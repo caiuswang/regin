@@ -1,0 +1,13 @@
+{
+  "session_id": "test-fixture-session-92a91ea4",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-92a91ea4.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "ToolSearch",
+  "tool_input": {
+    "query": "select:TaskCreate,Monitor",
+    "max_results": 2
+  },
+  "tool_use_id": "toolu_01EXWdGsteVrC3QsRmjKyccd"
+}

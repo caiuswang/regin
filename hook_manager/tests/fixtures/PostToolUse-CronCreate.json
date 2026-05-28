@@ -1,0 +1,20 @@
+{
+  "session_id": "test-fixture-session-45ffacd9",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-45ffacd9.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "CronCreate",
+  "tool_input": {
+    "cron": "*/10 * * * *",
+    "prompt": "make a plan to do refactor current table showing(it needs consider large data), let it return with page object (not hardcoded list). Good design always matterns.",
+    "recurring": true
+  },
+  "tool_response": {
+    "id": "55b068a8",
+    "humanSchedule": "Every 10 minutes",
+    "recurring": true,
+    "durable": false
+  },
+  "tool_use_id": "toolu_012DTknH2cjXuLjoiUTg3hjy"
+}

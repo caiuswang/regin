@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Skill PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "Skill"},
+    "tool_input": {
+      "type": "object",
+      "required": ["skill"],
+      "additionalProperties": true,
+      "properties": {
+        "skill": {"type": "string"},
+        "args": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "success": {"type": "boolean"},
+        "command_name": {"type": "string"}
+      }
+    }
+  }
+}

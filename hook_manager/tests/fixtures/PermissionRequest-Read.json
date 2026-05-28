@@ -1,0 +1,24 @@
+{
+  "session_id": "test-fixture-session-5d8e6b31",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-5d8e6b31.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/user/.claude/skills/git/content.md"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [
+        {
+          "toolName": "Read",
+          "ruleContent": "//Users/user/.claude/skills/git/**"
+        }
+      ],
+      "behavior": "allow",
+      "destination": "session"
+    }
+  ]
+}

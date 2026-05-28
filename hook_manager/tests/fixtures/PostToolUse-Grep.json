@@ -1,0 +1,22 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "skill_registry\\.SKILLS",
+    "path": "/Users/user/project",
+    "output_mode": "content",
+    "-n": true
+  },
+  "tool_response": {
+    "mode": "content",
+    "numFiles": 0,
+    "filenames": [],
+    "content": "cli/regin.py:333:            if args.id not in skill_registry.SKILLS:\nREFACTOR_MAP.md:587:Replaced 10 copies of `if skill_id not in skill_registry.SKILLS: return\nweb/blueprints/skills.py:21:    \"\"\"404 early if the URL's `<skill_id>` isn't in `skill_registry.SKILLS`.",
+    "numLines": 3
+  },
+  "tool_use_id": "toolu_01DUSXMaJE5FNWzW23CjAzb4"
+}

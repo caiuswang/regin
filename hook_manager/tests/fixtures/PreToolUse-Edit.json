@@ -1,0 +1,15 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/Users/user/project/blueprints/skills.py",
+    "old_string": "    \"\"\"404 early if the URL's `<skill_id>` isn't in `skill_registry.SKILLS`.\n\n    Replaces ~10 copies of the same guard across this blueprint. Must be\n    placed **below** `@require_editor` (closer to the function) so auth\n    runs first and an unauthed request on an unknown skill still returns\n    401 rather than leaking 404 as a membership oracle.\n    \"\"\"",
+    "new_string": "    \"\"\"404 early if the URL's `<skill_id>` isn't a known skill.\n\n    Rebuilds the skill list on each request via `skill_registry.all_ids()`\n    so patterns added after the server started are picked up without a\n    restart. Must be placed **below** `@require_editor` (closer to the\n    function) so auth runs first and an unauthed request on an unknown\n    skill still returns 401 rather than leaking 404 as a membership oracle.\n    \"\"\"",
+    "replace_all": false
+  },
+  "tool_use_id": "toolu_01SHnURULYqJSHQM6uvApHbB"
+}

@@ -1,0 +1,16 @@
+{
+  "session_id": "test-fixture-session-07f0f3bf",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-07f0f3bf.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/user/project/report.html",
+    "offset": 430,
+    "limit": 10
+  },
+  "tool_use_id": "toolu_01WeQnLQP3FrW9NGWsRLy2GQ",
+  "error": "File content (37634 tokens) exceeds maximum allowed tokens (25000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "is_interrupt": false
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "test-fixture-session-45ffacd9",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-45ffacd9.jsonl",
+  "cwd": "/Users/user/project",
+  "hook_event_name": "TaskCreated",
+  "task_id": "1",
+  "task_subject": "Build Phase 0 pagination foundation",
+  "task_description": "Create lib/pagination.py with Page/CursorPage dataclasses + helpers (paginate_query, keyset_query, cursor encode/decode, size clamping). Create frontend composables usePage.js and useCursor.js plus PageControls.vue and CursorControls.vue components."
+}

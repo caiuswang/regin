@@ -1,0 +1,12 @@
+{
+  "session_id": "test-fixture-session-45ffacd9",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-45ffacd9.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Skill",
+  "tool_input": {
+    "skill": "git"
+  },
+  "tool_use_id": "toolu_01BWr5cknyM9AHMhf3BPZuLT"
+}

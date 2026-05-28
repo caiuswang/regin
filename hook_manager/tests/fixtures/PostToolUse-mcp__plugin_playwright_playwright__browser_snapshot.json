@@ -1,0 +1,16 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__plugin_playwright_playwright__browser_snapshot",
+  "tool_input": {},
+  "tool_response": [
+    {
+      "type": "text",
+      "text": "### Open tabs\n- 0: (current) [](http://localhost:8322/publish)\n- 1: [regin-skillhub](http://localhost:8322/skills/git)\n### Page\n- Page URL: http://localhost:8322/publish\n### Snapshot\n```yaml\n- generic [ref=e3]:\n  - banner [ref=e4]:\n    - heading \"regin-skillhub\" [level=1] [ref=e5]\n    - generic [ref=e6]: Shareable Claude Code skills\n    - navigation [ref=e7]:\n      - link \"Skills\" [ref=e8] [cursor=pointer]:\n        - /url: /skills\n      - link \"Publish\" [ref=e9] [cursor=pointer]:\n        - /url: /publish\n  - generic [ref=e10]:\n    - heading \"Publish a skill bundle\" [level=2] [ref=e11]\n    - paragraph [ref=e12]:\n      - text: Upload a\n      - code [ref=e13]: .zip\n      - text: skill bundle to register its contents into this hub's registry. Promote patterns from the sibling\n      - code [ref=e14]: regin\n      - text: repo with\n      - code [ref=e15]: regin pattern promote <slug>\n      - text: .\n    - generic [ref=e16]:\n      - paragraph [ref=e17]:\n        - text: Drag a\n        - code [ref=e18]: .zip\n        - text: skill bundle here, or pick one below.\n      - button \"Choose File\" [ref=e19]\n    - generic [ref=e20]:\n      - generic [ref=e21]:\n        - checkbox \"Overwrite existing version\" [ref=e22]\n        - text: Overwrite existing version\n      - button \"Import bundle\" [disabled] [ref=e23]\n```"
+    }
+  ],
+  "tool_use_id": "toolu_01WhZNtAv1asNso2Up8be6ZJ"
+}

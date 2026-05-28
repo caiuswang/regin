@@ -1,0 +1,27 @@
+{
+  "agentType": "codex",
+  "sessionId": "codex-session-1",
+  "cwd": "/Users/user/project",
+  "permissionMode": "default",
+  "hook_event_name": "PreToolUse",
+  "hookEventName": "PreToolUse",
+  "toolName": "Bash",
+  "toolInput": {
+    "command": "npm --prefix frontend run build",
+    "description": "Build the frontend"
+  },
+  "sandboxPermissions": "require_escalated",
+  "justification": "Do you want to run the frontend build outside the sandbox?",
+  "permissionOptions": [
+    {
+      "id": "allow_session",
+      "label": "Allow this session",
+      "description": "Allow this exact build command for the current session."
+    },
+    {
+      "id": "allow_project",
+      "label": "Allow for project",
+      "description": "Persist approval for similar frontend build commands in this project."
+    }
+  ]
+}

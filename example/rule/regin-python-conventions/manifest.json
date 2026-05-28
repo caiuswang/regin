@@ -1,0 +1,36 @@
+{
+  "author": "claude",
+  "bundled": {
+    "grit_rules": [
+      "py_activity_logger_forbidden_level",
+      "py_bare_except",
+      "py_print_call",
+      "py_raw_sqlite_connect"
+    ],
+    "scripts": [
+      "check_grit.sh",
+      "find_applicable_files.py"
+    ]
+  },
+  "checksum": "sha256:92b12f038280b34ea35bc17e182ba3c406202eec47bb6b1eafa295425449b63a",
+  "dependencies": [],
+  "description": "regin Python conventions \u2014 repo-local GritQL rules for regin's own Python: no bare except, no print() in lib code, the activity-logger read/write discipline, and no raw sqlite3.connect().",
+  "license": "internal",
+  "name": "regin-python-conventions",
+  "origin": {
+    "created_at": "2026-05-27T12:16:41",
+    "source_commit": "unknown",
+    "source_path": "patterns/regin-python-conventions",
+    "source_repo": "regin",
+    "source_repos": [],
+    "type": "demo-handwritten"
+  },
+  "schema_version": 1,
+  "tags": [
+    "python",
+    "conventions",
+    "regin"
+  ],
+  "title": "regin-python-conventions",
+  "version": "1.0.0"
+}

@@ -1,0 +1,8 @@
+# Dependencies are defined in pyproject.toml — the single source of truth.
+# This installs the regin package (editable) plus all its dependencies.
+# Equivalent to: pip install -e .
+#
+# Optional extras live elsewhere:
+#   - dev tooling:        pip install -e ".[dev]"
+#   - SkillRouter (heavy): pip install -r requirements-router.txt
+-e .

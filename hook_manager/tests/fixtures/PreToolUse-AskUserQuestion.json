@@ -1,0 +1,51 @@
+{
+  "session_id": "test-fixture-session-61444405",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-61444405.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "plan",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Where should the canonical debug-hooks source markdown live?",
+        "header": "Source location",
+        "options": [
+          {
+            "label": "Move to patterns/debug-hooks/SKILL.md (Recommended)",
+            "description": "Follow existing convention (distributed-lock, database-service all live under patterns/<id>/SKILL.md). Delete the project-local .claude/skills/debug-hooks/ copy. `regin rebuild` + `skills push` will deploy it globally."
+          },
+          {
+            "label": "Keep both copies in sync",
+            "description": "Leave .claude/skills/debug-hooks/SKILL.md as the working draft AND copy it to patterns/debug-hooks/SKILL.md for registration. Risk: two files drift out of sync."
+          },
+          {
+            "label": "Register in place from .claude/skills/",
+            "description": "Modify skill_deployer to accept .claude/skills/ as a source root. Biggest change, deviates from existing convention."
+          }
+        ],
+        "multiSelect": false
+      },
+      {
+        "question": "How should tagging be handled for debug-hooks?",
+        "header": "Tagging",
+        "options": [
+          {
+            "label": "Add new tags to config/tags.yaml (Recommended)",
+            "description": "Add `hooks` (tech), `tracing` (concept), `debugging` (concept) to config/tags.yaml. Rebuild will auto-seed them into the tags table. These tags will be reusable for future observability patterns."
+          },
+          {
+            "label": "Reuse only existing tags",
+            "description": "Closest existing matches: `grit` (tech), maybe `error-handling` (concept). Neither is a great fit \u2014 the pattern would be under-discoverable."
+          },
+          {
+            "label": "Skip tagging for now",
+            "description": "Register the pattern without tags. It will still appear by slug in search but won't show up in tag-based browsing."
+          }
+        ],
+        "multiSelect": false
+      }
+    ]
+  },
+  "tool_use_id": "toolu_014PV9gNTnKcnTo3Q31ohSJo"
+}

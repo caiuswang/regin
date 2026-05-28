@@ -1,0 +1,9 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "import need to support pattern title(like onelineDescription attribute), and also support tag attributes to be imported.",
+  "session_title": "bundle-grit-rules-patterns"
+}

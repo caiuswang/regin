@@ -1,0 +1,140 @@
+"""Unit tests for lib.tokens.pricing."""
+
+from __future__ import annotations
+
+import json
+import time
+from unittest.mock import patch
+
+import pytest
+
+from lib.tokens import pricing
+from lib.tokens.pricing import TokenBreakdown, cost, model_rates, reset_cache
+
+
+_FAKE_CATALOGUE = {
+    'anthropic': {
+        'id': 'anthropic',
+        'models': {
+            'claude-opus-4-7': {
+                'id': 'claude-opus-4-7',
+                'cost': {'input': 5, 'output': 25, 'cache_read': 0.5, 'cache_write': 6.25},
+            },
+            'claude-sonnet-4-6': {
+                'id': 'claude-sonnet-4-6',
+                'cost': {'input': 3, 'output': 15, 'cache_read': 0.3, 'cache_write': 3.75},
+            },
+        },
+    },
+    'openai': {
+        'id': 'openai',
+        'models': {
+            'gpt-4o-mini': {
+                'id': 'gpt-4o-mini',
+                'cost': {'input': 0.15, 'output': 0.6},
+            },
+        },
+    },
+}
+
+
+@pytest.fixture(autouse=True)
+def isolate_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv('REGIN_PRICING_CACHE', str(tmp_path / 'models.json'))
+    reset_cache()
+    yield
+    reset_cache()
+
+
+def test_cost_returns_none_for_unknown_model(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    assert cost('unknown-model', TokenBreakdown(input_tokens=1000)) is None
+
+
+def test_cost_returns_none_for_empty_or_non_string_model(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    assert cost(None, TokenBreakdown(input_tokens=1000)) is None
+    assert cost('', TokenBreakdown(input_tokens=1000)) is None
+
+
+def test_cost_computes_for_known_model(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    # 1M input tokens at $5/M = $5
+    c = cost('claude-opus-4-7', TokenBreakdown(input_tokens=1_000_000))
+    assert c == pytest.approx(5.0)
+
+
+def test_cost_sums_all_four_buckets(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    c = cost('claude-opus-4-7', TokenBreakdown(
+        input_tokens=1_000_000,
+        output_tokens=200_000,
+        cache_read_tokens=500_000,
+        cache_creation_tokens=10_000,
+    ))
+    # 5 + 25*0.2 + 0.5*0.5 + 6.25*0.01 = 5 + 5 + 0.25 + 0.0625 = 10.3125
+    assert c == pytest.approx(10.3125)
+
+
+def test_strip_variant_handles_1m_suffix(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    c = cost('claude-opus-4-7[1m]', TokenBreakdown(input_tokens=1_000_000))
+    assert c == pytest.approx(5.0)
+
+
+def test_model_rates_searches_all_providers(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    assert model_rates('gpt-4o-mini') == {'input': 0.15, 'output': 0.6}
+
+
+def test_network_failure_returns_none(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: None)
+    assert cost('claude-opus-4-7', TokenBreakdown(input_tokens=1_000_000)) is None
+
+
+def test_disk_cache_avoids_repeated_network(tmp_path, monkeypatch):
+    cache_file = tmp_path / 'models.json'
+    monkeypatch.setenv('REGIN_PRICING_CACHE', str(cache_file))
+    reset_cache()
+    calls = {'n': 0}
+    def fake_fetch():
+        calls['n'] += 1
+        return _FAKE_CATALOGUE
+    monkeypatch.setattr(pricing, '_fetch', fake_fetch)
+    cost('claude-opus-4-7', TokenBreakdown(input_tokens=1))
+    assert calls['n'] == 1
+    assert cache_file.exists()
+    reset_cache()  # drop memo
+    cost('claude-opus-4-7', TokenBreakdown(input_tokens=1))
+    # Disk cache should serve this; no new fetch
+    assert calls['n'] == 1
+
+
+def test_disk_cache_expires_after_ttl(tmp_path, monkeypatch):
+    cache_file = tmp_path / 'models.json'
+    monkeypatch.setenv('REGIN_PRICING_CACHE', str(cache_file))
+    reset_cache()
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    cost('claude-opus-4-7', TokenBreakdown(input_tokens=1))
+    # Backdate the cache file beyond TTL
+    import os
+    past = time.time() - (25 * 60 * 60)
+    os.utime(cache_file, (past, past))
+    reset_cache()
+    calls = {'n': 0}
+    def fake_fetch():
+        calls['n'] += 1
+        return _FAKE_CATALOGUE
+    monkeypatch.setattr(pricing, '_fetch', fake_fetch)
+    cost('claude-opus-4-7', TokenBreakdown(input_tokens=1))
+    assert calls['n'] == 1
+
+
+def test_malformed_cache_file_falls_back_to_fetch(tmp_path, monkeypatch):
+    cache_file = tmp_path / 'models.json'
+    cache_file.write_text('not json at all')
+    monkeypatch.setenv('REGIN_PRICING_CACHE', str(cache_file))
+    reset_cache()
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    c = cost('claude-opus-4-7', TokenBreakdown(input_tokens=1_000_000))
+    assert c == pytest.approx(5.0)

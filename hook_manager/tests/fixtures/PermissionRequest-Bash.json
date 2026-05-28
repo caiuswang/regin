@@ -1,0 +1,25 @@
+{
+  "session_id": "test-fixture-session-5d8e6b31",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-5d8e6b31.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": ".venv/bin/python cli/regin_skillhub.py rebuild",
+    "description": "Resync DB from disk"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addRules",
+      "rules": [
+        {
+          "toolName": "Bash",
+          "ruleContent": ".venv/bin/python cli/regin_skillhub.py rebuild"
+        }
+      ],
+      "behavior": "allow",
+      "destination": "localSettings"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+schema: rule-bundle/v1
+id: frontend-style-convention
+language_ids: [vue, css, javascript, typescript]
+rules_dir: '.'
+checkers_dir: checkers
+runner:
+  kind: node
+  entry: bin/frontend-ux-runner.mjs
+  timeout_seconds: 10
+severity_default: warn
+description: |
+  Self-describing rule bundle for the regin frontend style convention.
+  Ships accessibility / interaction / typography rule YAMLs at the bundle
+  root, checker modules under `checkers/`, a Node runner under `bin/`,
+  and shared AST utilities under `lib/`. Run by regin's generic
+  BundleEngine when registered as a `kind: bundle` rule engine.

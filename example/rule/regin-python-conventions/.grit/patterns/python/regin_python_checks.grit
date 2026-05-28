@@ -1,0 +1,72 @@
+engine marzano(0.1)
+language python
+
+// ============================================================
+// regin Python conventions — enforce repo-local Python rules
+// ============================================================
+// Rules:
+//   1. No bare `except:` — always name the exception type
+//   2. No `print(...)` in library code — use structured logging
+//   3. Activity-logger wrapper forbids `.info()` / `.debug()`
+//   4. No raw `sqlite3.connect(...)` — use the ORM/get_connection helper
+// ============================================================
+
+// @rule id=py_bare_except
+// @rule layer=python-conventions
+// @rule triggers=except
+// @rule severity=warn
+// @rule guide=regin-python-conventions
+// @rule summary=Bare `except:` swallows every exception (including KeyboardInterrupt/SystemExit) — catch a specific exception type instead
+pattern py_bare_except() {
+    except_clause() as $e where {
+        $e <: r"except\s*:[\s\S]*",
+        log(message="[py_bare_except] bare `except:` — name the exception type (e.g. `except ValueError:`) so you don't swallow KeyboardInterrupt/SystemExit and mask real bugs.", variable=$e)
+    }
+}
+
+// @rule id=py_print_call
+// @rule layer=python-conventions
+// @rule triggers=print
+// @rule severity=warn
+// @rule guide=regin-python-conventions
+// @rule summary=Library code must not use print() — use lib/activity_log.py (get_activity_logger) or structured logging
+pattern py_print_call() {
+    or { `print($args)`, `print()` } as $p where {
+        log(message="[py_print_call] print() in library code — route output through lib/activity_log.py (get_activity_logger().write/read) or lib/logging_setup.py (get_logger). print() bypasses the structured-log pipeline and can't be filtered/rotated.", variable=$p)
+    }
+}
+
+// @rule id=py_activity_logger_forbidden_level
+// @rule layer=python-conventions
+// @rule triggers=get_activity_logger
+// @rule severity=error
+// @rule guide=regin-python-conventions
+// @rule summary=The activity-logger wrapper forbids `.info()` / `.debug()` — use `.read()` (DEBUG) or `.write()` (INFO)
+pattern py_activity_logger_forbidden_level() {
+    or { `$log.info($args)`, `$log.debug($args)` } where {
+        $log <: `log`,
+        log(message="[py_activity_logger_forbidden_level] the activity logger forbids .info()/.debug() (they raise AttributeError by design). Use log.read(event, ...) for read paths (DEBUG) and log.write(event, ...) for write paths (INFO). See CLAUDE.md > Activity logging.", variable=$log)
+    }
+}
+
+// @rule id=py_raw_sqlite_connect
+// @rule layer=python-conventions
+// @rule triggers=sqlite3
+// @rule severity=warn
+// @rule guide=regin-python-conventions
+// @rule summary=Don't call sqlite3.connect() directly — use SessionLocal()/AuthSessionLocal() or lib/orm/engine.get_connection()
+pattern py_raw_sqlite_connect() {
+    `sqlite3.connect($args)` as $c where {
+        log(message="[py_raw_sqlite_connect] raw sqlite3.connect() — use the ORM (SessionLocal()/AuthSessionLocal()) for normal access, or lib/orm/engine.get_connection() for the raw-sqlite path (it sets row_factory + WAL pragmas). Direct connects miss those and the canonical DB_PATH.", variable=$c)
+    }
+}
+
+// Top-level: scan all Python files
+file($body, name=includes ".py") where {
+    $body <: contains bubble or {
+        py_bare_except(),
+        py_print_call(),
+        py_activity_logger_forbidden_level(),
+        py_raw_sqlite_connect()
+    }
+}

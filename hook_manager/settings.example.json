@@ -1,0 +1,27 @@
+{
+  "_comment": "Drop-in replacement for the hook section of ~/.claude/settings.json. One line per event; the registry in hook_manager/registry.py decides what runs.",
+  "hooks": {
+    "SessionStart":     [{"hooks":[{"type":"command","command":"python -m hook_manager SessionStart","timeout":10}]}],
+    "SessionEnd":       [{"hooks":[{"type":"command","command":"python -m hook_manager SessionEnd","timeout":10}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"python -m hook_manager UserPromptSubmit","timeout":15}]}],
+    "PreToolUse":       [{"hooks":[{"type":"command","command":"python -m hook_manager PreToolUse","timeout":30}]}],
+    "PostToolUse":      [{"hooks":[{"type":"command","command":"python -m hook_manager PostToolUse","timeout":120}]}],
+    "PostToolUseFailure": [{"hooks":[{"type":"command","command":"python -m hook_manager PostToolUseFailure","timeout":10}]}],
+    "PermissionRequest": [{"hooks":[{"type":"command","command":"python -m hook_manager PermissionRequest","timeout":10}]}],
+    "Notification":     [{"hooks":[{"type":"command","command":"python -m hook_manager Notification","timeout":15}]}],
+    "SubagentStart":    [{"hooks":[{"type":"command","command":"python -m hook_manager SubagentStart","timeout":10}]}],
+    "SubagentStop":     [{"hooks":[{"type":"command","command":"python -m hook_manager SubagentStop","timeout":15}]}],
+    "TaskCreated":      [{"hooks":[{"type":"command","command":"python -m hook_manager TaskCreated","timeout":5}]}],
+    "TaskCompleted":    [{"hooks":[{"type":"command","command":"python -m hook_manager TaskCompleted","timeout":5}]}],
+    "Stop":             [{"hooks":[{"type":"command","command":"python -m hook_manager Stop","timeout":15}]}],
+    "StopFailure":      [{"hooks":[{"type":"command","command":"python -m hook_manager StopFailure","timeout":10}]}],
+    "PreCompact":       [{"hooks":[{"type":"command","command":"python -m hook_manager PreCompact","timeout":5}]}],
+    "PostCompact":      [{"hooks":[{"type":"command","command":"python -m hook_manager PostCompact","timeout":5}]}],
+    "FileChanged":      [{"hooks":[{"type":"command","command":"python -m hook_manager FileChanged","timeout":5}]}],
+    "CwdChanged":       [{"hooks":[{"type":"command","command":"python -m hook_manager CwdChanged","timeout":5}]}],
+    "_note_worktree_hooks": "DEPRECATED — DO NOT wire WorktreeCreate or WorktreeRemove to hook_manager. The harness reads WorktreeCreate's stdout as the new worktree path, and hook_manager's default `{\"suppressOutput\": true}` response gets parsed as that path, breaking EnterWorktree (chdir ENOENT). Both events are intentionally unwired; the Claude Code harness handles git-worktree provisioning itself.",
+    "ConfigChange":     [{"hooks":[{"type":"command","command":"python -m hook_manager ConfigChange","timeout":5}]}],
+    "InstructionsLoaded": [{"hooks":[{"type":"command","command":"python -m hook_manager InstructionsLoaded","timeout":5}]}],
+    "TeammateIdle":     [{"hooks":[{"type":"command","command":"python -m hook_manager TeammateIdle","timeout":5}]}]
+  }
+}

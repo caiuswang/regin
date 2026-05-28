@@ -1,0 +1,24 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/user/project/regin.py",
+    "offset": 325,
+    "limit": 15
+  },
+  "tool_response": {
+    "type": "text",
+    "file": {
+      "filePath": "/Users/user/project/regin.py",
+      "content": "def cmd_skills(args):\n    \"\"\"Manage Claude Code skills under ~/.claude/skills/.\"\"\"\n    from lib import skill_registry, skill_sync\n\n    action = args.skills_action\n\n    def _targets():\n        if getattr(args, 'id', None):\n            if args.id not in skill_registry.SKILLS:\n                print(f\"unknown skill id: {args.id}\")\n                print(f\"known ids: {', '.join(skill_registry.all_ids())}\")\n                sys.exit(2)\n            return [args.id]\n        return skill_registry.all_ids()\n",
+      "numLines": 15,
+      "startLine": 325,
+      "totalLines": 655
+    }
+  },
+  "tool_use_id": "toolu_01AGhCk5RZfxcNDVXXcVgwoa"
+}

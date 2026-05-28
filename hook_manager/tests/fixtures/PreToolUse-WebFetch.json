@@ -1,0 +1,13 @@
+{
+  "session_id": "test-fixture-session-2f518ddc",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-2f518ddc.jsonl",
+  "cwd": "/Users/user/project/worktrees/hook-refactor",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "https://code.claude.com/docs/en/hooks",
+    "prompt": "Extract the complete Claude Code hooks specification. Include: (1) every hook event name (PreToolUse, PostToolUse, UserPromptSubmit, Notification, Stop, SubagentStop, PreCompact, SessionStart, SessionEnd, etc.), (2) the exact JSON input schema for each event, (3) the JSON output/control schema (decision, continue, stopReason, hookSpecificOutput), (4) matcher semantics (tool name regex, etc.), (5) exit code meanings (0, 2, other), (6) the settings.json configuration shape, (7) any \"additionalContext\" or permission-decision fields, (8) timeout and parallelism rules. Be exhaustive \u2014 list fields verbatim."
+  },
+  "tool_use_id": "toolu_01YDUvbdn45cDwz9KT82zFZL"
+}

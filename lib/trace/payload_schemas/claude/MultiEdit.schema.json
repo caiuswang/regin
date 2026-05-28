@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MultiEdit PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "MultiEdit"},
+    "tool_input": {
+      "type": "object",
+      "required": ["file_path", "edits"],
+      "additionalProperties": true,
+      "properties": {
+        "file_path": {"type": "string"},
+        "edits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "old_string": {"type": "string"},
+              "new_string": {"type": "string"},
+              "replace_all": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "file_path": {"type": "string"},
+        "structured_patch": {"type": "array"},
+        "user_modified": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "hook_event_name": "ConfigChange",
+  "source": "skills",
+  "file_path": "/Users/user/.claude/skills/git/CHANGELOG.md"
+}

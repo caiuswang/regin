@@ -1,0 +1,14 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/Users/user/project/regin.py",
+    "offset": 325,
+    "limit": 15
+  },
+  "tool_use_id": "toolu_01AGhCk5RZfxcNDVXXcVgwoa"
+}

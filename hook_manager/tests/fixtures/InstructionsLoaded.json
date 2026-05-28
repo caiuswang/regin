@@ -1,0 +1,9 @@
+{
+  "session_id": "test-fixture-session-cebfb6a4",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-cebfb6a4.jsonl",
+  "cwd": "/Users/user/project",
+  "hook_event_name": "InstructionsLoaded",
+  "file_path": "/Users/user/project",
+  "memory_type": "Project",
+  "load_reason": "session_start"
+}

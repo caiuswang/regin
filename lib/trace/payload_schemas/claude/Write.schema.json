@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Write PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "Write"},
+    "tool_input": {
+      "type": "object",
+      "required": ["file_path", "content"],
+      "additionalProperties": true,
+      "properties": {
+        "file_path": {"type": "string"},
+        "content": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {"type": "string"},
+        "file_path": {"type": "string"},
+        "content": {"type": "string"},
+        "structured_patch": {"type": "array"},
+        "original_file": {"type": ["string", "null"]},
+        "user_modified": {"type": "boolean"}
+      }
+    }
+  }
+}

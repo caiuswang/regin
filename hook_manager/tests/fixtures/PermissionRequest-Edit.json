@@ -1,0 +1,21 @@
+{
+  "session_id": "test-fixture-session-5d8e6b31",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-5d8e6b31.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "default",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/Users/user/project/git/1.0.0/manifest.json",
+    "old_string": "  \"title\": \"git\",",
+    "new_string": "  \"title\": \"Git Commit Workflow\",",
+    "replace_all": false
+  },
+  "permission_suggestions": [
+    {
+      "type": "setMode",
+      "mode": "acceptEdits",
+      "destination": "session"
+    }
+  ]
+}

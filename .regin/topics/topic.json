@@ -1,0 +1,716 @@
+{
+  "repo": "regin",
+  "topics": {
+    "multi-user-topic-sharing": {
+      "aliases": [
+        "how other users see my topics",
+        "cross-user topic visibility",
+        "topic git sync flow",
+        "standalone mode topic sharing",
+        "promote topic to share"
+      ],
+      "commands": [
+        "regin topics install-hook",
+        "regin topics promote <id>",
+        "regin topics import --reason git_pull",
+        "regin doctor"
+      ],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "docs/topics/multi-user.md",
+        ".regin/topics/wiki/topic-graph-sync.md",
+        "lib/topics/scan.py",
+        "lib/topics/graph_io.py",
+        "lib/topics/core.py",
+        "cli/commands/topics.py"
+      ],
+      "intent": "Explain how regin's standalone-per-user model lets one user's approved topics become visible to other users: what travels via git (topic.json + wiki/<id>.md), what stays local (topic.local.json overlay, snapshot DB, in-flight proposals), and the producer/consumer steps (promote -> pre-commit add -> teammate git pull -> post-merge `topics import` -> snapshot DB seeded -> routable & visible in WebUI). Also covers the shared-server alternative when cross-user proposal review is needed.",
+      "label": "Multi-user topic sharing (how approved topics travel from one user to another)",
+      "refs": [
+        {
+          "path": "cli/commands/topics.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "lib/topics/core.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/graph_io.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/scan.py",
+          "role": "implementation"
+        },
+        {
+          "path": "docs/topics/multi-user.md",
+          "role": "docs"
+        }
+      ],
+      "status": "active"
+    },
+    "pattern-experiments": {
+      "aliases": [
+        "conceal experiments",
+        "skill ablation",
+        "pattern A/B variants",
+        "SKILL.md concealment",
+        "rule trigger ablation"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/experiments.py",
+        "lib/orm/models/rules.py",
+        "web/blueprints/experiments.py",
+        "frontend/src/views/Experiment*.vue",
+        "frontend/src/components/PatternExperimentCreator.vue",
+        "tests/rules/test_experiments*.py",
+        "tests/rules/test_blueprint_experiments.py"
+      ],
+      "intent": "Understand the experiment system that conceals selected H2/H3 sections of a pattern's SKILL.md at deploy time so rule-trigger rates can be compared against an unconcealed baseline. Covers the pure conceal filter, the experiments table and RuleTrigger.experiment_id linkage, the one-active-per-pattern lifecycle, the redeploy hook into skill_sync/skill_deployer, the baseline-vs-variant rollup endpoints, the Vue UI surfaces, and the gap between the ingest path and the rollup's variant column.",
+      "label": "Pattern Conceal Experiments",
+      "refs": [
+        {
+          "path": "web/blueprints/experiments.py",
+          "role": "api"
+        },
+        {
+          "path": "lib/orm/models/rules.py",
+          "role": "schema"
+        },
+        {
+          "path": "frontend/src/components/PatternExperimentCreator.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/views/ExperimentDetailView.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/views/ExperimentsView.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/experiments.py",
+          "role": "implementation"
+        },
+        {
+          "path": "tests/rules/test_blueprint_experiments.py",
+          "role": "test"
+        },
+        {
+          "path": "tests/rules/test_experiments.py",
+          "role": "test"
+        },
+        {
+          "path": "tests/rules/test_experiments_crud.py",
+          "role": "test"
+        }
+      ],
+      "status": "active"
+    },
+    "proposal-review-comments": {
+      "aliases": [
+        "feedback threads",
+        "proposal feedback",
+        "proposal comments",
+        "ProposalCommentsSidebar",
+        "ProposalFeedbackThread",
+        "/api/repos/<name>/topics/proposals/<id>/feedback-threads"
+      ],
+      "commands": [],
+      "edges": [
+        {
+          "target": "topic-proposal-pipeline",
+          "type": "related"
+        }
+      ],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/topics/proposals/feedback.py",
+        "lib/topics/proposal_orm/feedback.py",
+        "frontend/src/components/topics/ProposalCommentsSidebar.vue"
+      ],
+      "intent": "Document the inline review-comment system layered on top of a proposal run: how a thread is anchored (general / topic field / proposal summary / wiki range), what HTTP endpoints CRUD threads and comments, how the ORM stores them with revision pointers, how `format_review_feedback_for_prompt` injects open threads into the next regenerate, and how the auto-`addressed` sweep closes threads whose anchored content actually changed.",
+      "label": "Proposal review comments (feedback threads anchored to topics & wiki)",
+      "refs": [
+        {
+          "path": "frontend/src/components/topics/ProposalCommentsSidebar.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_orm/feedback.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/feedback.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
+    "rule-engine-design": {
+      "aliases": [
+        "rule engines",
+        "lib.rule_engines",
+        "RuleEngine protocol",
+        "GritEngine BundleEngine RadonEngine",
+        "regin-bundle.yaml",
+        "PostToolUse rule check",
+        "example/rule bundles",
+        "frontend-style-convention bundle",
+        "regin-python-conventions bundle",
+        "add a new rule engine",
+        "applicable_rules contract"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [
+        "**/__pycache__/**",
+        "tests/**",
+        "example/rule/*/node_modules/**"
+      ],
+      "include_globs": [
+        "lib/rule_engines/**",
+        "hook_manager/handlers/rule_check.py",
+        "lib/rules/**",
+        "lib/languages/**",
+        "example/rule/**"
+      ],
+      "intent": "Explain how regin loads, dispatches, and executes lint/rewrite rules: the engine-agnostic Protocol, the three-source registry precedence (explicit settings \u2192 legacy grit fallback \u2192 autodiscovered bundles), the three concrete adapters (Grit, Bundle, Radon), the PostToolUse hook that drives them per edit, the two in-tree example bundles under example/rule/, and the step-by-step playbook for adding a new engine. Use this when adding a new engine kind, packaging a new rule pack as a bundle, wiring an existing engine into a new language, importing one of the example bundles, or debugging why a rule fired (or didn't) on a file.",
+      "label": "Rule engine design (adapter protocol, registry, PostToolUse driver, in-tree example bundles, add-an-engine playbook)",
+      "refs": [
+        {
+          "path": "lib/languages/base.py",
+          "role": "architecture"
+        },
+        {
+          "path": "lib/rule_engines/base.py",
+          "role": "architecture"
+        },
+        {
+          "path": "hook_manager/handlers/rule_check.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "lib/rule_engines/__init__.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/accessibility.yaml",
+          "role": "schema"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/layout.yaml",
+          "role": "schema"
+        },
+        {
+          "path": "lib/rule_engines/manifest.py",
+          "role": "schema"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/bin/frontend-ux-runner.mjs",
+          "role": "implementation"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/icon_button_accessible_name.mjs",
+          "role": "implementation"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/scripts/check_grit.sh",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/languages/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/rule_engines/bundle.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/rule_engines/grit.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/rule_engines/radon_engine.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/rule_engines/repo_scope.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/rules/engine_rule_disable.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/rules/grit_rule_index.py",
+          "role": "implementation"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/regin-bundle.yaml",
+          "role": "config"
+        },
+        {
+          "path": "example/rule/README.md",
+          "role": "docs"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/SKILL.md",
+          "role": "docs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/SKILL.md"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/bin/check_frontend_ux.sh"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/clickable_requires_affordance.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/disallow_native_alert.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/disallow_native_confirm.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/disallow_raw_hex.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/heading_order.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/interactive_requires_focus_visible.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/checkers/select_input_in_flex_wrap.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/content.md"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/lib/ast-utils.mjs"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/manifest.json"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/package-lock.json"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/package.json"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/references/style-convention.md"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/.grit/patterns/python/regin_python_checks.grit"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/.grit/rules.json"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/content.md"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/manifest.json"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/references/python-conventions.md"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/scripts/filter_grit_output.py"
+        },
+        {
+          "path": "example/rule/regin-python-conventions/scripts/find_applicable_files.py"
+        },
+        {
+          "path": "lib/languages/java.py"
+        },
+        {
+          "path": "lib/languages/python.py"
+        },
+        {
+          "path": "lib/rules/__init__.py"
+        },
+        {
+          "path": "lib/rules/buckets.py"
+        },
+        {
+          "path": "lib/rules/status.py"
+        }
+      ],
+      "status": "active"
+    },
+    "session-trace-design": {
+      "aliases": [
+        "session spans schema",
+        "OpenTelemetry session model",
+        "trace ingest pipeline",
+        "session aggregates rollup",
+        "turn usage tokens",
+        "session_trace_map",
+        "materialize_session",
+        "SessionTraceView data flow"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/trace/**",
+        "lib/orm/models/trace.py",
+        "hook_manager/handlers/*trace*.py",
+        "hook_manager/handlers/session_lifecycle.py",
+        "hook_manager/handlers/prompt_trace.py",
+        "web/blueprints/trace/**",
+        "frontend/src/views/SessionTraceView.vue",
+        "frontend/src/views/SessionsView.vue"
+      ],
+      "intent": "Explain how Claude Code sessions are captured as OpenTelemetry-style spans by hook handlers, persisted through the trace_service ingest layer into session_spans plus a denormalized sessions row, and rendered by the Vue SessionTraceView via the /api/sessions/* read endpoints.",
+      "label": "Session trace design (OTel-style spans, ingest pipeline, aggregates, dashboard read paths)",
+      "refs": [
+        {
+          "path": "lib/trace/trace_service/__init__.py",
+          "role": "overview"
+        },
+        {
+          "path": "web/blueprints/trace/__init__.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/trace/mcp_calls.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/trace/prompt_images.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/trace/sessions.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/trace/skill_reads.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/trace/spans_ingest.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/trace/turn_usage.py",
+          "role": "api"
+        },
+        {
+          "path": "lib/orm/models/trace.py",
+          "role": "schema"
+        },
+        {
+          "path": "frontend/src/views/SessionTraceView.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/views/SessionsView.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/post_tool_trace.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/prompt_trace.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/session_lifecycle.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/trace_payload.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/payload_validation.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/projection.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/repair.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/trace_context.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/trace_service/ingest.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/trace_service/queries.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/transcript_parsers.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/transcript_usage.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/plan_trace.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/__init__.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/cache.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/entry.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/span_posters.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/timestamps.py"
+        },
+        {
+          "path": "lib/trace/__init__.py"
+        },
+        {
+          "path": "lib/trace/claude_version.py"
+        },
+        {
+          "path": "lib/trace/is_test.py"
+        },
+        {
+          "path": "lib/trace/payload_drift_store.py"
+        },
+        {
+          "path": "lib/trace/payload_schemas/README.md"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/AskUserQuestion.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Bash.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Edit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Glob.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Grep.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/MultiEdit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Read.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Skill.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskCreate.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskOutput.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskUpdate.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/ToolSearch.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Write.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json"
+        },
+        {
+          "path": "lib/trace/plan_context.py"
+        },
+        {
+          "path": "lib/trace/plans.py"
+        },
+        {
+          "path": "lib/trace/transcript_models.py"
+        },
+        {
+          "path": "web/blueprints/trace/ingest_errors.py"
+        }
+      ],
+      "status": "active"
+    },
+    "topic-proposal-pipeline": {
+      "aliases": [
+        "topic proposal flow",
+        "proposal authoring",
+        "external-agent proposal",
+        "stop proposal run",
+        "cancel in-flight proposal",
+        "/api/repos/<name>/topics/proposals"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [
+        "lib/topics/proposals/feedback.py",
+        "lib/topics/proposal_orm/feedback.py"
+      ],
+      "include_globs": [
+        "lib/topics/proposal*.py",
+        "lib/topics/proposals/**",
+        "lib/topics/proposal_orm/**",
+        "web/blueprints/topics/proposals.py",
+        "web/blueprints/topics/apply.py",
+        "web/blueprints/topics/maintenance.py"
+      ],
+      "intent": "Explain the end-to-end funnel that turns a user's topic request into one row in `.regin/topics/topic.json`: an external tool-using agent drafts the JSON+wiki, regin validates and persists it via the ORM, reviewers iterate through revise/regenerate/restore/stop, and a single server-side /diff+/apply path (or the matching library accept/replace/merge helpers) promotes a topic into the approved graph. Also describes the cross-thread cancel machinery that lets a Stop request terminate the agent subprocess without racing the worker's terminal-state writes.",
+      "label": "Topic proposal pipeline (request \u2192 draft \u2192 review \u2192 apply/stop)",
+      "refs": [
+        {
+          "path": "web/blueprints/topics/apply.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/topics/maintenance.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/topics/proposals.py",
+          "role": "api"
+        },
+        {
+          "path": "lib/topics/proposal_drafting.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_external.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_orm/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_orm/_common.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_orm/revisions.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_orm/runs.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_orm/serializers.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_providers.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/_common.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/core_io.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/downgrade.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/external_jobs.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/run_control.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/topic_actions.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
+    "topic-routing": {
+      "aliases": [
+        "topic router",
+        "regin topics route",
+        "topic graph routing",
+        "topic-router skill",
+        ".regin/topics"
+      ],
+      "commands": [
+        "regin topics route <keywords>",
+        "regin topics scan",
+        "regin topics router-skill",
+        "regin topics install-hook"
+      ],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/topics/route.py",
+        "lib/topics/core.py",
+        "lib/topics/scan.py",
+        "lib/topics/wiki.py",
+        "cli/commands/topics.py"
+      ],
+      "intent": "Understand how an agent resolves a freeform query into approved topic context: alias / label / ref-path / multi-keyword scoring against `.regin/topics/topic.json`, with optional fallback to unapproved candidates in `.regin/topics/candidates.json`. Covers the matcher (`match_topic`), the routing envelope (`route_topic`) that returns ordered refs + bounded wiki pages + first-degree related topics, and the deployed `topic-router` skill that tells agents how to use it.",
+      "label": "Topic routing (approved graph + candidate fallback)",
+      "refs": [
+        {
+          "path": "cli/commands/topics.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/core.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/route.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/scan.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/wiki.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    }
+  },
+  "updated_at": "2026-05-26T17:33:31Z",
+  "version": 1
+}

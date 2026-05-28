@@ -1,0 +1,29 @@
+{
+  "experimental_dense_search": true,
+  "bundle_autoload": false,
+  "rule_engines": [
+    {
+      "id": "grit",
+      "kind": "grit",
+      "grit_dir": "~/.local/share/regin/grit",
+      "language_ids": [
+        "python",
+        "java"
+      ]
+    },
+    {
+      "id": "radon",
+      "kind": "radon",
+      "language_ids": [
+        "python"
+      ],
+      "min_grade": "C",
+      "severity": "warn"
+    },
+    {
+      "id": "frontend-style-convention",
+      "kind": "bundle",
+      "bundle_root": "~/.local/share/regin/patterns/frontend-style-convention"
+    }
+  ]
+}

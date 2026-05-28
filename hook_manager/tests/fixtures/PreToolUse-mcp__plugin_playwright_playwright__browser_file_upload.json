@@ -1,0 +1,14 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__plugin_playwright_playwright__browser_file_upload",
+  "tool_input": {
+    "paths": [
+      "/Users/user/project/api-bean-contract-1.0.0.zip"
+    ]
+  },
+  "tool_use_id": "toolu_01W7ch4jTGeZmfTj4GgSdVY1"
+}

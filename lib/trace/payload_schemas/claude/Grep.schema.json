@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Grep PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "Grep"},
+    "tool_input": {
+      "type": "object",
+      "required": ["pattern"],
+      "additionalProperties": true,
+      "properties": {
+        "pattern": {"type": "string"},
+        "path": {"type": "string"},
+        "output_mode": {"type": "string"},
+        "glob": {"type": "string"},
+        "type": {"type": "string"},
+        "multiline": {"type": "boolean"},
+        "head_limit": {"type": "integer"},
+        "-n": {"type": "boolean"},
+        "-i": {"type": "boolean"},
+        "-A": {"type": "integer"},
+        "-B": {"type": "integer"},
+        "-C": {"type": "integer"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {"type": "string"},
+        "num_files": {"type": "integer"},
+        "filenames": {"type": "array", "items": {"type": "string"}},
+        "content": {"type": "string"},
+        "num_lines": {"type": "integer"}
+      }
+    }
+  }
+}

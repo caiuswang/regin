@@ -1,0 +1,15 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sqlite3 db/regin.db \"SELECT slug, title, oneliner, description FROM pattern_docs WHERE slug='git';\" 2>&1",
+    "description": "Check pattern_docs schema and git row"
+  },
+  "tool_use_id": "toolu_01QZ7kRGrRNDTWnhTAugzXPz",
+  "error": "Exit code 1\nError: in prepare, no such column: oneliner\n  SELECT slug, title, oneliner, description FROM pattern_docs WHERE slug='git';\n                      ^--- error here",
+  "is_interrupt": false
+}

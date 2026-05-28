@@ -1,0 +1,14 @@
+{
+  "session_id": "test-fixture-session-cebfb6a4",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-cebfb6a4.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Find trace span UI code",
+    "prompt": "Find the session trace span view in this Vue 3 frontend codebase at /Users/user/project/. The user wants to change the trace span display so that only \"first-class\" spans are shown by default (folded), and nested child spans can be unfolded when clicked.\n\nPlease find:\n1. The Vue component(s) that render the trace span tree/list (likely something like TraceView, SpanTree, SessionTrace, etc.)\n2. The data structure used for spans (what distinguishes \"first-class\" spans from children/nested spans - look for parent/child relationships, span_id, parent_span_id, or similar)\n3. Any existing folding/expand UI patterns in that component\n4. The API endpoint that serves the trace data (in web/app.py)\n\nReport with file paths and line numbers. Under 300 words. Include a brief snippet of the relevant render logic so I know what to edit.",
+    "subagent_type": "Explore"
+  },
+  "tool_use_id": "toolu_0134TSWhyMmFVW4LFRfRtDGv"
+}

@@ -1,0 +1,14 @@
+{
+  "session_id": "test-fixture-session-cebfb6a4",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-cebfb6a4.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "agent_id": "a906bb751c4a3464d",
+  "agent_type": "Explore",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Glob",
+  "tool_input": {
+    "pattern": "/Users/user/project/**/*[Tt]race*.vue"
+  },
+  "tool_use_id": "toolu_01RiAqRRjFGewTRsS8TERpsp"
+}

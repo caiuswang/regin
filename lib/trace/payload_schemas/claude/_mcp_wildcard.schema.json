@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCP tool PostToolUse payload (wildcard)",
+  "description": "Matches any tool whose name starts with `mcp__`. Permissive by design — MCP tool shapes vary by server and are loaded dynamically, so we only enforce the envelope.",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"type": "string", "pattern": "^mcp__"},
+    "tool_input": {"type": "object", "additionalProperties": true},
+    "tool_response": {}
+  }
+}

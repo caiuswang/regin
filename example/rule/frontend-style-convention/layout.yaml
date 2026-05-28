@@ -1,0 +1,22 @@
+- id: select_input_in_flex_wrap_row
+  checker: select_input_in_flex_wrap
+  summary: Inline form inputs using `.input` inside a flex-wrap row need a width override
+  severity: warn
+  category: layout
+  check_kind: template-ast
+  selector_scope: "select,input"
+  triggers:
+    - "src/**/*.vue"
+  rationale: |
+    The shared `.input` class sets `width: 100%` so it fills its column in
+    a form. When the same class is used on an inline filter control inside
+    a `flex flex-wrap` row, the 100% width forces the control onto its own
+    line — it stops being inline. Add a sibling class with `width: auto`
+    (and a `max-width`) in the component's scoped style so the control
+    keeps its inline footprint.
+  fix_hint: |
+    Add a scoped class alongside `.input` (e.g. `.filter-select`) that
+    overrides `width: auto` and sets a sensible `max-width`. Example:
+    `.filter-select { width: auto; max-width: 14rem; }`.
+  design_token_refs: []
+  options: {}

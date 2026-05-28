@@ -1,0 +1,39 @@
+Alembic migrations for regin.
+
+The Alembic environment lives in `env.py` one directory up and targets
+`lib.orm.base.metadata` — the single MetaData that every SQLModel class
+under `lib/orm/models/` registers on. The DB URL comes from
+`lib.orm.engine._resolve_primary_url()` (the project-local SQLite file);
+override for ad-hoc runs with `-x url=<override>` or `ALEMBIC_URL=`.
+
+Common workflows
+----------------
+
+Existing install — stamp the current revision without running upgrades:
+
+    .venv/bin/alembic stamp head
+
+Apply all pending migrations (fresh install after `regin init`):
+
+    .venv/bin/alembic upgrade head
+
+Generate a new migration from SQLModel class changes:
+
+    .venv/bin/alembic revision --autogenerate -m "<short description>"
+
+Inspect current + pending:
+
+    .venv/bin/alembic current
+    .venv/bin/alembic history --verbose
+
+Migration chain
+---------------
+
+- 0001_baseline.py — no-op. Anchors the revision chain at the schema
+  represented by the current `db/schema.sql` (first published release).
+  The pre-1.0 incremental migrations were collapsed into this baseline;
+  every table/column/index they added now lives in `db/schema.sql`.
+
+Schema changes from here forward land as new alembic revisions on top
+of 0001. Keep `db/schema.sql` in sync so fresh `regin init` runs match
+what `alembic upgrade head` would produce.

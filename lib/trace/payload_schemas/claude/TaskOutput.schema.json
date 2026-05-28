@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskOutput PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "TaskOutput"},
+    "tool_input": {
+      "type": "object",
+      "required": ["task_id"],
+      "additionalProperties": true,
+      "properties": {
+        "task_id": {"type": ["string", "integer"]}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "retrieval_status": {"type": "string"},
+        "task": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "task_id": {"type": ["string", "integer"]},
+            "task_type": {"type": "string"},
+            "status": {"type": "string"},
+            "description": {"type": "string"},
+            "exit_code": {"type": "integer"},
+            "output": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

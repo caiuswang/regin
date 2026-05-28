@@ -1,0 +1,19 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__plugin_playwright_playwright__browser_click",
+  "tool_input": {
+    "ref": "e19",
+    "element": "Choose File button"
+  },
+  "tool_response": [
+    {
+      "type": "text",
+      "text": "### Ran Playwright code\n```js\nawait page.getByRole('button', { name: 'Choose File' }).click();\n```\n### Open tabs\n- 0: (current) [](http://localhost:8322/publish)\n- 1: [regin-skillhub](http://localhost:8322/skills/git)\n### Page\n- Page URL: http://localhost:8322/publish\n### Modal state\n- [File chooser]: can be handled by browser_file_upload\n### Snapshot\n- [Snapshot](.playwright-mcp/page-2026-04-19T13-17-49-505Z.yml)"
+    }
+  ],
+  "tool_use_id": "toolu_01GESe72cMMEcFBTwsg8AUAH"
+}

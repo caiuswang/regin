@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskCreate PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "TaskCreate"},
+    "tool_input": {
+      "type": "object",
+      "required": ["subject"],
+      "additionalProperties": true,
+      "properties": {
+        "subject": {"type": "string"},
+        "description": {"type": "string"},
+        "active_form": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "task": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "id": {"type": ["string", "integer"]},
+            "subject": {"type": "string"}
+          }
+        },
+        "task_id": {"type": ["string", "integer"]}
+      }
+    }
+  }
+}

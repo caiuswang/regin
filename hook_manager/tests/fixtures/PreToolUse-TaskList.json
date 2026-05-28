@@ -1,0 +1,10 @@
+{
+  "session_id": "test-fixture-session-98f4f283",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-98f4f283.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "TaskList",
+  "tool_input": {},
+  "tool_use_id": "toolu_012jsmuybYr2bytaXmXTvJbg"
+}

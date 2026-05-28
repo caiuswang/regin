@@ -1,0 +1,11 @@
+# Optional deps for the experimental SkillRouter-style pattern router.
+# Install with: pip install -r requirements-router.txt
+#
+# These are NOT in the main requirements because torch + transformers add
+# ~3.5 GB to the venv, and they're only used by `regin pattern embed` /
+# `regin pattern route` (see lib/skill_router.py).
+
+torch>=2.2
+transformers>=4.55  # 4.55 introduced from_pretrained(dtype=...) (renamed from torch_dtype=)
+httpx[socks]>=0.27  # huggingface_hub uses httpx; SOCKS support needed if ALL_PROXY=socks5://
+numpy>=1.26

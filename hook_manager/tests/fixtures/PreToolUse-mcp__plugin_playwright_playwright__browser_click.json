@@ -1,0 +1,13 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__plugin_playwright_playwright__browser_click",
+  "tool_input": {
+    "ref": "e19",
+    "element": "Choose File button"
+  },
+  "tool_use_id": "toolu_01GESe72cMMEcFBTwsg8AUAH"
+}

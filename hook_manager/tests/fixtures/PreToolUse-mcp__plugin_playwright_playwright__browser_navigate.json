@@ -1,0 +1,12 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__plugin_playwright_playwright__browser_navigate",
+  "tool_input": {
+    "url": "http://localhost:8322/publish"
+  },
+  "tool_use_id": "toolu_01NjJ5v7FVphyvcHuKdVtPfz"
+}

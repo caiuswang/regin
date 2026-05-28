@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AskUserQuestion PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "AskUserQuestion"},
+    "tool_input": {
+      "type": "object",
+      "required": ["questions"],
+      "additionalProperties": true,
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["question", "header", "options"],
+            "additionalProperties": true,
+            "properties": {
+              "question": {"type": "string"},
+              "header": {"type": "string"},
+              "multi_select": {"type": "boolean"},
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "label": {"type": "string"},
+                    "description": {"type": "string"},
+                    "preview": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "answers": {"type": "object"},
+        "annotations": {"type": "object"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "questions": {"type": "array"},
+        "answers": {"type": "object"},
+        "annotations": {"type": "object"}
+      }
+    }
+  }
+}

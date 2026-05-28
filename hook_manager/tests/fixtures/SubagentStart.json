@@ -1,0 +1,8 @@
+{
+  "session_id": "test-fixture-session-cebfb6a4",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-cebfb6a4.jsonl",
+  "cwd": "/Users/user/project",
+  "agent_id": "a906bb751c4a3464d",
+  "agent_type": "Explore",
+  "hook_event_name": "SubagentStart"
+}

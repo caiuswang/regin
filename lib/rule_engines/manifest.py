@@ -1,0 +1,476 @@
+"""Bundle-manifest schema, discovery, scaffold, and validation helpers.
+
+A *bundle* is a pattern directory under `settings.patterns_dir` whose root
+contains a `regin-bundle.yaml` (or `.json`) manifest. The manifest makes
+the bundle self-describing: it pins the runner interpreter and entry,
+the rule and checker directories, and the file-extension languages the
+rules target. `BundleEngine` reads this contract and wires the bundle
+into the rule-engine registry without any Python adapter changes.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+from typing import Iterator, Literal
+
+import yaml
+from pydantic import BaseModel, Field, field_validator
+
+from lib.logging_setup import get_logger
+from lib.activity_log import get_activity_logger as _get_activity_logger
+
+
+def _rules_log():
+    return _get_activity_logger("rules")
+
+_log = get_logger(__name__)
+
+SCHEMA_ID = 'rule-bundle/v1'
+MANIFEST_NAMES = ('regin-bundle.yaml', 'regin-bundle.yml', 'regin-bundle.json')
+BUNDLE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*$')
+
+
+class RunnerSpec(BaseModel):
+    """How a bundle's rule runner is invoked."""
+
+    kind: Literal['node', 'python', 'shell'] = 'python'
+    entry: str
+    timeout_seconds: int = 10
+
+
+class BundleManifest(BaseModel):
+    """Top-level manifest a bundle ships at its root."""
+
+    schema_: str = Field(alias='schema', default=SCHEMA_ID)
+    id: str
+    language_ids: tuple[str, ...]
+    rules_dir: str = 'rules'
+    checkers_dir: str = 'checkers'
+    runner: RunnerSpec
+    severity_default: str = 'warn'
+    description: str | None = None
+
+    model_config = {'populate_by_name': True}
+
+    @field_validator('schema_')
+    @classmethod
+    def _check_schema(cls, value: str) -> str:
+        if value != SCHEMA_ID:
+            raise ValueError(f'unsupported bundle schema: {value!r}; expected {SCHEMA_ID!r}')
+        return value
+
+    @field_validator('id')
+    @classmethod
+    def _check_id(cls, value: str) -> str:
+        if not BUNDLE_ID_RE.match(value):
+            raise ValueError(
+                f'bundle id {value!r} must match {BUNDLE_ID_RE.pattern}',
+            )
+        return value
+
+
+def manifest_path(bundle_root: Path) -> Path | None:
+    """Return the first manifest file present in `bundle_root`, if any."""
+    for name in MANIFEST_NAMES:
+        candidate = bundle_root / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_manifest(path: Path) -> BundleManifest:
+    """Parse a manifest file. Raises ValueError/yaml.YAMLError on malformed input."""
+    text = path.read_text(encoding='utf-8')
+    if path.suffix == '.json':
+        data = json.loads(text)
+    else:
+        data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise ValueError(f'{path}: manifest must be a mapping at top level')
+    return BundleManifest.model_validate(data)
+
+
+def resolve_runner_entry(bundle_root: Path, entry: str) -> Path:
+    """Resolve `entry` relative to `bundle_root` and reject path traversal.
+
+    Returns the absolute path. Raises ValueError if the resolved path
+    escapes `bundle_root` (e.g. via `..`) or if it doesn't exist.
+    """
+    root = bundle_root.resolve()
+    resolved = (root / entry).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f'runner.entry {entry!r} escapes bundle root {root}',
+        ) from exc
+    if not resolved.is_file():
+        raise ValueError(f'runner.entry {entry!r} not found under {root}')
+    return resolved
+
+
+def discover_bundles(patterns_dir: Path) -> Iterator[tuple[Path, BundleManifest]]:
+    """Yield `(bundle_root, manifest)` for each well-formed bundle in `patterns_dir`.
+
+    Malformed manifests are logged and skipped; discovery never crashes
+    the caller. Hidden directories (`.foo`, `_foo`) are ignored.
+    """
+    if not patterns_dir.is_dir():
+        return
+    for entry in sorted(patterns_dir.iterdir()):
+        if not entry.is_dir() or entry.name.startswith(('.', '_')):
+            continue
+        mpath = manifest_path(entry)
+        if mpath is None:
+            continue
+        try:
+            manifest = load_manifest(mpath)
+        except Exception as exc:
+            _log.warning(
+                'rule_engines.bundle.manifest_invalid',
+                bundle=str(entry),
+                manifest=str(mpath),
+                error=str(exc),
+            )
+            continue
+        yield entry, manifest
+
+
+# ── Scaffold ────────────────────────────────────────────────────────────
+
+_SCAFFOLD_MANIFEST = """\
+schema: rule-bundle/v1
+id: {slug}
+language_ids: [python]
+rules_dir: rules
+checkers_dir: checkers
+runner:
+  kind: python
+  entry: bin/runner.py
+  timeout_seconds: 10
+severity_default: warn
+description: Example rule bundle generated by `regin pattern enable-rules`.
+"""
+
+_SCAFFOLD_RULE = """\
+- id: example_rule
+  checker: example_checker
+  summary: Example rule emitted by the regin bundle scaffold
+  severity: warn
+  triggers:
+    - "**/*.py"
+  rationale: Replace this with the rationale users should see when the rule fires.
+  fix_hint: Replace this with concrete fix guidance.
+  options:
+    forbidden_token: TODO_REPLACE_ME
+"""
+
+_SCAFFOLD_CHECKER = '''\
+"""Example checker — matches occurrences of `options.forbidden_token` in the file."""
+
+from __future__ import annotations
+
+
+def run(*, file_path: str, repo_root: str, rule: dict, options: dict) -> dict:
+    token = (options or {}).get('forbidden_token') or 'TODO_REPLACE_ME'
+    try:
+        with open(file_path, encoding='utf-8') as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return {'matches': 0, 'details': []}
+    details: list[str] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if token in line:
+            details.append(f'line {lineno}: {line.strip()}')
+    return {'matches': len(details), 'details': details}
+'''
+
+_SCAFFOLD_RUNNER = '''\
+#!/usr/bin/env python3
+"""Bundle runner — dispatches a JSON-over-stdin payload to a checker module.
+
+Input  (stdin):  {"repo_root": str, "file_path": str, "rule": {"id": str, "checker": str, ...}}
+Output (stdout): {"matches": int, "details": [str, ...]}
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+BUNDLE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_checker(name: str):
+    path = BUNDLE_ROOT / 'checkers' / f'{name}.py'
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(f'bundle_checker_{name}', path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def main() -> int:
+    raw = sys.stdin.read()
+    if not raw.strip():
+        json.dump({'matches': 0, 'details': []}, sys.stdout)
+        return 0
+    payload = json.loads(raw)
+    rule = payload.get('rule') or {}
+    checker_name = rule.get('checker')
+    if not checker_name:
+        json.dump({'matches': 0, 'details': []}, sys.stdout)
+        return 0
+    module = _load_checker(checker_name)
+    if module is None or not hasattr(module, 'run'):
+        json.dump({'matches': 0, 'details': []}, sys.stdout)
+        return 0
+    result = module.run(
+        file_path=payload.get('file_path', ''),
+        repo_root=payload.get('repo_root', ''),
+        rule=rule,
+        options=rule.get('options') or {},
+    )
+    json.dump(result or {'matches': 0, 'details': []}, sys.stdout)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+'''
+
+
+def scaffold_bundle(bundle_root: Path, *, slug: str) -> list[Path]:
+    """Write a minimal example bundle into `bundle_root`. Never overwrites.
+
+    Returns the list of files actually created. Raises FileExistsError if
+    `regin-bundle.yaml` already exists.
+    """
+    if manifest_path(bundle_root) is not None:
+        raise FileExistsError(
+            f'bundle already has a manifest at {bundle_root}',
+        )
+    if not BUNDLE_ID_RE.match(slug):
+        raise ValueError(f'slug {slug!r} must match {BUNDLE_ID_RE.pattern}')
+    bundle_root.mkdir(parents=True, exist_ok=True)
+    (bundle_root / 'rules').mkdir(exist_ok=True)
+    (bundle_root / 'checkers').mkdir(exist_ok=True)
+    (bundle_root / 'bin').mkdir(exist_ok=True)
+    created: list[Path] = []
+    for relpath, content in (
+        ('regin-bundle.yaml', _SCAFFOLD_MANIFEST.format(slug=slug)),
+        ('rules/example.yaml', _SCAFFOLD_RULE),
+        ('checkers/example_checker.py', _SCAFFOLD_CHECKER),
+        ('bin/runner.py', _SCAFFOLD_RUNNER),
+    ):
+        target = bundle_root / relpath
+        if target.exists():
+            continue
+        target.write_text(content, encoding='utf-8')
+        created.append(target)
+    runner = bundle_root / 'bin' / 'runner.py'
+    if runner.is_file():
+        os.chmod(runner, 0o755)
+    _rules_log().write(
+        "bundle_scaffolded",
+        slug=slug, bundle_root=str(bundle_root),
+        files_created=[str(p) for p in created],
+    )
+    return created
+
+
+# ── Validation (for `regin pattern rules-doctor`) ──────────────────────
+
+class BundleDiagnostic(BaseModel):
+    """One validation finding for a bundle."""
+
+    level: Literal['ok', 'warn', 'error']
+    message: str
+
+
+def validate_bundle(bundle_root: Path) -> tuple[BundleManifest | None, list[BundleDiagnostic]]:
+    """Inspect a bundle and report findings.
+
+    Returns `(manifest, diagnostics)`. `manifest` is None when the
+    manifest is absent or malformed (in which case diagnostics carries an
+    error explaining why).
+    """
+    diags: list[BundleDiagnostic] = []
+    mpath = manifest_path(bundle_root)
+    if mpath is None:
+        diags.append(BundleDiagnostic(level='error', message='no regin-bundle.{yaml,json} found'))
+        return None, diags
+    try:
+        manifest = load_manifest(mpath)
+    except Exception as exc:
+        diags.append(BundleDiagnostic(level='error', message=f'manifest parse failed: {exc}'))
+        return None, diags
+    try:
+        resolve_runner_entry(bundle_root, manifest.runner.entry)
+        diags.append(BundleDiagnostic(level='ok', message=f'runner: {manifest.runner.entry}'))
+    except ValueError as exc:
+        diags.append(BundleDiagnostic(level='error', message=str(exc)))
+    rules_root = bundle_root / manifest.rules_dir
+    rule_count = sum(1 for _ in _walk_rule_files(rules_root))
+    if rule_count == 0:
+        diags.append(BundleDiagnostic(
+            level='warn',
+            message=f'no rule files found under {manifest.rules_dir}/',
+        ))
+    else:
+        diags.append(BundleDiagnostic(
+            level='ok',
+            message=f'{rule_count} rule file(s) found under {manifest.rules_dir}/',
+        ))
+    checkers_root = bundle_root / manifest.checkers_dir
+    if not checkers_root.is_dir():
+        diags.append(BundleDiagnostic(
+            level='warn',
+            message=f'no checkers directory at {manifest.checkers_dir}/',
+        ))
+    diags.extend(_dry_run_runner(bundle_root, manifest))
+    return manifest, diags
+
+
+_RESERVED_RULE_NAMES = frozenset(
+    set(MANIFEST_NAMES) | {'package.json', 'bundle.json', 'package-lock.json'}
+)
+_SKIP_DIR_NAMES = frozenset({'node_modules', '.git', '__pycache__'})
+
+
+def _walk_rule_files(root: Path):
+    """Yield rule-file paths under `root`, mirroring BundleEngine's discovery
+    (skip node_modules / .git / hidden dirs, reserved filenames)."""
+    if not root.is_dir():
+        return
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = sorted(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                if entry.name in _SKIP_DIR_NAMES or entry.name.startswith('.'):
+                    continue
+                stack.append(entry)
+                continue
+            if entry.suffix.lower() not in ('.yaml', '.yml', '.json'):
+                continue
+            if entry.name in _RESERVED_RULE_NAMES:
+                continue
+            yield entry
+
+
+_INTERPRETER_FOR_KIND = {
+    'node': ['node'],
+    'python': ['python3'],
+    'shell': ['bash'],
+}
+
+
+def _first_checker_name(bundle_root: Path, manifest: BundleManifest) -> str | None:
+    """Return the first non-empty `checker:` value from any rule in the
+    bundle. Used by the runner dry-run to exercise checker module loading."""
+    rules_root = bundle_root / manifest.rules_dir
+    for path in _walk_rule_files(rules_root):
+        try:
+            text = path.read_text(encoding='utf-8')
+            data = (json.loads(text) if path.suffix.lower() == '.json'
+                    else yaml.safe_load(text))
+        except Exception:
+            continue
+        items: list = []
+        if isinstance(data, dict):
+            items = [data]
+        elif isinstance(data, list):
+            items = [x for x in data if isinstance(x, dict)]
+        for raw in items:
+            checker = raw.get('checker')
+            if isinstance(checker, str) and checker.strip():
+                return checker.strip()
+    return None
+
+
+def _dry_run_runner(bundle_root: Path, manifest: BundleManifest) -> list[BundleDiagnostic]:
+    """Spawn the bundle's runner with a representative payload to surface
+    import errors, missing interpreters, missing deps, or other startup
+    failures that the engine would otherwise swallow at runtime.
+
+    Picks the first checker found in the manifest's rules so the runner
+    actually exercises its module-load path — an empty payload would
+    short-circuit before any `import` runs."""
+    import json as _json
+    import subprocess
+    try:
+        entry = resolve_runner_entry(bundle_root, manifest.runner.entry)
+    except ValueError:
+        return []  # Already reported by the earlier runner-existence check.
+    interpreter = _INTERPRETER_FOR_KIND.get(manifest.runner.kind)
+    if interpreter is None:
+        return [BundleDiagnostic(
+            level='warn',
+            message=f'no dry-run interpreter wired for kind={manifest.runner.kind!r}',
+        )]
+    import tempfile
+    checker_name = _first_checker_name(bundle_root, manifest)
+    rule_payload: dict = {'id': '__doctor__'}
+    if checker_name:
+        rule_payload['checker'] = checker_name
+    # Most checkers read the target file via fs/open — pass a real empty
+    # file so they don't crash on path-not-found before their dep-import
+    # has a chance to run (or succeed). The point of the dry-run is to
+    # catch packaging issues, not to flag a checker's no-content path.
+    tmp = tempfile.NamedTemporaryFile(
+        prefix='regin-doctor-', suffix='.vue', delete=False,
+    )
+    tmp.close()
+    payload = _json.dumps({
+        'repo_root': '/tmp',
+        'file_path': tmp.name,
+        'rule': rule_payload,
+    })
+    try:
+        try:
+            proc = subprocess.run(
+                interpreter + [str(entry)],
+                cwd=str(bundle_root),
+                input=payload,
+                capture_output=True,
+                text=True,
+                timeout=manifest.runner.timeout_seconds,
+            )
+        except FileNotFoundError:
+            return [BundleDiagnostic(
+                level='error',
+                message=f'dry-run failed: interpreter {interpreter[0]!r} not on PATH',
+            )]
+        except subprocess.TimeoutExpired:
+            return [BundleDiagnostic(
+                level='error',
+                message=(
+                    f'dry-run timed out after {manifest.runner.timeout_seconds}s'
+                ),
+            )]
+        if proc.returncode != 0:
+            stderr_head = (proc.stderr or '').strip().splitlines()[:3]
+            snippet = ' | '.join(stderr_head) if stderr_head else '<no stderr>'
+            return [BundleDiagnostic(
+                level='error',
+                message=f'runner dry-run exited {proc.returncode}: {snippet}',
+            )]
+        return [BundleDiagnostic(level='ok', message='runner dry-run passed')]
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass

@@ -1,0 +1,22 @@
+{
+  "session_id": "test-fixture-session-98f4f283",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-98f4f283.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "CronList",
+  "tool_input": {},
+  "tool_response": {
+    "jobs": [
+      {
+        "id": "a7900aa7",
+        "cron": "7 * * * *",
+        "humanSchedule": "Every hour at :07",
+        "prompt": "/loop 50m deep into current trace mechaicm to find if there is any unapproriate design, and fix it byyourself. Do not forget add test case for you new design. And do not ask me to do any confirmation. I will back to see what you have changes. So you need a detail plan and reason why would you make this change. You could use playright to test if everything works.",
+        "recurring": true,
+        "durable": false
+      }
+    ]
+  },
+  "tool_use_id": "toolu_01KpRESdLFfWayL6qZ5MBbTv"
+}

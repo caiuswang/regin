@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ToolSearch PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "ToolSearch"},
+    "tool_input": {
+      "type": "object",
+      "required": ["query"],
+      "additionalProperties": true,
+      "properties": {
+        "query": {"type": "string"},
+        "max_results": {"type": "integer"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "matches": {"type": "array", "items": {"type": "string"}},
+        "query": {"type": "string"},
+        "total_deferred_tools": {"type": "integer"}
+      }
+    }
+  }
+}

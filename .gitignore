@@ -1,0 +1,92 @@
+# GritQL rule sources, tests, and generated indexes live outside the repo
+# in the XDG data dir (~/.local/share/regin/grit by default). Override with
+# REGIN_GRIT_DIR or the `grit_dir` setting in settings.local.json.
+/.grit/
+
+# Claude Code's per-project state: installed skills, settings, worktrees,
+# schedules. 100 % user-local — never commit to the shared repo.
+.claude/
+
+# Machine-local Claude instructions (per-user gitnexus / MCP config etc.)
+CLAUDE.local.md
+
+# Codex CLI's per-project skills cache. Same class as .claude/.
+.codex/
+
+# regin's per-project topic state. The dir is machine-local EXCEPT the
+# git-tracked approved graph (topic.json) and its per-topic wiki
+# narratives, which travel with the repo. The topic.local.json overlay
+# (proposal approvals / scans) plus candidates/ and proposals/ stay local.
+.regin/*
+!.regin/topics/
+.regin/topics/*
+!.regin/topics/topic.json
+!.regin/topics/wiki/
+.regin/topics/wiki/*
+!.regin/topics/wiki/*.md
+
+# User-generated procedure guides live outside the repo in the XDG data dir
+# (~/.local/share/regin/patterns by default). Override with REGIN_PATTERNS_DIR
+# or the `patterns_dir` setting in settings.local.json.
+/patterns/
+
+db/*.db
+db/*.db-wal
+db/*.db-shm
+config/settings.local.json
+config/jwt_secret.txt
+__pycache__/
+node_modules/
+web/static/dist/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.pytest_cache/
+.coverage
+/htmlcov/
+
+# Alembic artifacts that aren't revision files
+alembic/__pycache__/
+alembic/versions/__pycache__/
+
+# Personal scratch docs / iteration logs written during development.
+iterate-*.md
+
+# Playwright-MCP session cache: console logs, page captures, pattern
+# zip artifacts from `pattern promote`. Machine-local, not for VCS.
+.playwright-mcp/
+
+# hook_manager user-owned registrations.
+# Contains personal paths, webhook tokens, ticket-specific guards.
+# Copy hook_manager/custom_registry.example.py to start fresh.
+hook_manager/custom_registry.py
+
+# E2E probe file seeded under frontend/src/ so the frontend-ux engine
+# matches it. Cleaned up by scripts/e2e_rule_trigger.py finally + atexit,
+# but listed here as belt-and-suspenders against hard crashes / SIGKILL.
+frontend/src/__e2e_trigger_probe__.vue
+
+# Playwright test artifacts: screenshot dumps and runner state.
+# Machine-local, not for VCS.
+frontend/screenshots/
+frontend/test-results/
+
+# pattern promote bundle artifact, written at repo root.
+/regin.zip
+
+# UI/UX sketches are local design artifacts; commit the implementation, not the sketch.
+docs/ui-sketches/
+
+# Personal scratch at the repo root: ad-hoc notes, screenshot dumps,
+# one-off extraction scripts with hardcoded trace IDs. Each contributor
+# tends to grow their own — never commit, keep them local.
+/think.md
+/TODO.md
+/sessions-*.png
+/extract_session_conversation.py
+
+# SQLite backups taken before destructive migrations. Local-only.
+db/*.db.bak*

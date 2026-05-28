@@ -1,0 +1,18 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__plugin_playwright_playwright__browser_handle_dialog",
+  "tool_input": {
+    "accept": false
+  },
+  "tool_response": [
+    {
+      "type": "text",
+      "text": "### Modal state\n- [\"prompt\" dialog with message \"Promote to regin-skillhub as version:\"]: can be handled by browser_handle_dialog"
+    }
+  ],
+  "tool_use_id": "toolu_019JwtPirrXE4gweEoXgB7Jc"
+}

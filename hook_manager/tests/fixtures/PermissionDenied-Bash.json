@@ -1,0 +1,14 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PermissionDenied",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "kill 7789 2>&1; sleep 2; lsof -i :8321 -sTCP:LISTEN 2>&1 | head",
+    "description": "Kill Flask server on 8321"
+  },
+  "tool_use_id": "toolu_014n6WxYqw3FhvPwZNTTeFYv",
+  "reason": "Killing a process (PID 7789) that the agent did not create in this session risks disrupting other users' work on shared infrastructure."
+}

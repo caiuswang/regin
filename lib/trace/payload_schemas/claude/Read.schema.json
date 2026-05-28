@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Read PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "Read"},
+    "tool_input": {
+      "type": "object",
+      "required": ["file_path"],
+      "additionalProperties": true,
+      "properties": {
+        "file_path": {"type": "string"},
+        "offset": {"type": "integer"},
+        "limit": {"type": "integer"},
+        "pages": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "type": {"type": "string"},
+        "file": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "file_path": {"type": "string"},
+            "content": {"type": "string"},
+            "num_lines": {"type": "integer"},
+            "start_line": {"type": "integer"},
+            "total_lines": {"type": "integer"},
+            "type": {"type": "string"},
+            "base64": {"type": "string"},
+            "original_size": {"type": "integer"},
+            "dimensions": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "originalWidth": {"type": "integer"},
+                "originalHeight": {"type": "integer"},
+                "displayWidth": {"type": "integer"},
+                "displayHeight": {"type": "integer"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "skill_registry\\.SKILLS",
+    "path": "/Users/user/project",
+    "output_mode": "content",
+    "-n": true
+  },
+  "tool_use_id": "toolu_01DUSXMaJE5FNWzW23CjAzb4"
+}

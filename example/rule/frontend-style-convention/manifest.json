@@ -1,0 +1,40 @@
+{
+  "author": "claude",
+  "bundled": {
+    "rule_bundle": "regin-bundle.yaml",
+    "rules": [
+      "icon_button_requires_label",
+      "clickable_card_needs_affordance",
+      "avoid_raw_hex_in_templates",
+      "heading_hierarchy_skips",
+      "focus_visible_styling_coverage",
+      "avoid_native_alert_dialogs",
+      "avoid_native_confirm_dialogs",
+      "select_input_in_flex_wrap_row"
+    ],
+    "runner": "bin/frontend-ux-runner.mjs",
+    "checkers_dir": "checkers"
+  },
+  "dependencies": [],
+  "description": "regin frontend style convention — a regin-bundle/v1 rule pack of Vue/CSS/JS accessibility, interaction, color, typography, and layout checkers run by the generic BundleEngine, plus the style guidance behind them.",
+  "license": "internal",
+  "name": "frontend-style-convention",
+  "origin": {
+    "created_at": "2026-05-27T00:00:00",
+    "source_commit": "unknown",
+    "source_path": "patterns/frontend-style-convention",
+    "source_repo": "regin",
+    "source_repos": [],
+    "type": "demo-handwritten"
+  },
+  "schema_version": 1,
+  "tags": [
+    "frontend",
+    "vue",
+    "css",
+    "conventions",
+    "regin"
+  ],
+  "title": "frontend-style-convention",
+  "version": "1.0.0"
+}

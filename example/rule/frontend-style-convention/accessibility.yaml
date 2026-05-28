@@ -1,0 +1,117 @@
+- id: icon_button_requires_label
+  checker: icon_button_accessible_name
+  summary: Icon-only buttons must expose an accessible name
+  severity: error
+  category: accessibility
+  check_kind: template-ast
+  selector_scope: button
+  triggers:
+    - "src/**/*.vue"
+  rationale: Screen-reader users need an accessible name for icon-only actions.
+  fix_hint: Add `aria-label` or visible text content.
+  wcag_ref: "WCAG 4.1.2"
+  design_token_refs: []
+  options: {}
+
+- id: clickable_card_needs_affordance
+  checker: clickable_requires_affordance
+  summary: Clickable cards should expose pointer and visible hover/focus affordance
+  severity: warn
+  category: interaction
+  check_kind: tailwind-class
+  selector_scope: "[role='button'], [data-clickable='true']"
+  triggers:
+    - "src/**/*.vue"
+  rationale: Interactive surfaces should look interactive and remain keyboard discoverable.
+  fix_hint: Add pointer cursor plus hover/focus-visible affordance classes.
+  design_token_refs:
+    - spacing
+    - focus-ring
+  options:
+    required_pointer_class: cursor-pointer
+
+- id: avoid_raw_hex_in_templates
+  checker: disallow_raw_hex
+  summary: Avoid raw hex colors in templates when design tokens exist
+  severity: warn
+  category: color
+  check_kind: template-ast
+  selector_scope: style
+  triggers:
+    - "src/**/*.vue"
+    - "src/assets/**/*.css"
+  rationale: Design token usage keeps color changes consistent and reviewable.
+  fix_hint: Replace raw colors with approved CSS variables or utility tokens.
+  design_token_refs:
+    - color
+  options: {}
+
+- id: heading_hierarchy_skips
+  checker: heading_order
+  summary: Avoid skipping heading levels in page content hierarchy
+  severity: warn
+  category: typography
+  check_kind: template-ast
+  selector_scope: "h1,h2,h3,h4,h5,h6"
+  triggers:
+    - "src/**/*.vue"
+  rationale: Heading order should communicate document structure to users and assistive technology.
+  fix_hint: Progress headings one level at a time unless a new section explicitly restarts the hierarchy.
+  wcag_ref: "WCAG 1.3.1"
+  design_token_refs:
+    - typography
+  options: {}
+
+- id: focus_visible_styling_coverage
+  checker: interactive_requires_focus_visible
+  summary: Interactive elements should expose explicit focus-visible styling
+  severity: warn
+  category: accessibility
+  check_kind: tailwind-class
+  selector_scope: "button,a,[role='button'],[data-clickable='true']"
+  triggers:
+    - "src/**/*.vue"
+  rationale: Keyboard users need a visible focus indicator that survives custom styling.
+  fix_hint: Add at least one `focus-visible:` utility for ring, outline, border, or background treatment.
+  wcag_ref: "WCAG 2.4.7"
+  design_token_refs:
+    - focus-ring
+  options:
+    required_prefixes:
+      - "focus-visible:"
+
+- id: avoid_native_alert_dialogs
+  checker: disallow_native_alert
+  summary: Avoid native alert dialogs; use unified feedback components instead
+  severity: warn
+  category: feedback
+  check_kind: script-source
+  selector_scope: "script"
+  triggers:
+    - "src/**/*.vue"
+    - "src/**/*.js"
+    - "src/**/*.jsx"
+    - "src/**/*.ts"
+    - "src/**/*.tsx"
+  rationale: Browser alert dialogs break visual consistency and bypass the app's shared feedback patterns.
+  fix_hint: Use `useFlash` / `FlashMessage` for notices and `useConfirm` / `ConfirmDialog` for confirmation flows.
+  design_token_refs: []
+  options: {}
+
+- id: avoid_native_confirm_dialogs
+  checker: disallow_native_confirm
+  summary: Avoid native confirm dialogs; use ConfirmDialog instead
+  severity: warn
+  category: feedback
+  check_kind: script-source
+  selector_scope: "script"
+  triggers:
+    - "src/**/*.vue"
+    - "src/**/*.js"
+    - "src/**/*.jsx"
+    - "src/**/*.ts"
+    - "src/**/*.tsx"
+  rationale: Browser confirm dialogs bypass the app's shared confirmation flow and create inconsistent UX.
+  fix_hint: Use `useConfirm` / `ConfirmDialog` for confirmation prompts.
+  design_token_refs: []
+  options: {}

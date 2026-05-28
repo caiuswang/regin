@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "py_bare_except",
+      "layer": "python-conventions",
+      "triggers": [
+        "except"
+      ],
+      "severity": "warn",
+      "guide": "regin-python-conventions",
+      "summary": "Bare `except:` swallows every exception (including KeyboardInterrupt/SystemExit) \u2014 catch a specific exception type instead",
+      "source_file": "../../.local/share/regin/grit/patterns/python/regin_python_checks.grit",
+      "disabled": false
+    },
+    {
+      "id": "py_print_call",
+      "layer": "python-conventions",
+      "triggers": [
+        "print"
+      ],
+      "severity": "warn",
+      "guide": "regin-python-conventions",
+      "summary": "Library code must not use print() \u2014 use lib/activity_log.py (get_activity_logger) or structured logging",
+      "source_file": "../../.local/share/regin/grit/patterns/python/regin_python_checks.grit",
+      "disabled": false
+    },
+    {
+      "id": "py_activity_logger_forbidden_level",
+      "layer": "python-conventions",
+      "triggers": [
+        "get_activity_logger"
+      ],
+      "severity": "error",
+      "guide": "regin-python-conventions",
+      "summary": "The activity-logger wrapper forbids `.info()` / `.debug()` \u2014 use `.read()` (DEBUG) or `.write()` (INFO)",
+      "source_file": "../../.local/share/regin/grit/patterns/python/regin_python_checks.grit",
+      "disabled": false
+    },
+    {
+      "id": "py_raw_sqlite_connect",
+      "layer": "python-conventions",
+      "triggers": [
+        "sqlite3"
+      ],
+      "severity": "warn",
+      "guide": "regin-python-conventions",
+      "summary": "Don't call sqlite3.connect() directly \u2014 use SessionLocal()/AuthSessionLocal() or lib/orm/engine.get_connection()",
+      "source_file": "../../.local/share/regin/grit/patterns/python/regin_python_checks.grit",
+      "disabled": false
+    }
+  ],
+  "by_layer": {
+    "python-conventions": [
+      "py_activity_logger_forbidden_level",
+      "py_bare_except",
+      "py_print_call",
+      "py_raw_sqlite_connect"
+    ]
+  },
+  "by_trigger": {
+    "except": [
+      "py_bare_except"
+    ],
+    "get_activity_logger": [
+      "py_activity_logger_forbidden_level"
+    ],
+    "print": [
+      "py_print_call"
+    ],
+    "sqlite3": [
+      "py_raw_sqlite_connect"
+    ]
+  },
+  "by_guide": {
+    "regin-python-conventions": [
+      "py_activity_logger_forbidden_level",
+      "py_bare_except",
+      "py_print_call",
+      "py_raw_sqlite_connect"
+    ]
+  }
+}

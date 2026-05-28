@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskUpdate PostToolUse payload",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "TaskUpdate"
+    },
+    "tool_input": {
+      "type": "object",
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "task_id": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "success": {
+          "type": "boolean"
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "updated_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status_change": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          }
+        },
+        "verification_nudge_needed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "duration_ms": {
+      "type": "integer"
+    }
+  },
+  "x-claude-versions": [
+    "2.1.150"
+  ]
+}

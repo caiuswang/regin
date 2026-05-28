@@ -1,0 +1,25 @@
+{
+  "session_id": "test-fixture-session-45ffacd9",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-45ffacd9.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "TaskUpdate",
+  "tool_input": {
+    "taskId": "1",
+    "status": "in_progress"
+  },
+  "tool_response": {
+    "success": true,
+    "taskId": "1",
+    "updatedFields": [
+      "status"
+    ],
+    "statusChange": {
+      "from": "pending",
+      "to": "in_progress"
+    },
+    "verificationNudgeNeeded": false
+  },
+  "tool_use_id": "toolu_01EcRMgVodfrDb1JXBxaPwk7"
+}

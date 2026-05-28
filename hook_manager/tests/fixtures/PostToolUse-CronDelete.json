@@ -1,0 +1,15 @@
+{
+  "session_id": "test-fixture-session-45ffacd9",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-45ffacd9.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "CronDelete",
+  "tool_input": {
+    "id": "55b068a8"
+  },
+  "tool_response": {
+    "id": "55b068a8"
+  },
+  "tool_use_id": "toolu_01DCkRGhiweTuXLQNTpGTtpr"
+}

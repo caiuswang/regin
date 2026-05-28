@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Opt-in regin statusline ingest.
+
+Claude Code invokes the command registered at `statusLine.command`
+with a JSON blob on stdin — the schema is documented at
+https://code.claude.com/docs/en/statuslines. It is the *only* runtime
+surface that reliably carries the model variant suffix (e.g.
+`claude-opus-4-7[1m]`) and the authoritative context-window total:
+the `SessionStart` hook payload omits `model` entirely, and the
+transcript JSONL strips the variant from every assistant entry. So
+without this feed, regin infers the window from the bare base model
+and a peak-tokens heuristic — which misreads a 1M session as 200k
+whenever the peak stays under 200k.
+
+This script is the *regin* side of the statusline contract. It reads
+the same stdin JSON Claude Code would pass to any statusline, pulls
+out `session_id`, `model.id`, `context_window.{used_tokens,total_tokens}`,
+POSTs them to `POST /api/session-status`, and — unless invoked with
+`--ingest-only` — also prints a minimal default statusline so the
+script can act as `statusLine.command` on its own.
+
+Opt in by pointing settings.json at this file:
+
+    "statusLine": {
+      "type": "command",
+      "command": "/abs/path/to/regin/scripts/regin-statusline"
+    }
+
+Keep your own statusline and only opt into the ingest:
+
+    # in your existing statusline script
+    input="$(cat)"
+    printf '%s' "$input" | /abs/path/to/regin/scripts/regin-statusline --ingest-only
+    # ... your own rendering ...
+
+Outages are swallowed: if the regin server is unreachable the script
+still prints the default statusline (or exits 0 in ingest-only
+mode). A statusline that fails breaks Claude Code's UI, and that
+tradeoff is never worth a data point.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.request
+
+
+def main() -> int:
+    mode = sys.argv[1] if len(sys.argv) > 1 else ''
+    try:
+        data = json.loads(sys.stdin.read())
+    except (json.JSONDecodeError, ValueError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+
+    _ingest(data)
+
+    if mode != '--ingest-only':
+        _print_statusline(data)
+    return 0
+
+
+def _ingest(data: dict) -> None:
+    trace_id = data.get('session_id')
+    if not isinstance(trace_id, str) or not trace_id:
+        return
+
+    model_block = data.get('model') if isinstance(data.get('model'), dict) else {}
+    # Prefer the stable id over the display name — it's the one that
+    # already carries the `[1m]` suffix when the user is on that
+    # variant. `display_name` varies with Claude Code versions.
+    model = model_block.get('id') or model_block.get('display_name')
+
+    ctx = data.get('context_window') if isinstance(data.get('context_window'), dict) else {}
+    used = ctx.get('used_tokens')
+    total = ctx.get('total_tokens')
+
+    payload: dict = {'trace_id': trace_id}
+    if isinstance(model, str) and model.strip():
+        payload['model'] = model.strip()
+    if isinstance(used, int):
+        payload['context_used_tokens'] = used
+    if isinstance(total, int):
+        payload['context_window_tokens'] = total
+
+    # Only POST when we have something beyond the trace_id — no point
+    # hammering the endpoint with empty status pings.
+    if len(payload) < 2:
+        return
+
+    base = os.environ.get('REGIN_URL', 'http://127.0.0.1:8321').rstrip('/')
+    url = base + '/api/session-status'
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        urllib.request.urlopen(req, timeout=1).read()
+    except Exception:
+        # Statusline outage is strictly worse than a stale stat — stay
+        # quiet and let the UI keep rendering.
+        pass
+
+
+def _print_statusline(data: dict) -> None:
+    workspace = data.get('workspace') if isinstance(data.get('workspace'), dict) else {}
+    cwd = workspace.get('current_dir') or data.get('cwd') or ''
+    home = os.path.expanduser('~')
+    if isinstance(cwd, str) and cwd.startswith(home):
+        cwd = '~' + cwd[len(home):]
+
+    model_block = data.get('model') if isinstance(data.get('model'), dict) else {}
+    model = model_block.get('display_name') or model_block.get('id') or ''
+
+    ctx = data.get('context_window') if isinstance(data.get('context_window'), dict) else {}
+    pct = ctx.get('used_percentage')
+
+    parts = []
+    if isinstance(cwd, str) and cwd:
+        parts.append(cwd)
+    if isinstance(model, str) and model:
+        parts.append(model)
+    if isinstance(pct, (int, float)):
+        parts.append(f'ctx:{int(pct)}%')
+
+    sys.stdout.write(' '.join(parts))
+
+
+if __name__ == '__main__':
+    sys.exit(main())

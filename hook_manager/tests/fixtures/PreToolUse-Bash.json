@@ -1,0 +1,13 @@
+{
+  "session_id": "test-fixture-session-87ae6fc0",
+  "transcript_path": "/Users/user/.claude/projects/-Users-user-project/test-fixture-session-87ae6fc0.jsonl",
+  "cwd": "/Users/user/project",
+  "permission_mode": "auto",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sleep 2; curl -s -w \"\\nHTTP_STATUS:%{http_code}\\n\" http://localhost:8321/api/skills/git 2>&1 | tail -c 200",
+    "description": "Re-test /api/skills/git after fix"
+  },
+  "tool_use_id": "toolu_01S5EhFZbEg2ce3N848GUNZZ"
+}

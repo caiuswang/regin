@@ -1,0 +1,841 @@
+<script setup>
+import { ref, onMounted, computed, watch } from 'vue'
+import api from '../api'
+import Card from '../components/Card.vue'
+import Badge from '../components/Badge.vue'
+import HookCard from '../components/HookCard.vue'
+import HookLifecycleDiagram from '../components/HookLifecycleDiagram.vue'
+import ToggleSwitch from '../components/ToggleSwitch.vue'
+import ListInput from '../components/ListInput.vue'
+import { useFlash } from '../composables/useFlash'
+import { useFeatures } from '../composables/useFeatures'
+import { useConfirm } from '../composables/useConfirm'
+
+const { flash } = useFlash()
+const { refresh: refreshFeatures } = useFeatures()
+const { confirm } = useConfirm()
+const currentUser = api.getStoredUser ? api.getStoredUser() : null
+const isAdmin = computed(() => currentUser?.role === 'admin')
+
+function coerceBool(v) {
+  if (typeof v === 'boolean') return v
+  if (typeof v === 'number') return v !== 0
+  if (typeof v === 'string') return ['true', '1', 'yes', 'on'].includes(v.trim().toLowerCase())
+  return false
+}
+const settings = ref([])
+const formData = ref({})
+const loading = ref(true)
+
+const hooks = ref({})
+const hooksLoading = ref({})
+const providerHandlers = ref({})
+const providerConfigPaths = ref({})
+const selectedProvider = ref('claude')
+const handlerLoading = ref({})
+
+const activeSection = ref('config')
+
+// ── Rule trigger thresholds section ────────────────────────────
+const triggerThresholds = ref(null)            // last known persisted values
+const triggerThresholdsForm = ref(null)        // edited form copy
+const triggerStats = ref(null)                 // {total, oldest_at, distinct_rules}
+const triggerPreview = ref(null)               // {noisy, dead, active, configured} after save
+const triggerSaving = ref(false)
+const triggerResetting = ref(false)
+
+// Retention policy — `0` means wipe everything; positive N means
+// delete rows older than N days. Matches the windows returned by
+// /api/triggers/stats.older_than (7, 30, 90, 365).
+const triggerResetPolicy = ref(0)
+const TRIGGER_RESET_OPTIONS = [
+  { value: 7,   label: 'Older than 7 days' },
+  { value: 30,  label: 'Older than 30 days' },
+  { value: 90,  label: 'Older than 90 days' },
+  { value: 365, label: 'Older than 1 year' },
+  { value: 0,   label: 'All time' },
+]
+
+async function loadTriggerSettings() {
+  const [thresh, stats] = await Promise.all([
+    api.get('/settings/rule-triggers/thresholds'),
+    api.get('/triggers/stats'),
+  ])
+  triggerThresholds.value = thresh
+  triggerThresholdsForm.value = { ...thresh }
+  triggerStats.value = stats
+}
+
+async function saveTriggerThresholds() {
+  triggerSaving.value = true
+  try {
+    const res = await api.put(
+      '/settings/rule-triggers/thresholds',
+      triggerThresholdsForm.value,
+    )
+    if (!res.ok) {
+      flash(res.errors ? res.errors.join('; ') : 'Failed to save', 'error')
+      return
+    }
+    triggerThresholds.value = res.thresholds
+    flash('Thresholds saved.')
+    // Re-fetch the rule list to surface drift in the inline preview.
+    const list = await api.get('/triggers/rules')
+    triggerPreview.value = list.kpis
+  } finally {
+    triggerSaving.value = false
+  }
+}
+
+async function onSelectTriggers() {
+  activeSection.value = 'triggers'
+  if (triggerThresholds.value == null) await loadTriggerSettings()
+}
+
+// Rows that would be deleted at the currently-selected policy.
+// `older_than` is a {7: N, 30: N, 90: N, 365: N} map from /stats;
+// policy=0 (All time) just shows the grand total.
+const triggerResetCount = computed(() => {
+  if (!triggerStats.value) return 0
+  const p = triggerResetPolicy.value
+  if (p === 0) return triggerStats.value.total ?? 0
+  return triggerStats.value.older_than?.[p] ?? 0
+})
+
+const triggerResetLabel = computed(() => (
+  TRIGGER_RESET_OPTIONS.find(o => o.value === triggerResetPolicy.value)?.label
+  || 'All time'
+))
+
+async function resetTriggerLog() {
+  const policy = triggerResetPolicy.value
+  const n = triggerResetCount.value
+  const scope = policy === 0
+    ? 'every row in rule_triggers'
+    : `rule_triggers older than ${policy} day${policy === 1 ? '' : 's'}`
+  const ok = await confirm(
+    'Reset trigger log',
+    `Delete ${scope}? This removes ${n.toLocaleString()} event(s) and cannot be undone.`,
+    true,
+  )
+  if (!ok) return
+  triggerResetting.value = true
+  try {
+    const body = policy > 0 ? { older_than_days: policy } : {}
+    const res = await api.post('/triggers/reset', body)
+    if (!res.ok) {
+      flash(res.msg || res.error || 'Failed to reset', 'error')
+      return
+    }
+    flash(res.msg)
+    await loadTriggerSettings()
+  } finally {
+    triggerResetting.value = false
+  }
+}
+
+async function loadHookState() {
+  hooks.value = await api.get('/hooks')
+  const providers = hooks.value.providers || []
+  if (providers.length && !providers.some(p => p.id === selectedProvider.value)) {
+    selectedProvider.value = providers[0].id
+  }
+  for (const provider of providers) {
+    const data = await api.get(`/hooks/handlers?provider=${encodeURIComponent(provider.id)}`)
+    providerHandlers.value[provider.id] = data.handlers || []
+    providerConfigPaths.value[provider.id] = data.config_path || ''
+  }
+}
+
+onMounted(async () => {
+  settings.value = await api.get('/settings')
+  for (const s of settings.value) {
+    if (s.is_list) formData.value[s.key] = [...s.value]
+    else if (s.is_bool) formData.value[s.key] = coerceBool(s.value)
+    else formData.value[s.key] = s.value
+  }
+  await loadHookState()
+  loading.value = false
+})
+
+async function toggleHandler(name) {
+  const providerId = selectedProvider.value
+  const key = `${providerId}:${name}`
+  handlerLoading.value[key] = true
+  const result = await api.post(`/hooks/handlers/${name}/toggle?provider=${encodeURIComponent(providerId)}`)
+  if (!result.ok) {
+    flash(result.msg || 'Toggle failed', 'error')
+    handlerLoading.value[key] = false
+    return
+  }
+  flash(result.msg)
+  const h = (providerHandlers.value[providerId] || []).find(x => x.name === name)
+  if (h) h.enabled = result.enabled
+  handlerLoading.value[key] = false
+}
+
+async function setHandlerPriority({ name, priority }) {
+  const providerId = selectedProvider.value
+  const result = await api.post(
+    `/hooks/handlers/${name}/priority?provider=${encodeURIComponent(providerId)}`,
+    { priority },
+  )
+  if (!result.ok) {
+    flash(result.msg || 'Priority update failed', 'error')
+  } else {
+    flash(result.msg)
+  }
+  // Refetch unconditionally so the input field re-syncs with the
+  // canonical value on disk (success → confirms write, failure →
+  // resets a rejected typo back to what the server believes).
+  const data = await api.get(`/hooks/handlers?provider=${encodeURIComponent(providerId)}`)
+  providerHandlers.value[providerId] = data.handlers || []
+  providerConfigPaths.value[providerId] = data.config_path || ''
+}
+
+async function resetHandlerPriority(name) {
+  const providerId = selectedProvider.value
+  const result = await api.post(
+    `/hooks/handlers/${name}/reset-priority?provider=${encodeURIComponent(providerId)}`,
+  )
+  if (!result.ok) {
+    flash(result.msg || 'Reset failed', 'error')
+    return
+  }
+  flash(result.msg)
+  const data = await api.get(`/hooks/handlers?provider=${encodeURIComponent(providerId)}`)
+  providerHandlers.value[providerId] = data.handlers || []
+  providerConfigPaths.value[providerId] = data.config_path || ''
+}
+
+const hookProviders = computed(() => hooks.value.providers || [])
+
+const handlers = computed(() => providerHandlers.value[selectedProvider.value] || [])
+
+const configPath = computed(() => providerConfigPaths.value[selectedProvider.value] || '')
+
+const handlersByEvent = computed(() => {
+  const groups = {}
+  for (const h of handlers.value) {
+    for (const ev of h.events) {
+      if (!groups[ev]) groups[ev] = []
+      groups[ev].push(h)
+    }
+  }
+  for (const ev of Object.keys(groups)) {
+    groups[ev].sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
+  }
+  return groups
+})
+
+const enabledHandlerCount = computed(() => handlers.value.filter(h => h.enabled).length)
+
+async function save() {
+  const result = await api.post('/settings', formData.value)
+  if (!result.ok) { flash(result.msg || 'Failed to save settings', 'error'); return }
+  flash(result.msg || 'Saved')
+  await refreshFeatures()
+}
+
+async function toggleHook(providerId, name) {
+  const key = `${providerId}:${name}`
+  hooksLoading.value[key] = true
+  const provider = hookProviders.value.find(p => p.id === providerId)
+  const isInstalled = provider?.[name]?.installed
+  const result = await api.post(`/hooks/${name}/${isInstalled ? 'uninstall' : 'install'}?provider=${encodeURIComponent(providerId)}`)
+  if (!result.ok) {
+    flash(result.msg || 'Hook operation failed', 'error')
+    hooksLoading.value[key] = false
+    return
+  }
+  flash(result.msg)
+  await loadHookState()
+  hooksLoading.value[key] = false
+}
+
+const hookDefinitions = [
+  {
+    key: 'hook_manager',
+    title: 'Hook Manager',
+    subtitle: 'Recommended',
+    description: 'Installs the unified hook dispatcher for this provider. This is what makes the handler toggles above active.'
+  },
+  {
+    key: 'debug',
+    title: 'Debug Hook',
+    subtitle: 'Optional payload logger',
+    description: 'Logs raw hook payloads for this provider. It does <strong>not</strong> enable the handler toggles above.'
+  },
+]
+
+const showDiagram = ref(false)
+
+const debugPayloads = ref([])
+const debugPayloadsLoading = ref(false)
+
+async function fetchDebugPayloads() {
+  debugPayloadsLoading.value = true
+  const data = await api.get(`/debug-hook-payloads?provider=${encodeURIComponent(selectedProvider.value)}`)
+  debugPayloads.value = data.payloads || []
+  debugPayloadsLoading.value = false
+}
+
+watch([activeSection, selectedProvider], ([section]) => {
+  if (section === 'debug') fetchDebugPayloads()
+}, { immediate: true })
+</script>
+
+<template>
+  <div v-if="loading" class="empty-state">Loading settings…</div>
+  <div v-else>
+    <header class="page-header">
+      <div class="page-header-text">
+        <div class="page-eyebrow">System</div>
+        <h1 class="page-title">Settings</h1>
+        <p class="page-subtitle">Team and machine-local configuration, hook handlers, and installers.</p>
+      </div>
+    </header>
+  <div class="sv-layout">
+
+    <!-- Sidebar -->
+    <aside class="sv-sidebar">
+      <div class="sv-sidebar-heading">Settings</div>
+      <nav class="sv-nav">
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'config' }"
+          @click="activeSection = 'config'"
+        >
+          Configuration
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'hooks' }"
+          @click="activeSection = 'hooks'"
+        >
+          <span class="flex-1 text-left">Hook Handlers</span>
+          <span v-if="enabledHandlerCount" class="sv-pill">{{ enabledHandlerCount }}</span>
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'install' }"
+          @click="activeSection = 'install'"
+        >
+          Hook Installers
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'triggers' }"
+          @click="onSelectTriggers"
+        >
+          Rule Triggers
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'debug' }"
+          @click="activeSection = 'debug'"
+        >
+          Payload Debugger
+        </button>
+      </nav>
+    </aside>
+
+    <!-- Content pane -->
+    <div class="sv-content">
+
+      <!-- Configuration -->
+      <template v-if="activeSection === 'config'">
+        <div class="sv-section-header">
+          <h2 class="sv-section-title">Configuration</h2>
+          <p class="sv-section-desc">Manage team and machine-local settings. Team settings are versioned with git; local settings are machine-specific overrides.</p>
+        </div>
+
+        <div class="sv-group">
+          <div class="sv-group-label">Team Settings</div>
+          <p class="sv-group-meta">Shared across the team via git.</p>
+          <Card :no-padding="true">
+            <table class="tbl">
+              <thead><tr><th>Setting</th><th>Value</th><th>Default</th></tr></thead>
+              <tbody>
+                <tr v-for="s in settings.filter(s => s.scope === 'shared')" :key="s.key">
+                  <td>
+                    <div class="font-medium text-gray-900">{{ s.key }}</div>
+                    <div class="text-xs text-gray-400 mt-0.5">{{ s.description }}</div>
+                  </td>
+                  <td>
+                    <ListInput v-if="s.is_list" v-model="formData[s.key]" />
+                    <ToggleSwitch v-else-if="s.is_bool" v-model="formData[s.key]" :aria-label="s.key" />
+                    <input v-else type="text" v-model="formData[s.key]" :aria-label="s.key" :placeholder="String(s.default)"
+                           class="text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  </td>
+                  <td class="text-xs text-gray-400">
+                    <code class="text-xs">{{ s.is_list ? s.default.join(', ') : s.default }}</code>
+                    <Badge v-if="s.overridden" color="blue" label="overridden" class="ml-1" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </Card>
+        </div>
+
+        <div class="sv-group mt-6">
+          <div class="sv-group-label">Local Settings</div>
+          <p class="sv-group-meta">Machine-specific paths. Not shared with the team.</p>
+          <Card :no-padding="true">
+            <table class="tbl">
+              <thead><tr><th>Setting</th><th>Value</th><th>Default</th></tr></thead>
+              <tbody>
+                <tr v-for="s in settings.filter(s => s.scope === 'local')" :key="s.key">
+                  <td>
+                    <div class="font-medium text-gray-900">{{ s.key }}</div>
+                    <div class="text-xs text-gray-400 mt-0.5">{{ s.description }}</div>
+                  </td>
+                  <td>
+                    <ListInput v-if="s.is_list" v-model="formData[s.key]" />
+                    <ToggleSwitch v-else-if="s.is_bool" v-model="formData[s.key]" :aria-label="s.key" />
+                    <input v-else type="text" v-model="formData[s.key]" :aria-label="s.key" :placeholder="String(s.default)"
+                           class="text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  </td>
+                  <td class="text-xs text-gray-400">
+                    <code class="text-xs">{{ s.is_list ? s.default.join(', ') : s.default }}</code>
+                    <Badge v-if="s.overridden" color="blue" label="overridden" class="ml-1" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </Card>
+        </div>
+
+        <div class="mt-5 flex items-center gap-3">
+          <button type="button" class="btn btn-primary focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1" @click="save">Save settings</button>
+        </div>
+      </template>
+
+      <!-- Rule Triggers -->
+      <template v-else-if="activeSection === 'triggers'">
+        <div class="sv-section-header">
+          <h2 class="sv-section-title">Rule Triggers</h2>
+          <p class="sv-section-desc">Thresholds that decide which rules read as <strong>noisy</strong>, <strong>active</strong>, or <strong>dead</strong> on the
+            <router-link to="/trace/triggers" class="text-blue-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500">Trace › Rule Triggers</router-link>
+            tab. Plus admin-only retention controls for the trigger log.</p>
+        </div>
+
+        <div class="sv-group">
+          <div class="sv-group-label">Health classification thresholds</div>
+          <p class="sv-group-meta">A rule is <strong>noisy</strong> when its trigger rate AND its fire count both clear the gates below. <strong>Dead</strong> means zero fires across at least the configured number of checks.</p>
+          <Card>
+            <div v-if="!triggerThresholdsForm" class="text-sm text-gray-500">Loading…</div>
+            <div v-else class="space-y-3">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="block">
+                  <span class="text-xs text-gray-600">noisy_min_rate_pct (0–100)</span>
+                  <input
+                    type="number" min="0" max="100"
+                    v-model.number="triggerThresholdsForm.noisy_min_rate_pct"
+                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  />
+                </label>
+                <label class="block">
+                  <span class="text-xs text-gray-600">noisy_min_fires</span>
+                  <input
+                    type="number" min="0"
+                    v-model.number="triggerThresholdsForm.noisy_min_fires"
+                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  />
+                </label>
+                <label class="block">
+                  <span class="text-xs text-gray-600">dead_min_checks</span>
+                  <input
+                    type="number" min="1"
+                    v-model.number="triggerThresholdsForm.dead_min_checks"
+                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  />
+                </label>
+                <label class="block">
+                  <span class="text-xs text-gray-600">default_range</span>
+                  <select
+                    v-model="triggerThresholdsForm.default_range"
+                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    <option value="24h">24h</option>
+                    <option value="7d">7d</option>
+                    <option value="30d">30d</option>
+                    <option value="all">all</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="flex items-center gap-3">
+                <button type="button"
+                  class="btn btn-primary focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+                  :disabled="triggerSaving || !isAdmin"
+                  @click="saveTriggerThresholds">
+                  {{ triggerSaving ? 'Saving…' : 'Save thresholds' }}
+                </button>
+                <span v-if="!isAdmin" class="text-xs text-amber-700">Admin role required to change thresholds.</span>
+                <Badge v-if="triggerPreview" color="blue">
+                  preview: {{ triggerPreview.noisy }} noisy · {{ triggerPreview.dead }} dead
+                </Badge>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <div class="sv-group mt-6">
+          <div class="sv-group-label">Trigger log retention</div>
+          <p class="sv-group-meta">Trigger events accumulate over time. Wiping is reversible only by re-running rules; do it sparingly.</p>
+          <Card>
+            <div v-if="!triggerStats" class="text-sm text-gray-500">Loading…</div>
+            <div v-else class="space-y-3">
+              <dl class="grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <dt class="text-xs text-gray-500">Total events</dt>
+                  <dd class="font-mono text-base text-gray-900">{{ triggerStats.total.toLocaleString() }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-gray-500">Distinct rules</dt>
+                  <dd class="font-mono text-base text-gray-900">{{ triggerStats.distinct_rules }}</dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-gray-500">Oldest row</dt>
+                  <dd class="font-mono text-xs text-gray-700">{{ triggerStats.oldest_at || '—' }}</dd>
+                </div>
+              </dl>
+              <div class="flex items-center gap-3 pt-1 flex-wrap">
+                <label class="inline-flex items-center gap-2 text-sm">
+                  <span class="text-xs text-gray-500">Policy</span>
+                  <select v-model.number="triggerResetPolicy"
+                    class="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus-visible:outline-2 focus-visible:outline-blue-500"
+                    :disabled="triggerResetting || !isAdmin">
+                    <option v-for="o in TRIGGER_RESET_OPTIONS" :key="o.value" :value="o.value">
+                      {{ o.label }}
+                    </option>
+                  </select>
+                </label>
+                <span class="text-xs text-gray-500 font-mono">
+                  → {{ triggerResetCount.toLocaleString() }} row(s)
+                </span>
+                <button type="button"
+                  class="btn btn-danger focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1"
+                  :disabled="triggerResetting || !isAdmin || triggerResetCount === 0"
+                  @click="resetTriggerLog">
+                  {{ triggerResetting ? 'Resetting…' : `Reset (${triggerResetLabel})` }}
+                </button>
+                <span v-if="!isAdmin" class="text-xs text-amber-700">Admin role required.</span>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </template>
+
+      <!-- Hook Handlers -->
+      <template v-else-if="activeSection === 'hooks'">
+        <div class="sv-section-header">
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="sv-section-title">Hook Handlers</h2>
+            <!-- Diagram toggle lives in the section header as a view
+                 switcher, intentionally separate from the per-provider
+                 tab row below. Diagram contents *are* provider-aware
+                 (they read whatever provider's handlers are selected),
+                 but the toggle itself is section-scoped, not per-tab. -->
+            <button
+              type="button"
+              class="sv-view-toggle focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+              :class="{ 'is-active': showDiagram }"
+              :aria-pressed="showDiagram"
+              @click="showDiagram = !showDiagram"
+            >
+              <span aria-hidden="true">⊞</span>
+              {{ showDiagram ? 'Hide diagram' : 'Show diagram' }}
+            </button>
+          </div>
+          <p class="sv-section-desc">Enable or disable individual handlers per provider. Handlers are only active once hook_manager is installed for that provider.</p>
+        </div>
+
+        <div class="flex flex-wrap gap-2 mb-4">
+          <button
+            v-for="provider in hookProviders"
+            :key="provider.id"
+            type="button"
+            class="btn text-xs focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+            :class="selectedProvider === provider.id ? 'btn-primary' : 'btn-secondary'"
+            @click="selectedProvider = provider.id"
+          >
+            {{ provider.name }}
+          </button>
+        </div>
+
+        <div v-if="showDiagram" class="mb-6">
+          <HookLifecycleDiagram
+            :handlers="handlers"
+            :handlers-by-event="handlersByEvent"
+            :handler-loading="handlerLoading"
+            :selected-provider="selectedProvider"
+            @toggle-handler="toggleHandler"
+            @set-priority="setHandlerPriority"
+            @reset-priority="resetHandlerPriority"
+          />
+        </div>
+
+        <Card v-if="configPath" class="mb-4">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold text-gray-800">Persistence</h3>
+              <div class="text-xs text-gray-500 mt-0.5 break-all"><code>{{ configPath }}</code></div>
+              <p class="text-xs text-gray-500 mt-2 leading-snug">
+                Handler enable/disable flags and priority overrides for the selected provider are stored in this JSON file. Edits made here take effect on the next hook fire — each event invokes a fresh <code>python -m hook_manager</code> subprocess, so no server restart is needed.
+              </p>
+            </div>
+            <Badge color="gray" label="JSON" />
+          </div>
+        </Card>
+
+        <p v-if="!handlers.some(h => h.wired)" class="text-sm text-amber-700 mb-4">
+          Hook manager is not installed for {{ hookProviders.find(p => p.id === selectedProvider)?.name || selectedProvider }} right now, so these handlers are configured defaults only.
+        </p>
+
+        <Card :no-padding="true">
+          <table class="tbl">
+            <thead><tr><th>Handler</th><th>Events</th><th>Kind</th><th class="text-right">Status</th></tr></thead>
+            <tbody>
+              <tr v-for="h in handlers" :key="h.name">
+                <td>
+                  <div class="font-medium text-gray-900">{{ h.label }}</div>
+                  <div v-if="h.summary" class="text-xs text-gray-500 mt-0.5">{{ h.summary }}</div>
+                  <div class="text-xs text-gray-400 mt-1"><code>{{ h.name }}</code> · priority {{ h.priority }}</div>
+                </td>
+                <td class="text-xs text-gray-600">
+                  <div>{{ h.events.join(', ') }}</div>
+                  <div v-if="h.wired_events?.length" class="text-gray-500 mt-0.5">installed on: {{ h.wired_events.join(', ') }}</div>
+                  <div v-if="h.match_hint" class="text-gray-400 mt-0.5">{{ h.match_hint }}</div>
+                </td>
+                <td>
+                  <Badge :color="h.kind === 'gate' ? 'red' : h.kind === 'notify' ? 'purple' : h.kind === 'enrich' ? 'blue' : 'gray'" :label="h.kind" />
+                </td>
+                <td class="text-right">
+                  <div class="inline-flex justify-end w-full">
+                    <ToggleSwitch
+                      :model-value="h.enabled"
+                      :loading="handlerLoading[`${selectedProvider}:${h.name}`]"
+                      :disabled="!h.wired"
+                      on-label="Enabled"
+                      :off-label="h.wired ? 'Disabled' : 'Not wired'"
+                      @change="toggleHandler(h.name)"
+                    />
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </Card>
+      </template>
+
+      <!-- Hook Installers -->
+      <template v-else-if="activeSection === 'install'">
+        <div class="sv-section-header">
+          <h2 class="sv-section-title">Hook Installers</h2>
+          <p class="sv-section-desc">Install Hook Manager separately for each provider. The debug hook is optional and only logs raw payloads.</p>
+        </div>
+
+        <div class="space-y-4">
+          <Card v-for="provider in hookProviders" :key="provider.id">
+            <div class="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-800">{{ provider.name }}</h3>
+                <div class="text-xs text-gray-500 mt-0.5"><code>{{ provider.hook_settings_path }}</code></div>
+              </div>
+              <Badge :color="provider.hooks_supported ? 'green' : 'gray'" :label="provider.hooks_supported ? 'hooks supported' : 'not supported'" />
+            </div>
+            <div class="space-y-3">
+              <HookCard
+                v-for="h in hookDefinitions"
+                :key="`${provider.id}:${h.key}`"
+                :title="h.title"
+                :subtitle="h.subtitle"
+                :description="h.description"
+                :installed="provider[h.key]?.installed ?? null"
+                :loading="hooksLoading[`${provider.id}:${h.key}`]"
+                @toggle="toggleHook(provider.id, h.key)"
+              />
+            </div>
+          </Card>
+        </div>
+      </template>
+
+      <!-- Payload Debugger -->
+      <template v-else-if="activeSection === 'debug'">
+        <div class="sv-section-header">
+          <h2 class="sv-section-title">Payload Debugger</h2>
+          <p class="sv-section-desc">Inspect raw hook payloads for the selected provider. Useful when building new hooks.</p>
+        </div>
+
+        <div class="flex items-center gap-3 mb-4">
+          <button type="button" class="btn btn-secondary text-xs focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1" @click="fetchDebugPayloads">Refresh payloads</button>
+          <span v-if="debugPayloadsLoading" class="text-xs text-gray-400">loading…</span>
+          <span v-else-if="debugPayloads.length" class="text-xs text-gray-400">{{ debugPayloads.length }} entries</span>
+        </div>
+
+        <div v-if="debugPayloads.length" class="space-y-2">
+          <Card v-for="entry in debugPayloads.slice().reverse()" :key="entry.received_at" class="text-xs">
+            <div class="flex items-center gap-2 mb-1">
+              <Badge :color="entry.payload?.hook_event_name === 'UserPromptSubmit' ? 'purple' : 'blue'" :label="entry.payload?.hook_event_name || 'Unknown'" />
+              <span class="text-gray-400">{{ new Date(entry.received_at).toLocaleString() }}</span>
+            </div>
+            <pre class="bg-gray-50 p-2 rounded overflow-x-auto text-[11px]"><code>{{ JSON.stringify(entry.payload, null, 2) }}</code></pre>
+          </Card>
+        </div>
+        <div v-else class="text-sm text-slate-400">No payloads logged yet. Install the debug hook and trigger some Claude Code events.</div>
+      </template>
+
+    </div>
+  </div>
+  </div>
+</template>
+
+<style scoped>
+.sv-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 0;
+  border: 1px solid #F1F5F9;
+  border-radius: 0.875rem;
+  overflow: hidden;
+  background: #fff;
+  min-height: 480px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+.sv-sidebar {
+  border-right: 1px solid #F1F5F9;
+  padding: 1.25rem 0.75rem;
+  background: #F8FAFC;
+}
+.sv-sidebar-heading {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94A3B8;
+  padding: 0 0.75rem;
+  margin-bottom: 0.625rem;
+}
+.sv-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.sv-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.625rem;
+  font-size: 0.8125rem;
+  color: #475569;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+  text-align: left;
+}
+.sv-nav-item:hover {
+  background: #E2E8F0;
+  color: #0F172A;
+}
+.sv-nav-item.active {
+  background: linear-gradient(135deg, #1E40AF, #3B82F6);
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(30, 64, 175, 0.2);
+}
+.sv-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  background: #F1F5F9;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: #64748B;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.sv-pill-green { background: #DCFCE7; color: #15803D; }
+.sv-pill-red   { background: #FEE2E2; color: #B91C1C; }
+.sv-pill-gray  { background: #F1F5F9; color: #94A3B8; }
+.sv-nav-item.active .sv-pill { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.sv-content {
+  padding: 1.75rem 2rem;
+  min-width: 0;
+  overflow: auto;
+}
+.sv-section-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.125rem;
+  border-bottom: 1px solid #F1F5F9;
+}
+.sv-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid #E2E8F0;
+  border-radius: 0.375rem;
+  background: #FFFFFF;
+  font-size: 0.75rem;
+  color: #475569;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.sv-view-toggle:hover {
+  border-color: #CBD5E1;
+  color: #1E293B;
+}
+.sv-view-toggle.is-active {
+  border-color: #2563EB;
+  background: #EFF6FF;
+  color: #1D4ED8;
+}
+.sv-view-toggle:focus-visible {
+  outline: 2px solid #2563EB;
+  outline-offset: 2px;
+}
+.sv-section-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: #0F172A;
+  letter-spacing: -0.01em;
+}
+.sv-section-desc {
+  margin-top: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: #64748B;
+  max-width: 52rem;
+}
+.sv-group-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94A3B8;
+  margin-bottom: 0.5rem;
+}
+.sv-group-meta {
+  font-size: 0.8125rem;
+  color: #94A3B8;
+  margin-bottom: 0.625rem;
+}
+</style>

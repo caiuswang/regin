@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Scan staged files for leaked secrets before allowing a commit.
+# Installed via:  git config core.hooksPath .githooks
+set -e
+
+PY="${PY:-.venv/bin/python}"
+if [[ ! -x "$PY" ]]; then
+  PY="$(command -v python3)"
+fi
+
+"$PY" scripts/check_secrets.py --staged
