@@ -849,22 +849,51 @@ def _clear_run(run_id: str) -> None:
         conn.close()
 
 
-def _set_session_tokens(run_id: str, output_tokens: int | None) -> None:
-    """Stamp the run's headline token total onto the session row.
+def _session_token_split(agents_dir: Path, agent_ids: list[str]) -> dict:
+    """Sum the per-agent token split (input / output / cache) from the agent
+    transcripts via ``read_usage`` — the same source the normal aggregator and
+    the per-turn spans use. Used to populate the session row with an honest
+    output-only ``output_tokens`` instead of the manifest's grand
+    ``totalTokens`` (which folds in input + cache; cache usually dominates)."""
+    from lib.trace.transcript_usage import read_usage
 
-    The normal per-turn aggregator (`turn_trace`) never runs for workflow
-    runs, so the Sessions list / summary would show no tokens without this.
-    ``peak_context_tokens`` is left NULL — a fan-out has no single context
-    window, so context% is intentionally blank.
+    tot = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+    for aid in agent_ids:
+        if not aid:
+            continue
+        usage = read_usage(str(agents_dir / f"agent-{aid}.jsonl"), max_text_bytes=0)
+        if usage is None:
+            continue
+        tot["input"] += usage.input_tokens or 0
+        tot["output"] += usage.output_tokens or 0
+        tot["cache_read"] += usage.cache_read_tokens or 0
+        tot["cache_creation"] += usage.cache_creation_tokens or 0
+    return tot
+
+
+def _set_session_tokens(run_id: str, split: dict) -> None:
+    """Stamp the run's token split onto the session row, matching how the
+    normal per-turn aggregator (which never runs for workflow runs) populates a
+    session: separate input / output / cache columns, so ``output_tokens`` is
+    output-only.
+
+    This is what keeps the "Tokens by tool" rollup honest — its untagged
+    remainder is ``output_tokens - attributed_output``, so stuffing the grand
+    ``totalTokens`` into ``output_tokens`` (the old behaviour) surfaced the
+    whole cache+input total as bogus "untagged" output. ``peak_context_tokens``
+    stays NULL — a fan-out has no single context window, so context% is blank.
     """
-    if not output_tokens:
+    if not any(split.values()):
         return
     from lib.orm.engine import get_connection
 
     conn = get_connection()
     try:
-        conn.execute("UPDATE sessions SET output_tokens = ? WHERE trace_id = ?",
-                     (int(output_tokens), run_id))
+        conn.execute(
+            "UPDATE sessions SET input_tokens = ?, output_tokens = ?, "
+            "cache_read_tokens = ?, cache_creation_tokens = ? WHERE trace_id = ?",
+            (split["input"], split["output"], split["cache_read"],
+             split["cache_creation"], run_id))
         conn.commit()
     finally:
         conn.close()
@@ -1019,16 +1048,18 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
         spans = build_full_spans(manifest, run_ref.agents_dir,
                                  deep=deep, is_test=is_test)
         result = reingest(run_ref.run_id, spans)
-        _set_session_tokens(run_ref.run_id, manifest.get("totalTokens"))
+        _, agent_ids = _manifest_agents(manifest)
+        _set_session_tokens(run_ref.run_id,
+                            _session_token_split(run_ref.agents_dir, agent_ids))
         name = manifest.get("workflowName")
         _set_session_title(run_ref.run_id, name or manifest.get("summary"))
         _stamp_parent_link(run_ref, name)
         return result
     spans = build_flat_spans(run_ref, is_test=is_test)
     result = reingest(run_ref.run_id, spans)
-    total_out = sum(s["attributes"].get("tokens") or 0
-                    for s in spans if s["name"] == "subagent.start")
-    _set_session_tokens(run_ref.run_id, total_out or None)
+    started, _ = _journal_agents(_read_jsonl(run_ref.journal_path))
+    _set_session_tokens(run_ref.run_id,
+                        _session_token_split(run_ref.agents_dir, started))
     name = _parse_script_meta(run_ref.script_path)[0]
     _set_session_title(run_ref.run_id, name)
     _stamp_parent_link(run_ref, name)

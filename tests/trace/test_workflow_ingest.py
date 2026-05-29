@@ -70,7 +70,9 @@ _MANIFEST = {
     "status": "completed", "workflowName": "synthetic-wf",
     "summary": "synthetic workflow for tests", "taskId": "task_test",
     "defaultModel": "claude-haiku-4-5", "agentCount": 2,
-    "totalTokens": 100, "totalToolCalls": 1,
+    # Deliberately != the real read_usage output sum (50/agent × 2 = 100) so
+    # tests prove the session token columns come from the transcripts, not this.
+    "totalTokens": 999, "totalToolCalls": 1,
     "phases": [{"title": "Map", "detail": "d1"}, {"title": "Reduce", "detail": "d2"}],
     "workflowProgress": [
         {"type": "workflow_phase", "index": 1, "title": "Map"},
@@ -221,6 +223,29 @@ def test_full_spans_enrich_tool_args_prompt_result(tmp_path):
     assert agents["aAAA"]["attributes"]["result_full"] == '{"ok":true}'
 
 
+def test_session_tokens_are_real_split_not_manifest_total(tmp_path):
+    """The session row carries the real input/output/cache split summed from
+    the agent transcripts (read_usage) — so `output_tokens` is output-only and
+    the tool-rollup's `untagged = output - attributed_output` stays honest —
+    NOT the manifest's grand `totalTokens` (which folds in cache+input and made
+    the whole total surface as bogus 'untagged' output)."""
+    W.ingest_run(W.discover_runs(_make_run(tmp_path, with_manifest=True))[0],
+                 deep=True, is_test=True)
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT input_tokens, output_tokens, cache_read_tokens, "
+            "cache_creation_tokens FROM sessions WHERE trace_id=?",
+            (RUN_ID,)).fetchone()
+    finally:
+        conn.close()
+    # each agent transcript: input 10+12=22, output 20+30=50, no cache; ×2 agents
+    assert row["output_tokens"] == 100      # output-only, not manifest's 999
+    assert row["input_tokens"] == 44
+    assert row["cache_read_tokens"] == 0
+    assert row["cache_creation_tokens"] == 0
+
+
 def test_agent_tool_count_uses_captured_spans_not_manifest(tmp_path):
     """The agent header's `tool_calls` counts the captured `tool.*` spans (what
     the conversation renders), not the manifest's `toolCalls` — which
@@ -314,7 +339,9 @@ def test_ingest_flat_then_full_is_idempotent(tmp_path):
             "SELECT status, output_tokens FROM sessions WHERE trace_id=?",
             (RUN_ID,)).fetchone()
         assert row["status"] == "ended"
-        assert row["output_tokens"] == 100                    # manifest totalTokens
+        # output-only, summed from the agent transcripts via read_usage
+        # (50/agent × 2) — NOT the manifest's grand totalTokens (999)
+        assert row["output_tokens"] == 100
         full_count = conn.execute(
             "SELECT COUNT(*) c FROM session_spans WHERE trace_id=?",
             (RUN_ID,)).fetchone()["c"]
