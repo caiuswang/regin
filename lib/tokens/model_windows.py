@@ -72,9 +72,19 @@ def window_for(model: str | None) -> int:
     table = _table()
     if model in table:
         return table[model]
+    # Strip a trailing variant suffix (e.g. the `[1m]` extended-context
+    # tag) and retry, so an override keyed on the bare model id also
+    # covers the suffixed transcript id
+    # (`claude-opus-4-8[1m]` -> `claude-opus-4-8`). Without this, a
+    # user-configured window only applied to the exact `[1m]` key, and
+    # bare-id overrides silently fell through to the 200K default.
+    bare = model.split('[', 1)[0]
+    if bare != model and bare in table:
+        return table[bare]
     # Unknown dated alias (e.g. `claude-opus-4-7-20260101`) — strip the
-    # trailing date and retry against the base id.
-    base = model.rsplit('-', 1)[0] if model.count('-') >= 3 else model
+    # trailing date and retry against the base id. Operate on the
+    # suffix-stripped id so dated `[1m]` variants resolve too.
+    base = bare.rsplit('-', 1)[0] if bare.count('-') >= 3 else bare
     return table.get(base, DEFAULT_WINDOW)
 
 

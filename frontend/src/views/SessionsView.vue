@@ -701,9 +701,9 @@ function activityMoreTitle(s) {
                   v-if="s.context_pct != null"
                   class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-medium"
                   :class="contextBadgeClass(s.context_pct)"
-                  :title="`peak ${fmtTokens(s.peak_context_tokens)} / ${fmtTokens(s.context_window_tokens)} tokens`"
+                  :title="`main-conversation peak ${fmtTokens(s.peak_main_context_tokens || s.peak_context_tokens)} / ${fmtTokens(s.context_window_tokens)} tokens`"
                 >{{ s.context_pct }}%
-                  <span class="text-[10px] opacity-70">({{ fmtTokens(s.peak_context_tokens) }})</span>
+                  <span class="text-[10px] opacity-70">({{ fmtTokens(s.peak_main_context_tokens || s.peak_context_tokens) }} / {{ fmtTokens(s.context_window_tokens) }})</span>
                 </span>
                 <span v-else class="text-gray-300 text-xs">-</span>
               </td>
