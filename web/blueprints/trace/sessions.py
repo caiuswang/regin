@@ -460,6 +460,30 @@ def _fetch_session_task_list(trace_id: str) -> dict | None:
     return {'events': events, 'final': final}
 
 
+def _pct(value, window) -> float | None:
+    """`value / window` as a percentage (1 dp), or None when not computable."""
+    if isinstance(value, int) and window and window > 0:
+        return round(value * 100.0 / window, 1)
+    return None
+
+
+def _workflow_total_tokens(trace_id: str) -> int | None:
+    """A workflow run's authoritative grand total (manifest ``totalTokens``)
+    from its run-root span; None for non-workflow sessions."""
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT json_extract(attributes, '$.total_tokens') FROM session_spans "
+            "WHERE trace_id = ? AND name = 'session.start' "
+            "AND json_extract(attributes, '$.total_tokens') IS NOT NULL LIMIT 1",
+            (trace_id,)).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def _session_summary(trace_id: str) -> dict:
     """Read the session-row fields that aren't derivable from spans alone
     (model + transcript-derived token counters). Safe to call for a
@@ -497,6 +521,13 @@ def _session_summary(trace_id: str) -> dict:
     main_for_pct = peak_main if isinstance(peak_main, int) else peak
     return {
         'model': model,
+        # Workflow runs have no single context window (peak is NULL), so the
+        # ctx% chip is absent; surface the run's authoritative grand total
+        # (manifest totalTokens, stamped on the run-root span) for a header
+        # total chip. None for non-workflow sessions. The per-turn split in
+        # the columns below can't be summed to it — cache is counted
+        # differently — so it's read straight off the span, not derived.
+        'total_tokens': _workflow_total_tokens(trace_id),
         'input_tokens': input_tokens,
         'output_tokens': output_tokens,
         'cache_read_tokens': cache_read,
@@ -504,12 +535,8 @@ def _session_summary(trace_id: str) -> dict:
         'peak_context_tokens': peak,
         'peak_main_context_tokens': peak_main,
         'context_window_tokens': window,
-        'context_pct': (round(main_for_pct * 100.0 / window, 1)
-                        if isinstance(main_for_pct, int) and window and window > 0
-                        else None),
-        'context_pct_all': (round(peak * 100.0 / window, 1)
-                            if isinstance(peak, int) and window and window > 0
-                            else None),
+        'context_pct': _pct(main_for_pct, window),
+        'context_pct_all': _pct(peak, window),
         'active_work_ms': active_work_ms,
         'started_at': started_at,
         'ended_at': ended_at,

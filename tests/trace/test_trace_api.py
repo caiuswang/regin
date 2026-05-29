@@ -60,6 +60,18 @@ def _seed(db_path, rows):
         conn.close()
 
 
+def _seed_session_row(db_path, trace_id):
+    """Minimal `sessions` row so `_session_summary` returns its fields."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen) VALUES (?, ?, ?)",
+            (trace_id, '2026-01-01T00:00:00', '2026-01-01T00:00:00'))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _snapshot(db_path, trace_id):
     """Capture parent_id / start_time / end_time / duration_ms for every row."""
     conn = sqlite3.connect(str(db_path))
@@ -581,3 +593,25 @@ def test_workflow_runs_endpoint_lists_launched_runs(client, trace_db):
     items = client.get('/api/sessions/sess/workflow-runs').get_json()['items']
     assert items == [{'run_id': 'wf_a', 'name': 'alpha'},
                      {'run_id': 'wf_b', 'name': 'beta'}]
+
+
+def test_session_detail_surfaces_workflow_total_tokens(client, trace_db):
+    """A workflow run's session-detail response carries `total_tokens`, read
+    from the run-root span's attributes (the manifest grand total), so the
+    header can show a total chip even though peak_context_tokens is NULL.
+    A non-workflow session has no such span, so the field is None."""
+    _seed(trace_db, [
+        {'trace_id': 'wf_t', 'span_id': 'wfrun-t', 'name': 'session.start',
+         'start_time': '2026-01-01T00:00:00',
+         'attributes': {'agent_type': 'workflow', 'total_tokens': 116626}},
+    ])
+    _seed_session_row(trace_db, 'wf_t')
+    assert client.get('/api/sessions/wf_t').get_json()['total_tokens'] == 116626
+
+    _seed(trace_db, [
+        {'trace_id': 'norm', 'span_id': 'ss', 'name': 'session.start',
+         'start_time': '2026-01-01T00:00:00',
+         'attributes': {'agent_type': 'claude'}},
+    ])
+    _seed_session_row(trace_db, 'norm')
+    assert client.get('/api/sessions/norm').get_json()['total_tokens'] is None

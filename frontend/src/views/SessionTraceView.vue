@@ -456,6 +456,7 @@ const SESSION_SUMMARY_KEYS = [
   'cache_read_tokens', 'cache_creation_tokens',
   'peak_context_tokens', 'peak_main_context_tokens',
   'context_window_tokens', 'context_pct', 'context_pct_all',
+  'total_tokens',
   'active_work_ms',
   'started_at', 'ended_at', 'last_seen',
   'title', 'title_source',
@@ -1956,6 +1957,15 @@ const toolRollupSummary = computed(() => {
               class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
               :title="`peak with advisor/sub-call tokens rolled in: ${session.peak_context_tokens} / ${session.context_window_tokens}`"
             >+sub {{ session.context_pct_all }}%</span>
+          </template>
+          <!-- Workflow runs have no single context window (no ctx% chip), so
+               surface the run's authoritative grand total (manifest
+               totalTokens — input + cache + output across all agents). -->
+          <template v-if="session.total_tokens">
+            <span
+              class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 text-[11px] font-medium ml-1"
+              title="total tokens across all workflow agents (input + cache + output), from the run manifest"
+            >Σ <span class="opacity-75 font-mono">{{ fmtTokens(session.total_tokens) }}</span> tokens</span>
           </template>
           <template v-if="session.model">
             <span class="text-xs text-slate-500 font-mono ml-1">{{ session.model }}</span>
