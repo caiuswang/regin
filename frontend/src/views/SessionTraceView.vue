@@ -2001,13 +2001,17 @@ const toolRollupSummary = computed(() => {
             >ctx {{ session.context_pct }}%
               <span class="opacity-75 font-mono">{{ fmtTokens(session.peak_main_context_tokens || session.peak_context_tokens) }} / {{ fmtTokens(session.context_window_tokens) }}</span>
             </span>
-            <!-- All-inclusive peak only when it diverges (advisor turns). -->
+            <!-- All-inclusive peak only when it diverges (advisor turns).
+                 Shown as an absolute token count, not a % of window: it
+                 can exceed the window (server-side sub-call tokens are
+                 summed into one turn's bill), so a percentage reads as
+                 broken. -->
             <span
               v-if="session.context_pct_all != null
                     && (session.context_pct_all - session.context_pct) > 1"
               class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
-              :title="`peak with advisor/sub-call tokens rolled in: ${session.peak_context_tokens} / ${session.context_window_tokens}`"
-            >+sub {{ session.context_pct_all }}%</span>
+              :title="`all-inclusive peak turn: ${(session.peak_context_tokens || 0).toLocaleString()} tokens (vs ${(session.context_window_tokens || 0).toLocaleString()} window). Includes advisor/server-side sub-call tokens that Anthropic rolls into the parent turn's usage, so it can exceed the window — the headline ctx% excludes these.`"
+            >+sub <span class="opacity-75 font-mono">{{ fmtTokens(session.peak_context_tokens) }}</span></span>
           </template>
           <!-- Cache: read = context replayed each turn (the bulk of the API
                bill), write = cache creation. Not attributable per-tool, so
