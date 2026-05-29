@@ -116,3 +116,49 @@ optimising:
   type (e.g. always over-counts JSON-heavy tools): swap to a real
   Claude tokenizer. Single switch-point at the top of
   `lib/tokens/token_estimator.py`.
+
+## 9. Workflow runs show all per-turn input as "untagged"
+
+Dynamic-workflow runs (`lib/trace/workflow_ingest.py`) surface their
+whole per-turn **input** as the rollup's `untagged` remainder, because
+input is never attributed to a tool for these runs. (Output is fine —
+fully attributed to `assistant_text`.)
+
+**Why.** `fetch_tool_token_rollup` (`lib/trace/trace_service/queries.py`)
+attributes a span's tokens only from its `input_tokens` / `output_tokens`
+*columns*. The span INSERT in `ingest_session_spans` promotes only
+`output_tokens` to the column for `assistant_response` / `assistant.thinking`
+spans; a span's `input_tokens` reaches the column **only** via the per-tool
+attribution UPDATE that `turn_trace` runs for normal sessions — and that
+step never runs for workflow runs. So a workflow turn has
+output-in-column, input-in-attributes-only → `attributed_input = 0`, and
+`untagged_input = session_input − 0 = the whole input`.
+
+**Confirmed** on `wf_c3c01ad6-7f9`: session in/out 16,646 / 5,086;
+attributed in/out 0 / 5,086; untagged in/out 16,646 / 0. The ~16.6k
+"untagged" is purely input — the agents' dispatched prompts plus the
+fresh (non-cached) part of the files they read. Not double-counted,
+just not itemized. (Cache — the bulk of such runs, ~138k here — is never
+per-tool for any session; it's surfaced only via the `Σ` total chip the
+header now shows for workflow runs, since they have no single context
+window / `ctx%`.)
+
+**Fix (workflow-scoped — no normal-session regression).** After
+`reingest`, run an UPDATE that promotes each workflow assistant span's
+`attributes.input_tokens` into its `input_tokens` column, scoped
+`WHERE trace_id = <run_id> AND name IN ('assistant_response',
+'assistant.thinking')`. Then `attributed_input == session_input` →
+`untagged → 0`, and `assistant_text` shows input+output (~21.7k here).
+Safe because it's scoped to the run's own spans and workflow tool spans
+carry no input (no double-count).
+
+Do **NOT** promote input on the shared INSERT path (`ingest_session_spans`):
+for normal sessions input is already attributed to tool spans (incl.
+cache) via `turn_trace`, so promoting it onto assistant spans too would
+double-count and inflate the `assistant_text` chip. This is why the fix
+must be a workflow-scoped post-ingest UPDATE, not a change to the shared
+promotion.
+
+**Verify.** Re-ingest a completed run, then
+`GET /api/sessions/<run_id>/tool-rollup` → `untagged_input_tokens == 0`,
+and the "Tokens by tool" `assistant_text` chip ≈ input + output.
