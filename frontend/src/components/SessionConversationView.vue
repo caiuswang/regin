@@ -719,8 +719,11 @@ function onRowClick(span) {
 
           <!-- ASSISTANT response card (slate tint) — always render when expanded -->
           <template v-if="isPromptExpanded(entry.prompt.span_id)">
-            <template v-for="{ span } in renderableDescendants(entry)" :key="span.span_id">
-              <div :ref="(el) => { if (el) spanRefs.set(span.span_id, el); else spanRefs.delete(span.span_id) }">
+            <template v-for="{ span, inAgent } in renderableDescendants(entry)" :key="span.span_id">
+              <div
+                :ref="(el) => { if (el) spanRefs.set(span.span_id, el); else spanRefs.delete(span.span_id) }"
+                :class="inAgent ? 'border-l-2 border-pink-300 ml-1.5 pl-2.5' : ''"
+              >
               <!-- Background-task notification card (amber tint) -->
               <div
                 v-if="span.name === 'task.notification'"
@@ -1394,26 +1397,30 @@ function onRowClick(span) {
                     >{{ agentPromptPreview(agentPrompt(span)) }}</div>
                   </div>
                 </div>
-                <!-- Agent RESULT card (workflow agents): collapsible, with
-                     structured results pretty-printed. -->
-                <div
-                  v-if="agentResultText(span)"
-                  class="ml-6 mt-1 mb-1 rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-2"
-                >
-                  <div class="flex items-center justify-between gap-2 mb-1">
-                    <span class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">result</span>
-                    <button
-                      v-if="agentResultText(span).length > AGENT_RESULT_PREVIEW_CHARS"
-                      type="button"
-                      class="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 rounded focus-visible:outline-2 focus-visible:outline-emerald-500"
-                      @click.stop="toggleAgentResult(span.span_id)"
-                    >{{ isAgentResultExpanded(span.span_id) ? 'Collapse' : `Show full · ${agentResultText(span).length} chars` }}</button>
-                  </div>
-                  <div
-                    class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono"
-                    :class="isAgentResultExpanded(span.span_id) ? 'max-h-[32rem] overflow-y-auto' : ''"
-                  >{{ isAgentResultExpanded(span.span_id) ? agentResultText(span) : agentResultPreview(agentResultText(span)) }}</div>
+              </div>
+
+              <!-- Deferred agent RESULT card (workflow runs): the span-tree
+                   projection emits this AFTER the agent's turns, so each agent
+                   reads prompt → work → result (the result used to render
+                   bundled into the header block, before the work). `span` is a
+                   synthetic marker carrying the agent's attributes. -->
+              <div
+                v-else-if="span.name === 'workflow.agent_result'"
+                class="mt-1 mb-2 rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-2"
+              >
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <span class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">result</span>
+                  <button
+                    v-if="agentResultText(span).length > AGENT_RESULT_PREVIEW_CHARS"
+                    type="button"
+                    class="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 rounded focus-visible:outline-2 focus-visible:outline-emerald-500"
+                    @click.stop="toggleAgentResult(span.span_id)"
+                  >{{ isAgentResultExpanded(span.span_id) ? 'Collapse' : `Show full · ${agentResultText(span).length} chars` }}</button>
                 </div>
+                <div
+                  class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono"
+                  :class="isAgentResultExpanded(span.span_id) ? 'max-h-[32rem] overflow-y-auto' : ''"
+                >{{ isAgentResultExpanded(span.span_id) ? agentResultText(span) : agentResultPreview(agentResultText(span)) }}</div>
               </div>
 
               <!-- Dynamic-workflow launch: the Workflow tool call as a

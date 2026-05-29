@@ -97,14 +97,19 @@ export function useSpanTree(spansInput, turnsInput = null) {
     return childrenByParent.value.get(spanId) || []
   }
 
-  function flattenDescendants(spanId, depth = 0) {
+  // `inAgent` marks every row that lives inside a subagent's subtree (anything
+  // below a `subagent.start`), so the conversation spine can draw a grouping
+  // rail and the reader can tell a subagent's spans apart from the main thread.
+  // Once set it propagates to all deeper descendants (incl. nested subagents).
+  function flattenDescendants(spanId, depth = 0, inAgent = false) {
     const children = childrenOf(spanId)
     const result = []
     for (const child of children) {
-      result.push({ span: child, depth })
+      result.push({ span: child, depth, inAgent })
       const grandchildren = childrenOf(child.span_id)
       if (grandchildren.length) {
-        result.push(...flattenDescendants(child.span_id, depth + 1))
+        const childInAgent = inAgent || child.name === 'subagent.start'
+        result.push(...flattenDescendants(child.span_id, depth + 1, childInAgent))
       }
     }
     return result
@@ -137,19 +142,38 @@ export function useSpanTree(spansInput, turnsInput = null) {
       .sort((a, b) => (a.attributes?.index ?? 1e9) - (b.attributes?.index ?? 1e9))
   }
 
+  // Project one agent into the flat descendant list as: its header row, then
+  // its turns (tagged `inAgent` so the spine can draw a grouping rail), then a
+  // synthetic `workflow.agent_result` marker. Deferring the result to the end
+  // makes each agent read prompt → work → result — the result card used to be
+  // bundled into the header block and render BEFORE the agent's turns.
+  function _pushAgent(out, agent, depth) {
+    out.push({ span: agent, depth })
+    out.push(...flattenDescendants(agent.span_id, depth + 1).map((d) => ({ ...d, inAgent: true })))
+    if (agent.attributes?.result_full || agent.attributes?.result_preview) {
+      out.push({
+        span: { ...agent, span_id: `${agent.span_id}::result`, name: 'workflow.agent_result' },
+        depth: depth + 1,
+        inAgent: true,
+      })
+    }
+  }
+
   function _workflowDescendants(rootId, phases) {
     const out = []
     if (phases.length) {
       for (const phase of phases) {
         out.push({ span: phase, depth: 0 })
-        out.push(...flattenDescendants(phase.span_id, 1))
+        for (const agent of childrenOf(phase.span_id)) {
+          if (agent.name !== 'subagent.start') continue
+          _pushAgent(out, agent, 1)
+        }
       }
     } else if (rootId) {
       // Live/flat run: no phases yet — agents hang directly off the root.
       for (const agent of childrenOf(rootId)) {
         if (agent.name !== 'subagent.start') continue
-        out.push({ span: agent, depth: 0 })
-        out.push(...flattenDescendants(agent.span_id, 1))
+        _pushAgent(out, agent, 0)
       }
     }
     return out
