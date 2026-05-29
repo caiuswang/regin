@@ -162,9 +162,46 @@ _TIERED_CATALOGUE = {
 }
 
 
+_SUFFIXED_CATALOGUE = {
+    # The flat entry uses the bare id; the tier-bearing entry is keyed
+    # with a provider routing suffix ('@default', as google-vertex does
+    # for claude-opus-4-8). The resolver must normalize the suffix and
+    # still prefer the tiered entry.
+    'anthropic': {
+        'id': 'anthropic',
+        'models': {
+            'claude-opus-4-8': {'id': 'claude-opus-4-8',
+                                'cost': {'input': 5, 'output': 25}},
+        },
+    },
+    'google-vertex': {
+        'id': 'google-vertex',
+        'models': {
+            'claude-opus-4-8@default': {
+                'id': 'claude-opus-4-8@default',
+                'cost': {
+                    'input': 5, 'output': 25,
+                    'tiers': [{'input': 10, 'output': 37.5,
+                               'tier': {'type': 'context', 'size': 200000}}],
+                },
+            },
+        },
+    },
+}
+
+
 def test_resolver_prefers_tier_bearing_entry(monkeypatch):
     monkeypatch.setattr(pricing, '_fetch', lambda: _TIERED_CATALOGUE)
     assert 'tiers' in (model_rates('claude-opus-4-7') or {})
+
+
+def test_resolver_matches_routing_suffix_key(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _SUFFIXED_CATALOGUE)
+    # bare id should resolve the '@default'-suffixed tiered entry
+    assert 'tiers' in (model_rates('claude-opus-4-8') or {})
+    b = TokenBreakdown(input_tokens=1_000_000, output_tokens=1_000_000)
+    assert cost('claude-opus-4-8', b, context_tokens=700_000) == pytest.approx(47.5)
+    assert cost('claude-opus-4-8[1m]', b, context_tokens=700_000) == pytest.approx(47.5)
 
 
 def test_cost_uses_base_rate_below_threshold(monkeypatch):

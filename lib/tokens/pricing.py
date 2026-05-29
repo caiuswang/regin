@@ -103,11 +103,14 @@ def get_catalogue() -> dict | None:
     return data
 
 
-def _strip_variant(model: str) -> str:
-    # Claude Code reports models like 'claude-opus-4-7[1m]' but models.dev
-    # only lists the base id. Strip the bracketed variant suffix.
+def _norm_id(model: str) -> str:
+    # Normalize a model id for matching: Claude Code reports a bracketed
+    # variant ('claude-opus-4-8[1m]') and some providers append a routing
+    # suffix ('claude-opus-4-8@default' on google-vertex). models.dev's
+    # base id carries neither, so strip both before comparing.
     idx = model.find('[')
-    return model[:idx] if idx > 0 else model
+    base = model[:idx] if idx > 0 else model
+    return base.split('@', 1)[0]
 
 
 def _has_tiers(m: dict) -> bool:
@@ -115,25 +118,32 @@ def _has_tiers(m: dict) -> bool:
     return isinstance(c, dict) and ('tiers' in c or 'context_over_200k' in c)
 
 
-def _find_model(catalogue: dict, model: str) -> dict | None:
-    # models.dev shards the same model across many providers, and only
-    # some carry context-tier pricing (the >200K rate). Prefer a
-    # tier-bearing entry so cost() can apply the higher tier; fall back
-    # to the first plain match when none expose tiers.
-    target = _strip_variant(model)
-    fallback = None
+def _candidate_models(catalogue: dict, model: str):
+    """Yield every catalogue entry whose id matches `model` once both are
+    normalized (variant + routing suffix stripped)."""
+    target = _norm_id(model)
     for provider in catalogue.values():
         if not isinstance(provider, dict):
             continue
         models = provider.get('models')
         if not isinstance(models, dict):
             continue
-        m = models.get(target) or models.get(model)
-        if isinstance(m, dict):
-            if _has_tiers(m):
-                return m
-            if fallback is None:
-                fallback = m
+        for key, m in models.items():
+            if isinstance(m, dict) and _norm_id(key) == target:
+                yield m
+
+
+def _find_model(catalogue: dict, model: str) -> dict | None:
+    # models.dev shards the same model across many providers (and key
+    # shapes), and only some carry context-tier pricing (the >200K rate).
+    # Prefer a tier-bearing entry so cost() can apply the higher tier;
+    # fall back to the first plain match when none expose tiers.
+    fallback = None
+    for m in _candidate_models(catalogue, model):
+        if _has_tiers(m):
+            return m
+        if fallback is None:
+            fallback = m
     return fallback
 
 
