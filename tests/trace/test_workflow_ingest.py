@@ -34,6 +34,26 @@ _SCRIPT_BODY = (
     "}\n"
 )
 
+# A script WITH explicit `agent()` calls (unlike _SCRIPT_BODY, which has none)
+# so the live confident-mapping path is exercised. Two agents aligned with
+# _JOURNAL's two keys (v2:x→aAAA first, v2:y→aBBB second) and _MANIFEST's
+# Map/Reduce agents. The 2nd agent omits `phase`, inheriting the preceding
+# `phase('Reduce')` — exercising the phase-inheritance path.
+_SCRIPT_WITH_AGENTS = (
+    "export const meta = {\n"
+    "  name: 'synthetic-wf',\n"
+    "  description: 'synthetic workflow for tests',\n"
+    "  phases: [\n"
+    "    { title: 'Map', detail: 'd1' },\n"
+    "    { title: 'Reduce', detail: 'd2' },\n"
+    "  ],\n"
+    "}\n"
+    "phase('Map')\n"
+    "const one = agent('do map', { label: 'a:one', phase: 'Map' })\n"
+    "phase('Reduce')\n"
+    "const two = agent('do reduce', { label: 'a:two' })\n"
+)
+
 # A minimal agent transcript in the Claude Code shape `read_usage` parses:
 # two assistant turns (deduped by message.id), the first issuing a Bash
 # tool_use. cwd + timestamp on the first entry feed live start/repo tagging.
@@ -91,20 +111,26 @@ _MANIFEST = {
 }
 
 
-def _make_run(tmp_path: Path, *, with_manifest: bool) -> Path:
-    """Build a synthetic run tree; return the projects-root to scan."""
+def _make_run(tmp_path: Path, *, with_manifest: bool,
+              script_body: str = _SCRIPT_BODY, journal: str = _JOURNAL) -> Path:
+    """Build a synthetic run tree; return the projects-root to scan.
+
+    ``script_body`` / ``journal`` override the defaults so the live
+    confident-mapping path (which reads `agent()` opts from the script and keys
+    off journal `started` events) can be exercised.
+    """
     projects = tmp_path / "projects"
     sess = projects / "proj" / "sess"
     agents = sess / "subagents" / "workflows" / RUN_ID
     agents.mkdir(parents=True)
-    (agents / "journal.jsonl").write_text(_JOURNAL)
+    (agents / "journal.jsonl").write_text(journal)
     for aid in ("aAAA", "aBBB"):
         (agents / f"agent-{aid}.jsonl").write_text(_AGENT_JSONL)
         (agents / f"agent-{aid}.meta.json").write_text(
             json.dumps({"agentType": "Explore"}))
     scripts = sess / "workflows" / "scripts"
     scripts.mkdir(parents=True)
-    (scripts / f"synthetic-{RUN_ID}.js").write_text(_SCRIPT_BODY)
+    (scripts / f"synthetic-{RUN_ID}.js").write_text(script_body)
     if with_manifest:
         (sess / "workflows" / f"{RUN_ID}.json").write_text(json.dumps(_MANIFEST))
     return projects
@@ -225,39 +251,154 @@ def test_live_state_mtime_tracks_agent_transcripts(tmp_path):
     assert ref.state_mtime() == 1_780_000_500                 # not the journal's
 
 
-def test_resumed_run_reclassifies_as_live(tmp_path):
-    """A paused/'killed' run that's been resumed must flip back to live, not
-    stay terminal: the killed manifest predates (and can't describe) the agents
-    the resume adds, and the watcher would otherwise freeze on the stale
-    manifest mtime. A 'completed' manifest, by contrast, stays terminal even if
-    a transcript is touched afterwards (a finished run can't un-finish)."""
-    import os
-
+def test_manifest_existing_renders_from_manifest(tmp_path):
+    """A run renders from its manifest whenever one exists (the runtime writes
+    it at pause and completion); the journal-only flat tree is used only when
+    there's no manifest yet (never paused)."""
     projects = _make_run(tmp_path, with_manifest=False)
+    assert W.discover_runs(projects)[0].terminal is False      # no manifest -> flat
     mf = projects / "proj" / "sess" / "workflows" / f"{RUN_ID}.json"
-
-    # Pause: a 'killed' manifest lands, newer than all current activity.
     mf.write_text(json.dumps({**_MANIFEST, "status": "killed"}))
-    ref = W.discover_runs(projects)[0]
-    for p in (ref.journal_path, *ref.agents_dir.glob("agent-*.jsonl")):
-        os.utime(p, (1_779_999_000, 1_779_999_000))
-    os.utime(mf, (1_780_000_000, 1_780_000_000))
-    assert W.discover_runs(projects)[0].terminal is True       # killed + idle = done
+    assert W.discover_runs(projects)[0].terminal is True       # paused snapshot -> manifest
 
-    # Resume: a transcript grows past the manifest -> live again.
-    os.utime(ref.agents_dir / "agent-aBBB.jsonl", (1_780_000_500, 1_780_000_500))
+
+def test_manifest_wins_over_journal_iteration_overcount(tmp_path):
+    """After pause→resume→pause the journal accumulates *dead* agents from the
+    superseded iteration. The render must use the manifest's canonical agent
+    set (current iteration), NOT the inflated journal count — otherwise a
+    re-run shows e.g. 183 agents when the run really has 100."""
+    # Manifest knows aAAA, aBBB. The journal also logged a dead iteration-1
+    # agent (aOLD) the manifest doesn't list.
+    projects = _make_run(tmp_path, with_manifest=True, journal=_JOURNAL + json.dumps(
+        {"type": "started", "key": "v2:old", "agentId": "aOLD"}) + "\n")
     ref = W.discover_runs(projects)[0]
-    assert ref.terminal is False
-    # The live flat path enumerates agents from the JOURNAL (so resume-added
-    # agents surface) and deep-expands each transcript.
+    assert ref.terminal is True
+    spans = W.build_full_spans(W._read_json(ref.manifest_path), ref.agents_dir,
+                               deep=False, is_test=True)
+    ids = {s["attributes"]["agent_id"] for s in spans if s["name"] == "subagent.start"}
+    assert ids == {"aAAA", "aBBB"}                             # manifest's 2, not journal's 3
+
+
+def test_full_spans_queued_agents_get_unique_ids(tmp_path):
+    """A live/paused manifest lists *queued* agents with no agentId yet; they
+    must get unique span ids (by manifest index) rather than all colliding on
+    ``wfagent-…-None`` and rendering as one broken row."""
+    manifest = {**_MANIFEST, "workflowProgress": _MANIFEST["workflowProgress"] + [
+        {"type": "workflow_agent", "index": 3, "phaseIndex": 1, "label": "q-1",
+         "state": "queued"},
+        {"type": "workflow_agent", "index": 4, "phaseIndex": 2, "label": "q-2",
+         "state": "queued"},
+    ]}
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=True))[0]
+    spans = W.build_full_spans(manifest, ref.agents_dir, deep=False, is_test=True)
+    ss = [s["span_id"] for s in spans if s["name"] == "subagent.start"]
+    assert len(ss) == len(set(ss)) == 4                        # 2 real + 2 queued
+
+
+def test_running_manifest_has_no_session_end(tmp_path):
+    """A live ('running') manifest renders the full phase tree but no
+    session.end — the run hasn't ended, so it must not render as finished."""
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=True))[0]
+    by = _by_name(W.build_full_spans({**_MANIFEST, "status": "running"},
+                                     ref.agents_dir, deep=False, is_test=True))
+    assert "session.end" not in by
+    assert len(by["workflow.phase"]) == 2                      # phases still render
+
+
+def test_build_flat_spans_groups_live_agents_under_phases(tmp_path):
+    """When the script's `agent()` calls carry literal label/phase, the LIVE
+    path synthesizes real `workflow.phase` spans, parents each agent under its
+    phase, and stamps the script label — so the rail renders like a completed
+    run instead of a flat generic-`workflow-subagent` band."""
+    projects = _make_run(tmp_path, with_manifest=False,
+                         script_body=_SCRIPT_WITH_AGENTS)
+    ref = W.discover_runs(projects)[0]
     by = _by_name(W.build_flat_spans(ref, deep=True, is_test=True))
-    assert {s["attributes"]["agent_id"] for s in by["subagent.start"]} == {"aAAA", "aBBB"}
-    assert len(by["assistant_response"]) == 4                  # deep turns stream live
 
-    # Re-completion: a 'completed' manifest is terminal regardless of mtime.
-    mf.write_text(json.dumps(_MANIFEST))                       # status == 'completed'
-    os.utime(mf, (1_780_000_000, 1_780_000_000))              # still older than aBBB
-    assert W.discover_runs(projects)[0].terminal is True
+    phases = sorted(by["workflow.phase"], key=lambda s: s["attributes"]["index"])
+    assert [p["attributes"]["title"] for p in phases] == ["Map", "Reduce"]
+    assert phases[0]["attributes"]["detail"] == "d1"       # detail from meta.phases
+    pid = {p["span_id"]: p["attributes"]["title"] for p in phases}
+    agents = {a["attributes"]["label"]: pid[a["parent_id"]]
+              for a in by["subagent.start"]}
+    assert agents == {"a:one": "Map", "a:two": "Reduce"}   # a:two inherited phase
+    assert len(by["assistant_response"]) == 4              # deep turns still stream
+
+
+def test_live_phase_layout_matches_completion(tmp_path):
+    """The live confident layout's per-agent (label, phase) equals the completed
+    full tree's — so the live→complete re-ingest is a stable idempotent swap."""
+    projects = _make_run(tmp_path, with_manifest=True,
+                         script_body=_SCRIPT_WITH_AGENTS)
+    ref = W.discover_runs(projects)[0]
+    manifest = W._read_json(ref.manifest_path)
+
+    def amap(spans):
+        pid = {s["span_id"]: s["attributes"]["title"]
+               for s in spans if s["name"] == "workflow.phase"}
+        return {s["attributes"]["agent_id"]:
+                (s["attributes"].get("label"), pid.get(s["parent_id"]))
+                for s in spans if s["name"] == "subagent.start"}
+
+    live = amap(W.build_flat_spans(ref, deep=True, is_test=True))
+    full = amap(W.build_full_spans(manifest, ref.agents_dir, deep=True, is_test=True))
+    assert live == full == {"aAAA": ("a:one", "Map"), "aBBB": ("a:two", "Reduce")}
+
+
+def test_live_layout_falls_back_on_count_mismatch(tmp_path):
+    """If the journal's distinct-key count != the script's `agent()` count (not
+    every declared agent has started yet), order-mapping is unsafe → fall back
+    to the coarse phaseless tree."""
+    one_started = json.dumps(
+        {"type": "started", "key": "v2:x", "agentId": "aAAA"}) + "\n"
+    projects = _make_run(tmp_path, with_manifest=False,
+                         script_body=_SCRIPT_WITH_AGENTS, journal=one_started)
+    ref = W.discover_runs(projects)[0]
+    by = _by_name(W.build_flat_spans(ref, deep=True, is_test=True))
+    assert "workflow.phase" not in by                      # fallback: no phases
+    assert len(by["subagent.start"]) == 1
+
+
+def test_unstarted_phase_renders_as_empty_band(tmp_path):
+    """A phase declared in meta.phases that no agent targets still renders as an
+    empty numbered band — the real win over the flat 'Running' list."""
+    script = (
+        "export const meta = { name:'w', phases:["
+        "{title:'Map',detail:'d1'},{title:'Reduce',detail:'d2'},"
+        "{title:'Report',detail:'d3'}] }\n"
+        "phase('Map')\nagent('a', { label: 'a:one', phase: 'Map' })\n"
+        "phase('Reduce')\nagent('b', { label: 'a:two', phase: 'Reduce' })\n"
+    )
+    projects = _make_run(tmp_path, with_manifest=False, script_body=script)
+    ref = W.discover_runs(projects)[0]
+    by = _by_name(W.build_flat_spans(ref, deep=True, is_test=True))
+    phases = sorted(by["workflow.phase"], key=lambda s: s["attributes"]["index"])
+    assert [p["attributes"]["title"] for p in phases] == ["Map", "Reduce", "Report"]
+    report = phases[2]["span_id"]
+    assert not [a for a in by["subagent.start"] if a["parent_id"] == report]
+
+
+def test_parse_script_agents_static_and_dynamic(tmp_path):
+    """`_parse_script_agents` returns ordered {label,phase} for a static script,
+    tolerates a dynamic label, and returns None for dynamic dispatch (loops /
+    .map) or a non-literal phase — the structural fallback signal."""
+    def parse(body):
+        return W._parse_script_agents(_write_script(tmp_path, body))
+
+    assert parse(_SCRIPT_WITH_AGENTS) == [
+        {"label": "a:one", "phase": "Map"},
+        {"label": "a:two", "phase": "Reduce"}]
+    # dynamic label (template substitution) is cosmetic → kept None, still grouped
+    assert parse("phase('P')\nagent('x', { label: `a:${i}`, phase: 'P' })\n") == [
+        {"label": None, "phase": "P"}]
+    # dynamic phase → None (structural)
+    assert parse("agent('x', { label: 'a', phase: somePhase })\n") is None
+    # agent inside .map() → None (dynamic count/order)
+    assert parse("phase('P')\n[1,2].map(i => agent('x', { label: 'a' }))\n") is None
+    # agent inside a for-loop → None
+    assert parse("phase('P')\nfor (const i of xs) { agent('x', {label:'a'}) }\n") is None
+    # no agent() calls → None (falls back; this is the _SCRIPT_BODY case)
+    assert parse("const x = 1\n") is None
 
 
 def test_build_full_spans_tree_and_deep_turns(tmp_path):

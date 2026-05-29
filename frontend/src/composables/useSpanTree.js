@@ -266,40 +266,59 @@ export function useSpanTree(spansInput, turnsInput = null) {
   const phaseItems = computed(() => {
     if (!isWorkflow.value) return []
     const rootId = workflowRoot.value?.span_id || null
+    // Only a *live* run (status still 'running') gets per-phase in-progress
+    // cues — a completed run's phases must stay neutral even if some agent
+    // span carries a non-'done' state.
+    const liveRun = workflowRoot.value?.attributes?.workflow_status === 'running'
     const phases = _orderedPhases()
     const bands = phases.length
       ? phases.map((p) => ({ phase: p, agents: childrenOf(p.span_id).filter((s) => s.name === 'subagent.start') }))
       : (rootId ? [{ phase: null, agents: childrenOf(rootId).filter((s) => s.name === 'subagent.start') }] : [])
-    return bands.map((b, idx) => ({
-      idx,
-      // The `phase === null` band is the live/in-progress one: its agents
-      // aren't phase-mapped yet (the manifest with phaseIndex only lands at
-      // completion), so the rail renders it as a plain "Running" group rather
-      // than a numbered phase.
-      running: b.phase === null,
-      phaseSpanId: b.phase?.span_id || `wf-live-${idx}`,
-      title: b.phase?.attributes?.title || 'Agents',
-      detail: b.phase?.attributes?.detail || '',
-      index: b.phase?.attributes?.index ?? (idx + 1),
-      agentCount: b.agents.length,
-      // Phase token total = sum of its agents' output tokens. Null (not 0)
-      // for live/in-progress bands where no agent has reported tokens yet,
-      // so the rail can hide the chip instead of showing a bare "0".
-      tokens: b.agents.reduce((s, a) => s + (a.attributes?.tokens || 0), 0) || null,
-      agents: b.agents.map((a) => ({
-        spanId: a.span_id,
-        label: a.attributes?.label || a.attributes?.agent_type
-          || (a.attributes?.agent_id || '').slice(0, 8) || 'agent',
-        type: a.attributes?.agent_type || '',
-        // Full model id (e.g. claude-opus-4-8[1m]); the rail shortens it
-        // for display via fmtModel and keeps the full id in a tooltip.
-        // Null on live runs, which don't capture per-agent model yet.
-        model: a.attributes?.model ?? null,
-        tokens: a.attributes?.tokens ?? null,
-        toolCalls: a.attributes?.tool_calls ?? null,
-        state: a.attributes?.state || '',
-      })),
-    }))
+    return bands.map((b, idx) => {
+      const doneCount = b.agents.filter(
+        (a) => (a.attributes?.state || '') === 'done').length
+      return {
+        idx,
+        // The `phase === null` band is the live/in-progress one: its agents
+        // aren't phase-mapped yet (the manifest with phaseIndex only lands at
+        // completion), so the rail renders it as a plain "Running" group rather
+        // than a numbered phase.
+        running: b.phase === null,
+        // Every agent in the phase has finished → the header shows a ✓ instead
+        // of the phase number (mirrors the terminal's "✓ Scope 1/1").
+        complete: b.agents.length > 0 && doneCount === b.agents.length,
+        // A real (numbered) phase still has unfinished agents on a live run:
+        // render the completed-style header but with a running cue.
+        inProgress: liveRun && b.phase !== null && doneCount < b.agents.length,
+        phaseSpanId: b.phase?.span_id || `wf-live-${idx}`,
+        title: b.phase?.attributes?.title || 'Agents',
+        detail: b.phase?.attributes?.detail || '',
+        index: b.phase?.attributes?.index ?? (idx + 1),
+        agentCount: b.agents.length,
+        doneCount,                       // finished agents (the "done" in done/total)
+        // Phase token total = sum of its agents' output tokens. Null (not 0)
+        // for live/in-progress bands where no agent has reported tokens yet,
+        // so the rail can hide the chip instead of showing a bare "0".
+        tokens: b.agents.reduce((s, a) => s + (a.attributes?.tokens || 0), 0) || null,
+        agents: b.agents.map((a) => ({
+          spanId: a.span_id,
+          label: a.attributes?.label || a.attributes?.agent_type
+            || (a.attributes?.agent_id || '').slice(0, 8) || 'agent',
+          type: a.attributes?.agent_type || '',
+          // Full model id (e.g. claude-opus-4-8[1m]); the rail shortens it
+          // for display via fmtModel and keeps the full id in a tooltip.
+          // Null on live runs, which don't capture per-agent model yet.
+          model: a.attributes?.model ?? null,
+          tokens: a.attributes?.tokens ?? null,
+          toolCalls: a.attributes?.tool_calls ?? null,
+          state: a.attributes?.state || '',
+          done: (a.attributes?.state || '') === 'done',
+          // Actively running (vs queued / stopped) — drives a subtle pulse.
+          running: ['running', 'progress', 'start', 'in_progress']
+            .includes(a.attributes?.state),
+        })),
+      }
+    })
   })
 
   // True once the run has real `workflow.phase` spans (built from the

@@ -16,22 +16,29 @@ On-disk layout, per run ``wf_<id>`` inside a Claude session dir ``<S>``::
         journal.jsonl                          started/result events (written live)
         agent-<agentId>.jsonl  + .meta.json    each agent's transcript
 
-The rich manifest only exists once a run is terminal, so capture has two
-stages (see `ingest_run`):
+The manifest is the runtime's authoritative per-iteration snapshot, written at
+pause and at completion (not continuously while running, and not at start). It
+carries the canonical agent set with phases / labels / states — and crucially
+de-duplicates pause→resume *iterations*, where the journal (an append log)
+keeps the dead agents of superseded iterations. So capture prefers the
+manifest whenever it exists; the journal-only tree is the fallback for a run
+that has never paused. See `ingest_run` / `RunRef.terminal`:
 
-* **live** (no manifest yet) -> `build_flat_spans`: a flat run + agent list
-  (no phases yet), status ``active``, per-agent token totals from the live
-  transcripts. Each running agent's transcript is expanded into the same deep
-  per-turn / per-tool spans the full tree uses, so the run's own trace view
-  streams agent work live rather than showing bare agent rows.
-* **completed** (manifest present) -> `build_full_spans`: the full
-  ``phase -> agent -> turn`` tree, status ``ended``, with each agent's
-  transcript expanded into per-turn / per-tool spans.
+* **manifest exists** -> `build_full_spans`: the full ``phase -> agent -> turn``
+  tree (real phases, labels, per-agent state, deep per-turn / per-tool spans).
+  A live ``running`` snapshot stays open (no ``session.end``); ``completed`` /
+  paused ``killed`` close it. A running run's snapshot can lag the newest
+  agents (it refreshes only at pause/completion), but that's less wrong than
+  the journal's cross-iteration over-count.
+* **no manifest yet** (never paused) -> `build_flat_spans`: a flat run + agent
+  list keyed off the journal, status ``running``, agents deep-expanded (so a
+  live run streams agent work) and — when the script declares them statically
+  — grouped under script-derived phases.
 
 Span ids are deterministic (``wfrun-`` / ``wfphase-`` / ``wfagent-`` /
 ``wfturn-`` / ``wftool-``), so re-ingesting a run is idempotent. `reingest`
-clears a run's rows before re-inserting, so the live flat tree is cleanly
-replaced by the full tree on completion.
+clears a run's rows before re-inserting, so the flat tree is cleanly replaced
+by the manifest tree once the first snapshot is written.
 """
 
 from __future__ import annotations
@@ -89,36 +96,33 @@ class RunRef:
 
     @property
     def terminal(self) -> bool:
-        """True once the run has *finished* — not merely once a manifest exists.
+        """True once a manifest exists — render from it rather than the journal.
 
-        A ``completed`` manifest is always terminal (a finished run can't
-        un-finish, even if some transcript is touched afterwards). But a
-        paused/``killed`` run *also* writes a manifest, and resuming it grows
-        the journal + transcripts past that manifest's mtime. Treating such a
-        run as terminal freezes its capture: the watcher gates on the now-stale
-        manifest mtime, and the killed manifest can't even describe the agents
-        the resume added. So a non-``completed`` manifest is terminal only while
-        no activity postdates it — newer activity reclassifies the run as live.
+        The manifest is the runtime's authoritative per-iteration snapshot,
+        written at pause and at completion, carrying the canonical agent set
+        with phases / states. It's preferred over the journal whenever it
+        exists because the journal is an append log that accumulates *dead*
+        agents across pause→resume iterations (re-dispatched work) — a
+        journal-driven tree over-counts (e.g. 183 logged vs 100 canonical). The
+        journal-only flat tree is the fallback for a run with no manifest yet
+        (never paused): a single iteration, so no over-count, and it streams
+        live agent work the frozen manifest can't.
+
+        A running run's manifest lags the newest agents (refreshed only at
+        pause/completion), but lagging is less wrong than the journal's
+        cross-iteration over-count, and `state_mtime` keeps the watcher
+        re-ingesting so the tree refreshes the moment the manifest is rewritten.
         """
-        status = _manifest_status(self.manifest_path)
-        if status is None:
-            return False                      # no manifest yet → live
-        if status == "completed":
-            return True
-        mm = self._manifest_mtime()
-        return mm is None or self._activity_mtime() <= mm
+        return _manifest_status(self.manifest_path) is not None
 
     def state_mtime(self) -> float:
-        """mtime of the file(s) defining the run's current state, driving the
-        watcher's re-ingest gate.
-
-        Once terminal: the manifest (stable). While live (incl. a resumed run):
-        the live edge across the journal + transcripts, so the watcher
-        re-ingests as agents stream rather than freezing between journal events.
-        """
-        if self.terminal:
+        """mtime driving the watcher's re-ingest gate. A ``completed`` run is
+        stable (manifest mtime); any other state tracks the live edge across the
+        manifest + journal + transcripts, so the watcher re-ingests as the
+        manifest is rewritten (pause/resume) and as a no-manifest run streams."""
+        if _manifest_status(self.manifest_path) == "completed":
             return self._manifest_mtime() or 0.0
-        return self._activity_mtime()
+        return max(self._manifest_mtime() or 0.0, self._activity_mtime())
 
 
 # --------------------------------------------------------------------------
@@ -362,6 +366,203 @@ def _parse_script_phases(script_path: Path | None) -> list[dict]:
     return [{"title": p.get("title"), "detail": p.get("detail")}
             for p in (meta.get("phases") or [])
             if isinstance(p, dict) and p.get("title")]
+
+
+# Per-agent declaration cache (parallel to _META_CACHE), keyed by
+# (path, mtime_ns, size). Value is the ordered declaration list or None.
+_AGENTS_CACHE: dict[tuple, list | None] = {}
+
+# Lazily-built compiled (agent-call, phase-call) queries; see `_call_queries`.
+_CALL_QUERIES = None
+
+# `@call` captures the whole call node (for source-position ordering + ancestor
+# inspection); the `#eq?` predicate isolates the callee identifier.
+_AGENT_CALL_QUERY = (
+    "(call_expression function: (identifier) @fn arguments: (arguments) "
+    "(#eq? @fn \"agent\")) @call"
+)
+_PHASE_CALL_QUERY = (
+    "(call_expression function: (identifier) @fn arguments: (arguments) "
+    "(#eq? @fn \"phase\")) @call"
+)
+
+# A `agent()` call nested in any of these dispatches a dynamic number of times
+# / in non-source order, so static source-order mapping is unsafe.
+_LOOP_TYPES = {"for_statement", "for_in_statement", "while_statement",
+               "do_statement"}
+_ITER_METHODS = {"map", "forEach", "flatMap", "filter", "reduce"}
+
+# Sentinel: an opts value that exists but isn't a static string literal.
+_DYNAMIC = object()
+
+
+def _call_queries():
+    """Compiled (agent-call, phase-call) queries, built once. Raises
+    ImportError if the grammar isn't installed (caller degrades to None)."""
+    global _CALL_QUERIES
+    if _CALL_QUERIES is None:
+        import tree_sitter as ts
+        import tree_sitter_javascript as tsjs
+        lang = ts.Language(tsjs.language())
+        _CALL_QUERIES = (ts.Query(lang, _AGENT_CALL_QUERY),
+                         ts.Query(lang, _PHASE_CALL_QUERY))
+    return _CALL_QUERIES
+
+
+def _ts_literal_str(node, src: bytes):
+    """The static string value of a ``string`` / ``template_string`` node, or
+    `_DYNAMIC` when the node isn't a pure string literal (a template with a
+    ``${...}`` substitution, an identifier, a member expression, …)."""
+    if node.type == "string":
+        return _ts_string(node, src)
+    if node.type == "template_string":
+        if any(ch.type == "template_substitution" for ch in node.named_children):
+            return _DYNAMIC
+        return _ts_string(node, src)
+    return _DYNAMIC
+
+
+def _opts_object(call_node):
+    """The 2nd-argument opts ``object`` node of a call, or None when there's no
+    second arg or it isn't an object literal."""
+    args = call_node.child_by_field_name("arguments")
+    if args is None:
+        return None
+    named = args.named_children
+    return named[1] if len(named) >= 2 and named[1].type == "object" else None
+
+
+def _pair_kv(pair_node, src: bytes) -> tuple:
+    """``(key_name, value_node)`` of an object ``pair``, or ``(None, None)``."""
+    key, val = pair_node.child_by_field_name("key"), pair_node.child_by_field_name("value")
+    if key is None or val is None:
+        return None, None
+    name = _ts_string(key, src) if key.type == "string" else _ts_text(key, src)
+    return name, val
+
+
+def _agent_call_opts(call_node, src: bytes) -> tuple:
+    """``(label, phase)`` for one ``agent(prompt, opts)`` call.
+
+    ``label`` is the literal string or None (absent / dynamic — cosmetic).
+    ``phase`` is the literal string, None (no ``opts.phase`` key), or `_DYNAMIC`
+    (present but non-literal — structural, forces the caller to fall back).
+    """
+    obj = _opts_object(call_node)
+    if obj is None:
+        return None, None
+    label, phase = None, None
+    for ch in obj.named_children:
+        if ch.type != "pair":
+            continue
+        name, val = _pair_kv(ch, src)
+        if name == "label":
+            v = _ts_literal_str(val, src)
+            label = None if v is _DYNAMIC else v
+        elif name == "phase":
+            phase = _ts_literal_str(val, src)
+    return label, phase
+
+
+def _in_dynamic_context(node, src: bytes) -> bool:
+    """True if ``node`` sits inside a loop, an iteration callback (``.map`` /
+    ``.forEach`` / …), or a spread — contexts that dispatch agents in a dynamic
+    count / order, so source order no longer tracks dispatch order."""
+    anc = node.parent
+    while anc is not None:
+        if anc.type in _LOOP_TYPES or anc.type == "spread_element":
+            return True
+        if anc.type == "call_expression":
+            fn = anc.child_by_field_name("function")
+            if fn is not None and fn.type == "member_expression":
+                prop = fn.child_by_field_name("property")
+                if prop is not None and _ts_text(prop, src) in _ITER_METHODS:
+                    return True
+        anc = anc.parent
+    return False
+
+
+def _phase_markers(phase_calls, src: bytes) -> list[tuple]:
+    """``(start_byte, 'phase', title|None)`` per ``phase('X')`` call (None when
+    the title isn't a literal — that band just won't be set as current)."""
+    out: list[tuple] = []
+    for node in phase_calls:
+        args = node.child_by_field_name("arguments")
+        named = args.named_children if args else []
+        title = _ts_literal_str(named[0], src) if named else _DYNAMIC
+        out.append((node.start_byte, "phase", None if title is _DYNAMIC else title))
+    return out
+
+
+def _agent_markers(agent_calls, src: bytes) -> list[tuple] | None:
+    """``(start_byte, 'agent', (label, phase))`` per ``agent()`` call, or None
+    if any agent dispatches dynamically or carries a non-literal phase."""
+    out: list[tuple] = []
+    for node in agent_calls:
+        if _in_dynamic_context(node, src):
+            return None
+        label, phase = _agent_call_opts(node, src)
+        if phase is _DYNAMIC:
+            return None
+        out.append((node.start_byte, "agent", (label, phase)))
+    return out
+
+
+def _extract_script_agents(src: bytes) -> list[dict] | None:
+    """Ordered ``[{label, phase}]`` per ``agent()`` call, or None when the
+    script can't be confidently mapped (see `_parse_script_agents`)."""
+    import tree_sitter as ts
+
+    parser, _ = _ts()
+    root = parser.parse(src).root_node
+    agent_q, phase_q = _call_queries()
+    agent_calls = ts.QueryCursor(agent_q).captures(root).get("call", [])
+    agent_markers = _agent_markers(agent_calls, src)
+    if agent_markers is None:
+        return None
+    phase_calls = ts.QueryCursor(phase_q).captures(root).get("call", [])
+    markers = sorted(_phase_markers(phase_calls, src) + agent_markers,
+                     key=lambda m: m[0])
+    out: list[dict] = []
+    current = None
+    for _b, kind, payload in markers:
+        if kind == "phase":
+            current = payload
+        else:
+            label, explicit = payload
+            out.append({"label": label, "phase": explicit or current})
+    return out or None
+
+
+def _parse_script_agents(script_path: Path | None) -> list[dict] | None:
+    """Ordered ``[{label, phase}]`` for each ``agent(...)`` call in a run's
+    script, or ``None`` when the script can't be statically/confidently mapped.
+
+    Each agent's phase is its literal ``opts.phase`` if present, else the most
+    recent preceding top-level ``phase('X')`` call. Returns ``None`` (caller
+    falls back to the flat live tree) when any agent dispatches dynamically
+    (inside a loop / ``.map`` / spread) or carries a non-literal ``phase`` —
+    cases where source order no longer matches dispatch order, or the mapping
+    is unknowable. A dynamic ``label`` is cosmetic and tolerated (kept None).
+    Cached per (path, mtime, size); ``None`` on any failure (incl. a missing
+    tree-sitter install) so a weird script never breaks ingest.
+    """
+    if script_path is None or not script_path.exists():
+        return None
+    try:
+        st = script_path.stat()
+        src = script_path.read_bytes()
+    except OSError:
+        return None
+    key = (str(script_path), st.st_mtime_ns, st.st_size)
+    if key in _AGENTS_CACHE:
+        return _AGENTS_CACHE[key]
+    try:
+        result = _extract_script_agents(src)
+    except ImportError:
+        result = None
+    _AGENTS_CACHE[key] = result
+    return result
 
 
 def _parent_trace_id(agents_dir: Path) -> str | None:
@@ -679,13 +880,16 @@ def _manifest_agents(manifest: dict) -> tuple[list[dict], list[str]]:
     return agents, [a["agentId"] for a in agents if a.get("agentId")]
 
 
-def _phase_spans(run_id: str, root_id: str, manifest: dict, start: str | None,
+def _phase_spans(run_id: str, root_id: str, phases: list, start: str | None,
                  end: str | None, is_test: bool) -> tuple[list[dict], dict[int, str]]:
     """One ``workflow.phase`` span per declared phase, plus an index map so
-    agents can be parented to their phase."""
+    agents can be parented to their phase. Driven by a ``[{title, detail}]``
+    list — the manifest's ``phases`` when terminal, or the script's declared
+    ``meta.phases`` while live (so both paths build identical ``wfphase-`` ids
+    and the live→complete re-ingest stays idempotent)."""
     spans: list[dict] = []
     phase_ids: dict[int, str] = {}
-    for i, phase in enumerate(manifest.get("phases") or [], start=1):
+    for i, phase in enumerate(phases or [], start=1):
         pid = f"wfphase-{run_id}-{i}"
         phase_ids[i] = pid
         spans.append(_span(run_id, pid, "workflow.phase", parent_id=root_id,
@@ -698,7 +902,13 @@ def _phase_spans(run_id: str, root_id: str, manifest: dict, start: str | None,
 
 def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
                      is_test: bool = False) -> list[dict]:
-    """Build the complete span tree for a *terminal* run from its manifest."""
+    """Build the full phase tree from a run's manifest.
+
+    Used whenever the manifest covers the live agent set — a completed run, a
+    paused (``killed``) run, or a live (``running``) run whose continuously
+    written manifest snapshot is current (see `RunRef.terminal`). A live
+    ``running`` manifest gets no ``session.end`` span (the run hasn't ended);
+    every other status closes the run with one."""
     run_id = manifest["runId"]
     root_id = f"wfrun-{run_id}"
     start, end = _run_bounds(manifest)
@@ -718,18 +928,23 @@ def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
                "total_tool_calls": manifest.get("totalToolCalls")},
         is_test=is_test)
 
-    phases, phase_ids = _phase_spans(run_id, root_id, manifest, start, end, is_test)
+    phases, phase_ids = _phase_spans(run_id, root_id, manifest.get("phases") or [],
+                                     start, end, is_test)
     spans.extend(phases)
     # Full per-agent results live in the journal (the manifest only previews).
     _, results = _journal_agents(_read_jsonl(agents_dir / "journal.jsonl"))
     for agent in agents:
         spans.extend(_full_agent_spans(
-            run_id, root_id, phase_ids, agent, agents_dir, results, deep, is_test))
+            run_id, root_id, phase_ids, agent, agents_dir, results, deep, is_test,
+            run_start=start))
 
-    spans.append(_span(run_id, f"wfend-{run_id}", "session.end", parent_id=root_id,
-                       start_time=end, end_time=end,
-                       status_code="OK" if status == "completed" else "ERROR",
-                       attrs={"reason": status}, is_test=is_test))
+    # A live (still-running) manifest snapshot hasn't ended — don't close it
+    # with a session.end (that would render an in-flight run as finished).
+    if status != "running":
+        spans.append(_span(run_id, f"wfend-{run_id}", "session.end", parent_id=root_id,
+                           start_time=end, end_time=end,
+                           status_code="OK" if status == "completed" else "ERROR",
+                           attrs={"reason": status}, is_test=is_test))
     return spans
 
 
@@ -775,9 +990,20 @@ def _agent_tool_count(turn_spans: list[dict], deep: bool, agent_id, fallback):
     return sum(1 for s in turn_spans if s["name"].startswith("tool."))
 
 
+def _agent_bounds(agent: dict, run_start: str | None) -> tuple:
+    """``(start_ts, end_ts)`` ISO strings for an agent span. Un-started (queued)
+    agents have no ``startedAt`` — fall back to ``queuedAt`` then the run start
+    so ``start_time`` is never null (the DB requires it)."""
+    started = agent.get("startedAt")
+    start_ts = _iso(started) or _iso(agent.get("queuedAt")) or run_start
+    if started:
+        return start_ts, _iso(started + (agent.get("durationMs") or 0))
+    return start_ts, start_ts
+
+
 def _full_agent_spans(run_id: str, root_id: str, phase_ids: dict[int, str],
                       agent: dict, agents_dir: Path, results: dict, deep: bool,
-                      is_test: bool) -> list[dict]:
+                      is_test: bool, run_start: str | None = None) -> list[dict]:
     """One agent's ``subagent.start`` span plus its deep turn children.
 
     Prompt + result are sourced from the transcript / journal (full text),
@@ -786,9 +1012,12 @@ def _full_agent_spans(run_id: str, root_id: str, phase_ids: dict[int, str],
     """
     agent_id = agent.get("agentId")
     parent = phase_ids.get(agent.get("phaseIndex"), root_id)
-    started = agent.get("startedAt")
     dur = agent.get("durationMs") or 0
-    span_id = f"wfagent-{run_id}-{agent_id}"
+    # A live/paused manifest also lists *queued* agents that have no agentId
+    # yet; key those by their manifest index so they don't all collide on
+    # ``wfagent-…-None`` (and render as one broken row).
+    span_id = f"wfagent-{run_id}-{agent_id or 'q' + str(agent.get('index'))}"
+    start_ts, end_ts = _agent_bounds(agent, run_start)
     full_prompt = (_agent_full_prompt(agents_dir, agent_id) if agent_id else None) \
         or agent.get("promptPreview")
     result_full = _result_text(results.get(agent_id)) or agent.get("resultPreview")
@@ -797,8 +1026,7 @@ def _full_agent_spans(run_id: str, root_id: str, phase_ids: dict[int, str],
     tool_calls = _agent_tool_count(turn_spans, deep, agent_id, agent.get("toolCalls"))
     spans = [_span(
         run_id, span_id, "subagent.start", parent_id=parent,
-        start_time=_iso(started), end_time=_iso(started + dur) if started else None,
-        duration_ms=dur,
+        start_time=start_ts, end_time=end_ts, duration_ms=dur,
         attrs={"agent_id": agent_id, "agent_type": agent.get("agentType"),
                "agent_name": agent.get("label"), "label": agent.get("label"),
                "model": agent.get("model"), "state": agent.get("state"),
@@ -827,9 +1055,41 @@ def _journal_agents(events: list[dict]) -> tuple[list[str], dict[str, object]]:
     return started, results
 
 
-def _flat_agent_span(run_ref: RunRef, root_id: str, agent_id: str,
-                     results: dict, start: str | None, is_test: bool) -> dict:
-    """One agent's live ``subagent.start`` span with its current token total."""
+def _journal_key_order(events: list[dict]) -> tuple[list[str], dict[str, str]]:
+    """(distinct dispatch ``key``s in first-seen order, {key: latest agentId}).
+
+    Each ``started`` event carries a ``key`` (a stable hash of the agent's
+    dispatch input) and an ``agentId``. A paused→resumed run re-dispatches the
+    same logical agent under the same key with a new agentId, so keying on
+    ``key`` (keeping the latest agentId) collapses kill/resume duplicates to the
+    canonical agent set — the same set the completion manifest records — in the
+    order agents were first dispatched (which matches the script's source order;
+    see `_parse_script_agents`)."""
+    key_order: list[str] = []
+    key_to_agent: dict[str, str] = {}
+    for e in events:
+        if e.get("type") != "started":
+            continue
+        key, agent_id = e.get("key"), e.get("agentId")
+        if not key or not agent_id:
+            continue
+        if key not in key_to_agent:
+            key_order.append(key)
+        key_to_agent[key] = agent_id
+    return key_order, key_to_agent
+
+
+def _flat_agent_span(run_ref: RunRef, parent_id: str, agent_id: str,
+                     results: dict, start: str | None, is_test: bool, *,
+                     label: str | None = None,
+                     phase_title: str | None = None) -> dict:
+    """One agent's live ``subagent.start`` span with its current token total.
+
+    ``parent_id`` is the run root in the coarse fallback, or the agent's
+    ``workflow.phase`` span when the script let us map agents to phases live.
+    ``label`` / ``phase_title`` (script-derived) are stamped so the rail shows
+    real labels under real phases instead of generic ``workflow-subagent`` rows.
+    """
     from lib.trace.transcript_usage import read_usage
 
     path = run_ref.agents_dir / f"agent-{agent_id}.jsonl"
@@ -837,35 +1097,87 @@ def _flat_agent_span(run_ref: RunRef, root_id: str, agent_id: str,
     meta = _read_json(run_ref.agents_dir / f"agent-{agent_id}.meta.json") or {}
     return _span(
         run_ref.run_id, f"wfagent-{run_ref.run_id}-{agent_id}", "subagent.start",
-        parent_id=root_id, start_time=start,
+        parent_id=parent_id, start_time=start,
         attrs={"agent_id": agent_id, "agent_type": meta.get("agentType"),
+               "label": label, "agent_name": label, "phase_title": phase_title,
                "state": "done" if agent_id in results else "running",
                "result_preview": _preview(results.get(agent_id)),
                "tokens": usage.output_tokens if usage else None},
         is_test=is_test)
 
 
+def _live_phase_list(decls: list[dict], script_path: Path | None) -> list | None:
+    """The ordered ``[{title, detail}]`` phases for a confident live layout: the
+    script's declared ``meta.phases`` (with detail), else derived from the
+    agents' own phase values in first-seen order. None if any agent's phase is
+    missing or names a phase outside the set — i.e. the parse model is wrong."""
+    phases = _parse_script_phases(script_path)
+    titles = [p["title"] for p in phases]
+    if not titles:
+        for d in decls:
+            if d["phase"] and d["phase"] not in titles:
+                titles.append(d["phase"])
+        phases = [{"title": t, "detail": None} for t in titles]
+    if any(d["phase"] not in titles for d in decls):
+        return None
+    return phases
+
+
+def _confident_live_layout(run_ref: RunRef, root_id: str, key_order: list[str],
+                           key_to_agent: dict[str, str], start: str | None,
+                           is_test: bool) -> tuple | None:
+    """``(phase_spans, [(agent_id, label, phase_title, parent_id)])`` when the
+    script maps cleanly to the live agents — agents parented under synthesized
+    ``workflow.phase`` spans, mirroring the completed tree. None (→ coarse flat
+    fallback) when the script is dynamic, unmatched, or count-mismatched."""
+    decls = _parse_script_agents(run_ref.script_path)
+    if not decls or len(decls) != len(key_order):
+        return None
+    phases = _live_phase_list(decls, run_ref.script_path)
+    if phases is None:
+        return None
+    phase_spans, phase_ids = _phase_spans(run_ref.run_id, root_id, phases,
+                                          start, None, is_test)
+    index_by_title = {p["title"]: i + 1 for i, p in enumerate(phases)}
+    ordered = [(key_to_agent[k], d["label"], d["phase"],
+                phase_ids[index_by_title[d["phase"]]])
+               for k, d in zip(key_order, decls)]
+    return phase_spans, ordered
+
+
 def build_flat_spans(run_ref: RunRef, *, deep: bool = True,
                      is_test: bool = False) -> list[dict]:
     """Build the live tree for an *in-progress* run from the journal.
 
-    No manifest exists yet, so there are no phases: agents hang directly
-    off the run root, marked running/done. Per-agent token totals come from
-    the live transcripts (`read_usage`).
+    No completion manifest exists yet. When the run's script can be statically
+    mapped (`_confident_live_layout`), we synthesize the same
+    ``workflow.phase`` → ``subagent.start`` structure the completed tree builds
+    — real phases, real labels, agents marked running/done — so the run's own
+    view renders identically to a finished run while still live. Otherwise we
+    fall back to the coarse tree: agents hang directly off the run root and the
+    rail shows the read-only declared phase plan above a flat "Running" band.
 
-    When ``deep`` (the default), each agent's transcript is also expanded into
-    per-turn / per-tool spans via `_agent_turn_spans` — the same deep children
-    the full tree builds — so the run's own view streams live agent work. The
-    turn-span ids match the full tree's (``wfagent-…`` parent), so the live→
-    complete transition is idempotent. ``deep=False`` keeps the coarse
-    agent-only tree.
+    When ``deep`` (the default), each agent's transcript is expanded into
+    per-turn / per-tool spans via `_agent_turn_spans` (matching the full tree's
+    ``wfagent-…`` ids, so the live→complete transition is idempotent).
     """
     run_id = run_ref.run_id
     root_id = f"wfrun-{run_id}"
-    started, results = _journal_agents(_read_jsonl(run_ref.journal_path))
+    events = _read_jsonl(run_ref.journal_path)
+    started, results = _journal_agents(events)
+    key_order, key_to_agent = _journal_key_order(events)
     name, desc = _parse_script_meta(run_ref.script_path)
     start = _first_agent_value(run_ref.agents_dir, started, "timestamp") \
         or _iso(int(run_ref.state_mtime() * 1000))
+
+    layout = _confident_live_layout(run_ref, root_id, key_order, key_to_agent,
+                                    start, is_test)
+    if layout is not None:
+        phase_spans, agent_plan = layout
+    else:
+        # Fallback: today's coarse tree — raw started order, no phase mapping.
+        phase_spans = []
+        agent_plan = [(a, None, None, root_id) for a in started]
 
     spans = _root_and_title_spans(
         run_id, title=(desc or name or run_id), start=start, end=None,
@@ -873,15 +1185,18 @@ def build_flat_spans(run_ref: RunRef, *, deep: bool = True,
                "workflow_status": "running",
                "parent_trace_id": run_ref.session_dir.name,
                "cwd": _first_agent_value(run_ref.agents_dir, started, "cwd"),
-               # Declared phase plan from the script (no per-agent mapping yet —
-               # that arrives with the completion manifest); the rail shows it
-               # as a read-only plan above the running agents.
+               # Declared phase plan from the script. The rail shows it as a
+               # read-only plan only in the fallback (when no real phase spans
+               # exist); once `_confident_live_layout` synthesizes phases it is
+               # superseded but harmlessly retained.
                "phase_plan": _parse_script_phases(run_ref.script_path),
-               "agent_count": len(started)},
+               "agent_count": len(agent_plan)},
         is_test=is_test)
-    for agent_id in started:
-        spans.append(_flat_agent_span(run_ref, root_id, agent_id, results,
-                                      start, is_test))
+    spans.extend(phase_spans)
+    for agent_id, label, phase_title, parent_id in agent_plan:
+        spans.append(_flat_agent_span(run_ref, parent_id, agent_id, results,
+                                      start, is_test, label=label,
+                                      phase_title=phase_title))
         if deep and agent_id:
             spans.extend(_agent_turn_spans(
                 run_id, f"wfagent-{run_id}-{agent_id}", agent_id,
@@ -1125,7 +1440,8 @@ def reingest(run_id: str, spans: list[dict]) -> tuple[int, int]:
 
 def ingest_run(run_ref: RunRef, *, deep: bool = True,
                is_test: bool = False) -> tuple[int, int] | None:
-    """Ingest one run: full tree if terminal, flat live tree otherwise."""
+    """Ingest one run: the manifest's full phase tree when it covers the live
+    agent set (`RunRef.terminal`), else the journal-driven flat live tree."""
     if run_ref.terminal:
         manifest = _read_json(run_ref.manifest_path)
         if manifest is None or not manifest.get("runId"):

@@ -72,6 +72,47 @@ const turnTocRefs = new Map()
 const turnsAsideEl = ref(null)
 const { maxH: turnsMaxH } = useStickyMaxHeight(turnsAsideEl)
 
+// Resizable rail: width is dragged via the handle on the rail's right edge and
+// persisted in localStorage. Clamped so it can't collapse or swallow the chat
+// column. Default 224px = the previous fixed `w-56`.
+const RAIL_MIN = 176
+const RAIL_MAX = 560
+const RAIL_KEY = 'regin_trace_rail_width'
+function _clampRail(w) { return Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)) }
+const railWidth = ref((() => {
+  const v = parseInt(localStorage.getItem(RAIL_KEY), 10)
+  return Number.isFinite(v) ? _clampRail(v) : 224
+})())
+let _railStartX = 0
+let _railStartW = 0
+function onRailResizeMove(e) {
+  railWidth.value = _clampRail(_railStartW + (e.clientX - _railStartX))
+}
+function onRailResizeEnd() {
+  document.removeEventListener('mousemove', onRailResizeMove)
+  document.removeEventListener('mouseup', onRailResizeEnd)
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  localStorage.setItem(RAIL_KEY, String(Math.round(railWidth.value)))
+}
+function onRailResizeStart(e) {
+  _railStartX = e.clientX
+  _railStartW = railWidth.value
+  document.addEventListener('mousemove', onRailResizeMove)
+  document.addEventListener('mouseup', onRailResizeEnd)
+  document.body.style.userSelect = 'none'      // suppress text selection while dragging
+  document.body.style.cursor = 'col-resize'
+  e.preventDefault()
+}
+function onRailResizeKey(e) {
+  const step = e.shiftKey ? 32 : 8
+  if (e.key === 'ArrowLeft') railWidth.value = _clampRail(railWidth.value - step)
+  else if (e.key === 'ArrowRight') railWidth.value = _clampRail(railWidth.value + step)
+  else return
+  e.preventDefault()
+  localStorage.setItem(RAIL_KEY, String(Math.round(railWidth.value)))
+}
+
 // Span tree derivations live in useSpanTree (PR 2.3b): lookup maps,
 // roots, recursive descendants, prompt groups, and the turnItems
 // metadata the TOC and spine consume.
@@ -118,9 +159,17 @@ function launchForSubagent(startSpan) {
 }
 function renderableDescendants(entry) {
   const merged = agentLaunchMerge.value.merged
-  return merged.size
+  const list = merged.size
     ? entry.descendants.filter(({ span }) => !merged.has(span.span_id))
     : entry.descendants
+  // Flag each agent header that should get a separator line above it: between
+  // consecutive agents, but NOT the first agent of a phase (the phase divider
+  // already separates it) nor the very first item.
+  return list.map((d, i) => ({
+    ...d,
+    agentSep: d.span.name === 'subagent.start' && i > 0
+      && list[i - 1].span.name !== 'workflow.phase',
+  }))
 }
 function agentPromptPreview(text) {
   if (!text) return ''
@@ -498,12 +547,27 @@ function onRowClick(span) {
          reach when there are too many turns to scroll. -->
     <aside
       ref="turnsAsideEl"
-      class="w-56 shrink-0 sticky self-start flex flex-col"
+      class="shrink-0 sticky self-start flex flex-col"
       :style="{
+        width: railWidth + 'px',
         top: 'calc(var(--regin-trace-header-h, 5rem) + 0.5rem)',
         maxHeight: turnsMaxH || 'calc(100vh - var(--regin-trace-header-h, 5rem) - 2rem)',
       }"
     >
+      <!-- Drag handle on the rail's right edge (sits in the gutter between the
+           rail and the chat column). The aside is `sticky`, so this absolute
+           handle is positioned relative to it. A <button> so it's keyboard
+           focusable (arrow keys resize) and uses the resize cursor. -->
+      <button
+        type="button"
+        class="absolute top-0 -right-1.5 w-3 h-full p-0 bg-transparent border-0 cursor-col-resize group z-10 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+        title="Drag (or ←/→) to resize panel"
+        aria-label="Resize panel"
+        @mousedown="onRailResizeStart"
+        @keydown="onRailResizeKey"
+      >
+        <span class="block mx-auto w-px h-full bg-slate-200 group-hover:bg-blue-400 transition-colors"></span>
+      </button>
       <div class="flex items-baseline justify-between mb-2 shrink-0">
         <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
         <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
@@ -543,7 +607,7 @@ function onRowClick(span) {
             <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
               <span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0"></span>
               <span>Running</span>
-              <span class="ml-auto normal-case tracking-normal tabular-nums">{{ p.agentCount }} agent<span v-if="p.agentCount !== 1">s</span></span>
+              <span class="ml-auto normal-case tracking-normal tabular-nums" title="finished / total agents">{{ p.doneCount }}/{{ p.agentCount }} agents</span>
             </div>
           </div>
           <!-- Phase header (completed runs: real phases) -->
@@ -554,12 +618,26 @@ function onRowClick(span) {
             @click="selectWorkflowRow(p.phaseSpanId)"
           >
             <div class="flex items-start gap-1.5">
-              <span class="mt-px inline-flex items-center justify-center shrink-0 w-4 h-4 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold tabular-nums">{{ p.index }}</span>
+              <!-- ✓ once every agent in the phase is done, else the phase
+                   number; emerald=complete, blue=in-flight, slate=not started. -->
+              <span
+                class="mt-px inline-flex items-center justify-center shrink-0 w-4 h-4 rounded text-[10px] font-bold tabular-nums"
+                :class="p.complete ? 'bg-emerald-100 text-emerald-700'
+                  : p.agentCount ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'"
+              >{{ p.complete ? '✓' : p.index }}</span>
               <div class="min-w-0 flex-1">
-                <div class="text-xs font-semibold text-slate-800 leading-tight truncate" :title="p.title">{{ p.title }}</div>
+                <div class="text-xs font-semibold text-slate-800 leading-tight flex items-center gap-1.5">
+                  <span class="truncate" :title="p.title">{{ p.title }}</span>
+                  <span
+                    v-if="p.inProgress"
+                    class="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0"
+                    title="phase in progress"
+                  ></span>
+                </div>
                 <div v-if="p.detail" class="text-[10px] text-slate-400 leading-snug truncate" :title="p.detail">{{ p.detail }}</div>
                 <div class="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400 leading-tight">
-                  <span class="font-medium">{{ p.agentCount }} agent<span v-if="p.agentCount !== 1">s</span></span>
+                  <span v-if="p.agentCount" class="font-medium tabular-nums" title="finished / total agents">{{ p.doneCount }}/{{ p.agentCount }} agents</span>
+                  <span v-else class="font-medium text-slate-300">pending</span>
                   <template v-if="p.tokens">
                     <span class="text-slate-300">·</span>
                     <span class="tabular-nums" title="total output tokens across this phase's agents">{{ fmtTokens(p.tokens) }}</span>
@@ -568,8 +646,10 @@ function onRowClick(span) {
               </div>
             </div>
           </div>
-          <!-- Agents under this phase (connector rail on the left) -->
-          <div class="mt-1 ml-2.5 pl-2.5 border-l border-slate-200 space-y-0.5">
+          <!-- Agents under this phase (connector rail on the left). Hidden for
+               a declared-but-unstarted phase so it reads as a clean empty band
+               rather than a dangling connector. -->
+          <div v-if="p.agents.length" class="mt-1 ml-2.5 pl-2.5 border-l border-slate-200 space-y-0.5">
             <div
               v-for="a in p.agents"
               :key="a.spanId"
@@ -577,13 +657,30 @@ function onRowClick(span) {
               :class="selectedSpan && selectedSpan.span_id === a.spanId ? 'bg-blue-50 ring-1 ring-blue-200' : ''"
               @click="selectWorkflowRow(a.spanId)"
             >
-              <div class="flex items-center gap-1.5 text-[11px] leading-tight">
+              <!-- Three states, like the Claude terminal: done = green ✓ +
+                   normal text; actively running = bold BLUE filled dot + blue
+                   text so it's easy to spot; queued/stopped = muted gray hollow
+                   ring + gray text (it recedes). -->
+              <div
+                class="flex items-center gap-1.5 text-[11px] leading-tight"
+                :class="a.done ? 'text-slate-600' : a.running ? 'text-blue-700 font-semibold' : 'text-slate-400'"
+              >
                 <span
-                  class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                  :class="a.state === 'done' ? 'bg-green-500' : 'bg-blue-400 animate-pulse'"
-                  :title="a.state || 'running'"
+                  v-if="a.done"
+                  class="shrink-0 w-2 text-center text-emerald-500 text-[10px] leading-none"
+                  title="done"
+                >✓</span>
+                <span
+                  v-else-if="a.running"
+                  class="inline-block w-2 h-2 rounded-full shrink-0 bg-blue-500 ring-2 ring-blue-200 animate-pulse"
+                  title="running"
                 ></span>
-                <span class="truncate font-medium text-slate-700">{{ a.label }}</span>
+                <span
+                  v-else
+                  class="inline-block w-2 h-2 rounded-full border border-slate-300 shrink-0"
+                  :title="a.state || 'queued'"
+                ></span>
+                <span class="truncate">{{ a.label }}</span>
               </div>
               <div
                 v-if="a.model || a.tokens || a.toolCalls"
@@ -748,10 +845,13 @@ function onRowClick(span) {
 
           <!-- ASSISTANT response card (slate tint) — always render when expanded -->
           <template v-if="isPromptExpanded(entry.prompt.span_id)">
-            <template v-for="{ span, inAgent } in renderableDescendants(entry)" :key="span.span_id">
+            <template v-for="{ span, inAgent, agentSep } in renderableDescendants(entry)" :key="span.span_id">
               <div
                 :ref="(el) => { if (el) spanRefs.set(span.span_id, el); else spanRefs.delete(span.span_id) }"
-                :class="inAgent ? 'border-l-2 border-pink-300 ml-1.5 pl-2.5' : ''"
+                :class="[
+                  inAgent ? 'border-l-2 border-pink-300 ml-1.5 pl-2.5' : '',
+                  agentSep ? 'border-t-2 border-slate-200 mt-6 pt-5' : '',
+                ]"
               >
               <!-- Background-task notification card (amber tint) -->
               <div
@@ -1376,8 +1476,8 @@ function onRowClick(span) {
               <div v-else-if="span.name === 'subagent.start'">
                 <div
                   tabindex="0"
-                  class="flex items-center gap-2 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-                  :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-blue-50' : ''"
+                  class="flex items-center gap-2 text-xs cursor-pointer rounded-md px-2.5 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
+                  :class="selectedSpan && selectedSpan.span_id === span.span_id ? '!bg-blue-50 !border-blue-300 ring-1 ring-blue-200' : ''"
                   @click="onSelectSpan(span); maybeFetchContent(span)"
                 >
                   <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="toolRowDotClass(span)"></span>
@@ -1386,7 +1486,7 @@ function onRowClick(span) {
                        Workflow agents have no agent_type (the default workflow
                        subagent), so the `subagent:` prefix would render bare —
                        show just the agent's label instead. -->
-                  <span class="break-all flex-1 min-w-0 whitespace-pre-line font-medium text-slate-700">
+                  <span class="break-all flex-1 min-w-0 whitespace-pre-line text-sm font-semibold text-slate-800">
                     <template v-if="span.attributes?.agent_type">{{ fullLabel(span) }}<template v-if="agentDescription(span)"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ agentDescription(span) }}</span></template></template>
                     <template v-else>{{ agentDescription(span) || 'agent' }}</template>
                   </span>
