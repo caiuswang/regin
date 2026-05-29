@@ -442,6 +442,75 @@ def _print_cost_summary(total_spans: int, total_sessions: int,
           f"{len(pending)} model(s) still pending.")
 
 
+def _span_cost_rows(conn, trace: str | None, recompute: bool) -> list:
+    """Candidate tool-span counts grouped by session model."""
+    cost_clause = "" if recompute else "AND sp.cost_usd IS NULL"
+    where = (f"sp.name LIKE 'tool.%' {cost_clause} "
+             "AND (sp.input_tokens IS NOT NULL OR sp.output_tokens IS NOT NULL)")
+    scope = []
+    if trace:
+        where += " AND sp.trace_id = ?"
+        scope.append(trace)
+    return conn.execute(f"""
+        SELECT s.model AS model, COUNT(*) AS spans,
+               COUNT(DISTINCT sp.trace_id) AS sessions
+        FROM session_spans sp JOIN sessions s ON s.trace_id = sp.trace_id
+        WHERE {where}
+        GROUP BY s.model ORDER BY spans DESC
+    """, scope).fetchall()
+
+
+def _turn_row_cost(r) -> float | None:
+    """Full per-turn API cost (input+output+cache, context-tiered)."""
+    from lib.tokens.pricing import cost, TokenBreakdown
+
+    return cost(r['model'], TokenBreakdown(
+        input_tokens=r['input_tokens'] or 0,
+        output_tokens=r['output_tokens'] or 0,
+        cache_read_tokens=r['cache_read_tokens'] or 0,
+        cache_creation_tokens=r['cache_creation_tokens'] or 0,
+    ), context_tokens=r['context_used_tokens'] or 0)
+
+
+def _recompute_turn_costs(conn, trace: str | None, dry_run: bool,
+                          recompute: bool) -> tuple:
+    """Recompute turn_usage.cost_usd and re-aggregate sessions.cost_usd.
+
+    Unlike the per-tool span cost, the per-turn bill is the full API cost
+    — input + output + cache_read + cache_write, context-tiered — matching
+    ingest_turn_usage. Returns (turns_priced, sessions_touched).
+    """
+    cost_clause = "" if recompute else "AND cost_usd IS NULL"
+    where = f"1=1 {cost_clause}"
+    scope = []
+    if trace:
+        where += " AND trace_id = ?"
+        scope.append(trace)
+    rows = conn.execute(f"""
+        SELECT trace_id, turn_uuid, model, input_tokens, output_tokens,
+               cache_read_tokens, cache_creation_tokens, context_used_tokens
+        FROM turn_usage WHERE {where}
+    """, scope).fetchall()
+
+    updates = []
+    touched = set()
+    for r in rows:
+        usd = _turn_row_cost(r)
+        if usd is None:
+            continue
+        updates.append((usd, r['trace_id'], r['turn_uuid']))
+        touched.add(r['trace_id'])
+    if not dry_run and updates:
+        conn.executemany(
+            "UPDATE turn_usage SET cost_usd = ? "
+            "WHERE trace_id = ? AND turn_uuid = ?", updates)
+        conn.executemany(
+            "UPDATE sessions SET cost_usd = "
+            "(SELECT SUM(cost_usd) FROM turn_usage WHERE trace_id = ?) "
+            "WHERE trace_id = ?", [(t, t) for t in touched])
+    return len(updates), len(touched)
+
+
 @trace_app.command("backfill-costs",
                    help="Recompute NULL cost_usd from now-available models.dev rates")
 def cmd_backfill_costs(
@@ -453,70 +522,59 @@ def cmd_backfill_costs(
     ),
     recompute: bool = typer.Option(
         False, "--recompute",
-        help="Also re-price spans that already have a cost (e.g. after a "
+        help="Also re-price rows that already have a cost (e.g. after a "
              "pricing or context-tier fix), not just NULL-cost ones",
     ),
 ) -> None:
-    """Fill in per-tool `cost_usd` from current models.dev rates.
+    """Recompute `cost_usd` from current models.dev rates, two ways.
 
     `cost_usd` is stamped once at ingest from the session model's
     models.dev rate (ingest.py). If that model wasn't in the catalogue
     yet — or the fetch failed (pricing degrades silently to None so it
-    never blocks ingest) — the span keeps its token counts but a NULL
-    cost, and nothing recomputes it. This recomputes cost for every tool
-    span whose cost is still NULL and whose model resolves today, using
-    the same `lib.tokens.pricing.cost` path as live ingest (input+output
-    only; image/cache tokens excluded).
+    never blocks ingest) — the row keeps its token counts but a NULL
+    cost, and nothing recomputes it.
 
-    Context-tiered: models that publish a >200K-context tier (e.g. the
-    1M-context Claude models) are billed at the higher rate for spans
-    whose turn ran above the threshold, looked up per turn in turn_usage.
+    Two stores are fixed:
+      • session_spans.cost_usd — the per-tool cost the "Tokens by tool"
+        rollup sums. Only `tool.%` spans, input+output only (image/cache
+        excluded), matching live ingest — costing assistant_response /
+        assistant.thinking spans would over-report vs fresh ingest.
+      • turn_usage.cost_usd — the full per-turn API bill (input + output
+        + cache), re-aggregated into sessions.cost_usd (the session-total
+        cost shown in the sessions list).
 
-    Only `tool.%` spans are touched: live ingest never costs
-    assistant_response / assistant.thinking spans, so backfilling them
-    would make these sessions over-report cost versus freshly-ingested
-    ones of the same model.
+    Both use the shared `lib.tokens.pricing.cost` path, so they pick up
+    context-tiered pricing (1M-context Claude models bill the higher rate
+    above 200K), keyed per turn on context_used_tokens.
 
-    Idempotent: by default only NULL-cost spans are updated, so
-    correctly-priced rows stay untouched and models still missing from
-    models.dev are reported as pending (re-run once the catalogue catches
-    up). Pass --recompute to re-price already-costed spans after a
-    pricing/tier change.
+    Idempotent: by default only NULL-cost rows are updated, so correctly
+    priced rows stay untouched and the same command fills new gaps as the
+    catalogue catches up. Pass --recompute to re-price already-costed rows
+    after a pricing/tier change.
     """
     from lib.orm.engine import get_connection
 
-    cost_clause = "" if recompute else "AND sp.cost_usd IS NULL"
-    base_where = (
-        f"sp.name LIKE 'tool.%' {cost_clause} "
-        "AND (sp.input_tokens IS NOT NULL OR sp.output_tokens IS NOT NULL)"
-    )
-    scope = []
-    if trace:
-        base_where += " AND sp.trace_id = ?"
-        scope.append(trace)
-
     conn = get_connection()
     try:
-        rows = conn.execute(f"""
-            SELECT s.model AS model,
-                   COUNT(*) AS spans,
-                   COUNT(DISTINCT sp.trace_id) AS sessions
-            FROM session_spans sp
-            JOIN sessions s ON s.trace_id = sp.trace_id
-            WHERE {base_where}
-            GROUP BY s.model
-            ORDER BY spans DESC
-        """, scope).fetchall()
-        if not rows:
-            print("No matching tool spans found — nothing to backfill.")
-            raise typer.Exit(0)
-        totals = _collect_cost_updates(conn, rows, dry_run, trace, recompute)
+        span_rows = _span_cost_rows(conn, trace, recompute)
+        print("Tool spans (Tokens-by-tool rollup):")
+        if span_rows:
+            span_totals = _collect_cost_updates(
+                conn, span_rows, dry_run, trace, recompute)
+        else:
+            print("  none")
+            span_totals = (0, 0, [])
+        turns, turn_sessions = _recompute_turn_costs(
+            conn, trace, dry_run, recompute)
+        verb = "would re-price" if dry_run else "re-priced"
+        print(f"\nTurn usage (session totals): {verb} {turns} turns "
+              f"across {turn_sessions} session(s)")
         if not dry_run:
             conn.commit()
     finally:
         conn.close()
 
-    _print_cost_summary(*totals, dry_run)
+    _print_cost_summary(*span_totals, dry_run)
 
 
 def register_trace(app: typer.Typer) -> None:
