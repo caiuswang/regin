@@ -7,7 +7,7 @@ import { useFlash } from '../composables/useFlash.js'
 import { useSpanTree } from '../composables/useSpanTree.js'
 import { useStickyMaxHeight } from '../composables/useStickyMaxHeight.js'
 import {
-  fmtTime, fmtClock, fmtDuration, fmtTokens, fmtBytes, truncate,
+  fmtTime, fmtClock, fmtDuration, fmtTokens, fmtModel, fmtBytes, truncate,
   toolDisplayName, toolFilePath, ruleCheckOneLiner, fullLabel, mcpParts,
   dotColor, isRejectedToolSpan, isDeniedToolSpan, isErrorToolSpan,
   toolRowDotClass, toolRowTextClass,
@@ -507,32 +507,71 @@ function onRowClick(span) {
         <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
         <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? phaseItems.length : turnItems.length }}</span>
       </div>
-      <!-- Workflow phase TOC: phases as primary rows, agents as sub-items -->
+      <!-- Workflow phase TOC: each phase is a titled section (number badge,
+           title, detail subtitle, "N agents · tokens" meta) with its agents
+           listed beneath a connector rail. Each agent row carries its own
+           model, output tokens, and tool-call count so the reader can see
+           the shape of the fan-out without opening the spine. -->
       <div
         v-if="isWorkflow"
         ref="tocScrollEl"
-        class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5 [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
+        class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3 [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
       >
         <div v-for="p in phaseItems" :key="p.phaseSpanId">
+          <!-- Phase header -->
           <div
-            class="cursor-pointer rounded-md px-2 py-1 hover:bg-slate-50"
+            class="cursor-pointer rounded-md px-1.5 py-1 transition-colors hover:bg-emerald-50/70"
+            :class="selectedSpan && selectedSpan.span_id === p.phaseSpanId ? 'bg-emerald-50 ring-1 ring-emerald-200' : ''"
             @click="selectWorkflowRow(p.phaseSpanId)"
           >
-            <div class="flex items-baseline gap-1.5 text-xs leading-tight">
-              <span class="text-emerald-600 font-mono shrink-0 tabular-nums">{{ p.index }}</span>
-              <span class="truncate font-medium text-slate-800">{{ p.title }}</span>
-              <span class="ml-auto text-[10px] text-slate-400 tabular-nums shrink-0">{{ p.agentCount }}a</span>
+            <div class="flex items-start gap-1.5">
+              <span class="mt-px inline-flex items-center justify-center shrink-0 w-4 h-4 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold tabular-nums">{{ p.index }}</span>
+              <div class="min-w-0 flex-1">
+                <div class="text-xs font-semibold text-slate-800 leading-tight truncate" :title="p.title">{{ p.title }}</div>
+                <div v-if="p.detail" class="text-[10px] text-slate-400 leading-snug truncate" :title="p.detail">{{ p.detail }}</div>
+                <div class="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400 leading-tight">
+                  <span class="font-medium">{{ p.agentCount }} agent<span v-if="p.agentCount !== 1">s</span></span>
+                  <template v-if="p.tokens">
+                    <span class="text-slate-300">·</span>
+                    <span class="tabular-nums" title="total output tokens across this phase's agents">{{ fmtTokens(p.tokens) }}</span>
+                  </template>
+                </div>
+              </div>
             </div>
           </div>
-          <div
-            v-for="a in p.agents"
-            :key="a.spanId"
-            class="ml-3 cursor-pointer rounded px-2 py-0.5 hover:bg-slate-50 flex items-baseline gap-1.5 text-[11px]"
-            @click="selectWorkflowRow(a.spanId)"
-          >
-            <span class="inline-block w-1 h-1 rounded-full shrink-0" :class="a.state === 'done' ? 'bg-green-500' : 'bg-blue-400'"></span>
-            <span class="truncate text-slate-600">{{ a.label }}</span>
-            <span v-if="a.tokens" class="ml-auto text-[10px] text-slate-400 tabular-nums shrink-0">{{ a.tokens }}</span>
+          <!-- Agents under this phase (connector rail on the left) -->
+          <div class="mt-1 ml-2.5 pl-2.5 border-l border-slate-200 space-y-0.5">
+            <div
+              v-for="a in p.agents"
+              :key="a.spanId"
+              class="cursor-pointer rounded px-1.5 py-1 transition-colors hover:bg-slate-50"
+              :class="selectedSpan && selectedSpan.span_id === a.spanId ? 'bg-blue-50 ring-1 ring-blue-200' : ''"
+              @click="selectWorkflowRow(a.spanId)"
+            >
+              <div class="flex items-center gap-1.5 text-[11px] leading-tight">
+                <span
+                  class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                  :class="a.state === 'done' ? 'bg-green-500' : 'bg-blue-400 animate-pulse'"
+                  :title="a.state || 'running'"
+                ></span>
+                <span class="truncate font-medium text-slate-700">{{ a.label }}</span>
+              </div>
+              <div
+                v-if="a.model || a.tokens || a.toolCalls"
+                class="ml-3 mt-0.5 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[10px] text-slate-400 leading-tight"
+              >
+                <span
+                  v-if="a.model"
+                  class="inline-flex items-center rounded bg-slate-100 text-slate-500 px-1 font-medium"
+                  :title="a.model"
+                >{{ fmtModel(a.model) }}</span>
+                <span v-if="a.tokens" class="tabular-nums" title="output tokens">{{ fmtTokens(a.tokens) }}</span>
+                <template v-if="a.toolCalls">
+                  <span class="text-slate-300">·</span>
+                  <span class="tabular-nums">{{ a.toolCalls }} tool<span v-if="a.toolCalls !== 1">s</span></span>
+                </template>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1311,10 +1350,21 @@ function onRowClick(span) {
                 >
                   <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="toolRowDotClass(span)"></span>
                   <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
+                  <!-- Label: normal subagents read `subagent: <type> · <desc>`.
+                       Workflow agents have no agent_type (the default workflow
+                       subagent), so the `subagent:` prefix would render bare —
+                       show just the agent's label instead. -->
                   <span class="break-all flex-1 min-w-0 whitespace-pre-line font-medium text-slate-700">
-                    {{ fullLabel(span) }}<template v-if="agentDescription(span)"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ agentDescription(span) }}</span></template>
+                    <template v-if="span.attributes?.agent_type">{{ fullLabel(span) }}<template v-if="agentDescription(span)"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ agentDescription(span) }}</span></template></template>
+                    <template v-else>{{ agentDescription(span) || 'agent' }}</template>
                   </span>
-                  <span v-if="span.attributes?.tokens" class="font-mono text-[11px] text-slate-400 shrink-0">{{ span.attributes.tokens }} tok</span>
+                  <span
+                    v-if="span.attributes?.model"
+                    class="font-mono text-[10px] text-slate-500 bg-slate-100 border border-slate-200 px-1 rounded shrink-0"
+                    :title="span.attributes.model"
+                  >{{ fmtModel(span.attributes.model) }}</span>
+                  <span v-if="span.attributes?.tool_calls" class="font-mono text-[11px] text-slate-400 shrink-0">{{ span.attributes.tool_calls }} tool<span v-if="span.attributes.tool_calls !== 1">s</span></span>
+                  <span v-if="span.attributes?.tokens" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtTokens(span.attributes.tokens) }} tok</span>
                   <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
                 </div>
                 <!-- Task prompt card (collapsed by default) -->

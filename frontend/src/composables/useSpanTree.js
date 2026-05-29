@@ -250,13 +250,22 @@ export function useSpanTree(spansInput, turnsInput = null) {
       idx,
       phaseSpanId: b.phase?.span_id || `wf-live-${idx}`,
       title: b.phase?.attributes?.title || 'Agents',
+      detail: b.phase?.attributes?.detail || '',
       index: b.phase?.attributes?.index ?? (idx + 1),
       agentCount: b.agents.length,
+      // Phase token total = sum of its agents' output tokens. Null (not 0)
+      // for live/in-progress bands where no agent has reported tokens yet,
+      // so the rail can hide the chip instead of showing a bare "0".
+      tokens: b.agents.reduce((s, a) => s + (a.attributes?.tokens || 0), 0) || null,
       agents: b.agents.map((a) => ({
         spanId: a.span_id,
         label: a.attributes?.label || a.attributes?.agent_type
           || (a.attributes?.agent_id || '').slice(0, 8) || 'agent',
         type: a.attributes?.agent_type || '',
+        // Full model id (e.g. claude-opus-4-8[1m]); the rail shortens it
+        // for display via fmtModel and keeps the full id in a tooltip.
+        // Null on live runs, which don't capture per-agent model yet.
+        model: a.attributes?.model ?? null,
         tokens: a.attributes?.tokens ?? null,
         toolCalls: a.attributes?.tool_calls ?? null,
         state: a.attributes?.state || '',

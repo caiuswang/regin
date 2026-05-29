@@ -77,6 +77,18 @@ export function fmtTokens(n) {
   return String(n)
 }
 
+// Shorten a full model id to a scannable family + version label:
+//   claude-opus-4-8[1m] -> opus 4.8   ·   claude-haiku-4-5 -> haiku 4.5
+// The `[1m]`-style context-window suffix is dropped from the chip (keep
+// the full id in a title tooltip at the call site). Falls back to a
+// `claude-` / `[...]`-stripped form for any shape we don't recognise.
+export function fmtModel(model) {
+  if (!model) return ''
+  const m = String(model).match(/(opus|sonnet|haiku)-(\d+)-(\d+)/i)
+  if (m) return `${m[1].toLowerCase()} ${m[2]}.${m[3]}`
+  return String(model).replace(/^claude-/, '').replace(/\[.*\]$/, '')
+}
+
 export function fmtBytes(n) {
   if (!n) return ''
   if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1).replace(/\.0$/, '') + ' MB'
