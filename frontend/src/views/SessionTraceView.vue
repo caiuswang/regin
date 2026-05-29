@@ -1798,15 +1798,19 @@ async function fetchWorkflowRuns() {
 // Color buckets are coarse on purpose: FS for file ops, SH for shell,
 // AGT for subagent/skill/orchestration calls, BG for background-task
 // dispatch, AI for assistant prose, MCP for plugin tools.
-const _TOOL_BADGE_FS = { label: 'FS', classes: 'bg-amber-100 text-amber-800' }
-const _TOOL_BADGE_SH = { label: 'SH', classes: 'bg-slate-200 text-slate-700' }
-const _TOOL_BADGE_AGT = { label: 'AGT', classes: 'bg-pink-100 text-pink-800' }
-const _TOOL_BADGE_BG = { label: 'BG', classes: 'bg-orange-100 text-orange-800' }
-const _TOOL_BADGE_NET = { label: 'NET', classes: 'bg-purple-100 text-purple-800' }
-const _TOOL_BADGE_MCP = { label: 'MCP', classes: 'bg-cyan-100 text-cyan-800' }
-const _TOOL_BADGE_AI = { label: 'AI', classes: 'bg-emerald-100 text-emerald-800' }
-const _TOOL_BADGE_TH = { label: 'TH', classes: 'bg-amber-200 text-amber-900' }
-const _TOOL_BADGE_SYS = { label: 'SYS', classes: 'bg-slate-100 text-slate-600' }
+// Each badge doubles as a group definition for the grouped rollup view:
+// `group` is the human-readable cluster name, `order` is the tiebreak
+// when two groups have equal token totals (groups otherwise sort by
+// total tokens desc).
+const _TOOL_BADGE_FS = { label: 'FS', classes: 'bg-amber-100 text-amber-800', group: 'Read / write', order: 1 }
+const _TOOL_BADGE_SH = { label: 'SH', classes: 'bg-slate-200 text-slate-700', group: 'Shell', order: 2 }
+const _TOOL_BADGE_AGT = { label: 'AGT', classes: 'bg-pink-100 text-pink-800', group: 'Agents & skills', order: 3 }
+const _TOOL_BADGE_BG = { label: 'BG', classes: 'bg-orange-100 text-orange-800', group: 'Background tasks', order: 4 }
+const _TOOL_BADGE_NET = { label: 'NET', classes: 'bg-purple-100 text-purple-800', group: 'Network', order: 5 }
+const _TOOL_BADGE_MCP = { label: 'MCP', classes: 'bg-cyan-100 text-cyan-800', group: 'MCP tools', order: 6 }
+const _TOOL_BADGE_AI = { label: 'AI', classes: 'bg-emerald-100 text-emerald-800', group: 'Model output', order: 7 }
+const _TOOL_BADGE_TH = { label: 'TH', classes: 'bg-amber-200 text-amber-900', group: 'Thinking', order: 8 }
+const _TOOL_BADGE_SYS = { label: 'SYS', classes: 'bg-slate-100 text-slate-600', group: 'System', order: 9 }
 
 function toolBadge(fullName) {
   if (!fullName) return _TOOL_BADGE_SYS
@@ -1852,6 +1856,53 @@ const toolTokenRollup = computed(() => {
       n: t.calls || 0,
     }
   })
+})
+
+// Two ways to organize the rollup: 'groups' clusters tools by their
+// badge bucket with a per-group token subtotal; 'tokens' is a flat list
+// sorted by token spend. Default to the token-sorted flat list.
+const rollupView = ref('tokens')
+
+// The rollup collapses to a one-line summary by default so it doesn't
+// compete with the header usage chips and timeline; expand to reveal the
+// view toggle and per-tool chips.
+const rollupExpanded = ref(false)
+
+const _toolTokens = (t) => (t.input || 0) + (t.output || 0)
+
+// Flat list sorted by total tokens desc (the 'tokens' view).
+const toolTokenSorted = computed(() =>
+  [...toolTokenRollup.value].sort((a, b) => _toolTokens(b) - _toolTokens(a))
+)
+
+// Tools clustered by badge bucket (the 'groups' view). Each group carries
+// a token/cost/call subtotal. Groups sort by total tokens desc (badge
+// `order` breaks ties); tools within a group sort by tokens desc.
+const toolTokenGroups = computed(() => {
+  const byKey = new Map()
+  for (const tool of toolTokenRollup.value) {
+    const badge = tool.badge
+    let g = byKey.get(badge.label)
+    if (!g) {
+      g = { key: badge.label, label: badge.group, badge,
+            order: badge.order, tools: [], input: 0, output: 0, cost: 0, n: 0 }
+      byKey.set(badge.label, g)
+    }
+    g.tools.push(tool)
+    g.input += tool.input
+    g.output += tool.output
+    g.cost += tool.cost
+    g.n += tool.n
+  }
+  const groups = [...byKey.values()]
+  for (const g of groups) {
+    g.tools.sort((a, b) => _toolTokens(b) - _toolTokens(a))
+  }
+  groups.sort((a, b) => {
+    const diff = (b.input + b.output) - (a.input + a.output)
+    return diff !== 0 ? diff : a.order - b.order
+  })
+  return groups
 })
 
 const toolRollupSummary = computed(() => {
@@ -2142,17 +2193,86 @@ const toolRollupSummary = computed(() => {
       v-if="toolRollupSummary.hasData"
       class="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs"
     >
-      <div class="flex items-center gap-2 mb-1.5">
-        <span class="font-medium text-slate-700">Tokens by tool</span>
-        <span
-          v-if="toolRollupSummary.attributedCost > 0"
-          class="font-mono text-slate-500"
-          :title="'cost computed from session model rates via models.dev'"
-        >· {{ fmtCost(toolRollupSummary.attributedCost) }} attributed</span>
+      <div class="flex items-center gap-2" :class="rollupExpanded ? 'mb-1.5' : ''">
+        <button
+          type="button"
+          class="flex items-center gap-2 -mx-1 px-1 rounded transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          :aria-expanded="rollupExpanded"
+          @click="rollupExpanded = !rollupExpanded"
+        >
+          <svg
+            class="w-3 h-3 text-slate-400 transition-transform"
+            :class="rollupExpanded ? 'rotate-90' : ''"
+            viewBox="0 0 12 12" fill="none" aria-hidden="true"
+          >
+            <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="font-medium text-slate-700">Tokens by tool</span>
+          <span
+            v-if="toolRollupSummary.attributedCost > 0"
+            class="font-mono text-slate-500"
+            :title="'cost computed from session model rates via models.dev'"
+          >· {{ fmtCost(toolRollupSummary.attributedCost) }} attributed</span>
+          <span class="font-mono text-slate-400">· {{ toolTokenRollup.length }} tools</span>
+        </button>
+        <div
+          v-if="rollupExpanded"
+          class="ml-auto inline-flex rounded-md border border-slate-200 overflow-hidden text-[10px] font-medium"
+        >
+          <button
+            type="button"
+            class="px-2 py-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-inset"
+            :class="rollupView === 'groups' ? 'bg-slate-700 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'"
+            @click="rollupView = 'groups'"
+          >Groups</button>
+          <button
+            type="button"
+            class="px-2 py-0.5 transition-colors border-l border-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-inset"
+            :class="rollupView === 'tokens' ? 'bg-slate-700 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'"
+            @click="rollupView = 'tokens'"
+          >By tokens</button>
+        </div>
       </div>
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
+
+      <!-- Grouped view: one row per badge bucket, leading label carries the
+           group subtotal, followed by the per-tool chips. -->
+      <div v-if="rollupExpanded && rollupView === 'groups'" class="flex flex-col gap-1">
+        <div
+          v-for="g in toolTokenGroups"
+          :key="g.key"
+          class="flex items-start gap-x-3 font-mono text-[11px]"
+        >
+          <span
+            class="inline-flex items-center gap-1.5 shrink-0 w-[164px]"
+            :title="g.n + ' call(s) · in ' + g.input + ' · out ' + g.output + (g.cost ? ' · ' + fmtCost(g.cost) : '')"
+          >
+            <span
+              class="inline-block text-[9px] font-semibold uppercase tracking-wider px-1 py-px rounded"
+              :class="g.badge.classes"
+            >{{ g.badge.label }}</span>
+            <span class="font-sans text-slate-600">{{ g.label }}</span>
+            <span class="text-slate-500 font-semibold">{{ fmtTokens(g.input + g.output) }}</span>
+          </span>
+          <!-- Chips wrap within their own column so the second line indents
+               under the first chip instead of the group gutter. -->
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+            <span
+              v-for="tool in g.tools"
+              :key="tool.fullName"
+              class="inline-flex items-center gap-1"
+              :title="tool.fullName + ' — ' + tool.n + ' call(s) · in ' + tool.input + ' · out ' + tool.output + (tool.cost ? ' · ' + fmtCost(tool.cost) : '')"
+            >
+              <span class="text-slate-600">{{ tool.name }}</span>
+              <span class="text-slate-400">{{ fmtTokens(tool.input + tool.output) }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Flat view: every tool sorted by token spend, badge-prefixed. -->
+      <div v-else-if="rollupExpanded" class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
         <span
-          v-for="tool in toolTokenRollup"
+          v-for="tool in toolTokenSorted"
           :key="tool.fullName"
           class="inline-flex items-center gap-1"
           :title="tool.fullName + ' — ' + tool.n + ' call(s) · in ' + tool.input + ' · out ' + tool.output + (tool.cost ? ' · ' + fmtCost(tool.cost) : '')"
@@ -2164,8 +2284,14 @@ const toolRollupSummary = computed(() => {
           <span class="text-slate-600">{{ tool.name }}</span>
           <span class="text-slate-400">{{ fmtTokens(tool.input + tool.output) }}</span>
         </span>
+      </div>
+
+      <!-- Untagged remainder: shown in both views as a trailing note. -->
+      <div
+        v-if="rollupExpanded && toolRollupSummary.untaggedIn + toolRollupSummary.untaggedOut > 0"
+        class="mt-1.5 pt-1.5 border-t border-slate-100 font-mono text-[11px]"
+      >
         <span
-          v-if="toolRollupSummary.untaggedIn + toolRollupSummary.untaggedOut > 0"
           class="inline-flex items-center gap-1"
           :title="'in: ' + toolRollupSummary.untaggedIn + ' · out: ' + toolRollupSummary.untaggedOut + ' — system prompt, conversation history, untracked prose'"
         >
