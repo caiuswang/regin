@@ -2009,6 +2009,14 @@ const toolRollupSummary = computed(() => {
               :title="`peak with advisor/sub-call tokens rolled in: ${session.peak_context_tokens} / ${session.context_window_tokens}`"
             >+sub {{ session.context_pct_all }}%</span>
           </template>
+          <!-- Cache: read = context replayed each turn (the bulk of the API
+               bill), write = cache creation. Not attributable per-tool, so
+               it lives here rather than in the Tokens-by-tool rollup. -->
+          <span
+            v-if="session.cache_read_tokens || session.cache_creation_tokens"
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-500 text-[11px] font-medium ml-1"
+            :title="`cache read (context replayed each turn): ${(session.cache_read_tokens || 0).toLocaleString()} tokens\ncache write (cache creation): ${(session.cache_creation_tokens || 0).toLocaleString()} tokens\n\nCache is a per-request cost, not attributable to a single tool — so it isn't in 'Tokens by tool', but it dominates the full session bill.`"
+          >cache <span class="opacity-75 font-mono">{{ fmtTokens(session.cache_read_tokens) }} r · {{ fmtTokens(session.cache_creation_tokens) }} w</span></span>
           <!-- Workflow runs have no single context window (no ctx% chip), so
                surface the run's authoritative grand total (manifest
                totalTokens — input + cache + output across all agents). -->
