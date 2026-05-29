@@ -170,22 +170,151 @@ def _preview(value: object) -> str | None:
     return text[:_PREVIEW_MAX]
 
 
-def _parse_script_meta(script_path: Path | None) -> tuple[str | None, str | None]:
-    """Best-effort ``name`` / ``description`` from a run's persisted script.
+# meta-extraction cache, keyed by (path, mtime_ns, size) so repeated live
+# re-ingests of the same run don't re-parse the script. Bounded by the number
+# of distinct workflow scripts seen in a process — small.
+_META_CACHE: dict[tuple, dict] = {}
 
-    The script is written at run start, so it gives a non-blank title for
-    a live run before the manifest (which carries ``summary``) exists.
+# Lazily-built (parser, compiled meta query); see `_load_script_meta`.
+_TS = None
+
+# Matches `const meta = { ... }`: the `#eq?` predicate isolates the `meta`
+# declarator (not a `metadata` decoy or another object-valued const), so the
+# query returns the object node directly — no manual tree walk.
+_META_QUERY = (
+    "(variable_declarator name: (identifier) @name value: (object) @obj "
+    "(#eq? @name \"meta\"))"
+)
+
+
+def _ts():
+    """The shared (parser, compiled meta query), built on first use. Raises
+    ImportError if the grammar isn't installed — `_load_script_meta` degrades
+    to {}."""
+    global _TS
+    if _TS is None:
+        import tree_sitter as ts
+        import tree_sitter_javascript as tsjs
+        lang = ts.Language(tsjs.language())
+        _TS = (ts.Parser(lang), ts.Query(lang, _META_QUERY))
+    return _TS
+
+
+def _ts_text(node, src: bytes) -> str:
+    return src[node.start_byte:node.end_byte].decode("utf-8", "replace")
+
+
+def _ts_string(node, src: bytes) -> str:
+    """A string / template-literal value: literal fragments concatenated with
+    decoded escape sequences. The grammar exposes each escape as its own node,
+    so there's no hand-rolled un-escaping; non-ASCII literal text decodes as
+    UTF-8 while only the ASCII escape nodes go through ``unicode_escape``."""
+    parts: list[str] = []
+    for ch in node.named_children:
+        if ch.type == "escape_sequence":
+            parts.append(_ts_text(ch, src).encode().decode("unicode_escape"))
+        elif ch.type == "string_fragment":
+            parts.append(_ts_text(ch, src))
+    return "".join(parts)
+
+
+def _ts_number(node, src: bytes):
+    s = _ts_text(node, src)
+    return float(s) if ("." in s or "e" in s.lower()) else int(s)
+
+
+def _ts_array(node, src: bytes) -> list:
+    return [_ts_value(ch, src) for ch in node.named_children if ch.type != "comment"]
+
+
+def _ts_object(node, src: bytes) -> dict:
+    out: dict = {}
+    for ch in node.named_children:
+        if ch.type != "pair":
+            continue
+        key, val = ch.child_by_field_name("key"), ch.child_by_field_name("value")
+        if key is None or val is None:
+            continue
+        name = _ts_string(key, src) if key.type == "string" else _ts_text(key, src)
+        out[name] = _ts_value(val, src)
+    return out
+
+
+# Literal node.type -> handler(node, src); anything unrecognised falls back to
+# its raw source text. Defined after the handlers it references.
+_TS_HANDLERS = {
+    "object": _ts_object, "array": _ts_array,
+    "string": _ts_string, "template_string": _ts_string, "number": _ts_number,
+    "true": lambda n, s: True, "false": lambda n, s: False,
+    "null": lambda n, s: None, "undefined": lambda n, s: None,
+}
+
+
+def _ts_value(node, src: bytes):
+    """Convert a pure-literal JS value node to its Python value."""
+    if node.type == "unary_expression":   # e.g. a negative number `-1`
+        inner = _ts_value(node.named_children[0], src)
+        return -inner if _ts_text(node, src).lstrip().startswith("-") else inner
+    handler = _TS_HANDLERS.get(node.type)
+    return handler(node, src) if handler else _ts_text(node, src)
+
+
+def _find_meta_object(root, query):
+    """The ``const meta = {...}`` object node, located by the tree-sitter
+    ``query`` (with its ``#eq?`` predicate) — no manual tree walk. A real
+    query, so a comment, a ``metadata`` decoy, or braces in strings can't
+    match it the way a regex / hand-rolled scan could."""
+    import tree_sitter as ts
+    objs = ts.QueryCursor(query).captures(root).get("obj", [])
+    return objs[0] if objs else None
+
+
+def _load_script_meta(script_path: Path | None) -> dict:
+    """The run's ``meta`` object (``name``/``description``/``phases``…) read
+    from its persisted script — the only source of meta before the completion
+    manifest exists, so a live run can show its name + declared phase plan.
+
+    Parsed with tree-sitter (a real JS grammar — no regex and no code
+    execution). Cached per (path, mtime, size); ``{}`` on any failure (incl. a
+    missing tree-sitter install) so a weird script never breaks ingest.
     """
     if script_path is None or not script_path.exists():
-        return None, None
+        return {}
     try:
-        head = script_path.read_text(encoding="utf-8")[:2000]
+        st = script_path.stat()
+        src = script_path.read_bytes()
     except OSError:
-        return None, None
-    name = re.search(r"name:\s*['\"]([^'\"]+)['\"]", head)
-    desc = re.search(r"description:\s*['\"]([^'\"]+)['\"]", head)
-    return (name.group(1) if name else None,
-            desc.group(1) if desc else None)
+        return {}
+    key = (str(script_path), st.st_mtime_ns, st.st_size)
+    if key in _META_CACHE:
+        return _META_CACHE[key]
+    try:
+        parser, query = _ts()
+        obj = _find_meta_object(parser.parse(src).root_node, query)
+        meta = _ts_object(obj, src) if obj is not None else {}
+    except ImportError:
+        meta = {}
+    _META_CACHE[key] = meta
+    return meta
+
+
+def _parse_script_meta(script_path: Path | None) -> tuple[str | None, str | None]:
+    """``(name, description)`` from a run's script meta (cached node eval)."""
+    meta = _load_script_meta(script_path)
+    return meta.get("name"), meta.get("description")
+
+
+def _parse_script_phases(script_path: Path | None) -> list[dict]:
+    """Declared ``meta.phases`` (title + detail, in order) from a run's script.
+
+    The only phase info available before the completion manifest exists (which
+    carries the real per-agent ``phaseIndex``), so a live run can surface its
+    declared phase *plan*. Reuses the cached `_load_script_meta`.
+    """
+    meta = _load_script_meta(script_path)
+    return [{"title": p.get("title"), "detail": p.get("detail")}
+            for p in (meta.get("phases") or [])
+            if isinstance(p, dict) and p.get("title")]
 
 
 def _parent_trace_id(agents_dir: Path) -> str | None:
@@ -675,6 +804,10 @@ def build_flat_spans(run_ref: RunRef, *, is_test: bool = False) -> list[dict]:
                "workflow_status": "running",
                "parent_trace_id": run_ref.session_dir.name,
                "cwd": _first_agent_value(run_ref.agents_dir, started, "cwd"),
+               # Declared phase plan from the script (no per-agent mapping yet —
+               # that arrives with the completion manifest); the rail shows it
+               # as a read-only plan above the running agents.
+               "phase_plan": _parse_script_phases(run_ref.script_path),
                "agent_count": len(started)},
         is_test=is_test)
     for agent_id in started:

@@ -78,6 +78,7 @@ const { maxH: turnsMaxH } = useStickyMaxHeight(turnsAsideEl)
 const {
   spanById, rootSpans, childrenOf, flattenDescendants,
   entries, promptGroups, turnItems, isWorkflow, phaseItems,
+  hasPhaseSpans, phasePlan,
 } = useSpanTree(() => props.spans, () => props.turns)
 
 // ── Subagent launch merge ─────────────────────────────────────
@@ -505,7 +506,7 @@ function onRowClick(span) {
     >
       <div class="flex items-baseline justify-between mb-2 shrink-0">
         <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
-        <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? phaseItems.length : turnItems.length }}</span>
+        <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
       </div>
       <!-- Workflow phase TOC: each phase is a titled section (number badge,
            title, detail subtitle, "N agents · tokens" meta) with its agents
@@ -517,9 +518,37 @@ function onRowClick(span) {
         ref="tocScrollEl"
         class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3 [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
       >
+        <!-- Declared phase plan (live runs only): the manifest with real
+             per-agent phaseIndex isn't written until completion, so while the
+             run is in progress we surface the script's planned phases here and
+             list the running agents under a "Running" band below. -->
+        <div
+          v-if="!hasPhaseSpans && phasePlan.length"
+          class="rounded-md border border-dashed border-slate-200 bg-slate-50/60 px-2 py-1.5"
+        >
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">Planned phases</div>
+          <div class="space-y-1">
+            <div v-for="(ph, i) in phasePlan" :key="i" class="flex items-start gap-1.5">
+              <span class="mt-px inline-flex items-center justify-center shrink-0 w-4 h-4 rounded bg-slate-200 text-slate-500 text-[10px] font-bold tabular-nums">{{ i + 1 }}</span>
+              <div class="min-w-0 flex-1">
+                <div class="text-[11px] font-medium text-slate-500 leading-tight truncate" :title="ph.detail || ph.title">{{ ph.title }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="text-[10px] text-slate-400 italic mt-1">agents grouped by phase on completion</div>
+        </div>
         <div v-for="p in phaseItems" :key="p.phaseSpanId">
-          <!-- Phase header -->
+          <!-- Running band header (live: agents not yet phase-mapped) -->
+          <div v-if="p.running" class="px-1.5 py-1">
+            <div class="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0"></span>
+              <span>Running</span>
+              <span class="ml-auto normal-case tracking-normal tabular-nums">{{ p.agentCount }} agent<span v-if="p.agentCount !== 1">s</span></span>
+            </div>
+          </div>
+          <!-- Phase header (completed runs: real phases) -->
           <div
+            v-else
             class="cursor-pointer rounded-md px-1.5 py-1 transition-colors hover:bg-emerald-50/70"
             :class="selectedSpan && selectedSpan.span_id === p.phaseSpanId ? 'bg-emerald-50 ring-1 ring-emerald-200' : ''"
             @click="selectWorkflowRow(p.phaseSpanId)"

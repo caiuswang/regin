@@ -272,6 +272,11 @@ export function useSpanTree(spansInput, turnsInput = null) {
       : (rootId ? [{ phase: null, agents: childrenOf(rootId).filter((s) => s.name === 'subagent.start') }] : [])
     return bands.map((b, idx) => ({
       idx,
+      // The `phase === null` band is the live/in-progress one: its agents
+      // aren't phase-mapped yet (the manifest with phaseIndex only lands at
+      // completion), so the rail renders it as a plain "Running" group rather
+      // than a numbered phase.
+      running: b.phase === null,
       phaseSpanId: b.phase?.span_id || `wf-live-${idx}`,
       title: b.phase?.attributes?.title || 'Agents',
       detail: b.phase?.attributes?.detail || '',
@@ -297,10 +302,21 @@ export function useSpanTree(spansInput, turnsInput = null) {
     }))
   })
 
+  // True once the run has real `workflow.phase` spans (built from the
+  // completion manifest). False for a live run — where the rail instead shows
+  // the declared `phasePlan` below.
+  const hasPhaseSpans = computed(() => _orderedPhases().length > 0)
+
+  // The declared phase plan (title + detail, ordered) parsed from the workflow
+  // script at ingest and stamped on the live run root. Available before the
+  // completion manifest exists, so the rail can preview the planned phases
+  // while agents are still running (they can't be phase-mapped live).
+  const phasePlan = computed(() => workflowRoot.value?.attributes?.phase_plan || [])
+
   return {
     spanById, childrenByParent, rootSpans,
     childrenOf, flattenDescendants,
     entries, promptGroups, turnItems,
-    isWorkflow, phaseItems,
+    isWorkflow, phaseItems, hasPhaseSpans, phasePlan,
   }
 }

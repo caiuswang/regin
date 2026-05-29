@@ -18,10 +18,20 @@ RUN_ID = "wf_testrun01"
 
 # The run's persisted script. Byte-identical to the parent Workflow tool
 # call's `input.script` — that exact-match is how `_stamp_parent_link`
-# ties a run back to the tool call that launched it.
+# ties a run back to the tool call that launched it. The `phases` carry
+# deliberately adversarial detail strings (a `]`/`{` inside a value, a
+# comment with braces, mixed quotes, a trailing comma) so the meta parser is
+# exercised on exactly the syntax a regex would mangle.
 _SCRIPT_BODY = (
-    "export const meta = { name: 'synthetic-wf', "
-    "description: 'synthetic workflow for tests' }\n"
+    "export const meta = {\n"
+    "  name: 'synthetic-wf',\n"
+    "  description: 'synthetic workflow for tests',\n"
+    "  // a comment with } and ] must not fool the brace scanner\n"
+    "  phases: [\n"
+    "    { title: 'Map', detail: 'scan arrays [0] and {braces}' },\n"
+    "    { title: 'Reduce', detail: \"merge, then done\", },\n"
+    "  ],\n"
+    "}\n"
 )
 
 # A minimal agent transcript in the Claude Code shape `read_usage` parses:
@@ -148,6 +158,7 @@ def test_build_flat_spans_is_phaseless(tmp_path):
     root = by["session.start"][0]
     assert root["attributes"]["agent_type"] == "workflow"
     assert root["attributes"]["workflow_status"] == "running"
+    # prompt text is the script `description`, parsed from meta via tree-sitter
     assert by["prompt"][0]["attributes"]["text"] == "synthetic workflow for tests"
     # agents hang directly off the run root while live
     assert _parent_ids(by["subagent.start"]) == {root["span_id"]}
@@ -379,3 +390,66 @@ def test_stamp_parent_link_cross_links_run_and_tool_span(tmp_path):
         assert _row_attrs(conn, RUN_ID, "name='session.start'")["parent_span_id"] == "parentspan01"
     finally:
         conn.close()
+
+
+# ── Script meta parsing (tree-sitter AST, not regex / not eval) ─────────────
+
+def _write_script(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "wf.js"
+    p.write_text(body)
+    return p
+
+
+def test_parse_script_meta_and_phases_from_ast(tmp_path):
+    """name/description/phases come from a real JS parse of the `meta` literal,
+    so they survive syntax a regex mangles: `]`/`{` inside a detail string, a
+    comment containing braces, mixed single/double quotes, and a trailing
+    comma (all present in `_SCRIPT_BODY`)."""
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=False))[0]
+    assert W._parse_script_meta(ref.script_path) == (
+        "synthetic-wf", "synthetic workflow for tests")
+    assert W._parse_script_phases(ref.script_path) == [
+        {"title": "Map", "detail": "scan arrays [0] and {braces}"},
+        {"title": "Reduce", "detail": "merge, then done"},
+    ]
+
+
+def test_build_flat_spans_stamps_phase_plan(tmp_path):
+    """A live run (no manifest) carries the declared phase plan on its root, so
+    the rail can preview phases before completion maps agents to them."""
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=False))[0]
+    root = _by_name(W.build_flat_spans(ref, is_test=True))["session.start"][0]
+    assert [p["title"] for p in root["attributes"]["phase_plan"]] == ["Map", "Reduce"]
+
+
+def test_meta_handles_backticks_and_braces(tmp_path):
+    """The AST walk handles a template (backtick) string with an escape, and
+    braces/brackets inside values — cases a regex or a JSON parser would miss."""
+    meta = W._load_script_meta(_write_script(tmp_path,
+        "export const meta = {\n"
+        "  name: `multi\\nline`,\n"
+        "  phases: [{ title: 'P', detail: 'a } and ] here' }],\n"
+        "}\n"))
+    assert meta["name"] == "multi\nline"
+    assert meta["phases"][0]["detail"] == "a } and ] here"
+
+
+def test_meta_skips_comment_and_decoy_identifier(tmp_path):
+    """The query's `#eq?` predicate isolates the real `meta`: a leading comment
+    (with braces/brackets), a `metadata` decoy identifier, and another
+    object-valued const are all ignored."""
+    meta = W._load_script_meta(_write_script(tmp_path,
+        "/* header: metadata, a { and a ] inside */\n"
+        "const metadata = 1\n"
+        "const other = { name: 'WRONG', phases: ['x'] }\n"
+        "export const meta = { name: 'real', phases: [] }\n"
+        "await agent('x')\n"))
+    assert meta == {"name": "real", "phases": []}
+
+
+def test_meta_graceful_fallback(tmp_path):
+    """The loader degrades to {} for a None/missing script and for a script
+    with no `meta` declaration — so a weird script never breaks ingest."""
+    assert W._load_script_meta(None) == {}
+    assert W._load_script_meta(tmp_path / "nope.js") == {}
+    assert W._load_script_meta(_write_script(tmp_path, "const y = 1\n")) == {}
