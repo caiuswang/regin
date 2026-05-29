@@ -221,6 +221,21 @@ def test_full_spans_enrich_tool_args_prompt_result(tmp_path):
     assert agents["aAAA"]["attributes"]["result_full"] == '{"ok":true}'
 
 
+def test_agent_tool_count_uses_captured_spans_not_manifest(tmp_path):
+    """The agent header's `tool_calls` counts the captured `tool.*` spans (what
+    the conversation renders), not the manifest's `toolCalls` — which
+    undercounts server-side tools like advisor. aBBB's manifest `toolCalls` is
+    0, but its transcript makes one Bash call, so the deep span must report 1;
+    with deep=False (no turn spans built) it falls back to the manifest's 0."""
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=True))[0]
+    manifest = W._read_json(ref.manifest_path)
+    deep = _agents_by_id(W.build_full_spans(manifest, ref.agents_dir, deep=True, is_test=True))
+    assert deep["aAAA"]["attributes"]["tool_calls"] == 1
+    assert deep["aBBB"]["attributes"]["tool_calls"] == 1      # manifest said 0
+    flat = _agents_by_id(W.build_full_spans(manifest, ref.agents_dir, deep=False, is_test=True))
+    assert flat["aBBB"]["attributes"]["tool_calls"] == 0      # fallback to manifest
+
+
 _THINK_AGENT = "\n".join(json.dumps(e) for e in [
     {"type": "user", "uuid": "u1", "timestamp": "2026-01-01T00:00:00Z",
      "cwd": "/tmp/repo", "message": {"role": "user", "content": "do X"}},

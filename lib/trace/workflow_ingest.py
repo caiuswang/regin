@@ -716,6 +716,18 @@ def _result_text(result: object) -> str | None:
         return str(result)
 
 
+def _agent_tool_count(turn_spans: list[dict], deep: bool, agent_id, fallback):
+    """The agent header's tool-call count. When the deep tree was built, count
+    the ``tool.*`` spans actually captured (and rendered) — this includes
+    server-side tools like advisor and excludes the skipped StructuredOutput,
+    so the header matches the rendered rows. The manifest's ``toolCalls``
+    undercounts server-side tools, so it's only the fallback when no deep spans
+    were built."""
+    if not (deep and agent_id):
+        return fallback
+    return sum(1 for s in turn_spans if s["name"].startswith("tool."))
+
+
 def _full_agent_spans(run_id: str, root_id: str, phase_ids: dict[int, str],
                       agent: dict, agents_dir: Path, results: dict, deep: bool,
                       is_test: bool) -> list[dict]:
@@ -733,6 +745,9 @@ def _full_agent_spans(run_id: str, root_id: str, phase_ids: dict[int, str],
     full_prompt = (_agent_full_prompt(agents_dir, agent_id) if agent_id else None) \
         or agent.get("promptPreview")
     result_full = _result_text(results.get(agent_id)) or agent.get("resultPreview")
+    turn_spans = _agent_turn_spans(run_id, span_id, agent_id, agents_dir, is_test) \
+        if (deep and agent_id) else []
+    tool_calls = _agent_tool_count(turn_spans, deep, agent_id, agent.get("toolCalls"))
     spans = [_span(
         run_id, span_id, "subagent.start", parent_id=parent,
         start_time=_iso(started), end_time=_iso(started + dur) if started else None,
@@ -744,10 +759,9 @@ def _full_agent_spans(run_id: str, root_id: str, phase_ids: dict[int, str],
                "prompt": full_prompt,
                "result_full": result_full,
                "result_preview": _preview(result_full),
-               "tokens": agent.get("tokens"), "tool_calls": agent.get("toolCalls")},
+               "tokens": agent.get("tokens"), "tool_calls": tool_calls},
         is_test=is_test)]
-    if deep and agent_id:
-        spans.extend(_agent_turn_spans(run_id, span_id, agent_id, agents_dir, is_test))
+    spans.extend(turn_spans)
     return spans
 
 
