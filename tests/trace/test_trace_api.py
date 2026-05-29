@@ -559,3 +559,25 @@ def test_span_content_404_when_missing(client, trace_db):
     across the ORM migration."""
     resp = client.get('/api/sessions/no-such-trace/spans/no-such-span/content')
     assert resp.status_code == 404
+
+
+def test_workflow_runs_endpoint_lists_launched_runs(client, trace_db):
+    """The session header's `workflows N` chip reads this endpoint: it
+    lists captured runs in call order and excludes Workflow calls not yet
+    linked to a run (no `workflow_run_id`)."""
+    _seed(trace_db, [
+        {'trace_id': 'sess', 'span_id': 's1', 'name': 'tool.Workflow',
+         'start_time': '2026-01-01T00:00:02',
+         'attributes': {'tool_name': 'Workflow',
+                        'workflow_run_id': 'wf_b', 'workflow_name': 'beta'}},
+        {'trace_id': 'sess', 'span_id': 's2', 'name': 'tool.Workflow',
+         'start_time': '2026-01-01T00:00:01',
+         'attributes': {'tool_name': 'Workflow',
+                        'workflow_run_id': 'wf_a', 'workflow_name': 'alpha'}},
+        {'trace_id': 'sess', 'span_id': 's3', 'name': 'tool.Workflow',
+         'start_time': '2026-01-01T00:00:03',
+         'attributes': {'tool_name': 'Workflow'}},  # unstamped -> excluded
+    ])
+    items = client.get('/api/sessions/sess/workflow-runs').get_json()['items']
+    assert items == [{'run_id': 'wf_a', 'name': 'alpha'},
+                     {'run_id': 'wf_b', 'name': 'beta'}]

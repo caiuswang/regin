@@ -38,6 +38,15 @@ function isActive(path) {
       </router-link>
     </div>
 
-    <router-view />
+    <!-- Key the child by path so navigating between two same-route URLs
+         (e.g. session A → session B, or a "view run" / "launched from
+         session" jump) remounts the view and reloads its data — otherwise
+         Vue reuses the instance, onMounted never re-fires, and the URL
+         changes while the content stays stale. Query-only changes (the
+         ?span= deep-link) keep the same path, so they still update in
+         place via SessionTraceView's own query watcher. -->
+    <router-view v-slot="{ Component }">
+      <component :is="Component" :key="$route.path" />
+    </router-view>
   </div>
 </template>

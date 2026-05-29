@@ -682,6 +682,39 @@ def api_span_content(trace_id, span_id):
     })
 
 
+@trace_bp.route('/api/sessions/<trace_id>/workflow-runs')
+def api_session_workflow_runs(trace_id):
+    """Dynamic-workflow runs launched from this session, in call order.
+
+    Each ``tool.Workflow`` call this session made carries a
+    ``workflow_run_id`` (+ ``workflow_name``), stamped at ingest by matching
+    the persisted script to the captured run. Surfaced so the session header
+    can offer a ``workflows N`` pivot chip (mirroring the ``plans`` / ``tasks``
+    chips) that jumps straight to each run's captured trace. Empty for
+    sessions that launched no workflows (and for a run's own session, which
+    has no ``tool.Workflow`` spans).
+    """
+    from sqlmodel import select as _select
+
+    with SessionLocal() as session:
+        rows = session.exec(
+            _select(SessionSpan.attributes)
+            .where(SessionSpan.trace_id == trace_id)
+            .where(SessionSpan.name == 'tool.Workflow')
+            .order_by(SessionSpan.start_time)
+        ).all()
+    runs: list[dict] = []
+    seen: set[str] = set()
+    for attrs_json in rows:
+        attrs = json.loads(attrs_json or '{}')
+        run_id = attrs.get('workflow_run_id')
+        if not run_id or run_id in seen:
+            continue
+        seen.add(run_id)
+        runs.append({'run_id': run_id, 'name': attrs.get('workflow_name')})
+    return jsonify({'trace_id': trace_id, 'items': runs})
+
+
 @trace_bp.route('/api/sessions/<trace_id>/spans/<span_id>/ancestors')
 def api_span_ancestors(trace_id, span_id):
     """Walk parent_id up to the projected root and return the chain.

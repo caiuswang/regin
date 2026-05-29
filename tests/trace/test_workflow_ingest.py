@@ -16,6 +16,14 @@ from lib.trace import workflow_ingest as W
 
 RUN_ID = "wf_testrun01"
 
+# The run's persisted script. Byte-identical to the parent Workflow tool
+# call's `input.script` — that exact-match is how `_stamp_parent_link`
+# ties a run back to the tool call that launched it.
+_SCRIPT_BODY = (
+    "export const meta = { name: 'synthetic-wf', "
+    "description: 'synthetic workflow for tests' }\n"
+)
+
 # A minimal agent transcript in the Claude Code shape `read_usage` parses:
 # two assistant turns (deduped by message.id), the first issuing a Bash
 # tool_use. cwd + timestamp on the first entry feed live start/repo tagging.
@@ -84,9 +92,7 @@ def _make_run(tmp_path: Path, *, with_manifest: bool) -> Path:
             json.dumps({"agentType": "Explore"}))
     scripts = sess / "workflows" / "scripts"
     scripts.mkdir(parents=True)
-    (scripts / f"synthetic-{RUN_ID}.js").write_text(
-        "export const meta = { name: 'synthetic-wf', "
-        "description: 'synthetic workflow for tests' }\n")
+    (scripts / f"synthetic-{RUN_ID}.js").write_text(_SCRIPT_BODY)
     if with_manifest:
         (sess / "workflows" / f"{RUN_ID}.json").write_text(json.dumps(_MANIFEST))
     return projects
@@ -306,5 +312,70 @@ def test_ingest_flat_then_full_is_idempotent(tmp_path):
             "SELECT COUNT(*) c FROM session_spans WHERE trace_id=?",
             (RUN_ID,)).fetchone()["c"]
         assert again == full_count
+    finally:
+        conn.close()
+
+
+def _row_attrs(conn, trace_id, where):
+    row = conn.execute(
+        f"SELECT attributes FROM session_spans WHERE trace_id=? AND {where}",
+        (trace_id,)).fetchone()
+    return json.loads(row["attributes"]) if row else None
+
+
+def test_full_ingest_titles_session_with_workflow_name(tmp_path):
+    projects = _make_run(tmp_path, with_manifest=True)
+    W.ingest_run(W.discover_runs(projects)[0], deep=True, is_test=True)
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT title, title_source FROM sessions WHERE trace_id=?",
+            (RUN_ID,)).fetchone()
+        # title is the short workflow NAME, not the long objective sentence
+        assert (row["title"], row["title_source"]) == ("synthetic-wf", "workflow_name")
+        # the run root records its launching Claude session (dir name)
+        assert _row_attrs(conn, RUN_ID, "name='session.start'")["parent_trace_id"] == "sess"
+        # the objective still surfaces as the opening prompt bubble
+        assert _row_attrs(conn, RUN_ID, "name='prompt'")["text"] == "synthetic workflow for tests"
+    finally:
+        conn.close()
+
+
+def _parent_workflow_span(tool_use_id):
+    """A synthetic parent-session `tool.Workflow` span (what the PostToolUse
+    hook records when the main agent calls the Workflow tool)."""
+    return {
+        "trace_id": "sess", "span_id": "parentspan01", "parent_id": None,
+        "name": "tool.Workflow", "kind": "internal",
+        "start_time": "2026-01-01T00:00:00Z", "end_time": "2026-01-01T00:00:00Z",
+        "duration_ms": 0, "status_code": "OK", "status_message": None,
+        "attributes": {"tool_name": "Workflow", "tool_use_id": tool_use_id,
+                       "agent_type": "claude", "is_test": True},
+    }
+
+
+def test_stamp_parent_link_cross_links_run_and_tool_span(tmp_path):
+    from lib.trace.trace_service import ingest_session_spans
+    projects = _make_run(tmp_path, with_manifest=True)
+    # the launching Claude session: its transcript holds a Workflow tool_use
+    # whose script is byte-identical to the run's persisted script.
+    (projects / "proj" / "sess.jsonl").write_text(json.dumps({
+        "type": "assistant", "uuid": "pa1",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tuWF", "name": "Workflow",
+             "input": {"script": _SCRIPT_BODY}}]}}) + "\n")
+    span = _parent_workflow_span("tuWF")
+    ingest_session_spans([(span, span["attributes"])])
+
+    W.ingest_run(W.discover_runs(projects)[0], deep=True, is_test=True)
+
+    conn = get_connection()
+    try:
+        # parent tool span -> run + name (drives the inline "⚙ <name> · view run →")
+        parent = _row_attrs(conn, "sess", "span_id='parentspan01'")
+        assert (parent["workflow_run_id"], parent["workflow_name"]) == (RUN_ID, "synthetic-wf")
+        # run root -> parent tool span (drives the run view's backlink)
+        assert _row_attrs(conn, RUN_ID, "name='session.start'")["parent_span_id"] == "parentspan01"
     finally:
         conn.close()

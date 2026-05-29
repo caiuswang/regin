@@ -188,6 +188,20 @@ def _parse_script_meta(script_path: Path | None) -> tuple[str | None, str | None
             desc.group(1) if desc else None)
 
 
+def _parent_trace_id(agents_dir: Path) -> str | None:
+    """The trace_id of the Claude Code session a run was launched from.
+
+    On-disk a run lives at ``<S>/subagents/workflows/<run_id>``; ``<S>.name``
+    is that session's trace_id (and its transcript is the sibling
+    ``<S>.jsonl``). Stored on the run root so the run view can offer a
+    "↑ launched from session" jump back to its parent.
+    """
+    try:
+        return agents_dir.parent.parent.parent.name or None
+    except AttributeError:
+        return None
+
+
 def _first_agent_value(agents_dir: Path, agent_ids: list[str], key: str) -> str | None:
     """Read ``key`` from the first line of the first available agent jsonl.
 
@@ -521,6 +535,7 @@ def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
         attrs={"agent_type": "workflow", "model": manifest.get("defaultModel"),
                "cwd": _first_agent_value(agents_dir, agent_ids, "cwd"),
                "run_id": run_id, "task_id": manifest.get("taskId"),
+               "parent_trace_id": _parent_trace_id(agents_dir),
                "workflow_name": manifest.get("workflowName"),
                "workflow_status": status, "agent_count": manifest.get("agentCount"),
                "total_tokens": manifest.get("totalTokens"),
@@ -658,6 +673,7 @@ def build_flat_spans(run_ref: RunRef, *, is_test: bool = False) -> list[dict]:
         run_id, title=(desc or name or run_id), start=start, end=None,
         attrs={"agent_type": "workflow", "workflow_name": name, "run_id": run_id,
                "workflow_status": "running",
+               "parent_trace_id": run_ref.session_dir.name,
                "cwd": _first_agent_value(run_ref.agents_dir, started, "cwd"),
                "agent_count": len(started)},
         is_test=is_test)
@@ -707,6 +723,132 @@ def _set_session_tokens(run_id: str, output_tokens: int | None) -> None:
         conn.close()
 
 
+def _set_session_title(run_id: str, title: str | None) -> None:
+    """Title the run's session row with the *workflow name*, not its objective.
+
+    The synthetic ``prompt`` span carries the run's objective (the script
+    description / manifest summary), so the normal earliest-prompt rule
+    (`lib.trace.trace_service.ingest._handle_prompt_title`) would label the
+    session with that whole sentence and tag it ``first_prompt`` — which
+    then drives the wrong source chip + tooltip + truncation in the UI. The
+    workflow *name* (``meta.name``, e.g. "review-changes") is the short
+    canonical identifier, so we stamp it directly with an honest source.
+    ``_clear_run`` wipes the row each re-ingest, so this UPDATE is the
+    final, deterministic value.
+    """
+    if not title:
+        return
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sessions SET title = ?, title_source = 'workflow_name' "
+            "WHERE trace_id = ?", (title, run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _workflow_block(block: object) -> tuple[str, str] | None:
+    """``(tool_use_id, script)`` if ``block`` is a ``Workflow`` tool_use."""
+    if not isinstance(block, dict):
+        return None
+    if block.get("type") != "tool_use" or block.get("name") != "Workflow":
+        return None
+    tid, src = block.get("id"), (block.get("input") or {}).get("script")
+    return (tid, src) if tid and isinstance(src, str) else None
+
+
+def _iter_workflow_tool_uses(transcript: Path):
+    """Yield ``(tool_use_id, script)`` for each ``Workflow`` call in a
+    parent transcript's assistant content blocks."""
+    for entry in _read_jsonl(transcript):
+        if entry.get("type") != "assistant":
+            continue
+        content = entry.get("message", {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            hit = _workflow_block(block)
+            if hit:
+                yield hit
+
+
+def _find_parent_tool_use(transcript: Path, script: str) -> str | None:
+    """tool_use_id of the parent ``Workflow`` call whose script launched a run.
+
+    The runtime persists each run's script verbatim — byte-identical to the
+    parent's ``Workflow`` tool_use ``input.script`` — so an exact match
+    uniquely ties a run to the call that started it (distinct runs carry
+    distinct scripts). Whitespace-stripped compare as a safety net.
+    """
+    target = script.strip()
+    for tid, src in _iter_workflow_tool_uses(transcript):
+        if src.strip() == target:
+            return tid
+    return None
+
+
+def _stamp_parent_link(run_ref: RunRef, workflow_name: str | None) -> None:
+    """Cross-link a run with the ``tool.Workflow`` span that launched it.
+
+    Stamps ``workflow_run_id`` + ``workflow_name`` onto the parent session's
+    tool span (so the session view can render an inline "⚙ <name> · view run
+    →" card) and ``parent_span_id`` onto the run root (so the run view's
+    backlink deep-links to that exact tool call).
+    Best-effort and idempotent: a missing script, an unmatched call, or a
+    parent span that hasn't been ingested yet just skips silently — the
+    ``parent_trace_id`` already on the root keeps the backlink working
+    regardless.
+
+    One-shot dependency: a terminal run is ingested once (the watcher gates
+    on the now-stable manifest mtime), so the forward stamp only lands if
+    the parent ``tool.Workflow`` span already exists then. In practice the
+    PostToolUse hook records it at *launch* — long before completion — so it
+    does. If it were ever absent, only the forward "view run →" link is lost;
+    the backlink still resolves via ``parent_trace_id``.
+    """
+    if run_ref.script_path is None or not run_ref.script_path.exists():
+        return
+    try:
+        script = run_ref.script_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    parent_trace_id = run_ref.session_dir.name
+    transcript = run_ref.session_dir.parent / f"{parent_trace_id}.jsonl"
+    if not transcript.exists():
+        return
+    tool_use_id = _find_parent_tool_use(transcript, script)
+    if not tool_use_id:
+        return
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT span_id FROM session_spans WHERE trace_id = ? "
+            "AND name = 'tool.Workflow' "
+            "AND json_extract(attributes, '$.tool_use_id') = ?",
+            (parent_trace_id, tool_use_id)).fetchone()
+        if row is None:
+            return
+        parent_span_id = row[0]
+        conn.execute(
+            "UPDATE session_spans SET attributes = json_set("
+            "attributes, '$.workflow_run_id', ?, '$.workflow_name', ?) "
+            "WHERE trace_id = ? AND span_id = ?",
+            (run_ref.run_id, workflow_name, parent_trace_id, parent_span_id))
+        conn.execute(
+            "UPDATE session_spans "
+            "SET attributes = json_set(attributes, '$.parent_span_id', ?) "
+            "WHERE trace_id = ? AND name = 'session.start'",
+            (parent_span_id, run_ref.run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def reingest(run_id: str, spans: list[dict]) -> tuple[int, int]:
     """Clear then re-insert a run's spans via the shared ingest service.
 
@@ -731,12 +873,18 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
                                  deep=deep, is_test=is_test)
         result = reingest(run_ref.run_id, spans)
         _set_session_tokens(run_ref.run_id, manifest.get("totalTokens"))
+        name = manifest.get("workflowName")
+        _set_session_title(run_ref.run_id, name or manifest.get("summary"))
+        _stamp_parent_link(run_ref, name)
         return result
     spans = build_flat_spans(run_ref, is_test=is_test)
     result = reingest(run_ref.run_id, spans)
     total_out = sum(s["attributes"].get("tokens") or 0
                     for s in spans if s["name"] == "subagent.start")
     _set_session_tokens(run_ref.run_id, total_out or None)
+    name = _parse_script_meta(run_ref.script_path)[0]
+    _set_session_title(run_ref.run_id, name)
+    _stamp_parent_link(run_ref, name)
     return result
 
 
