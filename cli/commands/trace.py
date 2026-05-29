@@ -346,6 +346,130 @@ def cmd_ingest_workflows(
           f"failed={summary['failed']}")
 
 
+def _apply_model_cost(conn, model, in_rate: float, out_rate: float,
+                      trace: str | None) -> None:
+    """Stamp cost_usd on NULL-cost tool spans for one session model."""
+    upd = (
+        "UPDATE session_spans "
+        "SET cost_usd = (? * COALESCE(input_tokens, 0) "
+        "                + ? * COALESCE(output_tokens, 0)) / 1000000.0 "
+        "WHERE name LIKE 'tool.%' AND cost_usd IS NULL "
+        "  AND (input_tokens IS NOT NULL OR output_tokens IS NOT NULL) "
+        "  AND trace_id IN (SELECT trace_id FROM sessions WHERE model IS ?)"
+    )
+    params = [in_rate, out_rate, model]
+    if trace:
+        upd += " AND trace_id = ?"
+        params.append(trace)
+    conn.execute(upd, params)
+
+
+def _collect_cost_updates(conn, rows, dry_run: bool, trace: str | None) -> tuple:
+    """Apply (or, when dry_run, just tally) cost for each candidate model.
+
+    Returns (total_spans, total_sessions, pending) where pending lists
+    (model, spans, sessions) for models models.dev can't price yet.
+    """
+    from lib.tokens.pricing import model_rates
+
+    total_spans = 0
+    total_sessions = 0
+    pending = []
+    for r in rows:
+        rates = model_rates(r['model'])
+        if rates is None:
+            pending.append((r['model'], r['spans'], r['sessions']))
+            continue
+        in_rate = rates.get('input') or 0
+        out_rate = rates.get('output') or 0
+        print(f"  {str(r['model']):32} in=${in_rate}/Mtok out=${out_rate}/Mtok "
+              f"→ {r['spans']} spans across {r['sessions']} session(s)")
+        total_spans += r['spans']
+        total_sessions += r['sessions']
+        if not dry_run:
+            _apply_model_cost(conn, r['model'], in_rate, out_rate, trace)
+    return total_spans, total_sessions, pending
+
+
+def _print_cost_summary(total_spans: int, total_sessions: int,
+                        pending: list, dry_run: bool) -> None:
+    """Print the pending-models list and the one-line backfill summary."""
+    if pending:
+        print("\nPending (model not in models.dev catalogue yet — re-run later):")
+        for model, spans, sessions in pending:
+            print(f"  {str(model):32} {spans} spans across {sessions} session(s)")
+    verb = "Would update" if dry_run else "Updated"
+    print(f"\n{verb} {total_spans} tool spans across {total_sessions} session(s); "
+          f"{len(pending)} model(s) still pending.")
+
+
+@trace_app.command("backfill-costs",
+                   help="Recompute NULL cost_usd from now-available models.dev rates")
+def cmd_backfill_costs(
+    trace: str = typer.Option(
+        None, "--trace", help="Limit to one trace_id (default: every session)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would change without writing",
+    ),
+) -> None:
+    """Fill in per-tool `cost_usd` that was NULL at ingest time.
+
+    `cost_usd` is stamped once at ingest from the session model's
+    models.dev rate (ingest.py). If that model wasn't in the catalogue
+    yet — or the fetch failed (pricing degrades silently to None so it
+    never blocks ingest) — the span keeps its token counts but a NULL
+    cost, and nothing recomputes it. This recomputes cost for every
+    tool span whose cost is still NULL and whose model resolves today,
+    using the same input+output formula as live ingest (image and cache
+    tokens excluded, matching ingest).
+
+    Only `tool.%` spans are touched: live ingest never costs
+    assistant_response / assistant.thinking spans, so backfilling them
+    would make these sessions report a higher attributed cost than
+    freshly-ingested ones of the same model.
+
+    Idempotent and re-runnable: only NULL-cost spans are updated, so
+    correctly-priced rows stay untouched. Models still missing from
+    models.dev are reported as pending — re-run once the catalogue
+    catches up.
+    """
+    from lib.orm.engine import get_connection
+
+    base_where = (
+        "sp.name LIKE 'tool.%' "
+        "AND sp.cost_usd IS NULL "
+        "AND (sp.input_tokens IS NOT NULL OR sp.output_tokens IS NOT NULL)"
+    )
+    scope = []
+    if trace:
+        base_where += " AND sp.trace_id = ?"
+        scope.append(trace)
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(f"""
+            SELECT s.model AS model,
+                   COUNT(*) AS spans,
+                   COUNT(DISTINCT sp.trace_id) AS sessions
+            FROM session_spans sp
+            JOIN sessions s ON s.trace_id = sp.trace_id
+            WHERE {base_where}
+            GROUP BY s.model
+            ORDER BY spans DESC
+        """, scope).fetchall()
+        if not rows:
+            print("No NULL-cost tool spans found — nothing to backfill.")
+            raise typer.Exit(0)
+        totals = _collect_cost_updates(conn, rows, dry_run, trace)
+        if not dry_run:
+            conn.commit()
+    finally:
+        conn.close()
+
+    _print_cost_summary(*totals, dry_run)
+
+
 def register_trace(app: typer.Typer) -> None:
     """Hook point called from cli/app.py to attach the `trace` subapp."""
     app.add_typer(trace_app)
