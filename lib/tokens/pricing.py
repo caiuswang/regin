@@ -110,8 +110,18 @@ def _strip_variant(model: str) -> str:
     return model[:idx] if idx > 0 else model
 
 
+def _has_tiers(m: dict) -> bool:
+    c = m.get('cost')
+    return isinstance(c, dict) and ('tiers' in c or 'context_over_200k' in c)
+
+
 def _find_model(catalogue: dict, model: str) -> dict | None:
+    # models.dev shards the same model across many providers, and only
+    # some carry context-tier pricing (the >200K rate). Prefer a
+    # tier-bearing entry so cost() can apply the higher tier; fall back
+    # to the first plain match when none expose tiers.
     target = _strip_variant(model)
+    fallback = None
     for provider in catalogue.values():
         if not isinstance(provider, dict):
             continue
@@ -120,8 +130,11 @@ def _find_model(catalogue: dict, model: str) -> dict | None:
             continue
         m = models.get(target) or models.get(model)
         if isinstance(m, dict):
-            return m
-    return None
+            if _has_tiers(m):
+                return m
+            if fallback is None:
+                fallback = m
+    return fallback
 
 
 def model_rates(model: str | None) -> dict | None:
@@ -138,16 +151,66 @@ def model_rates(model: str | None) -> dict | None:
     return rates if isinstance(rates, dict) else None
 
 
-def cost(model: str | None, breakdown: TokenBreakdown) -> Optional[float]:
-    """USD cost for a token breakdown under the given model. None if unknown."""
+_RATE_KEYS = ('input', 'output', 'cache_read', 'cache_write')
+
+
+def _best_context_tier(tiers: list, context_tokens: int) -> dict | None:
+    """The highest context tier whose threshold `context_tokens` exceeds."""
+    best_size = -1
+    chosen = None
+    for t in tiers:
+        if not isinstance(t, dict):
+            continue
+        info = t.get('tier') or {}
+        size = info.get('size')
+        ok = (info.get('type') == 'context'
+              and isinstance(size, (int, float))
+              and context_tokens > size and size > best_size)
+        if ok:
+            best_size = size
+            chosen = t
+    return chosen
+
+
+def _rates_for_context(rates: dict, context_tokens: int | None) -> dict:
+    """Effective per-1M rates, applying the context tier when the
+    request's context size crosses a threshold.
+
+    models.dev encodes tiered pricing as
+    ``cost.tiers = [{input, output, ..., tier:{type:'context', size:N}}]``
+    (Anthropic's 1M-context models bill ~2x input / 1.5x output above
+    200K). Below the lowest threshold — or when no tiers are published —
+    the top-level rates apply, so this is a no-op for flat models.
+    """
+    eff = {k: rates.get(k) for k in _RATE_KEYS}
+    tiers = rates.get('tiers')
+    if not context_tokens or not isinstance(tiers, list):
+        return eff
+    tier = _best_context_tier(tiers, context_tokens)
+    if tier:
+        for k in _RATE_KEYS:
+            if tier.get(k) is not None:
+                eff[k] = tier[k]
+    return eff
+
+
+def cost(model: str | None, breakdown: TokenBreakdown,
+         context_tokens: int | None = None) -> Optional[float]:
+    """USD cost for a token breakdown under the given model. None if unknown.
+
+    `context_tokens` is the request's total context size; when provided
+    and the model publishes context tiers, the >threshold rate is used.
+    Omit it (or pass 0/None) for the flat top-level rate.
+    """
     rates = model_rates(model)
     if rates is None:
         return None
+    eff = _rates_for_context(rates, context_tokens)
     return (
-        (rates.get('input') or 0) * breakdown.input_tokens
-        + (rates.get('output') or 0) * breakdown.output_tokens
-        + (rates.get('cache_read') or 0) * breakdown.cache_read_tokens
-        + (rates.get('cache_write') or 0) * breakdown.cache_creation_tokens
+        (eff.get('input') or 0) * breakdown.input_tokens
+        + (eff.get('output') or 0) * breakdown.output_tokens
+        + (eff.get('cache_read') or 0) * breakdown.cache_read_tokens
+        + (eff.get('cache_write') or 0) * breakdown.cache_creation_tokens
     ) / 1_000_000
 
 

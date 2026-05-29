@@ -145,7 +145,7 @@ def ingest_turn_usage(rows: list[dict]) -> tuple[int, int]:
                     output_tokens=output_tokens,
                     cache_read_tokens=cache_read_tokens,
                     cache_creation_tokens=cache_creation_tokens,
-                ))
+                ), context_tokens=context_used_tokens)
             except Exception:
                 row_cost = None
 
@@ -265,6 +265,21 @@ def ingest_turn_usage(rows: list[dict]) -> tuple[int, int]:
     return inserted, skipped
 
 
+def _turn_context_tokens(conn, trace_id: str, turn_uuid: str | None) -> int | None:
+    """Context size of a turn, for context-tiered pricing. None when the
+    turn_usage row hasn't been ingested yet — cost then falls back to the
+    base tier (and a later `trace backfill-costs --recompute` can correct
+    it once turn usage lands)."""
+    if not turn_uuid:
+        return None
+    row = conn.execute(
+        "SELECT context_used_tokens FROM turn_usage "
+        "WHERE trace_id = ? AND turn_uuid = ?",
+        (trace_id, turn_uuid),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     """Attach per-tool token estimates to existing `tool.*` spans.
 
@@ -303,6 +318,7 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
             "SELECT model FROM sessions WHERE trace_id = ?", (trace_id,)
         ).fetchone()
         model = sess_row[0] if sess_row else None
+        turn_ctx = _turn_context_tokens(conn, trace_id, turn_uuid)
 
         updated = 0
         skipped = 0
@@ -329,7 +345,7 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
             usd = cost(model, TokenBreakdown(
                 input_tokens=in_tok or 0,
                 output_tokens=out_tok or 0,
-            )) if model else None
+            ), context_tokens=turn_ctx) if model else None
 
             # Prefer the authoritative image-token count when the
             # PostToolUse span stamped one from Claude Code's reported

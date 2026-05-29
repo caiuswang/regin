@@ -346,25 +346,62 @@ def cmd_ingest_workflows(
           f"failed={summary['failed']}")
 
 
-def _apply_model_cost(conn, model, in_rate: float, out_rate: float,
-                      trace: str | None) -> None:
-    """Stamp cost_usd on NULL-cost tool spans for one session model."""
+def _tier_rates(rates: dict) -> tuple:
+    """Unpack (base_in, base_out, over_in, over_out, threshold) per 1M.
+
+    Reuses the same context-tier selection as `lib.tokens.pricing.cost`
+    (passing a huge context picks the highest tier) so the backfill's SQL
+    CASE matches live ingest. `threshold` is a sentinel beyond any real
+    context size when the model is flat, so the over branch never fires.
+    """
+    from lib.tokens.pricing import _best_context_tier
+
+    base_in = rates.get('input') or 0
+    base_out = rates.get('output') or 0
+    flat = (base_in, base_out, base_in, base_out, 1 << 62)
+    tiers = rates.get('tiers')
+    if not isinstance(tiers, list):
+        return flat
+    tier = _best_context_tier(tiers, 1 << 62)
+    if not tier:
+        return flat
+    threshold = (tier.get('tier') or {}).get('size') or (1 << 62)
+    return (base_in, base_out, tier.get('input') or base_in,
+            tier.get('output') or base_out, threshold)
+
+
+def _apply_model_cost(conn, model, tier: tuple, trace: str | None,
+                      recompute: bool) -> None:
+    """Stamp context-tiered cost_usd on one model's tool spans.
+
+    Per span, the >threshold rate applies when that span's turn ran with
+    context over the tier threshold (looked up in turn_usage by
+    turn_uuid); spans whose turn has no recorded context fall to the base
+    rate. recompute=False touches only NULL-cost spans.
+    """
+    base_in, base_out, over_in, over_out, threshold = tier
+    cost_filter = "" if recompute else "AND cost_usd IS NULL"
     upd = (
-        "UPDATE session_spans "
-        "SET cost_usd = (? * COALESCE(input_tokens, 0) "
-        "                + ? * COALESCE(output_tokens, 0)) / 1000000.0 "
-        "WHERE name LIKE 'tool.%' AND cost_usd IS NULL "
+        "UPDATE session_spans SET cost_usd = (CASE WHEN ("
+        "    SELECT tu.context_used_tokens FROM turn_usage tu "
+        "     WHERE tu.trace_id = session_spans.trace_id "
+        "       AND tu.turn_uuid = session_spans.turn_uuid) > ? "
+        "  THEN (? * COALESCE(input_tokens, 0) + ? * COALESCE(output_tokens, 0)) "
+        "  ELSE (? * COALESCE(input_tokens, 0) + ? * COALESCE(output_tokens, 0)) "
+        "END) / 1000000.0 "
+        f"WHERE name LIKE 'tool.%' {cost_filter} "
         "  AND (input_tokens IS NOT NULL OR output_tokens IS NOT NULL) "
         "  AND trace_id IN (SELECT trace_id FROM sessions WHERE model IS ?)"
     )
-    params = [in_rate, out_rate, model]
+    params = [threshold, over_in, over_out, base_in, base_out, model]
     if trace:
         upd += " AND trace_id = ?"
         params.append(trace)
     conn.execute(upd, params)
 
 
-def _collect_cost_updates(conn, rows, dry_run: bool, trace: str | None) -> tuple:
+def _collect_cost_updates(conn, rows, dry_run: bool, trace: str | None,
+                          recompute: bool) -> tuple:
     """Apply (or, when dry_run, just tally) cost for each candidate model.
 
     Returns (total_spans, total_sessions, pending) where pending lists
@@ -380,14 +417,16 @@ def _collect_cost_updates(conn, rows, dry_run: bool, trace: str | None) -> tuple
         if rates is None:
             pending.append((r['model'], r['spans'], r['sessions']))
             continue
-        in_rate = rates.get('input') or 0
-        out_rate = rates.get('output') or 0
-        print(f"  {str(r['model']):32} in=${in_rate}/Mtok out=${out_rate}/Mtok "
+        tier = _tier_rates(rates)
+        base_in, base_out, over_in, over_out, threshold = tier
+        note = (f" · >{int(threshold) // 1000}k=${over_in}/${over_out}"
+                if (over_in, over_out) != (base_in, base_out) else "")
+        print(f"  {str(r['model']):28} in=${base_in}/Mtok out=${base_out}/Mtok{note} "
               f"→ {r['spans']} spans across {r['sessions']} session(s)")
         total_spans += r['spans']
         total_sessions += r['sessions']
         if not dry_run:
-            _apply_model_cost(conn, r['model'], in_rate, out_rate, trace)
+            _apply_model_cost(conn, r['model'], tier, trace, recompute)
     return total_spans, total_sessions, pending
 
 
@@ -412,33 +451,43 @@ def cmd_backfill_costs(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Report what would change without writing",
     ),
+    recompute: bool = typer.Option(
+        False, "--recompute",
+        help="Also re-price spans that already have a cost (e.g. after a "
+             "pricing or context-tier fix), not just NULL-cost ones",
+    ),
 ) -> None:
-    """Fill in per-tool `cost_usd` that was NULL at ingest time.
+    """Fill in per-tool `cost_usd` from current models.dev rates.
 
     `cost_usd` is stamped once at ingest from the session model's
     models.dev rate (ingest.py). If that model wasn't in the catalogue
     yet — or the fetch failed (pricing degrades silently to None so it
     never blocks ingest) — the span keeps its token counts but a NULL
-    cost, and nothing recomputes it. This recomputes cost for every
-    tool span whose cost is still NULL and whose model resolves today,
-    using the same input+output formula as live ingest (image and cache
-    tokens excluded, matching ingest).
+    cost, and nothing recomputes it. This recomputes cost for every tool
+    span whose cost is still NULL and whose model resolves today, using
+    the same `lib.tokens.pricing.cost` path as live ingest (input+output
+    only; image/cache tokens excluded).
+
+    Context-tiered: models that publish a >200K-context tier (e.g. the
+    1M-context Claude models) are billed at the higher rate for spans
+    whose turn ran above the threshold, looked up per turn in turn_usage.
 
     Only `tool.%` spans are touched: live ingest never costs
     assistant_response / assistant.thinking spans, so backfilling them
-    would make these sessions report a higher attributed cost than
-    freshly-ingested ones of the same model.
+    would make these sessions over-report cost versus freshly-ingested
+    ones of the same model.
 
-    Idempotent and re-runnable: only NULL-cost spans are updated, so
-    correctly-priced rows stay untouched. Models still missing from
-    models.dev are reported as pending — re-run once the catalogue
-    catches up.
+    Idempotent: by default only NULL-cost spans are updated, so
+    correctly-priced rows stay untouched and models still missing from
+    models.dev are reported as pending (re-run once the catalogue catches
+    up). Pass --recompute to re-price already-costed spans after a
+    pricing/tier change.
     """
     from lib.orm.engine import get_connection
 
+    cost_clause = "" if recompute else "AND sp.cost_usd IS NULL"
     base_where = (
-        "sp.name LIKE 'tool.%' "
-        "AND sp.cost_usd IS NULL "
+        f"sp.name LIKE 'tool.%' {cost_clause} "
         "AND (sp.input_tokens IS NOT NULL OR sp.output_tokens IS NOT NULL)"
     )
     scope = []
@@ -459,9 +508,9 @@ def cmd_backfill_costs(
             ORDER BY spans DESC
         """, scope).fetchall()
         if not rows:
-            print("No NULL-cost tool spans found — nothing to backfill.")
+            print("No matching tool spans found — nothing to backfill.")
             raise typer.Exit(0)
-        totals = _collect_cost_updates(conn, rows, dry_run, trace)
+        totals = _collect_cost_updates(conn, rows, dry_run, trace, recompute)
         if not dry_run:
             conn.commit()
     finally:

@@ -130,6 +130,71 @@ def test_disk_cache_expires_after_ttl(tmp_path, monkeypatch):
     assert calls['n'] == 1
 
 
+_TIERED_CATALOGUE = {
+    # Same model under two providers: only the second carries context-tier
+    # pricing. _find_model must prefer the tier-bearing entry.
+    'flatprov': {
+        'id': 'flatprov',
+        'models': {
+            'claude-opus-4-7': {
+                'id': 'claude-opus-4-7',
+                'cost': {'input': 5, 'output': 25},
+            },
+        },
+    },
+    'tierprov': {
+        'id': 'tierprov',
+        'models': {
+            'claude-opus-4-7': {
+                'id': 'claude-opus-4-7',
+                'cost': {
+                    'input': 5, 'output': 25, 'cache_read': 0.5, 'cache_write': 6.25,
+                    'tiers': [{
+                        'input': 10, 'output': 37.5,
+                        'cache_read': 1, 'cache_write': 12.5,
+                        'tier': {'type': 'context', 'size': 200000},
+                    }],
+                    'context_over_200k': {'input': 10, 'output': 37.5},
+                },
+            },
+        },
+    },
+}
+
+
+def test_resolver_prefers_tier_bearing_entry(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _TIERED_CATALOGUE)
+    assert 'tiers' in (model_rates('claude-opus-4-7') or {})
+
+
+def test_cost_uses_base_rate_below_threshold(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _TIERED_CATALOGUE)
+    b = TokenBreakdown(input_tokens=1_000_000, output_tokens=1_000_000)
+    # no context → base; context under 200K → base
+    assert cost('claude-opus-4-7', b) == pytest.approx(30.0)
+    assert cost('claude-opus-4-7', b, context_tokens=100_000) == pytest.approx(30.0)
+
+
+def test_cost_applies_over_tier_above_threshold(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _TIERED_CATALOGUE)
+    b = TokenBreakdown(input_tokens=1_000_000, output_tokens=1_000_000)
+    # 10*1 + 37.5*1 = 47.5
+    assert cost('claude-opus-4-7', b, context_tokens=300_000) == pytest.approx(47.5)
+
+
+def test_cost_tier_resolves_through_variant_suffix(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _TIERED_CATALOGUE)
+    b = TokenBreakdown(input_tokens=1_000_000, output_tokens=1_000_000)
+    assert cost('claude-opus-4-7[1m]', b, context_tokens=300_000) == pytest.approx(47.5)
+
+
+def test_flat_model_ignores_context(monkeypatch):
+    monkeypatch.setattr(pricing, '_fetch', lambda: _FAKE_CATALOGUE)
+    b = TokenBreakdown(input_tokens=1_000_000)
+    # _FAKE_CATALOGUE has no tiers — context must not change the price
+    assert cost('claude-opus-4-7', b, context_tokens=900_000) == pytest.approx(5.0)
+
+
 def test_malformed_cache_file_falls_back_to_fetch(tmp_path, monkeypatch):
     cache_file = tmp_path / 'models.json'
     cache_file.write_text('not json at all')
