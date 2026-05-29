@@ -362,12 +362,14 @@ function contextBadgeClass(pct) {
 }
 
 function agentTypeLabel(s) {
+  if (s.agent_kind === 'workflow') return 'Workflow run'
   if (s.agent_kind === 'claude') return 'Claude Code session'
   if (s.agent_kind === 'codex') return 'OpenAI Codex session'
   return s.agent_type ? `Agent session: ${s.agent_type}` : 'Agent session'
 }
 
 function agentTypeClass(s) {
+  if (s.agent_kind === 'workflow') return 'agent-icon--workflow'
   if (s.agent_kind === 'claude') return 'agent-icon--claude'
   if (s.agent_kind === 'codex') return 'agent-icon--codex'
   return 'agent-icon--generic'
@@ -622,6 +624,13 @@ function activityMoreTitle(s) {
                     <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
                     </svg>
+                    <svg v-else-if="s.agent_kind === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
+                      <circle cx="3.2" cy="8" r="1.5" />
+                      <path d="M4.7 8h2.8M7.5 4v8M7.5 4h3M7.5 8h3M7.5 12h3" />
+                      <circle cx="12" cy="4" r="1.3" />
+                      <circle cx="12" cy="8" r="1.3" />
+                      <circle cx="12" cy="12" r="1.3" />
+                    </svg>
                     <svg v-else viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
                     </svg>
@@ -743,6 +752,13 @@ function activityMoreTitle(s) {
                   </svg>
                   <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
+                  </svg>
+                  <svg v-else-if="s.agent_kind === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="3.2" cy="8" r="1.5" />
+                    <path d="M4.7 8h2.8M7.5 4v8M7.5 4h3M7.5 8h3M7.5 12h3" />
+                    <circle cx="12" cy="4" r="1.3" />
+                    <circle cx="12" cy="8" r="1.3" />
+                    <circle cx="12" cy="12" r="1.3" />
                   </svg>
                   <svg v-else viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
@@ -896,6 +912,10 @@ function activityMoreTitle(s) {
 .agent-icon--generic {
   background: #f3f4f6;
   color: #4b5563;
+}
+.agent-icon--workflow {
+  background: #ecfdf5;
+  color: #0f766e;
 }
 
 /* Visually-joined input + scope selector. Pulling the select tight

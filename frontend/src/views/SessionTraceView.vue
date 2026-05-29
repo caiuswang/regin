@@ -115,6 +115,27 @@ async function ensureTerminalSpansLoaded() {
     terminalLoading.value = false
   }
 }
+// Dynamic-workflow runs nest their objective/phases/agents/turns under the
+// `session.start` run root, which the shallow conversation load doesn't
+// descend into. Deep-load the whole run subtree once (with attributes) so
+// the Conversation tab can project it into phase-sectioned chat.
+const workflowSpansLoaded = ref(false)
+async function ensureWorkflowSpansLoaded() {
+  if (workflowSpansLoaded.value) return
+  const root = (session.value?.spans || []).find(
+    (s) => s.name === 'session.start' && s.attributes?.agent_type === 'workflow',
+  )
+  if (!root) return
+  workflowSpansLoaded.value = true
+  try {
+    const data = await api.get(
+      `/sessions/${route.params.id}/spans/${root.span_id}/children?deep=1`,
+    )
+    mergeLoadedSpans(data.spans || [])
+  } catch (_) {
+    workflowSpansLoaded.value = false  // allow a later retry (e.g. reload)
+  }
+}
 // Plans this session authored/edited — surfaced in the header as
 // clickable chips so the reader can pivot from session → plan in one
 // click. Populated from `plan_sessions` rows scoped to this trace_id.
@@ -357,6 +378,8 @@ async function loadSession() {
   hasMoreOlder.value = !!data.has_more_older
   oldestLoadedId.value = data.oldest_loaded_id ?? null
   newestLoadedId.value = data.newest_loaded_id ?? null
+  workflowSpansLoaded.value = false
+  await ensureWorkflowSpansLoaded()
 
   if (prevSelectedId) {
     const fresh = allSpans.value.find(s => s.span_id === prevSelectedId)
@@ -628,6 +651,16 @@ const allSpans = computed(() => {
     const cached = spanContentCache.value.get(s.span_id)
     return { ...s, attributes: cached || s.attributes || {} }
   })
+})
+
+// Dynamic-workflow name (e.g. "map-trace-pipeline"), surfaced in the header
+// so the run is identifiable beyond its objective title. Read from the
+// run-root session.start span; null for ordinary sessions.
+const workflowName = computed(() => {
+  const root = allSpans.value.find(
+    s => s.name === 'session.start' && s.attributes?.agent_type === 'workflow',
+  )
+  return root?.attributes?.workflow_name || null
 })
 
 // Drive `compact.pre → compact.post` polling off the live span set.
@@ -1200,6 +1233,8 @@ function spanLabel(span) {
       const cmd = a.command_name || 'command'
       return a.args ? `${cmd} ${a.args}` : cmd
     }
+    case 'workflow.phase':
+      return a.title ? `phase: ${a.title}` : 'phase'
     case 'subagent.start': {
       const tag = subagentTag(a)
       return tag ? `subagent: ${tag}` : 'subagent'
@@ -1849,6 +1884,11 @@ const toolRollupSummary = computed(() => {
         </div>
         <p class="mt-1.5 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500 m-0">
           <code class="font-mono text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ session.trace_id }}</code>
+          <span
+            v-if="workflowName"
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-emerald-300 bg-emerald-50 text-[11px] font-medium text-emerald-700"
+            title="Dynamic workflow"
+          >⚙ {{ workflowName }}</span>
           <span class="text-slate-300">·</span>
           <span>{{ session.span_count_total ?? session.spans.length }} spans</span>
           <span class="text-slate-300">·</span>

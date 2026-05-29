@@ -77,7 +77,7 @@ const { maxH: turnsMaxH } = useStickyMaxHeight(turnsAsideEl)
 // metadata the TOC and spine consume.
 const {
   spanById, rootSpans, childrenOf, flattenDescendants,
-  entries, promptGroups, turnItems,
+  entries, promptGroups, turnItems, isWorkflow, phaseItems,
 } = useSpanTree(() => props.spans, () => props.turns)
 
 // ── Subagent launch merge ─────────────────────────────────────
@@ -131,6 +131,27 @@ function selectAgentLaunch(startSpan) {
   const lc = launchForSubagent(startSpan)
   if (lc) { onSelectSpan(lc); maybeFetchContent(lc) }
 }
+// Agent metadata with a fallback for workflow agents, which have NO
+// `tool.Agent` launch span — the dispatched prompt / description / result
+// live on the `subagent.start` span's own attributes instead.
+function agentDescription(span) {
+  return launchForSubagent(span)?.attributes?.description || span.attributes?.label || ''
+}
+function agentPrompt(span) {
+  return launchForSubagent(span)?.attributes?.prompt || span.attributes?.prompt || ''
+}
+function agentPromptOwnerId(span) {
+  return launchForSubagent(span)?.span_id || span.span_id
+}
+function selectAgentPrompt(span) {
+  const lc = launchForSubagent(span)
+  if (lc) { onSelectSpan(lc); maybeFetchContent(lc) }
+  else { onSelectSpan(span); maybeFetchContent(span) }
+}
+// Number of agents under a workflow.phase, for the phase-divider label.
+function agentCountForPhase(spanId) {
+  return childrenOf(spanId).filter((s) => s.name === 'subagent.start').length
+}
 
 // Per-subagent prompt-card expand state.
 const expandedAgentPrompts = ref(new Set())
@@ -139,6 +160,23 @@ function toggleAgentPrompt(id) {
   const next = new Set(expandedAgentPrompts.value)
   if (next.has(id)) next.delete(id); else next.add(id)
   expandedAgentPrompts.value = next
+}
+// Per-agent RESULT card expand state (workflow agents). Separate set from
+// the prompt card so the two collapse independently on the same span.
+const expandedAgentResults = ref(new Set())
+function isAgentResultExpanded(id) { return expandedAgentResults.value.has(id) }
+function toggleAgentResult(id) {
+  const next = new Set(expandedAgentResults.value)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  expandedAgentResults.value = next
+}
+const AGENT_RESULT_PREVIEW_CHARS = 280
+function agentResultText(span) { return span.attributes?.result_full || span.attributes?.result_preview || '' }
+function agentResultPreview(text) {
+  if (!text) return ''
+  return text.length > AGENT_RESULT_PREVIEW_CHARS
+    ? text.slice(0, AGENT_RESULT_PREVIEW_CHARS).trimEnd() + '…'
+    : text
 }
 
 // Task writes (TaskCreate / TaskUpdate) render as ordinary compact
@@ -200,6 +238,18 @@ async function selectTurn(item) {
   await nextTick()
   const el = promptRefs.value.get(item.promptSpanId)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// Phase/agent TOC click (workflow runs): select the span and scroll its
+// row (phase divider or agent card) into view via the shared spanRefs map.
+async function selectWorkflowRow(spanId) {
+  const span = spanById.value.get(spanId)
+  if (span) { emit('select-span', span); maybeFetchContent(span) }
+  await nextTick()
+  const el = spanRefs.value.get(spanId)
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 }
 
 // Cross-highlight from external selection (e.g. clicking a colored bar
@@ -454,10 +504,39 @@ function onRowClick(span) {
       }"
     >
       <div class="flex items-baseline justify-between mb-2 shrink-0">
-        <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Turns</h3>
-        <span class="text-[11px] text-slate-400 tabular-nums">{{ turnItems.length }}</span>
+        <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
+        <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? phaseItems.length : turnItems.length }}</span>
       </div>
-      <div v-if="!turnItems.length" class="text-xs text-slate-400">
+      <!-- Workflow phase TOC: phases as primary rows, agents as sub-items -->
+      <div
+        v-if="isWorkflow"
+        ref="tocScrollEl"
+        class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1.5 [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
+      >
+        <div v-for="p in phaseItems" :key="p.phaseSpanId">
+          <div
+            class="cursor-pointer rounded-md px-2 py-1 hover:bg-slate-50"
+            @click="selectWorkflowRow(p.phaseSpanId)"
+          >
+            <div class="flex items-baseline gap-1.5 text-xs leading-tight">
+              <span class="text-emerald-600 font-mono shrink-0 tabular-nums">{{ p.index }}</span>
+              <span class="truncate font-medium text-slate-800">{{ p.title }}</span>
+              <span class="ml-auto text-[10px] text-slate-400 tabular-nums shrink-0">{{ p.agentCount }}a</span>
+            </div>
+          </div>
+          <div
+            v-for="a in p.agents"
+            :key="a.spanId"
+            class="ml-3 cursor-pointer rounded px-2 py-0.5 hover:bg-slate-50 flex items-baseline gap-1.5 text-[11px]"
+            @click="selectWorkflowRow(a.spanId)"
+          >
+            <span class="inline-block w-1 h-1 rounded-full shrink-0" :class="a.state === 'done' ? 'bg-green-500' : 'bg-blue-400'"></span>
+            <span class="truncate text-slate-600">{{ a.label }}</span>
+            <span v-if="a.tokens" class="ml-auto text-[10px] text-slate-400 tabular-nums shrink-0">{{ a.tokens }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="!turnItems.length" class="text-xs text-slate-400">
         No prompts found.
       </div>
       <div
@@ -630,6 +709,25 @@ function onRowClick(span) {
                   v-if="span.attributes?.task_id"
                   class="text-[10px] font-mono text-amber-600/70 mt-0.5"
                 >task {{ span.attributes.task_id }}</div>
+              </div>
+
+              <!-- Extended-thinking card (thinking-only turns) -->
+              <div
+                v-else-if="span.name === 'assistant.thinking'"
+                class="group rounded-md border border-violet-200 bg-violet-50/40 px-3 py-2 cursor-pointer hover:border-violet-300 transition-colors"
+                :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'ring-2 ring-violet-300' : ''"
+                @click="onSelectSpan(span); maybeFetchContent(span)"
+              >
+                <div class="flex items-center gap-2 text-[11px] font-mono text-violet-500 mb-1">
+                  <span class="font-semibold uppercase tracking-wider text-[10px]">THINKING</span>
+                  <span class="text-violet-300">·</span>
+                  <span>{{ fmtClock(span.start_time) }}</span>
+                </div>
+                <div
+                  v-if="span.attributes?.thinking_text"
+                  class="text-[12.5px] text-violet-900/80 italic whitespace-pre-wrap break-words leading-relaxed max-h-72 overflow-y-auto"
+                >{{ span.attributes.thinking_text }}</div>
+                <div v-else class="text-[12px] text-violet-500 italic">reasoned (text not captured)</div>
               </div>
 
               <div
@@ -1185,8 +1283,25 @@ function onRowClick(span) {
                 </div>
               </div>
 
+              <!-- Workflow phase band (dynamic-workflow runs only) -->
+              <div
+                v-else-if="span.name === 'workflow.phase'"
+                class="flex items-center gap-2 my-3 select-none"
+              >
+                <div class="flex-1 border-t border-dashed border-emerald-300"></div>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-emerald-300 bg-emerald-50 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                  <span>Phase {{ span.attributes?.index ?? '' }}</span>
+                  <template v-if="span.attributes?.title"><span class="text-emerald-400">·</span><span class="normal-case">{{ span.attributes.title }}</span></template>
+                  <span class="text-emerald-400">·</span>
+                  <span class="normal-case">{{ agentCountForPhase(span.span_id) }} agent<span v-if="agentCountForPhase(span.span_id) !== 1">s</span></span>
+                </span>
+                <div class="flex-1 border-t border-dashed border-emerald-300"></div>
+              </div>
+
               <!-- Subagent launch: subagent.start with its tool.Agent
-                   (description + prompt) folded in. -->
+                   (description + prompt) folded in. Workflow agents have no
+                   launch span, so description/prompt fall back to the
+                   subagent.start span's own attributes (see agent* helpers). -->
               <div v-else-if="span.name === 'subagent.start'">
                 <div
                   tabindex="0"
@@ -1197,36 +1312,57 @@ function onRowClick(span) {
                   <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="toolRowDotClass(span)"></span>
                   <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
                   <span class="break-all flex-1 min-w-0 whitespace-pre-line font-medium text-slate-700">
-                    {{ fullLabel(span) }}<template v-if="launchForSubagent(span)?.attributes?.description"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ launchForSubagent(span).attributes.description }}</span></template>
+                    {{ fullLabel(span) }}<template v-if="agentDescription(span)"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ agentDescription(span) }}</span></template>
                   </span>
+                  <span v-if="span.attributes?.tokens" class="font-mono text-[11px] text-slate-400 shrink-0">{{ span.attributes.tokens }} tok</span>
                   <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
                 </div>
                 <!-- Task prompt card (collapsed by default) -->
                 <div
-                  v-if="launchForSubagent(span)?.attributes?.prompt"
+                  v-if="agentPrompt(span)"
                   class="ml-6 mt-1 mb-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300"
-                  :class="selectedSpan && launchForSubagent(span) && selectedSpan.span_id === launchForSubagent(span).span_id ? 'ring-1 ring-blue-300' : ''"
-                  @click="selectAgentLaunch(span)"
+                  :class="selectedSpan && selectedSpan.span_id === agentPromptOwnerId(span) ? 'ring-1 ring-blue-300' : ''"
+                  @click="selectAgentPrompt(span)"
                 >
                   <div class="flex items-center justify-between gap-2 mb-1">
                     <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">task prompt</span>
                     <button
-                      v-if="launchForSubagent(span).attributes.prompt.length > AGENT_PROMPT_PREVIEW_CHARS"
+                      v-if="agentPrompt(span).length > AGENT_PROMPT_PREVIEW_CHARS"
                       type="button"
                       class="text-[11px] font-medium text-blue-600 hover:text-blue-800 rounded focus-visible:outline-2 focus-visible:outline-blue-500"
                       @click.stop="toggleAgentPrompt(span.span_id)"
-                    >{{ isAgentPromptExpanded(span.span_id) ? 'Collapse' : `Show full prompt · ${launchForSubagent(span).attributes.prompt.length} chars` }}</button>
+                    >{{ isAgentPromptExpanded(span.span_id) ? 'Collapse' : `Show full prompt · ${agentPrompt(span).length} chars` }}</button>
                   </div>
                   <div :class="isAgentPromptExpanded(span.span_id) ? 'max-h-[32rem] overflow-y-auto' : ''">
                     <MarkdownContent
                       v-if="isAgentPromptExpanded(span.span_id)"
-                      :markdown="launchForSubagent(span).attributes.prompt"
+                      :markdown="agentPrompt(span)"
                     />
                     <div
                       v-else
                       class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed"
-                    >{{ agentPromptPreview(launchForSubagent(span).attributes.prompt) }}</div>
+                    >{{ agentPromptPreview(agentPrompt(span)) }}</div>
                   </div>
+                </div>
+                <!-- Agent RESULT card (workflow agents): collapsible, with
+                     structured results pretty-printed. -->
+                <div
+                  v-if="agentResultText(span)"
+                  class="ml-6 mt-1 mb-1 rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-2"
+                >
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <span class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">result</span>
+                    <button
+                      v-if="agentResultText(span).length > AGENT_RESULT_PREVIEW_CHARS"
+                      type="button"
+                      class="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 rounded focus-visible:outline-2 focus-visible:outline-emerald-500"
+                      @click.stop="toggleAgentResult(span.span_id)"
+                    >{{ isAgentResultExpanded(span.span_id) ? 'Collapse' : `Show full · ${agentResultText(span).length} chars` }}</button>
+                  </div>
+                  <div
+                    class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono"
+                    :class="isAgentResultExpanded(span.span_id) ? 'max-h-[32rem] overflow-y-auto' : ''"
+                  >{{ isAgentResultExpanded(span.span_id) ? agentResultText(span) : agentResultPreview(agentResultText(span)) }}</div>
                 </div>
               </div>
 

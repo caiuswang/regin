@@ -110,7 +110,64 @@ export function useSpanTree(spansInput, turnsInput = null) {
     return result
   }
 
+  // ── Dynamic-workflow projection ───────────────────────────────
+  // A workflow run is captured as one trace: a `session.start` root tagged
+  // agent_type=workflow, a `prompt` objective, `workflow.phase` bands, and
+  // `subagent.start` agents carrying their assistant_response / tool.* turns.
+  // The normal prompt-anchored spine renders nothing (the objective prompt
+  // has no descendants — phases hang off the run root), so we project the
+  // run into a single conversation group: the objective as the opening USER
+  // card, then each phase as a divider row followed by its agents + turns.
+  const workflowRoot = computed(() => {
+    for (const s of spans()) {
+      if (s.name === 'session.start' && s.attributes?.agent_type === 'workflow') return s
+    }
+    const phase = spans().find((s) => s.name === 'workflow.phase')
+    if (phase?.parent_id) return spanById.value.get(phase.parent_id) || null
+    return null
+  })
+
+  const isWorkflow = computed(() =>
+    !!workflowRoot.value || spans().some((s) => s.name === 'workflow.phase'),
+  )
+
+  function _orderedPhases() {
+    return spans()
+      .filter((s) => s.name === 'workflow.phase')
+      .sort((a, b) => (a.attributes?.index ?? 1e9) - (b.attributes?.index ?? 1e9))
+  }
+
+  function _workflowDescendants(rootId, phases) {
+    const out = []
+    if (phases.length) {
+      for (const phase of phases) {
+        out.push({ span: phase, depth: 0 })
+        out.push(...flattenDescendants(phase.span_id, 1))
+      }
+    } else if (rootId) {
+      // Live/flat run: no phases yet — agents hang directly off the root.
+      for (const agent of childrenOf(rootId)) {
+        if (agent.name !== 'subagent.start') continue
+        out.push({ span: agent, depth: 0 })
+        out.push(...flattenDescendants(agent.span_id, 1))
+      }
+    }
+    return out
+  }
+
+  function workflowEntries() {
+    const root = workflowRoot.value
+    const rootId = root?.span_id || null
+    const objective =
+      spans().find((s) => s.name === 'prompt' && s.parent_id === rootId) ||
+      spans().find((s) => s.name === 'prompt') || null
+    const descendants = _workflowDescendants(rootId, _orderedPhases())
+    if (!objective && !descendants.length) return []
+    return [{ type: 'group', prompt: objective || root, descendants, workflow: true }]
+  }
+
   const entries = computed(() => {
+    if (isWorkflow.value) return workflowEntries()
     const out = []
     for (const root of rootSpans.value) {
       if (root.name === 'prompt') {
@@ -180,9 +237,37 @@ export function useSpanTree(spansInput, turnsInput = null) {
     })
   })
 
+  // Phase-anchored TOC for workflow runs (parallel to turnItems): one row
+  // per phase with its agents as sub-items. Empty for normal sessions.
+  const phaseItems = computed(() => {
+    if (!isWorkflow.value) return []
+    const rootId = workflowRoot.value?.span_id || null
+    const phases = _orderedPhases()
+    const bands = phases.length
+      ? phases.map((p) => ({ phase: p, agents: childrenOf(p.span_id).filter((s) => s.name === 'subagent.start') }))
+      : (rootId ? [{ phase: null, agents: childrenOf(rootId).filter((s) => s.name === 'subagent.start') }] : [])
+    return bands.map((b, idx) => ({
+      idx,
+      phaseSpanId: b.phase?.span_id || `wf-live-${idx}`,
+      title: b.phase?.attributes?.title || 'Agents',
+      index: b.phase?.attributes?.index ?? (idx + 1),
+      agentCount: b.agents.length,
+      agents: b.agents.map((a) => ({
+        spanId: a.span_id,
+        label: a.attributes?.label || a.attributes?.agent_type
+          || (a.attributes?.agent_id || '').slice(0, 8) || 'agent',
+        type: a.attributes?.agent_type || '',
+        tokens: a.attributes?.tokens ?? null,
+        toolCalls: a.attributes?.tool_calls ?? null,
+        state: a.attributes?.state || '',
+      })),
+    }))
+  })
+
   return {
     spanById, childrenByParent, rootSpans,
     childrenOf, flattenDescendants,
     entries, promptGroups, turnItems,
+    isWorkflow, phaseItems,
   }
 }

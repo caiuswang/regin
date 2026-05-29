@@ -308,6 +308,44 @@ def cmd_resolve_repos(
         conn.close()
 
 
+@trace_app.command("ingest-workflows",
+                   help="Capture Claude Code dynamic-workflow runs into the trace DB")
+def cmd_ingest_workflows(
+    watch: bool = typer.Option(
+        False, "--watch",
+        help="Poll continuously for new/updated runs instead of one pass",
+    ),
+    deep: bool = typer.Option(
+        True, "--deep/--no-deep",
+        help="Expand each agent into per-turn / per-tool spans (completion only)",
+    ),
+    interval: float = typer.Option(
+        5.0, "--interval", help="Watch poll interval in seconds",
+    ),
+) -> None:
+    """Scan the provider's transcript dir for workflow runs and project each
+    onto the session/span trace store (run -> phase -> agent -> turn).
+
+    Idempotent: deterministic span ids + delete-then-rebuild, so re-running
+    refreshes a run rather than duplicating it. `regin serve` runs the same
+    capture in the background; this command is for one-off backfill or a
+    standalone watcher.
+    """
+    from lib.trace.workflow_ingest import ingest_all, watch as watch_runs
+
+    if watch:
+        print(f"Watching for workflow runs every {interval}s (Ctrl-C to stop)…")
+        try:
+            watch_runs(interval, deep=deep)
+        except KeyboardInterrupt:
+            print("\nStopped.")
+        return
+
+    summary = ingest_all(deep=deep)
+    print(f"Done. runs={summary['runs']} spans={summary['spans']} "
+          f"failed={summary['failed']}")
+
+
 def register_trace(app: typer.Typer) -> None:
     """Hook point called from cli/app.py to attach the `trace` subapp."""
     app.add_typer(trace_app)

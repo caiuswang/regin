@@ -197,7 +197,9 @@ def api_sessions():
         # Canonical agent kind: 'claude', 'codex', or 'generic'.
         # Keep raw agent_type for display (tooltip uses it verbatim).
         raw = str(d.get('agent_type') or '').lower()
-        if 'claude' in raw:
+        if raw == 'workflow':
+            d['agent_kind'] = 'workflow'
+        elif 'claude' in raw:
             d['agent_kind'] = 'claude'
         elif 'codex' in raw or 'openai' in raw:
             d['agent_kind'] = 'codex'
