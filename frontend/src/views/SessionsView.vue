@@ -43,6 +43,22 @@ const kind = ref(
     : (localStorage.getItem(TEST_TOGGLE_KEY) === '1' ? 'all' : 'real')
 )
 
+// Workflow runs are a second, orthogonal axis to Kind (real/test): a row's
+// `origin` is "session" or "workflow". Hidden by default so the list reads as
+// interactive sessions; the server default is "show" (all), so the UI sends
+// "hide"/"only" explicitly and omits the param only when set to "show".
+const WF_KEY = 'regin_sessions_workflow'
+const WF_OPTIONS = [
+  { value: 'hide', label: 'Hide runs' },
+  { value: 'show', label: 'Show runs' },
+  { value: 'only', label: 'Only runs' },
+]
+const workflowFilter = ref(
+  WF_OPTIONS.some(o => o.value === localStorage.getItem(WF_KEY))
+    ? localStorage.getItem(WF_KEY)
+    : 'hide'
+)
+
 const ACTIVE_OPTIONS = [
   { value: 'all', label: 'Any status' },
   { value: 'active', label: 'Active only' },
@@ -123,7 +139,7 @@ function rangeBounds(key) {
 // `items` is the reactive row array — aliased as `sessions` below for
 // compatibility with the rest of this view's mental model.
 const {
-  items: sessions, loading, loadingMore, hasNext,
+  items: sessions, extras, loading, loadingMore, hasNext,
   load, loadMore,
 } = useCursor({
   path: '/sessions',
@@ -133,6 +149,9 @@ const {
     return {
       // 'real' is the server default; only send when narrowing/widening.
       kind: kind.value !== 'real' ? kind.value : undefined,
+      // 'show' (= all rows) is the server default; the UI default 'hide' IS
+      // sent, and 'only' too — we omit the param solely for 'show'.
+      workflow: workflowFilter.value !== 'show' ? workflowFilter.value : undefined,
       active: activeFilter.value !== 'all' ? activeFilter.value : undefined,
       trace_id: activeTraceId.value || undefined,
       q: activeSearch.value || undefined,
@@ -145,6 +164,12 @@ const {
     }
   },
 })
+
+// How many origin="workflow" rows the SAME other filters would have matched,
+// reported by the server only when workflow=hide. Drives the "N runs hidden"
+// hint below. `extras` updates on load() (not loadMore), which is correct —
+// it describes the whole filtered set, not the current page.
+const hiddenWorkflowCount = computed(() => extras.value?.workflow_hidden_count || 0)
 
 const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
 
@@ -290,6 +315,11 @@ watch(kind, (v) => {
   reload()
 })
 
+watch(workflowFilter, (v) => {
+  localStorage.setItem(WF_KEY, v)
+  reload()
+})
+
 watch(activeFilter, (v) => {
   localStorage.setItem(ACTIVE_KEY, v)
   reload()
@@ -362,14 +392,14 @@ function contextBadgeClass(pct) {
 }
 
 function agentTypeLabel(s) {
-  if (s.agent_kind === 'workflow') return 'Workflow run'
+  if (s.origin === 'workflow') return 'Workflow run'
   if (s.agent_kind === 'claude') return 'Claude Code session'
   if (s.agent_kind === 'codex') return 'OpenAI Codex session'
   return s.agent_type ? `Agent session: ${s.agent_type}` : 'Agent session'
 }
 
 function agentTypeClass(s) {
-  if (s.agent_kind === 'workflow') return 'agent-icon--workflow'
+  if (s.origin === 'workflow') return 'agent-icon--workflow'
   if (s.agent_kind === 'claude') return 'agent-icon--claude'
   if (s.agent_kind === 'codex') return 'agent-icon--codex'
   return 'agent-icon--generic'
@@ -525,6 +555,17 @@ function activityMoreTitle(s) {
           </select>
         </label>
 
+        <label class="facet-pill" :class="{ 'facet-pill--active': workflowFilter !== 'hide' }">
+          <span class="facet-pill__label">Workflow runs</span>
+          <select
+            v-model="workflowFilter"
+            class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
+            aria-label="Filter captured dynamic-workflow runs"
+          >
+            <option v-for="opt in WF_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </label>
+
         <label class="facet-pill" :class="{ 'facet-pill--active': activeFilter !== 'all' }">
           <span class="facet-pill__label">Status</span>
           <select
@@ -572,6 +613,16 @@ function activityMoreTitle(s) {
     </div>
     <!-- /sticky page header -->
 
+    <!-- Hidden-runs hint: when runs are hidden but some matched the other
+         filters, offer a one-click jump to "Only runs". -->
+    <button
+      v-if="workflowFilter === 'hide' && hiddenWorkflowCount > 0"
+      type="button"
+      class="mb-3 inline-flex items-center gap-1 text-xs text-teal-700 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"
+      title="Show only the captured dynamic-workflow runs"
+      @click="workflowFilter = 'only'"
+    >⚙ {{ hiddenWorkflowCount }} workflow run{{ hiddenWorkflowCount === 1 ? '' : 's' }} hidden →</button>
+
     <div class="split-card">
       <div v-if="sessions.length" class="hidden sm:block overflow-x-auto">
         <table class="tbl sessions-tbl">
@@ -618,18 +669,18 @@ function activityMoreTitle(s) {
                     :aria-label="agentTypeLabel(s)"
                     role="img"
                   >
-                    <svg v-if="s.agent_kind === 'claude'" viewBox="0 0 16 16" aria-hidden="true">
-                      <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5 8 2.2Z" />
-                    </svg>
-                    <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
-                      <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
-                    </svg>
-                    <svg v-else-if="s.agent_kind === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
+                    <svg v-if="s.origin === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
                       <circle cx="3.2" cy="8" r="1.5" />
                       <path d="M4.7 8h2.8M7.5 4v8M7.5 4h3M7.5 8h3M7.5 12h3" />
                       <circle cx="12" cy="4" r="1.3" />
                       <circle cx="12" cy="8" r="1.3" />
                       <circle cx="12" cy="12" r="1.3" />
+                    </svg>
+                    <svg v-else-if="s.agent_kind === 'claude'" viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5 8 2.2Z" />
+                    </svg>
+                    <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
                     </svg>
                     <svg v-else viewBox="0 0 16 16" aria-hidden="true">
                       <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
@@ -665,6 +716,11 @@ function activityMoreTitle(s) {
                     :title="s.test_name"
                   >{{ shortTestName(s.test_name) }}</span>
                 </template>
+                <span
+                  v-if="s.origin === 'workflow'"
+                  class="ml-2 inline-block rounded bg-teal-100 text-teal-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
+                  title="captured dynamic-workflow run"
+                >workflow</span>
               </td>
               <td class="col-title">
                 <span v-if="s.title" class="block truncate text-sm text-gray-800" :title="s.title">{{ titlePreview(s.title) }}</span>
@@ -747,18 +803,18 @@ function activityMoreTitle(s) {
                   :aria-label="agentTypeLabel(s)"
                   role="img"
                 >
-                  <svg v-if="s.agent_kind === 'claude'" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5 8 2.2Z" />
-                  </svg>
-                  <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
-                  </svg>
-                  <svg v-else-if="s.agent_kind === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
+                  <svg v-if="s.origin === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
                     <circle cx="3.2" cy="8" r="1.5" />
                     <path d="M4.7 8h2.8M7.5 4v8M7.5 4h3M7.5 8h3M7.5 12h3" />
                     <circle cx="12" cy="4" r="1.3" />
                     <circle cx="12" cy="8" r="1.3" />
                     <circle cx="12" cy="12" r="1.3" />
+                  </svg>
+                  <svg v-else-if="s.agent_kind === 'claude'" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5 8 2.2Z" />
+                  </svg>
+                  <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
                   </svg>
                   <svg v-else viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
@@ -781,6 +837,11 @@ function activityMoreTitle(s) {
                   v-if="s.is_test"
                   class="inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
                 >test</span>
+                <span
+                  v-if="s.origin === 'workflow'"
+                  class="inline-block rounded bg-teal-100 text-teal-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
+                  title="captured dynamic-workflow run"
+                >workflow</span>
                 <span
                   v-if="s.context_pct != null"
                   class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-medium"

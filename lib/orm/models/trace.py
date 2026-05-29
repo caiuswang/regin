@@ -176,6 +176,9 @@ class Session(Base, table=True):
                                      sa_column=Column("test_name", Text))
     agent_type: Optional[str] = Field(default=None,
                                       sa_column=Column("agent_type", Text))
+    origin: Optional[str] = Field(default="session",
+                                  sa_column=Column("origin", String,
+                                                   server_default=text("'session'")))
     model: Optional[str] = Field(default=None, sa_column=Column("model", Text))
     # Starting working directory, captured from the `session.start` span's
     # `cwd` attribute (earliest start wins). Display-only; repo membership

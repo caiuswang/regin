@@ -60,13 +60,23 @@ def _seed(db_path, rows):
         conn.close()
 
 
-def _seed_session_row(db_path, trace_id):
-    """Minimal `sessions` row so `_session_summary` returns its fields."""
+def _seed_session_row(db_path, trace_id, *, origin='session', is_test=0,
+                      agent_type=None, title=None, last_seen='2026-01-01T00:00:00'):
+    """Minimal `sessions` row so `_session_summary` / the list endpoint see it.
+
+    `is_test` defaults to 0 so the row matches the list endpoint's default
+    `kind='real'` filter; `origin`/`agent_type`/`title` are settable so the
+    workflow-axis filter tests can seed both interactive sessions and
+    captured runs.
+    """
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute(
-            "INSERT INTO sessions (trace_id, started_at, last_seen) VALUES (?, ?, ?)",
-            (trace_id, '2026-01-01T00:00:00', '2026-01-01T00:00:00'))
+            "INSERT INTO sessions "
+            "(trace_id, started_at, last_seen, origin, is_test, agent_type, title) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (trace_id, '2026-01-01T00:00:00', last_seen,
+             origin, is_test, agent_type, title))
         conn.commit()
     finally:
         conn.close()
@@ -603,7 +613,10 @@ def test_session_detail_surfaces_workflow_total_tokens(client, trace_db):
     _seed(trace_db, [
         {'trace_id': 'wf_t', 'span_id': 'wfrun-t', 'name': 'session.start',
          'start_time': '2026-01-01T00:00:00',
-         'attributes': {'agent_type': 'workflow', 'total_tokens': 116626}},
+         # New model: a run-root span's vendor is 'claude' and it carries a
+         # `run_id` (the workflow-ness marker) — never agent_type='workflow'.
+         'attributes': {'agent_type': 'claude', 'run_id': 'wf_t',
+                        'total_tokens': 116626}},
     ])
     _seed_session_row(trace_db, 'wf_t')
     assert client.get('/api/sessions/wf_t').get_json()['total_tokens'] == 116626
@@ -615,3 +628,89 @@ def test_session_detail_surfaces_workflow_total_tokens(client, trace_db):
     ])
     _seed_session_row(trace_db, 'norm')
     assert client.get('/api/sessions/norm').get_json()['total_tokens'] is None
+
+
+# --- /api/sessions list: workflow (origin) axis -------------------------
+
+def _seed_origin_mix(trace_db):
+    """Two interactive sessions + two captured runs, distinct last_seen so
+    the keyset order is stable. Returns nothing; trace_ids are fixed."""
+    _seed_session_row(trace_db, 'sess_a', origin='session',
+                      agent_type='claude', last_seen='2026-01-01T00:00:04')
+    _seed_session_row(trace_db, 'sess_b', origin='session',
+                      agent_type='codex', last_seen='2026-01-01T00:00:03')
+    _seed_session_row(trace_db, 'run_x', origin='workflow',
+                      agent_type='claude', last_seen='2026-01-01T00:00:02')
+    _seed_session_row(trace_db, 'run_y', origin='workflow',
+                      agent_type='claude', last_seen='2026-01-01T00:00:01')
+
+
+def _ids(body):
+    return {it['trace_id'] for it in body['items']}
+
+
+def test_sessions_workflow_default_show_returns_all(client, trace_db):
+    """Server default is `show` = every row, so external callers and E2E
+    fixtures are unaffected by the new origin axis. No `workflow_hidden_count`
+    when not hiding."""
+    _seed_origin_mix(trace_db)
+    body = client.get('/api/sessions').get_json()
+    assert _ids(body) == {'sess_a', 'sess_b', 'run_x', 'run_y'}
+    assert body['workflow_hidden_count'] is None
+
+
+def test_sessions_workflow_hide_excludes_runs_and_counts_them(client, trace_db):
+    """`hide` drops origin='workflow' rows and reports how many the same
+    other filters would have matched."""
+    _seed_origin_mix(trace_db)
+    body = client.get('/api/sessions?workflow=hide').get_json()
+    assert _ids(body) == {'sess_a', 'sess_b'}
+    assert body['workflow_hidden_count'] == 2
+
+
+def test_sessions_workflow_only_returns_just_runs(client, trace_db):
+    """`only` returns just the captured runs; no hidden count (only `hide`
+    carries it)."""
+    _seed_origin_mix(trace_db)
+    body = client.get('/api/sessions?workflow=only').get_json()
+    assert _ids(body) == {'run_x', 'run_y'}
+    assert body['workflow_hidden_count'] is None
+
+
+def test_sessions_workflow_hide_count_respects_other_filters(client, trace_db):
+    """The hidden count runs the SAME shared WHERE set as the page query, so a
+    workflow row excluded by another filter (here: `since`) is NOT counted."""
+    # run_x is recent, run_y is older than the `since` bound.
+    _seed_origin_mix(trace_db)
+    body = client.get(
+        '/api/sessions?workflow=hide&since=2026-01-01T00:00:02').get_json()
+    # sess_a/sess_b are recent enough; run_y is below `since` so it isn't
+    # among the hidden runs the filtered page would have shown.
+    assert _ids(body) == {'sess_a', 'sess_b'}
+    assert body['workflow_hidden_count'] == 1   # only run_x, not run_y
+
+
+def test_sessions_rows_carry_origin_and_is_workflow(client, trace_db):
+    """Each row exposes the orthogonal axes: `origin` (defaulting to 'session'
+    for NULL legacy rows) and the derived `is_workflow` boolean. agent_type is
+    vendor-only now, so a run reads as agent_kind='claude', not 'workflow'."""
+    _seed_origin_mix(trace_db)
+    rows = {it['trace_id']: it for it in client.get('/api/sessions').get_json()['items']}
+    assert rows['sess_a']['origin'] == 'session'
+    assert rows['sess_a']['is_workflow'] is False
+    assert rows['run_x']['origin'] == 'workflow'
+    assert rows['run_x']['is_workflow'] is True
+    assert rows['run_x']['agent_kind'] == 'claude'   # never 'workflow'
+
+
+def test_sessions_null_origin_reads_as_session(client, trace_db):
+    """A legacy row with NULL origin is treated as an interactive session:
+    `hide` keeps it, `only` drops it, and it reads back origin='session'."""
+    _seed_session_row(trace_db, 'legacy', origin=None, agent_type='claude')
+    hidden = client.get('/api/sessions?workflow=hide').get_json()
+    assert _ids(hidden) == {'legacy'}
+    assert hidden['workflow_hidden_count'] == 0
+    only = client.get('/api/sessions?workflow=only').get_json()
+    assert _ids(only) == set()
+    row = client.get('/api/sessions').get_json()['items'][0]
+    assert row['origin'] == 'session' and row['is_workflow'] is False

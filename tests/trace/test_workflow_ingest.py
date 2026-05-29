@@ -158,7 +158,13 @@ def test_build_flat_spans_is_phaseless(tmp_path):
     assert "workflow.phase" not in by                 # no phases live
     assert "session.end" not in by                    # run still going
     root = by["session.start"][0]
-    assert root["attributes"]["agent_type"] == "workflow"
+    # agent_type is now vendor-only: the Workflow tool is a Claude Code
+    # feature, so the run-root span's vendor is always 'claude'. The
+    # workflow-ness lives on the orthogonal `run_id` marker (which the
+    # frontend uses to detect a workflow-root session.start) and on the
+    # session row's `origin` axis.
+    assert root["attributes"]["agent_type"] == "claude"
+    assert root["attributes"]["run_id"] == RUN_ID
     assert root["attributes"]["workflow_status"] == "running"
     # prompt text is the script `description`, parsed from meta via tree-sitter
     assert by["prompt"][0]["attributes"]["text"] == "synthetic workflow for tests"
@@ -176,6 +182,82 @@ def test_build_flat_spans_agent_state_and_tokens(tmp_path):
     assert agents["aBBB"]["attributes"]["state"] == "running"   # started, no result
     # live token total comes from the transcript (20 + 30 = 50 per agent)
     assert agents["aAAA"]["attributes"]["tokens"] == 50
+
+
+def test_build_flat_spans_expands_live_agent_turns(tmp_path):
+    """A live run (no manifest yet) must still stream each running agent's
+    per-turn / per-tool work, not just bare agent rows — otherwise the run's
+    own trace view shows nothing happening while agents are mid-flight. The
+    deep children reuse the full tree's `wfagent-`/`wfturn-` ids so the
+    live->complete transition is idempotent."""
+    projects = _make_run(tmp_path, with_manifest=False)
+    ref = W.discover_runs(projects)[0]
+    spans = W.build_flat_spans(ref, deep=True, is_test=True)
+    by = _by_name(spans)
+
+    # both agents' transcripts -> 2 turns each, first turn issuing one Bash
+    assert len(by["assistant_response"]) == 4                  # 2 turns x 2 agents
+    assert _all_have_output_tokens(by["assistant_response"])
+    assert len(by["tool.Bash"]) == 2                          # one per agent
+    # turn heads nest under their agent span (the live agent id == full-tree id)
+    agent_ids = {s["span_id"] for s in by["subagent.start"]}
+    assert {s["parent_id"] for s in by["assistant_response"]} <= agent_ids
+    # opting out keeps the coarse agent-only tree
+    flat = _by_name(W.build_flat_spans(ref, deep=False, is_test=True))
+    assert "assistant_response" not in flat
+
+
+def test_live_state_mtime_tracks_agent_transcripts(tmp_path):
+    """The watcher's re-ingest gate must follow agent transcripts, not just the
+    journal: transcripts grow as agents stream output *between* the journal's
+    start/result events, so gating on the journal alone freezes the live view
+    mid-run."""
+    import os
+
+    projects = _make_run(tmp_path, with_manifest=False)
+    ref = W.discover_runs(projects)[0]
+    # Age the journal + every transcript, then "grow" one (fixed epochs — no
+    # clock). state_mtime must follow the freshest transcript, not the journal.
+    os.utime(ref.journal_path, (1_780_000_000, 1_780_000_000))
+    for p in ref.agents_dir.glob("agent-*.jsonl"):
+        os.utime(p, (1_780_000_000, 1_780_000_000))
+    os.utime(ref.agents_dir / "agent-aAAA.jsonl", (1_780_000_500, 1_780_000_500))
+    assert ref.state_mtime() == 1_780_000_500                 # not the journal's
+
+
+def test_resumed_run_reclassifies_as_live(tmp_path):
+    """A paused/'killed' run that's been resumed must flip back to live, not
+    stay terminal: the killed manifest predates (and can't describe) the agents
+    the resume adds, and the watcher would otherwise freeze on the stale
+    manifest mtime. A 'completed' manifest, by contrast, stays terminal even if
+    a transcript is touched afterwards (a finished run can't un-finish)."""
+    import os
+
+    projects = _make_run(tmp_path, with_manifest=False)
+    mf = projects / "proj" / "sess" / "workflows" / f"{RUN_ID}.json"
+
+    # Pause: a 'killed' manifest lands, newer than all current activity.
+    mf.write_text(json.dumps({**_MANIFEST, "status": "killed"}))
+    ref = W.discover_runs(projects)[0]
+    for p in (ref.journal_path, *ref.agents_dir.glob("agent-*.jsonl")):
+        os.utime(p, (1_779_999_000, 1_779_999_000))
+    os.utime(mf, (1_780_000_000, 1_780_000_000))
+    assert W.discover_runs(projects)[0].terminal is True       # killed + idle = done
+
+    # Resume: a transcript grows past the manifest -> live again.
+    os.utime(ref.agents_dir / "agent-aBBB.jsonl", (1_780_000_500, 1_780_000_500))
+    ref = W.discover_runs(projects)[0]
+    assert ref.terminal is False
+    # The live flat path enumerates agents from the JOURNAL (so resume-added
+    # agents surface) and deep-expands each transcript.
+    by = _by_name(W.build_flat_spans(ref, deep=True, is_test=True))
+    assert {s["attributes"]["agent_id"] for s in by["subagent.start"]} == {"aAAA", "aBBB"}
+    assert len(by["assistant_response"]) == 4                  # deep turns stream live
+
+    # Re-completion: a 'completed' manifest is terminal regardless of mtime.
+    mf.write_text(json.dumps(_MANIFEST))                       # status == 'completed'
+    os.utime(mf, (1_780_000_000, 1_780_000_000))              # still older than aBBB
+    assert W.discover_runs(projects)[0].terminal is True
 
 
 def test_build_full_spans_tree_and_deep_turns(tmp_path):
@@ -244,6 +326,25 @@ def test_session_tokens_are_real_split_not_manifest_total(tmp_path):
     assert row["input_tokens"] == 44
     assert row["cache_read_tokens"] == 0
     assert row["cache_creation_tokens"] == 0
+
+
+def test_terminal_ingest_sets_origin_workflow_and_vendor_claude(tmp_path):
+    """A freshly ingested (terminal) run splits the two orthogonal axes:
+    `agent_type` is the vendor and is always 'claude' (the Workflow tool is a
+    Claude Code feature — 'workflow' is NEVER a vendor anymore), while `origin`
+    records what KIND of row this is and flips to 'workflow' so the Sessions
+    list can filter captured runs in/out."""
+    W.ingest_run(W.discover_runs(_make_run(tmp_path, with_manifest=True))[0],
+                 deep=True, is_test=True)
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT agent_type, origin FROM sessions WHERE trace_id=?",
+            (RUN_ID,)).fetchone()
+    finally:
+        conn.close()
+    assert row["agent_type"] == "claude"
+    assert row["origin"] == "workflow"
 
 
 def test_agent_tool_count_uses_captured_spans_not_manifest(tmp_path):
@@ -317,7 +418,10 @@ def test_ingest_flat_then_full_is_idempotent(tmp_path):
         row = conn.execute(
             "SELECT agent_type, status FROM sessions WHERE trace_id=?",
             (RUN_ID,)).fetchone()
-        assert row["agent_type"] == "workflow"
+        # Vendor is always 'claude' (Workflow is a Claude Code feature) — the
+        # `origin='workflow'` marker is stamped only by the terminal pass and
+        # is asserted in step 2 below.
+        assert row["agent_type"] == "claude"
         assert row["status"] == "active"
         phases = conn.execute(
             "SELECT COUNT(*) c FROM session_spans WHERE trace_id=? "

@@ -119,6 +119,16 @@ def api_sessions():
       repo=<name>        — only sessions tagged with this registered repo
                            (unique repo name). Multi-repo sessions match
                            every repo they touched.
+      workflow=hide|show|only
+                         — filter by the `origin` axis. show (server default) →
+                           every row, so external callers and E2E fixtures are
+                           unaffected; hide → exclude captured dynamic-workflow
+                           runs (origin='workflow'); only → just those runs.
+                           SessionsView sends 'hide' by default to keep runs out
+                           of the main list. When 'hide' the envelope carries
+                           `workflow_hidden_count` — the number of origin=
+                           'workflow' rows the same other filters would have
+                           matched — for a pivot hint.
       cursor, size       — keyset pagination (see lib.utils.pagination)
     """
     from sqlmodel import select as _select
@@ -138,6 +148,9 @@ def api_sessions():
         scope = 'title'
     since = (request.args.get('since') or '').strip()
     until = (request.args.get('until') or '').strip()
+    workflow = (request.args.get('workflow') or 'show').strip().lower()
+    if workflow not in ('hide', 'show', 'only'):
+        workflow = 'show'
     cursor_token = request.args.get('cursor')
     size = clamp_size(request.args.get('size'), default=50)
 
@@ -194,17 +207,23 @@ def api_sessions():
             d['active_pct'] = None
             d['idle_ms'] = None
 
-        # Canonical agent kind: 'claude', 'codex', or 'generic'.
+        # Canonical agent kind: 'claude', 'codex', or 'generic'. agent_type
+        # is now vendor-only ('claude' | 'codex' | NULL) — "workflow" no
+        # longer lives here; it moved to the orthogonal `origin` axis below.
         # Keep raw agent_type for display (tooltip uses it verbatim).
         raw = str(d.get('agent_type') or '').lower()
-        if raw == 'workflow':
-            d['agent_kind'] = 'workflow'
-        elif 'claude' in raw:
+        if 'claude' in raw:
             d['agent_kind'] = 'claude'
         elif 'codex' in raw or 'openai' in raw:
             d['agent_kind'] = 'codex'
         else:
             d['agent_kind'] = 'generic' if raw else None
+
+        # `origin` is what KIND of row this is: 'session' (a real interactive
+        # agent session, the default) or 'workflow' (a captured dynamic-
+        # workflow run). NULL legacy rows read as 'session'.
+        d['origin'] = d.get('origin') or 'session'
+        d['is_workflow'] = (d['origin'] == 'workflow')
 
         return d
 
@@ -223,30 +242,21 @@ def api_sessions():
         .label('plans')
     )
 
-    with SessionLocal() as session:
-        stmt = _select(
-            SessionModel.trace_id, SessionModel.title, SessionModel.title_source,
-            SessionModel.status, SessionModel.ended_at, SessionModel.ended_reason,
-            SessionModel.started_at, SessionModel.last_seen,
-            SessionModel.span_count, SessionModel.skill_reads,
-            SessionModel.file_edits, SessionModel.rule_checks,
-            plans_subq, SessionModel.prompts,
-            SessionModel.tool_calls, SessionModel.is_test, SessionModel.test_name,
-            SessionModel.agent_type,
-            SessionModel.model,
-            SessionModel.cwd,
-            SessionModel.input_tokens, SessionModel.output_tokens,
-            SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
-            SessionModel.peak_context_tokens, SessionModel.peak_main_context_tokens,
-            SessionModel.context_window_tokens,
-            SessionModel.active_work_ms,
-        )
+    def _apply_filters(s):
+        """Apply the shared WHERE set (kind/is_test, trace_id, active,
+        title/prompt search, since/until, repo) to a statement and return it.
+
+        Extracted so the page query and the workflow_hidden_count query run
+        an identical filter set — the count must reflect exactly the rows the
+        page would have shown but for the `workflow` origin filter. The
+        workflow/origin clause is applied by the caller, NOT here.
+        """
         if kind == 'real':
-            stmt = stmt.where(SessionModel.is_test == 0)
+            s = s.where(SessionModel.is_test == 0)
         elif kind == 'test':
-            stmt = stmt.where(SessionModel.is_test == 1)
+            s = s.where(SessionModel.is_test == 1)
         if trace_id_q:
-            stmt = stmt.where(SessionModel.trace_id.ilike(f"{trace_id_q}%"))
+            s = s.where(SessionModel.trace_id.ilike(f"{trace_id_q}%"))
         if active_filter != 'all':
             # Mirror the frontend's `isActive(s)` rule so the server-side
             # filter matches the green badge: status='active' is always
@@ -262,10 +272,10 @@ def api_sessions():
                 _or(status_col.is_(None), status_col.notin_(['active', 'ended'])),
                 SessionModel.last_seen < cutoff_iso,
             )
-            if active_filter == 'active':
-                stmt = stmt.where(_or(status_col == 'active', recent_unknown))
-            else:
-                stmt = stmt.where(_or(status_col == 'ended', stale_unknown))
+            active_clause = (_or(status_col == 'active', recent_unknown)
+                             if active_filter == 'active'
+                             else _or(status_col == 'ended', stale_unknown))
+            s = s.where(active_clause)
         if search:
             # COLLATE NOCASE via .ilike on SQLite; for MySQL the default
             # collation already matches case-insensitively on varchar columns.
@@ -283,17 +293,53 @@ def api_sessions():
                     .ilike(f"%{search}%")
                 )
             )
-            if scope == 'title':
-                stmt = stmt.where(title_clause)
-            elif scope == 'prompt':
-                stmt = stmt.where(prompt_clause)
-            else:  # 'both'
-                stmt = stmt.where(_or(title_clause, prompt_clause))
+            search_clause = {'title': title_clause, 'prompt': prompt_clause}.get(
+                scope, _or(title_clause, prompt_clause))
+            s = s.where(search_clause)
         if since:
-            stmt = stmt.where(SessionModel.last_seen >= since)
+            s = s.where(SessionModel.last_seen >= since)
         if until:
-            stmt = stmt.where(SessionModel.last_seen < until)
-        stmt = _filter_sessions_by_repo(stmt, request.args.get('repo'))
+            s = s.where(SessionModel.last_seen < until)
+        return _filter_sessions_by_repo(s, request.args.get('repo'))
+
+    with SessionLocal() as session:
+        stmt = _apply_filters(_select(
+            SessionModel.trace_id, SessionModel.title, SessionModel.title_source,
+            SessionModel.status, SessionModel.ended_at, SessionModel.ended_reason,
+            SessionModel.started_at, SessionModel.last_seen,
+            SessionModel.span_count, SessionModel.skill_reads,
+            SessionModel.file_edits, SessionModel.rule_checks,
+            plans_subq, SessionModel.prompts,
+            SessionModel.tool_calls, SessionModel.is_test, SessionModel.test_name,
+            SessionModel.agent_type,
+            SessionModel.origin,
+            SessionModel.model,
+            SessionModel.cwd,
+            SessionModel.input_tokens, SessionModel.output_tokens,
+            SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
+            SessionModel.peak_context_tokens, SessionModel.peak_main_context_tokens,
+            SessionModel.context_window_tokens,
+            SessionModel.active_work_ms,
+        ))
+        # Apply the `workflow` (origin) filter AFTER the shared filters.
+        # NULL legacy rows count as 'session' (not workflow), so `hide` keeps
+        # them and `only` drops them.
+        if workflow == 'only':
+            stmt = stmt.where(SessionModel.origin == 'workflow')
+        elif workflow == 'hide':
+            stmt = stmt.where(_or(SessionModel.origin.is_(None),
+                                  SessionModel.origin != 'workflow'))
+
+        # When hiding runs, count how many the SAME other filters would have
+        # matched so the frontend can offer a pivot hint. Same _apply_filters,
+        # restricted to origin='workflow'.
+        if workflow == 'hide':
+            hidden_workflow_count = session.exec(
+                _apply_filters(_select(_func.count()).select_from(SessionModel))
+                .where(SessionModel.origin == 'workflow')
+            ).one()
+        else:
+            hidden_workflow_count = None
 
         page = keyset_page_stmt(
             session, stmt,
@@ -306,6 +352,7 @@ def api_sessions():
     envelope = page.to_envelope()
     envelope['sessions'] = envelope['items']  # legacy field
     envelope['search'] = search
+    envelope['workflow_hidden_count'] = hidden_workflow_count
     return jsonify(envelope)
 
 

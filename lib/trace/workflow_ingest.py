@@ -19,8 +19,11 @@ On-disk layout, per run ``wf_<id>`` inside a Claude session dir ``<S>``::
 The rich manifest only exists once a run is terminal, so capture has two
 stages (see `ingest_run`):
 
-* **live** (no manifest yet) -> `build_flat_spans`: a flat run + agent list,
-  status ``active``, per-agent token totals from the live transcripts.
+* **live** (no manifest yet) -> `build_flat_spans`: a flat run + agent list
+  (no phases yet), status ``active``, per-agent token totals from the live
+  transcripts. Each running agent's transcript is expanded into the same deep
+  per-turn / per-tool spans the full tree uses, so the run's own trace view
+  streams agent work live rather than showing bare agent rows.
 * **completed** (manifest present) -> `build_full_spans`: the full
   ``phase -> agent -> turn`` tree, status ``ended``, with each agent's
   transcript expanded into per-turn / per-tool spans.
@@ -66,23 +69,56 @@ class RunRef:
     manifest_path: Path
     script_path: Path | None
 
+    def _manifest_mtime(self) -> float | None:
+        try:
+            return self.manifest_path.stat().st_mtime
+        except OSError:
+            return None
+
+    def _activity_mtime(self) -> float:
+        """Newest mtime across the journal + every agent transcript — the run's
+        live edge. Advances as agents stream output (the journal only ticks on
+        start/result events) and, crucially, when a paused run is resumed."""
+        mtimes = [0.0]
+        for p in (self.journal_path, *self.agents_dir.glob("agent-*.jsonl")):
+            try:
+                mtimes.append(p.stat().st_mtime)
+            except OSError:
+                continue
+        return max(mtimes)
+
     @property
     def terminal(self) -> bool:
-        """A run is terminal once its manifest has been written."""
-        return self.manifest_path.exists()
+        """True once the run has *finished* — not merely once a manifest exists.
+
+        A ``completed`` manifest is always terminal (a finished run can't
+        un-finish, even if some transcript is touched afterwards). But a
+        paused/``killed`` run *also* writes a manifest, and resuming it grows
+        the journal + transcripts past that manifest's mtime. Treating such a
+        run as terminal freezes its capture: the watcher gates on the now-stale
+        manifest mtime, and the killed manifest can't even describe the agents
+        the resume added. So a non-``completed`` manifest is terminal only while
+        no activity postdates it — newer activity reclassifies the run as live.
+        """
+        status = _manifest_status(self.manifest_path)
+        if status is None:
+            return False                      # no manifest yet → live
+        if status == "completed":
+            return True
+        mm = self._manifest_mtime()
+        return mm is None or self._activity_mtime() <= mm
 
     def state_mtime(self) -> float:
-        """mtime of the file defining the run's current state.
+        """mtime of the file(s) defining the run's current state, driving the
+        watcher's re-ingest gate.
 
-        The manifest once terminal (stable after completion), else the
-        live journal (grows as agents start/finish). Drives the watcher's
-        re-ingest gate.
+        Once terminal: the manifest (stable). While live (incl. a resumed run):
+        the live edge across the journal + transcripts, so the watcher
+        re-ingests as agents stream rather than freezing between journal events.
         """
-        p = self.manifest_path if self.terminal else self.journal_path
-        try:
-            return p.stat().st_mtime
-        except OSError:
-            return 0.0
+        if self.terminal:
+            return self._manifest_mtime() or 0.0
+        return self._activity_mtime()
 
 
 # --------------------------------------------------------------------------
@@ -144,6 +180,17 @@ def _read_json(path: Path) -> dict | None:
             return json.load(fh)
     except (OSError, ValueError):
         return None
+
+
+def _manifest_status(path: Path) -> str | None:
+    """The manifest's ``status`` (``completed`` / ``killed`` / …), or None when
+    the manifest is absent or unreadable. Used to decide whether a run is
+    genuinely finished vs paused-and-resumable — see `RunRef.terminal`."""
+    manifest = _read_json(path)
+    if manifest is None:
+        return None
+    status = manifest.get("status")
+    return status if isinstance(status, str) else "completed"
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -661,7 +708,7 @@ def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
 
     spans = _root_and_title_spans(
         run_id, title=title, start=start, end=end,
-        attrs={"agent_type": "workflow", "model": manifest.get("defaultModel"),
+        attrs={"agent_type": "claude", "model": manifest.get("defaultModel"),
                "cwd": _first_agent_value(agents_dir, agent_ids, "cwd"),
                "run_id": run_id, "task_id": manifest.get("taskId"),
                "parent_trace_id": _parent_trace_id(agents_dir),
@@ -798,12 +845,20 @@ def _flat_agent_span(run_ref: RunRef, root_id: str, agent_id: str,
         is_test=is_test)
 
 
-def build_flat_spans(run_ref: RunRef, *, is_test: bool = False) -> list[dict]:
-    """Build the coarse, live tree for an *in-progress* run from the journal.
+def build_flat_spans(run_ref: RunRef, *, deep: bool = True,
+                     is_test: bool = False) -> list[dict]:
+    """Build the live tree for an *in-progress* run from the journal.
 
     No manifest exists yet, so there are no phases: agents hang directly
     off the run root, marked running/done. Per-agent token totals come from
     the live transcripts (`read_usage`).
+
+    When ``deep`` (the default), each agent's transcript is also expanded into
+    per-turn / per-tool spans via `_agent_turn_spans` — the same deep children
+    the full tree builds — so the run's own view streams live agent work. The
+    turn-span ids match the full tree's (``wfagent-…`` parent), so the live→
+    complete transition is idempotent. ``deep=False`` keeps the coarse
+    agent-only tree.
     """
     run_id = run_ref.run_id
     root_id = f"wfrun-{run_id}"
@@ -814,7 +869,7 @@ def build_flat_spans(run_ref: RunRef, *, is_test: bool = False) -> list[dict]:
 
     spans = _root_and_title_spans(
         run_id, title=(desc or name or run_id), start=start, end=None,
-        attrs={"agent_type": "workflow", "workflow_name": name, "run_id": run_id,
+        attrs={"agent_type": "claude", "workflow_name": name, "run_id": run_id,
                "workflow_status": "running",
                "parent_trace_id": run_ref.session_dir.name,
                "cwd": _first_agent_value(run_ref.agents_dir, started, "cwd"),
@@ -827,6 +882,10 @@ def build_flat_spans(run_ref: RunRef, *, is_test: bool = False) -> list[dict]:
     for agent_id in started:
         spans.append(_flat_agent_span(run_ref, root_id, agent_id, results,
                                       start, is_test))
+        if deep and agent_id:
+            spans.extend(_agent_turn_spans(
+                run_id, f"wfagent-{run_id}-{agent_id}", agent_id,
+                run_ref.agents_dir, is_test))
     return spans
 
 
@@ -921,6 +980,32 @@ def _set_session_title(run_id: str, title: str | None) -> None:
         conn.execute(
             "UPDATE sessions SET title = ?, title_source = 'workflow_name' "
             "WHERE trace_id = ?", (title, run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _set_session_origin(run_id: str) -> None:
+    """Mark the run's session row as a captured workflow on the *origin* axis.
+
+    ``sessions.origin`` is orthogonal to ``agent_type``: ``agent_type`` is
+    the launching agent's vendor ('claude' for a workflow run, since the
+    Workflow tool is a Claude Code feature), while ``origin`` records what
+    KIND of row this is — 'session' for a real interactive agent session
+    (the default) vs 'workflow' for a captured dynamic-workflow run. The
+    run-root span carries ``agent_type='claude'``, so without this stamp the
+    row would be indistinguishable from a normal Claude session; here we set
+    its ``origin`` so the Sessions list can filter captured runs in/out.
+    ``_clear_run`` wipes the row each re-ingest, so this UPDATE is the
+    final, deterministic value.
+    """
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sessions SET origin = 'workflow' WHERE trace_id = ?",
+            (run_id,))
         conn.commit()
     finally:
         conn.close()
@@ -1053,15 +1138,17 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
                             _session_token_split(run_ref.agents_dir, agent_ids))
         name = manifest.get("workflowName")
         _set_session_title(run_ref.run_id, name or manifest.get("summary"))
+        _set_session_origin(run_ref.run_id)
         _stamp_parent_link(run_ref, name)
         return result
-    spans = build_flat_spans(run_ref, is_test=is_test)
+    spans = build_flat_spans(run_ref, deep=deep, is_test=is_test)
     result = reingest(run_ref.run_id, spans)
     started, _ = _journal_agents(_read_jsonl(run_ref.journal_path))
     _set_session_tokens(run_ref.run_id,
                         _session_token_split(run_ref.agents_dir, started))
     name = _parse_script_meta(run_ref.script_path)[0]
     _set_session_title(run_ref.run_id, name)
+    _set_session_origin(run_ref.run_id)
     _stamp_parent_link(run_ref, name)
     return result
 

@@ -123,7 +123,7 @@ const workflowSpansLoaded = ref(false)
 async function ensureWorkflowSpansLoaded() {
   if (workflowSpansLoaded.value) return
   const root = (session.value?.spans || []).find(
-    (s) => s.name === 'session.start' && s.attributes?.agent_type === 'workflow',
+    (s) => s.name === 'session.start' && s.attributes?.run_id != null,
   )
   if (!root) return
   workflowSpansLoaded.value = true
@@ -666,7 +666,7 @@ const allSpans = computed(() => {
 // ordinary sessions). Source of the parent backlink below; the run's name
 // already shows as the session title, so it's not repeated as a chip.
 const workflowRoot = computed(() => allSpans.value.find(
-  s => s.name === 'session.start' && s.attributes?.agent_type === 'workflow',
+  s => s.name === 'session.start' && s.attributes?.run_id != null,
 ) || null)
 
 // Backlink target: the Claude Code session (and exact tool.Workflow span)

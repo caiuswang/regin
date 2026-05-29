@@ -116,8 +116,8 @@ export function useSpanTree(spansInput, turnsInput = null) {
   }
 
   // ── Dynamic-workflow projection ───────────────────────────────
-  // A workflow run is captured as one trace: a `session.start` root tagged
-  // agent_type=workflow, a `prompt` objective, `workflow.phase` bands, and
+  // A workflow run is captured as one trace: a `session.start` root identified
+  // by its `run_id`, a `prompt` objective, `workflow.phase` bands, and
   // `subagent.start` agents carrying their assistant_response / tool.* turns.
   // The normal prompt-anchored spine renders nothing (the objective prompt
   // has no descendants — phases hang off the run root), so we project the
@@ -125,7 +125,7 @@ export function useSpanTree(spansInput, turnsInput = null) {
   // card, then each phase as a divider row followed by its agents + turns.
   const workflowRoot = computed(() => {
     for (const s of spans()) {
-      if (s.name === 'session.start' && s.attributes?.agent_type === 'workflow') return s
+      if (s.name === 'session.start' && s.attributes?.run_id != null) return s
     }
     const phase = spans().find((s) => s.name === 'workflow.phase')
     if (phase?.parent_id) return spanById.value.get(phase.parent_id) || null

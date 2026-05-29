@@ -178,7 +178,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     tool_calls    INTEGER NOT NULL DEFAULT 0,
     is_test       INTEGER NOT NULL DEFAULT 0,
     test_name     TEXT,
-    agent_type    TEXT,                -- fixed from the first SessionStart span
+    agent_type    TEXT,                -- vendor of the launching agent: 'claude' | 'codex' | NULL
+    origin        TEXT DEFAULT 'session',  -- what produced this row: 'session' (interactive) | 'workflow' (captured run) | future kinds
     model         TEXT,
     input_tokens          INTEGER,
     output_tokens         INTEGER,
