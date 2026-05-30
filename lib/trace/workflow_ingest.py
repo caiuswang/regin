@@ -94,6 +94,27 @@ class RunRef:
                 continue
         return max(mtimes)
 
+    def snapshot_stale_since(self) -> float | None:
+        """mtime of the manifest when it's a *stale* snapshot, else None.
+
+        The manifest is the runtime's progress snapshot, flushed only at
+        pause/completion. While a non-``completed`` run keeps progressing (a
+        resume that started agents the manifest doesn't list), the rendered tree
+        is frozen at that snapshot — phases/counts lag reality. We can't refresh
+        it from disk (resume re-issues agents under new ids the snapshot can't
+        be reconciled with), so the UI flags it as "snapshot as of <mtime>"
+        instead of silently looking current. None when the snapshot still covers
+        the live agents (just paused) or the run is ``completed``."""
+        manifest = _read_json(self.manifest_path)
+        if manifest is None or manifest.get("status") == "completed":
+            return None
+        _, agent_ids = _manifest_agents(manifest)
+        known = set(agent_ids)
+        started, _ = _journal_agents(_read_jsonl(self.journal_path))
+        if all(a in known for a in started):
+            return None                  # snapshot covers the live agents → current
+        return self._manifest_mtime()
+
     @property
     def terminal(self) -> bool:
         """True once a manifest exists — render from it rather than the journal.
@@ -901,14 +922,16 @@ def _phase_spans(run_id: str, root_id: str, phases: list, start: str | None,
 
 
 def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
-                     is_test: bool = False) -> list[dict]:
+                     is_test: bool = False,
+                     snapshot_stale_at: str | None = None) -> list[dict]:
     """Build the full phase tree from a run's manifest.
 
-    Used whenever the manifest covers the live agent set — a completed run, a
-    paused (``killed``) run, or a live (``running``) run whose continuously
-    written manifest snapshot is current (see `RunRef.terminal`). A live
-    ``running`` manifest gets no ``session.end`` span (the run hasn't ended);
-    every other status closes the run with one."""
+    Used whenever a manifest exists — a completed run, a paused (``killed``)
+    run, or a running run whose snapshot is being shown (see `RunRef.terminal`).
+    A live ``running`` manifest gets no ``session.end`` span (the run hasn't
+    ended); every other status closes the run with one. ``snapshot_stale_at``
+    (an ISO time) is stamped on the root when the run has progressed past this
+    snapshot (a resume) so the UI can flag the tree as a stale snapshot."""
     run_id = manifest["runId"]
     root_id = f"wfrun-{run_id}"
     start, end = _run_bounds(manifest)
@@ -924,6 +947,7 @@ def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
                "parent_trace_id": _parent_trace_id(agents_dir),
                "workflow_name": manifest.get("workflowName"),
                "workflow_status": status, "agent_count": manifest.get("agentCount"),
+               "snapshot_stale_at": snapshot_stale_at,
                "total_tokens": manifest.get("totalTokens"),
                "total_tool_calls": manifest.get("totalToolCalls")},
         is_test=is_test)
@@ -1446,8 +1470,10 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
         manifest = _read_json(run_ref.manifest_path)
         if manifest is None or not manifest.get("runId"):
             return None
-        spans = build_full_spans(manifest, run_ref.agents_dir,
-                                 deep=deep, is_test=is_test)
+        stale = run_ref.snapshot_stale_since()
+        spans = build_full_spans(
+            manifest, run_ref.agents_dir, deep=deep, is_test=is_test,
+            snapshot_stale_at=_iso(int(stale * 1000)) if stale else None)
         result = reingest(run_ref.run_id, spans)
         _, agent_ids = _manifest_agents(manifest)
         _set_session_tokens(run_ref.run_id,

@@ -669,6 +669,14 @@ const workflowRoot = computed(() => allSpans.value.find(
   s => s.name === 'session.start' && s.attributes?.run_id != null,
 ) || null)
 
+// Set when the rendered tree is a *stale* manifest snapshot: the run has
+// resumed and progressed past the snapshot, but the runtime only flushes the
+// manifest at pause/completion, so phases/counts here lag reality and can't be
+// refreshed from disk. The header surfaces this so the view doesn't look
+// current. Value is the ISO time the snapshot was taken.
+const snapshotStaleAt = computed(
+  () => workflowRoot.value?.attributes?.snapshot_stale_at || null)
+
 // Backlink target: the Claude Code session (and exact tool.Workflow span)
 // this run was launched from. `parent_trace_id` is stamped on the run root
 // at ingest; `parent_span_id` is added once the launching tool call is
@@ -1971,6 +1979,14 @@ const toolRollupSummary = computed(() => {
         </div>
         <p class="mt-1.5 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500 m-0">
           <code class="font-mono text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ session.trace_id }}</code>
+          <!-- Stale-snapshot badge: the run resumed past the manifest snapshot,
+               which the runtime only flushes at pause/completion — so phases
+               and counts here are frozen and can't refresh live. -->
+          <span
+            v-if="snapshotStaleAt"
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-[11px] font-semibold text-amber-700"
+            :title="`This run resumed and is still in flight. The Workflow runtime writes its progress snapshot only at pause/completion, so the phases and agent counts shown are frozen as of ${fmtTime(snapshotStaleAt)} and can't be refreshed live from disk. Pause the run (or let it finish) to update.`"
+          >⏸ snapshot as of {{ fmtTime(snapshotStaleAt) }} · pause to refresh</span>
           <!-- No ⚙ workflow-name chip here: the session title already *is*
                the workflow name (title_source=workflow_name), so a chip
                repeating it would be redundant. The backlink below stays. -->

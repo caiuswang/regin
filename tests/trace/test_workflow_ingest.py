@@ -262,6 +262,46 @@ def test_manifest_existing_renders_from_manifest(tmp_path):
     assert W.discover_runs(projects)[0].terminal is True       # paused snapshot -> manifest
 
 
+def test_snapshot_stale_since_flags_resumed_run(tmp_path):
+    """A non-completed manifest the run has progressed past (a resume started an
+    agent it doesn't list) is a *stale* snapshot → `snapshot_stale_since`
+    returns its mtime so the UI can flag it. A covering snapshot (just paused)
+    or a completed run returns None."""
+    import os
+
+    projects = _make_run(tmp_path, with_manifest=False)
+    mf = projects / "proj" / "sess" / "workflows" / f"{RUN_ID}.json"
+    # Killed snapshot covering both journal agents (aAAA, aBBB) → current.
+    mf.write_text(json.dumps({**_MANIFEST, "status": "killed"}))
+    assert W.discover_runs(projects)[0].snapshot_stale_since() is None
+
+    # Resume: the journal starts an agent the snapshot doesn't know → stale.
+    ref = W.discover_runs(projects)[0]
+    ref.journal_path.write_text(_JOURNAL + json.dumps(
+        {"type": "started", "key": "v2:z", "agentId": "aZZZ"}) + "\n")
+    os.utime(mf, (1_780_000_000, 1_780_000_000))
+    assert W.discover_runs(projects)[0].snapshot_stale_since() == 1_780_000_000
+
+    # A completed snapshot is final, never stale (even with extra journal agents).
+    mf.write_text(json.dumps(_MANIFEST))                       # status 'completed'
+    assert W.discover_runs(projects)[0].snapshot_stale_since() is None
+
+
+def test_stale_snapshot_stamped_on_root(tmp_path):
+    """`build_full_spans` stamps ``snapshot_stale_at`` on the run root when given,
+    so the trace header can render a 'snapshot as of …' badge."""
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=True))[0]
+    by = _by_name(W.build_full_spans(
+        W._read_json(ref.manifest_path), ref.agents_dir, deep=False, is_test=True,
+        snapshot_stale_at="2026-05-30T00:00:00+00:00"))
+    assert by["session.start"][0]["attributes"]["snapshot_stale_at"] \
+        == "2026-05-30T00:00:00+00:00"
+    # Default (current snapshot) leaves it unset.
+    by2 = _by_name(W.build_full_spans(
+        W._read_json(ref.manifest_path), ref.agents_dir, deep=False, is_test=True))
+    assert "snapshot_stale_at" not in by2["session.start"][0]["attributes"]
+
+
 def test_manifest_wins_over_journal_iteration_overcount(tmp_path):
     """After pause→resume→pause the journal accumulates *dead* agents from the
     superseded iteration. The render must use the manifest's canonical agent
