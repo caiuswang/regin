@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UserPromptExpansion hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [
+    "2.1.158"
+  ],
+  "properties": {
+    "permission_mode": {
+      "type": "string"
+    },
+    "expansion_type": {
+      "type": "string"
+    },
+    "command_name": {
+      "type": "string"
+    },
+    "command_args": {
+      "type": "string"
+    },
+    "command_source": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

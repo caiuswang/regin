@@ -145,6 +145,13 @@ CREATE TABLE IF NOT EXISTS session_spans (
     cost_usd        REAL,
     tool_use_id     TEXT,
     turn_uuid       TEXT,
+    -- Which capture source wrote this row: 'hook' (live hook events —
+    -- tool timing, permissions, skill reads, the in-flight prompt
+    -- placeholder) or 'transcript' (the transcript scan — prompt anchors,
+    -- assistant_response/thinking, local commands). The store is
+    -- append-only; both sources coexist and the serve-time merge
+    -- (lib/trace/merge.py) selects winners. Defaults to 'hook'.
+    source          TEXT NOT NULL DEFAULT 'hook',
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -606,6 +613,10 @@ CREATE INDEX IF NOT EXISTS ix_topic_audits_triggering_run ON topic_audits(trigge
 CREATE TABLE IF NOT EXISTS payload_schema_drift (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     agent               TEXT NOT NULL DEFAULT 'claude',
+    -- 'tool' (the subject is a tool name) | 'hook_event' (the subject is a
+    -- hook event name like 'PreToolUse'). Orthogonal to `agent`; the
+    -- subject identity itself lives in `tool_name`.
+    subject_kind        TEXT NOT NULL DEFAULT 'tool',
     tool_name           TEXT NOT NULL,
     drift_kind          TEXT NOT NULL,
     field_path          TEXT NOT NULL,
@@ -618,12 +629,13 @@ CREATE TABLE IF NOT EXISTS payload_schema_drift (
     occurrence_count    INTEGER NOT NULL DEFAULT 1,
     status              TEXT NOT NULL DEFAULT 'pending',
     CONSTRAINT uq_payload_schema_drift_key
-        UNIQUE (agent, tool_name, drift_kind, field_path, claude_version)
+        UNIQUE (agent, subject_kind, tool_name, drift_kind, field_path, claude_version)
 );
 
 CREATE INDEX IF NOT EXISTS ix_payload_schema_drift_tool ON payload_schema_drift(tool_name);
 CREATE INDEX IF NOT EXISTS ix_payload_schema_drift_status ON payload_schema_drift(status);
 CREATE INDEX IF NOT EXISTS ix_payload_schema_drift_agent ON payload_schema_drift(agent);
+CREATE INDEX IF NOT EXISTS ix_payload_schema_drift_kind ON payload_schema_drift(subject_kind);
 
 -- Tag seeds are user-curated via $TAGS_CONFIG_PATH
 -- (default `~/.local/share/regin/config/tags.yaml`) and applied by

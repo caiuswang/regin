@@ -56,16 +56,20 @@ def _is_real_subagent(payload: HookPayload) -> bool:
     no type/name and a phantom transcript path.
     """
     raw = payload.raw or {}
-    agent_type = raw.get('subagent_type') or raw.get('agent_type')
-    if isinstance(agent_type, str) and agent_type.strip():
+    if _nonempty_str(raw, 'subagent_type', 'agent_type'):
         return True
-    agent_name = raw.get('subagent_name') or raw.get('agent_name')
-    if isinstance(agent_name, str) and agent_name.strip():
+    if _nonempty_str(raw, 'subagent_name', 'agent_name'):
         return True
+    import os
     path = raw.get('agent_transcript_path')
-    if isinstance(path, str) and path:
-        import os
-        if os.path.isfile(path):
+    return isinstance(path, str) and bool(path) and os.path.isfile(path)
+
+
+def _nonempty_str(raw: dict, *keys: str) -> bool:
+    """True if any of `keys` maps to a non-blank string in `raw`."""
+    for key in keys:
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
             return True
     return False
 
@@ -103,111 +107,166 @@ def _emit_span(payload: HookPayload, name: str) -> None:
 
 
 def _emit_subagent_responses(payload: HookPayload) -> None:
-    """Emit one `assistant_response` span per turn in the subagent's own
-    transcript. The dashboard's `_graft_orphans` Pass 5 nests any span
-    carrying `agent_id` under the matching `subagent.start`, so we set
-    that attribute and leave parent_id unset.
-    """
+    """SubagentStop entry: emit the subagent's assistant turns from its own
+    transcript (final catch-up; the live rescan posts most of them earlier)."""
     raw = payload.raw
-    transcript_path = raw.get('agent_transcript_path')
-    if not isinstance(transcript_path, str) or not transcript_path:
-        return
-    import os
-    if not os.path.isfile(transcript_path):
-        return
-    agent_id = raw.get('agent_id') or raw.get('subagent_id')
-    if not agent_id:
-        return
-
-    from lib.hook_plugin import post_span  # type: ignore
-    from lib.settings import settings  # type: ignore
-    from lib.tokens.token_estimator import estimate_text_tokens  # type: ignore
-    from lib.trace.transcript_usage import read_usage  # type: ignore
-
-    if not bool(getattr(settings, 'capture_assistant_response', True)):
-        return
-    max_text_bytes = int(getattr(settings, 'assistant_response_max_bytes', 50_000) or 0)
-    usage = read_usage(
-        transcript_path,
-        max_text_bytes=max_text_bytes if max_text_bytes > 0 else None,
+    emit_subagent_responses(
+        payload.session_id,
+        raw.get('agent_transcript_path'),
+        raw.get('agent_id') or raw.get('subagent_id'),
     )
-    if usage is None:
-        return
 
+
+def _subagent_capture(transcript_path, agent_id) -> tuple[bool, int | None]:
+    """`(should_emit, read_cap)`. `should_emit` is False when the guards fail
+    (missing path/file/agent_id) or assistant-response capture is disabled.
+    `read_cap` is the per-turn byte cap passed to the parser (None = no cap)."""
+    import os
+
+    from lib.settings import settings  # type: ignore
+    if not (isinstance(transcript_path, str) and transcript_path
+            and os.path.isfile(transcript_path) and agent_id):
+        return False, None
+    if not bool(getattr(settings, 'capture_assistant_response', True)):
+        return False, None
+    mb = int(getattr(settings, 'assistant_response_max_bytes', 50_000) or 0)
+    return True, (mb if mb > 0 else None)
+
+
+def emit_subagent_responses(trace_id, transcript_path, agent_id, *, seen=None) -> None:
+    """Emit one `assistant_response`/`assistant.thinking` span per turn in the
+    subagent's own transcript, tagged `agent_id` (the dashboard's `_graft_orphans`
+    Pass 5 nests them under the matching `subagent.start`). The one-shot
+    (full-read) path used at SubagentStop; the live rescan uses the resumable
+    variant below. `seen` (a turn-uuid set) gates re-posts; None posts all
+    (idempotent via the `resp-sa-`/`think-sa-` span_id)."""
+    ok, read_cap = _subagent_capture(transcript_path, agent_id)
+    if not ok:
+        return
+    from lib.trace.transcript_usage import read_usage  # type: ignore
+    usage = read_usage(transcript_path, max_text_bytes=read_cap)
+    if usage is not None:
+        _post_subagent_turns(trace_id, usage, agent_id, seen)
+
+
+def emit_subagent_responses_resumable(
+    trace_id, transcript_path, agent_id, state, *, seen=None,
+):
+    """Resumable variant for the live rescan: parse only bytes appended to the
+    subagent transcript since the last poll (reusing the accumulator in
+    `state`), then post the same spans. Returns the updated
+    `ResumableScanState` to thread back into the next poll."""
+    ok, read_cap = _subagent_capture(transcript_path, agent_id)
+    if not ok:
+        return state
+    from lib.trace.transcript_usage import read_usage_resumable  # type: ignore
+    usage, state = read_usage_resumable(
+        transcript_path, state, max_text_bytes=read_cap,
+    )
+    if usage is not None:
+        _post_subagent_turns(trace_id, usage, agent_id, seen)
+    return state
+
+
+def _normalize_subagent_ts(ts: str) -> str:
+    """UTC `...Z` timestamps → naive local ISO, matching the main-agent
+    span timestamps (the subagent transcript carries the same shape)."""
+    if not ts.endswith('Z'):
+        return ts
+    from datetime import datetime
+    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    return dt.astimezone().replace(tzinfo=None).isoformat()
+
+
+def _subagent_thinking_output_tokens(turn) -> int | None:
+    """Output-token estimate for a thinking-only turn so the Tokens-by-tool
+    rollup attributes subagent thinking instead of bucketing it under
+    "untagged". Prefer the captured-text estimate; fall back to the residual
+    of API-reported output minus tool_use estimates (redacted thinking)."""
+    from lib.tokens.token_estimator import estimate_text_tokens  # type: ignore
+    if turn.thinking_text:
+        return estimate_text_tokens(turn.thinking_text)
+    tool_use_out = sum(
+        int(tc.get('output_token_estimate') or 0) for tc in turn.tool_calls
+    )
+    return max(0, int(turn.output_tokens or 0) - tool_use_out) or None
+
+
+def _subagent_turn_attributes(turn, idx, agent_id, fallback_model) -> dict:
+    """Build the span attributes for one subagent turn."""
+    has_text = bool(turn.text)
+    attributes = {
+        'turn_uuid': turn.uuid,
+        'turn_index': idx,
+        'model': turn.model or fallback_model,
+        'agent_id': agent_id,
+    }
+    if has_text:
+        attributes['text'] = turn.text
+        attributes['truncated'] = turn.text_truncated
+        attributes['response_chars'] = len(turn.text)
+    else:
+        out = _subagent_thinking_output_tokens(turn)
+        if out:
+            attributes['output_tokens'] = out
+    if turn.tool_calls:
+        attributes['tool_calls'] = [
+            {'name': t['name'], 'is_error': t['is_error']}
+            for t in turn.tool_calls
+        ]
+    if turn.thinking_blocks:
+        attributes['thinking_blocks'] = turn.thinking_blocks
+        attributes['thinking_signature_bytes'] = turn.thinking_signature_bytes
+        if turn.thinking_text:
+            attributes['thinking_text'] = turn.thinking_text
+            attributes['thinking_truncated'] = turn.thinking_text_truncated
+    if turn.inference_duration_ms is not None:
+        attributes['inference_duration_ms'] = int(turn.inference_duration_ms)
+    if turn.turn_total_duration_ms is not None:
+        attributes['turn_total_duration_ms'] = int(turn.turn_total_duration_ms)
+    return attributes
+
+
+def _post_one_subagent_turn(trace_id, turn, idx, agent_id, fallback_model) -> None:
+    """Emit the single assistant_response / assistant.thinking span for one
+    subagent turn. Thinking-only turns get the distinct `assistant.thinking`
+    name so the conversation view doesn't render an empty response card."""
+    from lib.hook_plugin import post_span  # type: ignore
+    has_text = bool(turn.text)
+    ts = _normalize_subagent_ts(turn.timestamp)
+    post_span(
+        trace_id=trace_id,
+        span_id=f'{"resp-sa" if has_text else "think-sa"}-{turn.uuid[:13]}',
+        name='assistant_response' if has_text else 'assistant.thinking',
+        start_time=ts,
+        end_time=ts,
+        duration_ms=int(turn.inference_duration_ms or 0),
+        attributes=_subagent_turn_attributes(turn, idx, agent_id, fallback_model),
+    )
+
+
+def _subagent_turn_emittable(turn, seen) -> bool:
+    """A turn is emitted when it has a uuid + timestamp, isn't already seen,
+    and carried user-visible text OR extended thinking (mirrors the main-agent
+    gate in turn_trace — a reasoning-only turn still leaves a trace row)."""
+    if not turn.uuid or not turn.timestamp:
+        return False
+    if seen is not None and turn.uuid in seen:
+        return False
+    return bool(turn.text or turn.thinking_blocks)
+
+
+def _post_subagent_turns(trace_id, usage, agent_id, seen) -> None:
+    """Post the assistant_response / assistant.thinking spans for a subagent's
+    turns. Shared by the one-shot and resumable entry points."""
+    from hook_manager.handlers.turn_trace.cache import _mark_seen  # type: ignore
+
+    newly_seen: list = []
     fallback_model = usage.model
     for idx, turn in enumerate(usage.turns):
-        if not turn.uuid or not turn.timestamp:
+        if not _subagent_turn_emittable(turn, seen):
             continue
-        # Mirror the main-agent gate in turn_trace: emit a span when
-        # the turn carried user-visible text OR when extended thinking
-        # happened, so a reasoning-only subagent turn still leaves a
-        # trace row with its thinking metadata.
-        if not (turn.text or turn.thinking_blocks):
-            continue
-        ts = turn.timestamp
-        if ts.endswith('Z'):
-            from datetime import datetime
-            dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-            ts = dt.astimezone().replace(tzinfo=None).isoformat()
-        has_text = bool(turn.text)
-        attributes = {
-            'turn_uuid': turn.uuid,
-            'turn_index': idx,
-            'model': turn.model or fallback_model,
-            'agent_id': agent_id,
-        }
-        # Thinking-only turns get an output_tokens estimate so the
-        # Tokens-by-tool rollup can attribute subagent thinking instead
-        # of bucketing it under "untagged". Prefer the captured-text
-        # estimate; fall back to the residual of API-reported output
-        # minus tool_use estimates when the thinking text was redacted.
-        if not has_text:
-            if turn.thinking_text:
-                attributes['output_tokens'] = estimate_text_tokens(turn.thinking_text)
-            else:
-                tool_use_out = sum(
-                    int(tc.get('output_token_estimate') or 0)
-                    for tc in turn.tool_calls
-                )
-                residual = max(0, int(turn.output_tokens or 0) - tool_use_out)
-                if residual:
-                    attributes['output_tokens'] = residual
-        if has_text:
-            attributes['text'] = turn.text
-            attributes['truncated'] = turn.text_truncated
-            attributes['response_chars'] = len(turn.text)
-        if turn.tool_calls:
-            attributes['tool_calls'] = [
-                {'name': t['name'], 'is_error': t['is_error']}
-                for t in turn.tool_calls
-            ]
-        if turn.thinking_blocks:
-            attributes['thinking_blocks'] = turn.thinking_blocks
-            attributes['thinking_signature_bytes'] = turn.thinking_signature_bytes
-            if turn.thinking_text:
-                attributes['thinking_text'] = turn.thinking_text
-                attributes['thinking_truncated'] = turn.thinking_text_truncated
-        # Per-API-call latency surfaces on subagent responses too —
-        # the subagent transcript carries the same timestamp shape as
-        # the main one. `turn_total_duration_ms` is rarely populated
-        # for subagents (no `system: turn_duration` written for a
-        # subagent run), so the inference number is usually the only
-        # signal available.
-        inference_ms = int(turn.inference_duration_ms) if turn.inference_duration_ms else 0
-        if turn.inference_duration_ms is not None:
-            attributes['inference_duration_ms'] = int(turn.inference_duration_ms)
-        if turn.turn_total_duration_ms is not None:
-            attributes['turn_total_duration_ms'] = int(turn.turn_total_duration_ms)
-        # Distinct span name for thinking-only turns so the conversation
-        # view doesn't render an empty assistant_response card.
-        span_name = 'assistant_response' if has_text else 'assistant.thinking'
-        span_prefix = 'resp-sa' if has_text else 'think-sa'
-        post_span(
-            trace_id=payload.session_id,
-            span_id=f'{span_prefix}-{turn.uuid[:13]}',
-            name=span_name,
-            start_time=ts,
-            end_time=ts,
-            duration_ms=inference_ms,
-            attributes=attributes,
-        )
+        _post_one_subagent_turn(trace_id, turn, idx, agent_id, fallback_model)
+        newly_seen.append(turn.uuid)
+    if seen is not None and newly_seen:
+        _mark_seen(trace_id, newly_seen)

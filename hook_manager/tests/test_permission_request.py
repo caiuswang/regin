@@ -186,3 +186,52 @@ def test_plain_codex_pretool_without_permission_metadata_is_ignored():
     })
     assert payload.permission_request is None
     assert permission_events.handle_pre_tool_request(payload) is None
+
+
+# ── Pending span emission (live status) ──────────────────────────────
+
+def _capture_spans(monkeypatch):
+    import lib.hook_plugin as hp
+    spans = []
+    monkeypatch.setattr(hp, 'post_span', lambda **kw: spans.append(kw))
+    return spans
+
+
+def test_permission_request_emits_pending_span_with_deterministic_id(monkeypatch):
+    from lib.trace.pending_spans import perm_pending_id
+    spans = _capture_spans(monkeypatch)
+    payload = HookPayload.from_stdin_json('PermissionRequest', {
+        'hook_event_name': 'PermissionRequest', 'session_id': 's1',
+        'tool_name': 'Bash', 'tool_input': {'command': 'ls'},
+        'tool_use_id': 'toolu_perm12345678',
+    })
+    permission_events.handle_request(payload)
+    assert len(spans) == 1
+    s = spans[0]
+    assert s['name'] == 'permission.request'
+    assert s['status_code'] == 'PENDING'
+    assert s['span_id'] == perm_pending_id('toolu_perm12345678')
+    assert s['span_id'].startswith('permreq-')
+
+
+def test_permission_request_without_tool_use_id_keeps_random_id(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+    payload = HookPayload.from_stdin_json('PermissionRequest', {
+        'hook_event_name': 'PermissionRequest', 'session_id': 's1',
+        'tool_name': 'Bash', 'tool_input': {'command': 'ls'},
+    })
+    permission_events.handle_request(payload)
+    assert spans[0]['status_code'] == 'PENDING'
+    assert spans[0]['span_id'] is None  # degrades to random server-side id
+
+
+def test_permission_denied_is_error_status(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+    payload = HookPayload.from_stdin_json('PermissionDenied', {
+        'hook_event_name': 'PermissionDenied', 'session_id': 's1',
+        'tool_name': 'Bash', 'tool_input': {'command': 'ls'},
+        'tool_use_id': 'toolu_perm12345678',
+    })
+    permission_events.handle_denied(payload)
+    assert spans[0]['name'] == 'permission.denied'
+    assert spans[0]['status_code'] == 'ERROR'

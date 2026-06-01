@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskCreated hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [
+    "2.1.158"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "task_subject": {
+      "type": "string"
+    },
+    "task_description": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

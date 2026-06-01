@@ -8,7 +8,14 @@ from __future__ import annotations
 
 import json
 
-from lib.trace.transcript_usage import read_usage
+import pytest
+
+from lib.trace.transcript_usage import (
+    ResumableScanState,
+    _TranscriptScan,
+    read_usage,
+    read_usage_resumable,
+)
 
 
 def _write(tmp_path, *entries) -> str:
@@ -22,7 +29,7 @@ def _write(tmp_path, *entries) -> str:
 def _assistant(input_tokens: int, cache_read: int = 0, cache_creation: int = 0,
                output: int = 0, model: str = "claude-opus-4-7",
                uuid: str | None = None, timestamp: str | None = None,
-               request_id: str | None = None) -> dict:
+               request_id: str | None = None, parent: str | None = None) -> dict:
     entry = {
         "type": "assistant",
         "message": {
@@ -41,7 +48,41 @@ def _assistant(input_tokens: int, cache_read: int = 0, cache_creation: int = 0,
         entry["timestamp"] = timestamp
     if request_id is not None:
         entry["requestId"] = request_id
+    if parent is not None:
+        entry["parentUuid"] = parent
     return entry
+
+
+def _user_entry(uuid: str, content, timestamp: str,
+                parent: str | None = None) -> dict:
+    return {"type": "user", "uuid": uuid, "timestamp": timestamp,
+            "parentUuid": parent, "message": {"content": content}}
+
+
+def test_prompt_texts_keyed_by_triggering_entry_excludes_task_notifications(tmp_path):
+    """`prompt_texts`/`prompt_timestamps` carry the text + time of each
+    turn's triggering prompt, so turn_trace can re-emit a correctly-keyed
+    `prompt-<uuid>` anchor. Background-task (`<task-notification>`) prompts
+    are excluded — they must not become a turn anchor."""
+    path = _write(
+        tmp_path,
+        _user_entry("u1", "real prompt here", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=100, output=10, uuid="a1",
+                   timestamp="2026-05-20T10:00:05Z", parent="u1"),
+        _user_entry("u2", [{"type": "text", "text": "<task-notification>\ndone\n"
+                            "</task-notification>"}], "2026-05-20T10:01:00Z",
+                    parent="a1"),
+        _assistant(input_tokens=100, output=10, uuid="a2",
+                   timestamp="2026-05-20T10:01:05Z", parent="u2"),
+    )
+    u = read_usage(path)
+    assert u is not None
+    assert u.prompt_texts == {"u1": "real prompt here"}
+    assert "u1" in u.prompt_timestamps
+    assert "u2" not in u.prompt_texts
+    # The task-notification turn must NOT anchor to itself; the walk
+    # passes through it to the previous real prompt (u1).
+    assert [t.prompt_uuid for t in u.turns] == ["u1", "u1"]
 
 
 def test_missing_file_returns_none(tmp_path):
@@ -354,6 +395,105 @@ def test_resolves_prompt_uuid_via_parent_chain(tmp_path):
     # Both turns should resolve to the original user prompt.
     assert u.turns[0].prompt_uuid == "user-real"
     assert u.turns[1].prompt_uuid == "user-real"
+
+
+def test_local_command_entry_is_not_a_prompt_anchor(tmp_path):
+    """A `<command-name>` local-command user entry (/clear, !ls) gets its
+    own `cmd-<uuid>` span, never a `prompt-` anchor. A turn whose chain
+    passes through one must resolve to the real prompt above it, and the
+    command text must never appear in `prompt_texts`."""
+    path = _write(
+        tmp_path,
+        _user("u-real", None),
+        _asst_with_content(msg_id="m1", uuid="a1", parent="u-real",
+                            content=[{"type": "text", "text": "hi"}]),
+        {"type": "user", "uuid": "cmd-1", "parentUuid": "a1",
+         "message": {"content": "<command-name>/clear</command-name>\n"
+                                "<command-message>clear</command-message>"}},
+        _asst_with_content(msg_id="m2", uuid="a2", parent="cmd-1",
+                            content=[{"type": "text", "text": "cleared"}]),
+    )
+    u = read_usage(path)
+    assert u is not None and len(u.turns) == 2
+    assert [t.prompt_uuid for t in u.turns] == ["u-real", "u-real"]
+    assert "cmd-1" not in u.prompt_texts
+
+
+def test_meta_user_entry_is_not_a_prompt_anchor(tmp_path):
+    """An `isMeta` user entry (workflow-resume nudge, queued-command
+    marker) is not a real prompt — the walk passes through it to the
+    previous typed prompt."""
+    path = _write(
+        tmp_path,
+        _user("u-real", None),
+        _asst_with_content(msg_id="m1", uuid="a1", parent="u-real",
+                            content=[{"type": "text", "text": "hi"}]),
+        {"type": "user", "uuid": "meta-1", "parentUuid": "a1", "isMeta": True,
+         "message": {"content": "Resume the paused workflow by calling: ..."}},
+        _asst_with_content(msg_id="m2", uuid="a2", parent="meta-1",
+                            content=[{"type": "text", "text": "resumed"}]),
+    )
+    u = read_usage(path)
+    assert [t.prompt_uuid for t in u.turns] == ["u-real", "u-real"]
+    assert "meta-1" not in u.prompt_texts
+
+
+def test_turn_with_no_real_prompt_ancestor_resolves_to_none(tmp_path):
+    """A turn whose only user-entry ancestor is excluded (meta) and has no
+    real prompt above it keeps `prompt_uuid=None` — flat render, no crash."""
+    path = _write(
+        tmp_path,
+        {"type": "user", "uuid": "meta-root", "parentUuid": None, "isMeta": True,
+         "message": {"content": "Resume the paused workflow ..."}},
+        _asst_with_content(msg_id="m1", uuid="a1", parent="meta-root",
+                            content=[{"type": "text", "text": "ok"}]),
+    )
+    u = read_usage(path)
+    assert u is not None and len(u.turns) == 1
+    assert u.turns[0].prompt_uuid is None
+
+
+def test_every_resolved_prompt_uuid_is_an_anchor_or_none(tmp_path):
+    """Invariant: a turn's resolved `prompt_uuid` is either None or a uuid
+    that carries anchor text in `prompt_texts` — never a synthetic entry
+    (carrier/task-notif/command) that lacks a `prompt-` anchor span."""
+    path = _write(
+        tmp_path,
+        _user_entry("u1", "typed prompt", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=100, output=10, uuid="a1",
+                   timestamp="2026-05-20T10:00:05Z", parent="u1"),
+        {"type": "user", "uuid": "cmd", "parentUuid": "a1",
+         "message": {"content": "<command-name>/usage</command-name>"}},
+        _user_entry("u2", [{"type": "text", "text": "<task-notification>x"
+                            "</task-notification>"}], "2026-05-20T10:01:00Z",
+                    parent="cmd"),
+        _assistant(input_tokens=100, output=10, uuid="a2",
+                   timestamp="2026-05-20T10:01:05Z", parent="u2"),
+    )
+    u = read_usage(path)
+    assert u is not None
+    for t in u.turns:
+        assert t.prompt_uuid is None or t.prompt_uuid in u.prompt_texts
+
+
+def test_tool_use_to_turn_uuid_maps_to_issuing_turn(tmp_path):
+    """`tool_use_to_turn_uuid` exposes tool_use id → issuing assistant
+    turn uuid, for the Phase-2 write-time tool-span parent backfill."""
+    path = _write(
+        tmp_path,
+        _user("u1", None),
+        _asst_with_content(msg_id="m1", uuid="a1", parent="u1", content=[
+            {"type": "text", "text": "running"},
+            {"type": "tool_use", "id": "toolu_xyz", "name": "Bash",
+             "input": {"command": "ls"}},
+        ]),
+        {"type": "user", "uuid": "tr-1", "parentUuid": "a1",
+         "message": {"content": [{"type": "tool_result",
+                                  "tool_use_id": "toolu_xyz", "content": "out"}]}},
+    )
+    u = read_usage(path)
+    assert u is not None
+    assert u.tool_use_to_turn_uuid.get("toolu_xyz") == "a1"
 
 
 def test_truncates_text_at_byte_cap(tmp_path):
@@ -947,3 +1087,383 @@ def test_attachments_without_uuid_skipped(tmp_path):
     u = read_usage(path)
     assert u is not None
     assert u.attachments == ()
+
+
+def _user_blocks(uuid, blocks, timestamp='2026-06-01T03:22:52Z', parent=None):
+    return {'type': 'user', 'uuid': uuid, 'parentUuid': parent,
+            'timestamp': timestamp, 'message': {'content': blocks}}
+
+
+def test_image_reference_carrier_does_not_override_real_prompt(tmp_path):
+    """An image prompt is two user entries: the real one (typed text + base64
+    images) and a synthetic carrier of `[Image: source: <path>]` lines. The
+    carrier must not become the turn anchor — the real typed text must win."""
+    real_uuid = 'real-uuid-000000'
+    carrier_uuid = 'carrier-uuid-111'
+    img = {'type': 'image',
+           'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'QUJD'}}
+    path = _write(
+        tmp_path,
+        _user_blocks(real_uuid, [
+            {'type': 'text', 'text': 'fix this please [Image #1] [Image #2]'},
+            img, img,
+        ]),
+        _user_blocks(carrier_uuid, [
+            {'type': 'text', 'text': '[Image: source: /cache/1.png]'},
+            {'type': 'text', 'text': '[Image: source: /cache/2.png]'},
+        ], parent=real_uuid),
+        _assistant(100, output=10, uuid='asst-1', timestamp='2026-06-01T03:22:55Z',
+                   parent=carrier_uuid),
+    )
+    u = read_usage(path)
+    # carrier excluded; real prompt carries the typed text
+    assert carrier_uuid not in u.prompt_texts
+    assert u.prompt_texts[real_uuid] == 'fix this please [Image #1] [Image #2]'
+    # the assistant turn anchors to the real prompt, not the carrier
+    assert u.turns[0].prompt_uuid == real_uuid
+    # base64 image parts captured under the real prompt
+    assert real_uuid in u.prompt_image_parts
+
+
+def test_real_image_only_prompt_keeps_its_marker_text(tmp_path):
+    """A prompt that's only `[Image #1]` (no typed words) is still real — its
+    marker text, not the source-path carrier, must anchor the turn."""
+    real_uuid = 'imgonly-uuid-000'
+    img = {'type': 'image',
+           'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'QUJD'}}
+    path = _write(
+        tmp_path,
+        _user_blocks(real_uuid, [{'type': 'text', 'text': '[Image #1]'}, img]),
+        _user_blocks('carrier2', [
+            {'type': 'text', 'text': '[Image: source: /cache/1.png]'},
+        ], parent=real_uuid),
+        _assistant(50, output=5, uuid='asst-2', timestamp='2026-06-01T03:23:00Z',
+                   parent='carrier2'),
+    )
+    u = read_usage(path)
+    assert u.turns[0].prompt_uuid == real_uuid
+    assert u.prompt_texts[real_uuid] == '[Image #1]'
+    assert 'carrier2' not in u.prompt_texts
+
+
+# ── Turn-initiating slash commands (e.g. /review) ─────────────────────────
+# A slash command that expands into a prompt the assistant acts on must
+# anchor its OWN turn. Before this, the command echo (excluded by
+# <command-name>) and its isMeta expansion were both skipped, so the turn's
+# responses walked past to the PREVIOUS typed prompt (off-by-one), and the
+# command floated as a standalone local-command card.
+
+def _command_echo(uuid, name, timestamp, parent):
+    return _user_entry(
+        uuid,
+        f"<command-message>{name.lstrip('/')}</command-message> "
+        f"<command-name>{name}</command-name>",
+        timestamp, parent=parent)
+
+
+def _meta_expansion(uuid, text, timestamp, parent):
+    e = _user_entry(uuid, text, timestamp, parent=parent)
+    e["isMeta"] = True
+    return e
+
+
+def _turn_by_assistant(u, assistant_uuid):
+    return next(t for t in u.turns if t.uuid == assistant_uuid)
+
+
+def test_slash_command_with_expansion_anchors_its_own_turn(tmp_path):
+    # typed prompt → response, then /review (echo + isMeta expansion) →
+    # response. The /review turn must anchor on the command, not the prior
+    # typed prompt.
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "first typed prompt", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        _command_echo("cmd", "/review", "2026-05-20T10:01:00Z", parent="a0"),
+        _meta_expansion("exp", "You are an expert code reviewer...",
+                        "2026-05-20T10:01:01Z", parent="cmd"),
+        _assistant(input_tokens=10, uuid="a1", parent="exp",
+                   timestamp="2026-05-20T10:01:05Z"),
+    )
+    u = read_usage(path)
+    # the /review response anchors on the command, with a friendly label
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "cmd"
+    assert u.prompt_texts["cmd"] == "/review"
+    # the prior typed prompt keeps only its own turn
+    assert _turn_by_assistant(u, "a0").prompt_uuid == "p0"
+    # no duplicate local-command card for the anchored command
+    assert all(lc.command_name != "/review" for lc in u.local_commands)
+
+
+def test_display_command_without_expansion_stays_local(tmp_path):
+    # /clear has no isMeta expansion and no in-turn response; the following
+    # typed prompt opens the next turn. /clear must NOT anchor and must stay
+    # a local command.
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "first typed prompt", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        _command_echo("clr", "/clear", "2026-05-20T10:01:00Z", parent="a0"),
+        _user_entry("p1", "second typed prompt",
+                    "2026-05-20T10:02:00Z", parent="clr"),
+        _assistant(input_tokens=10, uuid="a1", parent="p1",
+                   timestamp="2026-05-20T10:02:05Z"),
+    )
+    u = read_usage(path)
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "p1"
+    assert "/clear" not in u.prompt_texts.values()
+    assert any(lc.command_name == "/clear" for lc in u.local_commands)
+
+
+def test_workflow_resume_nudge_does_not_anchor_command(tmp_path):
+    # /workflows (a system local_command) followed by an isMeta workflow-
+    # resume nudge whose parent is a SYSTEM entry, not the command. The
+    # nudge's response must anchor on the original typed prompt, not on
+    # /workflows (the isMeta child is not direct, so /workflows is no
+    # candidate). This is the real regression the gate guards against.
+    wf_cmd = {"type": "system", "subtype": "local_command", "uuid": "wf",
+              "parentUuid": "a0", "timestamp": "2026-05-20T10:01:00Z",
+              "content": "<command-name>/workflows</command-name>"}
+    sys2 = {"type": "system", "uuid": "sys2", "parentUuid": "wf",
+            "timestamp": "2026-05-20T10:01:01Z", "content": ""}
+    nudge = _meta_expansion("nudge", "Resume the paused workflow by calling:",
+                            "2026-05-20T10:01:02Z", parent="sys2")
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "kick off a workflow", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        wf_cmd, sys2, nudge,
+        _assistant(input_tokens=10, uuid="a1", parent="nudge",
+                   timestamp="2026-05-20T10:01:05Z"),
+    )
+    u = read_usage(path)
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "p0"
+    assert "/workflows" not in u.prompt_texts.values()
+    assert any(lc.command_name == "/workflows" for lc in u.local_commands)
+
+
+def test_task_notification_boundary_blocks_command_anchor(tmp_path):
+    # Even a command WITH an isMeta expansion must not be anchored by a
+    # background-task turn: a <task-notification> between the response and
+    # the command is a turn boundary, so the task turn nests under the prior
+    # typed prompt instead of latching onto the command.
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "launch a long job", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        _command_echo("cmd", "/workflows", "2026-05-20T10:01:00Z", parent="a0"),
+        _meta_expansion("exp", "workflow expansion",
+                        "2026-05-20T10:01:01Z", parent="cmd"),
+        _user_entry("tn", "<task-notification>\n<task-id>z</task-id>",
+                    "2026-05-20T10:02:00Z", parent="exp"),
+        _assistant(input_tokens=10, uuid="a1", parent="tn",
+                   timestamp="2026-05-20T10:02:05Z"),
+    )
+    u = read_usage(path)
+    # the task-notification turn nests under the prior typed prompt
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "p0"
+
+
+# --- finalize purity / golden equivalence ---------------------------------
+#
+# The live resumable rescan feeds appended transcript lines into ONE
+# persistent `_TranscriptScan` and calls `finalize` on every poll. So
+# `finalize` must be pure w.r.t. the accumulator: finalizing N times while
+# the file grows must yield the same `TranscriptUsage` as a single full
+# scan over the final file. These exercise the three non-idempotent
+# mutations the refactor removed (token-residual scaling, the destructive
+# `command_prompt_uuids &= meta_expansion_parents`, and the `real_prompt_
+# uuids`/`prompt_texts` promotion write-back).
+
+
+def _assistant_tool(uuid, parent, ts, *, msg_id, output, tool_id,
+                    tool_name="Bash", text=None, with_usage=True):
+    """An `assistant` entry carrying a tool_use (and optional text) block.
+
+    `with_usage=False` models the SECOND entry of a split turn (same
+    message.id, no repeated usage counters) so the dedup + text-accumulation
+    path is exercised across a chunk boundary."""
+    content = []
+    if text is not None:
+        content.append({"type": "text", "text": text})
+    content.append({"type": "tool_use", "id": tool_id, "name": tool_name,
+                    "input": {"command": "ls"}})
+    message = {"id": msg_id, "model": "claude-opus-4-7", "content": content}
+    if with_usage:
+        message["usage"] = {
+            "input_tokens": 50, "output_tokens": output,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        }
+    return {"type": "assistant", "uuid": uuid, "parentUuid": parent,
+            "timestamp": ts, "message": message}
+
+
+def _golden_entries():
+    """A transcript hitting every cross-boundary hazard: a turn split across
+    two same-message.id assistant entries with a large output residual (tool
+    redistribution), a `/review` command-anchored turn, and a task-
+    notification turn that must nest under the prior prompt."""
+    return [
+        _user_entry("p0", "first typed prompt", "2026-05-20T10:00:00Z"),
+        # split turn: text block (owns usage) + tool_use block (same msg id)
+        _assistant_tool("a0a", "p0", "2026-05-20T10:00:05Z", msg_id="m0",
+                        output=4000, tool_id="tu0", text="working on it"),
+        _assistant_tool("a0b", "a0a", "2026-05-20T10:00:06Z", msg_id="m0",
+                        output=4000, tool_id="tu0", with_usage=False),
+        _user_entry("tr0", [{"type": "tool_result", "tool_use_id": "tu0",
+                             "content": "ok"}], "2026-05-20T10:00:07Z",
+                    parent="a0b"),
+        # /review: command echo + isMeta expansion + its own turn
+        _command_echo("cmd", "/review", "2026-05-20T10:01:00Z", parent="tr0"),
+        _meta_expansion("exp", "You are an expert code reviewer...",
+                        "2026-05-20T10:01:01Z", parent="cmd"),
+        _assistant(input_tokens=10, output=10, uuid="a1", parent="exp",
+                   timestamp="2026-05-20T10:01:05Z"),
+        # background task completion: turn nests under p0, not the command
+        _user_entry("tn", "<task-notification>\n<task-id>z</task-id>",
+                    "2026-05-20T10:02:00Z", parent="a1"),
+        _assistant(input_tokens=10, output=10, uuid="a2", parent="tn",
+                   timestamp="2026-05-20T10:02:05Z"),
+    ]
+
+
+def _full_scan(entries):
+    scan = _TranscriptScan()
+    for e in entries:
+        scan.process_entry(e)
+    return scan.finalize(max_text_bytes=None)
+
+
+def _incremental_scan(entries, boundaries):
+    """Feed `entries` into ONE scan, finalizing after each slice delimited by
+    `boundaries`; return the LAST finalize result (what the final poll sees)."""
+    scan = _TranscriptScan()
+    cuts = [0, *boundaries, len(entries)]
+    last = None
+    for start, end in zip(cuts, cuts[1:]):
+        for e in entries[start:end]:
+            scan.process_entry(e)
+        last = scan.finalize(max_text_bytes=None)
+    return last
+
+
+@pytest.mark.parametrize("boundaries", [
+    [1, 2, 3, 4, 5, 6, 7, 8],  # every entry its own poll
+    [2],                        # boundary mid-split-turn (between a0a/a0b)
+    [5],                        # boundary after /review echo, before expansion
+    [4, 6],                     # command echo isolated from its expansion
+    [3, 5, 7],                  # mixed
+])
+def test_incremental_finalize_equals_full_scan(boundaries):
+    """Golden equivalence: any chunking of the transcript, finalized per
+    chunk, ends at the same `TranscriptUsage` as one full scan."""
+    entries = _golden_entries()
+    assert _incremental_scan(entries, boundaries) == _full_scan(entries)
+
+
+def test_repeated_finalize_is_idempotent():
+    """Finalizing the same fully-fed scan twice yields identical results —
+    no token double-scaling, no anchor-set corruption."""
+    scan = _TranscriptScan()
+    for e in _golden_entries():
+        scan.process_entry(e)
+    first = scan.finalize(max_text_bytes=None)
+    second = scan.finalize(max_text_bytes=None)
+    assert first == second
+
+
+def test_command_anchor_survives_finalize_before_expansion():
+    """The /review turn must anchor on the command even when an earlier poll
+    finalized after the command echo but BEFORE its isMeta expansion arrived
+    — the case the destructive `&=` intersection used to corrupt."""
+    entries = _golden_entries()
+    u = _incremental_scan(entries, [5])  # finalize once before `exp` lands
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "cmd"
+    assert u.prompt_texts["cmd"] == "/review"
+
+
+# --- read_usage_resumable: byte-offset driver -----------------------------
+
+
+def _serialize(entries) -> bytes:
+    return ("".join(json.dumps(e) + "\n" for e in entries)).encode()
+
+
+@pytest.mark.parametrize("splits", [
+    [1],            # one append
+    [3, 6],         # three polls
+    [1, 2, 3, 4, 5, 6, 7, 8],  # line-by-line append
+])
+def test_resumable_byte_appends_equal_full_read_usage(tmp_path, splits):
+    """Writing the transcript in byte-aligned appends and rescanning after
+    each yields the same TranscriptUsage as one read_usage over the whole
+    final file."""
+    entries = _golden_entries()
+    blob = _serialize(entries)
+    # byte offsets of the chosen line boundaries
+    line_ends = [i + 1 for i, b in enumerate(blob) if b == ord("\n")]
+    cuts = [0, *[line_ends[s - 1] for s in splits], len(blob)]
+
+    path = tmp_path / "live.jsonl"
+    state = None
+    usage = None
+    for start, end in zip(cuts, cuts[1:]):
+        with open(path, "ab") as f:
+            f.write(blob[start:end])
+        usage, state = read_usage_resumable(str(path), state)
+
+    full = tmp_path / "full.jsonl"
+    full.write_bytes(blob)
+    assert usage == read_usage(str(full))
+
+
+def test_resumable_holds_partial_line_until_newline(tmp_path):
+    """A mid-line flush (no terminating newline) must not be parsed; the
+    next poll reassembles it with the bytes that complete the line."""
+    entries = _golden_entries()
+    blob = _serialize(entries)
+    # cut in the MIDDLE of the last line (no trailing newline yet)
+    last_nl = blob.rindex(b"\n", 0, len(blob) - 1)
+    mid = last_nl + 1 + (len(blob) - last_nl) // 2
+
+    path = tmp_path / "live.jsonl"
+    path.write_bytes(blob[:mid])
+    usage_partial, state = read_usage_resumable(str(path), None)
+    # the final turn (a2) hasn't been committed — its line is incomplete
+    assert all(t.uuid != "a2" for t in (usage_partial.turns if usage_partial else []))
+
+    with open(path, "ab") as f:
+        f.write(blob[mid:])
+    usage_full, _ = read_usage_resumable(str(path), state)
+    assert usage_full == read_usage(str(path))
+    assert any(t.uuid == "a2" for t in usage_full.turns)
+
+
+def test_resumable_resets_on_inode_change(tmp_path):
+    """A replaced file (new inode — compaction / clear forward-copy) drops
+    the stale accumulator and re-scans from scratch."""
+    path = tmp_path / "live.jsonl"
+    first = [
+        _user_entry("p0", "old prompt", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, output=10, uuid="old",
+                   parent="p0", timestamp="2026-05-20T10:00:05Z"),
+    ]
+    path.write_bytes(_serialize(first))
+    _, state = read_usage_resumable(str(path), None)
+    assert state.offset > 0
+
+    # atomically replace with unrelated content → new inode
+    replacement = tmp_path / "new.jsonl"
+    replacement.write_bytes(_serialize(_golden_entries()))
+    import os
+    os.replace(replacement, path)
+
+    usage, state2 = read_usage_resumable(str(path), state)
+    assert usage == read_usage(str(path))
+    # the old turn is gone; the fresh content is fully reflected
+    assert all(t.uuid != "old" for t in usage.turns)
+    assert any(t.uuid == "a2" for t in usage.turns)

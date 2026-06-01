@@ -184,7 +184,7 @@ def _post_tools_delta_span(trace_id: str, att, ts) -> bool:
     )
 
 
-def _post_queued_command_span(trace_id: str, att, ts) -> bool:
+def _post_queued_command_span(trace_id: str, att, ts, resp_ts=None) -> bool:
     """Emit a `prompt` span for a queued user prompt.
 
     When the user types while the agent is mid-turn, Claude Code queues
@@ -197,10 +197,18 @@ def _post_queued_command_span(trace_id: str, att, ts) -> bool:
     span_id mirrors the UserPromptSubmit scheme (`prompt-<uuid[:13]>`,
     keyed on the attachment uuid) so `_graft_orphans` anchors the
     following assistant_response spans to it chronologically, and so a
-    replay UPSERTs the same row. Only prompt-mode queues become prompt
-    spans; a queued slash command (a different `command_mode`) is not a
-    model prompt — mark it seen without a span. Returning True in the
-    skip cases records the uuid so the scan doesn't re-walk it.
+    replay UPSERTs the same row.
+
+    **Timing:** the attachment's own timestamp (`ts`) is when the user
+    *typed* it — mid the interrupted turn — so anchoring there sorts the
+    prompt into the middle of that prior turn. We anchor at `resp_ts`, the
+    first response it triggered (the attachment uuid is that response's
+    parentUuid), so it sorts with its own turn. `resp_ts` is None on the
+    first scan after dequeue (response not flushed yet): emit at `ts` as a
+    fallback but DON'T mark seen, so a later scan re-times it (UPSERT) once
+    the response lands. Only prompt-mode queues become prompt spans; a queued
+    slash command (different `command_mode`) is not a model prompt — mark it
+    seen without a span.
     """
     from lib.hook_plugin import post_span  # type: ignore
     payload = att.payload or {}
@@ -211,24 +219,43 @@ def _post_queued_command_span(trace_id: str, att, ts) -> bool:
     if not isinstance(text, str) or not text:
         return True
     attrs = {'text': text, 'chars': len(text), 'queued': True}
-    return post_span(
+    # `resp_ts` is a raw transcript timestamp (offset-aware UTC); normalise it
+    # to local-naive like the response spans (and `ts`) so it sorts correctly
+    # against its sibling spans instead of as a `15:..Z` < `19:..` string.
+    start = _normalise_turn_ts(resp_ts) if resp_ts else ts
+    ok = post_span(
         trace_id=trace_id,
         span_id=f'prompt-{att.uuid[:13]}',
         name='prompt',
-        start_time=ts, end_time=ts, duration_ms=0,
+        start_time=start, end_time=start, duration_ms=0,
         attributes=attrs,
     )
+    # Cache only once anchored at the real response time; otherwise re-time
+    # next scan when the response has landed.
+    return bool(ok) and resp_ts is not None
 
 
 _ATTACHMENT_HANDLERS = {
     'task_reminder': _post_task_reminder_span,
     'skill_listing': _post_skill_listing_span,
     'deferred_tools_delta': _post_tools_delta_span,
-    'queued_command': _post_queued_command_span,
+    # 'queued_command' is special-cased in _post_attachment_spans (it needs the
+    # first-response timestamp to re-time the recovered prompt anchor).
 }
 
 
-def _post_attachment_spans(trace_id: str, attachments, seen: set[str]) -> None:
+def _first_ts_at_or_after(sorted_ts: list, threshold) -> str | None:
+    """First timestamp in `sorted_ts` >= `threshold` (raw transcript strings,
+    all offset-aware UTC so lexicographic == chronological), or None."""
+    if not sorted_ts or not threshold:
+        return None
+    import bisect
+    i = bisect.bisect_left(sorted_ts, threshold)
+    return sorted_ts[i] if i < len(sorted_ts) else None
+
+
+def _post_attachment_spans(trace_id: str, attachments, seen: set[str],
+                           turn_timestamps: list | None = None) -> None:
     """Emit one `harness.*` span per unseen Claude Code attachment of
     interest. Idempotent via `att-<uuid[:13]>` (or
     `skill-init-<trace_id[:24]>` for the initial skill-listing row).
@@ -238,15 +265,27 @@ def _post_attachment_spans(trace_id: str, attachments, seen: set[str]) -> None:
     their own per-uuid span so the trace shows when new skills came
     on/off line mid-session.
     """
+    turn_timestamps = turn_timestamps or []
     new_uuids: list[str] = []
     for att in attachments:
         if att.uuid in seen:
             continue
         ts = _normalise_attachment_ts(att.timestamp)
-        handler = _ATTACHMENT_HANDLERS.get(att.kind)
-        # An attachment kind we don't trace still gets marked seen so we
-        # don't re-walk it on the next scan.
-        post_ok = handler(trace_id, att, ts) if handler else True
+        if att.kind == 'queued_command':
+            # Re-time the recovered prompt to its first response (first turn at
+            # or after the attachment's raw timestamp — the attachment is
+            # contiguous with its response in the transcript), not its
+            # type-time. resp_ts may be absent on the first scan after dequeue
+            # (response not flushed yet) — then it isn't marked seen, so a
+            # later scan re-times it.
+            resp_ts = _first_ts_at_or_after(turn_timestamps, att.timestamp)
+            post_ok = _post_queued_command_span(
+                trace_id, att, ts, resp_ts=resp_ts)
+        else:
+            handler = _ATTACHMENT_HANDLERS.get(att.kind)
+            # An attachment kind we don't trace still gets marked seen so we
+            # don't re-walk it on the next scan.
+            post_ok = handler(trace_id, att, ts) if handler else True
         if post_ok:
             new_uuids.append(att.uuid)
     _mark_seen(trace_id, new_uuids)
@@ -313,6 +352,163 @@ def _post_local_command_spans(
     _mark_seen(trace_id, new_uuids)
 
 
+# Prompt-anchor text can be a full slash-command expansion (a skill body
+# can be several KiB). Cap so the turn-anchor span attrs stay lean — the
+# untruncated prompt still lives on the live UserPromptSubmit span.
+_PROMPT_ANCHOR_TEXT_MAX_BYTES = 8 * 1024
+
+
+def _post_prompt_anchor_spans(
+    trace_id: str,
+    turns,
+    prompt_texts: dict[str, str],
+    prompt_timestamps: dict[str, str],
+    prompt_image_parts: dict[str, list],
+    seen: set[str],
+) -> None:
+    """Emit the turn-anchor `prompt-<prompt_uuid[:13]>` span (and its
+    `prompt_images`) for each turn.
+
+    `prompt` spans are the only turn boundaries the projection paginates
+    on (`_TURN_ANCHOR_NAMES`), and this is now their **sole** authoritative
+    producer. The live UserPromptSubmit hook deliberately no longer writes
+    one: at fire time the current prompt isn't flushed, so a span_id keyed
+    off the transcript would land on a *prior* turn's entry and clobber its
+    anchor (text + a now() timestamp) on upsert. Emitting here from
+    `prompt_uuid` (the entry the assistant actually responded to) gives the
+    correct id + text + prompt-time stamp; a stray `prompt` placeholder that no
+    turn backs is dropped by the serve-time merge once a newer prompt lands
+    (lib/trace/merge.py:_drop_stale_blockers).
+
+    Images attach to the same `prompt-<prompt_uuid>` id (so they land on the
+    right prompt), resolved from Claude Code's per-session cache while it's
+    still present, falling back to the transcript's inline base64 parts.
+
+    Idempotent via the span_id; throttled by the seen-cache keyed on the
+    prompt entry uuid (a prompt's text never changes once submitted).
+    """
+    new_uuids: list[str] = []
+    posted: set[str] = set()
+    for turn in turns:
+        pu = turn.prompt_uuid
+        if not pu or pu in seen or pu in posted:
+            continue
+        text = prompt_texts.get(pu)
+        if not text:
+            continue
+        posted.add(pu)
+        if _emit_one_prompt_anchor(
+            trace_id, pu, text,
+            prompt_timestamps.get(pu), prompt_image_parts.get(pu),
+        ):
+            new_uuids.append(pu)
+    _mark_seen(trace_id, new_uuids)
+
+
+def _emit_one_prompt_anchor(
+    trace_id: str,
+    prompt_uuid: str,
+    text: str,
+    ts_raw: str | None,
+    inline_parts: list | None,
+) -> bool:
+    """Post one `prompt-<uuid>` anchor span plus its `prompt_images`.
+    Returns True iff the span persisted (so the caller caches the uuid)."""
+    from lib.hook_plugin import post_event, post_span  # type: ignore
+
+    span_id = f'prompt-{prompt_uuid[:13]}'
+    images, kept = _resolve_capped_anchor_images(trace_id, text, inline_parts)
+    attrs = _anchor_attrs(text, images, kept)
+    ts = _normalise_attachment_ts(ts_raw)
+    if not post_span(
+        trace_id=trace_id, span_id=span_id, name='prompt',
+        start_time=ts, end_time=ts, attributes=attrs,
+    ):
+        return False
+    if kept:
+        post_event('prompt_images', [
+            {
+                'trace_id': trace_id,
+                'prompt_span_id': span_id,
+                'idx': img['idx'],
+                'media_type': img['media_type'],
+                'data_b64': img['data_b64'],
+            }
+            for img in kept
+        ])
+    return True
+
+
+def _anchor_attrs(text: str, images: list, kept: list) -> dict:
+    """Build the `prompt` span attributes, including image metadata."""
+    capped, truncated = _truncate_utf8_with_marker(
+        text, _PROMPT_ANCHOR_TEXT_MAX_BYTES,
+    )
+    attrs: dict = {
+        'text': capped,
+        'chars': len(text),
+        'slash_command': text.split()[0] if text.startswith('/') else None,
+    }
+    if truncated:
+        attrs['text_truncated'] = True
+    if images:
+        attrs['image_indices'] = [img['idx'] for img in images]
+        if len(kept) != len(images):
+            attrs['image_indices_persisted'] = [img['idx'] for img in kept]
+        total = _image_tokens_total(images)
+        if total:
+            attrs['image_tokens_estimate'] = total
+    return attrs
+
+
+def _resolve_capped_anchor_images(
+    trace_id: str, text: str, inline_parts: list | None,
+) -> tuple[list, list]:
+    """Resolve the prompt's images and apply the configured persistence
+    caps. Returns `(all_resolved, kept_after_caps)` — `all_resolved` feeds
+    `image_indices` (so the UI knows images existed even when not stored);
+    `kept` is what actually lands in `prompt_images`."""
+    from lib.settings import settings  # type: ignore
+    from lib.trace.prompt_images_resolve import resolve_prompt_images
+
+    images = resolve_prompt_images(trace_id, text, inline_parts or [])
+    if not images or not bool(getattr(settings, 'capture_prompt_images', True)):
+        return images, []
+    max_count = int(getattr(settings, 'prompt_images_max_count', 10) or 0)
+    max_bytes = int(getattr(settings, 'prompt_image_max_bytes', 5_000_000) or 0)
+    return images, _cap_images(images, max_count, max_bytes)
+
+
+def _cap_images(images: list, max_count: int, max_bytes: int) -> list:
+    """Filter resolved images by the count cap and per-image decoded-byte
+    cap. `max_count`/`max_bytes` of 0 disable that cap."""
+    kept: list = []
+    for img in images:
+        if max_count and len(kept) >= max_count:
+            break
+        est_bytes = (len(img['data_b64']) * 3) // 4
+        if max_bytes and est_bytes > max_bytes:
+            continue
+        kept.append(img)
+    return kept
+
+
+def _image_tokens_total(images: list) -> int:
+    """Local Anthropic image-token estimate summed across the prompt's
+    images — see `lib/tokens/token_estimator.py`. The API rolls these into
+    `usage.input_tokens`, so they're not separately surfaced elsewhere."""
+    from lib.tokens.token_estimator import estimate_image_tokens  # type: ignore
+
+    total = 0
+    for img in images:
+        total += estimate_image_tokens({
+            'type': 'base64',
+            'media_type': img.get('media_type'),
+            'data': img.get('data_b64'),
+        })
+    return total
+
+
 # ───────────────────────────── live turns ──────────────────────────────
 
 
@@ -336,23 +532,35 @@ def _build_usage_row(
     }
 
 
+def _prompt_parent_id(turn) -> str | None:
+    """Write-time parent for an `assistant_response` / `assistant.thinking`
+    span: the turn's prompt anchor (`prompt-<prompt_uuid[:13]>`), where
+    `prompt_uuid` was resolved by the parentUuid walk in
+    `transcript_usage._resolve_prompt_anchors`. Returns None (→ root) when
+    the turn has no resolvable real prompt (e.g. a workflow-resume turn).
+    Setting this at write time is what lets the read path be pure tree
+    assembly instead of chronological grafting."""
+    return f'prompt-{turn.prompt_uuid[:13]}' if turn.prompt_uuid else None
+
+
 def _resolve_server_parent_id(turn, capture_text: bool) -> str | None:
-    """Server-tool spans nest under the turn's `assistant_response` (or
-    `assistant.thinking` when the turn carries no text). The model emits
+    """Parent for a turn's tool spans (live, server, and deny/error
+    synth). They nest under the turn's `assistant_response` (or
+    `assistant.thinking` when the turn carries no text) — the model emits
     text-blocks-then-tool_use within one turn, so the call is
-    semantically triggered by the response. A parent_id link encodes
-    that directly: render order falls out of the tree without depending
-    on the +1 ms transcript-time stagger, which JS Date.getTime() rounds
-    away anyway. When the turn has neither text nor thinking_blocks,
-    the server-tool stays an orphan and `_graft_orphans` falls back to
-    the prompt parent."""
-    if not capture_text:
-        return None
-    if turn.text:
+    semantically triggered by the response, and a parent_id link encodes
+    that directly without depending on the +1 ms transcript-time stagger.
+
+    When no `resp-`/`think-` span exists for the turn (a silent
+    tool-only turn, or text capture disabled), fall back to the turn's
+    prompt anchor so the tool gets a deterministic parent at write time
+    instead of orphaning — `prompt-<prompt_uuid>`, or None (→ root) when
+    the turn has no resolvable real prompt."""
+    if capture_text and turn.text:
         return f'resp-{turn.uuid[:13]}'
-    if turn.thinking_blocks:
+    if capture_text and turn.thinking_blocks:
         return f'think-{turn.uuid[:13]}'
-    return None
+    return _prompt_parent_id(turn)
 
 
 def _truncate_response_text(
@@ -510,14 +718,23 @@ def _emit_deny_and_error_spans(
         )
 
 
-def _post_tool_attribution_event(trace_id: str, turn) -> None:
+def _post_tool_attribution_event(
+    trace_id: str, turn, server_parent_id: str | None = None,
+) -> None:
     """Per-tool token attribution. transcript_usage carries token
     estimates on each tool_call; flatten them into one payload per turn
     so the ingest endpoint can UPDATE matching session_spans.
     Anthropic's API only emits one usage block per turn, so these are
     derived locally. The "Tokens by tool" rollup in the trace UI reads
     these columns directly, so this needs to fire live (not just on
-    UserPromptSubmit/Stop)."""
+    UserPromptSubmit/Stop).
+
+    `server_parent_id` (the issuing turn's `resp-`/`think-` span, or None)
+    rides along so ingest can backfill the live `tool.*` span's parent_id
+    by tool_use_id — the live PostToolUse span is posted parent-less
+    because at PostToolUse time the issuing turn isn't yet known. This is
+    a parent UPDATE on the existing row, never a re-post, so the rich
+    PostToolUse attributes (diff/stdout) are preserved."""
     from lib.hook_plugin import post_event  # type: ignore
     calls = [
         {
@@ -535,6 +752,7 @@ def _post_tool_attribution_event(trace_id: str, turn) -> None:
     post_event('tool_attribution', {
         'trace_id': trace_id,
         'turn_uuid': turn.uuid,
+        'parent_span_id': server_parent_id,
         'tool_calls': calls,
     })
 
@@ -630,9 +848,9 @@ def _maybe_emit_assistant_span(
         (separate name so the conversation view doesn't render empty
         "response" rows; the timeline can still surface it).
 
-    parent_id is intentionally left unset; `_graft_orphans()` in the
-    web layer attaches it to the current prompt based on chronological
-    order. Tracks whether persistence actually happened: default True
+    parent_id is set at write time to the turn's prompt anchor
+    (`_prompt_parent_id`), so the read path nests it without chronological
+    grafting. Tracks whether persistence actually happened: default True
     means "no post needed" (turn carried nothing postable). When a post
     IS needed, the cache should only land on success — see
     docs/trace/assistant_response_capture_vs_claudecodeui.md.
@@ -665,6 +883,7 @@ def _maybe_emit_assistant_span(
         trace_id=trace_id,
         span_id=f'{span_prefix}-{turn.uuid[:13]}',
         name=span_name,
+        parent_id=_prompt_parent_id(turn),
         start_time=ts, end_time=ts,
         duration_ms=inference_ms,
         attributes=attrs,
@@ -688,7 +907,7 @@ def _process_one_turn(
             trace_id, turn, server_parent_id, capture_text, max_text_bytes,
         )
         _emit_deny_and_error_spans(trace_id, turn, server_parent_id)
-        _post_tool_attribution_event(trace_id, turn)
+        _post_tool_attribution_event(trace_id, turn, server_parent_id)
     return _maybe_emit_assistant_span(trace_id, turn, idx, fallback_model, capture_text)
 
 

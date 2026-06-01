@@ -86,7 +86,7 @@ app.add_typer(skills.skills_app)
 app.add_typer(topics.topics_app)
 app.add_typer(patterns.pattern_app)
 app.add_typer(rules.rules_app)
-app.add_typer(schema.schema_app)
+schema.register(app)  # schema group + flat bootstrap-hook-schemas
 app.add_typer(trace.trace_app)
 app.add_typer(wiki.wiki_app)
 app.add_typer(logs.logs_app)

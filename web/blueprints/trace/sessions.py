@@ -12,7 +12,7 @@ from lib import hook_plugin as _hp
 from lib.orm import SessionLocal
 from lib.orm.models import (
     PlanSession, PromptImage, RuleTrigger, Session as SessionModel,
-    SessionSpan, SessionTraceMap, SkillRead,
+    SessionSpan, SkillRead,
 )
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace import trace_service
@@ -637,6 +637,116 @@ def api_session_span_children(trace_id, span_id):
     })
 
 
+def _structural_map_spans(trace_id: str) -> list[dict]:
+    """The full structural span list for the non-shallow `/map` (Terminal tab).
+
+    The store is append-only, so a placeholder and its real anchor coexist —
+    `merge_spans` selects the winner. It correlates by prompt-text hash /
+    tool_name, so it needs `attributes` (and `turn_uuid` for the reparent
+    ladder); read them from session_spans rather than the attribute-less
+    session_trace_map. After merging we STRIP attributes/turn_uuid so the map
+    stays the light, structure-only payload the frontend expects (descendants
+    fetch content lazily via /spans/<id>/content)."""
+    from sqlmodel import select as _select
+    from lib.trace.merge import merge_spans
+
+    with SessionLocal() as session:
+        rows = session.execute(
+            _select(
+                SessionSpan.id, SessionSpan.trace_id,
+                SessionSpan.span_id, SessionSpan.parent_id,
+                SessionSpan.name, SessionSpan.kind,
+                SessionSpan.start_time, SessionSpan.end_time,
+                SessionSpan.duration_ms, SessionSpan.status_code,
+                SessionSpan.status_message, SessionSpan.attributes,
+                SessionSpan.turn_uuid,
+            )
+            .where(SessionSpan.trace_id == trace_id)
+            .order_by(SessionSpan.start_time.asc(), SessionSpan.id.asc())
+        ).mappings().all()
+    spans = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['attributes'] = json.loads(d['attributes']) if d.get('attributes') else {}
+        except (TypeError, ValueError):
+            d['attributes'] = {}
+        spans.append(d)
+    grafted = merge_spans(spans)
+    for s in grafted:
+        s.pop('attributes', None)
+        s.pop('turn_uuid', None)
+    return grafted
+
+
+def _shallow_map_response(trace_id: str):
+    """Paginated structural map for the live trace view (`?shallow=1`): root
+    spans + lazy tree nodes + cursors + the merge's `retired_span_ids` (rows the
+    serve-time merge dropped from this window, which the client must prune from
+    its append-only `session.spans` or the cards show a duplicate)."""
+    from sqlmodel import select as _select
+    from sqlalchemy import func as _func
+    try:
+        limit = int(request.args.get('limit', 50))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'limit must be an integer'}), 400
+    limit = max(1, min(limit, 200))
+    before_id = request.args.get('before_id', type=int)
+    after_id = request.args.get('after_id', type=int)
+    if before_id is not None and after_id is not None:
+        return jsonify({'error': 'before_id and after_id are mutually exclusive'}), 400
+
+    # Live tail (initial / additive reload, not scroll-up): kick a background
+    # transcript rescan so assistant turns flushed since the last hook scan get
+    # ingested and show within a poll or two (esp. subagent reasoning, which
+    # otherwise batches at SubagentStop). Fire-and-forget; this response still
+    # serves the current DB state, the next poll picks up the new turns.
+    if before_id is None:
+        from lib.trace.live_rescan import trigger_rescan
+        trigger_rescan(trace_id)
+
+    widened, tree, has_more_older, retired_span_ids = trace_service.fetch_session_paginated(
+        trace_id, limit=limit, before_id=before_id, after_id=after_id,
+    )
+    root_ids = {n['data']['span_id'] for n in tree}
+    # Cursors use DB `id`: stable, monotonic, unambiguous on ties.
+    ids = [n['data']['id'] for n in tree if 'id' in n.get('data', {})]
+    oldest_loaded_id = min(ids) if ids else None
+    newest_loaded_id = max(ids) if ids else None
+    with SessionLocal() as session:
+        # span_count_total excludes PENDING placeholders (append-only keeps them).
+        span_count_total = session.exec(
+            _select(_func.count())
+            .select_from(SessionSpan)
+            .where(SessionSpan.trace_id == trace_id)
+            .where(SessionSpan.status_code != 'PENDING')
+        ).one()
+    return jsonify({
+        'trace_id': trace_id,
+        'spans': [s for s in widened if s['span_id'] in root_ids],
+        'tree': _shallow_nodes(tree),
+        'span_count': len(widened),
+        'span_count_total': span_count_total,
+        'has_more_older': has_more_older,
+        'oldest_loaded_id': oldest_loaded_id,
+        'newest_loaded_id': newest_loaded_id,
+        'retired_span_ids': retired_span_ids,
+        # Prompts typed while the agent is busy fire no hook; surface what's
+        # currently queued (derived live from the transcript, ephemeral).
+        'queued_prompts': _queued_prompts(trace_id),
+        'task_list': _fetch_session_task_list(trace_id),
+        **_session_summary(trace_id),
+    })
+
+
+def _queued_prompts(trace_id: str) -> list:
+    from lib.trace.queued_prompts import current_queued_prompts
+    try:
+        return current_queued_prompts(trace_id)
+    except Exception:
+        return []
+
+
 @trace_bp.route('/api/sessions/<trace_id>/map')
 def api_session_map(trace_id):
     """Return the structural map for a session.
@@ -654,85 +764,15 @@ def api_session_map(trace_id):
     Pass `?shallow=1` to return only root spans plus shallow tree nodes
     for lazy child expansion. Default stays backward-compatible.
     """
-    shallow = request.args.get('shallow', '').lower() in ('1', 'true')
-    if shallow:
-        # Pagination cursors. Cursor = DB id of a turn-anchor span.
-        # Mutually exclusive: passing both is an error.
-        try:
-            limit = int(request.args.get('limit', 50))
-        except (TypeError, ValueError):
-            return jsonify({'error': 'limit must be an integer'}), 400
-        limit = max(1, min(limit, 200))
-        before_id = request.args.get('before_id', type=int)
-        after_id = request.args.get('after_id', type=int)
-        if before_id is not None and after_id is not None:
-            return jsonify({
-                'error': 'before_id and after_id are mutually exclusive',
-            }), 400
+    if request.args.get('shallow', '').lower() in ('1', 'true'):
+        return _shallow_map_response(trace_id)
 
-        widened, tree, has_more_older = trace_service.fetch_session_paginated(
-            trace_id, limit=limit, before_id=before_id, after_id=after_id,
-        )
-        root_ids = {n['data']['span_id'] for n in tree}
-        # Boundary cursors for the frontend's next paginated call.
-        # Use DB `id`; stable, monotonic, unambiguous on ties.
-        ids = [n['data']['id'] for n in tree if 'id' in n.get('data', {})]
-        oldest_loaded_id = min(ids) if ids else None
-        newest_loaded_id = max(ids) if ids else None
-        # Session-wide total for the header — windowed `widened` only
-        # covers the page, so query the count directly.
-        from sqlmodel import select as _select
-        from sqlalchemy import func as _func
-        with SessionLocal() as session:
-            span_count_total = session.exec(
-                _select(_func.count())
-                .select_from(SessionSpan)
-                .where(SessionSpan.trace_id == trace_id)
-            ).one()
-        summary = _session_summary(trace_id)
-        task_list = _fetch_session_task_list(trace_id)
-        return jsonify({
-            'trace_id': trace_id,
-            'spans': [s for s in widened if s['span_id'] in root_ids],
-            'tree': _shallow_nodes(tree),
-            'span_count': len(widened),
-            'span_count_total': span_count_total,
-            'has_more_older': has_more_older,
-            'oldest_loaded_id': oldest_loaded_id,
-            'newest_loaded_id': newest_loaded_id,
-            'task_list': task_list,
-            **summary,
-        })
-
-    from sqlmodel import select as _select
-    from lib.trace.projection import _graft_orphans
-
-    # Project to the exact column set the previous raw SELECT returned —
-    # `_graft_orphans` reads dict-keyed (`s['start_time']` etc.) and the
-    # response is jsonified verbatim, so adding a column would change
-    # the over-the-wire shape. `.mappings()` returns dict-like rows
-    # whose keys match the projected column names; `dict(r)` casts each
-    # to a plain dict the projection helper expects.
-    with SessionLocal() as session:
-        rows = session.execute(
-            _select(
-                SessionTraceMap.id, SessionTraceMap.trace_id,
-                SessionTraceMap.span_id, SessionTraceMap.parent_id,
-                SessionTraceMap.name, SessionTraceMap.kind,
-                SessionTraceMap.start_time, SessionTraceMap.end_time,
-                SessionTraceMap.duration_ms, SessionTraceMap.status_code,
-                SessionTraceMap.status_message,
-            )
-            .where(SessionTraceMap.trace_id == trace_id)
-            .order_by(SessionTraceMap.start_time.asc(), SessionTraceMap.id.asc())
-        ).mappings().all()
-    spans = [dict(r) for r in rows]
-    grafted = _graft_orphans(spans)
+    spans = _structural_map_spans(trace_id)
     summary = _session_summary(trace_id)
     return jsonify({
         'trace_id': trace_id,
-        'spans': grafted,
-        'span_count': len(grafted),
+        'spans': spans,
+        'span_count': len(spans),
         **summary,
     })
 
@@ -756,6 +796,44 @@ def api_span_content(trace_id, span_id):
     })
 
 
+def _workflow_run_summary(session, run_id: str) -> dict:
+    """Read-time rollup for a captured workflow run (its trace_id == run_id).
+
+    Returns the counts the parent session's collapsed summary node shows:
+    agent/phase totals, the run's status, and summed agent output tokens.
+    Computed from spans on every call — nothing is denormalized, so this
+    stays clear of the schema.sql/Alembic drift trap.
+    """
+    from sqlmodel import select as _select
+    from sqlalchemy import func as _func
+
+    def _count(name: str) -> int:
+        return session.exec(
+            _select(_func.count())
+            .select_from(SessionSpan)
+            .where(SessionSpan.trace_id == run_id)
+            .where(SessionSpan.name == name)
+        ).one() or 0
+
+    tokens = session.exec(
+        _select(_func.sum(
+            _func.json_extract(SessionSpan.attributes, '$.tokens')))
+        .where(SessionSpan.trace_id == run_id)
+        .where(SessionSpan.name == 'subagent.start')
+    ).one()
+    status = session.exec(
+        _select(_func.json_extract(SessionSpan.attributes, '$.workflow_status'))
+        .where(SessionSpan.trace_id == run_id)
+        .where(SessionSpan.name == 'session.start')
+    ).first()
+    return {
+        'agent_count': _count('subagent.start'),
+        'phase_count': _count('workflow.phase'),
+        'tokens': int(tokens) if tokens is not None else None,
+        'status': status or None,
+    }
+
+
 @trace_bp.route('/api/sessions/<trace_id>/workflow-runs')
 def api_session_workflow_runs(trace_id):
     """Dynamic-workflow runs launched from this session, in call order.
@@ -777,15 +855,25 @@ def api_session_workflow_runs(trace_id):
             .where(SessionSpan.name == 'tool.Workflow')
             .order_by(SessionSpan.start_time)
         ).all()
-    runs: list[dict] = []
-    seen: set[str] = set()
-    for attrs_json in rows:
-        attrs = json.loads(attrs_json or '{}')
-        run_id = attrs.get('workflow_run_id')
-        if not run_id or run_id in seen:
-            continue
-        seen.add(run_id)
-        runs.append({'run_id': run_id, 'name': attrs.get('workflow_name')})
+
+        runs: list[dict] = []
+        seen: set[str] = set()
+        for attrs_json in rows:
+            attrs = json.loads(attrs_json or '{}')
+            run_id = attrs.get('workflow_run_id')
+            if not run_id or run_id in seen:
+                continue
+            seen.add(run_id)
+            # Counts are computed on read from the run's captured spans (its
+            # own trace_id == run_id) — no denormalized column, so no
+            # schema.sql/Alembic drift. Lets the parent session render a rich
+            # collapsed summary node (agents · phases · status · tokens)
+            # without opening the run.
+            runs.append({
+                'run_id': run_id,
+                'name': attrs.get('workflow_name'),
+                **_workflow_run_summary(session, run_id),
+            })
     return jsonify({'trace_id': trace_id, 'items': runs})
 
 
@@ -1044,5 +1132,7 @@ def api_session_repair_spans(trace_id):
         }), 500
     status = 200 if result.get('ok') else 404
     return jsonify(result), status
+
+
 
 

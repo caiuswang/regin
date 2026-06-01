@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SubagentStart hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [
+    "2.1.158"
+  ],
+  "properties": {
+    "agent_id": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

@@ -53,6 +53,36 @@ def _walk_to_assistant(
     return None
 
 
+def _walk_to_prompt(
+    start: str | None,
+    entry_parent: dict[str, str | None],
+    real_prompt_uuids: set[str],
+) -> str | None:
+    """Walk a parentUuid chain back to the nearest real-prompt ancestor.
+
+    A "real prompt" is the user entry that opened a turn — classified by
+    the caller and collected into `real_prompt_uuids` (typed prompts and
+    queued commands; NOT tool_results, task-notifications, local-command
+    echoes, image carriers, meta, or sidechain entries). Intermediate
+    `assistant`, `system`, `attachment`, and tool_result `user` entries
+    are passed straight through, so a multi-iteration turn (tool_result
+    between assistant entries) still resolves to the prompt that began
+    it. Returns the prompt uuid, or None if the chain reaches the root
+    without crossing a real prompt (e.g. a workflow-resume turn whose
+    only ancestor prompts are meta). Cycle-guarded via a visited set so
+    a malformed transcript can't loop, with no fixed depth cap (a long
+    agentic turn can chain through hundreds of entries).
+    """
+    cursor = start
+    seen: set[str] = set()
+    while cursor is not None and cursor not in seen:
+        if cursor in real_prompt_uuids:
+            return cursor
+        seen.add(cursor)
+        cursor = entry_parent.get(cursor)
+    return None
+
+
 def _extract_text_blocks(content: object) -> list[str]:
     """Pull text out of `type: text` content blocks ONLY.
 

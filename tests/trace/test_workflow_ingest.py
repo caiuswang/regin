@@ -719,6 +719,119 @@ def test_stamp_parent_link_cross_links_run_and_tool_span(tmp_path):
         conn.close()
 
 
+def test_build_workflow_attrs_stamps_run_id_from_result():
+    """The PostToolUse builder lifts the run_id out of the Workflow tool result
+    (the run dir path) so the span carries `workflow_run_id` at capture —
+    before any compaction can strip the launching script."""
+    from hook_manager.handlers.post_tool_trace import _build_workflow_attrs
+    # Synthetic result string — the run id below is invented by this test, not
+    # read from any DB or run dir, so the test is self-contained and portable.
+    run_id = "wf_synthetic01-x"
+    attrs: dict = {}
+    result = ("Workflow launched in background. Task ID: q9\n"
+              f"Transcript dir: /u/.claude/projects/p/sess/subagents/workflows/{run_id}/agents")
+    _build_workflow_attrs(attrs, {"script": "..."}, result, None)
+    assert attrs["workflow_run_id"] == run_id
+    # No run dir in the result (e.g. a failure) → nothing stamped, no crash.
+    empty: dict = {}
+    _build_workflow_attrs(empty, {}, "Workflow failed to launch.", None)
+    assert "workflow_run_id" not in empty
+
+
+def test_stamp_parent_link_recovers_via_result_when_script_compacted(tmp_path):
+    """Transcript compaction strips a Workflow call's ``input.script`` but keeps
+    its tool_result. The link is recovered from the result's run-dir reference
+    (``…/workflows/<run_id>``), so the run still cross-links + re-parents its
+    agents instead of orphaning them."""
+    from lib.trace.trace_service import ingest_session_spans
+    projects = _make_run(tmp_path, with_manifest=True)
+    # Compacted transcript: the Workflow tool_use has a DIFFERENT script (the
+    # real one was summarised away), but the tool_result still names the run dir.
+    (projects / "proj" / "sess.jsonl").write_text(
+        json.dumps({
+            "type": "assistant", "uuid": "pa1",
+            "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "tuWF", "name": "Workflow",
+                 "input": {"script": "// unrelated / summarised script"}}]}}) + "\n"
+        + json.dumps({
+            "type": "user", "uuid": "pu1",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tuWF",
+                 "content": f"Workflow launched in background. Task ID: abc\n"
+                            f"Transcript dir: /x/subagents/workflows/{RUN_ID}/agents"}]}}) + "\n")
+    span = _parent_workflow_span("tuWF")
+    spans = [span, _orphan_workflow_subagent("sa-a", "aAAA")]
+    ingest_session_spans([(s, s["attributes"]) for s in spans])
+
+    W.ingest_run(W.discover_runs(projects)[0], deep=True, is_test=True)
+
+    conn = get_connection()
+    try:
+        # script match missed; result-based recovery still linked the call
+        assert _row_attrs(conn, "sess", "span_id='parentspan01'")["workflow_run_id"] == RUN_ID
+        assert _row_attrs(conn, RUN_ID, "name='session.start'")["parent_span_id"] == "parentspan01"
+        # and the orphan agent got re-parented under it
+        assert conn.execute(
+            "SELECT parent_id FROM session_spans WHERE trace_id='sess' AND span_id='sa-a'"
+        ).fetchone()["parent_id"] == "parentspan01"
+    finally:
+        conn.close()
+
+
+def _orphan_workflow_subagent(span_id, agent_id):
+    """A parent-session `subagent.start` span as Claude Code's SubagentStart
+    hook records it for a workflow agent: orphan (parent_id NULL), carrying
+    only agent_id/agent_type."""
+    return {
+        "trace_id": "sess", "span_id": span_id, "parent_id": None,
+        "name": "subagent.start", "kind": "internal",
+        "start_time": "2026-01-01T00:01:00Z", "end_time": "2026-01-01T00:02:00Z",
+        "duration_ms": 60000, "status_code": "OK", "status_message": None,
+        "attributes": {"agent_type": "workflow-subagent", "agent_id": agent_id,
+                       "is_test": True},
+    }
+
+
+def test_ingest_reparents_session_subagents_under_tool_workflow(tmp_path):
+    """A workflow's own subagents land in the LAUNCHING session as orphan
+    `subagent.start` spans (hook-captured, parent_id NULL). Ingest matches
+    them to the run by agent_id and re-parents them under the `tool.Workflow`
+    span, so the session timeline nests + folds them natively instead of
+    floating them as siblings of the tool call."""
+    from lib.trace.trace_service import ingest_session_spans
+    projects = _make_run(tmp_path, with_manifest=True)
+    (projects / "proj" / "sess.jsonl").write_text(json.dumps({
+        "type": "assistant", "uuid": "pa1",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tuWF", "name": "Workflow",
+             "input": {"script": _SCRIPT_BODY}}]}}) + "\n")
+    # parent session: the tool.Workflow call + this run's two agents (aAAA,
+    # aBBB per _MANIFEST) as orphans, plus an unrelated agent that must NOT move.
+    spans = [
+        _parent_workflow_span("tuWF"),
+        _orphan_workflow_subagent("sa-a", "aAAA"),
+        _orphan_workflow_subagent("sa-b", "aBBB"),
+        _orphan_workflow_subagent("sa-other", "aZZZ"),
+    ]
+    ingest_session_spans([(s, s["attributes"]) for s in spans])
+
+    W.ingest_run(W.discover_runs(projects)[0], deep=True, is_test=True)
+
+    conn = get_connection()
+    try:
+        def _parent(span_id):
+            return conn.execute(
+                "SELECT parent_id FROM session_spans WHERE trace_id='sess' "
+                "AND span_id=?", (span_id,)).fetchone()["parent_id"]
+        # this run's agents now hang off the launching tool.Workflow span
+        assert _parent("sa-a") == "parentspan01"
+        assert _parent("sa-b") == "parentspan01"
+        # an agent that isn't part of this run is left untouched (still orphan)
+        assert _parent("sa-other") is None
+    finally:
+        conn.close()
+
+
 # ── Script meta parsing (tree-sitter AST, not regex / not eval) ─────────────
 
 def _write_script(tmp_path: Path, body: str) -> Path:

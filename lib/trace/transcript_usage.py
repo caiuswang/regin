@@ -44,6 +44,7 @@ from lib.trace.transcript_models import (
     TranscriptUsage,
     TurnUsage,
 )
+from lib.trace.prompt_images_resolve import extract_image_parts
 from lib.trace.transcript_parsers import (
     _assistant_message,
     _delta_ms,
@@ -53,6 +54,7 @@ from lib.trace.transcript_parsers import (
     _truncate_utf8,
     _usage_tokens,
     _walk_to_assistant,
+    _walk_to_prompt,
 )
 
 # Local slash-command markers. Claude Code wraps every standalone local
@@ -233,6 +235,73 @@ def _first_block_is_tool_result(content: object) -> bool:
     return isinstance(first, dict) and first.get('type') == 'tool_result'
 
 
+def _user_prompt_text(content: object) -> str | None:
+    """Submitted text of a user-prompt entry. Plain prompts carry a bare
+    string; slash-command expansions and image prompts carry a list of
+    content blocks. Returns None when no text could be extracted."""
+    if isinstance(content, str):
+        return content or None
+    blocks = _extract_text_blocks(content)
+    return '\n'.join(blocks) if blocks else None
+
+
+# Claude Code emits a second synthetic user entry alongside an image prompt
+# whose text is purely `[Image: source: <path>]` lines (one per pasted image).
+_IMAGE_REF_LINE_RE = re.compile(r'^\[Image: source: .+\]$')
+
+# Substrings that mark a `type:user` entry as a local-command echo
+# (/compact, /clear, !ls, their stdout, and the typed-command caveat)
+# rather than a real typed prompt. Local commands get their own
+# `harness.local_command` (`cmd-<uuid>`) span, never a `prompt-` anchor,
+# so a turn must never resolve its prompt anchor to one of these.
+_LOCAL_COMMAND_MARKERS: tuple[str, ...] = (
+    '<command-name>',
+    '<bash-input>',
+    '<bash-stdout>',
+    '<local-command-stdout>',
+    _LOCAL_COMMAND_CAVEAT_TAG,
+)
+
+
+def _is_image_reference_carrier(text: str) -> bool:
+    """True when every non-blank line is an `[Image: source: …]` reference —
+    i.e. a synthetic image carrier, not a real typed prompt."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return bool(lines) and all(_IMAGE_REF_LINE_RE.match(ln) for ln in lines)
+
+
+def _is_excluded_prompt_text(text: str) -> bool:
+    """Text-level exclusions from the real-prompt set: synthetic image
+    carriers, background `<task-notification>` completions, and
+    local-command echoes are never real typed prompts that anchor a turn."""
+    if text.lstrip().startswith('<task-notification>'):
+        return True
+    if _is_image_reference_carrier(text):
+        return True
+    return any(marker in text for marker in _LOCAL_COMMAND_MARKERS)
+
+
+def _is_real_prompt(entry_n: dict, content: object, text: str | None) -> bool:
+    """True when a `type:user` entry is a real prompt that opens a turn.
+
+    The authoritative discriminator is `sourceToolAssistantUUID`: Claude
+    Code stamps it on every `tool_result` user entry and leaves it absent
+    on genuine prompts. We also exclude `isMeta` carriers (workflow-resume
+    nudges, queued-command markers), `isSidechain` subagent prompts, and
+    first-block tool_results, then fall back to text-level exclusions for
+    the synthetic shapes (image carriers, task-notifications, local
+    commands) that carry none of those flags."""
+    if entry_n.get('source_tool_assistant_uuid'):
+        return False
+    if entry_n.get('is_meta') or entry_n.get('is_sidechain'):
+        return False
+    if _first_block_is_tool_result(content):
+        return False
+    if text and _is_excluded_prompt_text(text):
+        return False
+    return True
+
+
 def _extract_tool_result_text(inner: object) -> str | None:
     """Pull human-readable text from an error tool_result's content.
 
@@ -349,6 +418,7 @@ def _build_tool_call(
 
 def _should_skip_redistribution(
     builder: _TurnBuilder,
+    tool_calls: list[dict],
     text: str | None,
     thinking_text: str | None,
 ) -> bool:
@@ -360,7 +430,7 @@ def _should_skip_redistribution(
     the residual into thinking. Redistributing into tools there would
     zero out the thinking span's output column.
     """
-    if not builder.output_tokens or not builder.tool_calls:
+    if not builder.output_tokens or not tool_calls:
         return True
     return not text and not thinking_text and builder.thinking_blocks > 0
 
@@ -394,6 +464,7 @@ def _apply_residual_scale(
 
 def _redistribute_output_residual(
     builder: _TurnBuilder,
+    tool_calls: list[dict],
     text: str | None,
     thinking_text: str | None,
 ) -> None:
@@ -421,9 +492,9 @@ def _redistribute_output_residual(
     redistribution because no assistant span is emitted for them —
     the residual would otherwise surface as untagged.
     """
-    if _should_skip_redistribution(builder, text, thinking_text):
+    if _should_skip_redistribution(builder, tool_calls, text, thinking_text):
         return
-    main_tool_calls = [tc for tc in builder.tool_calls if not tc.get('server_side')]
+    main_tool_calls = [tc for tc in tool_calls if not tc.get('server_side')]
     main_tool_total = sum(
         int(tc.get('output_token_estimate') or 0) for tc in main_tool_calls
     )
@@ -472,7 +543,13 @@ def _builder_to_turn_usage(
         builder.thinking_parts, max_text_bytes
     )
     inference_ms = _delta_ms(builder.prior_entry_timestamp, builder.timestamp)
-    _redistribute_output_residual(builder, text, thinking_text)
+    # Redistribution scales `output_token_estimate` in place, so it must run
+    # on a copy — `_builder_to_turn_usage` may be called more than once on the
+    # same builder (the live resumable rescan finalizes on every poll), and a
+    # second pass would scale already-scaled estimates. Shallow-copying each
+    # call dict keeps the builder's originals (and their is_error patches) intact.
+    tool_calls = [dict(tc) for tc in builder.tool_calls]
+    _redistribute_output_residual(builder, tool_calls, text, thinking_text)
     return TurnUsage(
         model=builder.model,
         input_tokens=builder.input_tokens,
@@ -491,7 +568,7 @@ def _builder_to_turn_usage(
         inference_duration_ms=inference_ms,
         turn_total_duration_ms=builder.turn_total_duration_ms,
         prompt_uuid=builder.prompt_uuid,
-        tool_calls=tuple(builder.tool_calls),
+        tool_calls=tuple(tool_calls),
     )
 
 
@@ -529,18 +606,53 @@ class _TranscriptScan:
     # 99.x% non-denied case never copies large Bash commands or Edit
     # old/new strings onto the call dict.
     tool_use_inputs: dict[str, object] = field(default_factory=dict)
-    # The uuid of the most recent non-tool_result user entry. Captured
-    # onto each _TurnBuilder when its first assistant entry is seen.
-    # Simpler than parentUuid chain walking because Claude Code injects
-    # synthetic user entries (attachment carriers) between the system
-    # message and the assistant response.
-    current_prompt_uuid: str | None = None
+    # Uuids of every real-prompt user entry (typed prompts + queued
+    # commands; NOT tool_results, task-notifications, local-command
+    # echoes, image carriers, meta, or sidechain entries). Each turn's
+    # prompt anchor is resolved at finalize by walking parentUuid back
+    # into this set (`_resolve_prompt_anchors`) — the parentUuid chain is
+    # the transcript's ground truth, so no chronological "last user
+    # entry" heuristic is needed.
+    real_prompt_uuids: set[str] = field(default_factory=set)
     # Local-command grouping: collect the three related entries (caveat,
     # command-name, stdout) by uuid as we walk past them, then assemble
     # one TranscriptLocalCommand per command-name at end-of-pass.
     lc_commands: list[dict] = field(default_factory=list)
     lc_stdout_by_parent: dict[str, dict] = field(default_factory=dict)
     lc_caveat_uuids: set[str] = field(default_factory=set)
+    # uuid → submitted text / ISO timestamp for every non-tool_result user
+    # entry. Used at finalize to attach the triggering prompt's text and
+    # original time to each turn anchor (the anchor must sit at prompt time
+    # on the timeline, not at re-emission time).
+    prompt_texts: dict[str, str] = field(default_factory=dict)
+    prompt_timestamps: dict[str, str] = field(default_factory=dict)
+    # uuid → inline base64 image parts for that prompt entry (durable
+    # fallback for prompt_images when the live image cache is gone).
+    prompt_image_parts: dict[str, list] = field(default_factory=dict)
+    # Slash-command echoes are excluded from `real_prompt_uuids` (they're
+    # `harness.local_command` cards, not typed prompts). But a command that
+    # *opens* a turn — `/review`, which expands into instructions an
+    # assistant then acts on — must anchor that turn, or its responses walk
+    # past it to the PREVIOUS typed prompt (off-by-one). We collect every
+    # slash-command echo as a *candidate* anchor; `_resolve_prompt_anchors`
+    # walks into this set too, so a command only becomes an anchor when an
+    # assistant actually chains up to it before any real prompt (turn-
+    # initiating). Meta commands with no in-turn response (`/clear`,
+    # `/compact`) are never reached, so they stay local-command-only.
+    command_prompt_uuids: set[str] = field(default_factory=set)
+    # uuid → display text ("/review") for command candidates, promoted into
+    # `prompt_texts` for the subset that actually anchor a turn.
+    command_prompt_texts: dict[str, str] = field(default_factory=dict)
+    # `<task-notification>` user entries — background-task completions that
+    # open a turn but nest under the PRIOR prompt (never their own anchor).
+    # They're a turn boundary for command resolution: a command reached only
+    # by crossing one (e.g. `/workflows`, whose workflow run chains up via
+    # task-notifications) is NOT that turn's opener, so it must not anchor.
+    task_notification_uuids: set[str] = field(default_factory=set)
+    # parentUuids of isMeta user entries. A command only anchors a turn when
+    # it has a direct isMeta child (its skill expansion), so this gates
+    # `command_prompt_uuids` down to genuine prompt-expanding commands.
+    meta_expansion_parents: set[str] = field(default_factory=set)
 
     def process_entry(self, entry: object) -> None:
         entry_n = _normalize_dict_keys(entry)
@@ -550,7 +662,7 @@ class _TranscriptScan:
         is_user = (etype == 'user' or role == 'user')
 
         if is_user and euuid:
-            self._handle_user_message(entry_n)
+            self._handle_user_entry(entry_n, eparent)
         if euuid:
             self.entry_parent[euuid] = eparent
         if is_user:
@@ -570,13 +682,20 @@ class _TranscriptScan:
 
     # ---- user / tool_result --------------------------------------------------
 
+    def _handle_user_entry(self, entry_n: dict, eparent: str | None) -> None:
+        """Route a user entry to prompt/tool_result handling, and record the
+        isMeta-expansion parentage that gates command anchoring (a skill like
+        /review emits its expansion as a direct isMeta child of the command
+        echo — display commands / workflow-resume nudges do not)."""
+        self._handle_user_message(entry_n)
+        if entry_n.get('is_meta') and eparent:
+            self.meta_expansion_parents.add(eparent)
+
     def _handle_user_message(self, entry_n: dict) -> None:
         msg = _normalize_dict_keys(entry_n.get('message'))
         content = msg.get('content')
         if not _first_block_is_tool_result(content):
-            euuid = _maybe_str(entry_n.get('uuid'))
-            if euuid:
-                self.current_prompt_uuid = euuid
+            self._record_prompt_entry(entry_n, content)
             return
         if not isinstance(content, list):
             return
@@ -585,6 +704,35 @@ class _TranscriptScan:
         for block in content:
             if isinstance(block, dict) and block.get('type') == 'tool_result':
                 self._patch_tool_result_block(block)
+
+    def _record_prompt_entry(self, entry_n: dict, content: object) -> None:
+        """Register a real-prompt user entry and capture its anchor side
+        tables (text / timestamp / inline image parts), keyed by uuid.
+
+        Called for non-tool_result user entries. Only entries that pass
+        `_is_real_prompt` join `real_prompt_uuids`; synthetic shapes
+        (image-source carriers, `<task-notification>` completions,
+        local-command echoes, meta/sidechain) are skipped so the
+        parentUuid walk passes straight through them to the prompt that
+        actually opened the turn. The image parts are the durable
+        fallback for `prompt_images` when the live image cache is gone."""
+        euuid = _maybe_str(entry_n.get('uuid'))
+        if not euuid:
+            return
+        text = _user_prompt_text(content)
+        if text and text.lstrip().startswith('<task-notification>'):
+            self.task_notification_uuids.add(euuid)
+        if not _is_real_prompt(entry_n, content, text):
+            return
+        self.real_prompt_uuids.add(euuid)
+        if text:
+            self.prompt_texts[euuid] = text
+        ts = entry_n.get('timestamp')
+        if isinstance(ts, str) and ts:
+            self.prompt_timestamps[euuid] = ts
+        parts = extract_image_parts(content)
+        if parts:
+            self.prompt_image_parts[euuid] = parts
 
     def _patch_tool_result_block(self, block: dict) -> None:
         tu_id = block.get('tool_use_id')
@@ -673,13 +821,23 @@ class _TranscriptScan:
             return
         m_args = _COMMAND_ARGS_RE.search(lc_text)
         ts = entry_n.get('timestamp')
+        name = m_name.group(1).strip()
+        args = (m_args.group(1).strip() if m_args else None) or None
         self.lc_commands.append({
             'uuid': euuid,
-            'name': m_name.group(1).strip(),
-            'args': (m_args.group(1).strip() if m_args else None) or None,
+            'name': name,
+            'args': args,
             'timestamp': ts if isinstance(ts, str) else None,
             'parent_uuid': eparent,
         })
+        # Register this slash command as a candidate turn anchor (see
+        # `command_prompt_uuids`). The display text mirrors what the user
+        # typed; the timestamp lets the anchor sit at command time on the
+        # timeline (the side tables key on the same uuid as `prompt_texts`).
+        self.command_prompt_uuids.add(euuid)
+        self.command_prompt_texts[euuid] = f'{name} {args}' if args else name
+        if isinstance(ts, str) and ts:
+            self.prompt_timestamps.setdefault(euuid, ts)
 
     def _collect_bash_input(self, entry_n: dict, lc_text: str, euuid: str) -> None:
         # `!ls` → command_name `!ls`. The leading `!` distinguishes a bash
@@ -780,6 +938,26 @@ class _TranscriptScan:
             kind=kind,
             payload=att_n,
         ))
+        self._maybe_register_queued_prompt(att_n, euuid)
+
+    def _maybe_register_queued_prompt(self, att_n: dict, euuid: str) -> None:
+        """A dequeued user prompt (queued while the agent was busy) arrives as a
+        `queued_command` attachment, not a real user entry — so by default the
+        parentUuid walk passes straight through it to the prompt that was
+        running when it was queued, and the responses it triggered anchor there
+        instead of under it. Treat a prompt-mode queued command as a real prompt
+        boundary so `_resolve_anchor` stops here and its responses nest under it
+        (the recovered `prompt-<uuid>` anchor). Only the queued prompt's own
+        descendants chain through this entry, so nothing else is affected.
+        Text/timestamp come from the attachment itself
+        (span_posters._post_queued_command_span), so it stays out of
+        `prompt_texts` — no duplicate anchor from _post_prompt_anchor_spans."""
+        if att_n.get('type') != 'queued_command':
+            return
+        mode = att_n.get('command_mode')
+        text = att_n.get('prompt')
+        if (mode is None or mode == 'prompt') and isinstance(text, str) and text:
+            self.real_prompt_uuids.add(euuid)
 
     # ---- assistant -----------------------------------------------------------
 
@@ -849,7 +1027,9 @@ class _TranscriptScan:
             timestamp=ts if isinstance(ts, str) else None,
             request_id=rid if isinstance(rid, str) else None,
             parent_uuid=eparent,
-            prompt_uuid=self.current_prompt_uuid,
+            # prompt_uuid is resolved at finalize by walking parentUuid
+            # into real_prompt_uuids (`_resolve_prompt_anchors`).
+            prompt_uuid=None,
             prior_entry_timestamp=self.prev_entry_timestamp,
         )
         self.builders[dedup_key] = builder
@@ -959,11 +1139,108 @@ class _TranscriptScan:
             counted or self.attachments or self.system_events or self.lc_commands
         )
 
+    def _resolve_prompt_anchors(self) -> tuple[set[str], dict[str, str]]:
+        """Set each builder's `prompt_uuid` by walking the parentUuid
+        chain from its (first) assistant entry back to the nearest
+        real-prompt ancestor. Replaces the chronological "last user
+        entry" heuristic with the transcript's own ground-truth tree, so
+        a turn anchors to the prompt that opened it even when synthetic
+        user entries (carriers, tool_results, task-notifications) sit
+        between the prompt and the response. Unresolvable turns (chain
+        reaches root through meta-only ancestors) keep `prompt_uuid=None`.
+
+        Pure w.r.t. the accumulator's command/prompt *sets*: the live
+        resumable rescan calls `finalize` on every poll, so destructively
+        narrowing `command_prompt_uuids` or growing `real_prompt_uuids`
+        here would corrupt resolution on the next poll. Instead this
+        returns `(command_anchor_uuids, promoted_texts)` for finalize to
+        thread through. `builder.prompt_uuid` is recomputed from scratch
+        each call, so overwriting it is safe — it is derived, not
+        accumulated."""
+        # Gate command candidates to those with a direct isMeta expansion
+        # child — the skill-command signature. Display/mode commands and
+        # workflow-resume nudges lack it, so they stay local-command-only.
+        command_anchor_uuids = self.command_prompt_uuids & self.meta_expansion_parents
+        for builder in self.builders.values():
+            if builder.uuid is None:
+                continue
+            builder.prompt_uuid = self._resolve_anchor(
+                builder.uuid, command_anchor_uuids
+            )
+        return command_anchor_uuids, self._promoted_anchor_texts(command_anchor_uuids)
+
+    def _resolve_anchor(
+        self, start: str | None, command_anchor_uuids: set[str],
+    ) -> str | None:
+        """Walk the parentUuid chain from a turn's assistant to its opener.
+
+        Stops at the nearest typed prompt OR slash-command candidate — so a
+        turn opened by `/review` anchors on the command (it sits between the
+        response and the prior typed prompt), fixing the off-by-one where it
+        used to walk past to the previous prompt.
+
+        A `<task-notification>` is a turn boundary: a command reached only by
+        crossing one isn't this turn's opener (e.g. `/workflows`, whose
+        workflow run chains up through task-notifications). On crossing one we
+        fall back to typed-prompts-only, so those turns keep nesting under the
+        prior real prompt instead of latching onto the command. Cycle-guarded
+        via a visited set."""
+        cursor = start
+        seen: set[str] = set()
+        while cursor is not None and cursor not in seen:
+            if cursor in self.real_prompt_uuids:
+                return cursor
+            if cursor in command_anchor_uuids:
+                return cursor
+            if cursor in self.task_notification_uuids:
+                return _walk_to_prompt(
+                    self.entry_parent.get(cursor),
+                    self.entry_parent,
+                    self.real_prompt_uuids,
+                )
+            seen.add(cursor)
+            cursor = self.entry_parent.get(cursor)
+        return None
+
+    def _promoted_anchor_texts(
+        self, command_anchor_uuids: set[str],
+    ) -> dict[str, str]:
+        """A skill command that resolved to a turn anchor becomes a
+        first-class prompt: it needs anchor text so a `prompt-<uuid>` span is
+        emitted (turn header + sidebar entry). Its `harness.local_command`
+        span is already suppressed at finalize for the whole `command_anchor_
+        uuids` set, so the turn renders one /review card.
+
+        Returns the uuid → command-text mapping for anchors not already in
+        `prompt_texts` (the prior in-place `setdefault` semantics), without
+        mutating the accumulator — finalize merges this into the anchor-text
+        lookup. Adding to `real_prompt_uuids` (the old behaviour) was a no-op
+        in a single pass and a resolution-corrupting leak across resumes, so
+        it is dropped."""
+        out: dict[str, str] = {}
+        for builder in self.builders.values():
+            pu = builder.prompt_uuid
+            if pu and pu in command_anchor_uuids and pu not in self.prompt_texts:
+                out[pu] = self.command_prompt_texts[pu]
+        return out
+
+    def _tool_use_to_turn_uuid(self) -> dict[str, str]:
+        """tool_use id → issuing assistant turn uuid, for write-time tool
+        parentage (Phase 2: `parent_id = resp-<turn_uuid>`)."""
+        return {
+            tu_id: builder.uuid
+            for tu_id, builder in self.tool_use_to_turn.items()
+            if builder.uuid
+        }
+
     def finalize(self, *, max_text_bytes: int | None) -> TranscriptUsage | None:
         counted = self._counted_builders()
         if not self._has_emit_worthy_rows(counted):
             return None
+        command_anchor_uuids, promoted_texts = self._resolve_prompt_anchors()
         finalized = [_builder_to_turn_usage(b, max_text_bytes) for b in counted]
+        anchor_texts = self._anchor_prompt_texts(finalized, promoted_texts)
+        anchor_ts, anchor_images = self._anchor_side_tables(anchor_texts)
         return TranscriptUsage(
             turns=finalized,
             model=self.latest_model,
@@ -974,12 +1251,67 @@ class _TranscriptScan:
             peak_context_tokens=max((t.context_used for t in finalized), default=0),
             attachments=tuple(self.attachments),
             system_events=tuple(self.system_events),
-            local_commands=tuple(self._finalize_local_commands()),
+            local_commands=tuple(self._finalize_local_commands(command_anchor_uuids)),
+            prompt_texts=anchor_texts,
+            prompt_timestamps=anchor_ts,
+            prompt_image_parts=anchor_images,
+            tool_use_to_turn_uuid=self._tool_use_to_turn_uuid(),
         )
 
-    def _finalize_local_commands(self) -> list[TranscriptLocalCommand]:
+    def _anchor_side_tables(
+        self, anchor_texts: dict[str, str],
+    ) -> tuple[dict[str, str], dict[str, list]]:
+        """Timestamp + inline-image side tables for the anchored prompts,
+        filtered to the same uuid set as `anchor_texts`."""
+        anchor_ts = {
+            u: self.prompt_timestamps[u]
+            for u in anchor_texts
+            if u in self.prompt_timestamps
+        }
+        anchor_images = {
+            u: self.prompt_image_parts[u]
+            for u in anchor_texts
+            if u in self.prompt_image_parts
+        }
+        return anchor_ts, anchor_images
+
+    def _anchor_prompt_texts(
+        self, finalized: list[TurnUsage], promoted_texts: dict[str, str],
+    ) -> dict[str, str]:
+        """uuid → text for the prompt entry that triggered each turn.
+
+        `promoted_texts` carries the display text for anchored skill commands
+        (e.g. `/review`) that have no typed-prompt entry in `prompt_texts` —
+        merged in here rather than written back onto the accumulator.
+
+        Background-task completions (`<task-notification>` user entries)
+        are excluded: they get a dedicated `task.notification` span and the
+        projection deliberately nests their turn under the previous prompt
+        rather than starting a new one, so they must not become a `prompt`
+        turn anchor."""
+        out: dict[str, str] = {}
+        for t in finalized:
+            pu = t.prompt_uuid
+            if not pu:
+                continue
+            text = self.prompt_texts.get(pu) or promoted_texts.get(pu)
+            if text and not text.lstrip().startswith('<task-notification>'):
+                out[pu] = text
+        return out
+
+    def _finalize_local_commands(
+        self, command_anchor_uuids: set[str],
+    ) -> list[TranscriptLocalCommand]:
         out: list[TranscriptLocalCommand] = []
         for ce in self.lc_commands:
+            # A prompt-expanding skill command (it survived the isMeta-child
+            # gate into `command_anchor_uuids`) is emitted as the turn's
+            # `prompt-<uuid>` anchor, never a local-command card — even before
+            # its response lands. Suppressing it here from the very first
+            # firing means its uuid is never marked seen as a local command,
+            # so the live anchor poster isn't blocked once the turn appears.
+            if ce['uuid'] in command_anchor_uuids:
+                continue
             stdout = self.lc_stdout_by_parent.get(ce['uuid'])
             caveat_uuid = (
                 ce['parent_uuid']
@@ -1041,3 +1373,95 @@ def read_usage(
     except OSError:
         return None
     return scan.finalize(max_text_bytes=max_text_bytes)
+
+
+@dataclass
+class ResumableScanState:
+    """Persistent state for an incremental transcript rescan.
+
+    Holds the live `_TranscriptScan` accumulator, the byte offset of the
+    last consumed newline (the committed offset), and the file inode.
+    `read_usage_resumable` seeks to `offset` and feeds only the appended
+    complete lines into `scan`, so a steady session costs O(new bytes) per
+    poll instead of re-parsing the whole transcript. Treat as opaque and
+    thread the returned instance back into the next call."""
+
+    scan: _TranscriptScan = field(default_factory=_TranscriptScan)
+    offset: int = 0
+    inode: int | None = None
+
+
+def _resumable_should_reset(
+    state: ResumableScanState | None, st: os.stat_result,
+) -> bool:
+    """True when the parsed prefix is no longer valid and a fresh
+    accumulator is needed: no prior state, the file was replaced (inode
+    changed — compaction / `/clear` forward-copy), or it shrank below our
+    committed offset (truncation/rewrite). Append-only growth — the normal
+    case — returns False, so the common path is one `stat`."""
+    if state is None:
+        return True
+    return state.inode != st.st_ino or st.st_size < state.offset
+
+
+def _feed_complete_lines(scan: _TranscriptScan, chunk: bytes) -> int:
+    """Feed every complete (newline-terminated) JSONL line in `chunk` into
+    `scan`; return the number of bytes consumed. A trailing fragment with no
+    terminating newline is a partial flush — left unconsumed so the next
+    poll reassembles it with the bytes that complete it."""
+    nl = chunk.rfind(b'\n')
+    if nl == -1:
+        return 0
+    complete = chunk[:nl + 1]
+    for raw in complete.split(b'\n'):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        scan.process_entry(entry)
+    return len(complete)
+
+
+def read_usage_resumable(
+    path: str,
+    state: ResumableScanState | None,
+    *,
+    max_text_bytes: int | None = None,
+) -> tuple[TranscriptUsage | None, ResumableScanState]:
+    """Incremental `read_usage`: parse only the bytes appended since the
+    last call, reusing the persistent accumulator carried in `state`.
+
+    Returns `(usage, state)` — pass `state=None` on the first call, then
+    keep threading the returned state back in. Whenever the file was
+    replaced or truncated it transparently falls back to a full re-scan, so
+    the result is equivalent to a one-shot `read_usage` over the file's
+    newline-terminated content. The one intentional divergence: a final
+    complete-but-unterminated line (a mid-write flush) is held until its
+    newline arrives, whereas `read_usage` would ingest it — both reconverge
+    on the next poll once the `\\n` lands. `usage` is None on a
+    missing/unreadable file or one with no emit-worthy rows (same as
+    `read_usage`).
+
+    `finalize` is called on every invocation and is pure w.r.t. the
+    accumulator (see `_TranscriptScan._resolve_prompt_anchors`), so
+    re-finalizing a growing scan never corrupts anchors or token shares."""
+    if not isinstance(path, str) or not path:
+        return None, state or ResumableScanState()
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, state or ResumableScanState()
+    if _resumable_should_reset(state, st):
+        state = ResumableScanState(inode=st.st_ino)
+    if st.st_size > state.offset:
+        try:
+            with open(path, 'rb') as f:
+                f.seek(state.offset)
+                chunk = f.read()
+        except OSError:
+            chunk = b''
+        state.offset += _feed_complete_lines(state.scan, chunk)
+    return state.scan.finalize(max_text_bytes=max_text_bytes), state

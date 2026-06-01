@@ -11,6 +11,8 @@ in `~/.claude/hook-payloads.jsonl` via `trace_payload`.
 from __future__ import annotations
 
 import difflib
+import json
+import re
 from datetime import datetime, timedelta
 
 from ..core import HookPayload, HookResponse
@@ -352,6 +354,24 @@ def _build_taskcreate_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
         attrs['task_id'] = str(task_id)
 
 
+_WF_RUN_RE = re.compile(r'workflows/(wf_[A-Za-z0-9][A-Za-z0-9_-]*)')
+
+
+def _build_workflow_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    """Stamp the launched run_id onto the `tool.Workflow` span at capture time.
+
+    The Workflow tool launches a background run and returns its dir
+    (`…/subagents/workflows/<run_id>`). Capturing `workflow_run_id` here — live,
+    from the tool result — gives ingest a compaction-proof link to the run.
+    Otherwise the only link is the call's `input.script`, which transcript
+    compaction strips first, orphaning the run's subagents in the session view.
+    """
+    blob = tool_response if isinstance(tool_response, str) else json.dumps(tool_response)
+    m = _WF_RUN_RE.search(blob or '')
+    if m:
+        attrs['workflow_run_id'] = m.group(1)
+
+
 def _build_taskupdate_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
     # Normalise camelCase taskId → snake_case so attribute access is
     # consistent across the codebase.
@@ -438,6 +458,7 @@ _TOOL_BUILDERS: dict = {
     'ToolSearch': _build_toolsearch_attrs,
     'TaskCreate': _build_taskcreate_attrs,
     'TaskUpdate': _build_taskupdate_attrs,
+    'Workflow': _build_workflow_attrs,
     'TaskOutput': _build_taskoutput_attrs,
     'Skill': _build_skill_attrs,
 }

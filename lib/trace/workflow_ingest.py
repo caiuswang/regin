@@ -1390,13 +1390,59 @@ def _find_parent_tool_use(transcript: Path, script: str) -> str | None:
     return None
 
 
-def _stamp_parent_link(run_ref: RunRef, workflow_name: str | None) -> None:
+def _iter_workflow_tool_results(transcript: Path):
+    """Yield ``(tool_use_id, result_text)`` for each tool_result in a parent
+    transcript. Tool results come back as content blocks on the following
+    message; the ``Workflow`` result embeds the launched run's dir."""
+    for entry in _read_jsonl(transcript):
+        content = entry.get("message", {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tid = block.get("tool_use_id")
+            raw = block.get("content")
+            if tid:
+                yield tid, raw if isinstance(raw, str) else json.dumps(raw)
+
+
+def _find_parent_tool_use_by_run_id(transcript: Path, run_id: str) -> str | None:
+    """tool_use_id of the ``Workflow`` call that launched ``run_id``, recovered
+    from the call's RESULT instead of its input script.
+
+    The script lives in the tool_use ``input`` and is the first thing
+    transcript compaction strips — which is why the script match misses on
+    older sessions. The tool_result text (``Workflow launched … Transcript
+    dir: …/workflows/<run_id>``) is far more durable, so matching the run dir
+    path re-links runs whose launching script was summarised away. Returns the
+    first match; a run relaunched/resumed under the same dir maps to several
+    calls, and any of them is a valid anchor for the run's agents.
+    """
+    needle = f"workflows/{run_id}"
+    for tid, text in _iter_workflow_tool_results(transcript):
+        if needle in text:
+            return tid
+    return None
+
+
+def _stamp_parent_link(run_ref: RunRef, workflow_name: str | None,
+                       agent_ids: list[str] | None = None) -> None:
     """Cross-link a run with the ``tool.Workflow`` span that launched it.
 
     Stamps ``workflow_run_id`` + ``workflow_name`` onto the parent session's
     tool span (so the session view can render an inline "⚙ <name> · view run
     →" card) and ``parent_span_id`` onto the run root (so the run view's
     backlink deep-links to that exact tool call).
+
+    Also re-parents the parent session's own ``subagent.start`` spans for this
+    run's agents under that ``tool.Workflow`` span. Claude Code's SubagentStart
+    hook records those in the *launching* session as orphans (``parent_id``
+    NULL, carrying only ``agent_id``/``agent_type``) — so the session view
+    floated them as siblings of the tool call. Matching ``agent_id`` against
+    the run's manifest agent set makes the parent→child edge real in the DB,
+    so the timeline nests + lazily folds them natively instead of the frontend
+    grafting them by time window.
     Best-effort and idempotent: a missing script, an unmatched call, or a
     parent span that hasn't been ingested yet just skips silently — the
     ``parent_trace_id`` already on the root keeps the backlink working
@@ -1409,31 +1455,14 @@ def _stamp_parent_link(run_ref: RunRef, workflow_name: str | None) -> None:
     does. If it were ever absent, only the forward "view run →" link is lost;
     the backlink still resolves via ``parent_trace_id``.
     """
-    if run_ref.script_path is None or not run_ref.script_path.exists():
-        return
-    try:
-        script = run_ref.script_path.read_text(encoding="utf-8")
-    except OSError:
-        return
     parent_trace_id = run_ref.session_dir.name
-    transcript = run_ref.session_dir.parent / f"{parent_trace_id}.jsonl"
-    if not transcript.exists():
-        return
-    tool_use_id = _find_parent_tool_use(transcript, script)
-    if not tool_use_id:
-        return
     from lib.orm.engine import get_connection
 
     conn = get_connection()
     try:
-        row = conn.execute(
-            "SELECT span_id FROM session_spans WHERE trace_id = ? "
-            "AND name = 'tool.Workflow' "
-            "AND json_extract(attributes, '$.tool_use_id') = ?",
-            (parent_trace_id, tool_use_id)).fetchone()
-        if row is None:
+        parent_span_id = _resolve_parent_tool_span(conn, run_ref, parent_trace_id)
+        if parent_span_id is None:
             return
-        parent_span_id = row[0]
         conn.execute(
             "UPDATE session_spans SET attributes = json_set("
             "attributes, '$.workflow_run_id', ?, '$.workflow_name', ?) "
@@ -1444,9 +1473,71 @@ def _stamp_parent_link(run_ref: RunRef, workflow_name: str | None) -> None:
             "SET attributes = json_set(attributes, '$.parent_span_id', ?) "
             "WHERE trace_id = ? AND name = 'session.start'",
             (parent_span_id, run_ref.run_id))
+        # Re-parent this run's launching-session subagents under the tool span.
+        _reparent_session_subagents(
+            conn, parent_trace_id, parent_span_id, agent_ids)
         conn.commit()
     finally:
         conn.close()
+
+
+def _resolve_parent_tool_span(conn, run_ref, parent_trace_id: str) -> str | None:
+    """span_id of the launching ``tool.Workflow`` call for this run, or None.
+
+    Two resolution paths, most-durable first:
+      1. The span already carries ``workflow_run_id`` — stamped live at
+         PostToolUse from the tool result. Transcript-independent, so it
+         survives any later compaction.
+      2. Resolve a ``tool_use_id`` from the parent transcript (exact script
+         match, then the run-dir reference in the tool result) and look the
+         span up by that. The legacy path for spans captured before (1).
+    """
+    row = conn.execute(
+        "SELECT span_id FROM session_spans WHERE trace_id = ? "
+        "AND name = 'tool.Workflow' "
+        "AND json_extract(attributes, '$.workflow_run_id') = ?",
+        (parent_trace_id, run_ref.run_id)).fetchone()
+    if row is not None:
+        return row[0]
+    if run_ref.script_path is None or not run_ref.script_path.exists():
+        return None
+    try:
+        script = run_ref.script_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    transcript = run_ref.session_dir.parent / f"{parent_trace_id}.jsonl"
+    if not transcript.exists():
+        return None
+    tool_use_id = (_find_parent_tool_use(transcript, script)
+                   or _find_parent_tool_use_by_run_id(transcript, run_ref.run_id))
+    if not tool_use_id:
+        return None
+    row = conn.execute(
+        "SELECT span_id FROM session_spans WHERE trace_id = ? "
+        "AND name = 'tool.Workflow' "
+        "AND json_extract(attributes, '$.tool_use_id') = ?",
+        (parent_trace_id, tool_use_id)).fetchone()
+    return row[0] if row is not None else None
+
+
+def _reparent_session_subagents(conn, parent_trace_id: str, parent_span_id: str,
+                                agent_ids: list[str] | None) -> None:
+    """Set ``parent_id`` of the launching session's ``subagent.start`` spans to
+    the run's ``tool.Workflow`` span, matched by ``agent_id``.
+
+    Scoped to the run's own agent set, so a session that launched several
+    workflows nests each run's agents under its own tool call. Idempotent — a
+    re-ingest just re-asserts the same parent edge.
+    """
+    ids = [a for a in (agent_ids or []) if a]
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(
+        "UPDATE session_spans SET parent_id = ? "
+        "WHERE trace_id = ? AND name = 'subagent.start' "
+        f"AND json_extract(attributes, '$.agent_id') IN ({placeholders})",
+        (parent_span_id, parent_trace_id, *ids))
 
 
 def reingest(run_id: str, spans: list[dict]) -> tuple[int, int]:
@@ -1481,7 +1572,7 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
         name = manifest.get("workflowName")
         _set_session_title(run_ref.run_id, name or manifest.get("summary"))
         _set_session_origin(run_ref.run_id)
-        _stamp_parent_link(run_ref, name)
+        _stamp_parent_link(run_ref, name, agent_ids)
         return result
     spans = build_flat_spans(run_ref, deep=deep, is_test=is_test)
     result = reingest(run_ref.run_id, spans)
@@ -1491,7 +1582,7 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
     name = _parse_script_meta(run_ref.script_path)[0]
     _set_session_title(run_ref.run_id, name)
     _set_session_origin(run_ref.run_id)
-    _stamp_parent_link(run_ref, name)
+    _stamp_parent_link(run_ref, name, started)
     return result
 
 

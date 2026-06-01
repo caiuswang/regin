@@ -19,7 +19,8 @@ class PayloadSchemaDrift(Base, table=True):
     __tablename__ = "payload_schema_drift"
     __table_args__ = (
         UniqueConstraint(
-            "agent", "tool_name", "drift_kind", "field_path", "claude_version",
+            "agent", "subject_kind", "tool_name", "drift_kind", "field_path",
+            "claude_version",
             name="uq_payload_schema_drift_key",
         ),
     )
@@ -29,6 +30,13 @@ class PayloadSchemaDrift(Base, table=True):
         sa_column=Column(
             "agent", String, nullable=False, index=True,
             server_default=text("'claude'"),
+        ),
+    )
+    # 'tool' | 'hook_event' — what kind of subject `tool_name` names.
+    subject_kind: str = Field(
+        sa_column=Column(
+            "subject_kind", String, nullable=False, index=True,
+            server_default=text("'tool'"),
         ),
     )
     tool_name: str = Field(

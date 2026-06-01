@@ -229,10 +229,10 @@ def test_emits_assistant_response_span_with_text_and_parent_link(
     captured_spans, tmp_path,
 ):
     """A real turn (with usage) should produce an assistant_response
-    span carrying the response text and a deterministic span_id.
-    parent_id is intentionally NOT set by the handler — the web
-    projection's _graft_orphans attaches it later based on chronology
-    (same mechanism tool spans rely on)."""
+    span carrying the response text, a deterministic span_id, and a
+    write-time parent_id pointing at the turn's prompt anchor
+    (`prompt-<prompt_uuid[:13]>`) — so the read path nests it without
+    chronological grafting."""
     transcript = tmp_path / 'session.jsonl'
     user_uuid = 'user-uuid-abcdef0123456'
     turn_uuid = 'asst-uuid-9876543210xyz'
@@ -249,7 +249,7 @@ def test_emits_assistant_response_span_with_text_and_parent_link(
     s = response_spans[0]
     assert s['trace_id'] == 's1'
     assert s['span_id'] == f'resp-{turn_uuid[:13]}'
-    assert 'parent_id' not in s
+    assert s['parent_id'] == f'prompt-{user_uuid[:13]}'
     assert s['attributes']['text'] == 'Sure, here we go.\n\nDone.'
     assert s['attributes']['truncated'] is False
     assert s['attributes']['turn_uuid'] == turn_uuid
@@ -911,6 +911,42 @@ def test_queued_command_emits_prompt_span(captured_spans, tmp_path, monkeypatch)
     assert s['attributes']['queued'] is True
 
 
+def test_queued_command_anchor_retimed_to_first_response(captured_spans, tmp_path, monkeypatch):
+    """The recovered queued-prompt anchor sorts at its FIRST RESPONSE (the
+    first turn at/after the attachment ts), not its type-time — so it groups
+    with its own turn instead of splitting the interrupted one. Robust to an
+    intermediate attachment between the queued_command and the response (the
+    response's parentUuid is the intermediate, not the queued_command)."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        {'type': 'attachment', 'uuid': 'qc-uuid-aaaaaa', 'parentUuid': 'u1',
+         'timestamp': '2026-04-27T12:00:05Z',
+         'attachment': {'type': 'queued_command', 'prompt': 'queued one',
+                        'commandMode': 'prompt'}},
+        {'type': 'attachment', 'uuid': 'inter-uuid-bb',  # intermediate
+         'parentUuid': 'qc-uuid-aaaaaa', 'timestamp': '2026-04-27T12:00:05Z'},
+        {'type': 'assistant', 'uuid': 'a1', 'parentUuid': 'inter-uuid-bb',
+         'timestamp': '2026-04-27T12:00:20Z', 'requestId': 'r1',
+         'message': {'id': 'm1', 'model': 'claude-opus-4-8',
+                     'content': [{'type': 'text', 'text': 'reply'}],
+                     'usage': {'input_tokens': 1, 'output_tokens': 1}}},
+    ])
+    turn_trace.handle(_p('Stop', session_id='qc-rt',
+                         transcript_path=str(transcript)))
+    queued = [s for s in captured_spans if s.get('name') == 'prompt'
+              and s['attributes'].get('text') == 'queued one']
+    resp_spans = [s for s in captured_spans if s.get('name') == 'assistant_response']
+    assert len(queued) == 1 and len(resp_spans) == 1
+    # anchored at the response time, not the 12:00:05 type-time
+    assert queued[0]['start_time'] == resp_spans[0]['start_time']
+    assert not queued[0]['start_time'].startswith('2026-04-27T12:00:05')
+    # the response nests UNDER the queued prompt (resolves to it, not the
+    # original 'go' prompt) — the queued_command is treated as a prompt boundary
+    assert resp_spans[0].get('parent_id') == queued[0]['span_id']
+
+
 def test_queued_command_non_prompt_mode_skipped(captured_spans, tmp_path, monkeypatch):
     """Only prompt-mode queues become `prompt` spans — a queued slash
     command (different `commandMode`) is not a model prompt and must not
@@ -1207,3 +1243,206 @@ def test_failed_post_does_not_mark_seen(tmp_path, monkeypatch):
                          transcript_path=str(transcript)))
     third_response = [s for s in spans if s.get('name') == 'assistant_response']
     assert third_response == [], 'cached uuid must throttle the third fire'
+
+
+# ── prompt turn-anchor spans (off-by-one regression) ────────────────
+
+def _user(uuid, content, parent=None, ts='2026-04-27T12:00:00Z'):
+    return {'type': 'user', 'uuid': uuid, 'parentUuid': parent,
+            'timestamp': ts, 'message': {'content': content}}
+
+
+def _prompt_spans_by_uuid(spans):
+    return {s['span_id']: s for s in spans if s.get('name') == 'prompt'}
+
+
+def test_prompt_anchor_carries_its_own_text_not_the_next_prompts(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """Regression for the off-by-one prompt corruption: each
+    `prompt-<uuid>` anchor must carry the text of the prompt that uuid
+    belongs to, never the *next* prompt's text. turn_trace owns the
+    anchor and keys it off each turn's `prompt_uuid`, so three prompts
+    A→B→C produce three anchors with A/B/C text respectively — and no
+    duplicate where two anchors share one text."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    ua, ub, uc = 'user-aaaa0000aaaa', 'user-bbbb1111bbbb', 'user-cccc2222cccc'
+    _write_transcript(transcript, [
+        _user(ua, 'first question'),
+        _assistant_with_usage(msg_id='m1', text='answer A',
+                              uuid='asst-a0000000000', parent_uuid=ua),
+        _user(ub, 'second question', parent='asst-a0000000000'),
+        _assistant_with_usage(msg_id='m2', text='answer B',
+                              uuid='asst-b1111111111', parent_uuid=ub),
+        _user(uc, 'third question', parent='asst-b1111111111'),
+        _assistant_with_usage(msg_id='m3', text='answer C',
+                              uuid='asst-c2222222222', parent_uuid=uc),
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    prompts = _prompt_spans_by_uuid(captured_spans)
+    assert prompts[f'prompt-{ua[:13]}']['attributes']['text'] == 'first question'
+    assert prompts[f'prompt-{ub[:13]}']['attributes']['text'] == 'second question'
+    assert prompts[f'prompt-{uc[:13]}']['attributes']['text'] == 'third question'
+    # No duplicate-text anchors (the "go ahead and build the 3 commits"
+    # symptom): three distinct anchors, three distinct texts.
+    texts = [s['attributes']['text'] for s in prompts.values()]
+    assert sorted(texts) == ['first question', 'second question', 'third question']
+
+
+def test_prompt_anchor_uses_prompt_entry_timestamp_not_now(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """The anchor's start_time must be the prompt entry's transcript
+    timestamp (so it sorts at submission time), not the re-emission
+    time — otherwise a later anchor mis-sorts ahead of an earlier one."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    ua = 'user-tttt0000tttt'
+    _write_transcript(transcript, [
+        _user(ua, 'do it', ts='2026-04-27T09:15:00Z'),
+        _assistant_with_usage(msg_id='m1', text='ok', uuid='asst-t0000000000',
+                              parent_uuid=ua, ts='2026-04-27T09:15:02Z'),
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    anchor = _prompt_spans_by_uuid(captured_spans)[f'prompt-{ua[:13]}']
+    # start_time must equal the prompt entry's transcript time (normalised
+    # to local-naive the same way the handler does), not a fresh now().
+    from hook_manager.handlers.turn_trace.timestamps import _normalise_attachment_ts
+    expected = _normalise_attachment_ts('2026-04-27T09:15:00Z')
+    assert anchor['start_time'] == expected
+    assert anchor['end_time'] == expected
+
+
+def test_prompt_anchor_detects_slash_command(captured_spans, tmp_path, monkeypatch):
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    ua = 'user-ssss0000ssss'
+    _write_transcript(transcript, [
+        _user(ua, [{'type': 'text', 'text': '/plan ship it'}]),
+        _assistant_with_usage(msg_id='m1', text='ok', uuid='asst-s0000000000',
+                              parent_uuid=ua),
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    anchor = _prompt_spans_by_uuid(captured_spans)[f'prompt-{ua[:13]}']
+    assert anchor['attributes']['slash_command'] == '/plan'
+
+
+def test_prompt_anchor_attaches_inline_images_to_correct_anchor(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """An image prompt's `prompt_images` must be keyed to that prompt's
+    own `prompt-<uuid>` anchor (resolved from the inline base64 fallback
+    when the cache is gone), not the previous prompt's."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    events: list = []
+    import lib.hook_plugin as hp
+    monkeypatch.setattr(hp, 'post_event', lambda name, data: events.append((name, data)))
+    transcript = tmp_path / 'session.jsonl'
+    ua = 'user-iiii0000iiii'
+    _write_transcript(transcript, [
+        _user(ua, [
+            {'type': 'text', 'text': 'look at [Image #1]'},
+            {'type': 'image',
+             'source': {'type': 'base64', 'media_type': 'image/png', 'data': 'QUJD'}},
+        ]),
+        _assistant_with_usage(msg_id='m1', text='nice', uuid='asst-i0000000000',
+                              parent_uuid=ua),
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    image_events = [d for name, d in events if name == 'prompt_images']
+    assert image_events, 'prompt_images event must fire for an image prompt'
+    rows = image_events[0]
+    assert all(r['prompt_span_id'] == f'prompt-{ua[:13]}' for r in rows)
+    assert rows[0]['idx'] == 1
+    assert rows[0]['media_type'] == 'image/png'
+    assert rows[0]['data_b64'] == 'QUJD'
+
+
+# ── Turn-initiating slash commands (e.g. /review) ─────────────────────────
+# A skill command that expands into a prompt must render as its OWN turn
+# anchor (`prompt-<uuid>`), never a `harness.local_command` card — and the
+# transition must survive the incremental live firings (the command echo is
+# suppressed from the very first firing, so its uuid is never marked seen as
+# a local command, so the later anchor isn't throttled away).
+
+def _ut_user(uuid, content, parent, meta=False):
+    e = {'type': 'user', 'uuid': uuid, 'parentUuid': parent,
+         'timestamp': '2026-06-01T10:00:00Z', 'message': {'content': content}}
+    if meta:
+        e['isMeta'] = True
+    return e
+
+
+def _ut_asst(uuid, parent, text='ok'):
+    return {'type': 'assistant', 'uuid': uuid, 'parentUuid': parent,
+            'timestamp': '2026-06-01T10:00:00Z',
+            'message': {'id': 'm-' + uuid, 'model': 'claude-opus-4-8',
+                        'content': [{'type': 'text', 'text': text}],
+                        'usage': {'input_tokens': 10, 'output_tokens': 5,
+                                  'cache_read_input_tokens': 0,
+                                  'cache_creation_input_tokens': 0}}}
+
+
+def _local_command_named(spans, name):
+    return any(s.get('name') == 'harness.local_command'
+               and (s.get('attributes') or {}).get('command_name') == name
+               for s in spans)
+
+
+def _prompt_anchor_with_text(spans, text):
+    return next((s for s in spans
+                 if s.get('name') == 'prompt'
+                 and (s.get('attributes') or {}).get('text') == text), None)
+
+
+def test_review_command_anchors_not_local_command_across_firings(
+        captured_spans, tmp_path, monkeypatch):
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / 'state'))
+    transcript = tmp_path / 'session.jsonl'
+    base = [
+        _ut_user('p0', 'first typed prompt', None),
+        _ut_asst('a0', 'p0', text='answering first'),
+        _ut_user('cmd', '<command-message>review</command-message> '
+                 '<command-name>/review</command-name>', 'a0'),
+        _ut_user('exp', 'You are an expert code reviewer...', 'cmd', meta=True),
+    ]
+    # Firing 1: /review submitted (echo + expansion present), no response yet.
+    _write_transcript(transcript, base)
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    # Must NOT have emitted a /review local-command card — otherwise its uuid
+    # gets marked seen and the anchor below would be throttled away.
+    assert not _local_command_named(captured_spans, '/review')
+
+    # Firing 2: the /review response lands.
+    _write_transcript(transcript, base + [_ut_asst('a1', 'exp',
+                                                   text='doing the review')])
+    turn_trace.handle(_p('Stop', session_id='s1',
+                         transcript_path=str(transcript)))
+    # The /review turn now anchors on a prompt span with a friendly label,
+    # and there is still no duplicate local-command card.
+    anchor = _prompt_anchor_with_text(captured_spans, '/review')
+    assert anchor is not None
+    assert anchor['span_id'].startswith('prompt-')
+    assert not _local_command_named(captured_spans, '/review')
+
+
+def test_display_command_stays_local_command(captured_spans, tmp_path,
+                                             monkeypatch):
+    # /clear has no isMeta expansion — it must still emit as a local command.
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / 'state'))
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        _ut_user('p0', 'first typed prompt', None),
+        _ut_asst('a0', 'p0'),
+        _ut_user('clr', '<command-name>/clear</command-name>', 'a0'),
+    ])
+    turn_trace.handle(_p('Stop', session_id='s1',
+                         transcript_path=str(transcript)))
+    assert _local_command_named(captured_spans, '/clear')
+    assert _prompt_anchor_with_text(captured_spans, '/clear') is None

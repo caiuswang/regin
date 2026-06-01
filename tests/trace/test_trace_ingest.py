@@ -182,7 +182,7 @@ class _FlakyConn:
         self._insert_count = 0
 
     def execute(self, sql, *a, **kw):
-        if sql.lstrip().upper().startswith('INSERT OR REPLACE INTO SESSION_SPANS'):
+        if sql.lstrip().upper().startswith('INSERT INTO SESSION_SPANS'):
             self._insert_count += 1
             if self._insert_count == self._fail_on:
                 raise sqlite3.OperationalError('simulated DB failure')

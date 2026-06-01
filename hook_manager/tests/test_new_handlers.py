@@ -425,3 +425,37 @@ def test_task_short_subject_is_not_truncated(captured_spans):
     assert '…' not in attrs['subject']
 
 
+
+
+def test_emit_subagent_responses_seen_gating(captured_spans, tmp_path):
+    """The live rescan calls emit_subagent_responses with a seen-uuid set so a
+    running subagent's turns post once, not on every poll. A seen uuid is
+    skipped; a fresh one posts."""
+    from hook_manager.handlers.subagent_lifecycle import emit_subagent_responses
+    transcript = tmp_path / 'agent.jsonl'
+    _write_jsonl(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        _subagent_assistant(text='one', uuid='sa-uuid-aaaaaaaa', msg_id='m1'),
+        _subagent_assistant(text='two', uuid='sa-uuid-bbbbbbbb', msg_id='m2',
+                            ts='2026-04-27T12:00:01Z'),
+    ])
+    emit_subagent_responses('sid', str(transcript), 'agent-x',
+                            seen={'sa-uuid-aaaaaaaa'})
+    posted = {s['attributes']['turn_uuid'] for s in captured_spans
+              if s.get('name') == 'assistant_response'}
+    assert posted == {'sa-uuid-bbbbbbbb'}  # the seen turn was skipped
+
+
+def test_emit_subagent_responses_no_seen_posts_all(captured_spans, tmp_path):
+    from hook_manager.handlers.subagent_lifecycle import emit_subagent_responses
+    transcript = tmp_path / 'agent.jsonl'
+    _write_jsonl(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        _subagent_assistant(text='one', uuid='sa-uuid-cccccccc', msg_id='m1'),
+        _subagent_assistant(text='two', uuid='sa-uuid-dddddddd', msg_id='m2',
+                            ts='2026-04-27T12:00:01Z'),
+    ])
+    emit_subagent_responses('sid', str(transcript), 'agent-y')  # seen=None
+    posted = {s['attributes']['turn_uuid'] for s in captured_spans
+              if s.get('name') == 'assistant_response'}
+    assert posted == {'sa-uuid-cccccccc', 'sa-uuid-dddddddd'}

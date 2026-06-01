@@ -255,6 +255,129 @@ def cmd_schema_diff(
         print("  (no drift)")
 
 
+# Envelope keys that wrap every hook payload; excluded from inferred
+# schemas (they belong to the hook envelope, not the event body).
+_HOOK_COMMON_KEYS = frozenset(
+    {"session_id", "transcript_path", "cwd", "hook_event_name"}
+)
+
+
+def _hook_payload_log_entries() -> list[dict]:
+    """Stream-read the active provider's hook-payload JSONL log."""
+    from lib.providers import get_active_provider
+    path = Path(str(get_active_provider().hook_payload_log_path()))
+    rows: list[dict] = []
+    if not path.is_file():
+        return rows
+    with path.open() as f:
+        for line in f:
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                continue
+    return rows
+
+
+def _group_by_event(entries: list[dict]) -> dict[str, list[dict]]:
+    """Group payload dicts by their entry['hook_event']."""
+    groups: dict[str, list[dict]] = {}
+    for entry in entries:
+        event = entry.get("hook_event")
+        payload = entry.get("payload")
+        if not event or not isinstance(payload, dict):
+            continue
+        groups.setdefault(event, []).append(payload)
+    return groups
+
+
+def _json_type(value) -> str:
+    """Map a sample value to its JSON Schema type name."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, str):
+        return "string"
+    return "null"
+
+
+def _infer_event_schema(event: str, payloads: list[dict]) -> dict:
+    """Build a JSON Schema for one hook event from its payloads.
+
+    `required` is intentionally left empty: presence in a finite sample is
+    not evidence a field is mandatory (e.g. `agent_id` appears on every
+    main-agent payload but is absent on subagent ones). Marking such fields
+    required produces false `missing_required` drift that the user can only
+    ignore — it isn't ratifiable. New fields are still caught as
+    `unknown_field`, which IS ratifiable. Tighten `required` by hand if a
+    field is genuinely guaranteed.
+    """
+    from lib.trace.claude_version import current_claude_version
+    properties: dict[str, dict] = {}
+    for payload in payloads:
+        for key in payload:
+            if key not in _HOOK_COMMON_KEYS and key not in properties:
+                properties[key] = {"type": _json_type(payload[key])}
+    version = current_claude_version()
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": f"{event} hook payload",
+        "type": "object",
+        "additionalProperties": True,
+        "x-claude-versions": [version] if version else [],
+        "properties": properties,
+        "required": [],
+    }
+
+
+# PostToolUse is validated on the TOOL axis (per-tool schemas), not as a
+# hook event — the handler routes it to validate(), never validate_event().
+# Generating a hook baseline for it would surface an inert "PostToolUse ·
+# clean" row on the Hooks tab that nothing validates against, misleading the
+# reader (real PostToolUse drift lives on the Tools tab). Skip it.
+_HOOK_BOOTSTRAP_SKIP: frozenset[str] = frozenset({"PostToolUse"})
+
+
+def _bootstrap_hook_schemas(agent: str, force: bool) -> tuple[int, int]:
+    """Write inferred hook-event schemas; return (written, skipped)."""
+    out_dir = _agent_dir(agent) / "_hooks"
+    groups = _group_by_event(_hook_payload_log_entries())
+    written = skipped = 0
+    for event in sorted(groups):
+        if event in _HOOK_BOOTSTRAP_SKIP:
+            continue
+        out_path = out_dir / f"{event}.schema.json"
+        if out_path.exists() and not force:
+            print(f"skip {event}: already exists (use --force to overwrite)")
+            skipped += 1
+            continue
+        schema = _infer_event_schema(event, groups[event])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(schema, indent=2) + "\n")
+        print(f"wrote {event}.schema.json from {len(groups[event])} payload(s)")
+        written += 1
+    return written, skipped
+
+
+def cmd_bootstrap_hook_schemas(
+    force: bool = typer.Option(False, "--force", help="Overwrite existing schemas"),
+    agent: str = typer.Option(_DEFAULT_AGENT, "--agent", help="Agent provider id"),
+) -> None:
+    """Infer hook-event JSON Schemas from the hook-payload JSONL log."""
+    written, skipped = _bootstrap_hook_schemas(agent, force)
+    print(f"\nhook schemas: {written} written, {skipped} skipped")
+
+
 def register(app: typer.Typer) -> None:
     """Register the `schema` group on the root CLI app."""
     app.add_typer(schema_app)
+    app.command(
+        "bootstrap-hook-schemas",
+        help="Infer hook-event JSON Schemas from the hook-payload JSONL log",
+    )(cmd_bootstrap_hook_schemas)

@@ -110,6 +110,20 @@ def _add_local_command_expected(out: dict[str, set[str]], local_commands) -> Non
             out[lc.caveat_uuid] = expected
 
 
+def _add_turn_expected(out: dict[str, set[str]], usage, capture_text: bool) -> None:
+    """Record each turn's expected spans, keyed by the assistant uuid, plus
+    its turn-anchor `prompt-<prompt_uuid>` keyed by the triggering user
+    entry so a cached-but-missing anchor gets unlocked for re-emission."""
+    for turn in usage.turns:
+        if not turn.uuid:
+            continue
+        out[turn.uuid] = _turn_expected_span_ids(turn, capture_text)
+        if turn.prompt_uuid and turn.prompt_uuid in usage.prompt_texts:
+            out.setdefault(turn.prompt_uuid, set()).add(
+                f'prompt-{turn.prompt_uuid[:13]}'
+            )
+
+
 def _expected_span_ids_by_uuid(trace_id: str, transcript_path: str) -> dict[str, set[str]]:
     """Return the span_ids turn_trace would emit for each cached uuid.
 
@@ -136,10 +150,7 @@ def _expected_span_ids_by_uuid(trace_id: str, transcript_path: str) -> dict[str,
 
     out: dict[str, set[str]] = {}
 
-    for turn in usage.turns:
-        if not turn.uuid:
-            continue
-        out[turn.uuid] = _turn_expected_span_ids(turn, capture_text)
+    _add_turn_expected(out, usage, capture_text)
 
     for att in usage.attachments:
         out[att.uuid] = _attachment_expected_span_ids(trace_id, att)
@@ -224,6 +235,27 @@ def _save_cache(path: Path, uuids: Iterable[str]) -> None:
     os.replace(tmp, path)
 
 
+def _should_reemit(uuid: str, expected: set[str] | None, existing: set[str]) -> bool:
+    """Whether a cached uuid must be unlocked so the live emit pass
+    re-posts its spans.
+
+    Prompt-anchor uuids are **always** re-emitted: an older live
+    UserPromptSubmit hook clobbered the previous prompt's `prompt-<uuid>`
+    anchor with the next prompt's text + a now() timestamp (off-by-one).
+    The anchor row is therefore *present but wrong*, so the normal
+    "expected ⊆ existing → keep" rule would never re-post it. Re-emitting
+    from the transcript overwrites it with the correct id+text+time.
+
+    Everything else is re-emitted only when its expected spans are missing
+    (the historical seen-cache lockout this module was built to recover).
+    """
+    if expected is None:
+        return False
+    if f'prompt-{uuid[:13]}' in expected:
+        return True
+    return not expected.issubset(existing)
+
+
 def repair_session_spans(trace_id: str) -> dict:
     """Heal a session whose seen-uuid cache locked out its
     assistant_response / assistant.thinking / harness.* spans.
@@ -259,10 +291,10 @@ def repair_session_spans(trace_id: str) -> dict:
     dropped: list[str] = []
     for u in cached_unique:
         expected = expected_by_uuid.get(u)
-        if expected is None or expected.issubset(existing):
-            kept.append(u)
-        else:
+        if _should_reemit(u, expected, existing):
             dropped.append(u)
+        else:
+            kept.append(u)
 
     # Rewrite the cache so the live handler stops blocking these uuids,
     # *before* we re-run the emit — if the rewrite fails we'd rather
@@ -283,6 +315,18 @@ def repair_session_spans(trace_id: str) -> dict:
         tool_name=None,
     )
     _tt.handle(payload)
+
+    # Persist the healed projection: the re-emit re-wrote the prompt
+    # anchors and assistant_response/thinking spans with their correct
+    # parentUuid-derived parents, so a materialize now durably records the
+    # deterministic tree (parents + envelopes) instead of leaving it to
+    # be recomputed on every read. Best-effort — a materialize failure
+    # must not fail the repair, since the read path re-projects anyway.
+    try:
+        from lib.trace.trace_service import materialize_session
+        materialize_session(trace_id)
+    except Exception:
+        _trace_log().error("span_repair_materialize_failed", exc_info=True)
 
     after = _existing_span_ids(trace_id)
     recovered = len(after - existing)

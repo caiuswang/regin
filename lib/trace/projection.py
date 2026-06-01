@@ -69,50 +69,83 @@ _COMPACT_BOUNDARY_NAMES = frozenset({'compact.pre', 'compact.post'})
 _FIRST_CLASS_BOUNDARY_NAMES = _SESSION_LIFECYCLE_NAMES | _COMPACT_BOUNDARY_NAMES
 
 
-def _graft_orphans(spans: list[dict]) -> list[dict]:
-    """Return a copy of `spans` with orphan prompts grafted under the
-    conversation span, and other orphan spans grafted under the current
-    prompt. Does not mutate inputs or any DB row.
+def _is_pending(span: dict) -> bool:
+    """A live placeholder span awaiting its resolved counterpart."""
+    return span.get('status_code') == 'PENDING'
 
-    First-class boundary spans (`session.start`, `session.end`,
-    `compact.pre`, `compact.post`) are grafted under the conversation
-    span if one exists, but never under a prompt — a `session.end`
-    firing after the last prompt, or a `/compact` invocation between
-    turns, must not appear nested inside an unrelated prompt.
-    """
-    if not spans:
-        return spans
-    out = [dict(s) for s in spans]
-    sorted_spans = sorted(out, key=lambda s: s['start_time'])
 
-    conversations = [s for s in out if s['name'] == 'conversation']
-    current_conversation = conversations[0] if conversations else None
+# Spans the deterministic ladder never re-parents: prompts/conversation
+# are roots or anchors, boundaries delimit conversation-level events, and
+# subagent markers are re-parented by agent_id in a dedicated pass.
+_LADDER_SKIP_NAMES = (
+    frozenset({'prompt', 'conversation', 'subagent.start', 'subagent.stop'})
+    | _FIRST_CLASS_BOUNDARY_NAMES
+)
 
-    if current_conversation:
-        grafted_names = {'prompt', *_FIRST_CLASS_BOUNDARY_NAMES}
-        for s in out:
-            if s['name'] in grafted_names and not s.get('parent_id'):
-                s['parent_id'] = current_conversation['span_id']
 
-    by_id = {s['span_id']: s for s in out}
+def _turn_uuid_of(span: dict) -> str | None:
+    """Turn uuid from the column, falling back to the attribute the live
+    hook stamped (`attributes.turn_uuid`)."""
+    return span.get('turn_uuid') or (span.get('attributes') or {}).get('turn_uuid')
 
-    # Self-healing: clear parent_ids that point to non-existent parents.
-    # This happens when turn_trace.py wrote a parent_id based on a
-    # prompt uuid that prompt_trace.py never emitted (e.g. because the
-    # transcript tail was unreadable and it fell back to a random uuid).
-    # After clearing the dangling parent_id, the span gets grafted under
-    # the current prompt in the next pass, just like tool spans.
-    valid_ids = set(by_id)
+
+def _build_prompt_by_turn(out: list[dict]) -> dict[str, str]:
+    """turn_uuid → prompt anchor span_id, learned from the
+    assistant_response / assistant.thinking spans that already carry a
+    `prompt-*` parent (set at write time by the turn_trace poster). Lets a
+    turn's tools fall to the prompt rung even when the turn emitted no
+    `resp-`/`think-` span (a silent tool-only turn)."""
+    by_turn: dict[str, str] = {}
     for s in out:
-        pid = s.get('parent_id')
-        if pid and pid not in valid_ids:
-            s['parent_id'] = None
+        if s['name'] not in ('assistant_response', 'assistant.thinking'):
+            continue
+        t = _turn_uuid_of(s)
+        p = s.get('parent_id')
+        if t and isinstance(p, str) and p.startswith('prompt-'):
+            by_turn[t] = p
+    return by_turn
 
-    # `task.notification` spans are background-task completions. Although
-    # Claude Code injects them as synthetic user prompts (and the assistant
-    # does take another turn in response), they are NOT a turn boundary in
-    # the session view — they nest under the previous real `prompt` along
-    # with the assistant_response/tool spans they trigger.
+
+def _ladder_orphans_by_turn(out: list[dict], by_id: dict) -> None:
+    """Deterministic parent ladder for NULL-parent, non-boundary spans
+    that carry a `turn_uuid`: `resp-<turn>` → `think-<turn>` → the turn's
+    prompt anchor, chosen purely by deterministic id existence (no
+    timestamps). This is the preference pass; spans it can't place (no
+    turn_uuid, or none of the rungs exist) are left NULL for the
+    chronological `_graft_orphans_under_prompt` fallback. Mutates in place.
+
+    Load-bearing for migration: an old session (parent_id NULL but
+    turn_uuid populated, once repaired so the resp/think anchors carry
+    prompt parents) heals here at read time with zero re-emission."""
+    prompt_by_turn = _build_prompt_by_turn(out)
+    for s in out:
+        if s.get('parent_id') is not None:
+            continue
+        if s['name'] in _LADDER_SKIP_NAMES:
+            continue
+        t = _turn_uuid_of(s)
+        if not t:
+            continue
+        for cand in (f'resp-{t[:13]}', f'think-{t[:13]}', prompt_by_turn.get(t)):
+            if cand and cand in by_id and cand != s['span_id']:
+                s['parent_id'] = cand
+                break
+
+
+def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict) -> None:
+    """Graft each orphan span under the most recent `prompt`. Mutates the
+    dicts in `by_id` in place.
+
+    A live PENDING placeholder (promptlive-…) acts as a real prompt here: it
+    starts at submit time, so it only becomes `current_prompt` for spans that
+    come AFTER it — its own turn's in-flight tools/response, which haven't yet
+    been parented (their `resp-`/`prompt-` anchors land on Stop). Without this
+    the in-flight tools would orphan to the PREVIOUS prompt (or to root) and the
+    placeholder itself would nest under the previous prompt instead of opening a
+    new turn. The pre-P2b steal concern (grabbing a prior turn's work) no longer
+    applies: assistant/tool spans now carry deterministic write-time parents, so
+    a completed turn's spans are never orphans the placeholder could capture.
+    First-class boundary spans never anchor orphans."""
     current_prompt = None
     for span in sorted_spans:
         resolved = by_id[span['span_id']]
@@ -123,10 +156,50 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
         elif current_prompt is not None and not resolved.get('parent_id'):
             resolved['parent_id'] = current_prompt['span_id']
 
-    # Second pass: re-attribute `turn` spans that landed immediately
-    # before a LATER prompt. See _TURN_LOOKAHEAD_SECONDS for the why.
+
+def _graft_conversation_roots(out: list[dict], conv_span_id: str) -> None:
+    """Graft orphan prompts + first-class boundary spans under the
+    conversation span (when one exists). Never nests them under a
+    prompt — a boundary must stay a top-level divider."""
+    grafted_names = {'prompt', *_FIRST_CLASS_BOUNDARY_NAMES}
+    for s in out:
+        if s['name'] in grafted_names and not s.get('parent_id'):
+            s['parent_id'] = conv_span_id
+
+
+def _heal_dangling_parents(out: list[dict], by_id: dict) -> None:
+    """Clear parent_ids pointing to a non-existent span. Happens when a
+    write-time parent referenced an anchor that was never emitted (e.g.
+    an unreadable transcript tail). The cleared span then falls to the
+    ladder / chronological fallback like any other orphan."""
+    valid_ids = set(by_id)
+    for s in out:
+        pid = s.get('parent_id')
+        if pid and pid not in valid_ids:
+            s['parent_id'] = None
+
+
+def _attach_turn_to_following_prompt(
+    turn_span: dict, s_start_dt: datetime, prompts_by_start: list[dict],
+) -> None:
+    for p in prompts_by_start:
+        try:
+            p_start_dt = datetime.fromisoformat(p['start_time'])
+        except (TypeError, ValueError):
+            continue
+        delta = (p_start_dt - s_start_dt).total_seconds()
+        if 0 <= delta < _TURN_LOOKAHEAD_SECONDS:
+            turn_span['parent_id'] = p['span_id']
+            return
+
+
+def _relabel_turns_by_lookahead(out: list[dict]) -> None:
+    """Re-attribute `turn` spans that landed a few ms before a LATER
+    prompt back onto that prompt. See `_TURN_LOOKAHEAD_SECONDS`. `turn`
+    spans carry no deterministic parent, so this chronological nudge
+    stays."""
     prompts_by_start = sorted(
-        (s for s in out if s['name'] == 'prompt'),
+        (s for s in out if s['name'] == 'prompt' and not _is_pending(s)),
         key=lambda s: s['start_time'],
     )
     for s in out:
@@ -136,40 +209,75 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
             s_start_dt = datetime.fromisoformat(s['start_time'])
         except (TypeError, ValueError):
             continue
-        for p in prompts_by_start:
-            try:
-                p_start_dt = datetime.fromisoformat(p['start_time'])
-            except (TypeError, ValueError):
-                continue
-            delta = (p_start_dt - s_start_dt).total_seconds()
-            if 0 <= delta < _TURN_LOOKAHEAD_SECONDS:
-                s['parent_id'] = p['span_id']
-                break
+        _attach_turn_to_following_prompt(s, s_start_dt, prompts_by_start)
 
-    # Third pass: nest subagent-owned spans under the matching
-    # `subagent.start`. Claude Code tags every hook payload fired inside
-    # a subagent with `agent_id`; the `post_tool_trace` handler persists
-    # that onto the resulting `tool.*` span, and `subagent_lifecycle`
-    # does the same for the stop marker. Here we redirect any such span
-    # away from the prompt it was grafted under and onto its subagent,
-    # so the tree becomes prompt → subagent → subagent's tool calls.
-    subagent_starts_by_agent: dict[str, str] = {}
+
+def _subagent_starts_by_agent(out: list[dict]) -> dict[str, str]:
+    """agent_id → its `subagent.start` span_id."""
+    starts: dict[str, str] = {}
     for s in out:
         if s['name'] != 'subagent.start':
             continue
         aid = (s.get('attributes') or {}).get('agent_id')
         if aid:
-            subagent_starts_by_agent[aid] = s['span_id']
-    if subagent_starts_by_agent:
-        for s in out:
-            if s['name'] == 'subagent.start':
-                continue
-            aid = (s.get('attributes') or {}).get('agent_id')
-            if not aid:
-                continue
-            target = subagent_starts_by_agent.get(aid)
-            if target and target != s['span_id']:
-                s['parent_id'] = target
+            starts[aid] = s['span_id']
+    return starts
+
+
+def _reparent_subagents(out: list[dict]) -> None:
+    """Nest subagent-owned spans under their `subagent.start`. Claude Code
+    tags every hook payload fired inside a subagent with `agent_id`,
+    persisted onto the resulting span; here we redirect any such span onto
+    its subagent so the tree becomes prompt → subagent → its tool calls.
+    Structural (keyed on agent_id), not chronological."""
+    starts_by_agent = _subagent_starts_by_agent(out)
+    if not starts_by_agent:
+        return
+    for s in out:
+        if s['name'] == 'subagent.start':
+            continue
+        aid = (s.get('attributes') or {}).get('agent_id')
+        target = starts_by_agent.get(aid) if aid else None
+        if target and target != s['span_id']:
+            s['parent_id'] = target
+
+
+def _graft_orphans(spans: list[dict]) -> list[dict]:
+    """Return a copy of `spans` with parentage filled in. Does not mutate
+    inputs or any DB row.
+
+    Parentage is resolved deterministically wherever possible, with a
+    chronological fallback only for spans that have no turn linkage:
+      1. orphan prompts + boundaries → the conversation span (if any)
+      2. dangling-parent self-heal
+      3. `_ladder_orphans_by_turn` — the PREFERENCE pass: NULL-parent
+         spans with a turn_uuid nest under `resp-`/`think-`/prompt anchor
+         by deterministic id existence (the write-time parents from
+         turn_trace usually mean there's nothing left to do here).
+      4. `_graft_orphans_under_prompt` — chronological FALLBACK for the
+         spans the ladder couldn't place (attachments, rule.check,
+         permission.request, local commands, …): nest under the current
+         real prompt. Harmless to the bug-prone spans because step 3 and
+         the write-time posters already parented them — this only touches
+         genuinely turn-less session events.
+      5. `turn`-span lookahead re-attribution
+      6. subagent re-parent by agent_id
+    """
+    if not spans:
+        return spans
+    out = [dict(s) for s in spans]
+    sorted_spans = sorted(out, key=lambda s: s['start_time'])
+
+    conversations = [s for s in out if s['name'] == 'conversation']
+    if conversations:
+        _graft_conversation_roots(out, conversations[0]['span_id'])
+
+    by_id = {s['span_id']: s for s in out}
+    _heal_dangling_parents(out, by_id)
+    _ladder_orphans_by_turn(out, by_id)
+    _graft_orphans_under_prompt(sorted_spans, by_id)
+    _relabel_turns_by_lookahead(out)
+    _reparent_subagents(out)
     return out
 
 

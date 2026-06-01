@@ -82,6 +82,7 @@ permission_events   = _safe_import('permission_events')
 plan_trace          = _safe_import('plan_trace')
 post_tool_failure   = _safe_import('post_tool_failure')
 post_tool_trace     = _safe_import('post_tool_trace')
+pre_tool_trace      = _safe_import('pre_tool_trace')
 prompt_trace        = _safe_import('prompt_trace')
 session_lifecycle   = _safe_import('session_lifecycle')
 skill_invoke        = _safe_import('skill_invoke')
@@ -104,6 +105,16 @@ REGISTRY: list[Handler] = [
         kind='gate',
         priority=20,
         fn=permission_events.handle_pre_tool_request,
+    ),
+    Handler(
+        name='pre_tool_trace',
+        label='Pre-Tool Pending Trace',
+        summary='Emits a live PENDING span so in-flight tools (blocking + long-running like Bash/MCP) show while they run.',
+        match_hint='PreToolUse for blocking + long-running tools (AskUserQuestion, ExitPlanMode, Bash, WebFetch, mcp__*)',
+        events=['PreToolUse'],
+        kind='trace',
+        priority=100,
+        fn=pre_tool_trace.handle,
     ),
     # ── Enrichers (add context / traces) ───────────────────────────────
     Handler(

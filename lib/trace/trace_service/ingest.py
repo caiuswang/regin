@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 from lib.activity_log import get_activity_logger as _get_activity_logger
+from lib.trace.pending_spans import is_pending_span_id
 
 
 def _trace_log():
@@ -280,6 +281,76 @@ def _turn_context_tokens(conn, trace_id: str, turn_uuid: str | None) -> int | No
     return int(row[0]) if row and row[0] is not None else None
 
 
+def _as_int_or_none(v: object) -> int | None:
+    return int(v) if isinstance(v, (int, float)) else None
+
+
+def _attribute_one_call(
+    conn,
+    tc: object,
+    *,
+    model: str | None,
+    turn_ctx: int | None,
+    turn_uuid: str | None,
+    parent_span_id: str | None,
+    trace_id: str,
+) -> bool:
+    """UPDATE the session_spans row(s) matching one tool_call's
+    `tool_use_id` with its token estimates, cost, and (for `tool.*` rows
+    only) the backfilled parent_id. Returns True iff a row was updated.
+
+    The `parent_id` CASE is name-scoped so a `permission.request` /
+    `task.notification` row sharing the same tool_use_id keeps its own
+    parentage — only the live `tool.<name>` span (posted parent-less at
+    PostToolUse time) gets the issuing turn's `resp-`/`think-` parent.
+    COALESCE means an already-parented tool span (server/deny synth) is
+    left untouched."""
+    from lib.tokens.pricing import TokenBreakdown, cost
+    if not isinstance(tc, dict):
+        return False
+    tu_id = tc.get('tool_use_id')
+    if not isinstance(tu_id, str) or not tu_id:
+        return False
+    out_tok = _as_int_or_none(tc.get('output_tokens'))
+    in_tok = _as_int_or_none(tc.get('input_tokens'))
+    img_tok = _as_int_or_none(tc.get('image_tokens'))
+    # Cost bundles output (this turn's API output bill) + input (the
+    # tool_result feeding the next turn's input bill) into one USD.
+    usd = cost(model, TokenBreakdown(
+        input_tokens=in_tok or 0,
+        output_tokens=out_tok or 0,
+    ), context_tokens=turn_ctx) if model else None
+    # Prefer the authoritative image-token count when the PostToolUse
+    # span stamped one from Claude Code's reported display dimensions
+    # (`attributes.image_tokens_exact`); fall back to the base64-header
+    # estimate otherwise. The Read span is created before this UPDATE
+    # (post_tool_trace priority 110 < turn_trace 150), so the attribute
+    # is present whenever it applies.
+    cur = conn.execute(
+        """
+        UPDATE session_spans
+           SET output_tokens = ?,
+               input_tokens  = ?,
+               image_tokens  = COALESCE(
+                   CAST(json_extract(attributes, '$.image_tokens_exact')
+                        AS INTEGER),
+                   ?),
+               cost_usd      = ?,
+               tool_use_id   = COALESCE(tool_use_id, ?),
+               turn_uuid     = COALESCE(turn_uuid, ?),
+               parent_id     = CASE WHEN name LIKE 'tool.%'
+                                    THEN COALESCE(parent_id, ?)
+                                    ELSE parent_id END
+         WHERE trace_id = ?
+           AND (tool_use_id = ?
+                OR json_extract(attributes, '$.tool_use_id') = ?)
+        """,
+        (out_tok, in_tok, img_tok, usd, tu_id, turn_uuid, parent_span_id,
+         trace_id, tu_id, tu_id),
+    )
+    return cur.rowcount > 0
+
+
 def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     """Attach per-tool token estimates to existing `tool.*` spans.
 
@@ -292,19 +363,26 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     for older spans), set the new token columns, and compute
     `cost_usd` from the session's recorded model rate.
 
-    Body: `{trace_id, turn_uuid, tool_calls: [{tool_use_id, name?,
-            output_tokens, input_tokens, image_tokens?}]}`.
+    Body: `{trace_id, turn_uuid, parent_span_id?, tool_calls: [{tool_use_id,
+            name?, output_tokens, input_tokens, image_tokens?}]}`.
 
     Returns (updated_count, skipped_count).
     """
     from lib.orm.engine import get_connection
-    from lib.tokens.pricing import TokenBreakdown, cost
 
     if not isinstance(payload, dict):
         return 0, 1
     trace_id = payload.get('trace_id')
     turn_uuid = payload.get('turn_uuid')
     tool_calls = payload.get('tool_calls')
+    # Issuing turn's resp-/think- span (or None). Backfills the live
+    # tool.* span's parent_id, which is posted parent-less at PostToolUse
+    # time. Name-scoped in SQL so it never disturbs the parentage of a
+    # permission.request / task.notification row that happens to share a
+    # tool_use_id.
+    parent_span_id = payload.get('parent_span_id')
+    if not isinstance(parent_span_id, str) or not parent_span_id:
+        parent_span_id = None
     if not isinstance(trace_id, str) or not trace_id:
         return 0, 1
     if not isinstance(tool_calls, list):
@@ -323,57 +401,10 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
         updated = 0
         skipped = 0
         for tc in tool_calls:
-            if not isinstance(tc, dict):
-                skipped += 1
-                continue
-            tu_id = tc.get('tool_use_id')
-            if not isinstance(tu_id, str) or not tu_id:
-                skipped += 1
-                continue
-
-            out_tok = tc.get('output_tokens')
-            in_tok = tc.get('input_tokens')
-            img_tok = tc.get('image_tokens')
-            out_tok = int(out_tok) if isinstance(out_tok, (int, float)) else None
-            in_tok = int(in_tok) if isinstance(in_tok, (int, float)) else None
-            img_tok = int(img_tok) if isinstance(img_tok, (int, float)) else None
-
-            # Cost is on the *input side* of one tool — output_tokens
-            # contributed to that turn's API output bill, input_tokens
-            # (the tool_result) contributed to the next turn's API
-            # input bill. Bundle both for a single attributable USD.
-            usd = cost(model, TokenBreakdown(
-                input_tokens=in_tok or 0,
-                output_tokens=out_tok or 0,
-            ), context_tokens=turn_ctx) if model else None
-
-            # Prefer the authoritative image-token count when the
-            # PostToolUse span stamped one from Claude Code's reported
-            # display dimensions (`attributes.image_tokens_exact`); fall
-            # back to the base64-header estimate otherwise. The Read
-            # span is created before this UPDATE runs (post_tool_trace
-            # priority 110 < turn_trace 150), so the attribute is present
-            # whenever it applies.
-            cur = conn.execute(
-                """
-                UPDATE session_spans
-                   SET output_tokens = ?,
-                       input_tokens  = ?,
-                       image_tokens  = COALESCE(
-                           CAST(json_extract(attributes, '$.image_tokens_exact')
-                                AS INTEGER),
-                           ?),
-                       cost_usd      = ?,
-                       tool_use_id   = COALESCE(tool_use_id, ?),
-                       turn_uuid     = COALESCE(turn_uuid, ?)
-                 WHERE trace_id = ?
-                   AND (tool_use_id = ?
-                        OR json_extract(attributes, '$.tool_use_id') = ?)
-                """,
-                (out_tok, in_tok, img_tok, usd, tu_id, turn_uuid,
-                 trace_id, tu_id, tu_id),
-            )
-            if cur.rowcount > 0:
+            if _attribute_one_call(
+                conn, tc, model=model, turn_ctx=turn_ctx, turn_uuid=turn_uuid,
+                parent_span_id=parent_span_id, trace_id=trace_id,
+            ):
                 updated += 1
             else:
                 skipped += 1
@@ -889,6 +920,93 @@ def _resolve_session_repos(conn, normalised, duplicates) -> None:
         conn.execute(_SESSION_REPOS_UPSERT_SQL, (tid, repo_id, is_primary))
 
 
+def _counter_buckets_excl_pending(normalised, existing_set) -> dict:
+    """`_span_counter_buckets` over only the non-pending spans, so transient
+    placeholders never advance the session aggregates."""
+    counted = [sa for sa in normalised
+               if not is_pending_span_id(sa[0].get('span_id'))]
+    return _span_counter_buckets(counted, existing_set)
+
+
+_TRANSCRIPT_ID_PREFIXES = ('prompt-', 'resp-', 'think-', 'cmd-')
+
+
+def _infer_source(span_id) -> str:
+    """Best-effort capture-source tag for the append-only row: transcript-scan
+    spans carry deterministic id prefixes, everything else is a live hook
+    event. Audit/debug metadata only — the serve-time merge (lib/trace/merge.py)
+    keys on span_id/name, never on this."""
+    sid = span_id or ''
+    return 'transcript' if sid.startswith(_TRANSCRIPT_ID_PREFIXES) else 'hook'
+
+
+def _insert_span_row(conn, span, attrs) -> None:
+    """Append one normalised span into both span tables, keyed by
+    (trace_id, span_id). The store is APPEND-ONLY: a placeholder and its real
+    anchor coexist as distinct rows and the serve-time merge selects the
+    winner — no in-place promotion, no deletion. Idempotent: a re-ingest
+    UPDATEs the structural fields in place, preserving the DB row id and any
+    token-attribution columns (input/image/cost) that ingest_tool_attribution
+    backfilled later."""
+    # Promote attributes.output_tokens to its own column on assistant_response
+    # / assistant.thinking spans so fetch_tool_token_rollup can aggregate them
+    # alongside tool.* spans (tool spans get this filled by the attribution
+    # UPDATE; assistant.* carry it inline because there's no separate post).
+    out_tok = None
+    if span.get('name') in ('assistant_response', 'assistant.thinking'):
+        raw = attrs.get('output_tokens')
+        if isinstance(raw, (int, float)):
+            out_tok = int(raw)
+    conn.execute(
+        """INSERT INTO session_spans
+           (trace_id, span_id, parent_id, name, kind, start_time,
+            end_time, duration_ms, attributes, status_code, status_message,
+            output_tokens, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(trace_id, span_id) DO UPDATE SET
+             parent_id = excluded.parent_id,
+             name = excluded.name,
+             kind = excluded.kind,
+             start_time = excluded.start_time,
+             end_time = excluded.end_time,
+             duration_ms = excluded.duration_ms,
+             attributes = excluded.attributes,
+             status_code = excluded.status_code,
+             status_message = excluded.status_message,
+             output_tokens = COALESCE(excluded.output_tokens, session_spans.output_tokens),
+             source = excluded.source""",
+        (span.get('trace_id'), span.get('span_id'),
+         span.get('parent_id'), span.get('name'),
+         span.get('kind', 'internal'), span.get('start_time'),
+         span.get('end_time'), span.get('duration_ms'),
+         json.dumps(attrs),
+         span.get('status_code', 'UNSET'), span.get('status_message'),
+         out_tok, _infer_source(span.get('span_id'))),
+    )
+    # Dual-write structural data to session_trace_map so the frontend can load
+    # the full session shape without the potentially-large attributes blobs.
+    conn.execute(
+        """INSERT INTO session_trace_map
+           (trace_id, span_id, parent_id, name, kind, start_time,
+            end_time, duration_ms, status_code, status_message)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(trace_id, span_id) DO UPDATE SET
+             parent_id = excluded.parent_id,
+             name = excluded.name,
+             kind = excluded.kind,
+             start_time = excluded.start_time,
+             end_time = excluded.end_time,
+             duration_ms = excluded.duration_ms,
+             status_code = excluded.status_code,
+             status_message = excluded.status_message""",
+        (span.get('trace_id'), span.get('span_id'),
+         span.get('parent_id'), span.get('name'),
+         span.get('kind', 'internal'), span.get('start_time'),
+         span.get('end_time'), span.get('duration_ms'),
+         span.get('status_code', 'UNSET'), span.get('status_message')),
+    )
+
+
 def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
     """Persist a batch of normalised spans in one transaction.
 
@@ -925,57 +1043,15 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
 
         conn.execute('BEGIN IMMEDIATE')
         for span, attrs in normalised:
-            # Promote attributes.output_tokens to its own column on
-            # assistant_response and assistant.thinking spans so
-            # fetch_tool_token_rollup can aggregate them alongside
-            # tool.* spans. Tool spans get this column filled by
-            # ingest_tool_attribution UPDATE after the INSERT; the
-            # assistant.* spans carry the estimate inline because
-            # there's no separate post.
-            out_tok = None
-            if span.get('name') in ('assistant_response', 'assistant.thinking'):
-                raw = attrs.get('output_tokens')
-                if isinstance(raw, (int, float)):
-                    out_tok = int(raw)
-            conn.execute(
-                """INSERT OR REPLACE INTO session_spans
-                   (trace_id, span_id, parent_id, name, kind, start_time,
-                    end_time, duration_ms, attributes, status_code, status_message,
-                    output_tokens)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (span.get('trace_id'), span.get('span_id'),
-                 span.get('parent_id'), span.get('name'),
-                 span.get('kind', 'internal'), span.get('start_time'),
-                 span.get('end_time'), span.get('duration_ms'),
-                 json.dumps(attrs),
-                 span.get('status_code', 'UNSET'), span.get('status_message'),
-                 out_tok),
-            )
-            # Dual-write structural data to session_trace_map so the
-            # frontend can load the full session shape without dragging
-            # along the potentially-large attributes JSON blobs.
-            conn.execute(
-                """INSERT INTO session_trace_map
-                   (trace_id, span_id, parent_id, name, kind, start_time,
-                    end_time, duration_ms, status_code, status_message)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(trace_id, span_id) DO UPDATE SET
-                     parent_id = excluded.parent_id,
-                     name = excluded.name,
-                     kind = excluded.kind,
-                     start_time = excluded.start_time,
-                     end_time = excluded.end_time,
-                     duration_ms = excluded.duration_ms,
-                     status_code = excluded.status_code,
-                     status_message = excluded.status_message""",
-                (span.get('trace_id'), span.get('span_id'),
-                 span.get('parent_id'), span.get('name'),
-                 span.get('kind', 'internal'), span.get('start_time'),
-                 span.get('end_time'), span.get('duration_ms'),
-                 span.get('status_code', 'UNSET'), span.get('status_message')),
-            )
+            _insert_span_row(conn, span, attrs)
 
-        buckets = _span_counter_buckets(normalised, existing_set)
+        # Append-only: placeholders/pending rows are NOT retired here. They
+        # coexist with their resolved counterparts and the serve-time merge
+        # (lib/trace/merge.py) drops the superseded ones at read time.
+
+        # Pending placeholders carry reserved id prefixes and are skipped by
+        # _counter_buckets_excl_pending, so they never advance any aggregate.
+        buckets = _counter_buckets_excl_pending(normalised, existing_set)
         for tid, b in buckets.items():
             if b['ended_at'] and (b['last_start_at'] is None
                                   or b['ended_at'] >= b['last_start_at']):

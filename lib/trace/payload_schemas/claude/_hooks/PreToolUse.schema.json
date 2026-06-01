@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PreToolUse hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [
+    "2.1.158"
+  ],
+  "properties": {
+    "permission_mode": {
+      "type": "string"
+    },
+    "effort": {
+      "type": "object"
+    },
+    "tool_name": {
+      "type": "string"
+    },
+    "tool_input": {
+      "type": "object"
+    },
+    "tool_use_id": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    },
+    "agent_id": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

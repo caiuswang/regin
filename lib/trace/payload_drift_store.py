@@ -25,14 +25,14 @@ def _sha256(payload: dict) -> str:
 
 _UPSERT_SQL = sa_text("""
     INSERT INTO payload_schema_drift (
-        agent, tool_name, drift_kind, field_path, expected, sample_value,
+        agent, subject_kind, tool_name, drift_kind, field_path, expected, sample_value,
         sample_payload_sha, claude_version
     )
     VALUES (
-        :agent, :tool_name, :drift_kind, :field_path, :expected, :sample_value,
+        :agent, :subject_kind, :tool_name, :drift_kind, :field_path, :expected, :sample_value,
         :sample_payload_sha, :claude_version
     )
-    ON CONFLICT(agent, tool_name, drift_kind, field_path, claude_version) DO UPDATE SET
+    ON CONFLICT(agent, subject_kind, tool_name, drift_kind, field_path, claude_version) DO UPDATE SET
         last_seen        = datetime('now'),
         occurrence_count = occurrence_count + 1
 """)
@@ -58,6 +58,7 @@ def record_findings(findings: Iterable[DriftFinding], payload: dict) -> int:
             for f in items:
                 session.execute(_UPSERT_SQL, {
                     "agent": f.agent,
+                    "subject_kind": f.subject_kind,
                     "tool_name": f.tool_name,
                     "drift_kind": f.drift_kind,
                     "field_path": f.field_path,

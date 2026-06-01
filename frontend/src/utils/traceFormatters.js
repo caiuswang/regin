@@ -415,3 +415,22 @@ export function askNote(span, q) {
   const ann = span?.attributes?.annotations || {}
   return ann[q?.question]?.notes || ''
 }
+
+// ── Live-span reconcile ──────────────────────────────────────
+
+// Converge the append-only `session.spans` (which feeds the conversation cards)
+// to the server's reconciliation. `mergeLoadedSpans` is an append/update-only
+// keyed merge — it never removes — so a placeholder the serve-time merge has
+// since dropped (a `promptlive-` prompt promoted to its anchor, or a
+// `pending-`/`permreq-`/`permission.request` tool/permission placeholder
+// superseded by its resolved span) lingers and renders a SECOND, duplicate
+// card next to the real one. The server is the single reconciliation authority:
+// the `/map?shallow=1` response lists `retired_span_ids` (PENDING rows the
+// merge dropped from the live window), and we drop exactly those. A still-live
+// placeholder is never in that list, so instant feedback is preserved; loaded-
+// older history and `/children`-fetched spans are untouched.
+export function dropRetiredSpans(spans, retiredIds) {
+  const retired = retiredIds instanceof Set ? retiredIds : new Set(retiredIds || [])
+  if (!retired.size) return spans || []
+  return (spans || []).filter(s => !retired.has(s?.span_id))
+}

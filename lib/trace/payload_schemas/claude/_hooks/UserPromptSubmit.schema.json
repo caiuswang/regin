@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UserPromptSubmit hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [
+    "2.1.158"
+  ],
+  "properties": {
+    "permission_mode": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

@@ -191,6 +191,104 @@ def test_graft_orphans_keeps_compact_boundaries_out_of_prompts():
     assert cpost['parent_id'] == 'c'
 
 
+def test_ladder_nests_tool_under_resp_by_turn_uuid():
+    """P2b shape: a tool span carrying a turn_uuid nests under that turn's
+    `resp-` span deterministically — NOT under the most-recent prompt by
+    chronology. This is the off-by-one fix: the tool sorts after a LATER
+    prompt, but the ladder still attaches it to its own turn."""
+    t = 'turnuuidaaaaaaaaaaaa'
+    spans = [
+        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'end_time': None, 'duration_ms': 0},
+        {'span_id': f'resp-{t[:13]}', 'parent_id': 'p1', 'name': 'assistant_response',
+         'start_time': '2026-01-01T00:00:02', 'end_time': None, 'duration_ms': 0,
+         'turn_uuid': t},
+        # A LATER prompt: the chronological fallback would wrongly pull the
+        # trailing tool under here. The ladder must win.
+        {'span_id': 'p2', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:10', 'end_time': None, 'duration_ms': 0},
+        {'span_id': 'tool1', 'parent_id': None, 'name': 'tool.Bash',
+         'start_time': '2026-01-01T00:00:11', 'end_time': None, 'duration_ms': 5,
+         'turn_uuid': t},
+    ]
+    out = app_module._graft_orphans(spans)
+    tool = next(s for s in out if s['span_id'] == 'tool1')
+    assert tool['parent_id'] == f'resp-{t[:13]}'
+
+
+def test_ladder_falls_to_think_when_no_resp():
+    """A thinking-only turn emits `think-<turn>` (no resp-); the turn's
+    tools nest under it."""
+    t = 'turnuuidbbbbbbbbbbbb'
+    spans = [
+        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'end_time': None, 'duration_ms': 0},
+        {'span_id': f'think-{t[:13]}', 'parent_id': 'p1', 'name': 'assistant.thinking',
+         'start_time': '2026-01-01T00:00:02', 'end_time': None, 'duration_ms': 0,
+         'turn_uuid': t},
+        {'span_id': 'tool1', 'parent_id': None, 'name': 'tool.Bash',
+         'start_time': '2026-01-01T00:00:03', 'end_time': None, 'duration_ms': 5,
+         'turn_uuid': t},
+    ]
+    out = app_module._graft_orphans(spans)
+    tool = next(s for s in out if s['span_id'] == 'tool1')
+    assert tool['parent_id'] == f'think-{t[:13]}'
+
+
+def test_ladder_reads_turn_uuid_from_attributes():
+    """The ladder reads turn_uuid from `attributes.turn_uuid` when the
+    column isn't populated (older spans)."""
+    t = 'turnuuidcccccccccccc'
+    spans = [
+        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'end_time': None, 'duration_ms': 0},
+        {'span_id': f'resp-{t[:13]}', 'parent_id': 'p1', 'name': 'assistant_response',
+         'start_time': '2026-01-01T00:00:02', 'end_time': None, 'duration_ms': 0,
+         'attributes': {'turn_uuid': t}},
+        {'span_id': 'tool1', 'parent_id': None, 'name': 'tool.Read',
+         'start_time': '2026-01-01T00:00:03', 'end_time': None, 'duration_ms': 5,
+         'attributes': {'turn_uuid': t}},
+    ]
+    out = app_module._graft_orphans(spans)
+    tool = next(s for s in out if s['span_id'] == 'tool1')
+    assert tool['parent_id'] == f'resp-{t[:13]}'
+
+
+def test_turnless_span_falls_to_chronological_prompt():
+    """A span with no turn_uuid (permission.request, attachment, …) is
+    skipped by the ladder and caught by the chronological fallback, which
+    nests it under the current real prompt — not left at root."""
+    spans = [
+        {'span_id': 'p', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'end_time': None, 'duration_ms': 0},
+        {'span_id': 'perm', 'parent_id': None, 'name': 'permission.request',
+         'start_time': '2026-01-01T00:00:02', 'end_time': None, 'duration_ms': 0},
+    ]
+    out = app_module._graft_orphans(spans)
+    perm = next(s for s in out if s['span_id'] == 'perm')
+    assert perm['parent_id'] == 'p'
+
+
+def test_ladder_does_not_touch_write_time_parents():
+    """A span already parented (e.g. assistant_response → prompt at write
+    time) is left untouched by the ladder and the chronological graft."""
+    t = 'turnuuidddddddddddd'
+    spans = [
+        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'end_time': None, 'duration_ms': 0},
+        {'span_id': 'p2', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:10', 'end_time': None, 'duration_ms': 0},
+        # parented to the EARLIER prompt at write time; chronology would
+        # otherwise pull it under p2.
+        {'span_id': f'resp-{t[:13]}', 'parent_id': 'p1', 'name': 'assistant_response',
+         'start_time': '2026-01-01T00:00:11', 'end_time': None, 'duration_ms': 0,
+         'turn_uuid': t},
+    ]
+    out = app_module._graft_orphans(spans)
+    resp = next(s for s in out if s['span_id'] == f'resp-{t[:13]}')
+    assert resp['parent_id'] == 'p1'
+
+
 def test_graft_orphans_leaves_compact_boundaries_at_root_without_conversation():
     spans = [
         {'span_id': 'p', 'parent_id': None, 'name': 'prompt',
@@ -525,17 +623,17 @@ def test_ancestors_clears_dangling_parent_id(client, trace_db):
 
 
 def test_session_map_span_dict_has_exact_projection_keys(client, trace_db):
-    """The `/api/sessions/<id>/map` endpoint projects from
-    session_trace_map. `_graft_orphans` and the frontend both read
-    these spans dict-keyed, so the key set must match the SQL
-    projection. Pins the contract through the lib.db → lib.orm
-    migration. session_trace_map is dual-written by ingest; the test
+    """The `/api/sessions/<id>/map` endpoint projects from session_spans
+    (via merge_spans, which needs `attributes` to dedup), then STRIPS
+    attributes/turn_uuid so the wire payload stays structure-only. The
+    frontend reads these spans dict-keyed, so the key set must match that
+    exact projection. session_spans is the append-only source; the test
     seeds it directly so we exercise the projection in isolation."""
     trace_id = 'shape-map-1'
     conn = sqlite3.connect(str(trace_db))
     try:
         conn.execute(
-            """INSERT INTO session_trace_map
+            """INSERT INTO session_spans
                (trace_id, span_id, parent_id, name, kind,
                 start_time, end_time, duration_ms,
                 status_code, status_message)
@@ -601,8 +699,12 @@ def test_workflow_runs_endpoint_lists_launched_runs(client, trace_db):
          'attributes': {'tool_name': 'Workflow'}},  # unstamped -> excluded
     ])
     items = client.get('/api/sessions/sess/workflow-runs').get_json()['items']
-    assert items == [{'run_id': 'wf_a', 'name': 'alpha'},
-                     {'run_id': 'wf_b', 'name': 'beta'}]
+    # Call order preserved; each run carries the read-time summary rollup
+    # (computed from the run's own spans — zero here since no run was seeded).
+    assert [(i['run_id'], i['name']) for i in items] == [
+        ('wf_a', 'alpha'), ('wf_b', 'beta')]
+    assert items[0] == {'run_id': 'wf_a', 'name': 'alpha', 'agent_count': 0,
+                        'phase_count': 0, 'status': None, 'tokens': None}
 
 
 def test_session_detail_surfaces_workflow_total_tokens(client, trace_db):
@@ -714,3 +816,35 @@ def test_sessions_null_origin_reads_as_session(client, trace_db):
     assert _ids(only) == set()
     row = client.get('/api/sessions').get_json()['items'][0]
     assert row['origin'] == 'session' and row['is_workflow'] is False
+
+
+def test_graft_orphans_pending_placeholder_anchors_its_own_turn_not_prior():
+    """A live PENDING placeholder opens a NEW turn: it projects as a root and
+    anchors its own in-flight orphans (whose resp-/prompt- parents haven't
+    landed yet), but never steals the PREVIOUS turn's already-parented work.
+    (Post-P2b assistant/tool spans carry deterministic write-time parents, so a
+    completed turn's spans are never orphans the placeholder could capture.)"""
+    spans = [
+        {'span_id': 'prompt-real', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'end_time': None,
+         'duration_ms': 0, 'status_code': 'OK'},
+        # previous turn's response — already parented at write time (P2b)
+        {'span_id': 'resp-prev', 'parent_id': 'prompt-real',
+         'name': 'assistant_response', 'start_time': '2026-01-01T00:00:05',
+         'end_time': None, 'duration_ms': 0, 'status_code': 'OK',
+         'turn_uuid': 'tprev'},
+        {'span_id': 'promptlive-x', 'parent_id': None, 'name': 'prompt',
+         'start_time': '2026-01-01T00:01:00', 'end_time': None,
+         'duration_ms': 0, 'status_code': 'PENDING'},
+        # in-flight tool of the NEW turn — its resp- parent isn't emitted yet
+        {'span_id': 'tool-new', 'parent_id': None, 'name': 'tool.Bash',
+         'start_time': '2026-01-01T00:01:10', 'end_time': None,
+         'duration_ms': 0, 'status_code': 'OK', 'turn_uuid': 'tnew'},
+    ]
+    out = {s['span_id']: s for s in app_module._graft_orphans(spans)}
+    # prior turn's response stays under its real prompt (not stolen)
+    assert out['resp-prev']['parent_id'] == 'prompt-real'
+    # placeholder is a top-level root (opens the new turn)
+    assert out['promptlive-x']['parent_id'] is None
+    # the in-flight tool nests under the placeholder (its turn)
+    assert out['tool-new']['parent_id'] == 'promptlive-x'

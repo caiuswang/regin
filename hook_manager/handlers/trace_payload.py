@@ -77,19 +77,21 @@ def _diagnostics_enabled() -> bool:
 
 
 def _record_drift(payload: HookPayload) -> None:
-    """Validate PostToolUse payloads + persist any drift findings.
+    """Validate payloads + persist any drift findings.
 
     Wrapped wholesale in try/except: drift tracking is observability,
-    not a gate — must never break the trace pipeline. The validator
-    itself early-returns for non-PostToolUse events.
+    not a gate — must never break the trace pipeline. PostToolUse goes
+    through the tool validator; every other event goes through the
+    hook-event validator.
     """
-    if payload.event != 'PostToolUse':
-        return
     try:
-        from lib.trace.payload_validation import validate
+        from lib.trace.payload_validation import validate, validate_event
         from lib.trace.payload_drift_store import record_findings
         agent = getattr(payload.resolved_provider, 'provider_id', 'claude')
-        findings = validate(payload.tool_name, payload.raw, agent=agent)
+        if payload.event == 'PostToolUse':
+            findings = validate(payload.tool_name, payload.raw, agent=agent)
+        else:
+            findings = validate_event(payload.event, payload.raw, agent=agent)
         if findings:
             record_findings(findings, payload.raw)
     except Exception:

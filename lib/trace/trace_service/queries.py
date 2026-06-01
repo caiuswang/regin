@@ -138,7 +138,10 @@ def list_mcp_calls_page(
         WHERE json_extract(attributes, '$.is_test') = 1
     )"""
 
-    conditions = ["name LIKE 'tool.mcp__%'"]
+    # Exclude live PENDING placeholders — the append-only store keeps a
+    # pending tool span alongside its resolved twin, which would double-count
+    # in the feed and stats until the merge drops it at read time.
+    conditions = ["name LIKE 'tool.mcp__%'", "status_code != 'PENDING'"]
     params: list = []
     if tool_filter:
         conditions.append("json_extract(attributes, '$.tool_name') = ?")
@@ -170,7 +173,7 @@ def list_mcp_calls_page(
         stats: list[dict] = []
         sessions: list[dict] = []
         if cursor_token is None:
-            base_conditions = ["name LIKE 'tool.mcp__%'"]
+            base_conditions = ["name LIKE 'tool.mcp__%'", "status_code != 'PENDING'"]
             base_params: list = []
             if test_exclusion:
                 base_conditions.append(test_exclusion)
@@ -186,7 +189,8 @@ def list_mcp_calls_page(
             """, base_params).fetchall()
             stats = [dict(r) for r in stats_rows]
 
-            session_conditions = ["session_spans.name LIKE 'tool.mcp__%'"]
+            session_conditions = ["session_spans.name LIKE 'tool.mcp__%'",
+                                   "session_spans.status_code != 'PENDING'"]
             if test_exclusion:
                 session_conditions.append(
                     test_exclusion.replace(
@@ -233,14 +237,15 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
     that want the cleanup persisted use `materialize_session`.
     """
     from lib.orm.engine import get_connection
+    from lib.trace.merge import merge_spans
     from lib.trace.projection import (
-        _build_span_tree, _fetch_spans, _graft_orphans, _widen_envelopes,
+        _build_span_tree, _fetch_spans, _widen_envelopes,
     )
 
     conn = get_connection()
     try:
         raw = _fetch_spans(conn, trace_id)
-        grafted = _graft_orphans(raw)
+        grafted = merge_spans(raw)
         widened = _widen_envelopes(grafted)
         tree = _build_span_tree(widened)
         return widened, tree
@@ -296,8 +301,9 @@ def fetch_session_paginated(
         raise ValueError("limit must be >= 1")
 
     from lib.orm.engine import get_connection
+    from lib.trace.merge import merge_spans
     from lib.trace.projection import (
-        _build_span_tree, _graft_orphans, _widen_envelopes,
+        _build_span_tree, _widen_envelopes,
     )
 
     placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
@@ -306,6 +312,16 @@ def fetch_session_paginated(
         # Step 1: page the turn anchors. For after_id, no LIMIT — we
         # want every anchor newer than the cursor (capped server-side
         # by a sane upper bound to defend against runaway growth).
+        #
+        # `OR status_code = 'PENDING'` re-includes the live promptlive-
+        # placeholder on every additive reload even though its id is now
+        # <= the cursor — without it the in-flight prompt would never
+        # reach the live view until its real anchor lands on Stop. Scoped
+        # by `name IN (_AFTER_ID_ANCHOR_NAMES)` (prompt + boundaries only),
+        # so no pending tool/permission span leaks in. The cursor still
+        # advances: the real anchor lands with a higher id and is picked
+        # up by `id > ?`. The frontend prunes the stale placeholder when
+        # the real anchor arrives, so there's no duplicate.
         if after_id is not None:
             after_placeholders = ','.join('?' for _ in _AFTER_ID_ANCHOR_NAMES)
             anchors = conn.execute(
@@ -313,7 +329,7 @@ def fetch_session_paginated(
                 SELECT id, start_time FROM session_spans
                 WHERE trace_id = ?
                   AND name IN ({after_placeholders})
-                  AND id > ?
+                  AND (id > ? OR status_code = 'PENDING')
                 ORDER BY start_time ASC, id ASC
                 LIMIT 500
                 """,
@@ -344,7 +360,7 @@ def fetch_session_paginated(
             ).fetchall()
 
         if not anchors:
-            return [], [], False
+            return [], [], False, []
 
         # Step 2: window = [earliest_anchor_in_page, upper_bound).
         # For before_id, cap the upper bound at the cursor's
@@ -389,7 +405,7 @@ def fetch_session_paginated(
                 """
                 SELECT id, trace_id, span_id, parent_id, name, kind,
                        start_time, end_time, duration_ms, attributes,
-                       status_code, status_message
+                       status_code, status_message, turn_uuid
                 FROM session_spans
                 WHERE trace_id = ?
                   AND start_time >= ?
@@ -403,7 +419,7 @@ def fetch_session_paginated(
                 """
                 SELECT id, trace_id, span_id, parent_id, name, kind,
                        start_time, end_time, duration_ms, attributes,
-                       status_code, status_message
+                       status_code, status_message, turn_uuid
                 FROM session_spans
                 WHERE trace_id = ? AND start_time >= ?
                 ORDER BY start_time ASC, id ASC
@@ -415,11 +431,29 @@ def fetch_session_paginated(
             for r in raw_rows
         ]
 
-        # Step 5: standard projection on the windowed subset.
-        grafted = _graft_orphans(raw)
+        # Step 5: standard projection on the windowed subset. merge_spans
+        # dedups coexisting placeholder/pending rows (append-only store) then
+        # runs the deterministic reparent ladder. Pass the GLOBAL max prompt id
+        # so a stray prompt placeholder still drops when it happens to be the
+        # newest anchor *within this older window* (window-local max alone
+        # would keep it — see merge._drop_stale_blockers).
+        ceiling_row = conn.execute(
+            "SELECT MAX(id) FROM session_spans "
+            "WHERE trace_id = ? AND name = 'prompt'",
+            (trace_id,),
+        ).fetchone()
+        prompt_ceiling = ceiling_row[0] if ceiling_row else None
+        grafted = merge_spans(raw, prompt_id_ceiling=prompt_ceiling)
         widened = _widen_envelopes(grafted)
         tree = _build_span_tree(widened)
-        return widened, tree, has_more_older
+        # Placeholder/superseded rows the merge dropped from this window. The
+        # append-only store keeps them on disk, so the client's append-only
+        # `session.spans` must prune exactly these or the conversation cards
+        # show a duplicate (placeholder + resolved). Computed as raw−merged so
+        # it's robust to id ordering (a retired row can sort below survivors).
+        grafted_ids = {s['span_id'] for s in grafted}
+        retired_ids = [s['span_id'] for s in raw if s['span_id'] not in grafted_ids]
+        return widened, tree, has_more_older, retired_ids
     finally:
         conn.close()
 def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
@@ -575,10 +609,14 @@ def fetch_turn_usage(trace_id: str) -> list[dict]:
         if not turns:
             return turns
 
+        # Exclude live PENDING placeholders so a pending tool span and its
+        # resolved twin don't both land in a turn's span_refs/tool_summary
+        # (the append-only store keeps both until the read-time merge).
         span_rows = conn.execute("""
             SELECT span_id, name, start_time, attributes
             FROM session_spans
             WHERE trace_id = ?
+              AND status_code != 'PENDING'
             ORDER BY start_time ASC
         """, (trace_id,)).fetchall()
         # Set of turn_uuids whose API call rolled in a server-side

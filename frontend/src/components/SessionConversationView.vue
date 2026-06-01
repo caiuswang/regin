@@ -30,6 +30,10 @@ const props = defineProps({
   selectedSpan: { type: Object, default: null },
   traceId: { type: String, default: '' },
   contextWindowTokens: { type: Number, default: null },
+  // run_id → enriched run summary (agent_count, phase_count, status, tokens)
+  // from /workflow-runs, so an inline `tool.Workflow` row can render a rich
+  // collapsed summary linking to the captured run.
+  workflowRunsById: { type: Object, default: () => ({}) },
 })
 
 const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live'])
@@ -53,6 +57,53 @@ const expandedDiffIds = ref(new Set())
 // are useful detail but noisy in the spine. Default-collapsed; click
 // expands a small attribute card the same way Bash output does.
 const expandedToolSearchIds = ref(new Set())
+// Every subagent folds its whole subtree (turns, tools, nested agents,
+// result) by default — whether it's a dynamic-workflow run with a dozen
+// phase-mapped agents or a regular session that fanned out a few `tool.Agent`
+// (Task) subagents, the alternative is a wall of every agent's turn-by-turn
+// work. The header row stays (with its state · tools · tokens summary);
+// clicking the chevron expands one agent's spans, lazy-loaded on demand.
+const expandedAgents = ref(new Set())
+function isAgentExpanded(spanId) { return expandedAgents.value.has(spanId) }
+function toggleAgentExpanded(spanId) {
+  const next = new Set(expandedAgents.value)
+  if (next.has(spanId)) next.delete(spanId)
+  else { next.add(spanId); emit('load-subtree', spanId) }
+  expandedAgents.value = next
+}
+// Every foldable agent span_id, in spine order — backs the expand-all /
+// collapse-all control and the all-expanded check. Only agents that actually
+// have captured descendants are foldable; many session `tool.Agent` launches
+// record just the header with no child spans, so a chevron there would be a
+// no-op affordance.
+function agentHasChildren(spanId) { return childrenOf(spanId).length > 0 }
+const foldableAgentIds = computed(() =>
+  (props.spans || [])
+    .filter((s) => s.name === 'subagent.start' && agentHasChildren(s.span_id))
+    .map((s) => s.span_id),
+)
+const allAgentsExpanded = computed(() =>
+  foldableAgentIds.value.length > 0
+  && foldableAgentIds.value.every((id) => expandedAgents.value.has(id)))
+function expandAllAgents() {
+  const next = new Set(expandedAgents.value)
+  for (const id of foldableAgentIds.value) {
+    if (!next.has(id)) { next.add(id); emit('load-subtree', id) }
+  }
+  expandedAgents.value = next
+}
+function collapseAllAgents() { expandedAgents.value = new Set() }
+// Climb the parent_id chain to the nearest enclosing agent (inclusive), so a
+// span selected from the TOC or a deep-link can auto-expand the agent that
+// owns it — otherwise its row is folded away and the scroll target is absent.
+function agentAncestorId(spanId) {
+  let cur = spanById.value.get(spanId)
+  while (cur) {
+    if (cur.name === 'subagent.start') return cur.span_id
+    cur = cur.parent_id ? spanById.value.get(cur.parent_id) : null
+  }
+  return null
+}
 const promptRefs = ref(new Map())
 const spanRefs = ref(new Map())
 // Standalone (non-prompt) root entries — rare but possible (legacy
@@ -159,16 +210,33 @@ function launchForSubagent(startSpan) {
 }
 function renderableDescendants(entry) {
   const merged = agentLaunchMerge.value.merged
-  const list = merged.size
+  const base = merged.size
     ? entry.descendants.filter(({ span }) => !merged.has(span.span_id))
     : entry.descendants
+  // Fold collapsed agents: every row inside an agent carries `inAgent` (set by
+  // flattenDescendants once it crosses a `subagent.start`), so a collapsed
+  // agent's rows are a contiguous run from its header to the next agent/phase.
+  // Drop those rows — keep the header. Applies to any subagent, workflow run
+  // or regular `tool.Agent` fan-out alike.
+  const visible = []
+  let collapsing = false
+  for (const d of base) {
+    if (d.span.name === 'subagent.start') {
+      collapsing = !isAgentExpanded(d.span.span_id)
+      visible.push(d)
+      continue
+    }
+    if (!d.inAgent) { collapsing = false; visible.push(d); continue }
+    if (collapsing) continue
+    visible.push(d)
+  }
   // Flag each agent header that should get a separator line above it: between
   // consecutive agents, but NOT the first agent of a phase (the phase divider
   // already separates it) nor the very first item.
-  return list.map((d, i) => ({
+  return visible.map((d, i) => ({
     ...d,
     agentSep: d.span.name === 'subagent.start' && i > 0
-      && list[i - 1].span.name !== 'workflow.phase',
+      && visible[i - 1].span.name !== 'workflow.phase',
   }))
 }
 function agentPromptPreview(text) {
@@ -315,6 +383,13 @@ watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]
   )
   if (owner && !isPromptExpanded(owner.prompt.span_id)) {
     togglePromptExpanded(owner.prompt.span_id, true)
+    await nextTick()
+  }
+  // Folded agent: if the selected span lives inside (or is) a collapsed
+  // agent, expand it so its row exists to scroll to.
+  const agentId = agentAncestorId(id)
+  if (agentId && !isAgentExpanded(agentId)) {
+    toggleAgentExpanded(agentId)
     await nextTick()
   }
   await nextTick()
@@ -570,7 +645,18 @@ function onRowClick(span) {
       </button>
       <div class="flex items-baseline justify-between mb-2 shrink-0">
         <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
-        <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
+        <div class="flex items-baseline gap-2">
+          <!-- Agents fold by default; this toggles them all so the reader can
+               sweep every agent open or shut at once (workflow run or a
+               session's `tool.Agent` fan-out alike). -->
+          <button
+            v-if="foldableAgentIds.length"
+            type="button"
+            class="text-[11px] text-blue-600 hover:text-blue-800 rounded px-0.5 focus-visible:outline-2 focus-visible:outline-blue-500"
+            @click="allAgentsExpanded ? collapseAllAgents() : expandAllAgents()"
+          >{{ allAgentsExpanded ? 'collapse all' : 'expand all' }}</button>
+          <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
+        </div>
       </div>
       <!-- Workflow phase TOC: each phase is a titled section (number badge,
            title, detail subtitle, "N agents · tokens" meta) with its agents
@@ -1480,6 +1566,18 @@ function onRowClick(span) {
                   :class="selectedSpan && selectedSpan.span_id === span.span_id ? '!bg-blue-50 !border-blue-300 ring-1 ring-blue-200' : ''"
                   @click="onSelectSpan(span); maybeFetchContent(span)"
                 >
+                  <!-- Fold toggle: collapses the agent's whole subtree to just
+                       this header. Shown only when the agent has captured
+                       descendants to hide. Click target is the chevron only —
+                       the row body still selects the span. -->
+                  <button
+                    v-if="agentHasChildren(span.span_id)"
+                    type="button"
+                    class="shrink-0 -my-1 px-0.5 text-slate-400 hover:text-slate-700 font-mono text-[11px] leading-none focus-visible:outline-2 focus-visible:outline-blue-500 rounded"
+                    :title="isAgentExpanded(span.span_id) ? 'Collapse agent' : 'Expand agent'"
+                    :aria-expanded="isAgentExpanded(span.span_id)"
+                    @click.stop="toggleAgentExpanded(span.span_id)"
+                  >{{ isAgentExpanded(span.span_id) ? '▾' : '▸' }}</button>
                   <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="toolRowDotClass(span)"></span>
                   <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
                   <!-- Label: normal subagents read `subagent: <type> · <desc>`.
@@ -1572,6 +1670,20 @@ function onRowClick(span) {
                   class="font-mono text-[11px] text-slate-600 truncate flex-1 min-w-0"
                 >{{ span.attributes.workflow_name }}</span>
                 <span v-else class="flex-1"></span>
+                <!-- Collapsed run summary: agents/phases/status/tokens, computed
+                     server-side from the run's own spans (this trace holds no
+                     detail spans). Lets the reader gauge the fan-out without
+                     opening the run. -->
+                <template v-if="workflowRunsById[span.attributes?.workflow_run_id]">
+                  <span class="font-mono text-[11px] text-slate-500 shrink-0">{{ workflowRunsById[span.attributes.workflow_run_id].agent_count }} agent<span v-if="workflowRunsById[span.attributes.workflow_run_id].agent_count !== 1">s</span></span>
+                  <span
+                    v-if="workflowRunsById[span.attributes.workflow_run_id].status"
+                    class="shrink-0 px-1 rounded text-[10px] border font-medium"
+                    :class="workflowRunsById[span.attributes.workflow_run_id].status === 'running'
+                      ? 'bg-amber-50 border-amber-200 text-amber-700'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-700'"
+                  >{{ workflowRunsById[span.attributes.workflow_run_id].status }}</span>
+                </template>
                 <router-link
                   v-if="span.attributes?.workflow_run_id"
                   :to="`/trace/sessions/${span.attributes.workflow_run_id}`"

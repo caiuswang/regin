@@ -10,6 +10,20 @@ def _write_transcript(path, entries):
     path.write_text('\n'.join(json.dumps(e, separators=(',', ':')) for e in entries) + '\n')
 
 
+def _assert_prompt_anchor(db_module, trace_id, span_id, expected_text):
+    """The turn-anchor `prompt-<prompt_uuid>` span turn_trace re-emits from
+    the transcript exists with the prompt's own text."""
+    with db_module.get_connection() as conn:
+        row = conn.execute(
+            "SELECT name, attributes FROM session_spans "
+            "WHERE trace_id = ? AND span_id = ?",
+            (trace_id, span_id),
+        ).fetchone()
+    assert row is not None
+    assert row['name'] == 'prompt'
+    assert json.loads(row['attributes'])['text'] == expected_text
+
+
 def test_repair_unlocks_turn_with_missing_tool_use_error_child(tmp_path, monkeypatch):
     """A cached assistant turn can still be incomplete when its `resp-*`
     row exists but a synthesized `toolerr-*` child is missing.
@@ -143,7 +157,11 @@ def test_repair_unlocks_turn_with_missing_tool_use_error_child(tmp_path, monkeyp
 
     assert result['ok'] is True
     assert result['uuids_unlocked'] == 1
-    assert result['spans_recovered'] == 1
+    # Two spans recovered: the missing `toolerr-*` child AND the turn's
+    # `prompt-<prompt_uuid>` anchor, which turn_trace now derives from the
+    # transcript (the live UserPromptSubmit hook keys it off a stale entry).
+    assert result['spans_recovered'] == 2
+    _assert_prompt_anchor(db_module, trace_id, 'prompt-user-1', 'write the file')
 
     with db_module.get_connection() as conn:
         row = conn.execute(
@@ -163,3 +181,5 @@ def test_repair_unlocks_turn_with_missing_tool_use_error_child(tmp_path, monkeyp
     assert attrs['reject_reason'] == (
         'File has not been read yet. Read it first before writing to it.'
     )
+
+

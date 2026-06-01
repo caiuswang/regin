@@ -196,7 +196,7 @@ def _seed_chatty_session(db_path, trace_id, n_prompts, *, base_min=0):
 
 def test_fetch_session_paginated_no_cursor_returns_latest_page(tmp_db):
     _seed_chatty_session(tmp_db, 't-page', n_prompts=12)
-    widened, tree, has_more_older = trace_service.fetch_session_paginated(
+    widened, tree, has_more_older, _ = trace_service.fetch_session_paginated(
         't-page', limit=5,
     )
     prompt_roots = [n for n in tree if n['data']['name'] == 'prompt']
@@ -212,7 +212,7 @@ def test_fetch_session_paginated_before_id_walks_older(tmp_db):
     prompts = _seed_chatty_session(tmp_db, 't-walk', n_prompts=12)
     # Use prompt-7's id as the before cursor — should return prompt-2..6.
     cursor = next(pid for pid, sid in prompts if sid == 'prompt-7')
-    _w, tree, has_more_older = trace_service.fetch_session_paginated(
+    _w, tree, has_more_older, _ = trace_service.fetch_session_paginated(
         't-walk', limit=5, before_id=cursor,
     )
     prompt_roots = [n for n in tree if n['data']['name'] == 'prompt']
@@ -227,7 +227,7 @@ def test_fetch_session_paginated_before_id_exhausts_history(tmp_db):
     prompts = _seed_chatty_session(tmp_db, 't-end', n_prompts=12)
     # Cursor past the very first prompt — there's nothing older.
     cursor = prompts[2][0]  # prompt-2's id; request 5 older but only 2 exist
-    _w, tree, has_more_older = trace_service.fetch_session_paginated(
+    _w, tree, has_more_older, _ = trace_service.fetch_session_paginated(
         't-end', limit=5, before_id=cursor,
     )
     prompt_roots = [n for n in tree if n['data']['name'] == 'prompt']
@@ -240,7 +240,7 @@ def test_fetch_session_paginated_before_id_exhausts_history(tmp_db):
 def test_fetch_session_paginated_after_id_no_new_returns_empty(tmp_db):
     prompts = _seed_chatty_session(tmp_db, 't-after', n_prompts=12)
     latest_id = prompts[-1][0]
-    widened, tree, _ = trace_service.fetch_session_paginated(
+    widened, tree, _, _ = trace_service.fetch_session_paginated(
         't-after', after_id=latest_id,
     )
     assert widened == []
@@ -252,7 +252,7 @@ def test_fetch_session_paginated_after_id_picks_up_new_prompts(tmp_db):
     latest_id = prompts[-1][0]  # prompt-4's id
     # Now seed 3 more prompts arriving "later".
     _seed_chatty_session(tmp_db, 't-new', n_prompts=3, base_min=10)
-    widened, tree, _ = trace_service.fetch_session_paginated(
+    widened, tree, _, _ = trace_service.fetch_session_paginated(
         't-new', after_id=latest_id,
     )
     prompt_roots = [n for n in tree if n['data']['name'] == 'prompt']
@@ -272,7 +272,7 @@ def test_fetch_session_paginated_after_id_picks_up_compact_boundaries(tmp_db):
         ('t-compact', 'cpost', 'compact.post', '2026-05-01T10:06:00',
          {'summary': 'recap'}),
     ])
-    _widened, tree, _ = trace_service.fetch_session_paginated(
+    _widened, tree, _, _ = trace_service.fetch_session_paginated(
         't-compact', after_id=latest_id,
     )
     boundary_names = sorted(
@@ -286,7 +286,7 @@ def test_fetch_session_paginated_grafting_works_on_window(tmp_db):
     """Tool spans inside the window must still graft under the right
     prompt — the page must not break the orphan-grafting invariant."""
     _seed_chatty_session(tmp_db, 't-graft', n_prompts=8)
-    _w, tree, _ = trace_service.fetch_session_paginated(
+    _w, tree, _, _ = trace_service.fetch_session_paginated(
         't-graft', limit=3,
     )
     # Pick the latest prompt root from the page.
@@ -309,12 +309,68 @@ def test_fetch_session_paginated_rejects_both_cursors(tmp_db):
 
 
 def test_fetch_session_paginated_empty_trace_returns_empty(tmp_db):
-    widened, tree, has_more = trace_service.fetch_session_paginated(
+    widened, tree, has_more, _ = trace_service.fetch_session_paginated(
         'nonexistent',
     )
     assert widened == []
     assert tree == []
     assert has_more is False
+
+
+def _insert_pending_prompt(db_path, trace_id, span_id, start_time):
+    """Insert a live PENDING prompt placeholder (name='prompt'); return id."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
+            "attributes, status_code) VALUES (?, ?, 'prompt', ?, ?, 'PENDING')",
+            (trace_id, span_id, start_time, json.dumps({'live_placeholder': True})),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def test_after_id_reload_keeps_returning_pending_placeholder(tmp_db):
+    """The live promptlive- placeholder must keep being returned by the
+    additive (after_id) reload even once the cursor has advanced to its own
+    id — otherwise the in-flight prompt vanishes from the live view until
+    its real anchor lands (the regression the seamless-handoff fix undoes)."""
+    _seed_chatty_session(tmp_db, 't-live', n_prompts=2)  # prompt-0,1
+    ph_id = _insert_pending_prompt(tmp_db, 't-live', 'promptlive-abc',
+                                   '2026-05-01T10:05:00')
+    # Cursor already at the placeholder's own id (a prior reload saw it):
+    # `id > ph_id` matches nothing, so only `OR status_code='PENDING'` keeps
+    # it visible.
+    _w, tree, _, _ = trace_service.fetch_session_paginated('t-live', after_id=ph_id)
+    assert 'promptlive-abc' in [n['data']['span_id'] for n in tree]
+
+
+def test_after_id_reload_drops_retired_placeholder(tmp_db):
+    """Once retired (deleted on handoff), the placeholder is no longer
+    returned — the frontend prunes it and the real anchor takes its place,
+    so there's no duplicate."""
+    _seed_chatty_session(tmp_db, 't-ret', n_prompts=2)
+    ph_id = _insert_pending_prompt(tmp_db, 't-ret', 'promptlive-xyz',
+                                   '2026-05-01T10:05:00')
+    conn = sqlite3.connect(str(tmp_db))
+    conn.execute("DELETE FROM session_spans WHERE span_id='promptlive-xyz'")
+    conn.commit()
+    conn.close()
+    _w, tree, _, _ = trace_service.fetch_session_paginated('t-ret', after_id=ph_id)
+    assert 'promptlive-xyz' not in [n['data']['span_id'] for n in tree]
+
+
+def test_pending_placeholder_projects_as_a_top_level_root(tmp_db):
+    """The placeholder opens a new turn: it must project as a top-level
+    root, not nested under the previous prompt."""
+    _seed_chatty_session(tmp_db, 't-root', n_prompts=2)  # prompt-0,1
+    _insert_pending_prompt(tmp_db, 't-root', 'promptlive-root',
+                           '2026-05-01T10:05:00')
+    _w, tree, _, _ = trace_service.fetch_session_paginated('t-root', limit=50)
+    roots = {(n['data']['span_id'], n['data']['name']) for n in tree}
+    assert ('promptlive-root', 'prompt') in roots
 
 
 # ── ingest_session_status ────────────────────────────────────
@@ -751,3 +807,38 @@ def test_ingest_session_status_ignores_empty_trace_id(tmp_db):
         assert n == 0
     finally:
         conn.close()
+
+
+# ── retired_span_ids (dedup signal for the client cache) ─────
+
+def test_fetch_session_paginated_reports_retired_placeholder(tmp_db):
+    """fetch_session_paginated returns the placeholder ids the merge dropped
+    (raw window − merged), so the client can prune its append-only cache and
+    not show a duplicate card. Robust to id order: the placeholder sorts BELOW
+    its surviving anchor here."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+    tid = 't-retired'
+    ph = prompt_placeholder_id(tid, 'hi there')
+    _seed_spans(tmp_db, [
+        (tid, ph, 'prompt', '2026-01-01T00:00:01', {'text': 'hi there'}),
+        (tid, 'prompt-realone0001', 'prompt', '2026-01-01T00:00:02', {'text': 'hi there'}),
+    ])
+    widened, _tree, _more, retired = trace_service.fetch_session_paginated(tid, limit=50)
+    survivors = {s['span_id'] for s in widened}
+    assert ph not in survivors                      # merge dropped the placeholder
+    assert 'prompt-realone0001' in survivors        # ...kept the real anchor
+    assert ph in retired                            # ...and reported it for the prune
+
+
+def test_fetch_session_paginated_no_retired_when_only_live_placeholder(tmp_db):
+    """An in-flight placeholder with no resolved counterpart survives and is
+    NOT reported retired (instant feedback preserved)."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+    tid = 't-inflight'
+    ph = prompt_placeholder_id(tid, 'typing')
+    _seed_spans(tmp_db, [
+        (tid, ph, 'prompt', '2026-01-01T00:00:01', {'text': 'typing'}),
+    ])
+    widened, _tree, _more, retired = trace_service.fetch_session_paginated(tid, limit=50)
+    assert ph in {s['span_id'] for s in widened}
+    assert retired == []

@@ -10,7 +10,7 @@ import SuppressButton from '../components/triggers/SuppressButton.vue'
 import TreeIndent from '../components/TreeIndent.vue'
 import TreeTable from 'primevue/treetable'
 import Column from 'primevue/column'
-import { fmtTokens, toolDisplayLabel, mcpParts } from '../utils/traceFormatters.js'
+import { fmtTokens, toolDisplayLabel, mcpParts, dropRetiredSpans } from '../utils/traceFormatters.js'
 
 const route = useRoute()
 const session = ref(null)
@@ -51,6 +51,9 @@ const expandedKeys = ref({})
 const selectedKeys = ref({})   // PrimeVue TreeTable v-model:selection-keys
 const treeNodes = ref([])
 const loadingChildren = ref(new Set())
+// span_ids whose full subtree has been deep-loaded in one request — so a
+// repeat jump/selection into the same subtree doesn't refetch it.
+const subtreeLoaded = ref(new Set())
 
 // Sticky page header: everything that frames the trace (title row, tokens
 // rollup, mini-timeline, more-history banner) pins to the top of the scroll
@@ -150,6 +153,14 @@ const plansExpanded = ref(false)
 // to the run; N≥2 collapses to `workflows N` with click-to-expand.
 const workflowRuns = ref([])
 const workflowRunsExpanded = ref(false)
+// run_id → enriched run record (agent_count, phase_count, status, tokens),
+// so the inline `tool.Workflow` spine row and the detail panel can render a
+// rich collapsed summary without each opening the run's trace.
+const workflowRunsById = computed(() => {
+  const map = {}
+  for (const r of workflowRuns.value) map[r.run_id] = r
+  return map
+})
 
 const turns = ref(null)  // lazy-loaded via /api/sessions/:id/turn-usage
 const turnsLoading = ref(false)
@@ -272,6 +283,26 @@ function onTouchMove(e) {
   onAnyWheel({ deltaY, target: e.target })
 }
 
+// General live poll. The trace view is a live dashboard but `reload()`
+// otherwise only fires on scroll/wheel — so a user parked at the bottom
+// watching their session never sees updates (and any transient duplicate
+// from a placeholder→anchor handoff never gets reconciled away) until they
+// scroll. A lightweight visibility-gated tick keeps the reconcile
+// (`reloadLiveTail`) converging the tail to the DB every few seconds.
+let livePollTimer = null
+const LIVE_POLL_MS = 4000
+function startLivePoll() {
+  if (livePollTimer) return
+  livePollTimer = setInterval(() => {
+    if (document.hidden) return
+    if (reloading.value || loading.value || loadingOlder.value) return
+    reload()
+  }, LIVE_POLL_MS)
+}
+function stopLivePoll() {
+  if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null }
+}
+
 onMounted(async () => {
   const rollupP = fetchToolRollup()
   const plansP = fetchPlans()
@@ -279,6 +310,7 @@ onMounted(async () => {
   await loadSession()
   loading.value = false
   await Promise.all([rollupP, plansP, wfRunsP])
+  startLivePoll()
   if (viewMode.value === 'terminal') ensureTerminalSpansLoaded()
   // Capture phase so we see events from descendants like `.content-scroll`;
   // scroll events don't bubble, so a bubbling listener on document never
@@ -300,6 +332,7 @@ onUnmounted(() => {
   document.removeEventListener('touchmove', onTouchMove, { capture: true })
   if (stickyHeaderRO) { stickyHeaderRO.disconnect(); stickyHeaderRO = null }
   stopCompactWatch()
+  stopLivePoll()
 })
 
 // While a `compact.pre` exists without a matching later `compact.post`,
@@ -389,19 +422,27 @@ async function loadSession() {
   workflowSpansLoaded.value = false
   await ensureWorkflowSpansLoaded()
 
-  if (prevSelectedId) {
-    const fresh = allSpans.value.find(s => s.span_id === prevSelectedId)
-    // Default to the LATEST root (most recent prompt) — chat-style.
-    selectedSpan.value = fresh
-      || allSpans.value[allSpans.value.length - 1]
-      || null
-  } else if (allSpans.value.length) {
-    selectedSpan.value = allSpans.value[allSpans.value.length - 1]
+  // Skip the chat-style default entirely when a `?span=` deep-link is
+  // present: setting the latest prompt first makes the conversation spine
+  // expand+scroll it, then the async deep-link resolves and jumps again —
+  // a visible flash that reads as "jumped to the last prompt" (e.g. the
+  // workflow run's "↑ launched from session" backlink, which targets the
+  // tool.Workflow span). Let the deep-link own the initial selection.
+  if (!route.query.span) {
+    if (prevSelectedId) {
+      const fresh = allSpans.value.find(s => s.span_id === prevSelectedId)
+      // Default to the LATEST root (most recent prompt) — chat-style.
+      selectedSpan.value = fresh
+        || allSpans.value[allSpans.value.length - 1]
+        || null
+    } else if (allSpans.value.length) {
+      selectedSpan.value = allSpans.value[allSpans.value.length - 1]
+    }
   }
 
   // `?span=<id>` deep-link wins over the chat-style default — used by
   // the /trace/triggers drawer to jump to the exact PostToolUse span
-  // that recorded a rule trigger.
+  // that recorded a rule trigger, and the run view's backlink.
   await applyDeepLinkSpan()
 }
 
@@ -462,6 +503,7 @@ const SESSION_SUMMARY_KEYS = [
   'title', 'title_source',
   'span_count_total',
   'task_list',
+  'queued_prompts',
 ]
 function applySessionSummary(data) {
   if (!session.value || !data) return
@@ -509,40 +551,72 @@ async function refreshRecentRootSubtrees(roots) {
   }
 }
 
-// Additive reload: pull any roots that arrived after the current
-// `newestLoadedId`, append them to the tree, then deep-refresh the
-// latest root's subtree (the active prompt may still be mid-response).
-// Earlier prompts are immutable so nothing else needs touching.
-async function reloadAppendNew() {
+// Live tail reconcile. Instead of blindly appending new roots (which drifts
+// from the DB whenever a row is mutated — chiefly the promptlive- placeholder
+// that's retired and replaced by its real prompt-<uuid> anchor, a different
+// row id), re-fetch the latest page and reconcile the recent tail against it.
+// The fresh page is the DB's source of truth for the recent window, so a
+// retired placeholder (absent from it) is dropped and its real anchor
+// (present) takes its place: no missing, no duplicate, no drift. Older
+// immutable history (loaded via loadOlder) is kept untouched, and a root that
+// persists across the tick reuses its already-loaded subtree.
+async function reloadLiveTail() {
   if (newestLoadedId.value == null) {
-    // No cursor yet (initial load failed?) — fall back to a full
-    // initial load so we never strand the view with stale state.
+    // No cursor yet (initial load failed?) — fall back to a full load.
     await loadSession()
     return
   }
   const data = await api.get(
-    `/sessions/${route.params.id}/map?shallow=1&after_id=${newestLoadedId.value}`,
+    `/sessions/${route.params.id}/map?shallow=1&limit=${PAGE_SIZE}`,
   )
-  const incoming = data.tree || []
+  const freshTail = data.tree || []
   mergeLoadedSpans(data.spans || [])
-  applySessionSummary(data)
-
-  if (incoming.length) {
-    // De-dupe by key, then append. New prompts arrive in ASC order
-    // from the backend, so just push them on the end.
-    const seen = new Set(treeNodes.value.map(n => n.key))
-    const fresh = incoming.filter(n => !seen.has(n.key))
-    if (fresh.length) {
-      treeNodes.value = [...treeNodes.value, ...fresh]
-    }
-    if (data.newest_loaded_id != null) {
-      newestLoadedId.value = data.newest_loaded_id
+  // Prune placeholders the serve-time merge has since dropped from this window
+  // (prompt promoted to its anchor; pending tool/permission superseded by its
+  // resolved span). `mergeLoadedSpans` never removes, so without this the
+  // conversation cards (which read `session.spans`) keep a duplicate next to
+  // the resolved card — the bug the `treeNodes` reconcile alone never reached.
+  // `retired_span_ids` is the server's authoritative drop list for the window.
+  if (session.value) {
+    const pruned = dropRetiredSpans(session.value.spans || [], data.retired_span_ids)
+    if (pruned.length !== (session.value.spans || []).length) {
+      session.value = { ...session.value, spans: pruned }
     }
   }
+  applySessionSummary(data)
+  if (!freshTail.length) {
+    await refreshRecentRootSubtrees(treeNodes.value)
+    return
+  }
 
-  // Deep-refresh the recent tail of prompts regardless of whether new
-  // roots arrived — children may be streaming in under the active
-  // prompt OR under a prior prompt whose subagent finished late.
+  // The fresh page owns every root with id >= minFreshId; keep the older
+  // nodes (immutable, below the window) exactly as they are.
+  const freshIds = freshTail.map(n => n.data?.id).filter(v => v != null)
+  const minFreshId = freshIds.length ? Math.min(...freshIds) : 0
+  const older = treeNodes.value.filter(n => (n.data?.id ?? Infinity) < minFreshId)
+
+  // Reuse an existing node when its span_id persists, so its already-loaded
+  // subtree survives — only refresh the shallow root data + leaf flag.
+  const existingBySpan = new Map(treeNodes.value.map(n => [n.data?.span_id, n]))
+  const reconciled = freshTail.map((fresh) => {
+    const prev = existingBySpan.get(fresh.data?.span_id)
+    if (prev && prev.children && prev.children.length) {
+      return { ...prev, data: fresh.data, leaf: fresh.leaf }
+    }
+    return fresh
+  })
+
+  treeNodes.value = [...older, ...reconciled]
+  if (data.newest_loaded_id != null) newestLoadedId.value = data.newest_loaded_id
+  if (older.length === 0) {
+    // No older-than-page history is loaded, so the fresh page's cursors are
+    // authoritative; otherwise leave the loaded-older bookkeeping untouched.
+    if (data.oldest_loaded_id != null) oldestLoadedId.value = data.oldest_loaded_id
+    hasMoreOlder.value = !!data.has_more_older
+  }
+
+  // Deep-refresh the recent tail of prompts — children may still be streaming
+  // under the active prompt (or a prior prompt whose subagent finished late).
   await refreshRecentRootSubtrees(treeNodes.value)
 }
 
@@ -595,7 +669,7 @@ async function reload() {
   if (reloading.value) return
   reloading.value = true
   try {
-    const tasks = [reloadAppendNew(), fetchToolRollup()]
+    const tasks = [reloadLiveTail(), fetchToolRollup()]
     // Only refetch turns if they're loaded AND visible. While folded the
     // user isn't reading them, so defer the cost; mark stale and let the
     // unfold action pull the fresh copy in.
@@ -626,7 +700,7 @@ function latestSpanByTime(spans) {
 async function jumpToLatestSpan() {
   setViewMode('conversation')
   await nextTick()
-  await reloadAppendNew()
+  await reloadLiveTail()
   const latest = latestSpanByTime(allSpans.value)
   if (latest) {
     if (selectedSpan.value?.span_id === latest.span_id) {
@@ -816,22 +890,23 @@ async function ensureNodeChildrenLoaded(spanId) {
 }
 
 async function ensureSpanSubtreeLoaded(rootSpanId) {
-  if (!rootSpanId) return
-  const queue = [rootSpanId]
-  const visited = new Set()
-  while (queue.length) {
-    const spanId = queue.shift()
-    if (!spanId || visited.has(spanId)) continue
-    visited.add(spanId)
-
-    await ensureNodeChildrenLoaded(spanId)
-    const node = findNodeBySpanId(treeNodes.value, spanId)
-    if (!node?.children?.length) continue
-    for (const child of node.children) {
-      if (child && !child.leaf && child.data?.span_id) {
-        queue.push(child.data.span_id)
-      }
-    }
+  if (!rootSpanId || subtreeLoaded.value.has(rootSpanId)) return
+  if (loadingChildren.value.has(rootSpanId)) return
+  // One `deep=1` fetch returns the whole nested subtree. The previous BFS
+  // fired a shallow `/children` per non-leaf node, which exploded into
+  // hundreds of requests once a span had many children (e.g. a tool.Workflow
+  // span with its re-parented workflow agents). The TreeTable still renders
+  // lazily via expandedKeys, so grafting the full subtree up front is cheap.
+  loadingChildren.value.add(rootSpanId)
+  try {
+    const data = await api.get(
+      `/sessions/${route.params.id}/spans/${rootSpanId}/children?deep=1`,
+    )
+    mergeLoadedSpans(data.spans || [])
+    treeNodes.value = withNodeChildren(treeNodes.value, rootSpanId, data.children || [])
+    subtreeLoaded.value.add(rootSpanId)
+  } finally {
+    loadingChildren.value.delete(rootSpanId)
   }
 }
 
@@ -2154,6 +2229,10 @@ const toolRollupSummary = computed(() => {
                 class="text-emerald-700 hover:text-emerald-900 hover:underline focus-visible:outline-2 focus-visible:outline-emerald-500 break-all"
                 :title="r.run_id"
               >⚙ {{ r.name || r.run_id }}</router-link>
+              <span
+                v-if="r.agent_count"
+                class="text-slate-500 text-[11px] font-mono shrink-0"
+              >{{ r.agent_count }} agent<span v-if="r.agent_count !== 1">s</span><template v-if="r.phase_count"> · {{ r.phase_count }} phase<span v-if="r.phase_count !== 1">s</span></template><template v-if="r.tokens"> · {{ fmtTokens(r.tokens) }} tok</template></span>
               <span class="text-slate-400 text-[11px] font-mono shrink-0">{{ r.run_id }}</span>
             </li>
           </ul>
@@ -2391,6 +2470,20 @@ const toolRollupSummary = computed(() => {
     </div>
     <!-- /sticky page header -->
 
+    <!-- Queued prompts: typed while the agent is busy fire no hook, so they
+         can't show as spans; derived live from the transcript and transient —
+         they vanish from here the moment the agent dequeues them. -->
+    <div v-if="session?.queued_prompts?.length"
+         class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+      <div class="text-[11px] font-semibold uppercase tracking-wider text-amber-700 mb-1">
+        ⏳ {{ session.queued_prompts.length }} queued
+      </div>
+      <div v-for="(q, qi) in session.queued_prompts" :key="qi"
+           class="text-sm text-amber-900 truncate" :title="q.content">
+        {{ q.content }}
+      </div>
+    </div>
+
     <div class="flex flex-col lg:flex-row gap-4 lg:items-start">
       <!-- Conversation view: rendered outside Card so its sidebar can be sticky -->
       <template v-if="viewMode === 'conversation'">
@@ -2400,6 +2493,7 @@ const toolRollupSummary = computed(() => {
           :selected-span="selectedSpan"
           :trace-id="session?.trace_id"
           :context-window-tokens="session?.context_window_tokens"
+          :workflow-runs-by-id="workflowRunsById"
           class="flex-1 min-w-0"
           @select-span="selectedSpan = $event"
           @fetch-content="fetchSpanContent"
@@ -2708,6 +2802,25 @@ const toolRollupSummary = computed(() => {
             v-if="selectedSpan.name === 'tool.Workflow' && selectedSpan.attributes?.workflow_run_id"
             class="mb-4"
           >
+            <!-- Rich collapsed summary of the run, computed server-side from
+                 the run's own spans (no detail spans live in this trace). The
+                 chips give agents/phases/status/tokens at a glance; the link
+                 drills into the full run trace. -->
+            <div
+              v-if="workflowRunsById[selectedSpan.attributes.workflow_run_id]"
+              class="flex flex-wrap items-center gap-1.5 mb-2 text-[11px]"
+            >
+              <span
+                v-if="workflowRunsById[selectedSpan.attributes.workflow_run_id].status"
+                class="px-1.5 py-0.5 rounded border font-medium"
+                :class="workflowRunsById[selectedSpan.attributes.workflow_run_id].status === 'running'
+                  ? 'bg-amber-50 border-amber-200 text-amber-700'
+                  : 'bg-emerald-50 border-emerald-200 text-emerald-700'"
+              >{{ workflowRunsById[selectedSpan.attributes.workflow_run_id].status }}</span>
+              <span class="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 font-mono">{{ workflowRunsById[selectedSpan.attributes.workflow_run_id].agent_count }} agent<span v-if="workflowRunsById[selectedSpan.attributes.workflow_run_id].agent_count !== 1">s</span></span>
+              <span v-if="workflowRunsById[selectedSpan.attributes.workflow_run_id].phase_count" class="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 font-mono">{{ workflowRunsById[selectedSpan.attributes.workflow_run_id].phase_count }} phase<span v-if="workflowRunsById[selectedSpan.attributes.workflow_run_id].phase_count !== 1">s</span></span>
+              <span v-if="workflowRunsById[selectedSpan.attributes.workflow_run_id].tokens" class="px-1.5 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 font-mono">{{ fmtTokens(workflowRunsById[selectedSpan.attributes.workflow_run_id].tokens) }} tok</span>
+            </div>
             <router-link
               :to="`/trace/sessions/${selectedSpan.attributes.workflow_run_id}`"
               class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-300 bg-emerald-50 text-sm font-medium text-emerald-700 hover:bg-emerald-100 no-underline focus-visible:outline-2 focus-visible:outline-emerald-500"

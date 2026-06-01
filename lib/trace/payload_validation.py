@@ -56,6 +56,18 @@ _ENVELOPE_KEYS: frozenset[str] = frozenset({
     'duration_ms', 'effort',
 })
 
+# Always-present top-level keys on every hook-event payload, regardless of
+# event. The hook analog of `_ENVELOPE_KEYS` for the `subject_kind='hook_event'`
+# axis; selected by `_envelope_keys` at the top level of the walker.
+_HOOK_COMMON_KEYS: frozenset[str] = frozenset({
+    'session_id', 'transcript_path', 'cwd', 'hook_event_name',
+})
+
+
+def _envelope_keys(subject_kind: str) -> frozenset[str]:
+    """Always-known top-level keys for the given subject_kind axis."""
+    return _HOOK_COMMON_KEYS if subject_kind == 'hook_event' else _ENVELOPE_KEYS
+
 
 @dataclass(frozen=True)
 class DriftFinding:
@@ -67,6 +79,7 @@ class DriftFinding:
     field_path: str          # e.g. 'tool_input.questions[0].header'
     expected: str | None     # JSON Schema type/const if applicable
     actual_sample: str       # truncated repr of the offending value
+    subject_kind: str = 'tool'  # 'tool' | 'hook_event'
 
 
 def _schema_filename(tool_name: str) -> str:
@@ -75,14 +88,23 @@ def _schema_filename(tool_name: str) -> str:
     return f"{tool_name}.schema.json"
 
 
-def baseline_schema_path(agent: str, tool_name: str) -> Path:
+def _schema_relpath(tool_name: str, subject_kind: str) -> Path:
+    """Schema path relative to an agent dir. Hook events live under
+    `_hooks/<name>.schema.json` (no mcp-wildcard handling); tools keep the
+    flat `<tool>.schema.json` filename incl. mcp-wildcard collapsing."""
+    if subject_kind == 'hook_event':
+        return Path('_hooks') / f'{tool_name}.schema.json'
+    return Path(_schema_filename(tool_name))
+
+
+def baseline_schema_path(agent: str, tool_name: str, subject_kind: str = 'tool') -> Path:
     """Repo-tracked baseline schema path (`lib/trace/payload_schemas/<agent>/`)."""
-    return _BASELINE_DIR / agent / _schema_filename(tool_name)
+    return _BASELINE_DIR / agent / _schema_relpath(tool_name, subject_kind)
 
 
-def overlay_schema_path(agent: str, tool_name: str) -> Path:
+def overlay_schema_path(agent: str, tool_name: str, subject_kind: str = 'tool') -> Path:
     """Per-user overlay path under `settings.payload_schemas_overlay_dir`."""
-    return _overlay_dir() / agent / _schema_filename(tool_name)
+    return _overlay_dir() / agent / _schema_relpath(tool_name, subject_kind)
 
 
 def schema_path_for(agent: str, tool_name: str) -> Path:
@@ -140,15 +162,15 @@ def _merge_schemas(baseline: dict, overlay: dict) -> dict:
 
 
 @functools.lru_cache(maxsize=128)
-def _load_schema(agent: str, tool_name: str) -> dict | None:
-    """Return the merged schema for `(agent, tool_name)`, or None.
+def _load_schema(agent: str, tool_name: str, subject_kind: str = 'tool') -> dict | None:
+    """Return the merged schema for `(agent, tool_name, subject_kind)`, or None.
 
     Reads the baseline from the repo and overlays the per-user
     `settings.payload_schemas_overlay_dir` copy if present, deep-merging
     `properties` / `required` / `x-claude-versions` so user ratifies
     never block baseline upgrades from `git pull`."""
-    baseline = _load_json(baseline_schema_path(agent, tool_name))
-    overlay = _load_json(overlay_schema_path(agent, tool_name))
+    baseline = _load_json(baseline_schema_path(agent, tool_name, subject_kind))
+    overlay = _load_json(overlay_schema_path(agent, tool_name, subject_kind))
     if baseline is None and overlay is None:
         return None
     if overlay is None:
@@ -194,6 +216,7 @@ def _classify_error(err) -> str:
 
 def _jsonschema_findings(
     agent: str, tool_name: str, payload: dict, schema: dict,
+    subject_kind: str = 'tool',
 ) -> list[DriftFinding]:
     validator = Draft202012Validator(schema)
     findings: list[DriftFinding] = []
@@ -213,6 +236,7 @@ def _jsonschema_findings(
             field_path=path,
             expected=expected or None,
             actual_sample=_sample_repr(err.instance),
+            subject_kind=subject_kind,
         ))
     return findings
 
@@ -242,14 +266,16 @@ def _is_opaque_object(schema: dict) -> bool:
 def _walk_dict(
     payload: dict, schema: dict, path: str,
     agent: str, tool_name: str, findings: list[DriftFinding],
+    subject_kind: str = 'tool',
 ) -> None:
     if _is_opaque_object(schema):
         return
     props = schema.get('properties') or {}
     known = _known_keys(props)
-    # Top-level payload keys include the always-present envelope fields.
+    # Top-level payload keys include the always-present envelope fields;
+    # which envelope set depends on the subject_kind axis.
     if not path:
-        known = known | _ENVELOPE_KEYS
+        known = known | _envelope_keys(subject_kind)
     for key, value in payload.items():
         full = f'{path}.{key}' if path else key
         if not _is_known_key(key, known):
@@ -260,24 +286,27 @@ def _walk_dict(
                 field_path=full,
                 expected=None,
                 actual_sample=_sample_repr(value),
+                subject_kind=subject_kind,
             ))
             continue
         sub_schema = props.get(key) or props.get(_to_snake(key))
-        _walk_unknown_fields(value, sub_schema, full, agent, tool_name, findings)
+        _walk_unknown_fields(value, sub_schema, full, agent, tool_name, findings, subject_kind)
 
 
 def _walk_unknown_fields(
     payload: Any, schema: Any, path: str,
     agent: str, tool_name: str, findings: list[DriftFinding],
+    subject_kind: str = 'tool',
 ) -> None:
     if not isinstance(schema, dict):
         return
     if isinstance(payload, dict):
-        _walk_dict(payload, schema, path, agent, tool_name, findings)
+        _walk_dict(payload, schema, path, agent, tool_name, findings, subject_kind)
     elif isinstance(payload, list):
         items_schema = schema.get('items')
         for i, item in enumerate(payload):
-            _walk_unknown_fields(item, items_schema, f'{path}[{i}]', agent, tool_name, findings)
+            _walk_unknown_fields(
+                item, items_schema, f'{path}[{i}]', agent, tool_name, findings, subject_kind)
 
 
 def _is_postool_event(payload: dict) -> bool:
@@ -320,4 +349,39 @@ def validate(
 
     findings = _jsonschema_findings(agent, tool_name, payload, schema)
     _walk_unknown_fields(payload, schema, '', agent, tool_name, findings)
+    return findings
+
+
+def validate_event(
+    event_name: str | None,
+    payload: dict,
+    agent: str = _DEFAULT_AGENT,
+) -> list[DriftFinding]:
+    """Return all drift findings for a hook-event `payload`. Never raises.
+
+    The hook-event analog of `validate`: validates against the
+    `subject_kind='hook_event'` schema axis (`payload_schemas/<agent>/_hooks/`).
+    Returns `[]` for a non-dict payload or a falsy event name. An unknown
+    event (no baseline/overlay schema) yields a single `unknown_event`
+    finding; otherwise jsonschema + the unknown-field walker run with every
+    finding tagged `subject_kind='hook_event'`."""
+    if not isinstance(payload, dict) or not event_name:
+        return []
+
+    schema = _load_schema(agent, event_name, subject_kind='hook_event')
+    if schema is None:
+        return [DriftFinding(
+            agent=agent,
+            tool_name=event_name,
+            drift_kind='unknown_event',
+            field_path='(root)',
+            expected=None,
+            actual_sample=_sample_repr({'hook_event_name': event_name}),
+            subject_kind='hook_event',
+        )]
+
+    findings = _jsonschema_findings(
+        agent, event_name, payload, schema, subject_kind='hook_event')
+    _walk_unknown_fields(
+        payload, schema, '', agent, event_name, findings, subject_kind='hook_event')
     return findings

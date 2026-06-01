@@ -7,7 +7,7 @@ machinery.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -171,3 +171,25 @@ class TranscriptUsage:
     attachments: tuple[TranscriptAttachment, ...] = ()
     system_events: tuple[TranscriptSystemEvent, ...] = ()
     local_commands: tuple[TranscriptLocalCommand, ...] = ()
+    # uuid → submitted text for the user-prompt entries that triggered a
+    # turn (i.e. each turn's `prompt_uuid`). Keyed so turn_trace can emit
+    # the turn-anchor `prompt-<uuid>` span deterministically — uuid, not
+    # text, is what distinguishes a real prompt anchor from a client-only
+    # slash command (`/workflows`) the live hook mis-keyed. Only the
+    # prompt_uuids actually referenced by a turn are kept, so this stays
+    # small even on long sessions.
+    prompt_texts: dict[str, str] = field(default_factory=dict)
+    # uuid → ISO timestamp of the same prompt entries, so the re-emitted
+    # anchor sits at prompt time on the timeline (not re-emission time).
+    prompt_timestamps: dict[str, str] = field(default_factory=dict)
+    # uuid → inline base64 `image` parts (`{idx, media_type, data_b64}`)
+    # carried in that prompt entry's `message.content`. The durable
+    # fallback turn_trace uses to attach `prompt_images` to the correct
+    # anchor when Claude Code's per-session image cache is already gone
+    # (e.g. post-session repair). Same anchor-only keying as prompt_texts.
+    prompt_image_parts: dict[str, list] = field(default_factory=dict)
+    # tool_use id → the uuid of the assistant turn that issued it, derived
+    # from the transcript's parentUuid graph. Lets the live tool-span
+    # parent backfill (turn_trace) set `parent_id = resp-<turn_uuid>`
+    # deterministically without re-deriving the issuing turn at write time.
+    tool_use_to_turn_uuid: dict[str, str] = field(default_factory=dict)

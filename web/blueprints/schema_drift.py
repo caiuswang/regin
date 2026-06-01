@@ -23,7 +23,8 @@ from lib.auth import get_current_user, require_editor
 from lib.orm import SessionLocal
 from lib.providers import get_active_provider
 from lib.trace.payload_validation import (
-    _load_schema, baseline_schema_path, overlay_schema_path,
+    _BASELINE_DIR, _load_schema, _overlay_dir,
+    baseline_schema_path, overlay_schema_path,
 )
 
 
@@ -34,11 +35,12 @@ schema_drift_bp = Blueprint('schema_drift', __name__)
 
 @schema_drift_bp.route('/api/schema-drift', methods=['GET'])
 def api_schema_drift_list():
-    """Return drift findings, optionally filtered by status and agent."""
+    """Return drift findings, optionally filtered by status, agent, kind."""
     status_filter = request.args.get('status')  # pending | ratified | ignored | None=all
     agent_filter = request.args.get('agent')
+    kind_filter = request.args.get('kind')  # tool | hook_event | None=all
     sql = """
-        SELECT id, agent, tool_name, drift_kind, field_path, expected,
+        SELECT id, agent, subject_kind, tool_name, drift_kind, field_path, expected,
                sample_value, sample_payload_sha, claude_version,
                first_seen, last_seen, occurrence_count, status
         FROM payload_schema_drift
@@ -51,6 +53,9 @@ def api_schema_drift_list():
     if agent_filter:
         conditions.append("agent = :agent")
         params['agent'] = agent_filter
+    if kind_filter in ('tool', 'hook_event'):
+        conditions.append("subject_kind = :kind")
+        params['kind'] = kind_filter
     if conditions:
         sql += " WHERE " + " AND ".join(conditions)
     sql += " ORDER BY agent, tool_name, drift_kind, field_path"
@@ -74,29 +79,45 @@ def api_schema_drift_schemas():
     schemas as the primary entity; drift rows are the detail view per
     schema."""
     agent_filter = request.args.get('agent')
+    kind_filter = request.args.get('kind')  # tool | hook_event | None=all
     agents = _discover_agents(agent_filter)
     counts = _drift_counts_by_schema()
     rows: list[dict] = []
     for agent in agents:
-        for tool in _known_tools():
-            baseline = baseline_schema_path(agent, tool).is_file()
-            overlay = overlay_schema_path(agent, tool).is_file()
-            if not baseline and not overlay:
-                continue
-            stats = counts.get((agent, tool), {})
-            rows.append({
-                'agent': agent,
-                'tool': tool,
-                'baseline': baseline,
-                'overlay': overlay,
-                'pending': stats.get('pending', 0),
-                'ratified': stats.get('ratified', 0),
-                'ignored': stats.get('ignored', 0),
-                'last_drift_seen': stats.get('last_seen'),
-                'state': _schema_state(stats, overlay),
-            })
+        if kind_filter in (None, 'tool'):
+            for tool in _known_tools():
+                row = _schema_row(agent, tool, 'tool', counts)
+                if row:
+                    rows.append(row)
+        if kind_filter in (None, 'hook_event'):
+            for event in _known_hook_events():
+                row = _schema_row(agent, event, 'hook_event', counts)
+                if row:
+                    rows.append(row)
     kpi = _summary_kpis(rows)
     return jsonify({'rows': rows, 'kpi': kpi, 'agents': sorted(agents)})
+
+
+def _schema_row(agent: str, name: str, subject_kind: str, counts: dict) -> dict | None:
+    """Build one /schemas row for (agent, name, subject_kind), or None when
+    neither a baseline nor an overlay file exists for it."""
+    baseline = baseline_schema_path(agent, name, subject_kind).is_file()
+    overlay = overlay_schema_path(agent, name, subject_kind).is_file()
+    if not baseline and not overlay:
+        return None
+    stats = counts.get((agent, subject_kind, name), {})
+    return {
+        'agent': agent,
+        'subject_kind': subject_kind,
+        'tool': name,
+        'baseline': baseline,
+        'overlay': overlay,
+        'pending': stats.get('pending', 0),
+        'ratified': stats.get('ratified', 0),
+        'ignored': stats.get('ignored', 0),
+        'last_drift_seen': stats.get('last_seen'),
+        'state': _schema_state(stats, overlay),
+    }
 
 
 def _discover_agents(agent_filter: str | None) -> list[str]:
@@ -116,15 +137,34 @@ def _known_tools() -> list[str]:
     return sorted(set(_TOOL_BUILDERS.keys()) | {'_mcp_wildcard'})
 
 
-def _drift_counts_by_schema() -> dict[tuple[str, str], dict]:
-    out: dict[tuple[str, str], dict] = {}
+def _known_hook_events() -> list[str]:
+    """Hook event names with a known schema: `_hooks/*.schema.json` stems
+    (across every agent dir) unioned with the distinct hook_event names
+    that have already produced drift rows."""
+    found: set[str] = set()
+    for base in (_BASELINE_DIR, _overlay_dir()):
+        for hooks_dir in base.glob('*/_hooks'):
+            for path in hooks_dir.glob('*.schema.json'):
+                found.add(path.name.removesuffix('.schema.json'))
+    with SessionLocal() as session:
+        for row in session.execute(text(
+            "SELECT DISTINCT tool_name FROM payload_schema_drift "
+            "WHERE subject_kind = 'hook_event'",
+        )):
+            found.add(row[0])
+    return sorted(found)
+
+
+def _drift_counts_by_schema() -> dict[tuple[str, str, str], dict]:
+    out: dict[tuple[str, str, str], dict] = {}
     with SessionLocal() as session:
         for row in session.execute(text("""
-            SELECT agent, tool_name, status, COUNT(*) AS n, MAX(last_seen) AS last_seen
+            SELECT agent, subject_kind, tool_name, status,
+                   COUNT(*) AS n, MAX(last_seen) AS last_seen
             FROM payload_schema_drift
-            GROUP BY agent, tool_name, status
+            GROUP BY agent, subject_kind, tool_name, status
         """)):
-            key = (row.agent, row.tool_name)
+            key = (row.agent, row.subject_kind, row.tool_name)
             entry = out.setdefault(key, {})
             entry[row.status] = row.n
             if 'last_seen' not in entry or (row.last_seen or '') > (entry['last_seen'] or ''):
@@ -157,18 +197,20 @@ def api_schema_drift_schema():
     that have produced drift findings."""
     agent = request.args.get('agent', 'claude')
     tool = request.args.get('tool', '')
+    kind = request.args.get('kind', 'tool')
     if not tool:
         return jsonify({'error': 'tool query param required'}), 400
-    schema = _load_schema(agent, tool)
+    schema = _load_schema(agent, tool, kind)
     if schema is None:
         return jsonify({'error': 'no schema for that (agent, tool)'}), 404
     return jsonify({
         'agent': agent,
         'tool': tool,
+        'subject_kind': kind,
         'schema': schema,
-        'baseline_path': str(baseline_schema_path(agent, tool)),
-        'overlay_path': str(overlay_schema_path(agent, tool)),
-        'overlay_exists': overlay_schema_path(agent, tool).is_file(),
+        'baseline_path': str(baseline_schema_path(agent, tool, kind)),
+        'overlay_path': str(overlay_schema_path(agent, tool, kind)),
+        'overlay_exists': overlay_schema_path(agent, tool, kind).is_file(),
     })
 
 
@@ -180,9 +222,10 @@ def api_schema_drift_schema_diff():
     ratified everything in the queue."""
     agent = request.args.get('agent', 'claude')
     tool = request.args.get('tool', '')
+    kind = request.args.get('kind', 'tool')
     if not tool:
         return jsonify({'error': 'tool query param required'}), 400
-    current = _load_schema(agent, tool)
+    current = _load_schema(agent, tool, kind)
     if current is None:
         return jsonify({'error': 'no schema for that (agent, tool)'}), 404
 
@@ -191,6 +234,7 @@ def api_schema_drift_schema_diff():
     return jsonify({
         'agent': agent,
         'tool': tool,
+        'subject_kind': kind,
         'pending_count': len(drifts),
         'current': current,
         'proposed': proposed,
@@ -248,12 +292,13 @@ def api_schema_drift_detail(drift_id: int):
         return jsonify({'error': 'not found'}), 404
     agent = drift.get('agent') or 'claude'
     tool = drift['tool_name']
+    kind = drift.get('subject_kind') or request.args.get('kind', 'tool')
     return jsonify({
         'drift': drift,
-        'schema': _load_schema(agent, tool),
-        'baseline_path': str(baseline_schema_path(agent, tool)),
-        'overlay_path': str(overlay_schema_path(agent, tool)),
-        'overlay_exists': overlay_schema_path(agent, tool).is_file(),
+        'schema': _load_schema(agent, tool, kind),
+        'baseline_path': str(baseline_schema_path(agent, tool, kind)),
+        'overlay_path': str(overlay_schema_path(agent, tool, kind)),
+        'overlay_exists': overlay_schema_path(agent, tool, kind).is_file(),
         'payload': _lookup_payload(drift.get('sample_payload_sha')),
         'proposed_change': _propose_change(drift),
     })
@@ -272,8 +317,8 @@ def api_schema_drift_summary():
 # ── Mutations ───────────────────────────────────────────────────────
 
 _DRIFT_COLUMNS_FULL = (
-    "id, agent, tool_name, drift_kind, field_path, expected, sample_value, "
-    "sample_payload_sha, claude_version, first_seen, last_seen, "
+    "id, agent, subject_kind, tool_name, drift_kind, field_path, expected, "
+    "sample_value, sample_payload_sha, claude_version, first_seen, last_seen, "
     "occurrence_count, status"
 )
 
@@ -281,8 +326,9 @@ _DRIFT_COLUMNS_FULL = (
 def _load_drift_row(drift_id: int) -> dict | None:
     with SessionLocal() as session:
         row = session.execute(text(
-            "SELECT id, agent, tool_name, drift_kind, field_path, sample_value, "
-            "claude_version, status FROM payload_schema_drift WHERE id = :id"
+            "SELECT id, agent, subject_kind, tool_name, drift_kind, field_path, "
+            "sample_value, claude_version, status FROM payload_schema_drift "
+            "WHERE id = :id"
         ), {'id': drift_id}).mappings().first()
     return dict(row) if row else None
 
@@ -493,23 +539,32 @@ def _descend_property(node: dict, name: str) -> dict:
     return props[name]
 
 
-def _load_or_seed_overlay(agent: str, tool_name: str) -> tuple[Path, dict]:
+def _overlay_title(tool_name: str, subject_kind: str) -> str:
+    if subject_kind == 'hook_event':
+        return f'{tool_name} hook payload (user overlay)'
+    return f'{tool_name} PostToolUse payload (user overlay)'
+
+
+def _load_or_seed_overlay(
+    agent: str, tool_name: str, subject_kind: str = 'tool',
+) -> tuple[Path, dict]:
     """Return (overlay_path, overlay_dict).
 
     If the overlay doesn't exist yet, seed it as a minimal stub —
     enough scaffolding for the navigation+write helpers to find their
     way to the right nested `properties` dict. The validator then
     deep-merges the overlay onto the repo baseline, so the stub never
-    erases anything the baseline already declares."""
-    path = overlay_schema_path(agent, tool_name)
+    erases anything the baseline already declares. Hook overlays land
+    under `_hooks/` and carry a hook-flavored title."""
+    path = overlay_schema_path(agent, tool_name, subject_kind)
     if path.is_file():
         return path, json.loads(path.read_text())
-    baseline = baseline_schema_path(agent, tool_name)
+    baseline = baseline_schema_path(agent, tool_name, subject_kind)
     if not baseline.is_file():
         raise FileNotFoundError(f"no baseline schema for {agent}/{tool_name}")
     return path, {
         '$schema': 'https://json-schema.org/draft/2020-12/schema',
-        'title': f'{tool_name} PostToolUse payload (user overlay)',
+        'title': _overlay_title(tool_name, subject_kind),
         'type': 'object',
         'additionalProperties': True,
         'properties': {},
@@ -518,7 +573,8 @@ def _load_or_seed_overlay(agent: str, tool_name: str) -> tuple[Path, dict]:
 
 def _apply_ratify_to_schema(drift: dict) -> None:
     agent = drift.get('agent') or 'claude'
-    path, overlay = _load_or_seed_overlay(agent, drift['tool_name'])
+    subject_kind = drift.get('subject_kind') or 'tool'
+    path, overlay = _load_or_seed_overlay(agent, drift['tool_name'], subject_kind)
 
     parts = _split_field_path(drift['field_path'])
     if not parts:

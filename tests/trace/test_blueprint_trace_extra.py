@@ -370,3 +370,9 @@ def test_session_status_happy_path_updates_model(flask_client, tmp_db):
     # bare base model.
     assert detail['context_window_tokens'] == 1_000_000
     assert detail['context_pct'] is not None and detail['context_pct'] < 25
+
+
+# NOTE: POST /api/sessions/<id>/reconcile-prompts was removed in the
+# append-only capture refactor — stray `/workflows` prompt placeholders are
+# now dropped by the serve-time merge (lib/trace/merge.py:_drop_stale_blockers),
+# covered by tests/trace/test_pending_handoff.py.

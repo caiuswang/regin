@@ -47,36 +47,29 @@ def test_prompt_trace_skips_empty_prompt(captured_spans):
     assert captured_spans == []
 
 
-def test_prompt_trace_posts_span_with_text(captured_spans):
-    prompt_trace.handle(_p('UserPromptSubmit',
-                           prompt='hello world', session_id='s1'))
+def test_prompt_trace_emits_pending_placeholder_for_real_prompt(captured_spans):
+    """A real prompt gets a live PENDING placeholder keyed off a content
+    hash (`promptlive-…`), never a real `prompt-<uuid>` anchor — so it can't
+    clobber turn_trace's authoritative anchor. ingest retires it on handoff."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+    r = prompt_trace.handle(_p('UserPromptSubmit',
+                               prompt='hello world', session_id='s1'))
+    assert r is not None and r.suppress_output is True
     assert len(captured_spans) == 1
     s = captured_spans[0]
     assert s['name'] == 'prompt'
-    assert s['trace_id'] == 's1'
+    assert s['span_id'] == prompt_placeholder_id('s1', 'hello world')
+    assert s['span_id'].startswith('promptlive-')
+    assert s['status_code'] == 'PENDING'
     assert s['attributes']['text'] == 'hello world'
-    assert s['attributes']['chars'] == 11
+    assert s['attributes']['live_placeholder'] is True
 
 
-def test_prompt_trace_keeps_full_long_text(captured_spans):
-    long = 'x' * 5000
-    prompt_trace.handle(_p('UserPromptSubmit',
-                           prompt=long, session_id='s1'))
-    text = captured_spans[0]['attributes']['text']
-    assert text == long
-    assert captured_spans[0]['attributes']['chars'] == 5000
-
-
-def test_prompt_trace_detects_slash_command(captured_spans):
+def test_prompt_trace_placeholder_detects_slash_command(captured_spans):
     prompt_trace.handle(_p('UserPromptSubmit',
                            prompt='/plan do a thing', session_id='s1'))
     assert captured_spans[0]['attributes']['slash_command'] == '/plan'
-
-
-def test_prompt_trace_no_slash_command_for_regular_prompt(captured_spans):
-    prompt_trace.handle(_p('UserPromptSubmit',
-                           prompt='hello world', session_id='s1'))
-    assert captured_spans[0]['attributes']['slash_command'] is None
+    assert captured_spans[0]['status_code'] == 'PENDING'
 
 
 def test_prompt_trace_detects_plan_approval(captured_spans, tmp_path):
@@ -186,83 +179,18 @@ def test_plan_is_active_respects_fresh_seconds(tmp_path):
 
 
 def test_prompt_trace_swallows_emit_span_errors(monkeypatch):
-    """Post-span failure must not propagate: the hook still has to
-    return its HookResponse so the UserPromptSubmit pipeline completes."""
+    """Post-span failure on the task-notification path must not propagate:
+    the hook still has to return its HookResponse so the UserPromptSubmit
+    pipeline completes. (Real user prompts no longer post a span here.)"""
     def _boom(**_kw):
         raise RuntimeError('ingest down')
     import lib.hook_plugin as hp
     monkeypatch.setattr(hp, 'post_span', _boom)
 
     r = prompt_trace.handle(_p('UserPromptSubmit',
-        prompt='hello world', session_id='s1'))
+        prompt=_TASK_NOTIFICATION_SAMPLE, session_id='s1'))
     assert r is not None
     assert r.suppress_output is True
-
-
-# ── prompt_trace deterministic span_id ──────────────────────────────
-
-def _write_jsonl(path, entries):
-    import json
-    path.write_text('\n'.join(json.dumps(e) for e in entries) + '\n')
-
-
-def test_prompt_trace_uses_deterministic_span_id_from_transcript(
-    captured_spans, tmp_path,
-):
-    """The prompt span's span_id must be derivable from the transcript's
-    most recent user-prompt entry uuid as `prompt-<uuid[:13]>`. This is
-    the contract turn_trace relies on to compute parent_id for the
-    assistant_response spans it emits later."""
-    transcript = tmp_path / 'session.jsonl'
-    user_uuid = 'user-abcdef0123456789'
-    _write_jsonl(transcript, [
-        {'type': 'user', 'uuid': user_uuid, 'parentUuid': None,
-         'message': {'content': 'do the thing'}},
-    ])
-    prompt_trace.handle(_p('UserPromptSubmit',
-                           prompt='do the thing',
-                           session_id='s1',
-                           transcript_path=str(transcript)))
-    assert len(captured_spans) == 1
-    assert captured_spans[0]['span_id'] == f'prompt-{user_uuid[:13]}'
-
-
-def test_prompt_trace_skips_tool_result_user_entries(
-    captured_spans, tmp_path,
-):
-    """Tool-result entries are also `type: user` in the transcript;
-    they should NOT be picked as the prompt anchor. The latest *real*
-    user prompt is the one we're submitting now."""
-    transcript = tmp_path / 'session.jsonl'
-    real_uuid = 'user-realprompt12345'
-    _write_jsonl(transcript, [
-        {'type': 'user', 'uuid': real_uuid,
-         'message': {'content': 'do the thing'}},
-        {'type': 'assistant', 'uuid': 'asst-1', 'parentUuid': real_uuid,
-         'message': {'content': []}},
-        {'type': 'user', 'uuid': 'tool-result-uuid-xyz', 'parentUuid': 'asst-1',
-         'message': {'content': [{'type': 'tool_result', 'content': 'output'}]}},
-    ])
-    prompt_trace.handle(_p('UserPromptSubmit',
-                           prompt='do the thing',
-                           session_id='s1',
-                           transcript_path=str(transcript)))
-    assert captured_spans[0]['span_id'] == f'prompt-{real_uuid[:13]}'
-
-
-def test_prompt_trace_falls_back_when_transcript_missing(captured_spans):
-    """If transcript_path is absent or unreadable, the span still
-    gets emitted — just without a deterministic span_id (post_span
-    generates a random one). The whole prompt_trace pipeline must
-    not crash on missing transcripts."""
-    prompt_trace.handle(_p('UserPromptSubmit',
-                           prompt='hello',
-                           session_id='s1'))
-    assert len(captured_spans) == 1
-    # span_id is None here; post_span itself fills it with a random hex
-    # at build time — so from the captured kw we just verify the call
-    # didn't pass an explicit deterministic id.
-    assert captured_spans[0].get('span_id') is None
 
 
 # ── prompt_trace task.notification handling ─────────────────────────

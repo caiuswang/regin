@@ -41,11 +41,12 @@ const STATE_LABEL = { clean: 'clean', drift: 'has drift', overlaid: 'overlaid' }
 const KIND_COLOR = {
   unknown_field: 'blue', missing_required: 'red',
   type_mismatch: 'yellow', enum_violation: 'yellow', unknown_tool: 'gray',
+  unknown_event: 'gray',
 }
 const KIND_LABEL = {
   unknown_field: 'unknown field', missing_required: 'missing required',
   type_mismatch: 'type mismatch', enum_violation: 'enum violation',
-  unknown_tool: 'unknown tool',
+  unknown_tool: 'unknown tool', unknown_event: 'unknown event',
 }
 
 const stateChips = [
@@ -53,6 +54,14 @@ const stateChips = [
   { value: 'drift',    label: 'Has drift' },
   { value: 'clean',    label: 'Clean' },
   { value: 'overlaid', label: 'Overlaid' },
+]
+
+// Tools vs hook events are separate subject_kind axes sharing the same
+// table/UI. Default to tools so the page opens to its historical view.
+const kindFilter = ref('tool')
+const kindChips = [
+  { value: 'tool',       label: 'Tools' },
+  { value: 'hook_event', label: 'Hooks' },
 ]
 
 const filtered = computed(() => {
@@ -67,14 +76,18 @@ const filtered = computed(() => {
 
 const showAgentColumn = computed(() => allAgents.value.length > 1)
 
-function schemaKey(s) { return `${s.agent}::${s.tool}` }
+// Key on subject_kind too: a tool and a hook event can share a name
+// (e.g. nothing stops a future tool called `Stop`), so the kind must
+// disambiguate the row's cached schema / drift / diff sub-docs.
+function schemaKey(s) { return `${s.agent}::${s.subject_kind}::${s.tool}` }
 
 async function loadSchemas() {
   loading.value = true
   error.value = ''
   try {
-    const q = agentFilter.value ? `?agent=${agentFilter.value}` : ''
-    const resp = await api.get(`/schema-drift/schemas${q}`)
+    const params = new URLSearchParams({ kind: kindFilter.value })
+    if (agentFilter.value) params.set('agent', agentFilter.value)
+    const resp = await api.get(`/schema-drift/schemas?${params}`)
     schemas.value = resp.rows || []
     kpi.value = resp.kpi || kpi.value
     allAgents.value = resp.agents || []
@@ -83,6 +96,14 @@ async function loadSchemas() {
   } finally {
     loading.value = false
   }
+}
+
+function setKind(kind) {
+  if (kindFilter.value === kind) return
+  kindFilter.value = kind
+  expandedSchema.value = null
+  expandedDrift.value = null
+  loadSchemas()
 }
 
 async function toggleSchema(s) {
@@ -110,20 +131,22 @@ async function toggleSchema(s) {
     const tasks = []
     if (needsSchema) {
       tasks.push(api.get(
-        `/schema-drift/schema?agent=${encodeURIComponent(s.agent)}&tool=${encodeURIComponent(s.tool)}`,
+        `/schema-drift/schema?${schemaQuery(s)}`,
       ).then(d => { schemaBySchema.value = { ...schemaBySchema.value, [key]: d } }))
     }
     if (needsDrifts) {
       tasks.push(api.get(
-        `/schema-drift?agent=${encodeURIComponent(s.agent)}&status=pending`,
+        `/schema-drift?agent=${encodeURIComponent(s.agent)}&status=pending&kind=${s.subject_kind}`,
       ).then(resp => {
-        const forTool = (resp.rows || []).filter(r => r.tool_name === s.tool)
+        const forTool = (resp.rows || []).filter(
+          r => r.tool_name === s.tool && r.subject_kind === s.subject_kind,
+        )
         driftsBySchema.value = { ...driftsBySchema.value, [key]: forTool }
       }))
     }
     if (needsDiff) {
       tasks.push(api.get(
-        `/schema-drift/schema/diff?agent=${encodeURIComponent(s.agent)}&tool=${encodeURIComponent(s.tool)}`,
+        `/schema-drift/schema/diff?${schemaQuery(s)}`,
       ).then(d => { diffBySchema.value = { ...diffBySchema.value, [key]: d } }))
     }
     await Promise.all(tasks)
@@ -132,14 +155,20 @@ async function toggleSchema(s) {
   }
 }
 
+// agent + tool + kind query shared by the schema and diff endpoints
+// (both default kind to 'tool' server-side, so hook rows must pass it).
+function schemaQuery(s) {
+  return new URLSearchParams({
+    agent: s.agent, tool: s.tool, kind: s.subject_kind,
+  }).toString()
+}
+
 async function setTab(s, tab) {
   const key = schemaKey(s)
   tabBySchema.value = { ...tabBySchema.value, [key]: tab }
   if (tab === 'diff' && !diffBySchema.value[key]) {
     try {
-      const d = await api.get(
-        `/schema-drift/schema/diff?agent=${encodeURIComponent(s.agent)}&tool=${encodeURIComponent(s.tool)}`,
-      )
+      const d = await api.get(`/schema-drift/schema/diff?${schemaQuery(s)}`)
       diffBySchema.value = { ...diffBySchema.value, [key]: d }
     } catch (e) {
       error.value = e.message || String(e)
@@ -194,7 +223,7 @@ async function discard(r) {
 }
 
 async function refreshOpenSchema(r) {
-  const key = `${r.agent}::${r.tool_name}`
+  const key = `${r.agent}::${r.subject_kind}::${r.tool_name}`
   // Invalidate every cached sub-doc so re-expand re-fetches schema +
   // drift list + diff (ratify mutated the overlay).
   delete driftsBySchema.value[key]
@@ -239,8 +268,8 @@ onMounted(loadSchemas)
         <div class="page-eyebrow">Diagnostics</div>
         <h1 class="page-title">Schema drift</h1>
         <p class="page-subtitle">
-          Live payload fields that don't appear in the published tool schema.
-          Ratify to add them to your local overlay.
+          Live payload fields that don't appear in the published schema — for
+          tool calls and hook events alike. Ratify to add them to your local overlay.
         </p>
       </div>
       <div class="page-actions">
@@ -256,6 +285,18 @@ onMounted(loadSchemas)
     <div v-if="!diagEnabled" class="banner banner-warn">
       <Badge color="yellow" label="off" />
       Diagnostics is off — no new drift will be recorded. Rows below are historical.
+    </div>
+
+    <div class="segmented kind-switch" role="tablist" aria-label="Subject kind">
+      <button
+        v-for="k in kindChips" :key="k.value"
+        type="button"
+        role="tab"
+        :aria-selected="kindFilter === k.value"
+        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
+        :class="{ 'is-active': kindFilter === k.value }"
+        @click="setKind(k.value)"
+      >{{ k.label }}</button>
     </div>
 
     <div class="kpi-grid">
@@ -289,7 +330,7 @@ onMounted(loadSchemas)
         <input
           type="search"
           class="input focus-visible:outline-2 focus-visible:outline-blue-500"
-          placeholder="Search tool name…"
+          :placeholder="kindFilter === 'hook_event' ? 'Search event name…' : 'Search tool name…'"
           v-model="search"
         />
       </div>
@@ -574,6 +615,12 @@ onMounted(loadSchemas)
 }
 .banner-warn { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
 .banner-error { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
+
+/* Kind switch (Tools | Hooks) — primary axis above the KPI strip. */
+.kind-switch {
+  display: inline-flex;
+  margin-bottom: 1rem;
+}
 
 /* Toolbar -------------------------------------------------------- */
 .toolbar-search .input { width: 18rem; max-width: 100%; }
