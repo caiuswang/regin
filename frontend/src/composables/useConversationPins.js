@@ -67,12 +67,25 @@ export function useConversationPins({ spans, resolveEl, getScroller, onPinExpand
     requestAnimationFrame(() => { programmaticScroll = false })
   }
 
-  function scrollToBottom(scroller) {
+  // Stick to the bottom. `retry` re-sticks over the next two frames: a large
+  // trailing span often finishes laying out AFTER this tick (markdown/diff/
+  // async-fetched content), growing scrollHeight without firing a scroll event
+  // — a single write would then land short of the true bottom. The
+  // programmatic latch is held across the retry frames so the re-sticks don't
+  // read as a user scroll and cancel follow-tail.
+  function scrollToBottom(scroller, { retry = false } = {}) {
     const s = scroller || getScroller()
     if (!s) return
     programmaticScroll = true
     s.scrollTop = s.scrollHeight
-    releaseProgrammatic()
+    if (!retry) { releaseProgrammatic(); return }
+    requestAnimationFrame(() => {
+      s.scrollTop = s.scrollHeight
+      requestAnimationFrame(() => {
+        s.scrollTop = s.scrollHeight
+        releaseProgrammatic()
+      })
+    })
   }
 
   // Re-seat the pinned row at its captured viewport top. Returns true if it had
@@ -80,6 +93,13 @@ export function useConversationPins({ spans, resolveEl, getScroller, onPinExpand
   // mutation because content above the pinned row (markdown/preview cards) often
   // finishes laying out AFTER the synchronous post-patch tick — a single
   // correction would then under-compensate.
+  //
+  // NOTE: in practice the browser's native scroll anchoring (the scroll
+  // container is at the default `overflow-anchor: auto`) already holds the
+  // pinned row in place, so `delta` is usually 0 and this is a no-op fallback.
+  // It's the safety net for cases native anchoring suppresses (anchor node
+  // removed/recreated by the reconcile). Don't set `overflow-anchor: none` on
+  // the scroller without re-verifying pin hold — that hands the whole job here.
   function restorePinnedAnchor() {
     if (followTail.value || !pinnedSpanId.value || anchorTop0 == null) return false
     const el = resolveEl(pinnedSpanId.value)
@@ -110,6 +130,18 @@ export function useConversationPins({ spans, resolveEl, getScroller, onPinExpand
 
   function disableFollow() { followTail.value = false }
 
+  // Native scroll anchoring (the scroller is at the default `overflow-anchor:
+  // auto`) holds a top-anchor and nudges scrollTop *up* when content is appended
+  // below. While following that backfires twice: it fights the stick-to-bottom,
+  // and the upward nudge reads as a move-away-from-bottom, cancelling follow.
+  // So disable anchoring on the scroller while following and restore it
+  // otherwise. Pin and follow are mutually exclusive, so this never strands pin
+  // (which DOES rely on native anchoring — see restorePinnedAnchor).
+  watch(followTail, (on) => {
+    const s = getScroller()
+    if (s) s.style.overflowAnchor = on ? 'none' : ''
+  })
+
   // Pre-patch: snapshot the pinned element's viewport top while the DOM still
   // reflects the OLD state.
   watch(spans, () => {
@@ -128,7 +160,7 @@ export function useConversationPins({ spans, resolveEl, getScroller, onPinExpand
 
     const scroller = getScroller()
     if (!scroller) return
-    if (followTail.value) { scrollToBottom(scroller); return }
+    if (followTail.value) { scrollToBottom(scroller, { retry: true }); return }
     if (!pinnedSpanId.value || anchorTop0 == null) return
     // Correct now, then again over the next two frames to absorb async layout
     // (markdown/preview cards above the pinned row settling late).
@@ -147,8 +179,19 @@ export function useConversationPins({ spans, resolveEl, getScroller, onPinExpand
     if (atBottom.value) newSinceScroll.value = 0
     if (!programmaticScroll && s.scrollTop !== prevScrollTop) {
       userHasScrolled = true
-      // A genuine upward user scroll cancels follow-tail.
-      if (followTail.value && s.scrollTop < prevScrollTop) followTail.value = false
+      // Only a genuine upward user scroll *away from the bottom* cancels
+      // follow-tail. While following you're always parked at/near the bottom,
+      // so every browser-induced scrollTop change (a shrink-clamp when content
+      // above shrinks, sub-pixel layout settling) keeps you at the bottom and
+      // must NOT drop follow — without this guard a <2px jitter silently
+      // disabled follow and the view stopped tracking the newest spans. Gating
+      // on `!atBottom.value` (computed just above) is what distinguishes those
+      // involuntary jitters from the user actually scrolling up to read back.
+      // (Native scroll anchoring, the other nudger, is disabled while
+      // following — see the followTail watch above.)
+      if (followTail.value && !atBottom.value && s.scrollTop < prevScrollTop) {
+        followTail.value = false
+      }
     }
     prevScrollTop = s.scrollTop
   }
@@ -165,7 +208,12 @@ export function useConversationPins({ spans, resolveEl, getScroller, onPinExpand
 
   onBeforeUnmount(() => {
     const s = getScroller()
-    if (s) s.removeEventListener('scroll', onScroll)
+    if (s) {
+      s.removeEventListener('scroll', onScroll)
+      // The scroller is owned by the parent layout and outlives this view —
+      // don't leave it stuck at `overflow-anchor: none` for the next view.
+      s.style.overflowAnchor = ''
+    }
   })
 
   return {
