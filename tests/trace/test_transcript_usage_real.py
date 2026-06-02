@@ -17,7 +17,7 @@ import pytest
 
 from lib.providers import get_active_provider
 from lib.trace.transcript_usage import read_usage
-from lib.tokens.model_windows import infer_window
+from lib.tokens.model_windows import infer_window, window_for, _table
 
 
 def _find_any_transcript() -> str | None:
@@ -66,22 +66,39 @@ def test_real_transcript_peak_is_reasonable(real_transcript):
     assert usage.peak_context_tokens <= total
 
 
-def test_real_transcript_peak_within_inferred_window(real_transcript):
-    """infer_window must auto-promote to the 1M variant when the
-    measured peak exceeds the base window. Claude Code's transcript
-    reports `message.model` as the base id (e.g. `claude-opus-4-7`)
-    even when the user is on the 1M extended-context variant — this
-    test is the canary for that elision.
+def test_real_transcript_inferred_window_follows_the_contract(real_transcript):
+    """infer_window's window resolution must match its documented contract on
+    a real transcript. Claude Code reports `message.model` as the base id
+    (e.g. `claude-opus-4-7`) even on the 1M extended-context variant, so this
+    is the canary for that elision: a base that overflows must promote to the
+    `[1m]` window when one exists.
 
-    If this asserts, either the model family in _WINDOWS is missing a
-    [1m] entry or Claude Code reported tokens that shouldn't count
-    toward context_used (unlikely but worth flagging)."""
+    Note we do NOT assert `peak <= window`: for a known model already at its
+    largest configured window, infer_window deliberately HOLDS the window when
+    peak overflows (the UI then shows >100%) rather than inflating the
+    denominator past a real size. So the invariant is "window equals the
+    configured/promoted size", not "peak fits inside it"."""
     usage = read_usage(real_transcript)
     assert usage is not None
-    window = infer_window(usage.model, usage.peak_context_tokens)
-    assert usage.peak_context_tokens <= window, (
-        f"peak {usage.peak_context_tokens} > inferred window {window} "
-        f"for model {usage.model} ({real_transcript})"
+    peak = usage.peak_context_tokens
+    window = infer_window(usage.model, peak)
+    assert window > 0, "window must be positive so the UI never divides by zero"
+
+    base = window_for(usage.model)
+    table = _table()
+    extended = table.get(f"{usage.model}[1m]", 0)
+    known = usage.model in table or usage.model.rsplit('-', 1)[0] in table
+    if peak <= base:
+        expected = base
+    elif extended > base:
+        expected = extended            # base overflowed; a [1m] variant exists
+    elif known:
+        expected = base                # known model at its cap — hold, show >100%
+    else:
+        expected = max(base, peak)     # unknown model — fall back to peak
+    assert window == expected, (
+        f"inferred window {window} != expected {expected} "
+        f"(peak {peak}, base {base}, model {usage.model}) — {real_transcript}"
     )
 
 
@@ -229,5 +246,9 @@ def test_real_transcript_end_to_end_ingest(real_transcript, tmp_path, monkeypatc
     assert cread == sum(t.cache_read_tokens for t in usable)
     assert ccreate == sum(t.cache_creation_tokens for t in usable)
     assert peak == max(t.context_used for t in usable)
-    assert window >= peak  # infer_window promotes to 1M if peak overflows
+    # The stored window must match what infer_window computes for this
+    # model+peak. We assert that equality, NOT `window >= peak`: a known model
+    # that overflows its largest configured window holds the window (the UI
+    # shows >100%) instead of inflating the denominator, so peak may exceed it.
+    assert window == infer_window(model, peak)
     assert isinstance(model, str) and model
