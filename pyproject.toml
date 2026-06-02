@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "regin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pattern reference system for AI Agents — syncs and indexes best-practice code patterns from configured source repos"
 requires-python = ">=3.10"
 dependencies = [
