@@ -1122,13 +1122,19 @@ def _flat_agent_span(run_ref: RunRef, parent_id: str, agent_id: str,
     path = run_ref.agents_dir / f"agent-{agent_id}.jsonl"
     usage = read_usage(str(path), max_text_bytes=0) if path.exists() else None
     meta = _read_json(run_ref.agents_dir / f"agent-{agent_id}.meta.json") or {}
+    # Store the FULL result (not just a preview) so the RESULT card can offer
+    # "Show full" — mirrors `_full_agent_spans`. The journal carries the whole
+    # result for a done agent; previewing it without keeping the full text left
+    # the live path's RESULT card permanently trimmed at the preview cap.
+    result_full = _result_text(results.get(agent_id))
     return _span(
         run_ref.run_id, f"wfagent-{run_ref.run_id}-{agent_id}", "subagent.start",
         parent_id=parent_id, start_time=start,
         attrs={"agent_id": agent_id, "agent_type": meta.get("agentType"),
                "label": label, "agent_name": label, "phase_title": phase_title,
                "state": "done" if agent_id in results else "running",
-               "result_preview": _preview(results.get(agent_id)),
+               "result_full": result_full,
+               "result_preview": _preview(result_full),
                "tokens": usage.output_tokens if usage else None},
         is_test=is_test)
 

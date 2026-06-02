@@ -208,6 +208,13 @@ def test_build_flat_spans_agent_state_and_tokens(tmp_path):
     assert agents["aBBB"]["attributes"]["state"] == "running"   # started, no result
     # live token total comes from the transcript (20 + 30 = 50 per agent)
     assert agents["aAAA"]["attributes"]["tokens"] == 50
+    # the live path stores the FULL result (not just a preview), matching the
+    # completion path, so the RESULT card can offer "Show full" instead of being
+    # permanently trimmed at the preview cap.
+    assert agents["aAAA"]["attributes"]["result_full"] == '{"ok":true}'
+    assert agents["aAAA"]["attributes"]["result_preview"] == '{"ok":true}'
+    # an un-finished agent has no result yet — neither field is stamped.
+    assert agents["aBBB"]["attributes"].get("result_full") is None
 
 
 def test_build_flat_spans_expands_live_agent_turns(tmp_path):
