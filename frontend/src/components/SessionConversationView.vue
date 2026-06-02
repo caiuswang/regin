@@ -1,11 +1,12 @@
 <script setup>
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
 import MarkdownContent from './MarkdownContent.vue'
 import PromptBody from './PromptBody.vue'
 import DiffBlock from './DiffBlock.vue'
 import { useFlash } from '../composables/useFlash.js'
 import { useSpanTree } from '../composables/useSpanTree.js'
 import { useStickyMaxHeight } from '../composables/useStickyMaxHeight.js'
+import { useConversationPins } from '../composables/useConversationPins.js'
 import {
   fmtTime, fmtClock, fmtDuration, fmtTokens, fmtModel, fmtBytes, truncate,
   toolDisplayName, toolFilePath, ruleCheckOneLiner, fullLabel, mcpParts,
@@ -173,6 +174,48 @@ const {
   hasPhaseSpans, phasePlan,
 } = useSpanTree(() => props.spans, () => props.turns)
 
+// ── Pin a span / follow tail ──────────────────────────────────
+// Pin holds a chosen span at its on-screen position across the live poll;
+// follow-tail auto-sticks to the newest span like a terminal. Mechanics live in
+// useConversationPins; here we just supply the DOM hooks it needs.
+function resolvePinEl(spanId) {
+  return spanRefs.value.get(spanId)
+    || promptRefs.value.get(spanId)
+    || standaloneRefs.value.get(spanId)
+    || null
+}
+function getConversationScroller() {
+  return document.querySelector('.content-scroll')
+    || document.scrollingElement
+    || document.documentElement
+}
+// Force-expand the prompt/agent that owns a freshly-pinned span so the auto-fold
+// watcher can't collapse the pinned row out of the DOM (then there'd be nothing
+// to anchor to). Pairs with the `promptOwnsPinned` guard in that watcher.
+function ensurePinVisible(spanId) {
+  const owner = promptGroups.value.find(g =>
+    g.prompt.span_id === spanId || g.descendants.some(d => d.span.span_id === spanId))
+  if (owner && !isPromptExpanded(owner.prompt.span_id)) togglePromptExpanded(owner.prompt.span_id, true)
+  const agentId = agentAncestorId(spanId)
+  if (agentId && !isAgentExpanded(agentId)) toggleAgentExpanded(agentId)
+}
+function promptOwnsPinned(promptId) {
+  const pid = pinnedSpanId.value
+  if (!pid) return false
+  if (promptId === pid) return true
+  const g = promptGroups.value.find(g => g.prompt.span_id === promptId)
+  return !!g && g.descendants.some(d => d.span.span_id === pid)
+}
+const {
+  pinnedSpanId, followTail, atBottom, newSinceScroll,
+  isPinnable, togglePin, enableFollow, disableFollow,
+} = useConversationPins({
+  spans: () => props.spans,
+  resolveEl: resolvePinEl,
+  getScroller: getConversationScroller,
+  onPinExpand: ensurePinVisible,
+})
+
 // ── Subagent launch merge ─────────────────────────────────────
 // `tool.Agent` (the launch — carries description + prompt) and
 // `subagent.start` (the run) are separate spans sharing no id. Fold the
@@ -317,7 +360,9 @@ watch(promptGroups, (groups) => {
   if (!groups.length) return
   const latest = groups[groups.length - 1].prompt
   if (lastAutoExpandedId.value === latest.span_id) return
-  if (lastAutoExpandedId.value) {
+  // Don't auto-fold the turn that owns a pinned span — the pinned row must stay
+  // mounted for the scroll anchor to track it.
+  if (lastAutoExpandedId.value && !promptOwnsPinned(lastAutoExpandedId.value)) {
     expandedPromptIds.value.delete(lastAutoExpandedId.value)
   }
   expandedPromptIds.value.add(latest.span_id)
@@ -845,10 +890,22 @@ function onRowClick(span) {
         >
           <!-- USER prompt card (purple tint) -->
           <div
-            class="group rounded-md border bg-purple-50 border-purple-200 px-3 py-2 cursor-pointer hover:border-purple-300 transition-colors"
-            :class="selectedSpan && selectedSpan.span_id === entry.prompt.span_id ? 'ring-2 ring-purple-300' : ''"
+            class="group relative rounded-md border bg-purple-50 border-purple-200 px-3 py-2 cursor-pointer hover:border-purple-300 transition-colors"
+            :class="[
+              selectedSpan && selectedSpan.span_id === entry.prompt.span_id ? 'ring-2 ring-purple-300' : '',
+              pinnedSpanId === entry.prompt.span_id ? 'ring-2 ring-amber-400' : '',
+            ]"
             @click="onPromptClick(entry.prompt)"
           >
+            <button
+              v-if="isPinnable(entry.prompt)"
+              type="button"
+              class="absolute -left-4 top-1.5 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
+              :class="pinnedSpanId === entry.prompt.span_id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 grayscale'"
+              :title="pinnedSpanId === entry.prompt.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
+              :aria-pressed="pinnedSpanId === entry.prompt.span_id"
+              @click.stop="togglePin(entry.prompt.span_id)"
+            >📌</button>
             <div class="flex items-center gap-2 text-[11px] font-mono text-purple-700/80 mb-0.5">
               <span class="font-semibold uppercase tracking-wider text-[10px]">USER</span>
               <span class="text-purple-300">·</span>
@@ -934,11 +991,22 @@ function onRowClick(span) {
             <template v-for="{ span, inAgent, agentSep } in renderableDescendants(entry)" :key="span.span_id">
               <div
                 :ref="(el) => { if (el) spanRefs.set(span.span_id, el); else spanRefs.delete(span.span_id) }"
+                class="relative group/pin"
                 :class="[
                   inAgent ? 'border-l-2 border-pink-300 ml-1.5 pl-2.5' : '',
                   agentSep ? 'border-t-2 border-slate-200 mt-6 pt-5' : '',
+                  pinnedSpanId === span.span_id ? 'rounded-md ring-2 ring-amber-400' : '',
                 ]"
               >
+              <button
+                v-if="isPinnable(span)"
+                type="button"
+                class="absolute -left-4 top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
+                :class="pinnedSpanId === span.span_id ? 'opacity-100' : 'opacity-0 group-hover/pin:opacity-100 grayscale'"
+                :title="pinnedSpanId === span.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
+                :aria-pressed="pinnedSpanId === span.span_id"
+                @click.stop="togglePin(span.span_id)"
+              >📌</button>
               <!-- Background-task notification card (amber tint) -->
               <div
                 v-if="span.name === 'task.notification'"
@@ -1846,9 +1914,19 @@ function onRowClick(span) {
         <div
           v-else
           :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
-          class="flex items-center gap-2 text-xs text-slate-500 px-2 py-1 rounded cursor-pointer hover:bg-slate-50"
+          class="relative group/pin flex items-center gap-2 text-xs text-slate-500 px-2 py-1 rounded cursor-pointer hover:bg-slate-50"
+          :class="pinnedSpanId === entry.span.span_id ? 'ring-2 ring-amber-400' : ''"
           @click="onSelectSpan(entry.span)"
         >
+          <button
+            v-if="isPinnable(entry.span)"
+            type="button"
+            class="absolute -left-4 top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
+            :class="pinnedSpanId === entry.span.span_id ? 'opacity-100' : 'opacity-0 group-hover/pin:opacity-100 grayscale'"
+            :title="pinnedSpanId === entry.span.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
+            :aria-pressed="pinnedSpanId === entry.span.span_id"
+            @click.stop="togglePin(entry.span.span_id)"
+          >📌</button>
           <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(entry.span.name)"></span>
           <span class="font-mono text-[11px]">{{ fmtClock(entry.span.start_time) }}</span>
           <span class="break-words">{{ fullLabel(entry.span) }}</span>
@@ -1860,6 +1938,28 @@ function onRowClick(span) {
         No events recorded for this session.
       </div>
     </div>
+
+    <!-- Follow-tail pill: terminal-style stick-to-newest. Hidden once you're
+         already parked at the bottom and not following; while scrolled up it
+         surfaces a count of spans that arrived since. Clicking snaps to the
+         newest activity and keeps it glued across the live poll. -->
+    <button
+      v-if="followTail || !atBottom"
+      type="button"
+      class="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-lg transition-colors focus-visible:outline-2 focus-visible:outline-orange-400"
+      :class="followTail
+        ? 'bg-orange-500 border-orange-600 text-white hover:bg-orange-600'
+        : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'"
+      :title="followTail ? 'Stop following the latest activity' : 'Jump to and follow the latest activity'"
+      @click="followTail ? disableFollow() : enableFollow()"
+    >
+      <span aria-hidden="true">⤓</span>
+      <span>{{ followTail ? 'Following' : 'Follow latest' }}</span>
+      <span
+        v-if="!followTail && newSinceScroll > 0"
+        class="inline-flex items-center justify-center min-w-[1rem] h-4 px-1 rounded-full bg-orange-500 text-white text-[10px] tabular-nums"
+      >{{ newSinceScroll > 99 ? '99+' : newSinceScroll }}</span>
+    </button>
 
   </div>
 </template>
