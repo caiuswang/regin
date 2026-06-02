@@ -56,18 +56,31 @@ function runSpans() {
 }
 
 // The launching session: a prompt with a `tool.Workflow` call pointing at the
-// run. Holds NO workflow detail spans — the summary is computed server-side.
+// run, plus the workflow runtime's `subagent.start` markers — Claude Code fires
+// SubagentStart into the launching session for every workflow agent, and ingest
+// re-parents those markers under the tool.Workflow span. The conversation view
+// folds them behind the workflow card (the run's full detail lives in its own
+// wf_ session). The per-tool/per-turn activity is intentionally absent: the
+// trace hook gate drops it for agent_type='workflow-subagent'.
 function parentSpans(runId) {
   const traceId = randomUUID()
   const prompt = `p-${traceId.slice(0, 8)}`
+  const wfSpan = `wf-${traceId.slice(0, 8)}`
+  const marker = (id) => ({
+    trace_id: traceId, span_id: `sa-${id}`, parent_id: wfSpan,
+    name: 'subagent.start', start_time: T,
+    attributes: { agent_id: id, agent_type: 'workflow-subagent', is_test: true },
+  })
   return {
     traceId,
     spans: [
       { trace_id: traceId, span_id: prompt, parent_id: null, name: 'prompt',
         start_time: T, attributes: { text: 'kick off a review workflow', is_test: true } },
-      { trace_id: traceId, span_id: `wf-${traceId.slice(0, 8)}`, parent_id: prompt,
+      { trace_id: traceId, span_id: wfSpan, parent_id: prompt,
         name: 'tool.Workflow', start_time: T,
         attributes: { workflow_name: 'review-diff', workflow_run_id: runId, is_test: true } },
+      marker('mk-a'),
+      marker('mk-b'),
     ],
   }
 }
@@ -178,4 +191,25 @@ test('parent session shows a rich collapsed workflow summary node', async ({ pag
   await expect(page.getByRole('link', { name: 'view run →' }).first()).toBeVisible()
 
   await page.screenshot({ path: '/tmp/wf-fold-parent.png', fullPage: false })
+})
+
+test('parent session folds workflow subagent markers behind the card', async ({ page }) => {
+  const { runId, spans } = runSpans()
+  expect((await page.request.post('/api/session-spans', { data: spans })).ok()).toBeTruthy()
+  const { traceId, spans: pSpans } = parentSpans(runId)
+  expect((await page.request.post('/api/session-spans', { data: pSpans })).ok()).toBeTruthy()
+
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_session_view_mode', 'conversation')
+  })
+  await page.goto(`/trace/sessions/${traceId}`)
+
+  await expect(page.getByText('⚙ Workflow').first()).toBeVisible({ timeout: 10_000 })
+  // The two re-parented markers are folded away by default (not in the spine).
+  await expect(page.getByText(/workflow-subagent/)).toHaveCount(0)
+  // The fold chevron reports the marker count and reveals them on click.
+  const chevron = page.getByTitle(/Expand 2 agent markers/)
+  await expect(chevron).toBeVisible()
+  await chevron.click()
+  await expect(page.getByText(/workflow-subagent/)).toHaveCount(2)
 })

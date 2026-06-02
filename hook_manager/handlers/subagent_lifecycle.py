@@ -35,10 +35,16 @@ def handle_stop(payload: HookPayload) -> HookResponse | None:
         _emit_span(payload, 'subagent.stop')
     except Exception:
         pass
-    try:
-        _emit_subagent_responses(payload)
-    except Exception:
-        pass
+    # Workflow-tool subagents are captured in full as the run's own wf_ session
+    # (lib.trace.workflow_ingest reads their transcripts from disk). Mirroring
+    # their turns here too would duplicate the whole run into the launching
+    # conversation, so keep only the lightweight start/stop markers and skip the
+    # response replay (see HookPayload.is_workflow_subagent).
+    if not payload.is_workflow_subagent:
+        try:
+            _emit_subagent_responses(payload)
+        except Exception:
+            pass
     return HookResponse(suppress_output=True)
 
 

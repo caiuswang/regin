@@ -72,6 +72,23 @@ function toggleAgentExpanded(spanId) {
   else { next.add(spanId); emit('load-subtree', spanId) }
   expandedAgents.value = next
 }
+// A `tool.Workflow` launch folds its whole subtree (the run's re-parented
+// `subagent.start` markers — there can be dozens) behind the single workflow
+// card, collapsed by default. The full run lives in its own wf_ session, which
+// the card deep-links to; expanding here just reveals the marker list inline.
+const expandedWorkflows = ref(new Set())
+function isWorkflowExpanded(spanId) { return expandedWorkflows.value.has(spanId) }
+function toggleWorkflowExpanded(spanId) {
+  const next = new Set(expandedWorkflows.value)
+  if (next.has(spanId)) next.delete(spanId)
+  else { next.add(spanId); emit('load-subtree', spanId) }
+  expandedWorkflows.value = next
+}
+// Number of re-parented `subagent.start` markers under a `tool.Workflow` span,
+// for the card's "(N agents)" fold affordance.
+function workflowAgentCount(spanId) {
+  return childrenOf(spanId).filter((s) => s.name === 'subagent.start').length
+}
 // Every foldable agent span_id, in spine order — backs the expand-all /
 // collapse-all control and the all-expanded check. Only agents that actually
 // have captured descendants are foldable; many session `tool.Agent` launches
@@ -263,7 +280,22 @@ function renderableDescendants(entry) {
   // or regular `tool.Agent` fan-out alike.
   const visible = []
   let collapsing = false
+  let collapsingWorkflow = false
   for (const d of base) {
+    // Workflow fold takes precedence: a collapsed `tool.Workflow` hides its
+    // entire subtree (the re-parented agent markers + any of their turns)
+    // behind the single workflow card. Keep the card row itself.
+    if (d.span.name === 'tool.Workflow') {
+      collapsingWorkflow = !isWorkflowExpanded(d.span.span_id)
+      collapsing = false
+      visible.push(d)
+      continue
+    }
+    if (d.inWorkflow) {
+      if (collapsingWorkflow) continue
+    } else {
+      collapsingWorkflow = false
+    }
     if (d.span.name === 'subagent.start') {
       collapsing = !isAgentExpanded(d.span.span_id)
       visible.push(d)
@@ -1730,7 +1762,16 @@ function onRowClick(span) {
                 :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-emerald-50' : ''"
                 @click="onSelectSpan(span); maybeFetchContent(span)"
               >
-                <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-500"></span>
+                <!-- Fold the run's re-parented agent markers behind the card
+                     (collapsed by default; the full run is in its wf_ session). -->
+                <button
+                  v-if="workflowAgentCount(span.span_id)"
+                  type="button"
+                  class="shrink-0 text-slate-400 hover:text-emerald-700 focus-visible:outline-2 focus-visible:outline-emerald-500 rounded"
+                  :title="isWorkflowExpanded(span.span_id) ? 'Collapse agents' : `Expand ${workflowAgentCount(span.span_id)} agent markers`"
+                  @click.stop="toggleWorkflowExpanded(span.span_id)"
+                >{{ isWorkflowExpanded(span.span_id) ? '▾' : '▸' }}</button>
+                <span v-else class="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-500"></span>
                 <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
                 <span class="font-medium text-emerald-700 shrink-0">⚙ Workflow</span>
                 <span

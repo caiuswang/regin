@@ -35,6 +35,12 @@ def handle(payload: HookPayload) -> HookResponse | None:
     tool = payload.tool_name
     if not tool or not _should_emit_pending(tool):
         return None
+    # Workflow-tool subagents fire PreToolUse into the launching session; their
+    # in-flight cards belong to the run's own wf_ session, not here (see
+    # HookPayload.is_workflow_subagent). Skip so they don't leave stale PENDING
+    # placeholders flooding the launching conversation.
+    if payload.is_workflow_subagent:
+        return None
     tu_id = (payload.raw or {}).get('tool_use_id')
     if not isinstance(tu_id, str) or not tu_id:
         return None

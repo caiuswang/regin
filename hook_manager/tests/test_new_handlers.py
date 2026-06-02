@@ -12,6 +12,9 @@ import pytest
 from hook_manager.core import HookPayload
 from hook_manager.handlers import (
     compact_lifecycle,
+    post_tool_failure,
+    post_tool_trace,
+    pre_tool_trace,
     subagent_lifecycle,
     task_lifecycle,
 )
@@ -194,6 +197,64 @@ def test_subagent_stop_no_path_or_unreadable_is_safe(captured_spans, tmp_path):
         agent_transcript_path=str(tmp_path / 'missing.jsonl')))
     names = [s.get('name') for s in captured_spans]
     assert names.count('subagent.stop') == 2
+    assert 'assistant_response' not in names
+
+
+# ── workflow-subagent gate ────────────────────────────────────────────
+# A background Workflow run fires the FULL hook suite into the LAUNCHING
+# session for every one of its agents (all tagged agent_type='workflow-subagent').
+# That run is captured independently as its own wf_ session, so re-recording the
+# tool/turn activity off these hooks just duplicates it and floods the launching
+# conversation. The trace handlers gate on HookPayload.is_workflow_subagent:
+# tool/turn emission is dropped, the lightweight start/stop markers survive.
+
+def test_post_tool_trace_skips_workflow_subagent(captured_spans):
+    post_tool_trace.handle(_p('PostToolUse', session_id='s1', tool_name='WebFetch',
+                              agent_id='aWF', agent_type='workflow-subagent',
+                              tool_input={'url': 'https://x'}))
+    assert captured_spans == []
+
+
+def test_pre_tool_trace_skips_workflow_subagent(captured_spans):
+    pre_tool_trace.handle(_p('PreToolUse', session_id='s1', tool_name='WebFetch',
+                             agent_id='aWF', agent_type='workflow-subagent',
+                             tool_use_id='toolu_x'))
+    assert captured_spans == []
+
+
+def test_post_tool_failure_skips_workflow_subagent(captured_spans):
+    r = post_tool_failure.handle(_p('PostToolUseFailure', session_id='s1',
+                                    tool_name='Read', agent_id='aWF',
+                                    agent_type='workflow-subagent',
+                                    error='boom'))
+    assert captured_spans == []
+    assert r.suppress_output is True
+    assert r.additional_context is None  # no model-facing failure hint either
+
+
+def test_normal_subagent_tool_still_emitted(captured_spans):
+    # A real Task subagent (agent_type='Explore') is NOT gated — its tool span
+    # must still land so the projection can nest it under its subagent.start.
+    post_tool_trace.handle(_p('PostToolUse', session_id='s1', tool_name='Read',
+                              agent_id='aReal', agent_type='Explore',
+                              tool_input={'file_path': '/x'}))
+    assert [s['name'] for s in captured_spans] == ['tool.Read']
+    assert captured_spans[0]['attributes']['agent_id'] == 'aReal'
+
+
+def test_subagent_stop_workflow_keeps_marker_skips_responses(captured_spans, tmp_path):
+    # The workflow-subagent's transcript exists and has turns, but the response
+    # mirror is skipped; only the subagent.stop marker survives.
+    transcript = tmp_path / 'agent.jsonl'
+    _write_jsonl(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        _subagent_assistant(text='workflow agent output', uuid='sa-wf-uuid-xyz999'),
+    ])
+    subagent_lifecycle.handle_stop(_p('SubagentStop',
+        session_id='parent-sid', agent_id='aWF', agent_type='workflow-subagent',
+        agent_transcript_path=str(transcript)))
+    names = [s.get('name') for s in captured_spans]
+    assert 'subagent.stop' in names
     assert 'assistant_response' not in names
 
 

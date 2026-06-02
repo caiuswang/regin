@@ -19,6 +19,10 @@ import re
 # event registered in REGISTRY is a real spec event, and so unknown events
 # from stdin can be flagged.
 
+# agent_type Claude Code stamps on every hook event fired by a Workflow-tool
+# subagent. See HookPayload.is_workflow_subagent.
+WORKFLOW_SUBAGENT_TYPE = 'workflow-subagent'
+
 SPEC_EVENTS: frozenset[str] = frozenset({
     'Setup',
     'SessionStart',
@@ -90,6 +94,25 @@ class HookPayload:
     def resolved_provider(self):
         from lib.providers.registry import resolve_provider
         return resolve_provider(self.raw)
+
+    @property
+    def is_workflow_subagent(self) -> bool:
+        """True when this event was fired by a Claude Code Workflow-tool
+        subagent.
+
+        The background dynamic-workflow runtime fires the FULL hook suite
+        (PreToolUse/PostToolUse/PostToolUseFailure/SubagentStart/SubagentStop)
+        into the *launching* session for every one of its agents, each tagged
+        ``agent_type='workflow-subagent'``. Those runs are captured
+        independently as their own ``wf_`` session by
+        `lib.trace.workflow_ingest` from on-disk artifacts, so re-recording
+        their per-tool / per-turn activity off these hooks just duplicates the
+        whole run and floods the launching session's conversation view. Trace
+        handlers use this to skip emission (keeping only the lightweight
+        ``subagent.start``/``subagent.stop`` markers)."""
+        raw = self.raw or {}
+        agent_type = raw.get('subagent_type') or raw.get('agent_type')
+        return agent_type == WORKFLOW_SUBAGENT_TYPE
 
     @classmethod
     def from_stdin_json(cls, event_hint: str, data: dict) -> 'HookPayload':

@@ -21,17 +21,31 @@ the real span for the same prompt/tool/permission. Reconciling that race
 is the entire reason for **append-only storage + a read-time merge**
 (`lib/trace/merge.py`, then projection).
 
-Workflow runs have **one source with an authority gradient**: a server-side
+Workflow runs are **captured from one authoritative source**: a server-side
 poller (`lib/trace/workflow_ingest.py`, started as a daemon by
 `cli/commands/server.py`) reads on-disk artifacts a workflow run leaves
 under the session's `subagents/workflows/<run_id>/` directory — an append
-journal while live, a manifest once paused/complete. No hook emits workflow
-subagent spans; the only hook involvement is `post_tool_trace` stamping the
-launched `workflow_run_id` onto the parent's `tool.Workflow` span so the two
-sessions can be cross-linked. With a single source and **deterministic span
-IDs**, the poller rebuilds a run's spans wholesale (clear + reinsert) on
-each change. The rebuild is idempotent, so there is no duplicate-row race
-and nothing for a merge layer to reconcile.
+journal while live, a manifest once paused/complete. With a single source and
+**deterministic span IDs**, the poller rebuilds a run's spans wholesale (clear
++ reinsert) on each change. The rebuild is idempotent, so there is no
+duplicate-row race and nothing for a merge layer to reconcile.
+
+> **Gate: the workflow runtime also fires the full hook suite — we drop it.**
+> The Claude Code Workflow runtime fires PreToolUse / PostToolUse /
+> PostToolUseFailure / SubagentStart / SubagentStop into the **launching**
+> session for *every* workflow-subagent, each tagged
+> `agent_type='workflow-subagent'`. Recording those would duplicate the entire
+> run into the launching session (one deep-research run ≈ 1,350 spans) and
+> flood its conversation view. So the trace hook handlers gate on
+> `HookPayload.is_workflow_subagent`: the tool/turn handlers
+> (`pre_tool_trace`, `post_tool_trace`, `post_tool_failure`) and the
+> `subagent_lifecycle` assistant-response mirror **skip emission**, leaving only
+> the lightweight `subagent.start`/`subagent.stop` markers (re-parented under
+> the `tool.Workflow` span, folded behind the workflow card in the conversation
+> view). The authoritative per-agent detail lives only in the run's own `wf_`
+> session. The one positive hook involvement is `post_tool_trace` stamping the
+> launched `workflow_run_id` onto the parent's `tool.Workflow` span so the two
+> sessions can be cross-linked.
 
 ## Diagram — session traces (two sources → merge)
 

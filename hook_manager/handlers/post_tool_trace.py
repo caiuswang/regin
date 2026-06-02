@@ -467,6 +467,11 @@ _TOOL_BUILDERS: dict = {
 def handle(payload: HookPayload) -> HookResponse | None:
     if not payload.tool_name:
         return None
+    # Workflow-tool subagents fire PostToolUse into the launching session, but
+    # their activity is captured as the run's own wf_ session — skip to avoid
+    # flooding the launching conversation (see HookPayload.is_workflow_subagent).
+    if payload.is_workflow_subagent:
+        return HookResponse(suppress_output=True)
     try:
         _emit_span(payload)
     except Exception:

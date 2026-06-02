@@ -100,16 +100,21 @@ export function useSpanTree(spansInput, turnsInput = null) {
   // `inAgent` marks every row that lives inside a subagent's subtree (anything
   // below a `subagent.start`), so the conversation spine can draw a grouping
   // rail and the reader can tell a subagent's spans apart from the main thread.
-  // Once set it propagates to all deeper descendants (incl. nested subagents).
-  function flattenDescendants(spanId, depth = 0, inAgent = false) {
+  // `inWorkflow` marks rows below a `tool.Workflow` launch — a background
+  // workflow run leaves dozens of `subagent.start` markers in the launching
+  // session (re-parented under the tool call), so the spine folds that whole
+  // subtree behind the single workflow card. Both flags propagate to all deeper
+  // descendants (incl. nested subagents).
+  function flattenDescendants(spanId, depth = 0, inAgent = false, inWorkflow = false) {
     const children = childrenOf(spanId)
     const result = []
     for (const child of children) {
-      result.push({ span: child, depth, inAgent })
+      result.push({ span: child, depth, inAgent, inWorkflow })
       const grandchildren = childrenOf(child.span_id)
       if (grandchildren.length) {
         const childInAgent = inAgent || child.name === 'subagent.start'
-        result.push(...flattenDescendants(child.span_id, depth + 1, childInAgent))
+        const childInWorkflow = inWorkflow || child.name === 'tool.Workflow'
+        result.push(...flattenDescendants(child.span_id, depth + 1, childInAgent, childInWorkflow))
       }
     }
     return result

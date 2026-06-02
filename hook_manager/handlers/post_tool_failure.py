@@ -22,6 +22,12 @@ _CONTEXT_PREVIEW_MAX = 200
 
 
 def handle(payload: HookPayload) -> HookResponse | None:
+    # Workflow-tool subagents fire PostToolUseFailure into the launching
+    # session; the failure is captured in the run's own wf_ session, so skip
+    # both the span and the model-facing context (see
+    # HookPayload.is_workflow_subagent).
+    if payload.is_workflow_subagent:
+        return HookResponse(suppress_output=True)
     tool = payload.tool_name or 'unknown'
     err = (payload.raw.get('error') or '').strip()
     stored_err = err[:_ERROR_MAX]
