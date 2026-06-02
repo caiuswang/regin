@@ -1,11 +1,11 @@
-"""release schema update — session origin axis + hook subject_kind axis.
+"""release schema update — session origin + hook subject_kind + span source.
 
 Revision ID: 0002
 Revises: 0001
 Create Date: 2026-05-31
 
 This single revision carries a deployed v0.1.0 database forward to the
-current release in one step. It folds together two orthogonal schema
+v0.2.0 release in one step. It folds together three orthogonal schema
 changes so the DB is updated exactly once per release:
 
 1. ``sessions.origin`` — split the overloaded ``agent_type``.
@@ -31,6 +31,20 @@ changes so the DB is updated exactly once per release:
    (full copy). Existing rows backfill to ``subject_kind='tool'`` via the
    column ``server_default``, preserving the existing tool path
    byte-for-byte.
+
+3. ``session_spans.source`` — which capture source wrote the row: 'hook'
+   (live hook events: tool timing, permissions, skill reads, the
+   in-flight prompt placeholder) or 'transcript' (the transcript scan:
+   prompt anchors, assistant_response/thinking, local commands). Lands
+   alongside the capture refactor that makes ``session_spans``
+   append-only — the two sources no longer mutate each other's rows at
+   ingest; both coexist and a pure serve-time merge
+   (``lib/trace/merge.py``) selects winners. ``source`` is the
+   audit/debug discriminator for that split (the merge keys on
+   span_id/name, so it is not load-bearing for correctness). Backfill:
+   transcript-minted rows carry deterministic id prefixes (``prompt-``,
+   ``resp-``, ``think-``, ``cmd-``) → 'transcript'; everything else
+   defaults to 'hook'.
 
 The canonical final shape lives in ``db/schema.sql``; fresh installs run
 that directly and never touch this revision.
@@ -137,7 +151,8 @@ def _rebuild_table(create_ddl: str, copy_cols: str) -> None:
 
 
 def upgrade() -> None:
-    """Add ``sessions.origin`` and ``payload_schema_drift.subject_kind``."""
+    """Add the three release columns: ``sessions.origin``,
+    ``payload_schema_drift.subject_kind``, ``session_spans.source``."""
     # 1. sessions.origin axis + backfill the old overloaded workflow rows.
     op.add_column(
         "sessions",
@@ -156,9 +171,23 @@ def upgrade() -> None:
         "ON payload_schema_drift(subject_kind)"
     )
 
+    # 3. session_spans.source axis + backfill transcript-derived rows.
+    op.add_column(
+        "session_spans",
+        sa.Column("source", sa.Text(), nullable=False, server_default="hook"),
+    )
+    op.execute(
+        "UPDATE session_spans SET source='transcript' WHERE "
+        "span_id LIKE 'prompt-%' OR span_id LIKE 'resp-%' OR "
+        "span_id LIKE 'think-%' OR span_id LIKE 'cmd-%'"
+    )
+
 
 def downgrade() -> None:
-    """Reverse both axes (the agent_type backfill is not reversed)."""
+    """Reverse all three axes (the agent_type backfill is not reversed)."""
+    # 3. drop the session_spans.source column.
+    op.drop_column("session_spans", "source")
+
     # 2. revert payload_schema_drift to the 5-tuple constraint.
     op.execute("DROP INDEX IF EXISTS ix_payload_schema_drift_kind")
     _rebuild_table(_OLD_DDL, _CARRIED_COLS)
