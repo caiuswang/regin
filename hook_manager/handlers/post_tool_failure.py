@@ -45,6 +45,37 @@ def handle(payload: HookPayload) -> HookResponse | None:
     )
 
 
+def _capture_bash(attrs: dict, tool_input: dict) -> None:
+    """Carry the failed Bash command onto the span (preview always; full,
+    truncated body only when it overflows) — mirrors post_tool_trace so a
+    failure row renders with the same command context a success would."""
+    cmd_full = (tool_input or {}).get('command') or ''
+    if not (isinstance(cmd_full, str) and cmd_full):
+        return
+    attrs['command_preview'] = post_tool_trace._bash_preview(tool_input)
+    if len(cmd_full) > post_tool_trace._PREVIEW_MAX:
+        cmd_stored = cmd_full[:post_tool_trace._BASH_COMMAND_MAX]
+        attrs['command'] = cmd_stored
+        cmd_dropped = len(cmd_full) - len(cmd_stored)
+        if cmd_dropped:
+            attrs['command_truncated_bytes'] = cmd_dropped
+
+
+def _tag_subagent(attrs: dict, raw: dict) -> None:
+    """Persist the subagent's `agent_id` (+ optional `agent_type`) onto the
+    failure span — exactly as the success path (post_tool_trace._emit_span)
+    does. Without it a failed call made inside a subagent has no `agent_id`,
+    so the trace projection can't re-parent it under the matching
+    `subagent.start` and it renders adrift, flat under the main prompt."""
+    agent_id = raw.get('agent_id')
+    if not agent_id:
+        return
+    attrs['agent_id'] = agent_id
+    agent_type = raw.get('agent_type')
+    if agent_type:
+        attrs['agent_type'] = agent_type
+
+
 def _emit_span(payload: HookPayload, tool: str, error: str, error_dropped: int, interrupt: bool) -> None:
     from lib.hook_plugin import post_span  # type: ignore
     tool_input = payload.tool_input or {}
@@ -69,15 +100,8 @@ def _emit_span(payload: HookPayload, tool: str, error: str, error_dropped: int, 
     if fp:
         attrs['file_path'] = fp
     if tool == 'Bash':
-        cmd_full = (tool_input or {}).get('command') or ''
-        if isinstance(cmd_full, str) and cmd_full:
-            attrs['command_preview'] = post_tool_trace._bash_preview(tool_input)
-            if len(cmd_full) > post_tool_trace._PREVIEW_MAX:
-                cmd_stored = cmd_full[:post_tool_trace._BASH_COMMAND_MAX]
-                attrs['command'] = cmd_stored
-                cmd_dropped = len(cmd_full) - len(cmd_stored)
-                if cmd_dropped:
-                    attrs['command_truncated_bytes'] = cmd_dropped
+        _capture_bash(attrs, tool_input)
+    _tag_subagent(attrs, payload.raw or {})
     post_span(
         trace_id=payload.session_id,
         name='tool.failure',

@@ -781,13 +781,16 @@ def _tool_spans(run_id: str, parent_id: str, agent_id: str, turn_idx: int,
                 tool_outputs: dict, is_test: bool) -> list[dict]:
     """``tool.<name>`` spans for one turn, with full label/render attributes.
 
-    Skips ``StructuredOutput`` — that call *is* the agent's result, surfaced
-    by the agent's RESULT card rather than as a giant raw tool row.
+    Skips the *successful* ``StructuredOutput`` — that call *is* the agent's
+    result, surfaced by the agent's RESULT card rather than as a giant raw
+    tool row. A *failed* StructuredOutput is an error, not a result, so it's
+    kept: the retries are exactly the story the workflow trace should show
+    (mirrors the main session's `tool.failure` capture).
     """
     out: list[dict] = []
     for jdx, call in enumerate(tool_calls or ()):
         tname = call.get("name") or "tool"
-        if tname == "StructuredOutput":
+        if tname == "StructuredOutput" and not call.get("is_error"):
             continue
         attrs = _tool_attrs(agent_id, tname, tool_inputs.get(call.get("id")) or {})
         _enrich_call_attrs(attrs, call)
