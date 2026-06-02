@@ -1,0 +1,72 @@
+# Template-block complexity rules. No off-the-shelf tool computes these —
+# they are bespoke metrics over the @vue/compiler-dom template AST. Thresholds
+# are calibrated against the repo's own frontend/**/*.vue files.
+- id: vue.template.max-depth
+  checker: template_max_depth
+  summary: Template element nesting is deeper than the threshold
+  severity: warn
+  category: template-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: Deep nesting signals layout that should be decomposed into child components.
+  fix_hint: Extract inner blocks into child components or slots.
+  options:
+    threshold: 10
+
+- id: vue.template.directive-density
+  checker: template_directive_density
+  summary: Template uses more directives than the threshold
+  severity: warn
+  category: template-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: A high directive count concentrates reactive behaviour in one template.
+  fix_hint: Move logic into computed properties or split the template.
+  options:
+    threshold: 130
+
+- id: vue.template.conditional-loop
+  checker: template_conditional_loop
+  summary: Template has more conditional/loop branches than the threshold
+  severity: warn
+  category: template-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: v-if/v-else-if/v-for branches are the template analog of cyclomatic complexity.
+  fix_hint: Push branching into computed state or child components.
+  options:
+    threshold: 45
+
+- id: vue.template.node-count
+  checker: template_node_count
+  summary: Template has more elements than the threshold
+  severity: warn
+  category: template-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: A very large element count is a proxy for a component that should be split.
+  fix_hint: Break the component into smaller pieces.
+  options:
+    threshold: 180
+
+- id: vue.template.binding-count
+  checker: template_binding_count
+  summary: Template has more reactive bindings than the threshold
+  severity: warn
+  category: template-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: Many interpolations and bound attributes mean heavy template-to-state coupling.
+  fix_hint: Consolidate state with computed properties or extract child components.
+  options:
+    threshold: 100

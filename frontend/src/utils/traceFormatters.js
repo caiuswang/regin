@@ -89,6 +89,14 @@ export function fmtModel(model) {
   return String(model).replace(/^claude-/, '').replace(/\[.*\]$/, '')
 }
 
+// USD cost. Sub-cent values keep 4 dp (per-tool costs are often fractions
+// of a cent); anything larger rounds to 2 dp. Empty string for null.
+export function fmtCost(usd) {
+  if (usd == null) return ''
+  if (usd < 0.01) return '$' + usd.toFixed(4)
+  return '$' + usd.toFixed(2)
+}
+
 export function fmtBytes(n) {
   if (!n) return ''
   if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1).replace(/\.0$/, '') + ' MB'
@@ -188,6 +196,13 @@ export function ruleCheckOneLiner(span) {
   return `rule · ${file} — ${total} passed`
 }
 
+// NOTE: `fullLabel` (conversation view) and `spanLabel` (timeline/tree view,
+// below) are drifted twins — both turn a span into a one-line label but cover
+// different span families (fullLabel: task.notification / assistant_response /
+// AskUserQuestion / reject_reason; spanLabel: plan.* / compact.* /
+// workflow.phase / subagent.* / harness.local_command). Unifying them is the
+// follow-up the module header flags; until then, edit both when the shared
+// branches (tool.* / rule.check) change.
 export function fullLabel(span) {
   const a = span.attributes || {}
   const name = span.name || ''
@@ -258,6 +273,138 @@ export function fullLabel(span) {
     case 'subagent.stop': return 'subagent done'
   }
   return name
+}
+
+// Subagent identity tag: the explicit agent_type, else a short agent_id.
+function subagentTag(a) {
+  return a.agent_type || (a.agent_id ? a.agent_id.slice(0, 8) : '')
+}
+
+// Row label for a `tool.*` span (or any tool-shaped attribute bag `a` with a
+// `fallback` tool name). Private to `spanLabel`. Mirrors the tool.* branch of
+// `fullLabel` but keyed off `a.tool_name`/`fallback` rather than the span name.
+function toolLabel(a, fallback) {
+  const tool = toolDisplayLabel(a.tool_name || fallback)
+  if (a.command_preview) return `${tool}: ${a.command_preview}`
+  // Task tools: subject is the entire signal. Without this branch the
+  // Timeline view renders 53 bare "TaskCreate"/"TaskUpdate" rows
+  // indistinguishable from each other.
+  if ((a.tool_name === 'TaskCreate' || fallback === 'TaskCreate') && a.subject) {
+    return a.task_id ? `${tool} #${a.task_id}: ${a.subject}` : `${tool}: ${a.subject}`
+  }
+  if ((a.tool_name === 'TaskUpdate' || fallback === 'TaskUpdate') && a.task_id) {
+    return a.status ? `${tool} #${a.task_id} → ${a.status}` : `${tool} #${a.task_id}`
+  }
+  if ((a.tool_name === 'TaskOutput' || fallback === 'TaskOutput') && a.task_id) {
+    return a.status ? `${tool} #${a.task_id} → ${a.status}` : `${tool} #${a.task_id}`
+  }
+  if ((a.tool_name === 'Skill' || fallback === 'Skill') && a.skill_name) {
+    return `${tool}: ${a.skill_name}`
+  }
+  const tsTools = a.loaded_tools && a.loaded_tools.length
+    ? a.loaded_tools
+    : a.selected_tools
+  if (tsTools && tsTools.length) {
+    return `${tool}: ${tsTools.map(t => t.split('__').pop()).join(', ')}`
+  }
+  if (a.query) return `${tool}: ${a.query}`
+  if (a.pattern && a.file_path) return `${tool}: ${a.pattern} in ${a.file_path.split('/').pop()}`
+  if (a.pattern) return `${tool}: ${a.pattern}`
+  if (a.file_path) return `${tool}: ${a.file_path.split('/').pop()}`
+  return tool
+}
+
+// Timeline/tree row label for any span. Drifted twin of `fullLabel` (see note
+// there). Extracted from SessionTraceView. The `rule.check` branch delegates to
+// `ruleCheckOneLiner` so the two label paths can't drift on that span.
+export function spanLabel(span) {
+  const a = span.attributes || {}
+  switch (span.name) {
+    case 'skill.read': return `read: ${a.skill_id || ''}`
+    case 'skill.invoke': return `invoke: ${a.skill_id || ''}`
+    case 'file.edit': return `edit: ${a.file_path ? a.file_path.split('/').pop() : ''}`
+    case 'plan.edit': return `plan edit: ${a.file_path ? a.file_path.split('/').pop() : ''}`
+    case 'rule.check': return ruleCheckOneLiner(span)
+    case 'plan.session': return `plan session: ${a.plan_filename || ''}`
+    case 'plan.draft': return `plan draft: ${a.plan_filename || ''}`
+    case 'plan.review': return `plan review: ${a.plan_filename || ''}`
+    case 'plan.decision': return `plan decision: ${a.decision || ''}`
+    case 'plan.enter': return `plan: ${a.plan_filename || ''}`
+    case 'plan.exit': return 'plan exit'
+    case 'compact.pre': {
+      const tr = a.trigger ? ` (${a.trigger})` : ''
+      const ci = a.custom_instructions ? `: ${a.custom_instructions.slice(0, 60)}` : ''
+      return `context compacting${tr}${ci}`
+    }
+    case 'compact.post': {
+      const tr = a.trigger ? ` (${a.trigger})` : ''
+      return `context compacted${tr}`
+    }
+    case 'prompt': return a.text ? a.text.slice(0, 60) : 'prompt'
+    case 'conversation': return 'conversation start'
+    case 'harness.local_command': {
+      const cmd = a.command_name || 'command'
+      return a.args ? `${cmd} ${a.args}` : cmd
+    }
+    case 'workflow.phase':
+      return a.title ? `phase: ${a.title}` : 'phase'
+    case 'subagent.start': {
+      const tag = subagentTag(a)
+      return tag ? `subagent: ${tag}` : 'subagent'
+    }
+    case 'subagent.stop': {
+      const tag = subagentTag(a)
+      return tag ? `subagent done: ${tag}` : 'subagent done'
+    }
+    default:
+      if (span.name === 'tool.failure') {
+        const tool = toolDisplayLabel(a.tool_name || 'tool')
+        const bits = [`failed: ${tool}`]
+        if (a.is_interrupt) bits.push('(user interrupt)')
+        if (a.error) bits.push(`— ${a.error}`)
+        return bits.join(' ')
+      }
+      if (span.name.startsWith('tool.')) {
+        return toolLabel(a, span.name.slice(5))
+      }
+      if (span.name.startsWith('pre_tool.')) {
+        return `pre: ${toolDisplayLabel(a.tool_name || span.name.slice(9))}`
+      }
+      return span.name
+  }
+}
+
+// ── Tool group badges (sidebar token rollup) ────────────────
+
+const _TOOL_BADGE_FS = { label: 'FS', classes: 'bg-amber-100 text-amber-800', group: 'Read / write', order: 1 }
+const _TOOL_BADGE_SH = { label: 'SH', classes: 'bg-slate-200 text-slate-700', group: 'Shell', order: 2 }
+const _TOOL_BADGE_AGT = { label: 'AGT', classes: 'bg-pink-100 text-pink-800', group: 'Agents & skills', order: 3 }
+const _TOOL_BADGE_BG = { label: 'BG', classes: 'bg-orange-100 text-orange-800', group: 'Background tasks', order: 4 }
+const _TOOL_BADGE_NET = { label: 'NET', classes: 'bg-purple-100 text-purple-800', group: 'Network', order: 5 }
+const _TOOL_BADGE_MCP = { label: 'MCP', classes: 'bg-cyan-100 text-cyan-800', group: 'MCP tools', order: 6 }
+const _TOOL_BADGE_AI = { label: 'AI', classes: 'bg-emerald-100 text-emerald-800', group: 'Model output', order: 7 }
+const _TOOL_BADGE_TH = { label: 'TH', classes: 'bg-amber-200 text-amber-900', group: 'Thinking', order: 8 }
+const _TOOL_BADGE_SYS = { label: 'SYS', classes: 'bg-slate-100 text-slate-600', group: 'System', order: 9 }
+
+export function toolBadge(fullName) {
+  if (!fullName) return _TOOL_BADGE_SYS
+  if (fullName === 'assistant_text') return _TOOL_BADGE_AI
+  if (fullName === 'assistant_thinking') return _TOOL_BADGE_TH
+  if (fullName.startsWith('mcp__')) return _TOOL_BADGE_MCP
+  if (['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(fullName)) {
+    return _TOOL_BADGE_FS
+  }
+  if (fullName === 'Bash') return _TOOL_BADGE_SH
+  if (['WebFetch', 'WebSearch'].includes(fullName)) return _TOOL_BADGE_NET
+  if (['Agent', 'Skill', 'AskUserQuestion', 'ToolSearch'].includes(fullName)) {
+    return _TOOL_BADGE_AGT
+  }
+  if (['TaskCreate', 'TaskUpdate', 'TaskStop', 'TaskGet', 'TaskList',
+       'TaskOutput', 'ScheduleWakeup', 'CronCreate', 'CronDelete',
+       'CronList'].includes(fullName)) {
+    return _TOOL_BADGE_BG
+  }
+  return _TOOL_BADGE_SYS
 }
 
 // ── Span status / colour ────────────────────────────────────

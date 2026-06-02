@@ -24,6 +24,11 @@
       "id": "frontend-style-convention",
       "kind": "bundle",
       "bundle_root": "~/.local/share/regin/patterns/frontend-style-convention"
+    },
+    {
+      "id": "vue-complexity",
+      "kind": "bundle",
+      "bundle_root": "~/.local/share/regin/patterns/vue-complexity"
     }
   ],
   "model_context_windows": {

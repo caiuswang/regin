@@ -1157,10 +1157,28 @@ class _TranscriptScan:
         thread through. `builder.prompt_uuid` is recomputed from scratch
         each call, so overwriting it is safe — it is derived, not
         accumulated."""
-        # Gate command candidates to those with a direct isMeta expansion
-        # child — the skill-command signature. Display/mode commands and
+        # Gate command candidates to those with an isMeta expansion child —
+        # the skill-command signature. Display/mode commands and
         # workflow-resume nudges lack it, so they stay local-command-only.
-        command_anchor_uuids = self.command_prompt_uuids & self.meta_expansion_parents
+        #
+        # A command that prints a `<local-command-stdout>` line (e.g. /goal →
+        # "Goal set: …") puts that stdout entry between its echo and the
+        # expansion, so the isMeta child's parent is the stdout, not the
+        # command. Bridge that gap: map each command's stdout uuid back to the
+        # command, so an expansion under the stdout counts as one under the
+        # command. (Bash `!cmd` stdout parents aren't command candidates, so
+        # the `in command_prompt_uuids` filter leaves them out.)
+        stdout_to_command = {
+            info['uuid']: cmd_uuid
+            for cmd_uuid, info in self.lc_stdout_by_parent.items()
+            if cmd_uuid in self.command_prompt_uuids
+        }
+        meta_parents = set(self.meta_expansion_parents)
+        for muuid in self.meta_expansion_parents:
+            bridged = stdout_to_command.get(muuid)
+            if bridged is not None:
+                meta_parents.add(bridged)
+        command_anchor_uuids = self.command_prompt_uuids & meta_parents
         for builder in self.builders.values():
             if builder.uuid is None:
                 continue

@@ -1,0 +1,44 @@
+# Script-block complexity rules. Thresholds are calibrated against the
+# repo's own frontend/**/*.vue files (see references/calibration.json) so
+# they flag outliers, not the median component.
+- id: vue.script.cyclomatic-function
+  checker: script_cyclomatic_function
+  summary: A function in the SFC script exceeds the cyclomatic-complexity threshold
+  severity: warn
+  category: script-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: High per-function cyclomatic complexity means many independent paths — hard to test and reason about.
+  fix_hint: Extract helpers, collapse nested conditionals, or lift logic out of the component.
+  options:
+    threshold: 15
+
+- id: vue.script.cyclomatic-module
+  checker: script_cyclomatic_module
+  summary: The SFC script's aggregate cyclomatic complexity exceeds the threshold
+  severity: warn
+  category: script-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: <script setup> puts logic at module top level that per-function checks miss; the aggregate catches an over-loaded component as a whole.
+  fix_hint: Split the component, or move logic into composables (use*) / plain modules.
+  options:
+    threshold: 130
+
+- id: vue.script.function-length
+  checker: script_function_length
+  summary: A function in the SFC script is longer than the line threshold
+  severity: warn
+  category: script-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: Very long functions tend to do too much and resist reuse.
+  fix_hint: Break the function into smaller, named units.
+  options:
+    threshold: 60

@@ -1446,3 +1446,38 @@ def test_display_command_stays_local_command(captured_spans, tmp_path,
                          transcript_path=str(transcript)))
     assert _local_command_named(captured_spans, '/clear')
     assert _prompt_anchor_with_text(captured_spans, '/clear') is None
+
+
+def test_command_with_stdout_before_expansion_anchors(captured_spans, tmp_path,
+                                                      monkeypatch):
+    # /goal prints a `<local-command-stdout>` line ("Goal set: …") between its
+    # echo and the isMeta expansion (a Stop-hook injection), so the
+    # expansion's parent is the STDOUT entry, not the command. The anchor gate
+    # must bridge that gap: /goal still anchors as its own turn, its response
+    # parents under it, and it does not also emit a local-command card (which
+    # would leave the live promptlive placeholder un-superseded).
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / 'state'))
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        _ut_user('p0', 'continue to refactor', None),
+        _ut_asst('a0', 'p0', text='refactoring'),
+        _ut_user('cmd', '<command-message>goal</command-message> '
+                 '<command-name>/goal</command-name> '
+                 '<command-args>ship it</command-args>', 'a0'),
+        _ut_user('out', '<local-command-stdout>Goal set: ship it'
+                 '</local-command-stdout>', 'cmd'),
+        _ut_user('exp', 'A session-scoped Stop hook is now active...', 'out',
+                 meta=True),
+        _ut_asst('a1', 'exp', text='Goal acknowledged'),
+    ])
+    turn_trace.handle(_p('Stop', session_id='s1',
+                         transcript_path=str(transcript)))
+
+    anchor = _prompt_anchor_with_text(captured_spans, '/goal ship it')
+    assert anchor is not None, 'a stdout-then-expansion command must anchor'
+    assert anchor['span_id'] == 'prompt-cmd'
+    # No duplicate local-command card (its uuid would block placeholder drop).
+    assert not _local_command_named(captured_spans, '/goal')
+    # The response nests under the /goal anchor, not the prior typed prompt.
+    resp = next(s for s in captured_spans if s.get('span_id') == 'resp-a1')
+    assert resp['parent_id'] == 'prompt-cmd'

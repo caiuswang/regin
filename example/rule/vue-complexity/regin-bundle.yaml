@@ -1,0 +1,42 @@
+schema: rule-bundle/v1
+id: vue-complexity
+language_ids: [vue]
+rules_dir: '.'
+checkers_dir: checkers
+runner:
+  kind: node
+  entry: bin/vue-complexity-runner.mjs
+  timeout_seconds: 10
+severity_default: warn
+description: |
+  Complexity rule bundle for Vue 3 Single File Components. Measures two
+  orthogonal metric families on every `.vue` edit:
+
+  - script: cyclomatic complexity of the `<script>` / `<script setup>`
+    block, reported per-function AND as a module aggregate (the aggregate
+    captures top-level `<script setup>` logic that per-function tools miss).
+  - template: nesting depth, directive density, conditional/loop count,
+    element + component counts, and binding/interpolation count, computed
+    by walking the `@vue/compiler-dom` template AST.
+
+  Ships rule YAMLs at the bundle root, checker modules under `checkers/`,
+  a Node runner under `bin/`, and shared metric walkers under `lib/`.
+  Run by regin's generic BundleEngine when registered as a `kind: bundle`
+  rule engine. Distinct from `frontend-style-convention` (style/a11y) —
+  this bundle is complexity-only.
+
+  Activation (two steps — registration alone does NOT fire the rules):
+    1. Install: copy this dir into `patterns_dir` and `npm install` inside
+       it (the runner executes with cwd=bundle_root and needs node_modules
+       there — the deployed skill copy does not).
+    2. Register: add a `{id: vue-complexity, kind: bundle, bundle_root: ...}`
+       entry to `rule_engines` in config/settings.json.
+    3. Deploy: push the `vue-complexity` skill to the target project and
+       record a `pattern_deployments` row for it (UI: push-to-project, or
+       lib.skills.skill_sync.push + lib.patterns.pattern_deployments.
+       record_deployment). The PostToolUse scope gate
+       (lib/patterns/pattern_scope.py) only fires rules whose `guide`
+       pattern is deployed to a repo containing the edited file.
+
+  Thresholds are calibrated to ~p90-p95 of this repo's own
+  frontend/src/**/*.vue (see references/calibrate.mjs).

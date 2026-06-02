@@ -1,0 +1,9 @@
+{
+  "name": "vue-complexity-rules",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@babel/parser": "^7.25.0",
+    "vue": "^3.5.32"
+  }
+}
