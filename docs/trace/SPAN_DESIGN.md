@@ -127,13 +127,16 @@ the DB unless `/materialize` is hit.
 _fetch_spans(conn, trace_id)               # read rows for this trace_id
         │
         ▼
-_graft_orphans(spans)                      # assign parent_id
-        │   - pass 1: prompts + session.* grafted under `conversation`
-        │   - pass 2: orphan tool/skill/etc. grafted under current prompt
-        │   - pass 3: turn spans landing <1 s before a LATER prompt are
-        │             re-attached to that later prompt  (§6)
-        │   - pass 4: spans carrying attributes.agent_id re-attached
-        │             to their matching `subagent.start` span  (§7)
+merge_spans(spans)             # reconcile the append-only table (read-time)
+        │  1. dedup: drop superseded live placeholders (promptlive-/pending-/
+        │     permreq-), resolved permission.requests, stale cross-turn blockers
+        │  2. reparent: delegates to _graft_orphans (the 4 passes below)
+        │       - pass 1: prompts + session.* grafted under `conversation`
+        │       - pass 2: orphan tool/skill/etc. grafted under current prompt
+        │       - pass 3: turn spans landing <1 s before a LATER prompt are
+        │                 re-attached to that later prompt  (§6)
+        │       - pass 4: spans carrying attributes.agent_id re-attached
+        │                 to their matching `subagent.start` span  (§7)
         ▼
 _widen_envelopes(spans)                    # parent span times cover children
         │   - walks direct children only
@@ -146,12 +149,20 @@ _build_span_tree(spans)                    # convert to PrimeVue TreeTable
 {'widened': [...], 'tree': [...]}
 ```
 
-**Source**: `lib/trace/projection.py` (pure), called via
+The append-only store means a live placeholder and the real span coexist
+in the table; `merge_spans` (`lib/trace/merge.py`) is the single point that
+retires the superseded rows before parenting. With no placeholders present
+it reduces to `_graft_orphans` — that equivalence is its no-regression
+invariant.
+
+**Source**: `lib/trace/merge.py::merge_spans` (dedup + reparent) wrapping the
+pure transforms in `lib/trace/projection.py` (`_graft_orphans`,
+`_widen_envelopes`, `_build_span_tree`); called via
 `lib/trace/trace_service/queries.py::fetch_session_projection`.
 
 ### `_graft_orphans` in detail
 
-Three passes. Each is idempotent and never mutates the input list.
+Four passes. Each is idempotent and never mutates the input list.
 
 1. **Prompts & session lifecycle → conversation.** If a `conversation`
    span exists, every orphan `prompt`, `session.start`, `session.end`
@@ -572,6 +583,7 @@ is strictly worse than one that serves stale data.
 | `hook_manager/registry.py` | Single source of truth for handler order (priority) |
 | `hook_manager/handlers/*.py` | Per-event span emitters |
 | `hook_manager/runner.py` | Dispatcher: sort by priority, run, merge |
+| `lib/trace/merge.py` | Read-time reconcile entry point: dedup placeholders/pending/permissions, then delegate to `_graft_orphans` |
 | `lib/trace/projection.py` | Pure projection: graft + widen + tree |
 | `web/blueprints/trace/` | HTTP surface (`sessions.py`, `spans_ingest.py`, `turn_usage.py`, … — `/api/sessions`, `/api/session-spans`, `/api/sessions/<id>/spans/<span_id>/children`, `/materialize`) |
 | `lib/trace/trace_service/` | DB-facing package: `queries.py` (`fetch_session_projection`), `ingest.py` (`materialize_session`, span + turn_usage ingest) |

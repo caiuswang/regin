@@ -1,4 +1,4 @@
-# Implementation Spec — Incremental Transcript Rescan
+# Design & Invariants — Incremental Transcript Rescan
 
 Make the server-side live rescan cost **O(new bytes)** per poll instead of
 **O(file size)**, by resuming a persistent scan accumulator from the last
@@ -17,11 +17,12 @@ transcript file. `lib/trace/live_rescan.py` closes that gap: while a session is
 being viewed, the `/map?shallow` poll fires a fire-and-forget rescan that
 re-reads the transcript and ingests turns the hook scan hasn't posted yet.
 
-The rescan currently calls `_ingest_transcript_usage` →
+The naive rescan calls `_ingest_transcript_usage` →
 `read_usage` (`lib/trace/transcript_usage.py`), which **stream-parses the entire
 transcript** on every poll where the file's mtime changed (`live_rescan.py`,
 `_file_changed` gate). For an active session that is O(file size) every poll and
-O(file size²) over the session. Emission is already idempotent — the per-session
+O(file size²) over the session — the cost this design removes by resuming from
+the last committed offset. Emission is already idempotent — the per-session
 seen-uuid cache (`hook_manager/handlers/turn_trace/cache.py`) gates the HTTP
 posts — so the wasted work is purely the **read + JSON-parse**, repeated over
 bytes that haven't changed.

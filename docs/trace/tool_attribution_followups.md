@@ -53,7 +53,7 @@ tool_results end up in the cache prefix of the next turn and bill at
 the `cache_read` rate (~10× cheaper on Opus). The overcharge is
 material on long sessions where the same files are re-read.
 
-Fix: at attribution time, look at `turn[N+1].cache_read_input_tokens`
+Proposed fix: at attribution time, look at `turn[N+1].cache_read_input_tokens`
 vs the prior cumulative content size to detect whether this turn's
 result was cached, and apply `rate.cache_read` instead. Heuristic, but
 much closer to billing reality than the current uniform rate.
@@ -95,7 +95,7 @@ web_fetch_requests}` counts Anthropic-server-side tools. These are
 billed *per request*, not per token, so they're a different
 attribution path than client-side tools.
 
-Fix: add per-request counters on `turn_usage`, multiply by the
+Proposed fix: add per-request counters on `turn_usage`, multiply by the
 documented per-request price, surface as a separate row in the rollup
 ("web_search · 14 requests · $0.14"). Pricing per request lives in
 Anthropic's docs, not models.dev — would need to hardcode or extend
@@ -143,7 +143,7 @@ per-tool for any session; it's surfaced only via the `Σ` total chip the
 header now shows for workflow runs, since they have no single context
 window / `ctx%`.)
 
-**Fix (workflow-scoped — no normal-session regression).** After
+**Proposed fix (workflow-scoped — no normal-session regression).** After
 `reingest`, run an UPDATE that promotes each workflow assistant span's
 `attributes.input_tokens` into its `input_tokens` column, scoped
 `WHERE trace_id = <run_id> AND name IN ('assistant_response',

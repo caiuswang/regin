@@ -58,7 +58,12 @@ _ENVELOPE_KEYS: frozenset[str] = frozenset({
 
 # Always-present top-level keys on every hook-event payload, regardless of
 # event. The hook analog of `_ENVELOPE_KEYS` for the `subject_kind='hook_event'`
-# axis; selected by `_envelope_keys` at the top level of the walker.
+# axis; selected by `_envelope_keys` at the top level of the walker. Kept
+# deliberately distinct (and narrow) from `_ENVELOPE_KEYS`: the tool envelope
+# carries tool-flavored keys (permission_mode, tool_use_id, agent_id, …) that
+# are NOT universal across hook events, so reusing it for hook payloads would
+# mass-false-positive. Everything beyond these four belongs in the per-event
+# schema, not the envelope.
 _HOOK_COMMON_KEYS: frozenset[str] = frozenset({
     'session_id', 'transcript_path', 'cwd', 'hook_event_name',
 })
