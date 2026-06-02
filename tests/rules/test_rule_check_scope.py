@@ -233,3 +233,47 @@ def test_rule_without_guide_keeps_global_behavior(tmp_db, tmp_path, fake_engine_
 
     applicable_ids = {r["id"] for r in captured["applicable_rules"]}
     assert "R_NO_GUIDE" in applicable_ids
+
+
+class _ViolatingEngine(_FakeEngine):
+    """Reports one violation carrying a `detail` string, for every rule."""
+
+    def run(self, rule, file_path, repo_root):
+        return Violation(
+            rule_id=rule.id, file_path=file_path, match_count=1,
+            detail="aggregate CC=180 (threshold 130)",
+        )
+
+
+def test_violation_detail_is_surfaced_to_agent(tmp_db, tmp_path, monkeypatch):
+    """The engine's per-rule `detail` (what tripped, not just that something
+    did) must appear in the agent-facing body — without it the warning is
+    unactionable."""
+    _seed_deployment(tmp_db, "global-skill", "global", None)
+    rule = _make_rule("R_DETAIL", guide="global-skill")
+    engine = _ViolatingEngine("fake", [rule])
+
+    from lib import rule_engines as re_pkg
+    monkeypatch.setattr(re_pkg, "all_engines", lambda: [engine])
+    monkeypatch.setattr(
+        "lib.rules.engine_rule_disable.disabled_ids", lambda _eid: set()
+    )
+
+    f = tmp_path / "outside.py"
+    f.write_text("x = 1\n")
+
+    captured_events: list = []
+    monkeypatch.setattr(
+        "lib.hook_plugin.post_event",
+        lambda channel, events: captured_events.extend(events),
+    )
+
+    with mock.patch.object(rule_check, "_emit_rule_check_span", lambda *a, **k: None):
+        resp = rule_check.handle(_payload(str(f)))
+
+    # Agent-facing body carries the detail alongside the rule id + guide.
+    assert "R_DETAIL" in resp.additional_context
+    assert "aggregate CC=180 (threshold 130)" in resp.additional_context
+    # And it's persisted on the trigger event for the trace UI.
+    detail_event = next(e for e in captured_events if e["rule_id"] == "R_DETAIL")
+    assert detail_event["detail"] == "aggregate CC=180 (threshold 130)"

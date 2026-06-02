@@ -1,0 +1,33 @@
+# Complexity rules for plain JS/TS modules — composables (`use*`) and utils.
+#
+# WHY this exists: the .vue script rules only fire on SFCs, so splitting a
+# god-component's logic into a `.js` composable would otherwise move the
+# complexity to an UNCHECKED file. Per-function cyclomatic complexity is the
+# right metric here and it is wrapper-safe: a composable's `useX()` wrapper is
+# mostly declarations (low CC), so only genuinely branchy inner functions trip.
+#
+# Calibrated against this repo's own composables: passes `reloadLiveTail`
+# (CC=13), `fetchSpanContent` (CC=4); flags `selectTurn` (CC=16). Length and
+# module-aggregate CC are deliberately NOT applied to JS — a composable wrapper
+# spans the whole file, so those metrics would false-positive on every `use*`.
+- id: js.script.cyclomatic-function
+  checker: script_cyclomatic_function
+  summary: A function in this JS/TS module exceeds the cyclomatic-complexity threshold
+  severity: warn
+  category: script-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.js"
+    - "src/**/*.ts"
+    - "src/**/*.mjs"
+    - "**/composables/**/*.js"
+    - "**/composables/**/*.ts"
+    - "**/utils/**/*.js"
+    - "**/utils/**/*.ts"
+  rationale: >
+    High per-function cyclomatic complexity means many independent paths — hard
+    to test and reason about. Extracting a component's logic into a composable
+    does not reduce a function's own complexity, so the check follows it there.
+  fix_hint: Extract helpers or collapse nested conditionals; the composable wrapper itself is fine to be long.
+  options:
+    threshold: 15

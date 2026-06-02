@@ -8,14 +8,19 @@ manual: true
 
 # vue-complexity
 
-Use this skill when writing or editing `.vue` files in this repo. regin runs a
-complexity rule bundle on every `.vue` edit and warns when a component crosses
-the configured thresholds. Keep edits under these limits, or split the
-component.
+Use this skill when writing or editing `.vue` files — or the `.js`/`.ts`
+composables and utils a component's logic is extracted into — in this repo.
+regin runs a complexity rule bundle on every such edit and warns when the code
+crosses the configured thresholds. Keep edits under these limits, or split the
+component / function.
+
+The JS/TS check exists so that splitting a god-component into a composable
+*actually* reduces complexity instead of relocating it to an unchecked file.
 
 ## What is measured
 
-Two independent families, parsed from the SFC by `@vue/compiler-sfc`:
+Three families. The `.vue` script + template are parsed from the SFC by
+`@vue/compiler-sfc`; the JS/TS check runs on raw module files.
 
 ### Script (`<script>` / `<script setup>`)
 
@@ -29,6 +34,15 @@ aggregate is what catches an over-loaded `setup` that per-function tools miss.
 | `vue.script.cyclomatic-function` | max per-function cyclomatic complexity | 15 |
 | `vue.script.cyclomatic-module` | whole-script aggregate cyclomatic complexity | 130 |
 | `vue.script.function-length` | longest function, in lines | 60 |
+| `vue.script.surface-area` | top-level reactive decls + functions | 45 |
+
+`surface-area` is the **god-component** signal the cyclomatic checks miss: many
+*simple* refs and functions for many unrelated concerns keep per-function CC low
+while the component is still far too large to navigate. `useX()` composable
+calls are excluded from the count, so the fix — grouping related state + logic
+into composables — directly lowers the score. (Calibration anecdote: the
+`SessionTraceView.vue` god-component scored 89; extracting its concerns into
+composables dropped it to 17.)
 
 ### Template (`<template>`)
 
@@ -42,6 +56,21 @@ No off-the-shelf tool computes these; they are bespoke metrics over the
 | `vue.template.conditional-loop` | `v-if`/`v-else-if`/`v-for` branches | 45 |
 | `vue.template.node-count` | template element count | 180 |
 | `vue.template.binding-count` | `{{ }}` interpolations + bound attrs | 100 |
+
+### JS / TS modules (`composables/`, `utils/`, `src/`)
+
+Only **per-function** cyclomatic complexity — the same `@babel/parser` analysis
+as the SFC script check, run on raw `.js`/`.ts` files.
+
+| Rule | Metric | Threshold |
+|------|--------|-----------|
+| `js.script.cyclomatic-function` | max per-function cyclomatic complexity | 15 |
+
+Length and module-aggregate are intentionally **not** applied to JS modules: a
+composable's `useX()` wrapper spans the whole file, so those metrics would
+false-positive on every composable. Per-function CC is wrapper-safe — the
+wrapper is mostly declarations (low CC), so only branchy *inner* functions trip
+it. So a long composable is fine; a complex *function* inside it is not.
 
 Thresholds are calibrated to roughly the 90th–95th percentile of this repo's
 own `frontend/src/**/*.vue` files (see `references/calibration.json`), so they

@@ -1,10 +1,13 @@
-import { loadVueContext, scriptComplexity } from '../lib/complexity-utils.mjs'
+import { loadScriptContent, scriptComplexity } from '../lib/complexity-utils.mjs'
 
-// Flags each function in the SFC script whose cyclomatic complexity exceeds
-// `options.threshold`.
+// Flags each function whose cyclomatic complexity exceeds `options.threshold`.
+// Works on both `.vue` SFC scripts and plain `.js`/`.ts` modules (composables,
+// utils) — the metric is the same JS analysis. Per-function CC is wrapper-safe:
+// a composable's `useX()` wrapper is mostly declarations (low CC), so only
+// genuinely branchy inner functions trip it.
 export function run({ filePath, options }) {
   const threshold = options.threshold ?? 15
-  const { scriptContent } = loadVueContext(filePath)
+  const scriptContent = loadScriptContent(filePath)
   const { functions } = scriptComplexity(scriptContent)
   const offending = functions.filter((f) => f.cc > threshold)
   const details = offending

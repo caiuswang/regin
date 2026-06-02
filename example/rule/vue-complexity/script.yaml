@@ -42,3 +42,22 @@
   fix_hint: Break the function into smaller, named units.
   options:
     threshold: 60
+
+- id: vue.script.surface-area
+  checker: script_surface_area
+  summary: The SFC declares too many top-level refs/computeds + functions (god-component)
+  severity: warn
+  category: script-complexity
+  guide: vue-complexity
+  triggers:
+    - "src/**/*.vue"
+    - "**/*.vue"
+  rationale: >
+    Counts raw surface area — top-level reactive declarations + functions —
+    which cyclomatic complexity misses: many *simple* refs and functions for
+    many unrelated concerns keep per-function CC low while the component is
+    still too large to reason about. Composable calls are excluded, so the
+    metric rewards extraction.
+  fix_hint: Group related state + logic into composables (use*); each extracted concern drops the count.
+  options:
+    threshold: 45

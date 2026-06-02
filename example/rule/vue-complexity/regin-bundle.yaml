@@ -1,6 +1,6 @@
 schema: rule-bundle/v1
 id: vue-complexity
-language_ids: [vue]
+language_ids: [vue, javascript, typescript]
 rules_dir: '.'
 checkers_dir: checkers
 runner:
@@ -9,13 +9,20 @@ runner:
   timeout_seconds: 10
 severity_default: warn
 description: |
-  Complexity rule bundle for Vue 3 Single File Components. Measures two
-  orthogonal metric families on every `.vue` edit:
+  Complexity rule bundle for Vue 3 Single File Components — and, since
+  the per-function check is the same JS analysis, for the plain `.js`/`.ts`
+  composables and utils a component's logic gets extracted into. Measures:
 
-  - script: cyclomatic complexity of the `<script>` / `<script setup>`
+  - script (`.vue`): cyclomatic complexity of the `<script>` / `<script setup>`
     block, reported per-function AND as a module aggregate (the aggregate
-    captures top-level `<script setup>` logic that per-function tools miss).
-  - template: nesting depth, directive density, conditional/loop count,
+    captures top-level `<script setup>` logic that per-function tools miss),
+    plus per-function length.
+  - script (`.js`/`.ts` under composables/ utils/ src/): per-function
+    cyclomatic complexity only — so extracting a god-component's logic into a
+    composable can't dodge the check. Length / module-aggregate are NOT applied
+    to JS modules: a composable's `useX()` wrapper spans the whole file and
+    would false-positive on those metrics (see script-js.yaml).
+  - template (`.vue`): nesting depth, directive density, conditional/loop count,
     element + component counts, and binding/interpolation count, computed
     by walking the `@vue/compiler-dom` template AST.
 

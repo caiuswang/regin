@@ -35,6 +35,31 @@ export function loadVueContext(filePath) {
   return { source, sfc, scriptContent, template, ast }
 }
 
+// Returns just the script string for any supported file. A `.vue` SFC is split
+// by `@vue/compiler-sfc` (script + script-setup concatenated); a plain
+// `.js`/`.ts`/`.mjs` module IS the script, so it's returned verbatim. This lets
+// the script-complexity checkers run on composables/utils — extracting logic
+// into a `.js` file must not become a way to dodge the per-function check.
+// Defensive: an unreadable/unparseable file returns '' (→ zero metrics).
+export function loadScriptContent(filePath) {
+  let source
+  try {
+    source = fs.readFileSync(filePath, 'utf8')
+  } catch {
+    return ''
+  }
+  if (!filePath.endsWith('.vue')) return source
+  try {
+    const d = parseSfc(source, { filename: filePath }).descriptor
+    const parts = []
+    if (d.scriptSetup?.content) parts.push(d.scriptSetup.content)
+    if (d.script?.content) parts.push(d.script.content)
+    return parts.join('\n')
+  } catch {
+    return ''
+  }
+}
+
 // ── Script cyclomatic complexity ─────────────────────────────────────────
 
 // Babel plugins covering the JS/JSX features a Vue SFC script may use. No
@@ -171,6 +196,58 @@ export function scriptComplexity(scriptContent) {
     functions,
     parsed: true,
   }
+}
+
+// ── Script surface area ──────────────────────────────────────────────────
+
+// Reactive-state factories whose top-level use is a declared piece of
+// component state. A `useX()` composable call is deliberately NOT here:
+// extracting state into composables is the *cure*, so it must lower surface
+// area, not raise it.
+const REACTIVE_FACTORIES = new Set([
+  'ref', 'shallowRef', 'reactive', 'shallowReactive',
+  'computed', 'customRef', 'toRef', 'toRefs',
+])
+
+// Count the component's raw "surface area": top-level reactive-state
+// declarations (ref/computed/…) + top-level function definitions, in the
+// `<script setup>` / script body. This is the god-component signal that
+// cyclomatic complexity misses — many *simple* refs and functions for many
+// unrelated concerns keep per-function CC low while the component is still
+// far too large to reason about. Composable calls (`const {…} = useX()`) are
+// excluded, so the metric rewards extraction.
+export function scriptSurfaceArea(scriptContent) {
+  const empty = { count: 0, refs: 0, functions: 0 }
+  if (!scriptContent || !scriptContent.trim()) return empty
+
+  let ast
+  try {
+    ast = parseBabel(scriptContent, {
+      sourceType: 'module', errorRecovery: true, plugins: BABEL_PLUGINS,
+    })
+  } catch {
+    return empty
+  }
+
+  let refs = 0
+  let functions = 0
+  for (const node of ast.program.body) {
+    if (node.type === 'FunctionDeclaration') {
+      functions += 1
+      continue
+    }
+    if (node.type !== 'VariableDeclaration') continue
+    for (const decl of node.declarations) {
+      const init = decl.init
+      if (!init) continue
+      if (init.type === 'ArrowFunctionExpression' || init.type === 'FunctionExpression') {
+        functions += 1
+      } else if (init.type === 'CallExpression' && REACTIVE_FACTORIES.has(init.callee?.name)) {
+        refs += 1
+      }
+    }
+  }
+  return { count: refs + functions, refs, functions }
 }
 
 // ── Template structural metrics ──────────────────────────────────────────

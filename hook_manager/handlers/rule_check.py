@@ -173,6 +173,10 @@ def handle(payload: HookPayload) -> HookResponse | None:
     for engine, rule, guide in applicable:
         v = engine.run(rule, file_path, effective_root)
         match_count = v.match_count if v is not None else 0
+        # The engine's per-rule detail (e.g. "aggregate CC=180 (threshold 130)"
+        # or the offending function names) is the actionable part — surface it
+        # so the agent sees *what* tripped, not just *that* something did.
+        detail = v.detail if v is not None else None
         rule_id = getattr(rule, 'id', None) or rule.get('id')
         severity = getattr(rule, 'severity', None) or rule.get('severity', 'warn')
         summary = getattr(rule, 'summary', None) or rule.get('summary', '')
@@ -184,11 +188,14 @@ def handle(payload: HookPayload) -> HookResponse | None:
             'severity': severity,
             'guide': guide,
             'summary': summary,
+            'detail': detail,
             'source': 'post-edit-hook',
             'session_id': payload.session_id,
         })
         if match_count > 0:
             line = f"- `{rule_id}` ({severity}): {summary}"
+            if detail:
+                line += f" — {detail}"
             if guide:
                 line += f" — guide: `patterns/{guide}.md`"
             violations.append(line)
