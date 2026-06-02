@@ -20,6 +20,15 @@ def _rm(ts):
     return {'type': 'queue-operation', 'operation': 'remove', 'timestamp': ts}
 
 
+def _deq(ts):
+    return {'type': 'queue-operation', 'operation': 'dequeue', 'timestamp': ts}
+
+
+def _popall(content, ts):
+    return {'type': 'queue-operation', 'operation': 'popAll',
+            'content': content, 'timestamp': ts}
+
+
 def test_fifo_keeps_still_queued_and_filters_system(tmp_path, monkeypatch):
     tx = tmp_path / 't.jsonl'
     _write(tx, [
@@ -49,6 +58,48 @@ def test_system_only_queue_surfaces_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
                         lambda tid: str(tx))
     assert qp.current_queued_prompts('t') == []
+
+
+def test_dequeue_pops_fifo(tmp_path, monkeypatch):
+    # `dequeue` is the current Claude Code name for a single FIFO pop.
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_enq('a', 't1'), _enq('b', 't2'), _deq('t3')])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    out = qp.current_queued_prompts('t')
+    assert [q['content'] for q in out] == ['b']
+
+
+def test_popall_clears_whole_queue(tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_enq('a', 't1'), _enq('b', 't2'), _popall('a', 't3')])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert qp.current_queued_prompts('t') == []
+
+
+def test_edit_then_requeue_reflects_final_state(tmp_path, monkeypatch):
+    # Editing a queued prompt = popAll (back to editor) + a fresh enqueue.
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [
+        _enq('/workflows', 't1'),
+        _popall('/workflows', 't2'),      # pulled back to editor to edit
+        _enq('/workflows edited', 't3'),  # re-queued after the edit
+    ])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    out = qp.current_queued_prompts('t')
+    assert [q['content'] for q in out] == ['/workflows edited']
+
+
+def test_dequeue_on_empty_queue_is_noop(tmp_path, monkeypatch):
+    # Parsing may begin mid-stream; a pop with nothing queued must not error.
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_deq('t1'), _enq('a', 't2')])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    out = qp.current_queued_prompts('t')
+    assert [q['content'] for q in out] == ['a']
 
 
 def test_no_transcript_returns_empty(monkeypatch):
