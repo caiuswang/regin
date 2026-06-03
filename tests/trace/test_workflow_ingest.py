@@ -112,12 +112,14 @@ _MANIFEST = {
 
 
 def _make_run(tmp_path: Path, *, with_manifest: bool,
-              script_body: str = _SCRIPT_BODY, journal: str = _JOURNAL) -> Path:
+              script_body: str = _SCRIPT_BODY, journal: str = _JOURNAL,
+              agent_jsonl: str = _AGENT_JSONL) -> Path:
     """Build a synthetic run tree; return the projects-root to scan.
 
     ``script_body`` / ``journal`` override the defaults so the live
     confident-mapping path (which reads `agent()` opts from the script and keys
-    off journal `started` events) can be exercised.
+    off journal `started` events) can be exercised. ``agent_jsonl`` overrides
+    the per-agent transcript (e.g. to exercise the encrypted-thinking split).
     """
     projects = tmp_path / "projects"
     sess = projects / "proj" / "sess"
@@ -125,7 +127,7 @@ def _make_run(tmp_path: Path, *, with_manifest: bool,
     agents.mkdir(parents=True)
     (agents / "journal.jsonl").write_text(journal)
     for aid in ("aAAA", "aBBB"):
-        (agents / f"agent-{aid}.jsonl").write_text(_AGENT_JSONL)
+        (agents / f"agent-{aid}.jsonl").write_text(agent_jsonl)
         (agents / f"agent-{aid}.meta.json").write_text(
             json.dumps({"agentType": "Explore"}))
     scripts = sess / "workflows" / "scripts"
@@ -238,6 +240,61 @@ def test_build_flat_spans_expands_live_agent_turns(tmp_path):
     # opting out keeps the coarse agent-only tree
     flat = _by_name(W.build_flat_spans(ref, deep=False, is_test=True))
     assert "assistant_response" not in flat
+
+
+# Encrypted-thinking agent transcript: turn 1 = text + signature-only
+# thinking + a Bash tool; turn 2 = thinking ONLY (no text). The old head-span
+# logic dropped turn 2 entirely (no thinking_text -> no span) and folded turn
+# 1's reasoning into the response bucket.
+_ENC_THINK_AGENT = "\n".join(json.dumps(e) for e in [
+    {"type": "user", "uuid": "u1", "timestamp": "2026-01-01T00:00:00Z",
+     "cwd": "/tmp/repo", "message": {"role": "user", "content": "do X"}},
+    {"type": "assistant", "uuid": "a1", "timestamp": "2026-01-01T00:00:01Z",
+     "message": {"id": "m1", "model": "claude-opus-4-8", "role": "assistant",
+                 "stop_reason": "tool_use",
+                 "usage": {"input_tokens": 10, "output_tokens": 500,
+                           "cache_read_input_tokens": 0,
+                           "cache_creation_input_tokens": 0},
+                 "content": [{"type": "thinking", "thinking": "", "signature": "S" * 2000},
+                             {"type": "text", "text": "answer"},
+                             {"type": "tool_use", "id": "tu1", "name": "Bash",
+                              "input": {"command": "ls"}}]}},
+    {"type": "assistant", "uuid": "a2", "timestamp": "2026-01-01T00:00:02Z",
+     "message": {"id": "m2", "model": "claude-opus-4-8", "role": "assistant",
+                 "stop_reason": "end_turn",
+                 "usage": {"input_tokens": 12, "output_tokens": 300,
+                           "cache_read_input_tokens": 0,
+                           "cache_creation_input_tokens": 0},
+                 "content": [{"type": "thinking", "thinking": "", "signature": "S" * 900}]}},
+]) + "\n"
+
+
+def _agent_heads(spans, agent_id):
+    """(assistant_response list, {turn_uuid: assistant.thinking}) for one agent."""
+    by = _by_name([s for s in spans if s["attributes"].get("agent_id") == agent_id])
+    thinking = {s["attributes"]["turn_uuid"]: s for s in by.get("assistant.thinking", [])}
+    return by.get("assistant_response", []), thinking
+
+
+def test_workflow_encrypted_thinking_splits_into_thinking_span(tmp_path):
+    """Workflow parity for the encrypted-thinking split: a text+thinking turn
+    emits BOTH a response (text estimate) and an assistant.thinking span
+    (output - text); a thinking-only turn emits an assistant.thinking span
+    where the old code emitted nothing (losing the tokens)."""
+    from lib.tokens.token_estimator import estimate_text_tokens
+    projects = _make_run(tmp_path, with_manifest=False, agent_jsonl=_ENC_THINK_AGENT)
+    ref = W.discover_runs(projects)[0]
+    resp, thinking = _agent_heads(W.build_flat_spans(ref, deep=True, is_test=True), "aAAA")
+    text_out = estimate_text_tokens("answer")
+    assert len(resp) == 1
+    assert resp[0]["attributes"]["output_tokens"] == text_out         # text only
+    assert len(thinking) == 2                                         # a1 (w/ text) + a2 (thinking-only)
+    assert thinking["a1"]["attributes"]["output_tokens"] == 500 - text_out
+    assert thinking["a2"]["attributes"]["output_tokens"] == 300       # was 0 spans before
+    # invariant: response + thinking accounts for the whole turn output
+    assert resp[0]["attributes"]["output_tokens"] + thinking["a1"]["attributes"]["output_tokens"] == 500
+    # thinking card sorts before its response (1 ms stagger)
+    assert thinking["a1"]["start_time"] < resp[0]["start_time"]
 
 
 def test_live_state_mtime_tracks_agent_transcripts(tmp_path):

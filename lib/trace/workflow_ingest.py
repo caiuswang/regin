@@ -50,7 +50,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from lib.activity_log import get_activity_logger
@@ -841,38 +841,94 @@ def _agent_turn_spans(run_id: str, agent_span_id: str, agent_id: str,
         # A turn emits a response card when it produced text, else a thinking
         # card when it only reasoned; tools nest under whichever exists (or the
         # agent itself), avoiding an empty bubble / orphan parent_id.
-        head = _turn_head_span(run_id, resp_id, agent_span_id, agent_id, turn, ts, is_test)
-        if head is not None:
-            spans.append(head)
-        tool_parent = resp_id if head is not None else agent_span_id
+        think_id = f"wfthink-{run_id}-{agent_id}-{idx}"
+        spans.extend(_turn_head_spans(run_id, resp_id, think_id, agent_span_id,
+                                      agent_id, turn, ts, is_test))
+        tool_parent = (resp_id if turn.text
+                       else think_id if turn.thinking_blocks
+                       else agent_span_id)
         spans.extend(_tool_spans(run_id, tool_parent, agent_id, idx, ts,
                                  turn.tool_calls, tool_inputs, tool_outputs, is_test))
     return spans
 
 
-def _turn_head_span(run_id: str, resp_id: str, parent_id: str, agent_id: str,
-                    turn, ts: str | None, is_test: bool) -> dict | None:
-    """The per-turn head: an ``assistant_response`` (when the turn has text,
-    carrying any thinking) or an ``assistant.thinking`` card (thinking only).
-    None for a pure tool-call turn."""
-    base = {"agent_id": agent_id, "output_tokens": turn.output_tokens,
-            "input_tokens": turn.input_tokens, "model": turn.model,
-            "turn_uuid": turn.uuid}
-    if turn.thinking_text:
-        base["thinking_text"] = turn.thinking_text
-        base["thinking_truncated"] = turn.thinking_text_truncated
+def _stagger_before_ts(ts: str | None) -> str | None:
+    """`ts` minus 1 ms so the thinking span sorts immediately ahead of its
+    response in the start_time-ordered conversation tree (same idiom as
+    span_posters._stagger_before). Returns `ts` unchanged when it isn't a
+    parseable ISO timestamp."""
+    if not ts:
+        return ts
+    try:
+        base = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+        return (datetime.fromisoformat(base) - timedelta(milliseconds=1)).isoformat()
+    except (ValueError, TypeError):
+        return ts
+
+
+def _turn_head_spans(run_id: str, resp_id: str, think_id: str, parent_id: str,
+                     agent_id: str, turn, ts: str | None,
+                     is_test: bool) -> list[dict]:
+    """Per-turn head span(s): an ``assistant_response`` (text) and/or an
+    ``assistant.thinking`` (reasoning). A turn with both emits BOTH — the
+    thinking staggered 1 ms earlier so the start_time-ordered tree renders
+    it first. Mirrors ``span_posters._maybe_emit_assistant_span``.
+
+    Token split — this reconstruction does NOT attribute tokens to
+    individual tool spans, so the head spans account for the whole turn:
+
+      * no thinking          -> response carries the full turn
+                                output_tokens (unchanged; tool_use stays
+                                lumped with the text as before).
+      * thinking present     -> response carries the text estimate and the
+                                thinking span carries the remainder
+                                (output - text) = reasoning + tool_use.
+
+    Either way ``response + thinking == turn.output_tokens`` so nothing is
+    lost. The prior code dropped an encrypted thinking-only turn entirely
+    (no thinking_text -> no span) and folded thinking into the response
+    bucket on text turns — both fixed here."""
+    from lib.tokens.token_estimator import estimate_text_tokens  # type: ignore
+    spans: list[dict] = []
+    has_think = turn.thinking_blocks > 0
+    text_out = estimate_text_tokens(turn.text) if turn.text else 0
+    base = {"agent_id": agent_id, "input_tokens": turn.input_tokens,
+            "model": turn.model, "turn_uuid": turn.uuid}
     if turn.text:
-        return _span(run_id, resp_id, "assistant_response", parent_id=parent_id,
-                     start_time=ts, end_time=ts,
-                     duration_ms=turn.inference_duration_ms or 0,
-                     attrs={**base, "text": turn.text, "truncated": turn.text_truncated},
-                     is_test=is_test)
+        resp_out = text_out if has_think else (turn.output_tokens or 0)
+        spans.append(_span(
+            run_id, resp_id, "assistant_response", parent_id=parent_id,
+            start_time=ts, end_time=ts,
+            duration_ms=turn.inference_duration_ms or 0,
+            attrs={**base, "output_tokens": resp_out,
+                   "text": turn.text, "truncated": turn.text_truncated},
+            is_test=is_test))
+    if has_think:
+        spans.append(_thinking_head_span(
+            run_id, think_id, parent_id, base, turn, ts, text_out,
+            has_text=bool(turn.text), is_test=is_test))
+    return spans
+
+
+def _thinking_head_span(run_id: str, think_id: str, parent_id: str, base: dict,
+                        turn, ts: str | None, text_out: int, *,
+                        has_text: bool, is_test: bool) -> dict:
+    """The turn's ``assistant.thinking`` span. Output is the turn's output
+    minus the text estimate (reasoning + un-attributed tool_use); when the
+    turn also has text it's staggered 1 ms ahead and carries no duration
+    (the response span owns the per-call latency)."""
+    tattrs = {**base, "output_tokens": max(0, (turn.output_tokens or 0) - text_out),
+              "thinking_blocks": turn.thinking_blocks,
+              "thinking_signature_bytes": turn.thinking_signature_bytes}
     if turn.thinking_text:
-        return _span(run_id, resp_id, "assistant.thinking", parent_id=parent_id,
-                     start_time=ts, end_time=ts,
-                     duration_ms=turn.inference_duration_ms or 0,
-                     attrs=base, is_test=is_test)
-    return None
+        tattrs["thinking_text"] = turn.thinking_text
+        tattrs["thinking_truncated"] = turn.thinking_text_truncated
+    think_ts = _stagger_before_ts(ts) if has_text else ts
+    return _span(
+        run_id, think_id, "assistant.thinking", parent_id=parent_id,
+        start_time=think_ts, end_time=think_ts,
+        duration_ms=0 if has_text else (turn.inference_duration_ms or 0),
+        attrs=tattrs, is_test=is_test)
 
 
 def _root_and_title_spans(run_id: str, *, title: str, start: str | None,
