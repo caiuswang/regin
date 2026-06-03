@@ -13,8 +13,8 @@ from sqlmodel import select
 
 from lib.orm import SessionLocal
 from lib.orm.models import (
-    PlanSession, RuleTrigger, Session as SessionModel, SessionSpan,
-    SkillRead,
+    PlanSession, RuleTrigger, Session as SessionModel, SessionRepo,
+    SessionSpan, SessionTraceMap, SkillRead, TurnUsage,
 )
 
 
@@ -55,7 +55,32 @@ def _seed_session(trace_id: str):
             rule_id="r", file_path="f.java", match_count=0, triggered=0,
             session_id=trace_id, checked_at="2026-04-22 10:00:00",
         ))
+        session.add(SessionTraceMap(
+            trace_id=trace_id, span_id="root-span", parent_id=None,
+            name="root", start_time="2026-04-22 10:00:00",
+        ))
+        session.add(TurnUsage(
+            trace_id=trace_id, turn_uuid="t1", turn_index=0,
+            timestamp="2026-04-22 10:00:00", input_tokens=1, output_tokens=1,
+            cache_read_tokens=0, cache_creation_tokens=0, context_used_tokens=1,
+        ))
+        session.add(SessionRepo(trace_id=trace_id, repo_id=1, is_primary=1))
         session.commit()
+
+
+def _assert_no_session_residue(trace_id: str):
+    """Fail if any session-keyed table still holds a row for `trace_id`.
+
+    Drives off the production target list so a newly-added table that the
+    delete path forgets to clear is caught here automatically.
+    """
+    from web.blueprints.trace.sessions import _SESSION_DELETE_TARGETS
+    with SessionLocal() as session:
+        for key, model, column in _SESSION_DELETE_TARGETS:
+            remaining = session.exec(
+                select(model).where(column == trace_id)
+            ).all()
+            assert remaining == [], f"{key} left {len(remaining)} orphan row(s)"
 
 
 # ── POST /api/skill-reads/reset ─────────────────────────────
@@ -168,7 +193,7 @@ def test_batch_delete_empty_list_rejected(flask_client, tmp_db):
     assert resp.status_code == 400
 
 
-def test_batch_delete_removes_from_all_five_tables(flask_client, tmp_db):
+def test_batch_delete_removes_from_all_session_tables(flask_client, tmp_db):
     _seed_session("t1")
     _seed_session("t2")
 
@@ -180,13 +205,14 @@ def test_batch_delete_removes_from_all_five_tables(flask_client, tmp_db):
     body = resp.get_json()
     assert body["ok"] is True
     assert body["processed"] == 2
-    deleted = body["deleted"]
-    # Two sessions seeded with 1 row each in each child table.
-    assert deleted["sessions"] == 2
-    assert deleted["spans"] == 2
-    assert deleted["skill_reads"] == 2
-    assert deleted["plan_sessions"] == 2
-    assert deleted["rule_triggers"] == 2
+    # Two sessions seeded with 1 row each in every session-keyed table.
+    assert body["deleted"] == {
+        "sessions": 2, "spans": 2, "trace_map": 2, "turn_usage": 2,
+        "session_repos": 2, "skill_reads": 2, "plan_sessions": 2,
+        "rule_triggers": 2, "prompt_images": 0,
+    }
+    _assert_no_session_residue("t1")
+    _assert_no_session_residue("t2")
 
 
 def test_batch_delete_unknown_ids_are_noops(flask_client, tmp_db):
@@ -224,12 +250,13 @@ def test_session_delete_removes_full_session(flask_client, tmp_db):
     resp = flask_client.delete("/api/sessions/to-delete")
     body = resp.get_json()
     assert body["ok"] is True
-    deleted = body["deleted"]
-    assert deleted["sessions"] == 1
-    assert deleted["spans"] == 1
-    assert deleted["skill_reads"] == 1
-    assert deleted["plan_sessions"] == 1
-    assert deleted["rule_triggers"] == 1
+    assert body["deleted"] == {
+        "sessions": 1, "spans": 1, "trace_map": 1, "turn_usage": 1,
+        "session_repos": 1, "skill_reads": 1, "plan_sessions": 1,
+        "rule_triggers": 1, "prompt_images": 0,
+    }
+    # No table that carries the session id may keep a row behind.
+    _assert_no_session_residue("to-delete")
 
 
 # ── GET /api/ingest-errors ──────────────────────────────────

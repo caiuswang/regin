@@ -12,7 +12,7 @@ from lib import hook_plugin as _hp
 from lib.orm import SessionLocal
 from lib.orm.models import (
     PlanSession, PromptImage, RuleTrigger, Session as SessionModel,
-    SessionSpan, SkillRead,
+    SessionRepo, SessionSpan, SessionTraceMap, SkillRead, TurnUsage,
 )
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace import trace_service
@@ -971,6 +971,39 @@ def api_span_ancestors(trace_id, span_id):
     })
 
 
+# Every table that carries a session's id, paired with the column it lives
+# under and the response key it reports. The single- and batch-delete paths
+# both run this list so they can never drift (a missed table here leaks rows
+# that no reader can ever reach again — they go stale forever). Keep in sync
+# with db/schema.sql whenever a new trace_id/session_id-keyed table is added.
+_SESSION_DELETE_TARGETS = (
+    ('sessions', SessionModel, SessionModel.trace_id),
+    ('spans', SessionSpan, SessionSpan.trace_id),
+    ('trace_map', SessionTraceMap, SessionTraceMap.trace_id),
+    ('turn_usage', TurnUsage, TurnUsage.trace_id),
+    ('session_repos', SessionRepo, SessionRepo.trace_id),
+    ('skill_reads', SkillRead, SkillRead.session_id),
+    ('plan_sessions', PlanSession, PlanSession.session_id),
+    ('rule_triggers', RuleTrigger, RuleTrigger.session_id),
+    ('prompt_images', PromptImage, PromptImage.trace_id),
+)
+
+
+def _delete_session_rows(session, trace_id):
+    """Delete every row keyed to `trace_id` across all session tables.
+
+    Returns a dict of per-table rowcounts. Caller owns the transaction so
+    single- and batch-delete can each wrap their own BEGIN IMMEDIATE.
+    """
+    from sqlalchemy import delete as _delete
+    counts = {}
+    for key, model, column in _SESSION_DELETE_TARGETS:
+        counts[key] = session.execute(
+            _delete(model).where(column == trace_id)
+        ).rowcount
+    return counts
+
+
 @trace_bp.route('/api/sessions/batch-delete', methods=['POST'])
 def api_session_batch_delete():
     """Delete multiple sessions in a single transaction.
@@ -992,30 +1025,12 @@ def api_session_batch_delete():
     if not trace_ids:
         return jsonify({'ok': False, 'error': 'trace_ids must not be empty'}), 400
 
-    from sqlalchemy import delete as _delete
-    totals = {'sessions': 0, 'spans': 0, 'skill_reads': 0,
-              'plan_sessions': 0, 'rule_triggers': 0, 'prompt_images': 0}
+    totals = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
     try:
         with SessionLocal() as session:
             for trace_id in trace_ids:
-                totals['sessions'] += session.execute(
-                    _delete(SessionModel).where(SessionModel.trace_id == trace_id)
-                ).rowcount
-                totals['spans'] += session.execute(
-                    _delete(SessionSpan).where(SessionSpan.trace_id == trace_id)
-                ).rowcount
-                totals['skill_reads'] += session.execute(
-                    _delete(SkillRead).where(SkillRead.session_id == trace_id)
-                ).rowcount
-                totals['plan_sessions'] += session.execute(
-                    _delete(PlanSession).where(PlanSession.session_id == trace_id)
-                ).rowcount
-                totals['rule_triggers'] += session.execute(
-                    _delete(RuleTrigger).where(RuleTrigger.session_id == trace_id)
-                ).rowcount
-                totals['prompt_images'] += session.execute(
-                    _delete(PromptImage).where(PromptImage.trace_id == trace_id)
-                ).rowcount
+                for key, count in _delete_session_rows(session, trace_id).items():
+                    totals[key] += count
             session.commit()
     except Exception as exc:
         return jsonify({
@@ -1033,35 +1048,17 @@ def api_session_batch_delete():
 def api_session_delete(trace_id):
     """Delete a session and all of its related trace rows.
 
-    Five tables carry the session id:
-      sessions.trace_id,           session_spans.trace_id,
-      skill_reads.session_id,      plan_sessions.session_id,
-      rule_triggers.session_id
-    Everything is removed in one BEGIN IMMEDIATE so a crash mid-delete
-    can't leave half a session in the DB (which would leak into the
-    sessions list with a missing title or zero spans).
+    Nine tables carry the session id (see `_SESSION_DELETE_TARGETS`):
+    sessions/session_spans/session_trace_map/turn_usage/prompt_images and
+    session_repos key on trace_id; skill_reads/plan_sessions/rule_triggers
+    key on session_id. Everything is removed in one BEGIN IMMEDIATE so a
+    crash mid-delete can't leave half a session in the DB (which would leak
+    into the sessions list with a missing title or zero spans) or strand
+    trace_map/turn_usage/repo rows that no reader can ever reach again.
     """
-    from sqlalchemy import delete as _delete
     try:
         with SessionLocal() as session:
-            session_row = session.execute(
-                _delete(SessionModel).where(SessionModel.trace_id == trace_id)
-            ).rowcount
-            spans = session.execute(
-                _delete(SessionSpan).where(SessionSpan.trace_id == trace_id)
-            ).rowcount
-            skills = session.execute(
-                _delete(SkillRead).where(SkillRead.session_id == trace_id)
-            ).rowcount
-            plans = session.execute(
-                _delete(PlanSession).where(PlanSession.session_id == trace_id)
-            ).rowcount
-            rules = session.execute(
-                _delete(RuleTrigger).where(RuleTrigger.session_id == trace_id)
-            ).rowcount
-            prompt_images = session.execute(
-                _delete(PromptImage).where(PromptImage.trace_id == trace_id)
-            ).rowcount
+            deleted = _delete_session_rows(session, trace_id)
             session.commit()
     except Exception as exc:
         return jsonify({
@@ -1072,14 +1069,7 @@ def api_session_delete(trace_id):
     return jsonify({
         'ok': True,
         'trace_id': trace_id,
-        'deleted': {
-            'sessions': session_row,
-            'spans': spans,
-            'skill_reads': skills,
-            'plan_sessions': plans,
-            'rule_triggers': rules,
-            'prompt_images': prompt_images,
-        },
+        'deleted': deleted,
     })
 
 
