@@ -43,6 +43,7 @@ from lib.trace.transcript_models import (
     TranscriptSystemEvent,
     TranscriptUsage,
     TurnUsage,
+    has_encrypted_thinking,
 )
 from lib.trace.prompt_images_resolve import extract_image_parts
 from lib.trace.transcript_parsers import (
@@ -424,15 +425,24 @@ def _should_skip_redistribution(
 ) -> bool:
     """True when redistribution must NOT run for this builder.
 
-    Redacted-thinking-with-tools case (no text, no thinking text, but
-    thinking_blocks > 0): turn_trace.py's fallback already computes the
-    thinking span's output as `max(0, API.out − Σ tool_use)`, absorbing
-    the residual into thinking. Redistributing into tools there would
-    zero out the thinking span's output column.
+    Encrypted-thinking case (thinking_blocks > 0 but no captured
+    thinking_text — see `has_encrypted_thinking`): the residual
+    `API.out − Σ estimates` is dominated by the turn's reasoning tokens,
+    not tool_use framing undershoot. Its rightful home is the
+    `assistant.thinking` span, whose output `span_posters` computes as
+    `max(0, API.out − text_est − Σ raw non-server tool_use)` — which is
+    only correct if the tools below stay raw. So skip regardless of
+    whether the turn also emitted user-visible text: a Write that merely
+    *followed* the reasoning must not absorb it.
+
+    A turn with no thinking blocks (or with captured plaintext thinking,
+    whose tokens the thinking span counts directly) still gets
+    redistribution — there the residual really is framing undershoot and
+    belongs on the tools.
     """
     if not builder.output_tokens or not tool_calls:
         return True
-    return not text and not thinking_text and builder.thinking_blocks > 0
+    return has_encrypted_thinking(builder.thinking_blocks, thinking_text)
 
 
 def _apply_residual_scale(

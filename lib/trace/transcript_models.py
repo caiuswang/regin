@@ -10,6 +10,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+def has_encrypted_thinking(thinking_blocks: int, thinking_text: str | None) -> bool:
+    """True when a turn carried extended-thinking blocks whose plaintext
+    was not captured — the API returned only an encrypted `signature`,
+    so the reasoning's token cost is recoverable only by subtraction
+    from the turn's API-reported `output_tokens`.
+
+    This is the single predicate that couples two attribution sites which
+    must agree on the per-turn token split:
+
+      * `transcript_usage._should_skip_redistribution` — when True, the
+        thinking residual must NOT be smeared onto tool_use estimates, so
+        tool spans keep their raw `output_token_estimate`.
+      * `span_posters._compute_thinking_output` — when True, the
+        `assistant.thinking` span claims that residual as
+        `max(0, output − text_est − Σ raw non-server tool_use)`, which is
+        only correct *because* the tools above were left raw.
+
+    Editing one site without the other silently desyncs the split (double
+    counting or a vanished residual), so both gate on this function.
+    """
+    return thinking_blocks > 0 and not thinking_text
+
+
 @dataclass(frozen=True)
 class TurnUsage:
     model: str | None
