@@ -497,7 +497,22 @@ def _file_target(attrs: dict) -> tuple[str, str] | None:
 
 
 def _cmd_target(attrs: dict) -> tuple[str, str] | None:
-    flat = ' '.join((_command_str(attrs.get('tool_input')) or '').split())
+    """`(full, label)` for a command-style tool (Bash/Grep/Glob), or None.
+
+    The command/pattern lives in different attributes across capture paths:
+    the live hook path (`post_tool_trace`) stores `command`/`command_preview`
+    for Bash and `pattern` for Grep/Glob, while the workflow-ingest path stores
+    the raw `tool_input` dict. Reading only `tool_input` (the old behaviour)
+    left every hook-captured Bash/Grep/Glob span with no drill-down target, so
+    the per-tool rollup's jump-to-span button was permanently disabled for them.
+    """
+    cmd = (_nonempty_str(attrs.get('command'))
+           or _command_str(attrs.get('tool_input'))
+           or _nonempty_str(attrs.get('command_preview'))
+           or _nonempty_str(attrs.get('pattern'))
+           or _nonempty_str(attrs.get('glob'))
+           or _nonempty_str(attrs.get('query')))
+    flat = ' '.join((cmd or '').split())
     if not flat:
         return None
     return flat, (flat[:160] + '…' if len(flat) > 160 else flat)
@@ -544,6 +559,7 @@ def _tool_target_breakdown(conn, trace_id: str, per_tool: int = 8) -> dict:
         "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) AS tok "
         "FROM session_spans "
         "WHERE trace_id = ? AND name LIKE 'tool.%' "
+        "AND status_code != 'PENDING' "
         "AND (input_tokens > 0 OR output_tokens > 0)",
         (trace_id,),
     ).fetchall()

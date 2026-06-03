@@ -1069,16 +1069,19 @@ def test_fetch_session_paginated_no_retired_when_only_live_placeholder(tmp_db):
 
 def _insert_tool_spans(db_path, trace_id, rows):
     """Insert tool.* spans carrying token counts. Each row:
-    (span_id, name, input_tokens, output_tokens, attributes_dict)."""
+    (span_id, name, input_tokens, output_tokens, attributes_dict[, status_code]).
+    status_code defaults to 'OK'; pass 'PENDING' to model a live placeholder."""
     conn = sqlite3.connect(str(db_path))
     try:
-        for sid, name, intok, outtok, attrs in rows:
+        for row in rows:
+            sid, name, intok, outtok, attrs = row[:5]
+            status = row[5] if len(row) > 5 else "OK"
             conn.execute(
                 "INSERT INTO session_spans (trace_id, span_id, name, "
-                "start_time, input_tokens, output_tokens, attributes) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "start_time, input_tokens, output_tokens, attributes, status_code) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (trace_id, sid, name, "2026-06-02T10:00:00",
-                 intok, outtok, json.dumps(attrs)),
+                 intok, outtok, json.dumps(attrs), status),
             )
         conn.commit()
     finally:
@@ -1129,3 +1132,47 @@ def test_tool_rollup_drill_down_by_target(tmp_db):
 
     # Agent carries no drill-down target.
     assert by_name["Agent"]["targets"] == []
+
+
+def test_tool_rollup_drill_down_hook_path_command(tmp_db):
+    """The live hook path (post_tool_trace) stores a command-tool's command in
+    `command`/`command_preview` (Bash) or `pattern` (Grep/Glob), NOT in a
+    `tool_input` dict (which only the workflow-ingest path writes). The target
+    breakdown must read those attrs too, or every hook-captured Bash/Grep/Glob
+    span gets no drill-down target and its jump-to-span button stays disabled.
+    PENDING placeholders are excluded so the jump never lands on a span the
+    serve-time merge retires."""
+    _insert_tool_spans(tmp_db, "hkp", [
+        # short Bash: only command_preview is stored (command omitted < cap)
+        ("b1", "tool.Bash", 150, 0, {"tool_name": "Bash",
+                                     "command_preview": "git status"}),
+        # long Bash: full command stored; preview is the truncated head — the
+        # full `command` is preferred so the two calls group as one target.
+        ("b2", "tool.Bash", 90, 0, {"tool_name": "Bash",
+                                    "command": "make build && make test",
+                                    "command_preview": "make build && make…"}),
+        ("b3", "tool.Bash", 400, 0, {"tool_name": "Bash",
+                                     "command": "make build && make test",
+                                     "command_preview": "make build && make…"}),
+        # Grep stores `pattern` (no tool_input).
+        ("g1", "tool.Grep", 60, 0, {"tool_name": "Grep", "pattern": "TODO"}),
+        # PENDING placeholder for the highest-token call must NOT win the jump.
+        ("bp", "tool.Bash", 5000, 0, {"tool_name": "Bash",
+                                      "command": "make build && make test",
+                                      "command_preview": "make build && make…"},
+         "PENDING"),
+    ])
+
+    rollup, _ = trace_service.fetch_tool_token_rollup("hkp")
+    by_name = {r["name"]: r for r in rollup}
+
+    bash = {t["label"]: t for t in by_name["Bash"]["targets"]}
+    assert "git status" in bash                       # resolved from command_preview
+    # both long-command calls grouped under the full `command` (490 = 90+400),
+    # and the PENDING 5000-token row is excluded entirely.
+    assert bash["make build && make test"]["tokens"] == 490
+    assert bash["make build && make test"]["calls"] == 2
+    assert bash["make build && make test"]["span_id"] == "b3"   # peak resolved call
+    # Grep resolves its pattern target with a real span_id (jump enabled).
+    assert by_name["Grep"]["targets"] == [
+        {"target": "TODO", "label": "TODO", "tokens": 60, "calls": 1, "span_id": "g1"}]
