@@ -115,6 +115,7 @@ const turnBoundaries = computed(() => {
       <div
         v-for="(node, idx) in treeNodes"
         :key="node.data.span_id"
+        data-testid="overview-strip-bar"
         class="absolute top-0.5 bottom-0.5 rounded-sm cursor-pointer transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-500"
         :class="[
           paletteColor(idx),

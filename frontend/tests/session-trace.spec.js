@@ -68,13 +68,19 @@ test.describe('Session Trace View', () => {
     const firstRow = page.locator('ul > li').filter({ hasText: /\d{2}:\d{2}:\d{2}/ }).first()
     await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    // Clicking a turn row dims the overview-strip bars that don't belong to
-    // that turn. We observe this via the opacity class the component toggles.
-    // At least one dimmed bar proves the cross-highlight pipeline is wired (if
-    // the session only has one turn, every bar matches — skip in that case).
+    // Clicking the first (earliest) turn row must select it — the deterministic
+    // proof that the row → selectTurn wiring fired.
     await firstRow.click()
-    if (turnCount > 1) {
-      const dimmed = page.locator('.opacity-20')
+    await expect(firstRow).toHaveClass(/bg-indigo-50/, { timeout: 5_000 })
+
+    // …and it must dim the overview-strip bars that fall outside that turn's
+    // interval. Each bar is a prompt-level root; the first turn's interval is
+    // `(-∞, firstTurn.ts]`, so EVERY later prompt bar gets dimmed. Gate on the
+    // real precondition — ≥2 strip bars — not turnCount: a session with one
+    // prompt but many tool-use turns has turnCount>1 yet nothing to dim.
+    const bars = page.locator('[data-testid="overview-strip-bar"]')
+    if ((await bars.count()) >= 2) {
+      const dimmed = page.locator('[data-testid="overview-strip-bar"].opacity-20')
       await expect(dimmed.first()).toBeVisible({ timeout: 5_000 })
     }
   })
