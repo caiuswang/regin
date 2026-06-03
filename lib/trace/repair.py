@@ -54,13 +54,17 @@ def _tool_call_expected_span_id(tc: dict) -> str | None:
 
 
 def _turn_expected_span_ids(turn, capture_text: bool) -> set[str]:
-    """Span_ids turn_trace emits for one assistant turn: the response
-    (or thinking) span plus any synthetic tool spans keyed on
-    `tool_use_id`."""
+    """Span_ids turn_trace emits for one assistant turn, plus any
+    synthetic tool spans keyed on `tool_use_id`. A turn can emit BOTH a
+    `resp-` (text) and a `think-` (extended thinking) span — they're
+    independent, so a turn with both must list both here or repair would
+    see `resp-` present and never re-emit the missing `think-`. Mirrors
+    `span_posters._maybe_emit_assistant_span`."""
     span_ids: set[str] = set()
-    if capture_text and (turn.text or turn.thinking_blocks):
-        prefix = 'resp' if turn.text else 'think'
-        span_ids.add(f'{prefix}-{turn.uuid[:13]}')
+    if capture_text and turn.text:
+        span_ids.add(f'resp-{turn.uuid[:13]}')
+    if capture_text and turn.thinking_blocks:
+        span_ids.add(f'think-{turn.uuid[:13]}')
     for tc in turn.tool_calls:
         sid = _tool_call_expected_span_id(tc)
         if sid:

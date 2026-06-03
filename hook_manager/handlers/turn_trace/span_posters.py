@@ -757,69 +757,100 @@ def _post_tool_attribution_event(
     })
 
 
-def _compute_response_output_tokens(turn, has_text: bool) -> int:
-    """Estimate output_tokens for the assistant_response (or
-    assistant.thinking) span so the "Tokens by tool" rollup can show an
-    "assistant text" bucket. The API's per-turn output_tokens count
-    covers text + tool_use blocks combined; tool_use blocks already get
-    attributed to tool.* spans via tool_attribution, so this estimate is
-    the text-only remainder. ingest_session_spans promotes it from
-    attributes into the output_tokens column for assistant_response
-    spans so the rollup query can sum it directly."""
+def _compute_response_output_tokens(turn) -> int:
+    """output_tokens for the `assistant_response` span: the user-visible
+    prose only. The API's per-turn output_tokens covers text + thinking +
+    tool_use combined; thinking goes to `assistant.thinking` and tool_use
+    to `tool.*`, so the response span carries just the text estimate.
+    ingest_session_spans promotes it from attributes into the
+    output_tokens column so the rollup can sum it as the
+    'assistant_text' bucket."""
     from lib.tokens.token_estimator import estimate_text_tokens  # type: ignore
-    if has_text:
-        return estimate_text_tokens(turn.text) if turn.text else 0
-    thinking_text_tokens = (
-        estimate_text_tokens(turn.thinking_text) if turn.thinking_text else 0
-    )
-    if thinking_text_tokens:
-        return thinking_text_tokens
-    # The API frequently redacts thinking text (the transcript carries
-    # only an opaque signature). Fall back to the residual of the turn's
-    # API-reported output minus the tool-use serialization estimates so
-    # redacted thinking still surfaces in the Tokens-by-tool rollup.
-    # Clamped to >= 0 since both terms are approximate.
-    tool_use_out = sum(
-        int(tc.get('output_token_estimate') or 0) for tc in turn.tool_calls
-    )
-    return max(0, int(turn.output_tokens or 0) - tool_use_out)
+    return estimate_text_tokens(turn.text) if turn.text else 0
 
 
-def _build_response_attrs(
-    turn,
-    idx: int,
-    fallback_model: str | None,
-    has_text: bool,
-) -> dict:
-    attrs: dict = {
-        'turn_uuid': turn.uuid,
-        'turn_index': idx,
-        'model': turn.model or fallback_model,
-        'output_tokens': _compute_response_output_tokens(turn, has_text),
-    }
-    if has_text:
-        attrs['text'] = turn.text
-        attrs['truncated'] = turn.text_truncated
-        attrs['response_chars'] = len(turn.text)
+def _compute_thinking_output(turn) -> int:
+    """output_tokens for the `assistant.thinking` span.
+
+    Captured plaintext thinking is tokenized directly. Encrypted thinking
+    (the API returned only an opaque `signature` — see
+    `transcript_models.has_encrypted_thinking`) carries no tokenizable
+    text, so its cost is recovered by subtraction: the turn's
+    API-reported output minus what we *can* estimate — the response text
+    and the raw, non-server tool_use blocks. Redistribution was skipped
+    for that shape (same predicate), so those tool estimates are still
+    raw and this subtraction is self-consistent. The small cl100k framing
+    undershoot lands here too — honestly grouped with the un-tokenizable
+    reasoning rather than smeared onto a tool. Server-side tools (advisor)
+    are excluded: they bill via a separate `iterations` entry, NOT this
+    turn's output_tokens. Clamped >= 0 since the terms are approximate."""
+    from lib.tokens.token_estimator import estimate_text_tokens  # type: ignore
+    if turn.thinking_text:
+        return estimate_text_tokens(turn.thinking_text)
+    text_est = estimate_text_tokens(turn.text) if turn.text else 0
+    raw_tool_use = sum(
+        int(tc.get('output_token_estimate') or 0)
+        for tc in turn.tool_calls if not tc.get('server_side')
+    )
+    return max(0, int(turn.output_tokens or 0) - text_est - raw_tool_use)
+
+
+def _add_tool_summary(turn, attrs: dict) -> None:
+    """Attach the turn's tool-call summary to the span that tool spans
+    nest under (the primary span — see `_resolve_server_parent_id`)."""
     if turn.tool_calls:
         attrs['tool_calls'] = [
             {'name': t['name'], 'is_error': t['is_error']}
             for t in turn.tool_calls
         ]
-    # Surface extended-thinking metadata even when the text is redacted —
-    # `thinking_blocks` and `thinking_signature_bytes` are still non-zero,
-    # so downstream queries can ask "did thinking happen on this turn?"
-    # without inspecting blobs.
-    if turn.thinking_blocks:
-        attrs['thinking_blocks'] = turn.thinking_blocks
-        attrs['thinking_signature_bytes'] = turn.thinking_signature_bytes
-        if turn.thinking_text:
-            attrs['thinking_text'] = turn.thinking_text
-            attrs['thinking_truncated'] = turn.thinking_text_truncated
+
+
+def _add_durations(turn, attrs: dict) -> None:
     if turn.turn_total_duration_ms is not None:
         attrs['turn_total_duration_ms'] = int(turn.turn_total_duration_ms)
     if turn.inference_duration_ms is not None:
         attrs['inference_duration_ms'] = int(turn.inference_duration_ms)
+
+
+def _build_response_attrs(turn, idx: int, fallback_model: str | None) -> dict:
+    attrs: dict = {
+        'turn_uuid': turn.uuid,
+        'turn_index': idx,
+        'model': turn.model or fallback_model,
+        'output_tokens': _compute_response_output_tokens(turn),
+        'text': turn.text,
+        'truncated': turn.text_truncated,
+        'response_chars': len(turn.text),
+    }
+    _add_tool_summary(turn, attrs)
+    _add_durations(turn, attrs)
+    return attrs
+
+
+def _build_thinking_attrs(
+    turn, idx: int, fallback_model: str | None, *, is_primary: bool,
+) -> dict:
+    """Attributes for the turn's `assistant.thinking` span. On a
+    thinking-only turn (`is_primary`) it owns the tool summary + durations
+    because tool spans nest under it; when the turn also has text the
+    response span is primary and this stays a lean leaf carrying just the
+    reasoning's token cost and the extended-thinking presence metadata
+    (`thinking_blocks`/`thinking_signature_bytes` prove reasoning happened
+    even when the text is an encrypted signature)."""
+    attrs: dict = {
+        'turn_uuid': turn.uuid,
+        'turn_index': idx,
+        'model': turn.model or fallback_model,
+        'output_tokens': _compute_thinking_output(turn),
+        'thinking_blocks': turn.thinking_blocks,
+        'thinking_signature_bytes': turn.thinking_signature_bytes,
+    }
+    if turn.thinking_text:
+        attrs['thinking_text'] = turn.thinking_text
+        attrs['thinking_truncated'] = turn.thinking_text_truncated
+    if is_primary:
+        _add_tool_summary(turn, attrs)
+        _add_durations(turn, attrs)
     return attrs
 
 
@@ -834,46 +865,31 @@ def _normalise_turn_ts(ts: str) -> str:
     return dt.astimezone().replace(tzinfo=None).isoformat()
 
 
-def _maybe_emit_assistant_span(
-    trace_id: str,
-    turn,
-    idx: int,
-    fallback_model: str | None,
-    capture_text: bool,
-) -> bool:
-    """Per-turn span. Two cases:
-      * turn carried user-visible text → emit `assistant_response`
-        (renders as a card in the conversation view).
-      * turn carried only thinking blocks → emit `assistant.thinking`
-        (separate name so the conversation view doesn't render empty
-        "response" rows; the timeline can still surface it).
+def _stagger_before(ts: str) -> str:
+    """`ts` minus 1 ms — so a sibling span sorts immediately ahead of the
+    one at `ts` in the start_time-ordered conversation tree. Matches the
+    existing +1 ms transcript-time stagger idiom."""
+    from datetime import datetime, timedelta
+    try:
+        return (datetime.fromisoformat(ts) - timedelta(milliseconds=1)).isoformat()
+    except (ValueError, TypeError):
+        return ts
 
-    parent_id is set at write time to the turn's prompt anchor
-    (`_prompt_parent_id`), so the read path nests it without chronological
-    grafting. Tracks whether persistence actually happened: default True
-    means "no post needed" (turn carried nothing postable). When a post
-    IS needed, the cache should only land on success — see
-    docs/trace/assistant_response_capture_vs_claudecodeui.md.
-    """
-    if not capture_text or not (turn.text or turn.thinking_blocks):
-        return True
+
+def _post_assistant_span(
+    trace_id: str, turn, name: str, prefix: str, ts: str, attrs: dict,
+    *, primary: bool,
+) -> bool:
+    """Post one assistant span (`resp-`/`think-<uuid[:13]>`). Only the
+    primary span carries the per-API-call latency: span.duration_ms is
+    the inference time, and `estimated_start_time` (completion −
+    inference) gives consumers the inference window without us reordering
+    the timeline by moving start_time itself."""
     from lib.hook_plugin import post_span  # type: ignore
-    has_text = bool(turn.text)
-    ts = _normalise_turn_ts(turn.timestamp)
-    attrs = _build_response_attrs(turn, idx, fallback_model, has_text)
-    span_name = 'assistant_response' if has_text else 'assistant.thinking'
-    span_prefix = 'resp' if has_text else 'think'
-    # span.duration_ms = per-API-call latency (current entry's
-    # timestamp minus the prior content entry's timestamp). This is
-    # the "how long did this specific Anthropic call take" metric.
-    # The full prompt-cycle duration (every API call + tools + hooks)
-    # lands on `attributes.turn_total_duration_ms`.
-    inference_ms = int(turn.inference_duration_ms) if turn.inference_duration_ms else 0
-    # `ts` is the transcript flush time ≈ inference completion, and is
-    # stored as both start_time and end_time (the transcript carries no
-    # API-start timestamp). Surface the estimated start as completion −
-    # inference latency so consumers have the inference window without
-    # us reordering the timeline by moving start_time itself.
+    inference_ms = (
+        int(turn.inference_duration_ms)
+        if primary and turn.inference_duration_ms else 0
+    )
     if inference_ms > 0:
         from datetime import datetime, timedelta
         attrs['estimated_start_time'] = (
@@ -881,13 +897,64 @@ def _maybe_emit_assistant_span(
         ).isoformat()
     return post_span(
         trace_id=trace_id,
-        span_id=f'{span_prefix}-{turn.uuid[:13]}',
-        name=span_name,
+        span_id=f'{prefix}-{turn.uuid[:13]}',
+        name=name,
         parent_id=_prompt_parent_id(turn),
         start_time=ts, end_time=ts,
         duration_ms=inference_ms,
         attributes=attrs,
     )
+
+
+def _maybe_emit_assistant_span(
+    trace_id: str,
+    turn,
+    idx: int,
+    fallback_model: str | None,
+    capture_text: bool,
+) -> bool:
+    """Per-turn assistant span(s). A turn can carry text, extended
+    thinking, or both:
+      * text          → `assistant_response` (renders as a card).
+      * thinking only → `assistant.thinking` (separate name so the
+                        conversation view doesn't render empty "response"
+                        rows; it also owns the turn's tool summary).
+      * both          → BOTH spans. The thinking span is staggered 1 ms
+                        earlier so the start_time-ordered tree renders the
+                        thinking card ahead of the response, and it
+                        carries the reasoning's token cost so that lands
+                        in the `assistant_thinking` rollup bucket instead
+                        of inflating whichever tool happened to follow the
+                        reasoning.
+
+    parent_id is the turn's prompt anchor for both, set at write time so
+    the read path nests without chronological grafting. Returns True iff
+    every needed post succeeded (default True = nothing postable). A
+    partial failure leaves the turn un-cached so the next scan retries;
+    the deterministic `resp-`/`think-` span ids make re-posts idempotent.
+    See docs/trace/assistant_response_capture_vs_claudecodeui.md.
+    """
+    if not capture_text or not (turn.text or turn.thinking_blocks):
+        return True
+    ts = _normalise_turn_ts(turn.timestamp)
+    has_text = bool(turn.text)
+    ok = True
+    if turn.thinking_blocks:
+        think_ts = _stagger_before(ts) if has_text else ts
+        think_attrs = _build_thinking_attrs(
+            turn, idx, fallback_model, is_primary=not has_text,
+        )
+        ok = _post_assistant_span(
+            trace_id, turn, 'assistant.thinking', 'think', think_ts,
+            think_attrs, primary=not has_text,
+        ) and ok
+    if has_text:
+        resp_attrs = _build_response_attrs(turn, idx, fallback_model)
+        ok = _post_assistant_span(
+            trace_id, turn, 'assistant_response', 'resp', ts,
+            resp_attrs, primary=True,
+        ) and ok
+    return ok
 
 
 def _process_one_turn(

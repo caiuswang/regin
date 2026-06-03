@@ -532,6 +532,160 @@ def test_assistant_response_carries_estimated_output_tokens(
     assert 5 < attrs['output_tokens'] < 40
 
 
+def _enc_thinking_assistant(*, uuid, content_blocks, output_tokens,
+                            advisor_out=None, ts='2026-06-03T06:48:49Z'):
+    """An assistant entry whose extended thinking is *encrypted* — a
+    `thinking` block with an empty plaintext field but a present
+    `signature` (the real Opus 4.x transcript shape). `advisor_out`, when
+    given, bills via `usage.iterations` (an `advisor_message`), NOT the
+    top-level output_tokens — exactly how the API reports a server-tool
+    sub-call: it is excluded from the main turn's output_tokens."""
+    usage = {
+        'input_tokens': 4,
+        'output_tokens': output_tokens,
+        'cache_creation_input_tokens': 0,
+        'cache_read_input_tokens': 0,
+    }
+    if advisor_out is not None:
+        usage['iterations'] = [
+            {'type': 'message', 'output_tokens': output_tokens},
+            {'type': 'advisor_message', 'output_tokens': advisor_out,
+             'input_tokens': 192174},
+        ]
+    return {
+        'type': 'assistant', 'uuid': uuid, 'parentUuid': 'u1',
+        'timestamp': ts, 'requestId': 'req-' + uuid,
+        'message': {'id': 'msg-' + uuid, 'model': 'claude-opus-4-8',
+                    'content': content_blocks, 'usage': usage},
+    }
+
+
+def _turn_split(captured_spans, posted_events):
+    """Pull a single turn's emitted figures out of the capture buffers:
+    (assistant_response spans, assistant.thinking spans, {tool_name:
+    attribution_call}). Keeps the comprehensions out of the test bodies."""
+    resp = [s for s in captured_spans if s.get('name') == 'assistant_response']
+    think = [s for s in captured_spans if s.get('name') == 'assistant.thinking']
+    attr = [d for n, d in posted_events if n == 'tool_attribution']
+    calls = {c['name']: c for c in attr[0]['tool_calls']} if attr else {}
+    return resp, think, calls
+
+
+def test_encrypted_thinking_residual_lands_on_thinking_span_not_tool(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """Regression for the "Write a file = 22k tokens" inflation.
+
+    On a turn with user-visible text, encrypted (signature-only) extended
+    thinking, a Write, and an advisor sub-call, the turn's API
+    output_tokens must split as:
+        assistant_response  = text estimate
+        tool.Write          = its RAW tool_use estimate (NOT inflated)
+        assistant.thinking  = the leftover reasoning residual
+    with `text + Write + thinking == turn output_tokens` and the advisor's
+    iteration tokens kept OUT of that sum. Before the fix, redistribution
+    smeared the residual onto Write, inflating it toward the whole turn
+    total."""
+    from lib.tokens.token_estimator import (  # type: ignore
+        estimate_text_tokens, estimate_tool_use_tokens,
+    )
+    posted_events: list[tuple[str, object]] = []
+    import lib.hook_plugin as hp
+    monkeypatch.setattr(hp, 'post_event',
+                        lambda n, d: posted_events.append((n, d)))
+
+    turn_uuid = 'asst-uuid-encthink01'
+    text = 'Done — decomposed the component.'
+    write_input = {'file_path': '/repo/Big.vue',
+                   'content': '  const x = computeValue(items)\n' * 300}
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'decompose it'}},
+        _enc_thinking_assistant(
+            uuid=turn_uuid, output_tokens=22195, advisor_out=15073,
+            content_blocks=[
+                {'type': 'thinking', 'thinking': '', 'signature': 'S' * 4000},
+                {'type': 'text', 'text': text},
+                {'type': 'server_tool_use', 'id': 'srvtoolu_adv01',
+                 'name': 'advisor', 'input': {}},
+                {'type': 'thinking', 'thinking': '', 'signature': 'S' * 600},
+                {'type': 'tool_use', 'id': 'tu_write01', 'name': 'Write',
+                 'input': write_input},
+            ],
+        ),
+    ])
+    turn_trace.handle(_p('PostToolUse', session_id='senc',
+                         transcript_path=str(transcript)))
+
+    resp, think, calls = _turn_split(captured_spans, posted_events)
+    # The "show card too" behaviour: a text turn that also reasoned emits
+    # BOTH spans.
+    assert len(resp) == 1
+    assert len(think) == 1
+    resp_out = resp[0]['attributes']['output_tokens']
+    think_out = think[0]['attributes']['output_tokens']
+    write_out = calls['Write']['output_tokens']
+    raw_write = estimate_tool_use_tokens('Write', write_input)
+    # 1. Write keeps its RAW estimate — redistribution did NOT inflate it.
+    assert write_out == raw_write
+    # 2. Response span carries only the text estimate.
+    assert resp_out == estimate_text_tokens(text)
+    # 3. Thinking span claims the leftover reasoning residual, which
+    #    dwarfs the tool — the bulk of the turn was reasoning.
+    assert think_out == max(0, 22195 - resp_out - write_out)
+    assert think_out > write_out
+    # 4. Invariant: the three independently-emitted figures account for
+    #    the full turn output_tokens, nothing lost or double-counted.
+    assert resp_out + write_out + think_out == 22195
+    # 5. The advisor bills via usage.iterations, NOT this turn's output —
+    #    it stays out of the sum above.
+    assert calls['advisor']['output_tokens'] == 15073
+    # 6. The thinking card sorts before the response (1 ms stagger).
+    assert think[0]['start_time'] < resp[0]['start_time']
+
+
+def test_thinking_only_residual_excludes_server_side_tool(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """A thinking-only turn (no user-visible text) with encrypted thinking
+    + an advisor sub-call: the assistant.thinking residual must subtract
+    only the RAW *non-server* tool_use, never the advisor's iteration
+    tokens (which aren't part of this turn's output_tokens). Subtracting
+    the advisor would wrongly clamp the thinking span to zero."""
+    from lib.tokens.token_estimator import estimate_tool_use_tokens  # type: ignore
+    import lib.hook_plugin as hp
+    monkeypatch.setattr(hp, 'post_event', lambda n, d: None)
+
+    turn_uuid = 'asst-uuid-thinkadv01'
+    bash_input = {'command': 'ls -la /some/path'}
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        _enc_thinking_assistant(
+            uuid=turn_uuid, output_tokens=8000, advisor_out=15073,
+            content_blocks=[
+                {'type': 'thinking', 'thinking': '', 'signature': 'S' * 2000},
+                {'type': 'server_tool_use', 'id': 'srvtoolu_adv02',
+                 'name': 'advisor', 'input': {}},
+                {'type': 'tool_use', 'id': 'tu_bash02', 'name': 'Bash',
+                 'input': bash_input},
+            ],
+        ),
+    ])
+    turn_trace.handle(_p('PostToolUse', session_id='sthk',
+                         transcript_path=str(transcript)))
+
+    resp, think, _calls = _turn_split(captured_spans, [])
+    # thinking-only: no response card.
+    assert len(think) == 1
+    assert resp == []
+    think_out = think[0]['attributes']['output_tokens']
+    raw_bash = estimate_tool_use_tokens('Bash', bash_input)
+    # Residual excludes the advisor's 15073; thinking stays well above 0.
+    assert think_out == max(0, 8000 - raw_bash)
+    assert think_out > 7000
+
+
 def test_post_tool_use_throttled_by_seen_uuid_cache(captured_spans, tmp_path):
     """A second PostToolUse on the same transcript must not re-post a
     turn we've already seen. Idempotency on the server is a safety net;
