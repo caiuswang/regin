@@ -121,9 +121,14 @@ test('suppress a rule from the session conversation view', async ({ page }) => {
     ruleRow.locator('button[title="Un-mark as noise"]')
   ).toBeVisible()
 
-  // Confirm via the API that the underlying trigger row flipped.
+  // Confirm via the API that the underlying trigger row flipped. The
+  // `page.request` context is separate from the browser and carries no
+  // localStorage token, so attach the fixture's JWT explicitly — the
+  // /api/triggers/by-span route is behind the auth gate.
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
   const check = await page.request.get(
     `${API_BASE}/api/triggers/by-span/${checkId}`,
+    { headers: { Authorization: `Bearer ${token}` } },
   )
   const body = await check.json()
   expect(body.triggers[0].suppressed).toBe(true)
