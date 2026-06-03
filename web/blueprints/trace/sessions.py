@@ -881,87 +881,41 @@ def api_session_workflow_runs(trace_id):
 def api_span_ancestors(trace_id, span_id):
     """Walk parent_id up to the projected root and return the chain.
 
-    The DB-level `parent_id` is not authoritative for tree shape: many
-    rule.check / tool spans carry NULL and get grafted server-side to
-    the chronologically-current prompt by `_graft_orphans`. This
-    endpoint mirrors that projection so the /trace/triggers deep-link
-    can resolve a nested span back to the root the frontend actually
-    renders. Without this mirror, an orphan rule.check's chain comes
-    back as just [self] and the frontend asks for the wrong subtree.
+    The DB-level `parent_id` is NOT authoritative for tree shape, and
+    neither is a per-row mirror of any single graft rule. The store is
+    append-only, so a live `promptlive-` placeholder and its promoted
+    `prompt-<uuid>` anchor coexist; the serve-time `merge_spans` drops
+    the placeholder, then grafts NULL-parent orphans (rule.check, tool
+    attachments) under the surviving anchor and reparents subagent spans
+    by `agent_id`. Resolving the chain off raw rows lands on the retired
+    placeholder (or skips the subagent nesting) — a root the frontend no
+    longer renders, so the deep-link loads the wrong subtree and the jump
+    silently fails.
+
+    So compute the chain from the SAME merged span set the `/map` and
+    `/children` endpoints render (`_structural_map_spans`): walk its
+    post-merge `parent_id` from the target up to the root. The returned
+    root is guaranteed to exist in the rendered tree, and a `children?deep`
+    fetch of it surfaces the target.
 
     Cycle-guarded against a self-referential parent_id.
     """
-    from sqlmodel import select as _select
-    from lib.trace.projection import _FIRST_CLASS_BOUNDARY_NAMES
-
-    with SessionLocal() as session:
-        # The three closures share `session` (the previous version
-        # shared `conn`). Keeping them inside the `with` block scopes
-        # the session lifetime to the request; the closures don't
-        # escape the function.
-        def _row(span_id_: str):
-            return session.exec(
-                _select(
-                    SessionSpan.span_id, SessionSpan.parent_id,
-                    SessionSpan.name, SessionSpan.start_time,
-                )
-                .where(SessionSpan.trace_id == trace_id)
-                .where(SessionSpan.span_id == span_id_)
-            ).first()
-
-        def _exists(span_id_: str) -> bool:
-            return _row(span_id_) is not None
-
-        def _grafted_parent(row) -> str | None:
-            """Apply the same orphan-resolution as `_graft_orphans`
-            for a single row. Returns None when this row is the
-            projected root.
-            """
-            name = row.name
-            if name == 'conversation':
-                return None  # the projected root
-            if name == 'prompt' or name in _FIRST_CLASS_BOUNDARY_NAMES:
-                return session.exec(
-                    _select(SessionSpan.span_id)
-                    .where(SessionSpan.trace_id == trace_id)
-                    .where(SessionSpan.name == 'conversation')
-                    .limit(1)
-                ).first()
-            # Any other orphan (tool.*, rule.check, etc.) grafts under
-            # the latest prompt with start_time <= self.start_time.
-            # Matches _graft_orphans' chronological-scan logic.
-            return session.exec(
-                _select(SessionSpan.span_id)
-                .where(SessionSpan.trace_id == trace_id)
-                .where(SessionSpan.name == 'prompt')
-                .where(SessionSpan.start_time <= row.start_time)
-                .order_by(
-                    SessionSpan.start_time.desc(),
-                    SessionSpan.id.desc(),
-                )
-                .limit(1)
-            ).first()
-
-        chain: list[str] = []
-        current_id = span_id
-        seen: set[str] = set()
-        while current_id and current_id not in seen:
-            seen.add(current_id)
-            row = _row(current_id)
-            if not row:
-                # Self-healing: a dangling parent_id was followed. Stop.
-                break
-            chain.append(current_id)
-            # Honor the raw parent_id only when it points to a real row.
-            # Otherwise fall through to the graft logic.
-            raw_pid = row.parent_id
-            if raw_pid and _exists(raw_pid):
-                current_id = raw_pid
-            else:
-                current_id = _grafted_parent(row)
-
-    if not chain:
+    by_id = {s['span_id']: s for s in _structural_map_spans(trace_id)}
+    if span_id not in by_id:
         return jsonify({'error': 'span not found'}), 404
+
+    chain: list[str] = []
+    current_id = span_id
+    seen: set[str] = set()
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        span = by_id.get(current_id)
+        if not span:
+            # Dangling parent (merge heals these, but stay defensive). Stop.
+            break
+        chain.append(current_id)
+        current_id = span.get('parent_id')
+
     chain.reverse()  # root first
     return jsonify({
         'trace_id': trace_id,
