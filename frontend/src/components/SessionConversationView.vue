@@ -1695,6 +1695,16 @@ function onRowClick(span) {
                   >{{ fmtModel(span.attributes.model) }}</span>
                   <span v-if="span.attributes?.tool_calls" class="font-mono text-[11px] text-slate-400 shrink-0">{{ span.attributes.tool_calls }} tool<span v-if="span.attributes.tool_calls !== 1">s</span></span>
                   <span v-if="span.attributes?.tokens" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtTokens(span.attributes.tokens) }} tok</span>
+                  <!-- Main-session impact: tokens this subagent's result added
+                       back into the parent context (serve-time estimate, stamped
+                       by queries.py _attach_subagent_impact). Shown only on
+                       unambiguous 1:1 turns whose launch carried result tokens;
+                       hidden for parallel fan-outs and un-enriched runs. -->
+                  <span
+                    v-if="span.attributes?.main_session_impact_tokens"
+                    class="font-mono text-[11px] text-violet-600 bg-violet-50 border border-violet-200 px-1 rounded shrink-0"
+                    title="Estimated tokens the subagent's result added back into the main (parent) context"
+                  >+{{ fmtTokens(span.attributes.main_session_impact_tokens) }} → main</span>
                   <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
                 </div>
                 <!-- Task prompt card (collapsed by default) -->
@@ -1911,6 +1921,11 @@ function onRowClick(span) {
               <span>{{ entry.span.name === 'compact.pre' ? '▼ context compacting' : '▲ context compacted' }}</span>
               <span v-if="entry.span.attributes?.trigger" class="text-amber-500">·</span>
               <span v-if="entry.span.attributes?.trigger" class="lowercase">{{ entry.span.attributes.trigger }}</span>
+              <span
+                v-if="entry.span.attributes?.reclaimed_tokens"
+                class="text-emerald-700 normal-case"
+                :title="'context tokens reclaimed: last turn before compaction minus first turn after (measured from turn_usage.context_used_tokens)'"
+              >· freed ~{{ fmtTokens(entry.span.attributes.reclaimed_tokens) }}</span>
               <span class="text-amber-400">·</span>
               <span class="text-amber-600 normal-case">{{ fmtClock(entry.span.start_time) }}</span>
             </span>

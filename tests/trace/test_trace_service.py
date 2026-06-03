@@ -48,6 +48,37 @@ def _seed_spans(db_path, rows):
         conn.close()
 
 
+def _naive_local_to_z(ts):
+    """Convert a naive wall-clock ISO string into the `Z`-suffixed UTC form
+    Claude Code writes into `turn_usage.timestamp`. Spans store the naive
+    local string; the matching turn row stores the SAME instant as UTC-with-
+    `Z`. Deriving one from the other here keeps the fixture's two timestamp
+    conventions describing the same instant on any host timezone — exactly
+    what `_to_utc` reconciles in production."""
+    from datetime import datetime, timezone
+    dt = datetime.fromisoformat(ts).astimezone(timezone.utc)
+    return dt.isoformat().replace('+00:00', 'Z')
+
+
+def _seed_turn_usage(db_path, rows):
+    """Insert turn_usage rows directly. Each row: (trace_id, turn_uuid,
+    turn_index, naive_local_timestamp, context_used_tokens). The naive
+    wall-clock timestamp (same convention as seeded spans) is converted to
+    Claude Code's `Z`-suffixed UTC form on the way in, so the test exercises
+    the real cross-convention `_to_utc` reconciliation regardless of host
+    timezone."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executemany(
+            "INSERT INTO turn_usage (trace_id, turn_uuid, turn_index, "
+            "timestamp, context_used_tokens) VALUES (?, ?, ?, ?, ?)",
+            [(t, u, i, _naive_local_to_z(ts), ctx) for t, u, i, ts, ctx in rows],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ── list_skill_reads_page ────────────────────────────────────
 
 def test_list_skill_reads_empty_db_returns_empty_page(tmp_db):
@@ -280,6 +311,198 @@ def test_fetch_session_paginated_after_id_picks_up_compact_boundaries(tmp_db):
         if n['data']['name'] in ('compact.pre', 'compact.post')
     )
     assert boundary_names == ['compact.post', 'compact.pre']
+
+
+# ── compaction reclaim delta ─────────────────────────────────
+
+def _compact_post_span(spans):
+    return next(s for s in spans if s['name'] == 'compact.post')
+
+
+def test_compaction_reclaim_delta_attached_to_post(tmp_db):
+    """compact.post carries `reclaimed_tokens` = context of the last turn
+    before compact.pre minus context of the first turn after compact.post."""
+    _seed_chatty_session(tmp_db, 't-rec', n_prompts=2)
+    _seed_spans(tmp_db, [
+        ('t-rec', 'cpre', 'compact.pre', '2026-05-01T10:05:00', {}),
+        ('t-rec', 'cpost', 'compact.post', '2026-05-01T10:06:00', {}),
+    ])
+    _seed_turn_usage(tmp_db, [
+        ('t-rec', 'tu-0', 0, '2026-05-01T10:00:30', 40_000),
+        ('t-rec', 'tu-1', 1, '2026-05-01T10:04:30', 150_000),   # before pre
+        ('t-rec', 'tu-2', 2, '2026-05-01T10:07:00', 25_000),    # after post
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-rec')
+    post = _compact_post_span(widened)
+    assert post['attributes']['reclaimed_tokens'] == 125_000
+
+
+def test_compaction_reclaim_omitted_without_turn_after(tmp_db):
+    """No turn after compact.post → nothing to subtract → no attribute
+    (it self-heals on the next poll once a post-turn lands)."""
+    _seed_chatty_session(tmp_db, 't-norec', n_prompts=2)
+    _seed_spans(tmp_db, [
+        ('t-norec', 'cpre', 'compact.pre', '2026-05-01T10:05:00', {}),
+        ('t-norec', 'cpost', 'compact.post', '2026-05-01T10:06:00', {}),
+    ])
+    _seed_turn_usage(tmp_db, [
+        ('t-norec', 'tu-1', 1, '2026-05-01T10:04:30', 150_000),  # before pre only
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-norec')
+    post = _compact_post_span(widened)
+    assert 'reclaimed_tokens' not in post.get('attributes', {})
+
+
+def test_compaction_reclaim_omits_nonpositive_delta(tmp_db):
+    """Context didn't shrink across the boundary → no garbage number."""
+    _seed_chatty_session(tmp_db, 't-grow', n_prompts=2)
+    _seed_spans(tmp_db, [
+        ('t-grow', 'cpre', 'compact.pre', '2026-05-01T10:05:00', {}),
+        ('t-grow', 'cpost', 'compact.post', '2026-05-01T10:06:00', {}),
+    ])
+    _seed_turn_usage(tmp_db, [
+        ('t-grow', 'tu-1', 1, '2026-05-01T10:04:30', 20_000),   # before pre
+        ('t-grow', 'tu-2', 2, '2026-05-01T10:07:00', 30_000),   # after post (grew)
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-grow')
+    post = _compact_post_span(widened)
+    assert 'reclaimed_tokens' not in post.get('attributes', {})
+
+
+def test_compaction_reclaim_per_boundary_with_two_compactions(tmp_db):
+    """Two `/compact` runs each get their own delta from their own bracket
+    turns — the second pairs with the second compact.pre, not the first."""
+    _seed_chatty_session(tmp_db, 't-multi', n_prompts=2)
+    _seed_spans(tmp_db, [
+        ('t-multi', 'cpre1', 'compact.pre', '2026-05-01T10:05:00', {}),
+        ('t-multi', 'cpost1', 'compact.post', '2026-05-01T10:06:00', {}),
+        ('t-multi', 'cpre2', 'compact.pre', '2026-05-01T10:20:00', {}),
+        ('t-multi', 'cpost2', 'compact.post', '2026-05-01T10:21:00', {}),
+    ])
+    _seed_turn_usage(tmp_db, [
+        ('t-multi', 'tu-a', 0, '2026-05-01T10:04:30', 150_000),  # before pre1
+        ('t-multi', 'tu-b', 1, '2026-05-01T10:07:00', 30_000),   # after post1
+        ('t-multi', 'tu-c', 2, '2026-05-01T10:19:30', 180_000),  # before pre2
+        ('t-multi', 'tu-d', 3, '2026-05-01T10:22:00', 45_000),   # after post2
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-multi')
+    by_span = {s['span_id']: s for s in widened}
+    assert by_span['cpost1']['attributes']['reclaimed_tokens'] == 120_000
+    assert by_span['cpost2']['attributes']['reclaimed_tokens'] == 135_000
+
+
+def test_compaction_reclaim_in_paginated_window(tmp_db):
+    """The live-tail path (fetch_session_paginated) also stamps the delta,
+    even though the bracketing turns aren't loaded as spans in the window."""
+    prompts = _seed_chatty_session(tmp_db, 't-pgrec', n_prompts=3)
+    latest_id = prompts[-1][0]
+    _seed_spans(tmp_db, [
+        ('t-pgrec', 'cpre', 'compact.pre', '2026-05-01T10:05:00', {}),
+        ('t-pgrec', 'cpost', 'compact.post', '2026-05-01T10:06:00', {}),
+    ])
+    _seed_turn_usage(tmp_db, [
+        ('t-pgrec', 'tu-1', 1, '2026-05-01T10:04:30', 160_000),  # before pre
+        ('t-pgrec', 'tu-2', 2, '2026-05-01T10:07:00', 35_000),   # after post
+    ])
+    widened, _tree, _more, _retired = trace_service.fetch_session_paginated(
+        't-pgrec', after_id=latest_id,
+    )
+    post = _compact_post_span(widened)
+    assert post['attributes']['reclaimed_tokens'] == 125_000
+
+
+# ── subagent main-session impact ─────────────────────────────
+
+def _seed_rich_spans(db_path, rows):
+    """Insert spans carrying parent_id + input_tokens (which `_seed_spans`
+    doesn't). Each row: (trace_id, span_id, parent_id, name, start_time,
+    input_tokens, attrs)."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for trace_id, span_id, parent_id, name, start, in_tok, attrs in rows:
+            conn.execute(
+                "INSERT INTO session_spans (trace_id, span_id, parent_id, "
+                "name, start_time, input_tokens, attributes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (trace_id, span_id, parent_id, name, start, in_tok,
+                 json.dumps(attrs)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _subagent_span(spans, span_id):
+    return next(s for s in spans if s['span_id'] == span_id)
+
+
+def test_subagent_impact_stamped_for_unambiguous_pair(tmp_db):
+    """A prompt with exactly one tool.Agent + one subagent.start stamps the
+    launch's input_tokens (result text returned to main) onto the start."""
+    _seed_rich_spans(tmp_db, [
+        ('t-imp', 'prompt-0', None, 'prompt', '2026-05-01T10:00:00', None, {}),
+        ('t-imp', 'ag-0', 'prompt-0', 'tool.Agent', '2026-05-01T10:00:05',
+         4391, {'tool_name': 'Agent'}),
+        ('t-imp', 'sa-0', None, 'subagent.start', '2026-05-01T10:00:02', None,
+         {'agent_id': 'a0', 'agent_type': 'Explore'}),
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-imp')
+    sa = _subagent_span(widened, 'sa-0')
+    assert sa['attributes']['main_session_impact_tokens'] == 4391
+
+
+def test_subagent_impact_omitted_on_parallel_fanout(tmp_db):
+    """Two subagents in one prompt can't be ordered against two launches
+    safely (completion vs start order), so neither gets a per-subagent
+    number — avoids misattribution."""
+    _seed_rich_spans(tmp_db, [
+        ('t-fan', 'prompt-0', None, 'prompt', '2026-05-01T10:00:00', None, {}),
+        ('t-fan', 'ag-0', 'prompt-0', 'tool.Agent', '2026-05-01T10:00:05',
+         5000, {'tool_name': 'Agent'}),
+        ('t-fan', 'ag-1', 'prompt-0', 'tool.Agent', '2026-05-01T10:00:06',
+         3000, {'tool_name': 'Agent'}),
+        ('t-fan', 'sa-0', None, 'subagent.start', '2026-05-01T10:00:02', None,
+         {'agent_id': 'a0', 'agent_type': 'Explore'}),
+        ('t-fan', 'sa-1', None, 'subagent.start', '2026-05-01T10:00:03', None,
+         {'agent_id': 'a1', 'agent_type': 'Plan'}),
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-fan')
+    for sid in ('sa-0', 'sa-1'):
+        sa = _subagent_span(widened, sid)
+        assert 'main_session_impact_tokens' not in sa.get('attributes', {})
+
+
+def test_subagent_impact_omitted_when_launch_unenriched(tmp_db):
+    """A 1:1 pair whose tool.Agent never got token attribution (input_tokens
+    NULL) stamps nothing — the chip degrades to hidden rather than showing 0."""
+    _seed_rich_spans(tmp_db, [
+        ('t-bare', 'prompt-0', None, 'prompt', '2026-05-01T10:00:00', None, {}),
+        ('t-bare', 'ag-0', 'prompt-0', 'tool.Agent', '2026-05-01T10:00:05',
+         None, {'tool_name': 'Agent'}),
+        ('t-bare', 'sa-0', None, 'subagent.start', '2026-05-01T10:00:02', None,
+         {'agent_id': 'a0', 'agent_type': 'Explore'}),
+    ])
+    widened, _tree = trace_service.fetch_session_projection('t-bare')
+    sa = _subagent_span(widened, 'sa-0')
+    assert 'main_session_impact_tokens' not in sa.get('attributes', {})
+
+
+def test_subagent_impact_stamped_in_paginated_window(tmp_db):
+    """The live-tail path (fetch_session_paginated) stamps the impact too —
+    its raw fetch must carry input_tokens, or the chip would show on a full
+    reload but vanish on scroll/live-tail (the both-read-paths invariant)."""
+    _seed_rich_spans(tmp_db, [
+        ('t-pgimp', 'prompt-0', None, 'prompt', '2026-05-01T10:00:00', None, {}),
+        ('t-pgimp', 'ag-0', 'prompt-0', 'tool.Agent', '2026-05-01T10:00:05',
+         4391, {'tool_name': 'Agent'}),
+        ('t-pgimp', 'sa-0', None, 'subagent.start', '2026-05-01T10:00:02', None,
+         {'agent_id': 'a0', 'agent_type': 'Explore'}),
+    ])
+    widened, _tree, _more, _retired = trace_service.fetch_session_paginated(
+        't-pgimp', limit=50,
+    )
+    sa = _subagent_span(widened, 'sa-0')
+    assert sa['attributes']['main_session_impact_tokens'] == 4391
 
 
 def test_fetch_session_paginated_grafting_works_on_window(tmp_db):
@@ -842,3 +1065,67 @@ def test_fetch_session_paginated_no_retired_when_only_live_placeholder(tmp_db):
     widened, _tree, _more, retired = trace_service.fetch_session_paginated(tid, limit=50)
     assert ph in {s['span_id'] for s in widened}
     assert retired == []
+
+
+def _insert_tool_spans(db_path, trace_id, rows):
+    """Insert tool.* spans carrying token counts. Each row:
+    (span_id, name, input_tokens, output_tokens, attributes_dict)."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for sid, name, intok, outtok, attrs in rows:
+            conn.execute(
+                "INSERT INTO session_spans (trace_id, span_id, name, "
+                "start_time, input_tokens, output_tokens, attributes) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (trace_id, sid, name, "2026-06-02T10:00:00",
+                 intok, outtok, json.dumps(attrs)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_tool_rollup_drill_down_by_target(tmp_db):
+    """fetch_tool_token_rollup hangs a per-tool target breakdown (top
+    files/commands by token cost, each with the peak call's span_id) off
+    each rollup row — the actionable 'which file/command cost most' jump."""
+    _insert_tool_spans(tmp_db, "trd", [
+        # (span_id, name, input_tokens, output_tokens, attributes)
+        ("r1", "tool.Read", 100, 0, {"tool_name": "Read", "file_path": "/a/big.py"}),
+        ("r2", "tool.Read", 300, 0, {"tool_name": "Read", "file_path": "/a/big.py"}),
+        ("r3", "tool.Read", 50, 0, {"tool_name": "Read", "file_path": "/a/small.py"}),
+        # Edit: tiny result (input) but large emitted content (output) — the
+        # drill-down must count input+output so it reconciles with the row.
+        ("e1", "tool.Edit", 20, 1800, {"tool_name": "Edit", "file_path": "/a/big.py"}),
+        # Bash tool_input arrives as a python-repr string AND as JSON; both parse.
+        ("b1", "tool.Bash", 200, 0, {"tool_name": "Bash",
+                                     "tool_input": "{'command': 'ls -la /tmp'}"}),
+        ("b2", "tool.Bash", 80, 0, {"tool_name": "Bash",
+                                    "tool_input": '{"command": "echo hi"}'}),
+        # Agent has no file/command target → no drill-down.
+        ("ag", "tool.Agent", 999, 0, {"tool_name": "Agent"}),
+    ])
+
+    rollup, _totals = trace_service.fetch_tool_token_rollup("trd")
+    by_name = {r["name"]: r for r in rollup}
+
+    # Read: big.py (100+300, 2 calls) ranks above small.py (50, 1 call).
+    read_targets = [(t["label"], t["tokens"], t["calls"])
+                    for t in by_name["Read"]["targets"]]
+    assert read_targets == [("big.py", 400, 2), ("small.py", 50, 1)]
+    # The jump target is the single most expensive call (r2: 300 > r1: 100).
+    assert by_name["Read"]["targets"][0]["span_id"] == "r2"
+
+    # Edit: input+output (20+1800), so the drill-down reconciles with the
+    # rollup row instead of collapsing to the tiny result size.
+    assert by_name["Edit"]["targets"] == [
+        {"target": "/a/big.py", "label": "big.py", "tokens": 1820,
+         "calls": 1, "span_id": "e1"}]
+
+    # Bash command extracted from BOTH the python-repr and JSON tool_input.
+    bash_labels = {t["label"] for t in by_name["Bash"]["targets"]}
+    assert "ls -la /tmp" in bash_labels
+    assert "echo hi" in bash_labels
+
+    # Agent carries no drill-down target.
+    assert by_name["Agent"]["targets"] == []

@@ -6,8 +6,13 @@ import api from '../api'
 // panel and conversation cards fetch it lazily by span_id and cache it here.
 //
 // `allSpans` overlays the cache onto `session.spans` so every consumer reads a
-// single merged list (cached attributes win over the shallow placeholder).
-// `session` is the shared ref owned by the SFC; `route` supplies the id.
+// single merged list. The lazily-fetched `/content` attributes win on shared
+// keys (they carry the full, untruncated bag), but we MERGE rather than replace
+// so serve-time-derived fields survive: `reclaimed_tokens` (compaction) and
+// `main_session_impact_tokens` (subagent) are stamped onto the shallow /map
+// projection only — the per-span /content endpoint never recomputes them, so a
+// blind replace would erase the chip the moment the span's content is fetched
+// (e.g. on selection). `session` is the SFC-owned ref; `route` supplies the id.
 export function useSpanContentCache(session, route) {
   const spanContentCache = ref(new Map())
 
@@ -16,7 +21,10 @@ export function useSpanContentCache(session, route) {
     const spans = session.value.spans || []
     return spans.map(s => {
       const cached = spanContentCache.value.get(s.span_id)
-      return { ...s, attributes: cached || s.attributes || {} }
+      return {
+        ...s,
+        attributes: cached ? { ...(s.attributes || {}), ...cached } : (s.attributes || {}),
+      }
     })
   })
 

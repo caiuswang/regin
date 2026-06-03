@@ -280,6 +280,18 @@ function subagentTag(a) {
   return a.agent_type || (a.agent_id ? a.agent_id.slice(0, 8) : '')
 }
 
+// `compact.post` row label. Appends the serve-time reclaim delta
+// (`attributes.reclaimed_tokens`, stamped by queries.py
+// _attach_compaction_reclaim) as a `· freed ~N` suffix. The backend omits
+// the attribute when a bracket turn is missing or the delta is non-positive,
+// so the suffix only shows when the number is meaningful. Extracted so the
+// already-large `spanLabel` switch doesn't grow another branch.
+function compactPostLabel(a) {
+  const tr = a.trigger ? ` (${a.trigger})` : ''
+  const freed = a.reclaimed_tokens ? ` · freed ~${fmtTokens(a.reclaimed_tokens)}` : ''
+  return `context compacted${tr}${freed}`
+}
+
 // Row label for a `tool.*` span (or any tool-shaped attribute bag `a` with a
 // `fallback` tool name). Private to `spanLabel`. Mirrors the tool.* branch of
 // `fullLabel` but keyed off `a.tool_name`/`fallback` rather than the span name.
@@ -336,10 +348,7 @@ export function spanLabel(span) {
       const ci = a.custom_instructions ? `: ${a.custom_instructions.slice(0, 60)}` : ''
       return `context compacting${tr}${ci}`
     }
-    case 'compact.post': {
-      const tr = a.trigger ? ` (${a.trigger})` : ''
-      return `context compacted${tr}`
-    }
+    case 'compact.post': return compactPostLabel(a)
     case 'prompt': return a.text ? a.text.slice(0, 60) : 'prompt'
     case 'conversation': return 'conversation start'
     case 'harness.local_command': {

@@ -247,6 +247,8 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
         raw = _fetch_spans(conn, trace_id)
         grafted = merge_spans(raw)
         widened = _widen_envelopes(grafted)
+        _attach_compaction_reclaim(conn, trace_id, widened)
+        _attach_subagent_impact(widened)
         tree = _build_span_tree(widened)
         return widened, tree
     finally:
@@ -405,7 +407,8 @@ def fetch_session_paginated(
                 """
                 SELECT id, trace_id, span_id, parent_id, name, kind,
                        start_time, end_time, duration_ms, attributes,
-                       status_code, status_message, turn_uuid
+                       status_code, status_message, turn_uuid,
+                       output_tokens, input_tokens, image_tokens, cost_usd
                 FROM session_spans
                 WHERE trace_id = ?
                   AND start_time >= ?
@@ -419,7 +422,8 @@ def fetch_session_paginated(
                 """
                 SELECT id, trace_id, span_id, parent_id, name, kind,
                        start_time, end_time, duration_ms, attributes,
-                       status_code, status_message, turn_uuid
+                       status_code, status_message, turn_uuid,
+                       output_tokens, input_tokens, image_tokens, cost_usd
                 FROM session_spans
                 WHERE trace_id = ? AND start_time >= ?
                 ORDER BY start_time ASC, id ASC
@@ -445,6 +449,8 @@ def fetch_session_paginated(
         prompt_ceiling = ceiling_row[0] if ceiling_row else None
         grafted = merge_spans(raw, prompt_id_ceiling=prompt_ceiling)
         widened = _widen_envelopes(grafted)
+        _attach_compaction_reclaim(conn, trace_id, widened)
+        _attach_subagent_impact(widened)
         tree = _build_span_tree(widened)
         # Placeholder/superseded rows the merge dropped from this window. The
         # append-only store keeps them on disk, so the client's append-only
@@ -456,6 +462,131 @@ def fetch_session_paginated(
         return widened, tree, has_more_older, retired_ids
     finally:
         conn.close()
+def _command_str(tool_input: object) -> str | None:
+    """Pull the command/pattern string out of a stored `tool_input`
+    attribute. It may be a dict, a JSON string, or a Python-repr string
+    (the Bash hook stored some as `str(dict)`, which isn't valid JSON)."""
+    import ast
+    val = tool_input
+    if isinstance(val, str):
+        parsed = None
+        for loader in (json.loads, ast.literal_eval):
+            try:
+                parsed = loader(val)
+            except (ValueError, SyntaxError, TypeError):
+                continue
+            break
+        val = parsed
+    if isinstance(val, dict):
+        return val.get('command') or val.get('pattern') or val.get('glob')
+    return None
+
+
+_FILE_TOOLS = ('Read', 'Edit', 'Write', 'NotebookEdit')
+_CMD_TOOLS = ('Bash', 'Grep', 'Glob')
+_AGENT_TOOLS = ('Agent', 'Task')
+
+
+def _nonempty_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _file_target(attrs: dict) -> tuple[str, str] | None:
+    path = _nonempty_str(attrs.get('file_path') or attrs.get('notebook_path'))
+    return (path, path.rsplit('/', 1)[-1]) if path else None
+
+
+def _cmd_target(attrs: dict) -> tuple[str, str] | None:
+    flat = ' '.join((_command_str(attrs.get('tool_input')) or '').split())
+    if not flat:
+        return None
+    return flat, (flat[:160] + '…' if len(flat) > 160 else flat)
+
+
+def _agent_target(attrs: dict) -> tuple[str, str] | None:
+    desc = _nonempty_str(attrs.get('description') or attrs.get('subagent_type'))
+    return (desc, desc) if desc else None
+
+
+def _span_target(attrs: dict) -> tuple[str, str] | None:
+    """`(full_target, display_label)` a tool call drills into, or None when
+    the tool has no meaningful per-call target. file_path for file tools,
+    the command for Bash/Grep/Glob, the description for subagents."""
+    tool = attrs.get('tool_name')
+    if tool in _FILE_TOOLS:
+        return _file_target(attrs)
+    if tool in _CMD_TOOLS:
+        return _cmd_target(attrs)
+    if tool in _AGENT_TOOLS:
+        return _agent_target(attrs)
+    return None
+
+
+def _clean_target_cell(c: dict) -> dict:
+    """Public shape of a drill-down target — drops the internal peak tracker."""
+    return {'target': c['target'], 'label': c['label'], 'tokens': c['tokens'],
+            'calls': c['calls'], 'span_id': c['span_id']}
+
+
+def _tool_target_breakdown(conn, trace_id: str, per_tool: int = 8) -> dict:
+    """Per-tool top targets by token cost: `{tool_key: [{target, label,
+    tokens, calls, span_id}, ...]}`, top `per_tool` each. `tool_key` matches
+    `fetch_tool_token_rollup`'s row name (`attributes.tool_name`), so the UI
+    can hang each tool's drill-down off its rollup row. Token cost is
+    input+output — the SAME total the rollup row shows — so the per-target
+    sums reconcile with the tool subtotal. (For Read/Bash that's ~all result
+    tokens; for Edit/Write the bulk is the OUTPUT — the edit/write content
+    the model emitted — which input-only would have hidden.) `span_id` is the
+    single most expensive call for that target, for jump-to-span."""
+    rows = conn.execute(
+        "SELECT json_extract(attributes, '$.tool_name') AS tool, "
+        "span_id, attributes, "
+        "COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) AS tok "
+        "FROM session_spans "
+        "WHERE trace_id = ? AND name LIKE 'tool.%' "
+        "AND (input_tokens > 0 OR output_tokens > 0)",
+        (trace_id,),
+    ).fetchall()
+    agg: dict = {}
+    for r in rows:
+        try:
+            attrs = json.loads(r['attributes'] or '{}')
+        except (ValueError, TypeError):
+            continue
+        target = _span_target(attrs)
+        if not r['tool'] or target is None:
+            continue
+        full, label = target
+        tok = int(r['tok'] or 0)
+        cell = agg.setdefault(r['tool'], {}).setdefault(
+            full, {'target': full, 'label': label, 'tokens': 0, 'calls': 0,
+                   'span_id': None, 'peak': -1})
+        cell['tokens'] += tok
+        cell['calls'] += 1
+        if tok > cell['peak']:
+            cell['peak'], cell['span_id'] = tok, r['span_id']
+    return {
+        tool: [_clean_target_cell(c) for c in
+               sorted(cells.values(), key=lambda c: -c['tokens'])[:per_tool]]
+        for tool, cells in agg.items()
+    }
+
+
+def _rollup_row(r, targets_by_tool: dict) -> dict:
+    """Build one per-tool rollup row, hanging its drill-down targets off the
+    same `tool` key the breakdown was aggregated under."""
+    name = r[0] or ''
+    return {
+        'name': name,
+        'calls': int(r[1] or 0),
+        'input_tokens': int(r[2] or 0),
+        'output_tokens': int(r[3] or 0),
+        'image_tokens': int(r[4] or 0),
+        'cost_usd': float(r[5] or 0.0),
+        'targets': targets_by_tool.get(name, []),
+    }
+
+
 def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
     """Aggregate per-tool token cost for one session.
 
@@ -498,17 +629,8 @@ def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
             GROUP BY tool
             ORDER BY (SUM(COALESCE(input_tokens,0)) + SUM(COALESCE(output_tokens,0))) DESC
         """, (trace_id,)).fetchall()
-        rollup = [
-            {
-                'name': r[0] or '',
-                'calls': int(r[1] or 0),
-                'input_tokens': int(r[2] or 0),
-                'output_tokens': int(r[3] or 0),
-                'image_tokens': int(r[4] or 0),
-                'cost_usd': float(r[5] or 0.0),
-            }
-            for r in rows
-        ]
+        breakdown = _tool_target_breakdown(conn, trace_id)
+        rollup = [_rollup_row(r, breakdown) for r in rows]
         sess_row = conn.execute(
             "SELECT input_tokens, output_tokens FROM sessions WHERE trace_id = ?",
             (trace_id,),
@@ -559,6 +681,130 @@ def _to_utc(ts: str | None) -> datetime | None:
         # Naive → assume host local.
         dt = dt.astimezone()
     return dt.astimezone(timezone.utc)
+
+
+def _reclaimed_for_pair(pre_at, post_at, turns: list[tuple]) -> int | None:
+    """Tokens a single `/compact` freed: the context used by the last turn
+    BEFORE `compact.pre` minus the context used by the first turn AFTER
+    `compact.post`. `turns` is `[(utc_dt, context_used_tokens), …]` sorted
+    ascending. Returns None when either bracket turn is missing (e.g. the
+    boundary just landed and no post-turn exists yet) or the delta would be
+    non-positive (no garbage numbers).
+
+    A boundary first served without a post-turn re-acquires the value on a
+    later poll: this is recomputed on every read, and the live tail's
+    `mergeLoadedSpans` overwrites the cached span's attributes by span_id
+    when the fresh fetch carries a non-empty attributes dict."""
+    before = next(
+        (ctx for ts, ctx in reversed(turns) if ts and ts <= pre_at and ctx),
+        None,
+    )
+    after = next(
+        (ctx for ts, ctx in turns if ts and ts >= post_at and ctx),
+        None,
+    )
+    if before is None or after is None:
+        return None
+    delta = before - after
+    return delta if delta > 0 else None
+
+
+def _attach_compaction_reclaim(conn, trace_id: str, spans: list[dict]) -> None:
+    """Stamp `attributes.reclaimed_tokens` onto every `compact.post` span
+    in `spans` whose reclaim delta is computable.
+
+    Pure serve-time derivation: the compact boundary spans carry no token
+    payload, but `turn_usage.context_used_tokens` is recorded per turn. We
+    pair each `compact.post` with its immediately preceding `compact.pre`
+    (boundaries sorted by time) and read the bracketing turns' context use.
+
+    Mutates the shared `attributes` dict in place so both the widened span
+    list and the tree (which shallow-copies spans but shares `attributes`
+    by reference) surface the value. Queried full-trace, not from the
+    passed-in window, because a paginated window may not load the
+    bracketing turns or the matching `compact.pre` as spans."""
+    posts = [s for s in spans if s.get('name') == 'compact.post']
+    if not posts:
+        return
+    pres = conn.execute(
+        "SELECT start_time FROM session_spans "
+        "WHERE trace_id = ? AND name = 'compact.pre' "
+        "ORDER BY start_time ASC",
+        (trace_id,),
+    ).fetchall()
+    pre_times = sorted(
+        t for t in (_to_utc(r['start_time']) for r in pres) if t
+    )
+    turn_rows = conn.execute(
+        "SELECT timestamp, context_used_tokens FROM turn_usage "
+        "WHERE trace_id = ? ORDER BY timestamp ASC",
+        (trace_id,),
+    ).fetchall()
+    turns = [(_to_utc(r['timestamp']), r['context_used_tokens']) for r in turn_rows]
+    for post in posts:
+        post_at = _to_utc(post.get('start_time'))
+        if post_at is None:
+            continue
+        # Pair with the latest compact.pre at/before this post.
+        pre_at = next((t for t in reversed(pre_times) if t <= post_at), None)
+        if pre_at is None:
+            continue
+        reclaimed = _reclaimed_for_pair(pre_at, post_at, turns)
+        if reclaimed is not None:
+            post.setdefault('attributes', {})['reclaimed_tokens'] = reclaimed
+
+
+def _enclosing_prompt_id(span: dict, by_id: dict) -> str | None:
+    """Walk `parent_id` up to the nearest enclosing `prompt` span_id (or
+    None). Cycle-guarded; the spans are already grafted, so a `tool.Agent`
+    rises through its turn anchor and a `subagent.start` through the prompt
+    it was re-parented under."""
+    cur: dict | None = span
+    seen: set[str] = set()
+    while cur is not None and cur['span_id'] not in seen:
+        if cur.get('name') == 'prompt':
+            return cur['span_id']
+        seen.add(cur['span_id'])
+        cur = by_id.get(cur.get('parent_id'))
+    return None
+
+
+def _attach_subagent_impact(spans: list[dict]) -> None:
+    """Stamp `attributes.main_session_impact_tokens` onto each
+    `subagent.start` whose result we can unambiguously attribute.
+
+    "Main-session impact" = the tokens the subagent's result text added back
+    into the PARENT context, captured as the `input_tokens` of the matching
+    `tool.Agent` launch span (the tool_result fed to the next parent turn).
+    `tool.Agent` and `subagent.start` share no id; we correlate by enclosing
+    prompt and only stamp when that prompt contains exactly ONE of each — a
+    parallel fan-out (>1) can't be ordered safely (`tool.Agent.start_time` is
+    completion order, `subagent.start` is start order), so per-subagent
+    attribution there would be a guess. Sparse by design: `tool.Agent` only
+    carries `input_tokens` once `ingest_tool_attribution` enriched it, so the
+    chip shows on the turns where that data exists and is hidden elsewhere.
+
+    Pure serve-time derivation; mutates the shared `attributes` dict in place
+    (the tree shares it by reference). No DB, no schema change."""
+    by_id = {s['span_id']: s for s in spans}
+    agents_by_prompt: dict[str, list[dict]] = {}
+    starts_by_prompt: dict[str, list[dict]] = {}
+    for s in spans:
+        if s.get('name') == 'tool.Agent':
+            pid = _enclosing_prompt_id(s, by_id)
+            if pid:
+                agents_by_prompt.setdefault(pid, []).append(s)
+        elif s.get('name') == 'subagent.start':
+            pid = _enclosing_prompt_id(s, by_id)
+            if pid:
+                starts_by_prompt.setdefault(pid, []).append(s)
+    for pid, starts in starts_by_prompt.items():
+        agents = agents_by_prompt.get(pid) or []
+        if len(starts) != 1 or len(agents) != 1:
+            continue
+        impact = agents[0].get('input_tokens')
+        if impact:
+            starts[0].setdefault('attributes', {})['main_session_impact_tokens'] = int(impact)
 
 
 # Span names that are structural scaffolding (prompt boundaries,

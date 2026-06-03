@@ -244,32 +244,34 @@ async function onOverviewSpanClick(node) {
 const { traceStart, traceEnd, traceDuration, activeWorkMs } =
   useTraceTimeline(session, allSpans)
 
-// Jump from a row in the expanded task list to the most relevant
-// span in the spine for that task's current state:
-//   pending     → TaskCreate (only event so far)
-//   in_progress → the TaskUpdate that flipped it to in_progress
-//   completed   → the TaskUpdate that flipped it to completed
-// Backend pre-computes this as `current_span_id`; we fall back to
-// `created_span_id` for pending tasks. If the target span isn't in
-// the loaded shallow set (its owning prompt is still collapsed),
-// `ensureSpanSubtreeLoaded` fetches the subtree first, then the
-// existing `selectedSpan` watcher does the scroll-and-highlight.
-async function jumpToTaskSpan(task) {
-  const targetSpanId = task?.current_span_id || task?.created_span_id
-  if (!targetSpanId) return
+// Select + scroll to a span by id, loading its (possibly collapsed)
+// subtree first. Shared by the task-list jump and the tool-drill-down
+// jump. If the span isn't in the loaded shallow set, walk the roots
+// calling `ensureSpanSubtreeLoaded` until it materialises; the existing
+// `selectedSpan` watcher then does the scroll-and-highlight.
+async function selectSpanById(spanId) {
+  if (!spanId) return
   setViewMode('conversation')
-  let span = allSpans.value.find(s => s.span_id === targetSpanId)
+  let span = allSpans.value.find(s => s.span_id === spanId)
   if (!span) {
     for (const node of treeNodes.value) {
       if (node?.data?.span_id) {
         // eslint-disable-next-line no-await-in-loop
         await ensureSpanSubtreeLoaded(node.data.span_id)
-        span = allSpans.value.find(s => s.span_id === targetSpanId)
+        span = allSpans.value.find(s => s.span_id === spanId)
         if (span) break
       }
     }
   }
   if (span) selectedSpan.value = span
+}
+
+// Jump from a row in the expanded task list to the most relevant span for
+// that task's current state: pending → TaskCreate, in_progress / completed
+// → the TaskUpdate that flipped it. Backend pre-computes `current_span_id`;
+// fall back to `created_span_id` for pending.
+function jumpToTaskSpan(task) {
+  return selectSpanById(task?.current_span_id || task?.created_span_id)
 }
 
 async function onNodeSelect(event) {
@@ -371,7 +373,7 @@ const {
       @jump-to-task="jumpToTaskSpan"
     />
 
-    <ToolTokenRollup :rollup-data="toolRollupData" />
+    <ToolTokenRollup :rollup-data="toolRollupData" @jump-span="selectSpanById" />
 
     <TraceOverviewStrip
       :tree-nodes="treeNodes"

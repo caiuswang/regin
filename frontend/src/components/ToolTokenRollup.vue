@@ -8,9 +8,13 @@ import { fmtTokens, fmtCost, toolDisplayLabel, toolBadge } from '../utils/traceF
 
 const props = defineProps({
   // The raw payload: { rollup: [{name, input_tokens, output_tokens, cost_usd,
-  // calls}], attributed_*, untagged_* }. null until loaded.
+  // calls, targets:[{target,label,tokens,calls,span_id}]}], attributed_*,
+  // untagged_* }. null until loaded.
   rollupData: { type: Object, default: null },
 })
+
+// Clicking a drill-down target jumps to its most expensive call's span.
+const emit = defineEmits(['jump-span'])
 
 // Normalized per-tool rows. Each badge doubles as a group definition for the
 // grouped view (`group` = cluster name, `order` = tiebreak).
@@ -35,9 +39,16 @@ const toolTokenRollup = computed(() => {
       output: t.output_tokens || 0,
       cost: t.cost_usd || 0,
       n: t.calls || 0,
+      // Top targets (files/commands) by input-token cost — the drill-down.
+      targets: Array.isArray(t.targets) ? t.targets : [],
     }
   })
 })
+
+// Per-tool drill-down expand state (flat 'tokens' view), keyed by fullName.
+const expandedTools = ref({})
+const toggleTool = (name) => { expandedTools.value[name] = !expandedTools.value[name] }
+const isToolExpanded = (name) => !!expandedTools.value[name]
 
 // Two ways to organize the rollup: 'groups' clusters tools by badge bucket
 // with a per-group subtotal; 'tokens' is a flat list sorted by spend.
@@ -181,21 +192,52 @@ const toolRollupSummary = computed(() => {
       </div>
     </div>
 
-    <!-- Flat view: every tool sorted by token spend, badge-prefixed. -->
-    <div v-else-if="rollupExpanded" class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px]">
-      <span
-        v-for="tool in toolTokenSorted"
-        :key="tool.fullName"
-        class="inline-flex items-center gap-1"
-        :title="tool.fullName + ' — ' + tool.n + ' call(s) · in ' + tool.input + ' · out ' + tool.output + (tool.cost ? ' · ' + fmtCost(tool.cost) : '')"
-      >
-        <span
-          class="inline-block text-[9px] font-semibold uppercase tracking-wider px-1 py-px rounded"
-          :class="tool.badge.classes"
-        >{{ tool.badge.label }}</span>
-        <span class="text-slate-600">{{ tool.name }}</span>
-        <span class="text-slate-400">{{ fmtTokens(tool.input + tool.output) }}</span>
-      </span>
+    <!-- Flat view: tools sorted by spend; tools with file/command targets
+         expand to a per-target token drill-down (which file/command cost most). -->
+    <div v-else-if="rollupExpanded" class="flex flex-col gap-0.5 font-mono text-[11px]">
+      <div v-for="tool in toolTokenSorted" :key="tool.fullName">
+        <button
+          v-if="tool.targets.length"
+          type="button"
+          class="flex items-center gap-1.5 w-full text-left py-0.5 -mx-1 px-1 rounded hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          :aria-expanded="isToolExpanded(tool.fullName)"
+          @click="toggleTool(tool.fullName)"
+        >
+          <svg
+            class="w-2.5 h-2.5 text-slate-400 transition-transform shrink-0"
+            :class="isToolExpanded(tool.fullName) ? 'rotate-90' : ''"
+            viewBox="0 0 12 12" fill="none" aria-hidden="true"
+          >
+            <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="inline-block text-[9px] font-semibold uppercase tracking-wider px-1 py-px rounded" :class="tool.badge.classes">{{ tool.badge.label }}</span>
+          <span class="text-slate-600">{{ tool.name }}</span>
+          <span class="text-slate-400">{{ fmtTokens(tool.input + tool.output) }}</span>
+          <span class="text-slate-300">· {{ tool.n }}×</span>
+        </button>
+        <div v-else class="flex items-center gap-1.5 py-0.5 -mx-1 px-1">
+          <span class="w-2.5 shrink-0" aria-hidden="true"></span>
+          <span class="inline-block text-[9px] font-semibold uppercase tracking-wider px-1 py-px rounded" :class="tool.badge.classes">{{ tool.badge.label }}</span>
+          <span class="text-slate-600">{{ tool.name }}</span>
+          <span class="text-slate-400">{{ fmtTokens(tool.input + tool.output) }}</span>
+        </div>
+        <ul v-if="isToolExpanded(tool.fullName)" class="ml-5 mb-1 mt-0.5 flex flex-col gap-0.5">
+          <li v-for="tg in tool.targets" :key="tg.target">
+            <button
+              type="button"
+              class="flex items-center gap-2 w-full text-left -mx-1 px-1 py-px rounded hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:hover:bg-transparent"
+              :disabled="!tg.span_id"
+              :title="tg.span_id ? tg.target + '  ·  click to jump to its most expensive call' : tg.target"
+              @click="emit('jump-span', tg.span_id)"
+            >
+              <span class="shrink-0 w-14 text-right tabular-nums text-slate-600 font-medium">{{ fmtTokens(tg.tokens) }}</span>
+              <span v-if="tg.calls > 1" class="shrink-0 w-7 text-slate-300">{{ tg.calls }}×</span>
+              <span v-else class="shrink-0 w-7" aria-hidden="true"></span>
+              <span class="truncate min-w-0 flex-1 text-slate-500">{{ tg.label }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <!-- Untagged remainder: shown in both views as a trailing note. -->
