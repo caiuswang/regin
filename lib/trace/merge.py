@@ -33,7 +33,7 @@ property the read path relies on.
 
 from __future__ import annotations
 
-from lib.trace.pending_spans import pending_id_for_resolved
+from lib.trace.pending_spans import is_pending_span_id, pending_id_for_resolved
 from lib.trace.projection import _graft_orphans
 
 
@@ -42,20 +42,84 @@ def _attrs(span: dict) -> dict:
     return a if isinstance(a, dict) else {}
 
 
+def _inherit_turn_linkage(survivor: dict, placeholder: dict) -> dict:
+    """Hand a retired tool placeholder's `turn_uuid` + `resp-`/`think-` parent
+    to the resolved span that supersedes it, when the survivor never got its
+    own.
+
+    A slow tool emits its `pending-<tu>` placeholder at PreToolUse and its
+    resolved `tool.<Name>` at PostToolUse, both parent-less / turn_uuid-less.
+    If a `turn_trace` attribution pass lands while only the placeholder exists,
+    the placeholder absorbs the turn linkage and the later resolved span never
+    does (the turn is cached, so it's never re-attributed). Dropping the
+    placeholder here would then strand the resolved span on the prompt-root
+    graft fallback — the assistant-response branch visibly collapses.
+
+    Gate on a NULL `turn_uuid`: attribution always sets `turn_uuid` alongside
+    the parent, so its absence is the unambiguous mark of the un-attributed
+    survivor. That also makes the transfer materialize-proof — `_persist_
+    projection` writes `parent_id` but never `turn_uuid`, so a prompt-root
+    parent a prior materialize may have baked onto the survivor is still
+    overridden here. Returns a copy when it changes anything (merge stays
+    pure)."""
+    if survivor.get('turn_uuid') or not placeholder.get('turn_uuid'):
+        return survivor
+    out = dict(survivor)
+    out['turn_uuid'] = placeholder.get('turn_uuid')
+    if placeholder.get('parent_id'):
+        out['parent_id'] = placeholder.get('parent_id')
+    return out
+
+
+def _classify_supersessions(spans: list[dict], placeholders: dict) -> tuple[set, dict]:
+    """Walk the window once: return the placeholder keys each resolved span
+    supersedes (`drop`) and, for a resolved *tool* span, the `pending-` tool
+    placeholder it should inherit turn linkage from (`inherit`).
+
+    Both sides are gated on `tool.` rather than name-equality: the pending
+    span is minted `tool.{raw}` while the resolved one is `tool.{normalize}`,
+    so an exact-name guard would silently miss any tool `_normalize_tool_name`
+    rewrites (today none, but it's documented to collapse MCP names). The
+    placeholder is already matched by the survivor's own tool_use_id, whose
+    only two candidates are `pending-<tu>` (tool) and `permreq-<tu>`
+    (permission.request) — the `tool.` check keeps the former and drops the
+    latter without reparenting the resolved tool span."""
+    drop: set[tuple] = set()
+    inherit: dict = {}  # survivor span_id → placeholder it should inherit from
+    for s in spans:
+        is_tool = (s.get('name') or '').startswith('tool.')
+        for pid in pending_id_for_resolved(s, _attrs(s)):
+            key = (s.get('trace_id'), pid)
+            drop.add(key)
+            ph = placeholders.get(key)
+            if is_tool and ph is not None and (ph.get('name') or '').startswith('tool.'):
+                inherit[s.get('span_id')] = ph
+    return drop, inherit
+
+
 def _drop_superseded_placeholders(spans: list[dict]) -> list[dict]:
     """Drop the `promptlive-`/`pending-`/`permreq-` placeholder rows whose
     resolved span is present in the window, keyed by `pending_id_for_resolved`
     (prompt-text hash / tool_use_id). A placeholder with no resolved
     counterpart in the window survives — that's the in-flight prompt / blocking
-    tool the live view must still show."""
-    drop: set[tuple] = set()
-    for s in spans:
-        for pid in pending_id_for_resolved(s, _attrs(s)):
-            drop.add((s.get('trace_id'), pid))
+    tool the live view must still show.
+
+    Before dropping a tool placeholder, hand its turn linkage to the resolving
+    tool span (`_inherit_turn_linkage`) so a slow tool keeps its branch."""
+    placeholders = {
+        (s.get('trace_id'), s.get('span_id')): s
+        for s in spans if is_pending_span_id(s.get('span_id'))
+    }
+    drop, inherit = _classify_supersessions(spans, placeholders)
     if not drop:
         return spans
-    return [s for s in spans
-            if (s.get('trace_id'), s.get('span_id')) not in drop]
+    out: list[dict] = []
+    for s in spans:
+        if (s.get('trace_id'), s.get('span_id')) in drop:
+            continue
+        ph = inherit.get(s.get('span_id'))
+        out.append(_inherit_turn_linkage(s, ph) if ph is not None else s)
+    return out
 
 
 def _gate_resolved_tool_name(span: dict) -> str | None:
