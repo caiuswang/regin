@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { toolDisplayLabel } from '../utils/traceFormatters.js'
+import { terminalSpanLabel, terminalSpanDetail } from '../utils/traceFormatters.js'
 
 const props = defineProps({
   spans: { type: Array, default: () => [] },
@@ -178,124 +178,14 @@ function dotColor(name) {
 }
 
 
-// Two-column "SPAN · DETAIL" split. `spanLabel` returns the canonical
-// name (left), `detail` the per-event context (right). Empty `detail`
-// is fine — the dash separator is omitted in the template.
-function spanLabel(span) {
-  const n = span.name || ''
-  if (n === 'prompt') return 'prompt'
-  if (n === 'assistant_response') return 'assistant_response'
-  if (n === 'skill.read') return 'skill.read'
-  if (n === 'skill.invoke') return 'skill.invoke'
-  if (n === 'skill.launch') return 'skill.launch'
-  if (n === 'rule.check') return 'rule.check'
-  if (n === 'subagent.start') return 'subagent.start'
-  if (n === 'subagent.stop') return 'subagent.stop'
-  if (n === 'session.start') return 'session.start'
-  if (n === 'session.end') return 'session.end'
-  if (n === 'compact.pre') return 'compact.pre'
-  if (n === 'compact.post') return 'compact.post'
-  if (n.startsWith('tool.')) {
-    const tool = toolDisplayLabel(n.slice(5))
-    return `tool.${tool}`
-  }
-  if (n.startsWith('pre_tool.')) {
-    return `pre_tool.${toolDisplayLabel(n.slice(9))}`
-  }
-  return n
-}
-
-function spanDetail(span) {
-  const a = span.attributes || {}
-  const n = span.name || ''
-  switch (n) {
-    case 'prompt':
-      return a.text ? truncate(a.text, 100) : ''
-    case 'assistant_response':
-      return a.text ? `"${truncate(a.text, 80)}"` : ''
-    case 'assistant.thinking':
-      return a.thinking_text ? truncate(a.thinking_text, 100) : ''
-    case 'skill.read':
-    case 'skill.invoke':
-    case 'skill.launch':
-      return a.skill_id || ''
-    case 'rule.check':
-      return a.rule_id ? `${a.rule_id}${a.findings === 0 ? ' (no findings)' : ''}` : ''
-    case 'subagent.start':
-      return a.agent_type || (a.agent_id ? a.agent_id.slice(0, 8) : '')
-    case 'subagent.stop':
-      return a.agent_type || ''
-    case 'session.start':
-      return a.cwd || a.model || ''
-    case 'session.end':
-      return a.reason || ''
-    case 'compact.pre': {
-      const tr = a.trigger ? `[${a.trigger}]` : ''
-      const ci = a.custom_instructions ? ` ${truncate(a.custom_instructions, 80)}` : ''
-      return `${tr}${ci}`.trim()
-    }
-    case 'compact.post': {
-      const tr = a.trigger ? `[${a.trigger}]` : ''
-      const sum = a.summary ? ` summary: ${truncate(a.summary, 70)}` : ''
-      return `${tr}${sum}`.trim()
-    }
-  }
-  if (n.startsWith('tool.')) {
-    if (a.command_preview) return a.command_preview
-    // Task tools: subject + task_id are the entire signal.
-    if (n === 'tool.TaskCreate' && a.subject) {
-      return a.task_id ? `#${a.task_id}: ${a.subject}` : a.subject
-    }
-    if (n === 'tool.TaskUpdate' && a.task_id) {
-      return a.status ? `#${a.task_id} → ${a.status}` : `#${a.task_id}`
-    }
-    if (n === 'tool.TaskOutput' && a.task_id) {
-      return a.status ? `#${a.task_id} → ${a.status}` : `#${a.task_id}`
-    }
-    if (n === 'tool.Skill' && a.skill_name) return a.skill_name
-    if (a.questions) return askQuestionPreview(a)
-    const tsTools = a.loaded_tools && a.loaded_tools.length
-      ? a.loaded_tools
-      : a.selected_tools
-    if (tsTools && tsTools.length) {
-      return tsTools.map(t => t.split('__').pop()).join(', ')
-    }
-    if (a.query) return a.query
-    if (a.pattern && a.file_path) return `${a.pattern} in ${a.file_path.split('/').pop()}`
-    if (a.pattern) return a.pattern
-    if (a.file_path) {
-      const fname = a.file_path.split('/').pop()
-      if (a.lines) return `${fname} (${a.lines} lines)`
-      return fname
-    }
-    return ''
-  }
-  if (n.startsWith('pre_tool.')) return a.tool_name || ''
-  return ''
-}
-
+// Two-column "SPAN · DETAIL" split. `terminalSpanLabel` returns the
+// canonical name (left), `terminalSpanDetail` the per-event context
+// (right) — both live in traceFormatters.js. `spanDetailLines` wraps the
+// detail string into per-line rows (multi-line AskUserQuestion previews).
 function spanDetailLines(span) {
-  const text = spanDetail(span)
+  const text = terminalSpanDetail(span)
   if (!text) return []
   return String(text).split('\n')
-}
-
-function askQuestionPreview(a) {
-  const qs = a.questions || []
-  if (!qs.length) return ''
-  const answers = a.answers || {}
-  return qs.map(q => {
-    const text = q?.question || q?.header || ''
-    const ans = answers[q?.question]
-    return ans ? `${text} → ${ans}` : text
-  }).join('\n')
-}
-
-function truncate(text, max) {
-  if (!text) return ''
-  text = String(text).replace(/\s+/g, ' ').trim()
-  if (text.length <= max) return text
-  return text.slice(0, max) + '…'
 }
 
 function isSelected(span) {
@@ -479,7 +369,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKey))
               <div class="flex items-center gap-2" :style="parentIsSubagent(span) ? 'padding-left: 1.5rem' : ''">
                 <span class="inline-block w-2 h-2 rounded-full shrink-0" :class="dotColor(span.name)"></span>
                 <span v-if="parentIsSubagent(span)" class="text-slate-300 font-mono text-[11px] -ml-3 mr-1">↳</span>
-                <span class="text-slate-700 font-medium text-[12px] truncate">{{ spanLabel(span) }}</span>
+                <span class="text-slate-700 font-medium text-[12px] truncate">{{ terminalSpanLabel(span) }}</span>
               </div>
             </td>
             <td class="px-2 py-2 align-middle text-slate-600 text-[12px] max-w-0">

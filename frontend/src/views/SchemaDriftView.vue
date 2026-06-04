@@ -7,7 +7,7 @@ import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import StatCard from '../components/StatCard.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import DiffBlock from '../components/DiffBlock.vue'
+import SchemaExpansionPanel from '../components/SchemaExpansionPanel.vue'
 
 const { confirm } = useConfirm()
 const { enabled: diagEnabled, setEnabled: setDiag } = useDiagnosticsState()
@@ -37,17 +37,6 @@ const error = ref('')
 
 const STATE_COLOR = { clean: 'green', drift: 'yellow', overlaid: 'blue' }
 const STATE_LABEL = { clean: 'clean', drift: 'has drift', overlaid: 'overlaid' }
-
-const KIND_COLOR = {
-  unknown_field: 'blue', missing_required: 'red',
-  type_mismatch: 'yellow', enum_violation: 'yellow', unknown_tool: 'gray',
-  unknown_event: 'gray',
-}
-const KIND_LABEL = {
-  unknown_field: 'unknown field', missing_required: 'missing required',
-  type_mismatch: 'type mismatch', enum_violation: 'enum violation',
-  unknown_tool: 'unknown tool', unknown_event: 'unknown event',
-}
 
 const stateChips = [
   { value: 'all',      label: 'All' },
@@ -235,29 +224,6 @@ async function refreshOpenSchema(r) {
   if (s) await toggleSchema(s)
 }
 
-function fmtSample(s) {
-  if (!s) return ''
-  return s.length > 80 ? s.slice(0, 80) + '…' : s
-}
-
-function pretty(obj) {
-  if (obj === null || obj === undefined) return ''
-  return JSON.stringify(obj, null, 2)
-}
-
-function relevantSubschema(detail) {
-  if (!detail?.schema || !detail?.drift?.field_path) return null
-  const parts = detail.drift.field_path.split('.').filter(Boolean)
-  let node = detail.schema
-  for (let i = 0; i < parts.length - 1; i++) {
-    const part = parts[i].replace(/\[\d+\]$/, '')
-    if (!node?.properties?.[part]) return node
-    node = node.properties[part]
-    if (node?.items) node = node.items
-  }
-  return node
-}
-
 onMounted(loadSchemas)
 </script>
 
@@ -405,184 +371,21 @@ onMounted(loadSchemas)
 
             <tr v-if="expandedSchema === schemaKey(s)" class="expansion-row">
               <td :colspan="showAgentColumn ? 8 : 7">
-                <div class="expansion">
-                  <div class="segmented">
-                    <button
-                      type="button"
-                      class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-                      :class="{ 'is-active': activeTab(s) === 'schema' }"
-                      @click.stop="setTab(s, 'schema')"
-                    >Schema</button>
-                    <button
-                      v-if="s.pending > 0"
-                      type="button"
-                      class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-                      :class="{ 'is-active': activeTab(s) === 'diff' }"
-                      @click.stop="setTab(s, 'diff')"
-                    >
-                      Diff
-                      <span class="seg-count">{{ s.pending }}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-                      :class="{ 'is-active': activeTab(s) === 'findings' }"
-                      @click.stop="setTab(s, 'findings')"
-                    >
-                      Findings
-                      <span v-if="s.pending" class="seg-count">{{ s.pending }}</span>
-                    </button>
-                  </div>
-
-                  <!-- Schema tab -->
-                  <div v-if="activeTab(s) === 'schema'" class="tab-panel">
-                    <div v-if="!schemaBySchema[schemaKey(s)]" class="empty-state-inline">Loading schema…</div>
-                    <div v-else>
-                      <dl class="meta-kv">
-                        <dt>Baseline</dt>
-                        <dd><code class="cell-code">{{ schemaBySchema[schemaKey(s)].baseline_path }}</code></dd>
-                        <dt>Overlay</dt>
-                        <dd class="meta-kv__overlay">
-                          <code class="cell-code">{{ schemaBySchema[schemaKey(s)].overlay_path }}</code>
-                          <Badge
-                            v-if="!schemaBySchema[schemaKey(s)].overlay_exists"
-                            color="gray" label="not yet"
-                          />
-                          <Badge v-else color="blue" label="overlay active" />
-                        </dd>
-                      </dl>
-                      <pre class="code-block">{{ pretty(schemaBySchema[schemaKey(s)].schema) }}</pre>
-                    </div>
-                  </div>
-
-                  <!-- Diff tab -->
-                  <div v-else-if="activeTab(s) === 'diff'" class="tab-panel">
-                    <div v-if="!diffBySchema[schemaKey(s)]" class="empty-state-inline">Loading diff…</div>
-                    <div v-else>
-                      <p class="tab-help">
-                        Preview the overlay after ratifying every pending unknown_field for this schema
-                        ({{ diffBySchema[schemaKey(s)].pending_count }} change<span v-if="diffBySchema[schemaKey(s)].pending_count !== 1">s</span>).
-                      </p>
-                      <div v-if="diffBySchema[schemaKey(s)].unified_diff" class="diff-wrap">
-                        <DiffBlock
-                          :diff="diffBySchema[schemaKey(s)].unified_diff"
-                          :file-path="`${s.tool}.json`"
-                        />
-                      </div>
-                      <p v-else class="empty-state-inline">
-                        No textual change — schema already covers every pending field.
-                      </p>
-                    </div>
-                  </div>
-
-                  <!-- Findings tab -->
-                  <div v-else class="tab-panel tab-panel--flush">
-                    <div v-if="!driftsBySchema[schemaKey(s)]" class="empty-state-inline pad">
-                      Loading findings…
-                    </div>
-                    <div v-else-if="!driftsBySchema[schemaKey(s)].length" class="empty-state-inline pad">
-                      No pending drift findings — this schema matches every live payload so far.
-                    </div>
-                    <table v-else class="tbl findings-tbl">
-                      <thead>
-                        <tr>
-                          <th class="caret-col"></th>
-                          <th>Field</th>
-                          <th>Kind</th>
-                          <th>Sample</th>
-                          <th>Version</th>
-                          <th class="text-right">Count</th>
-                          <th class="actions-col">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <template v-for="r in driftsBySchema[schemaKey(s)]" :key="r.id">
-                          <tr
-                            class="row-clickable focus-visible:outline-2 focus-visible:outline-blue-500"
-                            :class="{ 'tbl-row-active': expandedDrift === r.id }"
-                            tabindex="0"
-                            @click.stop="toggleDrift(r)"
-                            @keydown.enter.prevent.stop="toggleDrift(r)"
-                            @keydown.space.prevent.stop="toggleDrift(r)"
-                          >
-                            <td class="caret-col">
-                              <span class="caret" :class="{ open: expandedDrift === r.id }">▸</span>
-                            </td>
-                            <td><code class="cell-code">{{ r.field_path }}</code></td>
-                            <td>
-                              <Badge
-                                :color="KIND_COLOR[r.drift_kind] || 'gray'"
-                                :label="KIND_LABEL[r.drift_kind] || r.drift_kind"
-                              />
-                            </td>
-                            <td><code class="cell-code sample">{{ fmtSample(r.sample_value) }}</code></td>
-                            <td><code class="cell-code">{{ r.claude_version || '—' }}</code></td>
-                            <td class="text-right tabular">{{ r.occurrence_count }}</td>
-                            <td class="actions-col">
-                              <button
-                                v-if="r.drift_kind === 'unknown_field'"
-                                type="button"
-                                class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
-                                title="Add this field to your local overlay"
-                                @click.stop="ratify(r)"
-                              >Ratify</button>
-                              <button
-                                type="button"
-                                class="btn btn-ghost focus-visible:outline-2 focus-visible:outline-blue-500"
-                                @click.stop="ignore(r)"
-                              >Ignore</button>
-                              <button
-                                type="button"
-                                class="btn btn-ghost btn-danger focus-visible:outline-2 focus-visible:outline-blue-500"
-                                @click.stop="discard(r)"
-                              >Discard</button>
-                            </td>
-                          </tr>
-
-                          <tr v-if="expandedDrift === r.id" class="expansion-row expansion-row--inner">
-                            <td colspan="7">
-                              <div v-if="detailLoading[r.id]" class="empty-state-inline pad">
-                                Loading detail…
-                              </div>
-                              <div v-else-if="detailById[r.id]" class="detail-grid">
-                                <section>
-                                  <div class="detail-heading">Schema</div>
-                                  <dl class="meta-kv">
-                                    <dt>Baseline</dt>
-                                    <dd><code class="cell-code">{{ detailById[r.id].baseline_path }}</code></dd>
-                                    <dt>Overlay</dt>
-                                    <dd class="meta-kv__overlay">
-                                      <code class="cell-code">{{ detailById[r.id].overlay_path }}</code>
-                                      <Badge
-                                        v-if="!detailById[r.id].overlay_exists"
-                                        color="gray" label="not yet"
-                                      />
-                                    </dd>
-                                  </dl>
-                                </section>
-                                <section>
-                                  <div class="detail-heading">Current schema (slice)</div>
-                                  <pre class="code-block">{{ pretty(relevantSubschema(detailById[r.id])) }}</pre>
-                                </section>
-                                <section v-if="detailById[r.id].proposed_change">
-                                  <div class="detail-heading">Ratify would add</div>
-                                  <pre class="code-block code-block-add">{{ pretty({ [detailById[r.id].proposed_change.leaf]: detailById[r.id].proposed_change.schema_to_insert }) }}</pre>
-                                </section>
-                                <section>
-                                  <div class="detail-heading">Raw payload</div>
-                                  <p v-if="!detailById[r.id].payload" class="empty-state-inline">
-                                    Not in <code class="cell-code">~/.claude/hook-payloads.jsonl</code> (rotated past).
-                                  </p>
-                                  <pre v-else class="code-block">{{ pretty(detailById[r.id].payload) }}</pre>
-                                </section>
-                              </div>
-                            </td>
-                          </tr>
-                        </template>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <SchemaExpansionPanel
+                  :s="s"
+                  :active-tab="activeTab(s)"
+                  :schema-doc="schemaBySchema[schemaKey(s)]"
+                  :diff="diffBySchema[schemaKey(s)]"
+                  :drifts="driftsBySchema[schemaKey(s)]"
+                  :detail-by-id="detailById"
+                  :detail-loading="detailLoading"
+                  :expanded-drift="expandedDrift"
+                  @set-tab="setTab(s, $event)"
+                  @toggle-drift="toggleDrift($event)"
+                  @ratify="ratify($event)"
+                  @ignore="ignore($event)"
+                  @discard="discard($event)"
+                />
               </td>
             </tr>
           </template>
@@ -626,9 +429,8 @@ onMounted(loadSchemas)
 .toolbar-search .input { width: 18rem; max-width: 100%; }
 
 /* Tables — column widths so expanded JSON can't reflow header cols. */
-.schemas-tbl, .findings-tbl { table-layout: fixed; }
+.schemas-tbl { table-layout: fixed; }
 .caret-col { width: 1.5rem; }
-.actions-col { text-align: right; white-space: nowrap; width: 14rem; }
 
 /* Direct-child selectors so these widths don't bleed into the
    findings-tbl that's nested inside an expansion row — without `>`
@@ -640,11 +442,6 @@ onMounted(loadSchemas)
 .schemas-tbl > thead > tr > th:nth-child(6),
 .schemas-tbl > thead > tr > th:nth-child(7) { width: 7rem; }
 .schemas-tbl > thead > tr > th:nth-child(8) { width: 11rem; }
-
-/* Findings-tbl column widths (Field auto-fills the leftover). */
-.findings-tbl > thead > tr > th:nth-child(3) { width: 9rem; }   /* Kind */
-.findings-tbl > thead > tr > th:nth-child(5) { width: 6rem; }   /* Version */
-.findings-tbl > thead > tr > th:nth-child(6) { width: 5rem; }   /* Count */
 
 .row-clickable { cursor: pointer; }
 
@@ -659,126 +456,11 @@ onMounted(loadSchemas)
 .text-right { text-align: right; }
 .text-muted { color: #94A3B8; }
 
-.sample { color: #475569; word-break: break-all; }
-
-/* Expansion panel ------------------------------------------------- */
+/* Expansion panel host — the inner content lives in SchemaExpansionPanel. */
 .expansion-row > td {
   background: #F8FAFC;
   padding: 0 !important;
   border-bottom: 1px solid #E2E8F0;
 }
 .expansion-row:hover { background: transparent; }
-.expansion {
-  padding: 0.875rem 1.125rem;
-  display: flex; flex-direction: column; gap: 0.875rem;
-}
-.tab-panel { display: flex; flex-direction: column; gap: 0.625rem; }
-.tab-panel--flush { padding: 0; gap: 0; }
-.tab-help { font-size: 0.8125rem; color: #475569; line-height: 1.5; margin: 0; }
-.diff-wrap {
-  background: #0F172A;
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-
-.seg-count {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 1.25rem; height: 1.125rem;
-  padding: 0 0.375rem; margin-left: 0.375rem;
-  background: rgba(148, 163, 184, 0.18);
-  border-radius: 999px;
-  font-size: 0.6875rem; font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.segmented-item.is-active .seg-count {
-  background: rgba(30, 64, 175, 0.12);
-  color: #1E40AF;
-}
-
-/* Findings table (nested inside the expansion) -------------------- */
-.findings-tbl {
-  background: #fff;
-  border: 1px solid #E2E8F0;
-  border-radius: 0.625rem;
-  font-size: 0.8125rem;
-}
-.findings-tbl thead { background: #F8FAFC; }
-.expansion-row--inner > td {
-  background: #FAFCFE;
-  border-top: 1px solid #E2E8F0;
-}
-
-/* Schema/detail key-value rows ------------------------------------ */
-.meta-kv {
-  display: grid;
-  grid-template-columns: 6rem 1fr;
-  gap: 0.25rem 1rem;
-  margin: 0;
-  font-size: 0.8125rem;
-}
-.meta-kv dt { color: #94A3B8; font-weight: 500; }
-.meta-kv dd { margin: 0; color: #1E293B; min-width: 0; }
-.meta-kv__overlay { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-
-/* Code blocks — dark only because they show code/JSON.
-   Everything else on the page stays neutral. */
-.code-block {
-  background: #0F172A; color: #E2E8F0;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.5rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.75rem; line-height: 1.55;
-  max-height: 22rem;
-  overflow: auto; margin: 0;
-  white-space: pre;
-}
-.code-block-add {
-  background: #052E2A;
-  color: #BBF7D0;
-  box-shadow: inset 3px 0 0 #10B981;
-}
-
-.detail-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
-  padding: 0.875rem 1.125rem;
-}
-.detail-heading {
-  font-size: 0.6875rem; font-weight: 600;
-  color: #64748B;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  margin-bottom: 0.375rem;
-}
-
-.empty-state-inline {
-  font-size: 0.8125rem;
-  color: #64748B;
-  margin: 0;
-}
-.empty-state-inline.pad { padding: 0.75rem 0.25rem; }
-
-/* Buttons -------------------------------------------------------- */
-.btn {
-  background: #fff;
-  border: 1px solid #E2E8F0;
-  color: #334155;
-  font-size: 0.75rem; font-weight: 500;
-  padding: 0.25rem 0.625rem;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  margin-left: 0.25rem;
-  transition: background-color 120ms, border-color 120ms, color 120ms;
-}
-.btn:hover { background: #F8FAFC; border-color: #CBD5E1; }
-.btn-primary {
-  background: #1E40AF; color: #fff; border-color: #1E40AF;
-}
-.btn-primary:hover { background: #1E3A8A; border-color: #1E3A8A; }
-.btn-ghost {
-  background: transparent; border-color: transparent; color: #475569;
-}
-.btn-ghost:hover { background: #F1F5F9; border-color: #E2E8F0; }
-.btn-ghost.btn-danger { color: #B91C1C; }
-.btn-ghost.btn-danger:hover { background: #FEF2F2; border-color: #FECACA; }
 </style>

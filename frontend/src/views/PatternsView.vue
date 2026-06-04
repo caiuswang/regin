@@ -4,9 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import PatternFolderImportModal from '../components/PatternFolderImportModal.vue'
+import PatternCreateForm from '../components/PatternCreateForm.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
 import { useConfirm } from '../composables/useConfirm'
+import { useSkillImport } from '../composables/useSkillImport'
 
 const { flash } = useFlash()
 const { features } = useFeatures()
@@ -16,11 +19,6 @@ const router = useRouter()
 const data = ref(null)
 const loading = ref(true)
 const showCreate = ref(false)
-const newTitle = ref('')
-const newSlug = ref('')
-const newDescription = ref('')
-const newTags = ref([])
-const creating = ref(false)
 const showCategoryFilter = ref(false)
 const showTagFilter = ref(false)
 
@@ -105,22 +103,21 @@ watch(() => denseOn.value && features.experimental_dense_search, (on) => {
   if (on) loadCoverage()
 })
 
-function autoSlug() {
-  if (!newSlug.value) {
-    newSlug.value = newTitle.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-  }
-}
-
-const importDragging = ref(false)
-const importUploading = ref(false)
-const importInput = ref(null)
-
-const conflictVisible = ref(false)
-const conflictMsg = ref('')
-const conflictSlug = ref('')
-const conflictSelection = ref(null)
-const conflictRenaming = ref(false)
-const conflictNewSlug = ref('')
+const {
+  importDragging,
+  importUploading,
+  importInput,
+  conflictVisible,
+  conflictMsg,
+  conflictRenaming,
+  conflictNewSlug,
+  doImport,
+  conflictOverwrite,
+  conflictRename,
+  conflictCancel,
+  onImportPick,
+  onImportDrop,
+} = useSkillImport()
 
 const activeFilterCount = computed(() => {
   if (!data.value) return 0
@@ -208,251 +205,8 @@ async function commitRename() {
   flash(result.msg || `Renamed to ${result.new_name}`)
 }
 
-// A selection is either { kind: 'single', file } (a .zip/.md upload) or
-// { kind: 'folder', entries: [{ file, path }] } (a whole skill folder,
-// each path relative to the picked folder).
-function hasSkillMd(entries) {
-  return entries.some((e) => e.path.split('/').pop() === 'SKILL.md')
-}
-
-function buildImportBody(selection) {
-  const fd = new FormData()
-  if (selection.kind === 'folder') {
-    for (const e of selection.entries) fd.append('file', e.file)
-    fd.append('paths', JSON.stringify(selection.entries.map((e) => e.path)))
-  } else {
-    fd.append('file', selection.file)
-  }
-  return fd
-}
-
-async function doImport(selection, opts = {}) {
-  if (!selection) return
-  if (selection.kind === 'single' && !/\.(zip|md)$/i.test(selection.file.name)) {
-    flash('Import accepts a skill folder, a .zip bundle, or SKILL.md', 'error')
-    return
-  }
-  if (selection.kind === 'folder' && !hasSkillMd(selection.entries)) {
-    flash('No SKILL.md found in the selected folder', 'error')
-    return
-  }
-  importUploading.value = true
-  try {
-    const fd = buildImportBody(selection)
-    if (opts.slug) fd.append('slug', opts.slug)
-    const headers = {}
-    const token = api.getToken()
-    if (token) headers['Authorization'] = `Bearer ${token}`
-    const url = opts.force ? '/api/patterns/import?force=true' : '/api/patterns/import'
-    const res = await fetch(url, {
-      method: 'POST', headers, body: fd,
-    })
-    if (res.status === 401) {
-      api.clearAuth()
-      window.location.href = '/login'
-      return
-    }
-    const payload = await res.json().catch(() => ({ ok: false, msg: `HTTP ${res.status}` }))
-    if (!payload.ok) {
-      if (res.status === 409 && payload.conflict) {
-        conflictSelection.value = selection
-        conflictSlug.value = payload.slug || ''
-        conflictMsg.value = payload.msg || 'A pattern with this name already exists.'
-        conflictNewSlug.value = ''
-        conflictRenaming.value = false
-        conflictVisible.value = true
-        return
-      }
-      flash(payload.msg || payload.error || 'Import failed', 'error')
-      return
-    }
-    flash(payload.msg)
-    router.push(`/patterns/${payload.slug}`)
-  } finally {
-    importUploading.value = false
-  }
-}
-
-async function conflictOverwrite() {
-  conflictVisible.value = false
-  await doImport(conflictSelection.value, { force: true })
-}
-
-async function conflictRename() {
-  if (!conflictNewSlug.value.trim()) {
-    flash('Please enter a new name', 'error')
-    return
-  }
-  conflictVisible.value = false
-  await doImport(conflictSelection.value, { slug: conflictNewSlug.value.trim() })
-}
-
-function conflictCancel() {
-  conflictVisible.value = false
-  conflictSelection.value = null
-}
-
-// Folder picker (webkitdirectory): files carry webkitRelativePath.
-function onImportPick(ev) {
-  const files = Array.from(ev.target.files || [])
-  if (files.length) {
-    const entries = files.map((f) => ({ file: f, path: f.webkitRelativePath || f.name }))
-    doImport({ kind: 'folder', entries })
-  }
-  ev.target.value = ''
-}
-
-// Recursively read a dropped FileSystemEntry into {file, path} pairs.
-async function traverseEntry(entry, prefix, out) {
-  if (entry.isFile) {
-    const file = await new Promise((res, rej) => entry.file(res, rej))
-    out.push({ file, path: prefix + entry.name })
-    return
-  }
-  const reader = entry.createReader()
-  // readEntries yields in batches; keep reading until it returns empty.
-  for (;;) {
-    const batch = await new Promise((res, rej) => reader.readEntries(res, rej))
-    if (!batch.length) break
-    for (const child of batch) await traverseEntry(child, prefix + entry.name + '/', out)
-  }
-}
-
-async function onImportDrop(ev) {
-  importDragging.value = false
-  if (importUploading.value) return  // ignore drops while a previous import is in flight
-  const dt = ev.dataTransfer
-  if (!dt) return
-  const entries = (dt.items ? Array.from(dt.items) : [])
-    .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
-    .filter(Boolean)
-
-  // A single dropped .zip/.md file → single-file import (preserves old path).
-  if (entries.length === 1 && entries[0].isFile) {
-    const f = dt.files?.[0]
-    if (f && /\.(zip|md)$/i.test(f.name)) {
-      doImport({ kind: 'single', file: f })
-      return
-    }
-  }
-
-  // Otherwise traverse everything (folders + loose files) into a folder upload.
-  const out = []
-  for (const entry of entries) await traverseEntry(entry, '', out)
-  if (out.length) {
-    doImport({ kind: 'folder', entries: out })
-  } else if (dt.files?.[0]) {
-    doImport({ kind: 'single', file: dt.files[0] })
-  }
-}
-
-// Batch-import-from-folder modal state
+// Batch-import-from-folder modal — state lives in PatternFolderImportModal.
 const folderVisible = ref(false)
-const folderPath = ref('~/.claude/skills')
-const folderOnConflict = ref('skip')
-const folderScanning = ref(false)
-const folderImporting = ref(false)
-const folderCandidates = ref([])     // [{name, derived_slug, conflict, error}]
-const folderResolvedPath = ref('')   // absolute path the server resolved
-const folderResults = ref([])        // [{name, status, slug, ...}] after import
-const folderResultPath = ref('')
-const folderCounts = ref({})
-
-function openFolderImport() {
-  folderVisible.value = true
-  folderCandidates.value = []
-  folderResults.value = []
-  folderCounts.value = {}
-  folderResolvedPath.value = ''
-  folderResultPath.value = ''
-}
-
-function closeFolderImport() {
-  if (folderScanning.value || folderImporting.value) return
-  folderVisible.value = false
-}
-
-async function scanFolder() {
-  const path = folderPath.value.trim()
-  if (!path) { flash('Enter a folder path', 'error'); return }
-  folderScanning.value = true
-  folderResults.value = []
-  try {
-    const payload = await api.post('/patterns/import-dir/scan', { path })
-    if (!payload.ok) {
-      flash(payload.msg || 'Scan failed', 'error')
-      folderCandidates.value = []
-      folderResolvedPath.value = ''
-      return
-    }
-    folderCandidates.value = payload.candidates || []
-    folderResolvedPath.value = payload.path || ''
-    if (!folderCandidates.value.length) {
-      flash(`No <name>/SKILL.md found under ${payload.path}`, 'warn')
-    }
-  } finally {
-    folderScanning.value = false
-  }
-}
-
-async function runFolderImport() {
-  if (!folderCandidates.value.length) { flash('Scan first', 'error'); return }
-  folderImporting.value = true
-  try {
-    const payload = await api.post('/patterns/import-dir', {
-      path: folderResolvedPath.value || folderPath.value.trim(),
-      on_conflict: folderOnConflict.value,
-    })
-    if (!payload.ok) { flash(payload.msg || 'Import failed', 'error'); return }
-    folderResults.value = payload.results || []
-    folderCounts.value = payload.counts || {}
-    folderResultPath.value = payload.path || ''
-    const c = payload.counts || {}
-    const imported = (c.imported || 0) + (c.overwritten || 0) + (c.renamed || 0)
-    const gritTotal = (payload.results || []).reduce((n, r) => n + ((r.grit_rules || []).length), 0)
-    const gritNote = gritTotal ? ` (+${gritTotal} grit rule(s))` : ''
-    flash(`Imported ${imported} skill(s) from ${payload.path}${gritNote}`, imported ? 'success' : 'warn')
-    await load()
-  } finally {
-    folderImporting.value = false
-  }
-}
-
-const folderImportableCount = computed(() => {
-  if (!folderCandidates.value.length) return 0
-  const importable = folderCandidates.value.filter((c) => !c.error)
-  if (folderOnConflict.value === 'skip') {
-    return importable.filter((c) => !c.conflict).length
-  }
-  return importable.length
-})
-
-const folderResultGlyph = {
-  imported: '+',
-  overwritten: '↻',
-  renamed: '~',
-  skipped: '·',
-  failed: '!',
-  planned: '·',
-}
-
-async function createPattern() {
-  if (!newTitle.value.trim()) { flash('Title is required', 'error'); return }
-  creating.value = true
-  const result = await api.post('/patterns/create', {
-    title: newTitle.value.trim(),
-    slug: newSlug.value.trim(),
-    description: newDescription.value.trim(),
-    tags: newTags.value,
-  })
-  creating.value = false
-  if (result.ok) {
-    flash(result.msg)
-    router.push(`/patterns/${result.slug}`)
-  } else {
-    flash(result.msg || 'Failed to create', 'error')
-  }
-}
 
 function setFilter(key, value) {
   const q = {}
@@ -490,6 +244,12 @@ const skillBadge = {
 </script>
 
 <template>
+  <!-- Folder-import modal lives OUTSIDE the loading v-if/v-else: a successful
+       batch import calls @imported="load", which flips `loading` and would
+       otherwise unmount the modal's child scope and wipe its results table.
+       It teleports to body and is internally v-if="visible"-gated, so its
+       position here is cosmetically irrelevant. -->
+  <PatternFolderImportModal v-model:visible="folderVisible" @imported="load" />
   <div v-if="loading" class="empty-state">Loading patterns…</div>
   <div v-else>
     <header class="page-header">
@@ -507,7 +267,7 @@ const skillBadge = {
           type="button"
           class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label="Batch import"
-          @click="openFolderImport"
+          @click="folderVisible = true"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
           Batch import
@@ -719,171 +479,8 @@ const skillBadge = {
         </button>
       </div>
 
-      <Card v-if="showCreate">
-        <h2 class="card-header">Create new pattern</h2>
-        <div class="grid grid-cols-2 gap-4 max-w-2xl">
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
-            <input v-model="newTitle" type="text" aria-label="Pattern title" @blur="autoSlug" placeholder="e.g. Distributed Lock with RLockUtil"
-              class="input focus-visible:outline-2 focus-visible:outline-blue-500">
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-slate-700 mb-1">Slug</label>
-            <input v-model="newSlug" type="text" aria-label="Pattern slug" placeholder="auto-generated from title"
-              class="input font-mono focus-visible:outline-2 focus-visible:outline-blue-500">
-          </div>
-          <div class="col-span-2">
-            <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
-            <textarea v-model="newDescription" rows="2" aria-label="Pattern description" placeholder="What this pattern covers…"
-              class="input focus-visible:outline-2 focus-visible:outline-blue-500"></textarea>
-          </div>
-          <div class="col-span-2" v-if="data?.tags?.length">
-            <label class="block text-sm font-medium text-slate-700 mb-1">Tags</label>
-            <div class="flex flex-wrap gap-1.5">
-              <label v-for="t in data.tags" :key="t.name" class="tag-pick"
-                :class="{ 'is-active': newTags.includes(t.name) }">
-                <input type="checkbox" :value="t.name" v-model="newTags" :aria-label="t.name" class="hidden">
-                {{ t.name }}
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="mt-4 flex gap-2">
-          <button type="button" @click="createPattern" :disabled="creating"
-                  class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500">
-            {{ creating ? 'Creating…' : 'Create' }}
-          </button>
-          <button type="button" @click="showCreate = false; newTitle = ''; newSlug = ''; newDescription = ''; newTags = []"
-                  class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500">
-            Cancel
-          </button>
-        </div>
-      </Card>
+      <PatternCreateForm v-if="showCreate" :tags="data?.tags" @close="showCreate = false" />
     </aside>
-
-    <!-- Batch import folder modal -->
-    <Teleport to="body">
-      <aside
-        v-if="folderVisible"
-        class="modal-overlay"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="folder-import-title"
-        @click.self="closeFolderImport"
-        @keydown.esc="closeFolderImport"
-      >
-        <div class="modal-card modal-card-wide">
-          <div class="modal-body">
-            <h2 id="folder-import-title" class="modal-title">Batch import skills from folder</h2>
-            <p class="modal-text">
-              Walks each <code>&lt;folder&gt;/&lt;name&gt;/SKILL.md</code> and imports it as a pattern.
-              Path is resolved on the regin server (this machine).
-            </p>
-
-            <div class="flex gap-2 mt-3">
-              <input
-                v-model="folderPath"
-                type="text"
-                aria-label="Folder path to scan"
-                placeholder="~/.claude/skills"
-                class="input font-mono flex-1 focus-visible:outline-2 focus-visible:outline-blue-500"
-                @keydown.enter.prevent="scanFolder"
-              />
-              <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
-                      :disabled="folderScanning || folderImporting"
-                      @click="scanFolder">
-                {{ folderScanning ? 'Scanning…' : 'Scan' }}
-              </button>
-            </div>
-            <p v-if="folderResolvedPath" class="text-[11px] text-slate-500 mt-1 font-mono">
-              resolved → {{ folderResolvedPath }}
-            </p>
-
-            <div v-if="folderCandidates.length" class="mt-4 max-h-72 overflow-y-auto border border-slate-200 rounded">
-              <table class="tbl tbl-compact">
-                <thead>
-                  <tr><th>Folder</th><th>Derived slug</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="c in folderCandidates" :key="c.name">
-                    <td class="font-mono text-[12px]">{{ c.name }}</td>
-                    <td class="font-mono text-[12px]">{{ c.derived_slug || '—' }}</td>
-                    <td>
-                      <Badge v-if="c.error" color="red" :label="c.error" />
-                      <Badge v-else-if="c.conflict" color="yellow" label="already exists" />
-                      <Badge v-else color="green" label="new" />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div v-if="folderCandidates.length" class="mt-4">
-              <label class="block text-sm font-medium text-slate-700 mb-1">On conflict:</label>
-              <div class="flex gap-3 text-sm">
-                <label class="inline-flex items-center gap-1.5">
-                  <input type="radio" v-model="folderOnConflict" value="skip" aria-label="On conflict: skip" /> Skip
-                </label>
-                <label class="inline-flex items-center gap-1.5">
-                  <input type="radio" v-model="folderOnConflict" value="overwrite" aria-label="On conflict: overwrite" /> Overwrite
-                </label>
-                <label class="inline-flex items-center gap-1.5">
-                  <input type="radio" v-model="folderOnConflict" value="rename" aria-label="On conflict: rename" /> Rename (-2, -3, …)
-                </label>
-              </div>
-            </div>
-
-            <div v-if="folderResults.length" class="mt-4 max-h-72 overflow-y-auto border border-slate-200 rounded">
-              <table class="tbl tbl-compact">
-                <thead>
-                  <tr><th></th><th>Folder</th><th>Slug</th><th>Status</th><th>Note</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="r in folderResults" :key="r.name">
-                    <td class="font-mono text-[14px] text-slate-500 text-center">
-                      {{ folderResultGlyph[r.status] || '?' }}
-                    </td>
-                    <td class="font-mono text-[12px]">{{ r.name }}</td>
-                    <td class="font-mono text-[12px]">{{ r.slug || '—' }}</td>
-                    <td>
-                      <Badge
-                        :color="r.status === 'imported' ? 'green'
-                              : r.status === 'overwritten' ? 'blue'
-                              : r.status === 'renamed' ? 'purple'
-                              : r.status === 'skipped' ? 'gray'
-                              : r.status === 'failed' ? 'red' : 'gray'"
-                        :label="r.status"
-                      />
-                    </td>
-                    <td class="text-[12px] text-slate-600">
-                      {{ r.error || (r.file_count != null ? `${r.file_count} file(s)` : '') }}
-                      <span v-if="r.grit_rules && r.grit_rules.length" class="text-emerald-600">
-                        +{{ r.grit_rules.length }} grit rule(s)
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
-                    :disabled="folderScanning || folderImporting"
-                    @click="closeFolderImport">
-              {{ folderResults.length ? 'Close' : 'Cancel' }}
-            </button>
-            <button v-if="folderCandidates.length && !folderResults.length"
-                    type="button"
-                    class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
-                    :disabled="folderImporting || folderImportableCount === 0"
-                    @click="runFolderImport">
-              {{ folderImporting ? 'Importing…'
-                 : `Import ${folderImportableCount} skill${folderImportableCount === 1 ? '' : 's'}` }}
-            </button>
-          </div>
-        </div>
-      </aside>
-    </Teleport>
 
     <!-- Conflict dialog -->
     <Teleport to="body">
@@ -1130,24 +727,6 @@ const skillBadge = {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
-/* Tag pick chips (create form) */
-.tag-pick {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    font-size: 0.75rem;
-    background: #F1F5F9;
-    color: #475569;
-    border-radius: 0.375rem;
-    padding: 0.25rem 0.625rem;
-    cursor: pointer;
-    transition: background-color 150ms, color 150ms;
-}
-
-.tag-pick:hover { background: #E2E8F0; }
-
-.tag-pick.is-active { background: #DBEAFE; color: #1E40AF; font-weight: 500; }
-
 /* Modal */
 .modal-overlay {
     position: fixed;
@@ -1168,16 +747,6 @@ const skillBadge = {
     width: 100%;
     box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
     overflow: hidden;
-}
-
-.modal-card-wide {
-    max-width: 48rem;
-}
-
-.tbl-compact th,
-.tbl-compact td {
-    padding: 0.4rem 0.6rem;
-    font-size: 0.8125rem;
 }
 
 .modal-body { padding: 1.25rem 1.25rem 1rem; }

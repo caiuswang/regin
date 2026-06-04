@@ -99,6 +99,22 @@ async function loadWiki() {
   wikiLoaded.value = true
 }
 
+function selectDefaultProvider() {
+  if (!proposalData.value?.providers?.some((provider) => provider.id === selectedProvider.value) && proposalData.value?.providers?.length) {
+    selectedProvider.value = proposalData.value.providers.find((provider) => provider.id === 'langchain' && provider.configured)?.id || proposalData.value.providers[0].id
+  }
+}
+
+function syncAgentForProvider() {
+  if (selectedProposalProvider.value?.id === 'external-agent') {
+    if (!selectedProviderAgents.value.includes(selectedAgent.value)) {
+      selectedAgent.value = selectedProviderAgents.value[0] || ''
+    }
+  } else {
+    selectedAgent.value = ''
+  }
+}
+
 async function loadProposals() {
   proposalError.value = ''
   const params = new URLSearchParams()
@@ -108,16 +124,8 @@ async function loadProposals() {
   const suffix = params.toString() ? `?${params.toString()}` : ''
   proposalData.value = await api.get(`/repos/${repo.value}/topics/workspace/proposals${suffix}`)
   proposalLoaded.value = true
-  if (!proposalData.value?.providers?.some((provider) => provider.id === selectedProvider.value) && proposalData.value?.providers?.length) {
-    selectedProvider.value = proposalData.value.providers.find((provider) => provider.id === 'langchain' && provider.configured)?.id || proposalData.value.providers[0].id
-  }
-  if (selectedProposalProvider.value?.id === 'external-agent') {
-    if (!selectedProviderAgents.value.includes(selectedAgent.value)) {
-      selectedAgent.value = selectedProviderAgents.value[0] || ''
-    }
-  } else {
-    selectedAgent.value = ''
-  }
+  selectDefaultProvider()
+  syncAgentForProvider()
   refreshProposalPolling()
 }
 

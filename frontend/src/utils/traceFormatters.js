@@ -383,6 +383,140 @@ export function spanLabel(span) {
   }
 }
 
+// ── Terminal flat-log labels/details (SessionTerminalLog) ────
+//
+// The Terminal view renders a flat two-column "SPAN · DETAIL" log. These
+// formatters are a separate family from `fullLabel`/`spanLabel` above:
+// the label keeps the canonical span name (e.g. `tool.Bash`) and the
+// detail carries terse per-event context. Moved verbatim out of the SFC.
+
+// Terminal-log truncate: collapses internal whitespace (newlines/tabs →
+// single space) BEFORE the length check, unlike the exported `truncate`.
+// Kept private so the two truncation behaviours can't be conflated.
+function _terminalTruncate(text, max) {
+  if (!text) return ''
+  text = String(text).replace(/\s+/g, ' ').trim()
+  if (text.length <= max) return text
+  return text.slice(0, max) + '…'
+}
+
+// Multi-line "question → answer" preview for AskUserQuestion tool spans.
+// NOT truncated — the multi-line join is rendered line-by-line by the row.
+export function terminalAskQuestionPreview(a) {
+  const qs = a.questions || []
+  if (!qs.length) return ''
+  const answers = a.answers || {}
+  return qs.map(q => {
+    const text = q?.question || q?.header || ''
+    const ans = answers[q?.question]
+    return ans ? `${text} → ${ans}` : text
+  }).join('\n')
+}
+
+// Span names that label as themselves (the canonical name is the label).
+// The fallthrough already returns `n` for unknown names, so these are
+// identity branches kept explicit only for documentation of coverage.
+const _TERMINAL_IDENTITY_LABELS = new Set([
+  'prompt', 'assistant_response',
+  'skill.read', 'skill.invoke', 'skill.launch',
+  'rule.check', 'subagent.start', 'subagent.stop',
+  'session.start', 'session.end', 'compact.pre', 'compact.post',
+])
+
+export function terminalSpanLabel(span) {
+  const n = span.name || ''
+  if (_TERMINAL_IDENTITY_LABELS.has(n)) return n
+  if (n.startsWith('tool.')) {
+    return `tool.${toolDisplayLabel(n.slice(5))}`
+  }
+  if (n.startsWith('pre_tool.')) {
+    return `pre_tool.${toolDisplayLabel(n.slice(9))}`
+  }
+  return n
+}
+
+// Detail for the non-tool span families. Returns undefined when `n` isn't
+// one of them, signalling the caller to fall through to the tool branch.
+const _TERMINAL_DETAIL_BUILDERS = {
+  prompt: (a) => (a.text ? _terminalTruncate(a.text, 100) : ''),
+  assistant_response: (a) => (a.text ? `"${_terminalTruncate(a.text, 80)}"` : ''),
+  'assistant.thinking': (a) => (a.thinking_text ? _terminalTruncate(a.thinking_text, 100) : ''),
+  'skill.read': (a) => a.skill_id || '',
+  'skill.invoke': (a) => a.skill_id || '',
+  'skill.launch': (a) => a.skill_id || '',
+  'rule.check': (a) => (a.rule_id ? `${a.rule_id}${a.findings === 0 ? ' (no findings)' : ''}` : ''),
+  'subagent.start': (a) => a.agent_type || (a.agent_id ? a.agent_id.slice(0, 8) : ''),
+  'subagent.stop': (a) => a.agent_type || '',
+  'session.start': (a) => a.cwd || a.model || '',
+  'session.end': (a) => a.reason || '',
+  'compact.pre': (a) => {
+    const tr = a.trigger ? `[${a.trigger}]` : ''
+    const ci = a.custom_instructions ? ` ${_terminalTruncate(a.custom_instructions, 80)}` : ''
+    return `${tr}${ci}`.trim()
+  },
+  'compact.post': (a) => {
+    const tr = a.trigger ? `[${a.trigger}]` : ''
+    const sum = a.summary ? ` summary: ${_terminalTruncate(a.summary, 70)}` : ''
+    return `${tr}${sum}`.trim()
+  },
+}
+
+// Task-tool detail: subject / task-id / status are the entire signal.
+function _terminalTaskDetail(n, a) {
+  if (n === 'tool.TaskCreate' && a.subject) {
+    return a.task_id ? `#${a.task_id}: ${a.subject}` : a.subject
+  }
+  if (n === 'tool.TaskUpdate' && a.task_id) {
+    return a.status ? `#${a.task_id} → ${a.status}` : `#${a.task_id}`
+  }
+  if (n === 'tool.TaskOutput' && a.task_id) {
+    return a.status ? `#${a.task_id} → ${a.status}` : `#${a.task_id}`
+  }
+  return undefined
+}
+
+// File / pattern tail of the tool detail (the lowest-priority attributes).
+function _terminalToolFile(a) {
+  if (a.pattern && a.file_path) return `${a.pattern} in ${a.file_path.split('/').pop()}`
+  if (a.pattern) return a.pattern
+  if (a.file_path) {
+    const fname = a.file_path.split('/').pop()
+    if (a.lines) return `${fname} (${a.lines} lines)`
+    return fname
+  }
+  return ''
+}
+
+// Detail string for a `tool.*` span. Priority order preserved verbatim
+// from the original SFC switch fallthrough.
+function _terminalToolDetail(n, a) {
+  if (a.command_preview) return a.command_preview
+  const taskDetail = _terminalTaskDetail(n, a)
+  if (taskDetail !== undefined) return taskDetail
+  if (n === 'tool.Skill' && a.skill_name) return a.skill_name
+  if (a.questions) return terminalAskQuestionPreview(a)
+  const tsTools = a.loaded_tools && a.loaded_tools.length
+    ? a.loaded_tools
+    : a.selected_tools
+  if (tsTools && tsTools.length) {
+    return tsTools.map(t => t.split('__').pop()).join(', ')
+  }
+  if (a.query) return a.query
+  return _terminalToolFile(a)
+}
+
+export function terminalSpanDetail(span) {
+  const a = span.attributes || {}
+  const n = span.name || ''
+  // `Object.hasOwn` so an inherited prototype key (constructor/toString/…)
+  // can't masquerade as a builder — matches the original `switch` falling
+  // through to the tool branch / '' for any non-listed name.
+  if (Object.hasOwn(_TERMINAL_DETAIL_BUILDERS, n)) return _TERMINAL_DETAIL_BUILDERS[n](a)
+  if (n.startsWith('tool.')) return _terminalToolDetail(n, a)
+  if (n.startsWith('pre_tool.')) return a.tool_name || ''
+  return ''
+}
+
 // ── Tool group badges (sidebar token rollup) ────────────────
 
 const _TOOL_BADGE_FS = { label: 'FS', classes: 'bg-amber-100 text-amber-800', group: 'Read / write', order: 1 }

@@ -7,6 +7,7 @@ import HookCard from '../components/HookCard.vue'
 import HookLifecycleDiagram from '../components/HookLifecycleDiagram.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ListInput from '../components/ListInput.vue'
+import SettingsRuleTriggers from '../components/SettingsRuleTriggers.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
 import { useConfirm } from '../composables/useConfirm'
@@ -422,119 +423,20 @@ watch([activeSection, selectedProvider], ([section]) => {
 
       <!-- Rule Triggers -->
       <template v-else-if="activeSection === 'triggers'">
-        <div class="sv-section-header">
-          <h2 class="sv-section-title">Rule Triggers</h2>
-          <p class="sv-section-desc">Thresholds that decide which rules read as <strong>noisy</strong>, <strong>active</strong>, or <strong>dead</strong> on the
-            <router-link to="/trace/triggers" class="text-blue-700 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500">Trace › Rule Triggers</router-link>
-            tab. Plus admin-only retention controls for the trigger log.</p>
-        </div>
-
-        <div class="sv-group">
-          <div class="sv-group-label">Health classification thresholds</div>
-          <p class="sv-group-meta">A rule is <strong>noisy</strong> when its trigger rate AND its fire count both clear the gates below. <strong>Dead</strong> means zero fires across at least the configured number of checks.</p>
-          <Card>
-            <div v-if="!triggerThresholdsForm" class="text-sm text-gray-500">Loading…</div>
-            <div v-else class="space-y-3">
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label class="block">
-                  <span class="text-xs text-gray-600">noisy_min_rate_pct (0–100)</span>
-                  <input
-                    type="number" min="0" max="100"
-                    v-model.number="triggerThresholdsForm.noisy_min_rate_pct"
-                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  />
-                </label>
-                <label class="block">
-                  <span class="text-xs text-gray-600">noisy_min_fires</span>
-                  <input
-                    type="number" min="0"
-                    v-model.number="triggerThresholdsForm.noisy_min_fires"
-                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  />
-                </label>
-                <label class="block">
-                  <span class="text-xs text-gray-600">dead_min_checks</span>
-                  <input
-                    type="number" min="1"
-                    v-model.number="triggerThresholdsForm.dead_min_checks"
-                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  />
-                </label>
-                <label class="block">
-                  <span class="text-xs text-gray-600">default_range</span>
-                  <select
-                    v-model="triggerThresholdsForm.default_range"
-                    class="mt-1 text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  >
-                    <option value="24h">24h</option>
-                    <option value="7d">7d</option>
-                    <option value="30d">30d</option>
-                    <option value="all">all</option>
-                  </select>
-                </label>
-              </div>
-
-              <div class="flex items-center gap-3">
-                <button type="button"
-                  class="btn btn-primary focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-                  :disabled="triggerSaving || !isAdmin"
-                  @click="saveTriggerThresholds">
-                  {{ triggerSaving ? 'Saving…' : 'Save thresholds' }}
-                </button>
-                <span v-if="!isAdmin" class="text-xs text-amber-700">Admin role required to change thresholds.</span>
-                <Badge v-if="triggerPreview" color="blue">
-                  preview: {{ triggerPreview.noisy }} noisy · {{ triggerPreview.dead }} dead
-                </Badge>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        <div class="sv-group mt-6">
-          <div class="sv-group-label">Trigger log retention</div>
-          <p class="sv-group-meta">Trigger events accumulate over time. Wiping is reversible only by re-running rules; do it sparingly.</p>
-          <Card>
-            <div v-if="!triggerStats" class="text-sm text-gray-500">Loading…</div>
-            <div v-else class="space-y-3">
-              <dl class="grid grid-cols-3 gap-3 text-sm">
-                <div>
-                  <dt class="text-xs text-gray-500">Total events</dt>
-                  <dd class="font-mono text-base text-gray-900">{{ triggerStats.total.toLocaleString() }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs text-gray-500">Distinct rules</dt>
-                  <dd class="font-mono text-base text-gray-900">{{ triggerStats.distinct_rules }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs text-gray-500">Oldest row</dt>
-                  <dd class="font-mono text-xs text-gray-700">{{ triggerStats.oldest_at || '—' }}</dd>
-                </div>
-              </dl>
-              <div class="flex items-center gap-3 pt-1 flex-wrap">
-                <label class="inline-flex items-center gap-2 text-sm">
-                  <span class="text-xs text-gray-500">Policy</span>
-                  <select v-model.number="triggerResetPolicy"
-                    class="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus-visible:outline-2 focus-visible:outline-blue-500"
-                    :disabled="triggerResetting || !isAdmin">
-                    <option v-for="o in TRIGGER_RESET_OPTIONS" :key="o.value" :value="o.value">
-                      {{ o.label }}
-                    </option>
-                  </select>
-                </label>
-                <span class="text-xs text-gray-500 font-mono">
-                  → {{ triggerResetCount.toLocaleString() }} row(s)
-                </span>
-                <button type="button"
-                  class="btn btn-danger focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-1"
-                  :disabled="triggerResetting || !isAdmin || triggerResetCount === 0"
-                  @click="resetTriggerLog">
-                  {{ triggerResetting ? 'Resetting…' : `Reset (${triggerResetLabel})` }}
-                </button>
-                <span v-if="!isAdmin" class="text-xs text-amber-700">Admin role required.</span>
-              </div>
-            </div>
-          </Card>
-        </div>
+        <SettingsRuleTriggers
+          :is-admin="isAdmin"
+          :thresholds-form="triggerThresholdsForm"
+          :saving="triggerSaving"
+          :preview="triggerPreview"
+          :stats="triggerStats"
+          v-model:reset-policy="triggerResetPolicy"
+          :reset-options="TRIGGER_RESET_OPTIONS"
+          :resetting="triggerResetting"
+          :reset-count="triggerResetCount"
+          :reset-label="triggerResetLabel"
+          @save-thresholds="saveTriggerThresholds"
+          @reset-log="resetTriggerLog"
+        />
       </template>
 
       <!-- Hook Handlers -->

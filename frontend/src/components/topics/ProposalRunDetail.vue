@@ -8,7 +8,10 @@ import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import DiffPanel from './DiffPanel.vue'
 import ProposalCommentsSidebar from './ProposalCommentsSidebar.vue'
-import { fmtAgo, fmtLocalDateTime } from '../../utils/traceFormatters'
+import ProposalRunHeader from './ProposalRunHeader.vue'
+import ProposalDraftTopicsTable from './ProposalDraftTopicsTable.vue'
+import ProposalGeneralReviewNotes from './ProposalGeneralReviewNotes.vue'
+import ProposalFeedbackThread from './ProposalFeedbackThread.vue'
 
 const props = defineProps({
   repo: { type: String, required: true },
@@ -350,33 +353,10 @@ watch(selectedProposalId, () => {
   commentsDrawerOpen.value = false
 })
 
-function proposalStateColor(state) {
-  if (state === 'completed') return 'green'
-  if (state === 'failed' || state === 'timed_out') return 'red'
-  if (state === 'waiting_for_permission') return 'yellow'
-  if (state === 'running' || state === 'queued') return 'blue'
-  if (state === 'cancelled') return 'gray'
-  return 'gray'
-}
-
 function reviewStatusColor(status) {
   if (status === 'accepted' || status === 'merged') return 'green'
   if (status === 'ignored') return 'gray'
   return 'blue'
-}
-
-function proposalReviewColor(status) {
-  if (status === 'ready_to_apply') return 'green'
-  if (status === 'changes_requested') return 'yellow'
-  if (status === 'partially_applied') return 'blue'
-  if (status === 'applied') return 'green'
-  return 'gray'
-}
-
-function feedbackThreadColor(status) {
-  if (status === 'addressed' || status === 'resolved') return 'green'
-  if (status === 'dismissed') return 'gray'
-  return 'yellow'
 }
 </script>
 
@@ -389,127 +369,30 @@ function feedbackThreadColor(status) {
   </div>
   <div v-else class="topics-run-detail">
     <Card>
-      <div class="topics-run-header-strip">
-        <div class="topics-run-header-left">
-          <button
-            type="button"
-            class="topics-back-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            @click="backToList"
-          >← Back to runs</button>
-          <h2 class="topics-run-title" :title="selectedRun.topic_request || ''">{{ selectedRun.title || 'Untitled run' }}</h2>
-          <div class="topics-run-header-id">
-            <code class="text-xs text-slate-500">{{ selectedRun.id }}</code>
-            <span v-if="fmtAgo(selectedRun.last_activity_at)" class="text-xs text-slate-500">· updated {{ fmtAgo(selectedRun.last_activity_at) }}</span>
-            <Badge :color="proposalStateColor(selectedRun.state)" :label="selectedRun.state || 'completed'" />
-            <span class="text-xs text-slate-500">{{ selectedRun.provider }}<span v-if="selectedRun.agent"> · {{ selectedRun.agent }}</span></span>
-            <Badge
-              :color="proposalReviewColor(selectedProposalReviewState)"
-              :label="selectedProposalReviewState.replaceAll('_', ' ')"
-            />
-            <Badge
-              v-if="selectedRevision"
-              :color="selectedRevisionIsLatest ? 'blue' : 'gray'"
-              :label="`r${selectedRevision.revision_number}${selectedRevisionIsLatest ? ' latest' : ''}`"
-            />
-          </div>
-        </div>
-        <div class="topics-run-header-actions btn-row">
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="!prevRun"
-            :title="prevRun ? `Previous: ${prevRun.id}` : 'No earlier run'"
-            @click="chooseRun(prevRun?.id)"
-          >← Prev</button>
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="!nextRun"
-            :title="nextRun ? `Next: ${nextRun.id}` : 'No later run'"
-            @click="chooseRun(nextRun?.id)"
-          >Next →</button>
-          <span class="topics-run-header-divider" aria-hidden="true"></span>
-          <button
-            v-if="isActiveRun"
-            type="button"
-            class="btn btn-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="isBusy()"
-            title="Terminate the running agent and cancel this run"
-            @click="stopProposal"
-          >{{ isBusy('stop-proposal') ? 'Stopping…' : 'Stop' }}</button>
-          <button
-            v-if="!['applied', 'partially_applied'].includes(selectedProposalReviewState)"
-            type="button"
-            class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="isBusy() || !selectedRevisionIsLatest"
-            @click="updateReviewState('changes_requested')"
-          >Request changes</button>
-          <button
-            v-if="!['ready_to_apply', 'partially_applied', 'applied'].includes(selectedProposalReviewState)"
-            type="button"
-            class="btn btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="isBusy() || !selectedRevisionIsLatest"
-            @click="updateReviewState('ready_to_apply')"
-          >Mark ready</button>
-          <button
-            type="button"
-            class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="isBusy() || !selectedProposalId || !selectedRevisionIsLatest"
-            @click="regenerateProposal"
-          >Regenerate</button>
-          <button
-            type="button"
-            class="btn btn-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :disabled="isBusy()"
-            @click="deleteRun"
-          >Delete Run</button>
-        </div>
-      </div>
+      <ProposalRunHeader
+        :selected-run="selectedRun"
+        :prev-run="prevRun"
+        :next-run="nextRun"
+        :is-active-run="isActiveRun"
+        :selected-proposal-review-state="selectedProposalReviewState"
+        :selected-revision="selectedRevision"
+        :selected-revision-is-latest="selectedRevisionIsLatest"
+        :selected-proposal-id="selectedProposalId"
+        :busy-action="busyAction"
+        @back="backToList"
+        @choose-run="chooseRun"
+        @stop="stopProposal"
+        @update-review-state="updateReviewState"
+        @regenerate="regenerateProposal"
+        @delete="deleteRun"
+      />
     </Card>
 
-    <Card :no-padding="true">
-      <div class="topics-panel-header">
-        <div>
-          <h2>Draft Topics</h2>
-          <p class="topics-panel-caption">Review each proposed topic before accepting, merging, or ignoring it.</p>
-        </div>
-        <Badge color="purple" :label="String((data?.draft_topics || []).length)" />
-      </div>
-      <table class="tbl tbl-workbench">
-        <thead>
-          <tr>
-            <th>Label</th>
-            <th>Status</th>
-            <th class="text-right">Evidence</th>
-            <th class="text-right">Refs</th>
-            <th class="text-right">Threads</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="topic in (data?.draft_topics || [])"
-            :key="topic.id"
-            class="topics-row-selectable cursor-pointer"
-            :class="{ 'tbl-row-active': topic.id === selectedDraftTopicId }"
-            @click="chooseDraftTopic(topic.id)"
-          >
-            <td>
-              <button type="button" class="topics-row-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" @click.stop="chooseDraftTopic(topic.id)">
-                <div class="topics-row-title">{{ topic.label }}</div>
-                <div class="topics-row-meta line-clamp-2">{{ topic.intent_preview }}</div>
-              </button>
-            </td>
-            <td><Badge :color="reviewStatusColor(topic.review_status)" :label="topic.review_status" /></td>
-            <td class="text-right">{{ topic.evidence_count }}</td>
-            <td class="text-right">{{ topic.proposed_ref_count }}</td>
-            <td class="text-right">{{ topic.feedback_thread_count || 0 }}</td>
-          </tr>
-          <tr v-if="!(data?.draft_topics || []).length">
-            <td colspan="5" class="text-gray-500">No draft topics in this run.</td>
-          </tr>
-        </tbody>
-      </table>
-    </Card>
+    <ProposalDraftTopicsTable
+      :draft-topics="data?.draft_topics || []"
+      :selected-draft-topic-id="selectedDraftTopicId"
+      @select="chooseDraftTopic"
+    />
 
     <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
       <Card>
@@ -586,32 +469,7 @@ function feedbackThreadColor(status) {
             </div>
           </div>
 
-          <div v-if="selectedGeneralReviewThreads.length" class="space-y-3">
-            <h3 class="topics-subsection-title">General Review Notes</h3>
-            <div
-              v-for="thread in selectedGeneralReviewThreads"
-              :key="`general-${thread.id}`"
-              class="rounded border border-amber-200 bg-amber-50/70 px-4 py-3"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :color="feedbackThreadColor(thread.resolution_state)" :label="thread.resolution_state || 'open'" />
-                <span class="text-xs font-medium text-slate-700">Revision overview</span>
-                <span v-if="thread.revision_number" class="text-[11px] text-slate-500">opened in r{{ thread.revision_number }}</span>
-                <span v-if="thread.addressed_in_revision_number" class="text-[11px] text-slate-500">addressed in r{{ thread.addressed_in_revision_number }}</span>
-              </div>
-              <article
-                v-for="comment in (thread.comments || [])"
-                :key="`general-comment-${comment.id}`"
-                class="mt-3 border-l-2 border-amber-300 pl-3"
-              >
-                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
-                  <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
-              </article>
-            </div>
-          </div>
+          <ProposalGeneralReviewNotes :threads="selectedGeneralReviewThreads" />
 
           <div v-if="data?.revisions?.length" class="topics-candidate-card">
             <h3 class="topics-subsection-title">Revision History</h3>
@@ -683,29 +541,13 @@ function feedbackThreadColor(status) {
 
           <div v-if="selectedTopicSummaryThreads.length" class="space-y-3">
             <h3 class="topics-subsection-title">Inline review: topic summary</h3>
-            <div
+            <ProposalFeedbackThread
               v-for="thread in selectedTopicSummaryThreads"
               :key="`summary-${thread.id}`"
-              class="rounded border border-amber-200 bg-amber-50/70 px-4 py-3"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :color="feedbackThreadColor(thread.resolution_state)" :label="thread.resolution_state || 'open'" />
-                <span class="text-xs font-medium text-slate-700">{{ selectedDraftTopic.label }}</span>
-                <span v-if="thread.addressed_in_revision_number" class="text-[11px] text-slate-500">addressed in r{{ thread.addressed_in_revision_number }}</span>
-              </div>
-              <p v-if="thread.quoted_text" class="mt-2 text-xs text-slate-500">“{{ thread.quoted_text }}”</p>
-              <article
-                v-for="comment in (thread.comments || [])"
-                :key="`summary-comment-${comment.id}`"
-                class="mt-3 border-l-2 border-amber-300 pl-3"
-              >
-                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
-                  <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
-              </article>
-            </div>
+              :thread="thread"
+              :title="selectedDraftTopic.label"
+              key-prefix="summary"
+            />
           </div>
 
           <div class="space-y-2">
@@ -718,29 +560,13 @@ function feedbackThreadColor(status) {
               />
             </div>
             <p class="text-sm text-slate-700">{{ selectedDraftTopic.intent }}</p>
-            <div
+            <ProposalFeedbackThread
               v-for="thread in selectedTopicIntentThreads"
               :key="`intent-${thread.id}`"
-              class="rounded border border-amber-200 bg-amber-50/70 px-4 py-3"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :color="feedbackThreadColor(thread.resolution_state)" :label="thread.resolution_state || 'open'" />
-                <span class="text-xs font-medium text-slate-700">Intent comment</span>
-                <span v-if="thread.addressed_in_revision_number" class="text-[11px] text-slate-500">addressed in r{{ thread.addressed_in_revision_number }}</span>
-              </div>
-              <p v-if="thread.quoted_text" class="mt-2 text-xs text-slate-500">“{{ thread.quoted_text }}”</p>
-              <article
-                v-for="comment in (thread.comments || [])"
-                :key="`intent-comment-${comment.id}`"
-                class="mt-3 border-l-2 border-amber-300 pl-3"
-              >
-                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
-                  <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
-              </article>
-            </div>
+              :thread="thread"
+              title="Intent comment"
+              key-prefix="intent"
+            />
           </div>
 
           <div class="space-y-2">
@@ -756,29 +582,13 @@ function feedbackThreadColor(status) {
               <code v-for="alias in selectedDraftAliases" :key="alias" class="text-xs">{{ alias }}</code>
             </div>
             <p v-else class="text-sm text-slate-500">No aliases proposed for this topic.</p>
-            <div
+            <ProposalFeedbackThread
               v-for="thread in selectedTopicAliasesThreads"
               :key="`aliases-${thread.id}`"
-              class="rounded border border-amber-200 bg-amber-50/70 px-4 py-3"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :color="feedbackThreadColor(thread.resolution_state)" :label="thread.resolution_state || 'open'" />
-                <span class="text-xs font-medium text-slate-700">Alias comment</span>
-                <span v-if="thread.addressed_in_revision_number" class="text-[11px] text-slate-500">addressed in r{{ thread.addressed_in_revision_number }}</span>
-              </div>
-              <p v-if="thread.quoted_text" class="mt-2 text-xs text-slate-500">“{{ thread.quoted_text }}”</p>
-              <article
-                v-for="comment in (thread.comments || [])"
-                :key="`aliases-comment-${comment.id}`"
-                class="mt-3 border-l-2 border-amber-300 pl-3"
-              >
-                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
-                  <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
-              </article>
-            </div>
+              :thread="thread"
+              title="Alias comment"
+              key-prefix="aliases"
+            />
           </div>
 
           <div>
@@ -811,29 +621,14 @@ function feedbackThreadColor(status) {
                 :label="`${selectedTopicWikiThreads.length} comment${selectedTopicWikiThreads.length === 1 ? '' : 's'}`"
               />
             </div>
-            <div
+            <ProposalFeedbackThread
               v-for="thread in selectedTopicWikiThreads"
               :key="`wiki-${thread.id}`"
-              class="mb-4 rounded border border-amber-200 bg-amber-50/70 px-4 py-3"
-            >
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :color="feedbackThreadColor(thread.resolution_state)" :label="thread.resolution_state || 'open'" />
-                <span class="text-xs font-medium text-slate-700">Wiki preview comment</span>
-                <span v-if="thread.addressed_in_revision_number" class="text-[11px] text-slate-500">addressed in r{{ thread.addressed_in_revision_number }}</span>
-              </div>
-              <p v-if="thread.quoted_text" class="mt-2 text-xs text-slate-500">“{{ thread.quoted_text }}”</p>
-              <article
-                v-for="comment in (thread.comments || [])"
-                :key="`wiki-comment-${comment.id}`"
-                class="mt-3 border-l-2 border-amber-300 pl-3"
-              >
-                <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                  <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
-                  <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
-              </article>
-            </div>
+              :thread="thread"
+              title="Wiki preview comment"
+              key-prefix="wiki"
+              class="mb-4"
+            />
             <MarkdownContent :markdown="data.wiki_preview" />
           </div>
         </div>
