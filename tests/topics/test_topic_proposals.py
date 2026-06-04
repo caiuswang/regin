@@ -27,7 +27,10 @@ from lib.topics.proposals import (
     set_proposal_review_state,
     update_proposed_topic,
 )
-from lib.topics.proposal_drafting import validate_proposal
+from lib.topics.proposal_drafting import (
+    format_review_feedback_for_prompt,
+    validate_proposal,
+)
 from lib.topics import TopicGraphError, bootstrap, load_graph, load_graph_merged, save_graph, utc_now
 
 
@@ -535,6 +538,81 @@ def test_validate_proposal_reports_missing_fields():
 
     assert "topics[0].label is required" in errors
     assert "topics[0].refs must be a list" not in errors
+
+
+def test_format_review_feedback_empty_returns_blank():
+    assert format_review_feedback_for_prompt(None) == ""
+    assert format_review_feedback_for_prompt([]) == ""
+
+
+def test_format_review_feedback_full_thread():
+    threads = [
+        {
+            "proposal_topic_id": "t1",
+            "anchor_kind": "topic_field",
+            "anchor": {"field": "label"},
+            "quoted_text": "  old label  ",
+            "comments": [
+                {"author_kind": "human", "body": "  please rename  "},
+                {"body": "no author here"},
+            ],
+        }
+    ]
+    assert format_review_feedback_for_prompt(threads) == "\n".join(
+        [
+            "Review feedback to address in this revision:",
+            "1. topic `t1`, field `label`",
+            '   Quoted text: "old label"',
+            "   - human: please rename",
+            "   - reviewer: no author here",
+        ]
+    )
+
+
+def test_format_review_feedback_anchor_kinds_and_fallbacks():
+    threads = [
+        {"anchor_kind": "proposal_summary"},
+        {"anchor_kind": "wiki_range"},
+        {"anchor_kind": "general"},
+        {"anchor_kind": "unknown_kind"},
+        {"anchor_kind": "topic_field", "anchor": {}},
+        {"proposal_topic_id": "", "anchor_kind": "topic_field"},
+        {"proposal_topic_id": 123, "anchor_kind": "general"},
+    ]
+    assert format_review_feedback_for_prompt(threads) == "\n".join(
+        [
+            "Review feedback to address in this revision:",
+            "1. proposal summary",
+            "2. wiki content",
+            "3. general review",
+            "4. general review",
+            "5. general review",
+            "6. general review",
+            "7. general review",
+        ]
+    )
+
+
+def test_format_review_feedback_skips_blank_and_nonstring_comments():
+    threads = [
+        {
+            "anchor_kind": "general",
+            "quoted_text": "   ",
+            "comments": [
+                {"body": "   "},
+                {"body": None},
+                {"body": 42},
+                {"author_kind": "human", "body": "keep me"},
+            ],
+        }
+    ]
+    assert format_review_feedback_for_prompt(threads) == "\n".join(
+        [
+            "Review feedback to address in this revision:",
+            "1. general review",
+            "   - human: keep me",
+        ]
+    )
 
 
 def test_accept_proposed_topic_promotes_one_topic(stub_proposal_provider, fake_git_repo):
@@ -1160,6 +1238,41 @@ def test_proposal_run_row_reports_external_agent_while_running(tmp_path):
     run_no_agent = {**run, "agent": None}
     row_no_agent = _proposal_run_row(str(tmp_path), run_no_agent)
     assert row_no_agent["provider"] == "unknown"
+
+
+def test_proposal_run_row_title_derivation(monkeypatch):
+    """Title is derived from the topic_request, else the topics list.
+
+    Guards the run-row title branches: topic_request wins; otherwise a
+    single topic uses its label, multiple topics get a "X + N more"
+    summary, and an empty proposal yields None.
+    """
+    from web.blueprints.topics import _helpers
+
+    run = {"id": "r", "path": "/nonexistent", "has_topics": True}
+
+    def _row_for(proposal):
+        monkeypatch.setattr(_helpers, "load_proposal", lambda repo, rid: proposal)
+        return _helpers._proposal_run_row("/repo", run)
+
+    # topic_request takes precedence over topics.
+    row = _row_for({"topic_request": "  ship the auth flow  ", "topics": [{"label": "ignored"}]})
+    assert row["title"] == "ship the auth flow"
+    assert row["topic_request"] == "ship the auth flow"
+
+    # Single topic with no request -> its label.
+    row = _row_for({"topics": [{"label": "Auth"}]})
+    assert row["title"] == "Auth"
+    assert row["topic_request"] is None
+
+    # Multiple topics -> "first + N more" summary.
+    row = _row_for({"topics": [{"label": "Auth"}, {"label": "Billing"}, {"id": "x"}]})
+    assert row["title"] == "Auth + 2 more"
+    assert row["draft_topic_count"] == 3
+
+    # No topics and no request -> None.
+    row = _row_for({"topics": []})
+    assert row["title"] is None
 
 
 def test_external_agent_instructions_are_repo_driven(fake_git_repo):

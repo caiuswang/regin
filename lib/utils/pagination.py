@@ -209,37 +209,17 @@ def keyset_page(conn, base_sql: str, base_params: list,
     """
     cursor_vals = decode_cursor(cursor_token)
 
-    where_clauses = []
-    params = list(base_params)
-
-    if cursor_vals is not None and len(cursor_vals) == len(order_cols):
-        # Build the row-comparison predicate the long way. We can't rely
-        # on SQLite's row-value comparison (`(a, b) < (?, ?)`) for mixed
-        # DESC/ASC columns, so we expand into the equivalent OR-of-ANDs.
-        # For (c1 DESC, c2 DESC) this produces:
-        #     c1 < ? OR (c1 = ? AND c2 < ?)
-        or_terms = []
-        for i, ((col, direction), val) in enumerate(zip(order_cols, cursor_vals)):
-            cmp_op = '<' if direction.upper() == 'DESC' else '>'
-            eq_prefix = ' AND '.join(f"{c} = ?" for c, _ in order_cols[:i])
-            term = f"{col} {cmp_op} ?"
-            if eq_prefix:
-                term = f"({eq_prefix} AND {term})"
-            or_terms.append(term)
-            # Equality prefix params, then the strict-compare param.
-            for j in range(i):
-                params.append(cursor_vals[j])
-            params.append(val)
-        where_clauses.append(f"({' OR '.join(or_terms)})")
+    where_clause, predicate_params = _build_keyset_predicate(order_cols, cursor_vals)
+    params = list(base_params) + predicate_params
 
     # Inject the keyset predicate. We always wrap it in its own
     # parenthesized group appended with AND, then let the caller's base
     # WHERE stand on its own — avoids quoting the existing clause.
-    if where_clauses:
+    if where_clause:
         if ' where ' in base_sql.lower():
-            sql = f"{base_sql} AND {' AND '.join(where_clauses)}"
+            sql = f"{base_sql} AND {where_clause}"
         else:
-            sql = f"{base_sql} WHERE {' AND '.join(where_clauses)}"
+            sql = f"{base_sql} WHERE {where_clause}"
     else:
         sql = base_sql
 
@@ -256,22 +236,59 @@ def keyset_page(conn, base_sql: str, base_params: list,
     if has_more:
         items = items[:size]
 
-    next_token = None
-    if has_more and items:
-        last = items[-1]
-        # For the cursor we need the *raw* column values as they sit in
-        # the DB, indexed by the SQL expression the caller used. If the
-        # expression is something compound like ``start_time`` it must
-        # appear as that literal key in each row dict — the caller's
-        # SELECT list is responsible for exposing it.
-        key_vals = [_extract_key(last, col) for col, _ in order_cols]
-        next_token = encode_cursor(key_vals)
-
     return CursorPage(
         items=items,
-        next_cursor=next_token,
+        next_cursor=_next_cursor(items, order_cols, has_more),
         size=size,
     )
+
+
+def _build_keyset_predicate(
+    order_cols: list[tuple[str, str]], cursor_vals: list | None
+) -> tuple[str | None, list]:
+    """Build the keyset row-comparison WHERE predicate and its params.
+
+    Returns ``(None, [])`` when there is no usable cursor (first page, or a
+    cursor whose arity no longer matches ``order_cols``).
+    """
+    if cursor_vals is None or len(cursor_vals) != len(order_cols):
+        return None, []
+
+    # Build the row-comparison predicate the long way. We can't rely
+    # on SQLite's row-value comparison (`(a, b) < (?, ?)`) for mixed
+    # DESC/ASC columns, so we expand into the equivalent OR-of-ANDs.
+    # For (c1 DESC, c2 DESC) this produces:
+    #     c1 < ? OR (c1 = ? AND c2 < ?)
+    or_terms = []
+    params: list = []
+    for i, ((col, direction), val) in enumerate(zip(order_cols, cursor_vals)):
+        cmp_op = '<' if direction.upper() == 'DESC' else '>'
+        eq_prefix = ' AND '.join(f"{c} = ?" for c, _ in order_cols[:i])
+        term = f"{col} {cmp_op} ?"
+        if eq_prefix:
+            term = f"({eq_prefix} AND {term})"
+        or_terms.append(term)
+        # Equality prefix params, then the strict-compare param.
+        for j in range(i):
+            params.append(cursor_vals[j])
+        params.append(val)
+    return f"({' OR '.join(or_terms)})", params
+
+
+def _next_cursor(
+    items: list[dict], order_cols: list[tuple[str, str]], has_more: bool
+) -> str | None:
+    """Encode the next-page cursor from the last item, or ``None`` at the end."""
+    if not (has_more and items):
+        return None
+    last = items[-1]
+    # For the cursor we need the *raw* column values as they sit in
+    # the DB, indexed by the SQL expression the caller used. If the
+    # expression is something compound like ``start_time`` it must
+    # appear as that literal key in each row dict — the caller's
+    # SELECT list is responsible for exposing it.
+    key_vals = [_extract_key(last, col) for col, _ in order_cols]
+    return encode_cursor(key_vals)
 
 
 def _extract_key(row: dict, col_sql: str):
@@ -293,6 +310,70 @@ def _extract_key(row: dict, col_sql: str):
 
 
 # ── SQLModel / SQLAlchemy expression variant ───────────────────
+
+def _apply_keyset_predicate_stmt(stmt, order_cols, cursor_vals):
+    """Append the keyset OR-of-ANDs WHERE predicate to ``stmt``.
+
+    Mirrors :func:`_build_keyset_predicate` but for SQLAlchemy column
+    expressions. Returns ``stmt`` unchanged when the cursor is absent or
+    its arity no longer matches ``order_cols`` (first page / stale token).
+    """
+    if cursor_vals is None or len(cursor_vals) != len(order_cols):
+        return stmt
+    # Build the OR-of-ANDs predicate so we can handle mixed DESC/ASC.
+    from sqlalchemy import and_, or_
+    or_terms = []
+    for i, ((col_obj, direction), val) in enumerate(zip(order_cols, cursor_vals)):
+        strict = col_obj < val if direction.upper() == "DESC" else col_obj > val
+        prefix = [order_cols[j][0] == cursor_vals[j] for j in range(i)]
+        term = and_(*prefix, strict) if prefix else strict
+        or_terms.append(term)
+    return stmt.where(or_(*or_terms))
+
+
+def _apply_keyset_order_stmt(stmt, order_cols, size):
+    """Append ORDER BY (mixed ASC/DESC) and ``LIMIT size + 1`` to ``stmt``.
+
+    The extra row lets the caller detect "has more" without a COUNT.
+    """
+    order_exprs = []
+    for col_obj, direction in order_cols:
+        if direction.upper() == "DESC":
+            order_exprs.append(col_obj.desc())
+        else:
+            order_exprs.append(col_obj.asc())
+    return stmt.order_by(*order_exprs).limit(size + 1)
+
+
+def _default_stmt_to_dict(r):
+    """Default row→dict converter for :func:`keyset_page_stmt`.
+
+    Handles row-mapping results, scalar model instances (stripping
+    SQLAlchemy's ``_sa_`` internals), plain dicts, and bare scalars.
+    """
+    if hasattr(r, "_mapping"):
+        return dict(r._mapping)
+    if hasattr(r, "__dict__"):
+        return {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_")}
+    return dict(r) if isinstance(r, dict) else {"value": r}
+
+
+def _next_cursor_stmt(items, order_cols, has_more):
+    """Encode the next-page cursor from the last item, or ``None`` at the end.
+
+    Mirrors :func:`_next_cursor` but resolves each column's lookup key
+    from the SQLAlchemy expression's ``key`` (falling back to the bare
+    attribute suffix).
+    """
+    if not (has_more and items):
+        return None
+    last = items[-1]
+    key_vals = []
+    for col_obj, _ in order_cols:
+        key_name = getattr(col_obj, "key", None) or str(col_obj).split(".")[-1]
+        key_vals.append(_extract_key(last, key_name))
+    return encode_cursor(key_vals)
+
 
 def keyset_page_stmt(session, stmt, order_cols, cursor_token, size,
                      row_transform=None, row_to_dict=None):
@@ -328,38 +409,12 @@ def keyset_page_stmt(session, stmt, order_cols, cursor_token, size,
     """
     cursor_vals = decode_cursor(cursor_token)
 
-    if cursor_vals is not None and len(cursor_vals) == len(order_cols):
-        # Build the OR-of-ANDs predicate so we can handle mixed DESC/ASC.
-        from sqlalchemy import and_, or_
-        or_terms = []
-        for i, ((col_obj, direction), val) in enumerate(zip(order_cols, cursor_vals)):
-            strict = col_obj < val if direction.upper() == "DESC" else col_obj > val
-            prefix = [order_cols[j][0] == cursor_vals[j] for j in range(i)]
-            term = and_(*prefix, strict) if prefix else strict
-            or_terms.append(term)
-        stmt = stmt.where(or_(*or_terms))
-
-    # ORDER BY + LIMIT (size + 1 so we detect "has more" without COUNT).
-    order_exprs = []
-    for col_obj, direction in order_cols:
-        if direction.upper() == "DESC":
-            order_exprs.append(col_obj.desc())
-        else:
-            order_exprs.append(col_obj.asc())
-    stmt = stmt.order_by(*order_exprs).limit(size + 1)
+    stmt = _apply_keyset_predicate_stmt(stmt, order_cols, cursor_vals)
+    stmt = _apply_keyset_order_stmt(stmt, order_cols, size)
 
     raw_rows = session.exec(stmt).all()
 
-    # Pick a default row→dict converter if the caller didn't provide one.
-    def _default_to_dict(r):
-        if hasattr(r, "_mapping"):
-            return dict(r._mapping)
-        if hasattr(r, "__dict__"):
-            d = {k: v for k, v in r.__dict__.items() if not k.startswith("_sa_")}
-            return d
-        return dict(r) if isinstance(r, dict) else {"value": r}
-
-    converter = row_to_dict or _default_to_dict
+    converter = row_to_dict or _default_stmt_to_dict
     items = [converter(r) for r in raw_rows]
     if row_transform is not None:
         items = [row_transform(it) for it in items]
@@ -368,15 +423,5 @@ def keyset_page_stmt(session, stmt, order_cols, cursor_token, size,
     if has_more:
         items = items[:size]
 
-    next_token = None
-    if has_more and items:
-        last = items[-1]
-        # Match by the SQL-expression's column `key` (SQLAlchemy stores
-        # the column name); falls back to the bare attribute suffix.
-        key_vals = []
-        for col_obj, _ in order_cols:
-            key_name = getattr(col_obj, "key", None) or str(col_obj).split(".")[-1]
-            key_vals.append(_extract_key(last, key_name))
-        next_token = encode_cursor(key_vals)
-
+    next_token = _next_cursor_stmt(items, order_cols, has_more)
     return CursorPage(items=items, next_cursor=next_token, size=size)

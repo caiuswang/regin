@@ -2040,3 +2040,147 @@ def test_ingest_repo_resolution_ignores_unregistered_paths(tmp_db, tmp_path):
     tags = _session_repo_tags('t-out')
     # cwd was outside any repo (no primary), but the edit lands in repoA.
     assert tags == {(rid_a, 0)}
+
+
+# ── prompt-image ingest: characterization (pins behavior pre-refactor) ─
+
+# base64 of b'ABC' == 'QUJD'; a 1x1 PNG payload below is just any small blob.
+_PI_DATA_B64 = 'QUJD'
+
+
+def _make_prompt_image(**over):
+    img = {
+        'trace_id': 'pi-trace',
+        'prompt_span_id': 'pi-span',
+        'idx': 1,
+        'media_type': 'image/png',
+        'data_b64': _PI_DATA_B64,
+    }
+    img.update(over)
+    return img
+
+
+def _count_prompt_images(db_path):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return conn.execute('SELECT COUNT(*) FROM prompt_images').fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_prompt_image_accepts_single_object(client, trace_db):
+    """A lone object (not a list) is wrapped and ingested."""
+    r = client.post('/api/prompt-images', json=_make_prompt_image())
+    assert r.status_code == 200
+    assert r.get_json() == {'ok': True, 'ingested': 1, 'skipped_duplicates': 0}
+    assert _count_prompt_images(trace_db) == 1
+
+
+def test_prompt_image_idempotent_replay_skips(client, trace_db):
+    """Replaying the same (trace, span, idx) is a no-op skip, not an insert."""
+    payload = _make_prompt_image()
+    first = client.post('/api/prompt-images', json=payload)
+    assert first.get_json() == {'ok': True, 'ingested': 1, 'skipped_duplicates': 0}
+    second = client.post('/api/prompt-images', json=payload)
+    assert second.status_code == 200
+    assert second.get_json() == {'ok': True, 'ingested': 0, 'skipped_duplicates': 1}
+    assert _count_prompt_images(trace_db) == 1
+
+
+def test_prompt_image_none_body_is_400(client, trace_db):
+    r = client.post('/api/prompt-images', data='not json',
+                    content_type='application/json')
+    assert r.status_code == 400
+    assert r.get_json() == {'ok': False, 'error': 'invalid JSON body'}
+
+
+def test_prompt_image_empty_list_is_ok_zero(client, trace_db):
+    """`[]` runs no items, no errors → 200 with zero counts."""
+    r = client.post('/api/prompt-images', json=[])
+    assert r.status_code == 200
+    assert r.get_json() == {'ok': True, 'ingested': 0, 'skipped_duplicates': 0}
+    assert _count_prompt_images(trace_db) == 0
+
+
+@pytest.mark.parametrize('payload, reason', [
+    ('scalar', 'not an object'),
+    ({'prompt_span_id': 's', 'idx': 1, 'media_type': 'image/png',
+      'data_b64': _PI_DATA_B64}, 'trace_id required'),
+    ({'trace_id': 't', 'idx': 1, 'media_type': 'image/png',
+      'data_b64': _PI_DATA_B64}, 'prompt_span_id required'),
+    ({'trace_id': 't', 'prompt_span_id': 's', 'idx': 0,
+      'media_type': 'image/png', 'data_b64': _PI_DATA_B64},
+     'idx must be a positive int'),
+    ({'trace_id': 't', 'prompt_span_id': 's', 'idx': 1,
+      'media_type': 'image/bmp', 'data_b64': _PI_DATA_B64},
+     "unsupported media_type 'image/bmp'"),
+    ({'trace_id': 't', 'prompt_span_id': 's', 'idx': 1,
+      'media_type': 'image/png'}, 'data_b64 required'),
+])
+def test_prompt_image_validation_reasons(client, trace_db, payload, reason):
+    """Each guard surfaces its exact reason string and ingests nothing."""
+    r = client.post('/api/prompt-images', json=[payload])
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body['ok'] is False
+    assert body['ingested'] == 0
+    assert body['errors'] == [{'index': 0, 'reason': reason}]
+    assert _count_prompt_images(trace_db) == 0
+
+
+def test_prompt_image_bad_base64_reason(client, trace_db):
+    """Undecodable base64 surfaces a 'bad base64: ...' prefixed reason."""
+    bad = _make_prompt_image(data_b64='@@@not-base64@@@')
+    r = client.post('/api/prompt-images', json=[bad])
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body['errors'][0]['index'] == 0
+    assert body['errors'][0]['reason'].startswith('bad base64:')
+    assert _count_prompt_images(trace_db) == 0
+
+
+def test_prompt_image_too_large_reason(client, trace_db, monkeypatch):
+    """A payload over the ingest ceiling is rejected with a size reason."""
+    import base64
+    from web.blueprints.trace import prompt_images as _pi_mod
+    monkeypatch.setattr(_pi_mod, '_PROMPT_IMAGE_INGEST_MAX_BYTES', 4)
+    big_b64 = base64.b64encode(b'01234567').decode()  # 8 bytes > 4
+    r = client.post('/api/prompt-images',
+                    json=[_make_prompt_image(data_b64=big_b64)])
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body['errors'][0]['reason'].startswith('image too large:')
+    assert _count_prompt_images(trace_db) == 0
+
+
+def test_prompt_image_first_failing_guard_wins(client, trace_db):
+    """An item failing two guards reports only the first (idx before media)."""
+    # idx invalid AND media_type unsupported → only the idx reason fires.
+    bad = _make_prompt_image(idx=0, media_type='image/bmp')
+    r = client.post('/api/prompt-images', json=[bad])
+    assert r.status_code == 400
+    assert r.get_json()['errors'] == [
+        {'index': 0, 'reason': 'idx must be a positive int'},
+    ]
+
+
+def test_prompt_image_batch_aborts_entirely_on_any_error(client, trace_db):
+    """A batch with any invalid item ingests NOTHING and lists every error."""
+    batch = [
+        _make_prompt_image(idx=1),                       # valid
+        _make_prompt_image(idx=0),                       # bad idx
+        _make_prompt_image(idx=2, media_type='image/bmp'),  # bad media
+    ]
+    r = client.post('/api/prompt-images', json=batch)
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body == {
+        'ok': False,
+        'ingested': 0,
+        'errors': [
+            {'index': 1, 'reason': 'idx must be a positive int'},
+            {'index': 2, 'reason': "unsupported media_type 'image/bmp'"},
+        ],
+    }
+    # The valid item must NOT have been written — batch-abort semantics.
+    assert _count_prompt_images(trace_db) == 0

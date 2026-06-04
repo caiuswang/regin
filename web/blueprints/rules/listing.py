@@ -146,6 +146,44 @@ def api_pattern_scripts():
     return jsonify({'patterns': out, 'total_scripts': total})
 
 
+def _pattern_block_end(src, idx):
+    """Index just past the closing brace of the pattern body starting at `idx`.
+
+    Falls back to `idx` if no balanced `{...}` block is found.
+    """
+    depth = 0
+    in_pattern = False
+    for i in range(idx, len(src)):
+        ch = src[i]
+        if ch == '{':
+            depth += 1
+            in_pattern = True
+        elif ch == '}':
+            depth -= 1
+            if in_pattern and depth == 0:
+                return i + 1
+    return idx
+
+
+def _extract_rule_snippet(source_path, rule_id):
+    """Return the `pattern <rule_id>(...)` block from `source_path`, or None.
+
+    None when the file is missing or the pattern marker is absent.
+    """
+    if not os.path.exists(source_path):
+        return None
+    with open(source_path, 'r') as f:
+        src = f.read()
+    marker = f"pattern {rule_id}("
+    idx = src.find(marker)
+    if idx == -1:
+        return None
+    start = src.rfind('\n\n', 0, idx)
+    start = 0 if start == -1 else start + 2
+    end = _pattern_block_end(src, idx)
+    return src[start:end]
+
+
 @rules_bp.route('/api/rules/<rule_id>')
 def api_rule_detail(rule_id):
     pattern_scope.reset_cache()
@@ -156,30 +194,8 @@ def api_rule_detail(rule_id):
     rule = _decorate_rule(raw_rule, engines_by_id) if raw_rule else None
     if not rule:
         return jsonify({'error': 'not found'}), 404
-    source_snippet = None
     source_path = os.path.join(os.path.dirname(str(settings.patterns_dir)), rule['source_file'])
-    if os.path.exists(source_path):
-        with open(source_path, 'r') as f:
-            src = f.read()
-        marker = f"pattern {rule['id']}("
-        idx = src.find(marker)
-        if idx != -1:
-            start = src.rfind('\n\n', 0, idx)
-            start = 0 if start == -1 else start + 2
-            depth = 0
-            end = idx
-            in_pattern = False
-            for i in range(idx, len(src)):
-                ch = src[i]
-                if ch == '{':
-                    depth += 1
-                    in_pattern = True
-                elif ch == '}':
-                    depth -= 1
-                    if in_pattern and depth == 0:
-                        end = i + 1
-                        break
-            source_snippet = src[start:end]
+    source_snippet = _extract_rule_snippet(source_path, rule['id'])
     engine = engines_by_id.get(rule['engine'])
     return jsonify({
         'rule': rule,

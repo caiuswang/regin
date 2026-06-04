@@ -24,36 +24,48 @@ def _proposal_prior_draft(proposal_path: Path, wiki_path: Path) -> dict[str, Any
     }
 
 
+_ANCHOR_LABELS = {
+    "proposal_summary": "proposal summary",
+    "wiki_range": "wiki content",
+    "general": "general review",
+}
+
+
+def _thread_header(thread: dict[str, Any]) -> str:
+    parts: list[str] = []
+    topic_id = thread.get("proposal_topic_id")
+    if isinstance(topic_id, str) and topic_id:
+        parts.append(f"topic `{topic_id}`")
+    anchor_kind = thread.get("anchor_kind")
+    anchor = thread.get("anchor") or {}
+    if anchor_kind == "topic_field" and anchor.get("field"):
+        parts.append(f"field `{anchor['field']}`")
+    elif anchor_kind in _ANCHOR_LABELS:
+        parts.append(_ANCHOR_LABELS[anchor_kind])
+    return ", ".join(parts) or "general review"
+
+
+def _thread_comment_lines(thread: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for comment in thread.get("comments") or []:
+        body = comment.get("body")
+        if not isinstance(body, str) or not body.strip():
+            continue
+        author = comment.get("author_kind") or "reviewer"
+        lines.append(f"   - {author}: {body.strip()}")
+    return lines
+
+
 def format_review_feedback_for_prompt(feedback_threads: list[dict[str, Any]] | None) -> str:
     if not feedback_threads:
         return ""
     lines = ["Review feedback to address in this revision:"]
     for index, thread in enumerate(feedback_threads, start=1):
-        parts: list[str] = []
-        topic_id = thread.get("proposal_topic_id")
-        if isinstance(topic_id, str) and topic_id:
-            parts.append(f"topic `{topic_id}`")
-        anchor_kind = thread.get("anchor_kind")
-        anchor = thread.get("anchor") or {}
-        if anchor_kind == "topic_field" and anchor.get("field"):
-            parts.append(f"field `{anchor['field']}`")
-        elif anchor_kind == "proposal_summary":
-            parts.append("proposal summary")
-        elif anchor_kind == "wiki_range":
-            parts.append("wiki content")
-        elif anchor_kind == "general":
-            parts.append("general review")
-        header = ", ".join(parts) or "general review"
-        lines.append(f"{index}. {header}")
+        lines.append(f"{index}. {_thread_header(thread)}")
         quoted_text = thread.get("quoted_text")
         if isinstance(quoted_text, str) and quoted_text.strip():
             lines.append(f'   Quoted text: "{quoted_text.strip()}"')
-        for comment in thread.get("comments") or []:
-            body = comment.get("body")
-            if not isinstance(body, str) or not body.strip():
-                continue
-            author = comment.get("author_kind") or "reviewer"
-            lines.append(f"   - {author}: {body.strip()}")
+        lines.extend(_thread_comment_lines(thread))
     return "\n".join(lines)
 
 

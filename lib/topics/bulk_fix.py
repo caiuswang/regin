@@ -35,6 +35,57 @@ AUTO_FIXABLE_CODES: frozenset[str] = frozenset({
 })
 
 
+def _group_issues_by_topic(
+    issues: list[ValidationIssue],
+    selected_codes: set[str],
+    topics: dict[str, Any],
+) -> dict[str, list[ValidationIssue]]:
+    """Bucket each selected issue under the first of its topic_ids that
+    exists in the graph (first match wins; one topic owns the fix)."""
+    by_topic: dict[str, list[ValidationIssue]] = defaultdict(list)
+    for issue in issues:
+        if issue.code not in selected_codes:
+            continue
+        for tid in issue.topic_ids:
+            if tid in topics:
+                by_topic[tid].append(issue)
+                break  # one topic owns the fix; first match wins
+    return by_topic
+
+
+def _strip_dead_refs(cleaned: dict[str, Any], topic_issues: list[ValidationIssue]) -> None:
+    """Drop refs whose path is flagged dead by a `graph.dead_ref` issue."""
+    dead_paths = {
+        path
+        for issue in topic_issues
+        if issue.code == "graph.dead_ref"
+        for path in issue.paths
+    }
+    if dead_paths:
+        cleaned["refs"] = [
+            ref for ref in cleaned.get("refs", []) or []
+            if not (isinstance(ref, dict) and ref.get("path") in dead_paths)
+        ]
+
+
+def _strip_orphan_edges(
+    cleaned: dict[str, Any], topic_issues: list[ValidationIssue], tid: str
+) -> None:
+    """Drop edges whose target is flagged orphan by `graph.orphan_edge_target`."""
+    orphan_targets = {
+        t
+        for issue in topic_issues
+        if issue.code == "graph.orphan_edge_target"
+        for t in issue.topic_ids
+        if t != tid
+    }
+    if orphan_targets:
+        cleaned["edges"] = [
+            edge for edge in cleaned.get("edges", []) or []
+            if not (isinstance(edge, dict) and edge.get("target") in orphan_targets)
+        ]
+
+
 def compose_fix(
     graph: dict[str, Any],
     issues: list[ValidationIssue],
@@ -53,45 +104,14 @@ def compose_fix(
     if not selected_codes:
         return []
     topics = graph.get("topics") or {}
-    by_topic: dict[str, list[ValidationIssue]] = defaultdict(list)
-    for issue in issues:
-        if issue.code not in selected_codes:
-            continue
-        for tid in issue.topic_ids:
-            if tid in topics:
-                by_topic[tid].append(issue)
-                break  # one topic owns the fix; first match wins
+    by_topic = _group_issues_by_topic(issues, selected_codes, topics)
 
     fixes: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     for tid, topic_issues in by_topic.items():
         original = topics[tid]
         cleaned = copy.deepcopy(original)
-
-        dead_paths = {
-            path
-            for issue in topic_issues
-            if issue.code == "graph.dead_ref"
-            for path in issue.paths
-        }
-        if dead_paths:
-            cleaned["refs"] = [
-                ref for ref in cleaned.get("refs", []) or []
-                if not (isinstance(ref, dict) and ref.get("path") in dead_paths)
-            ]
-
-        orphan_targets = {
-            t
-            for issue in topic_issues
-            if issue.code == "graph.orphan_edge_target"
-            for t in issue.topic_ids
-            if t != tid
-        }
-        if orphan_targets:
-            cleaned["edges"] = [
-                edge for edge in cleaned.get("edges", []) or []
-                if not (isinstance(edge, dict) and edge.get("target") in orphan_targets)
-            ]
-
+        _strip_dead_refs(cleaned, topic_issues)
+        _strip_orphan_edges(cleaned, topic_issues, tid)
         if cleaned != original:
             fixes.append((tid, cleaned, original))
     return fixes

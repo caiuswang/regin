@@ -216,6 +216,40 @@ def _approved_shape(proposed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_str_alias(a: Any) -> bool:
+    """Alias guard: non-empty string (matches `_alias_keys`)."""
+    return isinstance(a, str) and bool(a)
+
+
+def _is_dict(x: Any) -> bool:
+    """ref/edge guard: any dict, including the empty dict."""
+    return isinstance(x, dict)
+
+
+def _union_keyed(
+    out: dict[str, Any],
+    fname: str,
+    proposed: dict[str, Any],
+    *,
+    guard,
+    keyfn,
+) -> None:
+    """Append `proposed[fname]` items into `out[fname]`, deduped by `keyfn`.
+
+    Only items passing `guard` participate. The output key is materialized
+    lazily (via `setdefault`) so an absent field with nothing to add stays
+    absent — preserving the original per-field merge semantics.
+    """
+    existing_items = out.get(fname, [])
+    seen = {keyfn(item) for item in existing_items if guard(item)}
+    for item in proposed.get(fname, []) or []:
+        if guard(item):
+            key = keyfn(item)
+            if key not in seen:
+                out.setdefault(fname, []).append(item)
+                seen.add(key)
+
+
 def _merged_topic(
     target: dict[str, Any], proposed: dict[str, Any],
 ) -> dict[str, Any]:
@@ -227,25 +261,13 @@ def _merged_topic(
     """
     out = copy.deepcopy(target)
 
-    existing_aliases = _alias_keys(out.get("aliases", []))
-    for a in proposed.get("aliases", []) or []:
-        if isinstance(a, str) and a and _normalize_alias(a) not in existing_aliases:
-            out.setdefault("aliases", []).append(a)
-            existing_aliases[_normalize_alias(a)] = a
+    _union_keyed(out, "aliases", proposed, guard=_is_str_alias, keyfn=_normalize_alias)
+    _union_keyed(out, "refs", proposed, guard=_is_dict, keyfn=_ref_key)
+    _union_keyed(out, "edges", proposed, guard=_is_dict, keyfn=_edge_key)
 
-    existing_refs = {_ref_key(r) for r in out.get("refs", []) if isinstance(r, dict)}
-    for r in proposed.get("refs", []) or []:
-        if isinstance(r, dict) and _ref_key(r) not in existing_refs:
-            out.setdefault("refs", []).append(r)
-            existing_refs.add(_ref_key(r))
-
-    existing_edges = {_edge_key(e) for e in out.get("edges", []) if isinstance(e, dict)}
-    for e in proposed.get("edges", []) or []:
-        if isinstance(e, dict) and _edge_key(e) not in existing_edges:
-            out.setdefault("edges", []).append(e)
-            existing_edges.add(_edge_key(e))
-
-    # Globs and commands accumulate, dedup-by-string.
+    # Globs and commands accumulate, dedup-by-string. Unlike the keyed
+    # fields above, these are materialized unconditionally (even when
+    # empty), so this loop stays verbatim.
     for fname in ("commands", "include_globs", "exclude_globs"):
         existing = list(out.get(fname, []) or [])
         seen = set(existing)
@@ -280,37 +302,23 @@ def _valid_strategies_for(
     return tuple(out)
 
 
-def diff_against_graph(
-    proposed_topic: dict[str, Any],
-    current_graph: dict[str, Any],
-    *,
+def _apply_strategy(
     strategy: Strategy,
-    target_topic_id: Optional[str] = None,
-    repo_path: Optional[Path | str] = None,
-) -> GraphDiff:
-    """Compute the prospective graph and the diff for one proposed topic.
+    *,
+    proposed_id: str,
+    target_topic_id: Optional[str],
+    topics: dict[str, Any],
+    prospective_topics: dict[str, Any],
+    after_topic_shape: dict[str, Any],
+) -> tuple[list[TopicDelta], list[ValidationIssue]]:
+    """Apply one strategy, mutating `prospective_topics` to the after-state.
 
-    The function is permissive: precondition failures (e.g. create with
-    a colliding id) surface in `introduced_errors` instead of raising,
-    so the caller can use the same code path to ask "what would happen
-    if I picked X?" before committing to a strategy.
+    Returns the per-topic deltas and any precondition errors. Precondition
+    failures (e.g. create with a colliding id) are reported as issues rather
+    than raised, so callers can preview a strategy without committing.
     """
-    if strategy not in VALID_STRATEGIES:
-        raise ValueError(f"strategy must be one of {VALID_STRATEGIES}, got {strategy!r}")
-
-    proposed_id = proposed_topic.get("id") or ""
-    topics = dict(current_graph.get("topics", {}) or {})
-    prospective_graph = copy.deepcopy(current_graph)
-    prospective_graph.setdefault("topics", {})
-
-    # `prospective_topics` is the mutable dict we'll mutate to compose
-    # the after-state; `topic_deltas` collects the per-topic changes.
-    prospective_topics = prospective_graph["topics"]
     deltas: list[TopicDelta] = []
     introduced_pre: list[ValidationIssue] = []
-
-    valid_strategies = _valid_strategies_for(proposed_id, current_graph, target_topic_id)
-    after_topic_shape = _approved_shape(proposed_topic)
 
     if strategy == "create":
         if proposed_id in topics:
@@ -373,23 +381,83 @@ def diff_against_graph(
                 after=merged,
             ))
 
-    # Now audit pre- and post-states to derive graph_warnings (issues
-    # that already exist; advisory) vs introduced_errors (issues the
-    # diff would add; blocking).
+    return deltas, introduced_pre
+
+
+def _classify_issues(
+    current_graph: dict[str, Any],
+    prospective_graph: dict[str, Any],
+    *,
+    introduced_pre: list[ValidationIssue],
+    repo_path: Optional[Path | str],
+) -> tuple[tuple[ValidationIssue, ...], tuple[ValidationIssue, ...]]:
+    """Derive graph_warnings (advisory) and introduced_errors (blocking)."""
     repo_pathobj = Path(repo_path) if repo_path else None
     pre_issues = audit_graph(current_graph, repo_path=repo_pathobj)
     post_issues = audit_graph(prospective_graph, repo_path=repo_pathobj)
     introduced_from_audit, _resolved = diff_issues(pre_issues, post_issues)
 
-    # Split pre_issues: keep only those still present after the diff
-    # (= pre-existing rot the apply didn't touch). Anything resolved
-    # by the apply is great news and not worth reporting.
+    # Keep only pre_issues still present after the diff (= pre-existing rot
+    # the apply didn't touch). Anything the apply resolved isn't worth
+    # reporting.
     post_keys = {i.identity for i in post_issues}
     graph_warnings = tuple(i for i in pre_issues if i.identity in post_keys)
 
     introduced_errors = tuple(
         [i for i in introduced_pre if i.severity == "error"]
         + [i for i in introduced_from_audit if i.severity == "error"]
+    )
+    return graph_warnings, introduced_errors
+
+
+def diff_against_graph(
+    proposed_topic: dict[str, Any],
+    current_graph: dict[str, Any],
+    *,
+    strategy: Strategy,
+    target_topic_id: Optional[str] = None,
+    repo_path: Optional[Path | str] = None,
+) -> GraphDiff:
+    """Compute the prospective graph and the diff for one proposed topic.
+
+    The function is permissive: precondition failures (e.g. create with
+    a colliding id) surface in `introduced_errors` instead of raising,
+    so the caller can use the same code path to ask "what would happen
+    if I picked X?" before committing to a strategy.
+    """
+    if strategy not in VALID_STRATEGIES:
+        raise ValueError(f"strategy must be one of {VALID_STRATEGIES}, got {strategy!r}")
+
+    proposed_id = proposed_topic.get("id") or ""
+    topics = dict(current_graph.get("topics", {}) or {})
+    prospective_graph = copy.deepcopy(current_graph)
+    prospective_graph.setdefault("topics", {})
+
+    # `prospective_topics` is the mutable dict we'll mutate to compose
+    # the after-state; `topic_deltas` collects the per-topic changes.
+    prospective_topics = prospective_graph["topics"]
+
+    valid_strategies = _valid_strategies_for(proposed_id, current_graph, target_topic_id)
+    after_topic_shape = _approved_shape(proposed_topic)
+
+    # Apply the strategy: mutate `prospective_topics` in place to compose
+    # the after-state, and record per-topic deltas / precondition errors.
+    deltas, introduced_pre = _apply_strategy(
+        strategy,
+        proposed_id=proposed_id,
+        target_topic_id=target_topic_id,
+        topics=topics,
+        prospective_topics=prospective_topics,
+        after_topic_shape=after_topic_shape,
+    )
+
+    # Audit pre- and post-states to derive graph_warnings (advisory) vs
+    # introduced_errors (blocking).
+    graph_warnings, introduced_errors = _classify_issues(
+        current_graph,
+        prospective_graph,
+        introduced_pre=introduced_pre,
+        repo_path=repo_path,
     )
 
     return GraphDiff(

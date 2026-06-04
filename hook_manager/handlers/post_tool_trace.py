@@ -96,6 +96,46 @@ def _attach_edit_diff(attrs: dict, diff_text: str, added: int, removed: int, op:
     attrs['edit_op'] = op
 
 
+def _hunk_int(h: dict, *keys: str) -> int:
+    # Claude Code emits hunk bounds in camelCase (`oldStart`); accept the
+    # snake_case spelling too. `or`-style truthy fallback (0/''/None skip to
+    # the next key, then default 0) is preserved deliberately — int() stays
+    # here so a non-numeric value raises into the caller's per-hunk guard.
+    for k in keys:
+        v = h.get(k)
+        if v:
+            return int(v)
+    return 0
+
+
+def _parse_hunk(h: object) -> dict | None:
+    # One structured_patch entry → normalized line-range dict, or None if it
+    # is not a dict or any bound is non-numeric (drop the whole hunk, never a
+    # partial). Matches the original try/except-per-hunk behavior.
+    if not isinstance(h, dict):
+        return None
+    try:
+        return {
+            'old_start': _hunk_int(h, 'oldStart', 'old_start'),
+            'old_lines': _hunk_int(h, 'oldLines', 'old_lines'),
+            'new_start': _hunk_int(h, 'newStart', 'new_start'),
+            'new_lines': _hunk_int(h, 'newLines', 'new_lines'),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_hunks(patch: object) -> list[dict]:
+    if not (isinstance(patch, list) and patch):
+        return []
+    hunks: list[dict] = []
+    for h in patch:
+        parsed = _parse_hunk(h)
+        if parsed is not None:
+            hunks.append(parsed)
+    return hunks
+
+
 def _attach_edit_metadata(attrs: dict, tool_response: dict) -> None:
     """Pull non-diff-derivable signals off `tool_response` and stash them
     on the span. `user_modified=True` means the user hand-edited the diff
@@ -112,23 +152,9 @@ def _attach_edit_metadata(attrs: dict, tool_response: dict) -> None:
         attrs['user_modified'] = True
     if tool_response.get('replace_all') is True:
         attrs['replace_all'] = True
-    patch = tool_response.get('structured_patch')
-    if isinstance(patch, list) and patch:
-        hunks: list[dict] = []
-        for h in patch:
-            if not isinstance(h, dict):
-                continue
-            try:
-                hunks.append({
-                    'old_start': int(h.get('oldStart') or h.get('old_start') or 0),
-                    'old_lines': int(h.get('oldLines') or h.get('old_lines') or 0),
-                    'new_start': int(h.get('newStart') or h.get('new_start') or 0),
-                    'new_lines': int(h.get('newLines') or h.get('new_lines') or 0),
-                })
-            except (TypeError, ValueError):
-                continue
-        if hunks:
-            attrs['hunks'] = hunks
+    hunks = _parse_hunks(tool_response.get('structured_patch'))
+    if hunks:
+        attrs['hunks'] = hunks
 
 
 def _file_path(tool_input: dict) -> str | None:

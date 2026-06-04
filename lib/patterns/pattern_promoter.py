@@ -320,6 +320,59 @@ def _compute_checksum(skill_md: str, content_md: str,
     return f'sha256:{h.hexdigest()}'
 
 
+def _as_str_list(value: Any) -> list:
+    """Normalize a frontmatter value that may be a scalar str or a list.
+
+    A bare string becomes a single-element list; ``None``/falsey becomes ``[]``.
+    """
+    value = value or []
+    if isinstance(value, str):
+        return [value]
+    return value
+
+
+def _resolve_tags(db_tags: list[str], fm: dict) -> list[str]:
+    """Pick the tag list for the manifest.
+
+    DB is the source of truth (managed via the /patterns/<slug>/tags
+    endpoint); frontmatter tags are a fallback for patterns whose DB
+    row hasn't been tagged yet.
+    """
+    if db_tags:
+        return db_tags
+    return [str(t).strip() for t in _as_str_list(fm.get('tags')) if str(t).strip()]
+
+
+def _assemble_extras(scripts_payload: dict[str, bytes], rule_ids: list[str],
+                     grit_files: dict[str, bytes], rules_json: dict) -> dict[str, bytes]:
+    """Build the {bundle-relpath: bytes} map of script + grit-rule extras."""
+    extras: dict[str, bytes] = {}
+    for name, data in sorted(scripts_payload.items()):
+        extras[f'scripts/{name}'] = data
+    if rule_ids:
+        extras['.grit/rules.json'] = (
+            json.dumps(rules_json, indent=2, sort_keys=False).encode('utf-8') + b'\n'
+        )
+        for rel, data in grit_files.items():
+            extras[f'.grit/{rel}'] = data
+    return extras
+
+
+def _write_bundle_zip(manifest: dict, shim_md: str, content_md: str,
+                      references: dict[str, bytes], extras: dict[str, bytes]) -> bytes:
+    """Serialize the bundle contents into a deflated zip and return its bytes."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('manifest.json', json.dumps(manifest, indent=2, sort_keys=True))
+        zf.writestr('SKILL.md', shim_md)
+        zf.writestr('content.md', content_md)
+        for rel, data in references.items():
+            zf.writestr(f'references/{rel}', data)
+        for rel, data in sorted(extras.items()):
+            zf.writestr(rel, data)
+    return buf.getvalue()
+
+
 def build_bundle(slug: str, version: str = DEFAULT_VERSION,
                  author: str | None = None) -> tuple[str, bytes]:
     """Produce (filename, bytes) for the `.zip` bundle.
@@ -347,14 +400,7 @@ def build_bundle(slug: str, version: str = DEFAULT_VERSION,
     # `title` / `pattern_docs.title` because those fields are populated
     # by the sync pipeline with description-like text, not display names.
     title = fm.get('display_title') or slug
-
-    fm_tags = fm.get('tags') or []
-    if isinstance(fm_tags, str):
-        fm_tags = [fm_tags]
-    # DB is the source of truth (managed via the /patterns/<slug>/tags
-    # endpoint); frontmatter tags are a fallback for patterns whose DB
-    # row hasn't been tagged yet.
-    tags = db_tags or [str(t).strip() for t in fm_tags if str(t).strip()]
+    tags = _resolve_tags(db_tags, fm)
 
     shim_md = (
         f'---\n'
@@ -382,19 +428,7 @@ def build_bundle(slug: str, version: str = DEFAULT_VERSION,
         scripts_payload.update(_collect_runner_scripts())
     scripts_payload.update(pattern_scripts)  # pattern overrides runner
 
-    extras: dict[str, bytes] = {}
-    for name, data in sorted(scripts_payload.items()):
-        extras[f'scripts/{name}'] = data
-    if rule_ids:
-        extras['.grit/rules.json'] = (
-            json.dumps(rules_json, indent=2, sort_keys=False).encode('utf-8') + b'\n'
-        )
-        for rel, data in grit_files.items():
-            extras[f'.grit/{rel}'] = data
-
-    source_repos = fm.get('source_repos') or []
-    if isinstance(source_repos, str):
-        source_repos = [source_repos]
+    extras = _assemble_extras(scripts_payload, rule_ids, grit_files, rules_json)
 
     manifest: dict[str, Any] = {
         'schema_version': SCHEMA_VERSION,
@@ -411,7 +445,7 @@ def build_bundle(slug: str, version: str = DEFAULT_VERSION,
             'source_repo': 'regin',
             'source_path': f'patterns/{slug}',
             'source_commit': _git_head(),
-            'source_repos': source_repos,
+            'source_repos': _as_str_list(fm.get('source_repos')),
             'created_at': _dt.datetime.now().isoformat(timespec='seconds'),
         },
     }
@@ -422,17 +456,8 @@ def build_bundle(slug: str, version: str = DEFAULT_VERSION,
         }
     manifest['checksum'] = _compute_checksum(shim_md, content_md, references, extras)
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr('manifest.json', json.dumps(manifest, indent=2, sort_keys=True))
-        zf.writestr('SKILL.md', shim_md)
-        zf.writestr('content.md', content_md)
-        for rel, data in references.items():
-            zf.writestr(f'references/{rel}', data)
-        for rel, data in sorted(extras.items()):
-            zf.writestr(rel, data)
-
-    return f'{slug}-{version}.zip', buf.getvalue()
+    data = _write_bundle_zip(manifest, shim_md, content_md, references, extras)
+    return f'{slug}-{version}.zip', data
 
 
 def _build_multipart(filename: str, data: bytes, force: bool) -> tuple[bytes, str]:

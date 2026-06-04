@@ -40,15 +40,48 @@ from web.blueprints.patterns._helpers import (
 
 # ── Create / edit / delete ─────────────────────────────────────
 
+def _parse_create_payload(data):
+    """Pull and normalize the create-pattern fields off a request body."""
+    return (
+        (data.get("title") or "").strip(),
+        (data.get("description") or "").strip(),
+        (data.get("slug") or "").strip(),
+        data.get("tags", []),
+    )
+
+
+def _attach_tags(session, doc, tags):
+    """Link a freshly-flushed ``doc`` to existing tags by name (INSERT OR IGNORE)."""
+    for tag_name in tags:
+        tag_row = session.exec(
+            select(Tag).where(Tag.name == tag_name)
+        ).first()
+        if tag_row is not None:
+            # INSERT OR IGNORE — check before insert.
+            link_exists = session.exec(
+                select(DocTag).where(
+                    DocTag.doc_id == doc.id,
+                    DocTag.tag_id == tag_row.id,
+                )
+            ).first()
+            if link_exists is None:
+                session.add(DocTag(doc_id=doc.id, tag_id=tag_row.id))
+
+
+def _audit_create_actor(user):
+    """Resolve the (id, username) tuple for the create-pattern audit record."""
+    return (
+        user["id"] if user else None,
+        user["username"] if user else "anonymous",
+    )
+
+
 @patterns_bp.route("/api/patterns/create", methods=["POST"])
 @require_editor
 def api_create_pattern():
     """Create a new manual pattern with a SKILL.md template."""
     data = request.get_json(silent=True) or {}
-    title = (data.get("title") or "").strip()
-    description = (data.get("description") or "").strip()
-    slug = (data.get("slug") or "").strip()
-    tags = data.get("tags", [])
+    title, description, slug, tags = _parse_create_payload(data)
 
     if not title:
         return jsonify({"ok": False, "msg": "Title is required"}), 400
@@ -100,26 +133,12 @@ def api_create_pattern():
         session.add(doc)
         session.flush()  # populate doc.id
 
-        for tag_name in tags:
-            tag_row = session.exec(
-                select(Tag).where(Tag.name == tag_name)
-            ).first()
-            if tag_row is not None:
-                # INSERT OR IGNORE — check before insert.
-                link_exists = session.exec(
-                    select(DocTag).where(
-                        DocTag.doc_id == doc.id,
-                        DocTag.tag_id == tag_row.id,
-                    )
-                ).first()
-                if link_exists is None:
-                    session.add(DocTag(doc_id=doc.id, tag_id=tag_row.id))
+        _attach_tags(session, doc, tags)
         session.commit()
 
-    user = get_current_user()
+    actor_id, actor_name = _audit_create_actor(get_current_user())
     audit.log_action(
-        user["id"] if user else None,
-        user["username"] if user else "anonymous",
+        actor_id, actor_name,
         "create_pattern", f"patterns/{slug}",
         {"title": title, "tags": tags},
     )

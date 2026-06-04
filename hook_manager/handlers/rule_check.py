@@ -79,39 +79,23 @@ def _extract_file_path(payload: HookPayload) -> str | None:
     return None
 
 
-def handle(payload: HookPayload) -> HookResponse | None:
-    if payload.tool_name not in ('Edit', 'Write', 'MultiEdit'):
-        return None
+def _collect_applicable_rules(
+    configured_engines: list[tuple[RuleEngine, str]],
+    file_path: str,
+    content: str,
+    skipped_by_scope: list[dict],
+) -> tuple[list[tuple[RuleEngine, dict | object, str | None]], int, bool, str | None]:
+    """Evaluate every configured engine's rule pool against this file.
 
-    file_path = _extract_file_path(payload)
-    if not file_path or not os.path.isfile(file_path):
-        return None
-
-    # Resolve the file's repo once: it gates engine selection (a repo-local
-    # `.regin/config.json` may extend language routing) and tags triggers.
-    registered_repo = repo_for_path(file_path)
-    repo_root = registered_repo.path if registered_repo else None
-
-    configured_engines = _engines_for_file(file_path, repo_root)
-    if not configured_engines:
-        return None
-
-    try:
-        with open(file_path) as f:
-            content = f.read()
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    # Refresh the per-pattern deployment cache: a deployment toggled
-    # between hook invocations should take effect on the very next
-    # check, not after a process restart.
-    pattern_scope.reset_cache()
-    registered_repo_name = registered_repo.name if registered_repo else None
-
+    Scope-gates each candidate rule (appending rejects to
+    `skipped_by_scope`) and returns the surviving `applicable` rules, the
+    total rules considered, whether any engine had an evaluable pool, and
+    the repo_root discovered from a bundle (None → caller falls back to the
+    file's dirname).
+    """
     applicable: list[tuple[RuleEngine, dict | object, str | None]] = []
-    skipped_by_scope: list[dict] = []
     engine_rule_totals: dict[str, int] = {}
-    repo_root = None
+    repo_root: str | None = None
     any_engine_evaluable = False
 
     def _scope_gate(rule_id, guide: str | None) -> bool:
@@ -138,36 +122,19 @@ def handle(payload: HookPayload) -> HookResponse | None:
                 continue
             applicable.append((run_engine, rule, guide))
 
-    if not any_engine_evaluable:
-        return None
-    if repo_root is None:
-        repo_root = os.path.dirname(file_path)
-
     total_rules = sum(engine_rule_totals.values())
-    engine_tags = [
-        {'engine': e.id, 'language': lang}
-        for e, lang in configured_engines
-    ]
-    if not applicable:
-        status = 'all_rules_out_of_scope' if skipped_by_scope else 'no_applicable_rules'
-        _emit_rule_check_span(
-            payload.session_id,
-            file_path,
-            repo_root or os.path.dirname(file_path),
-            applicable_rules=[],
-            engine_tags=engine_tags,
-            total_rules=total_rules,
-            status=status,
-            raw=payload.raw,
-            skipped_by_scope=skipped_by_scope,
-        )
-        return HookResponse(
-            suppress_output=True,
-            additional_context=f'rule-check: {os.path.basename(file_path)} — no applicable rules',
-        )
+    return applicable, total_rules, any_engine_evaluable, repo_root
 
-    effective_root = repo_root or os.path.dirname(file_path)
-    repo_label = registered_repo_name or os.path.basename(effective_root)
+
+def _run_applicable_rules(
+    applicable: list[tuple[RuleEngine, dict | object, str | None]],
+    file_path: str,
+    effective_root: str,
+    repo_label: str,
+    session_id: str | None,
+) -> tuple[list[dict], list[str]]:
+    """Run each applicable rule, returning the trigger events (one per rule)
+    and the agent-facing violation lines (one per rule that matched)."""
     violations: list[str] = []
     trigger_events: list[dict] = []
     for engine, rule, guide in applicable:
@@ -190,7 +157,7 @@ def handle(payload: HookPayload) -> HookResponse | None:
             'summary': summary,
             'detail': detail,
             'source': 'post-edit-hook',
-            'session_id': payload.session_id,
+            'session_id': session_id,
         })
         if match_count > 0:
             line = f"- `{rule_id}` ({severity}): {summary}"
@@ -199,9 +166,53 @@ def handle(payload: HookPayload) -> HookResponse | None:
             if guide:
                 line += f" — guide: `patterns/{guide}.md`"
             violations.append(line)
+    return trigger_events, violations
 
-    rel = os.path.relpath(file_path, effective_root)
-    applicable_rules = [
+
+def _build_response_body(
+    violations: list[str], rel: str, applicable_count: int, total_rules: int,
+) -> str:
+    if violations:
+        return (
+            f'rule-check: {len(violations)} rule violation(s) in `{rel}` '
+            f'(checked {applicable_count} applicable of {total_rules} total):\n'
+            + '\n'.join(violations)
+            + '\n\nFix these before claiming the edit is complete.'
+        )
+    return f'rule-check: OK — `{rel}` passes {applicable_count} applicable rule(s).'
+
+
+def _emit_no_applicable(
+    payload: HookPayload,
+    file_path: str,
+    effective_root: str,
+    engine_tags: list[dict],
+    total_rules: int,
+    skipped_by_scope: list[dict],
+) -> HookResponse:
+    """Emit the rule.check span and agent response for the case where every
+    engine had an evaluable pool but no rule survived (out-of-scope or none
+    applicable)."""
+    status = 'all_rules_out_of_scope' if skipped_by_scope else 'no_applicable_rules'
+    _emit_rule_check_span(
+        payload.session_id,
+        file_path,
+        effective_root,
+        applicable_rules=[],
+        engine_tags=engine_tags,
+        total_rules=total_rules,
+        status=status,
+        raw=payload.raw,
+        skipped_by_scope=skipped_by_scope,
+    )
+    return HookResponse(
+        suppress_output=True,
+        additional_context=f'rule-check: {os.path.basename(file_path)} — no applicable rules',
+    )
+
+
+def _applicable_rule_summaries(trigger_events: list[dict]) -> list[dict]:
+    return [
         {
             'id': ev['rule_id'],
             'severity': ev['severity'],
@@ -212,17 +223,106 @@ def handle(payload: HookPayload) -> HookResponse | None:
         }
         for ev in trigger_events
     ]
-    # Emit the rule.check span BEFORE ingest so its id can stamp each
-    # trigger row — that's the deep-link target for the /trace/triggers
-    # drawer's "recent events" list.
+
+
+def _prepare_check(payload: HookPayload):
+    """Run the guard prologue: validate the tool/file, resolve the repo, pick
+    engines, and read the content. Returns a 4-tuple
+    `(file_path, registered_repo, configured_engines, content)` when the
+    check should proceed, else None."""
+    if payload.tool_name not in ('Edit', 'Write', 'MultiEdit'):
+        return None
+
+    file_path = _extract_file_path(payload)
+    if not file_path or not os.path.isfile(file_path):
+        return None
+
+    # Resolve the file's repo once: it gates engine selection (a repo-local
+    # `.regin/config.json` may extend language routing) and tags triggers.
+    registered_repo = repo_for_path(file_path)
+    repo_root = registered_repo.path if registered_repo else None
+
+    configured_engines = _engines_for_file(file_path, repo_root)
+    if not configured_engines:
+        return None
+
+    try:
+        with open(file_path) as f:
+            content = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    return file_path, registered_repo, configured_engines, content
+
+
+def handle(payload: HookPayload) -> HookResponse | None:
+    prepared = _prepare_check(payload)
+    if prepared is None:
+        return None
+    file_path, registered_repo, configured_engines, content = prepared
+
+    # Refresh the per-pattern deployment cache: a deployment toggled
+    # between hook invocations should take effect on the very next
+    # check, not after a process restart.
+    pattern_scope.reset_cache()
+    registered_repo_name = registered_repo.name if registered_repo else None
+
+    skipped_by_scope: list[dict] = []
+    applicable, total_rules, any_engine_evaluable, repo_root = _collect_applicable_rules(
+        configured_engines, file_path, content, skipped_by_scope,
+    )
+
+    if not any_engine_evaluable:
+        return None
+
+    engine_tags = [
+        {'engine': e.id, 'language': lang}
+        for e, lang in configured_engines
+    ]
+    effective_root = repo_root or os.path.dirname(file_path)
+    if not applicable:
+        return _emit_no_applicable(
+            payload, file_path, effective_root, engine_tags,
+            total_rules, skipped_by_scope,
+        )
+
+    repo_label = registered_repo_name or os.path.basename(effective_root)
+    trigger_events, violations = _run_applicable_rules(
+        applicable, file_path, effective_root, repo_label, payload.session_id,
+    )
+
+    rel = os.path.relpath(file_path, effective_root)
+    _emit_span_and_post_triggers(
+        payload, file_path, effective_root, engine_tags,
+        total_rules, skipped_by_scope, trigger_events, bool(violations),
+    )
+
+    body = _build_response_body(violations, rel, len(applicable), total_rules)
+    return HookResponse(suppress_output=True, additional_context=body)
+
+
+def _emit_span_and_post_triggers(
+    payload: HookPayload,
+    file_path: str,
+    effective_root: str,
+    engine_tags: list[dict],
+    total_rules: int,
+    skipped_by_scope: list[dict],
+    trigger_events: list[dict],
+    has_violation: bool,
+) -> None:
+    """Emit the rule.check span (stamping its id onto every trigger row) and
+    ingest the trigger events. The span is emitted BEFORE ingest so its id can
+    stamp each row — that's the deep-link target for the /trace/triggers
+    drawer's 'recent events' list."""
     span_id = _emit_rule_check_span(
         payload.session_id,
         file_path,
         effective_root,
-        applicable_rules=applicable_rules,
+        applicable_rules=_applicable_rule_summaries(trigger_events),
         engine_tags=engine_tags,
         total_rules=total_rules,
-        status='violation' if violations else 'ok',
+        status='violation' if has_violation else 'ok',
         raw=payload.raw,
         skipped_by_scope=skipped_by_scope,
     )
@@ -232,19 +332,6 @@ def handle(payload: HookPayload) -> HookResponse | None:
 
     from lib.hook_plugin import post_event
     post_event('rule_triggers', trigger_events)
-    if violations:
-        body = (
-            f'rule-check: {len(violations)} rule violation(s) in `{rel}` '
-            f'(checked {len(applicable)} applicable of {total_rules} total):\n'
-            + '\n'.join(violations)
-            + '\n\nFix these before claiming the edit is complete.'
-        )
-    else:
-        body = (
-            f'rule-check: OK — `{rel}` passes {len(applicable)} applicable rule(s).'
-        )
-
-    return HookResponse(suppress_output=True, additional_context=body)
 
 
 def _emit_rule_check_span(

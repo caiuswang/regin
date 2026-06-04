@@ -95,6 +95,169 @@ def _refresh_active_work_ms(conn, trace_ids) -> None:
         )
 # ── Session-span ingest ──────────────────────────────────────
 
+def _validate_turn_row(r) -> tuple[str, str, str] | None:
+    """Return (trace_id, turn_uuid, timestamp) for a well-formed turn-usage
+    row, or None when the row is malformed and should be skipped."""
+    if not isinstance(r, dict):
+        return None
+    trace_id = r.get('trace_id')
+    turn_uuid = r.get('turn_uuid')
+    timestamp = r.get('timestamp')
+    if not (isinstance(trace_id, str) and trace_id
+            and isinstance(turn_uuid, str) and turn_uuid
+            and isinstance(timestamp, str) and timestamp):
+        return None
+    return trace_id, turn_uuid, timestamp
+
+
+def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
+    """Upsert a single validated turn-usage row by (trace_id, turn_uuid)."""
+    from lib.tokens.pricing import TokenBreakdown, cost as pricing_cost
+
+    # Compute per-turn USD cost from the model + token mix the
+    # hook just reported. Falls back to NULL when the model
+    # isn't in the catalogue — a non-Anthropic model, an old
+    # transcript that never carried a model name, or pricing
+    # data being unreachable. We never block ingest on this.
+    input_tokens = int(r.get('input_tokens') or 0)
+    output_tokens = int(r.get('output_tokens') or 0)
+    cache_read_tokens = int(r.get('cache_read_tokens') or 0)
+    cache_creation_tokens = int(r.get('cache_creation_tokens') or 0)
+    context_used_tokens = int(r.get('context_used_tokens') or 0)
+    model = r.get('model')
+    row_cost: float | None = None
+    try:
+        row_cost = pricing_cost(model, TokenBreakdown(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        ), context_tokens=context_used_tokens)
+    except Exception:
+        row_cost = None
+
+    conn.execute(
+        """
+        INSERT INTO turn_usage (
+            trace_id, turn_uuid, turn_index, timestamp, model,
+            input_tokens, output_tokens, cache_read_tokens,
+            cache_creation_tokens, context_used_tokens, request_id,
+            cost_usd, effort_level
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(trace_id, turn_uuid) DO UPDATE SET
+            turn_index = excluded.turn_index,
+            timestamp  = excluded.timestamp,
+            model      = COALESCE(excluded.model, turn_usage.model),
+            input_tokens          = excluded.input_tokens,
+            output_tokens         = excluded.output_tokens,
+            cache_read_tokens     = excluded.cache_read_tokens,
+            cache_creation_tokens = excluded.cache_creation_tokens,
+            context_used_tokens   = excluded.context_used_tokens,
+            request_id            = COALESCE(excluded.request_id,
+                                            turn_usage.request_id),
+            cost_usd              = COALESCE(excluded.cost_usd,
+                                            turn_usage.cost_usd),
+            effort_level          = COALESCE(excluded.effort_level,
+                                            turn_usage.effort_level)
+        """,
+        (
+            trace_id, turn_uuid,
+            int(r.get('turn_index') or 0),
+            timestamp,
+            model,
+            input_tokens, output_tokens,
+            cache_read_tokens, cache_creation_tokens,
+            context_used_tokens,
+            r.get('request_id'),
+            row_cost,
+            r.get('effort_level'),
+        ),
+    )
+
+
+def _insert_turn_usage_rows(conn, rows) -> tuple[int, int, set[str]]:
+    """Validate + upsert each turn-usage row.
+
+    Returns (inserted_count, skipped_count, touched_trace_ids)."""
+    touched_traces: set[str] = set()
+    inserted = 0
+    skipped = 0
+    for r in rows:
+        validated = _validate_turn_row(r)
+        if validated is None:
+            skipped += 1
+            continue
+        trace_id, turn_uuid, timestamp = validated
+        _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp)
+        inserted += 1
+        touched_traces.add(trace_id)
+    return inserted, skipped, touched_traces
+
+
+def _refresh_session_aggregates(conn, trace_ids) -> None:
+    """Re-derive session-row aggregates from turn_usage so the
+    header/list views stay authoritative."""
+    from lib.tokens.model_windows import infer_window
+
+    for tid in trace_ids:
+        row = conn.execute("""
+            SELECT SUM(input_tokens),  SUM(output_tokens),
+                   SUM(cache_read_tokens), SUM(cache_creation_tokens),
+                   MAX(context_used_tokens),
+                   COUNT(*),
+                   SUM(cost_usd)
+            FROM turn_usage WHERE trace_id = ?
+        """, (tid,)).fetchone()
+        if not row or row[5] == 0:
+            continue
+        (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot) = row
+        # "Main" peak excludes turns whose API call rolled in a
+        # server-side sub-call. Anthropic charges the advisor's
+        # internal iterations to the parent turn's `usage`, so the
+        # raw peak overstates main-conversation context size. The
+        # corresponding span carries attributes.server_side=true.
+        # The turn_uuid column on session_spans is populated lazily
+        # by ingest_tool_attribution, so we COALESCE with the value
+        # the hook stamped into attributes.turn_uuid — guaranteed
+        # present from the first ingest of any server_side span.
+        peak_main_row = conn.execute("""
+            SELECT MAX(tu.context_used_tokens)
+              FROM turn_usage tu
+             WHERE tu.trace_id = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM session_spans ss
+                    WHERE ss.trace_id = tu.trace_id
+                      AND COALESCE(ss.turn_uuid,
+                                   json_extract(ss.attributes, '$.turn_uuid'))
+                          = tu.turn_uuid
+                      AND json_extract(ss.attributes, '$.server_side') = 1
+               )
+        """, (tid,)).fetchone()
+        peak_main = peak_main_row[0] if peak_main_row else None
+        # Read sessions.model (may be None for a freshly-ingesting
+        # session) to compute the window; infer_window handles the
+        # None case gracefully. Window inference still uses the
+        # all-inclusive peak — the 1M-variant promotion heuristic
+        # needs to see advisor-inflated turns to fire on sessions
+        # whose main flow never crosses 200K but ran on `[1m]`.
+        sess = conn.execute(
+            "SELECT model FROM sessions WHERE trace_id = ?", (tid,)
+        ).fetchone()
+        model = sess[0] if sess else None
+        window = infer_window(model, int(peak or 0))
+        conn.execute("""
+            UPDATE sessions SET
+                input_tokens = ?, output_tokens = ?,
+                cache_read_tokens = ?, cache_creation_tokens = ?,
+                peak_context_tokens = ?,
+                peak_main_context_tokens = ?,
+                context_window_tokens = ?,
+                cost_usd = ?
+            WHERE trace_id = ?
+        """, (in_tot, out_tot, cread, ccreate, peak, peak_main, window,
+              cost_tot, tid))
+
+
 def ingest_turn_usage(rows: list[dict]) -> tuple[int, int]:
     """Insert per-turn usage rows and refresh the owning session row.
 
@@ -106,149 +269,11 @@ def ingest_turn_usage(rows: list[dict]) -> tuple[int, int]:
     Returns (inserted_or_updated_count, malformed_skipped_count).
     """
     from lib.orm.engine import get_connection
-    from lib.tokens.model_windows import infer_window
-    from lib.tokens.pricing import TokenBreakdown, cost as pricing_cost
-
-    touched_traces: set[str] = set()
-    inserted = 0
-    skipped = 0
 
     conn = get_connection()
     try:
-        for r in rows:
-            if not isinstance(r, dict):
-                skipped += 1
-                continue
-            trace_id = r.get('trace_id')
-            turn_uuid = r.get('turn_uuid')
-            timestamp = r.get('timestamp')
-            if not (isinstance(trace_id, str) and trace_id
-                    and isinstance(turn_uuid, str) and turn_uuid
-                    and isinstance(timestamp, str) and timestamp):
-                skipped += 1
-                continue
-
-            # Compute per-turn USD cost from the model + token mix the
-            # hook just reported. Falls back to NULL when the model
-            # isn't in the catalogue — a non-Anthropic model, an old
-            # transcript that never carried a model name, or pricing
-            # data being unreachable. We never block ingest on this.
-            input_tokens = int(r.get('input_tokens') or 0)
-            output_tokens = int(r.get('output_tokens') or 0)
-            cache_read_tokens = int(r.get('cache_read_tokens') or 0)
-            cache_creation_tokens = int(r.get('cache_creation_tokens') or 0)
-            context_used_tokens = int(r.get('context_used_tokens') or 0)
-            model = r.get('model')
-            row_cost: float | None = None
-            try:
-                row_cost = pricing_cost(model, TokenBreakdown(
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                ), context_tokens=context_used_tokens)
-            except Exception:
-                row_cost = None
-
-            conn.execute(
-                """
-                INSERT INTO turn_usage (
-                    trace_id, turn_uuid, turn_index, timestamp, model,
-                    input_tokens, output_tokens, cache_read_tokens,
-                    cache_creation_tokens, context_used_tokens, request_id,
-                    cost_usd, effort_level
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(trace_id, turn_uuid) DO UPDATE SET
-                    turn_index = excluded.turn_index,
-                    timestamp  = excluded.timestamp,
-                    model      = COALESCE(excluded.model, turn_usage.model),
-                    input_tokens          = excluded.input_tokens,
-                    output_tokens         = excluded.output_tokens,
-                    cache_read_tokens     = excluded.cache_read_tokens,
-                    cache_creation_tokens = excluded.cache_creation_tokens,
-                    context_used_tokens   = excluded.context_used_tokens,
-                    request_id            = COALESCE(excluded.request_id,
-                                                    turn_usage.request_id),
-                    cost_usd              = COALESCE(excluded.cost_usd,
-                                                    turn_usage.cost_usd),
-                    effort_level          = COALESCE(excluded.effort_level,
-                                                    turn_usage.effort_level)
-                """,
-                (
-                    trace_id, turn_uuid,
-                    int(r.get('turn_index') or 0),
-                    timestamp,
-                    model,
-                    input_tokens, output_tokens,
-                    cache_read_tokens, cache_creation_tokens,
-                    context_used_tokens,
-                    r.get('request_id'),
-                    row_cost,
-                    r.get('effort_level'),
-                ),
-            )
-            inserted += 1
-            touched_traces.add(trace_id)
-
-        # Re-derive session-row aggregates from turn_usage so the
-        # header/list views stay authoritative.
-        for tid in touched_traces:
-            row = conn.execute("""
-                SELECT SUM(input_tokens),  SUM(output_tokens),
-                       SUM(cache_read_tokens), SUM(cache_creation_tokens),
-                       MAX(context_used_tokens),
-                       COUNT(*),
-                       SUM(cost_usd)
-                FROM turn_usage WHERE trace_id = ?
-            """, (tid,)).fetchone()
-            if not row or row[5] == 0:
-                continue
-            (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot) = row
-            # "Main" peak excludes turns whose API call rolled in a
-            # server-side sub-call. Anthropic charges the advisor's
-            # internal iterations to the parent turn's `usage`, so the
-            # raw peak overstates main-conversation context size. The
-            # corresponding span carries attributes.server_side=true.
-            # The turn_uuid column on session_spans is populated lazily
-            # by ingest_tool_attribution, so we COALESCE with the value
-            # the hook stamped into attributes.turn_uuid — guaranteed
-            # present from the first ingest of any server_side span.
-            peak_main_row = conn.execute("""
-                SELECT MAX(tu.context_used_tokens)
-                  FROM turn_usage tu
-                 WHERE tu.trace_id = ?
-                   AND NOT EXISTS (
-                       SELECT 1 FROM session_spans ss
-                        WHERE ss.trace_id = tu.trace_id
-                          AND COALESCE(ss.turn_uuid,
-                                       json_extract(ss.attributes, '$.turn_uuid'))
-                              = tu.turn_uuid
-                          AND json_extract(ss.attributes, '$.server_side') = 1
-                   )
-            """, (tid,)).fetchone()
-            peak_main = peak_main_row[0] if peak_main_row else None
-            # Read sessions.model (may be None for a freshly-ingesting
-            # session) to compute the window; infer_window handles the
-            # None case gracefully. Window inference still uses the
-            # all-inclusive peak — the 1M-variant promotion heuristic
-            # needs to see advisor-inflated turns to fire on sessions
-            # whose main flow never crosses 200K but ran on `[1m]`.
-            sess = conn.execute(
-                "SELECT model FROM sessions WHERE trace_id = ?", (tid,)
-            ).fetchone()
-            model = sess[0] if sess else None
-            window = infer_window(model, int(peak or 0))
-            conn.execute("""
-                UPDATE sessions SET
-                    input_tokens = ?, output_tokens = ?,
-                    cache_read_tokens = ?, cache_creation_tokens = ?,
-                    peak_context_tokens = ?,
-                    peak_main_context_tokens = ?,
-                    context_window_tokens = ?,
-                    cost_usd = ?
-                WHERE trace_id = ?
-            """, (in_tot, out_tot, cread, ccreate, peak, peak_main, window,
-                  cost_tot, tid))
+        inserted, skipped, touched_traces = _insert_turn_usage_rows(conn, rows)
+        _refresh_session_aggregates(conn, touched_traces)
         conn.commit()
     except Exception:
         try:
@@ -644,26 +669,44 @@ def _handle_session_title(bucket: dict, attrs: dict, start) -> None:
         bucket['live_title_source'] = src
 
 
+def _apply_timed_attr(
+    bucket: dict, attrs: dict, attr_key: str, value_field: str,
+    tracker_field: str, start, *, latest: bool, store_stripped: bool,
+) -> None:
+    """Set a session-start string attribute under a time-precedence rule.
+
+    `latest=True` keeps the value seen at the greatest `start` (latest
+    wins); `latest=False` keeps the earliest. The decision is tracked
+    against `tracker_field`, never `value_field`, so a fallback that
+    pre-set the value without a tracker timestamp is still overridden.
+    `store_stripped` writes the whitespace-trimmed value (agent_type,
+    cwd); model stores the raw string.
+    """
+    raw = attrs.get(attr_key)
+    if not (isinstance(raw, str) and raw.strip()):
+        return
+    tracker = bucket[tracker_field]
+    if latest:
+        wins = tracker is None or (start and start > tracker)
+    else:
+        wins = tracker is None or (start and start < tracker)
+    if not wins:
+        return
+    bucket[value_field] = raw.strip() if store_stripped else raw
+    bucket[tracker_field] = start
+
+
 def _handle_session_start(bucket: dict, attrs: dict, start) -> None:
     """session.start carries `last_start_at` (latest wins), `agent_type`
     (earliest non-empty wins), and `model` (latest wins)."""
     if start and (bucket['last_start_at'] is None or start > bucket['last_start_at']):
         bucket['last_start_at'] = start
-    agent_type = attrs.get('agent_type')
-    if isinstance(agent_type, str) and agent_type.strip():
-        if bucket['_agent_type_start'] is None or (start and start < bucket['_agent_type_start']):
-            bucket['agent_type'] = agent_type.strip()
-            bucket['_agent_type_start'] = start
-    m = attrs.get('model')
-    if isinstance(m, str) and m.strip():
-        if bucket['_model_start'] is None or (start and start > bucket['_model_start']):
-            bucket['model'] = m
-            bucket['_model_start'] = start
-    cwd = attrs.get('cwd')
-    if isinstance(cwd, str) and cwd.strip():
-        if bucket['_cwd_start'] is None or (start and start < bucket['_cwd_start']):
-            bucket['cwd'] = cwd.strip()
-            bucket['_cwd_start'] = start
+    _apply_timed_attr(bucket, attrs, 'agent_type', 'agent_type',
+                      '_agent_type_start', start, latest=False, store_stripped=True)
+    _apply_timed_attr(bucket, attrs, 'model', 'model',
+                      '_model_start', start, latest=True, store_stripped=False)
+    _apply_timed_attr(bucket, attrs, 'cwd', 'cwd',
+                      '_cwd_start', start, latest=False, store_stripped=True)
 
 
 def _handle_turn_model(bucket: dict, attrs: dict, start) -> None:
@@ -1007,6 +1050,102 @@ def _insert_span_row(conn, span, attrs) -> None:
     )
 
 
+def _detect_existing_spans(conn, normalised: list[tuple]) -> tuple[set, int]:
+    """Return (existing_set, skipped) for a batch.
+
+    `existing_set` holds the (trace_id, span_id) pairs already present in
+    session_spans; `skipped` counts how many entries in `normalised` are
+    re-ingests. Empty batch -> (set(), 0).
+    """
+    if not normalised:
+        return set(), 0
+    pairs = {(s.get('trace_id'), s.get('span_id'))
+             for s, _ in normalised}
+    placeholders = ','.join(['(?, ?)'] * len(pairs))
+    flat = [v for p in pairs for v in p]
+    existing = conn.execute(
+        f"SELECT trace_id, span_id FROM session_spans "
+        f"WHERE (trace_id, span_id) IN (VALUES {placeholders})",
+        flat,
+    ).fetchall()
+    existing_set = {(r['trace_id'], r['span_id']) for r in existing}
+    skipped = sum(
+        1 for s, _ in normalised
+        if (s.get('trace_id'), s.get('span_id')) in existing_set
+    )
+    return existing_set, skipped
+
+
+def _resolve_session_status(b: dict) -> str | None:
+    """Derive the session status from a counter bucket."""
+    if b['ended_at'] and (b['last_start_at'] is None
+                          or b['ended_at'] >= b['last_start_at']):
+        return 'ended'
+    if b['last_start_at']:
+        return 'active'
+    return None
+
+
+def _resolve_session_title(b: dict) -> tuple[str | None, str | None]:
+    """Derive (title, title_source) from a counter bucket."""
+    if b['live_title']:
+        return b['live_title'], b['live_title_source']
+    if b['title']:
+        return b['title'], 'first_prompt'
+    return None, None
+
+
+def _upsert_session_counters(conn, buckets: dict) -> None:
+    """Apply incremental sessions-table counter upserts for each trace."""
+    for tid, b in buckets.items():
+        new_status = _resolve_session_status(b)
+        title_val, title_src = _resolve_session_title(b)
+        conn.execute(_SESSIONS_UPSERT_SQL, (
+            tid, title_val, title_src,
+            new_status, b['last_start_at'], b['ended_at'], b['ended_reason'],
+            b['started_at'], b['last_seen'],
+            b['span_count'], b['skill_reads'], b['file_edits'],
+            b['rule_checks'], b['plan_enters'], b['prompts'],
+            b['tool_calls'], b['is_test'], b['test_name'],
+            b['agent_type'], b['model'], b['cwd'],
+        ))
+
+
+def _refresh_server_side_peaks(conn, normalised: list[tuple]) -> None:
+    """Recompute peak_main_context_tokens for any trace this batch touched
+    with server-side spans (advisor and similar sub-calls). Spans can arrive
+    after the matching turn_usage row has already had its aggregates derived,
+    so without this symmetric refresh peak_main would stay stale at peak_full.
+    """
+    server_side_traces = {
+        s.get('trace_id')
+        for s, attrs in normalised
+        if attrs.get('server_side') is True
+    }
+    server_side_traces.discard(None)
+    for tid in server_side_traces:
+        row = conn.execute(
+            """
+            SELECT MAX(tu.context_used_tokens)
+              FROM turn_usage tu
+             WHERE tu.trace_id = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM session_spans ss
+                    WHERE ss.trace_id = tu.trace_id
+                      AND COALESCE(ss.turn_uuid,
+                                   json_extract(ss.attributes, '$.turn_uuid'))
+                          = tu.turn_uuid
+                      AND json_extract(ss.attributes, '$.server_side') = 1
+               )
+            """,
+            (tid,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE sessions SET peak_main_context_tokens = ? WHERE trace_id = ?",
+            (row[0] if row else None, tid),
+        )
+
+
 def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
     """Persist a batch of normalised spans in one transaction.
 
@@ -1021,25 +1160,9 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
     """
     from lib.orm.engine import get_connection
 
-    skipped = 0
-    existing_set: set = set()
     conn = get_connection()
     try:
-        if normalised:
-            pairs = {(s.get('trace_id'), s.get('span_id'))
-                     for s, _ in normalised}
-            placeholders = ','.join(['(?, ?)'] * len(pairs))
-            flat = [v for p in pairs for v in p]
-            existing = conn.execute(
-                f"SELECT trace_id, span_id FROM session_spans "
-                f"WHERE (trace_id, span_id) IN (VALUES {placeholders})",
-                flat,
-            ).fetchall()
-            existing_set = {(r['trace_id'], r['span_id']) for r in existing}
-            skipped = sum(
-                1 for s, _ in normalised
-                if (s.get('trace_id'), s.get('span_id')) in existing_set
-            )
+        existing_set, skipped = _detect_existing_spans(conn, normalised)
 
         conn.execute('BEGIN IMMEDIATE')
         for span, attrs in normalised:
@@ -1052,61 +1175,8 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         # Pending placeholders carry reserved id prefixes and are skipped by
         # _counter_buckets_excl_pending, so they never advance any aggregate.
         buckets = _counter_buckets_excl_pending(normalised, existing_set)
-        for tid, b in buckets.items():
-            if b['ended_at'] and (b['last_start_at'] is None
-                                  or b['ended_at'] >= b['last_start_at']):
-                new_status = 'ended'
-            elif b['last_start_at']:
-                new_status = 'active'
-            else:
-                new_status = None
-            if b['live_title']:
-                title_val, title_src = b['live_title'], b['live_title_source']
-            elif b['title']:
-                title_val, title_src = b['title'], 'first_prompt'
-            else:
-                title_val, title_src = None, None
-            conn.execute(_SESSIONS_UPSERT_SQL, (
-                tid, title_val, title_src,
-                new_status, b['last_start_at'], b['ended_at'], b['ended_reason'],
-                b['started_at'], b['last_seen'],
-                b['span_count'], b['skill_reads'], b['file_edits'],
-                b['rule_checks'], b['plan_enters'], b['prompts'],
-                b['tool_calls'], b['is_test'], b['test_name'],
-                b['agent_type'], b['model'], b['cwd'],
-            ))
-        # If this batch landed any server-side spans (advisor and
-        # similar sub-calls), recompute peak_main_context_tokens for
-        # those traces. Spans can arrive after the matching turn_usage
-        # row has already had its aggregates derived, so without this
-        # symmetric refresh peak_main would stay stale at peak_full.
-        server_side_traces = {
-            s.get('trace_id')
-            for s, attrs in normalised
-            if attrs.get('server_side') is True
-        }
-        server_side_traces.discard(None)
-        for tid in server_side_traces:
-            row = conn.execute(
-                """
-                SELECT MAX(tu.context_used_tokens)
-                  FROM turn_usage tu
-                 WHERE tu.trace_id = ?
-                   AND NOT EXISTS (
-                       SELECT 1 FROM session_spans ss
-                        WHERE ss.trace_id = tu.trace_id
-                          AND COALESCE(ss.turn_uuid,
-                                       json_extract(ss.attributes, '$.turn_uuid'))
-                              = tu.turn_uuid
-                          AND json_extract(ss.attributes, '$.server_side') = 1
-                   )
-                """,
-                (tid,),
-            ).fetchone()
-            conn.execute(
-                "UPDATE sessions SET peak_main_context_tokens = ? WHERE trace_id = ?",
-                (row[0] if row else None, tid),
-            )
+        _upsert_session_counters(conn, buckets)
+        _refresh_server_side_peaks(conn, normalised)
 
         # Refresh the active-work aggregate for every trace this batch
         # touched. Re-projecting per batch keeps the list view honest

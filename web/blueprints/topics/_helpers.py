@@ -71,51 +71,78 @@ def _proposal_review_state_from_payload(proposal: dict | None) -> str:
     return proposal.get("status") or proposal.get("metadata", {}).get("proposal_status") or "draft"
 
 
-def _proposal_run_row(repo_path: str, run: dict) -> dict:
-    row = dict(run)
-    proposal = None
-    if row.get("has_topics"):
-        try:
-            proposal = load_proposal(repo_path, row["id"])
-        except OSError:
-            proposal = None
-    topics = proposal.get("topics", []) if proposal else []
-    reviewed_count = sum(1 for topic in topics if topic.get("review_status"))
-    # Infer provider for the row: the proposal's stored provider when
-    # topics.json is on disk; otherwise fall back to "external-agent"
-    # when status.json names an agent (the external-agent flow writes
-    # status.json before the agent finishes drafting topics.json), else
-    # "unknown".
+def _proposal_provider_for_row(proposal: dict | None, row: dict) -> str:
+    """Infer the provider label for a run row.
+
+    Use the proposal's stored provider when topics.json is on disk;
+    otherwise fall back to "external-agent" when status.json names an
+    agent (the external-agent flow writes status.json before the agent
+    finishes drafting topics.json), else "unknown".
+    """
     if proposal:
-        provider = _proposal_provider_from_payload(proposal)
-    elif row.get("agent"):
-        provider = "external-agent"
-    else:
-        provider = "unknown"
-    topic_request = ((proposal or {}).get("topic_request") or "").strip() if proposal else ""
+        return _proposal_provider_from_payload(proposal)
+    if row.get("agent"):
+        return "external-agent"
+    return "unknown"
+
+
+def _proposal_run_title(topic_request: str, topics: list) -> str | None:
+    """Derive the one-line title for a run row from its request/topics."""
     if topic_request:
-        title = _title_from_topic_request(topic_request)
-    elif topics:
-        first_label = (topics[0].get("label") or topics[0].get("id") or "").strip()
-        if len(topics) == 1 or not first_label:
-            title = first_label or None
-        else:
-            title = f"{first_label} + {len(topics) - 1} more"
-    else:
-        title = None
-    row.update({
-        "provider": provider,
+        return _title_from_topic_request(topic_request)
+    if not topics:
+        return None
+    first_label = (topics[0].get("label") or topics[0].get("id") or "").strip()
+    if len(topics) == 1 or not first_label:
+        return first_label or None
+    return f"{first_label} + {len(topics) - 1} more"
+
+
+def _proposal_run_updated_at(row: dict) -> float | None:
+    """Mtime of the run's on-disk path, or None if it's absent."""
+    return Path(row["path"]).stat().st_mtime if row.get("path") and Path(row["path"]).exists() else None
+
+
+def _load_run_proposal(repo_path: str, row: dict) -> dict | None:
+    """Load the proposal payload for a run row, or None when absent.
+
+    Only runs that advertise topics.json (`has_topics`) have a payload;
+    a missing/unreadable file (OSError) is treated the same as absent.
+    """
+    if not row.get("has_topics"):
+        return None
+    try:
+        return load_proposal(repo_path, row["id"])
+    except OSError:
+        return None
+
+
+def _proposal_derived_fields(proposal: dict | None, row: dict) -> dict:
+    """Compute the row fields derived from the loaded proposal payload."""
+    payload = proposal or {}
+    topics = payload.get("topics", [])
+    reviewed_count = sum(1 for topic in topics if topic.get("review_status"))
+    topic_request = (payload.get("topic_request") or "").strip()
+    proposal_revision = payload.get("revision", {}).get("revision_number")
+    return {
+        "provider": _proposal_provider_for_row(proposal, row),
         "complexity": _proposal_complexity_from_payload(proposal or {}),
         "review_state": _proposal_review_state_from_payload(proposal),
-        "revision_count": row.get("revision_count") or (proposal.get("revision", {}).get("revision_number") if proposal else 0) or 0,
-        "latest_revision_number": row.get("latest_revision_number") or (proposal.get("revision", {}).get("revision_number") if proposal else None),
+        "revision_count": row.get("revision_count") or proposal_revision or 0,
+        "latest_revision_number": row.get("latest_revision_number") or proposal_revision,
         "draft_topic_count": len(topics),
         "reviewed_count": reviewed_count,
         "pending_count": len(topics) - reviewed_count,
         "topic_request": topic_request or None,
-        "title": title,
-        "updated_at": Path(row["path"]).stat().st_mtime if row.get("path") and Path(row["path"]).exists() else None,
-    })
+        "title": _proposal_run_title(topic_request, topics),
+        "updated_at": _proposal_run_updated_at(row),
+    }
+
+
+def _proposal_run_row(repo_path: str, run: dict) -> dict:
+    row = dict(run)
+    proposal = _load_run_proposal(repo_path, row)
+    row.update(_proposal_derived_fields(proposal, row))
     return row
 
 
@@ -164,14 +191,10 @@ def _wiki_workspace_payload(repo_path: str, selected_topic_id: str | None) -> di
     }
 
 
-def _proposal_workspace_payload(
-    repo_path: str,
-    *,
-    selected_proposal_id: str | None,
-    selected_draft_topic_id: str | None,
-    selected_revision_id: str | None,
-) -> dict:
-    runs = [_proposal_run_row(repo_path, run) for run in list_proposal_runs(repo_path)]
+def _resolve_selected_proposal(
+    runs: list[dict], selected_proposal_id: str | None
+) -> tuple[str | None, dict | None]:
+    """Default the selection to a non-downgrade run, then resolve the run row."""
     if not selected_proposal_id and runs:
         preferred_run = next(
             (
@@ -181,8 +204,123 @@ def _proposal_workspace_payload(
             None,
         )
         selected_proposal_id = (preferred_run or runs[0])["id"]
-
     selected_run = next((run for run in runs if run["id"] == selected_proposal_id), None)
+    return selected_proposal_id, selected_run
+
+
+def _parse_revision_int(selected_revision_id: str | None) -> int | None:
+    """Parse a revision id to int, treating blank/non-numeric values as None."""
+    if not selected_revision_id:
+        return None
+    try:
+        return int(selected_revision_id)
+    except ValueError:
+        return None
+
+
+def _build_draft_topic_rows(
+    topics: list[dict],
+    feedback_threads: list[dict],
+    selected_draft_topic_id: str | None,
+) -> tuple[list[dict], str | None, dict | None]:
+    """Build draft-topic rows (with per-topic feedback counts) and resolve the selection."""
+    topic_feedback_counts: dict[str, int] = {}
+    for feedback_thread in feedback_threads:
+        topic_id = feedback_thread.get("proposal_topic_id")
+        if isinstance(topic_id, str) and topic_id:
+            topic_feedback_counts[topic_id] = topic_feedback_counts.get(topic_id, 0) + 1
+    draft_topic_rows = [
+        _proposal_topic_row(topic, feedback_thread_count=topic_feedback_counts.get(topic.get("id"), 0))
+        for topic in topics
+    ]
+    if not selected_draft_topic_id and draft_topic_rows:
+        selected_draft_topic_id = draft_topic_rows[0]["id"]
+    selected_draft_topic = next(
+        (topic for topic in topics if topic.get("id") == selected_draft_topic_id), None
+    )
+    return draft_topic_rows, selected_draft_topic_id, selected_draft_topic
+
+
+def _feedback_summary(
+    feedback_threads: list[dict], selected_draft_topic_id: str | None
+) -> dict:
+    """Summarize feedback threads: totals, open count, and selected-topic count."""
+    return {
+        "thread_count": len(feedback_threads),
+        "open_thread_count": sum(
+            1 for thread in feedback_threads if thread.get("resolution_state") == "open"
+        ),
+        "selected_topic_thread_count": sum(
+            1
+            for thread in feedback_threads
+            if selected_draft_topic_id and thread.get("proposal_topic_id") == selected_draft_topic_id
+        ),
+    }
+
+
+def _load_proposal_for_revision(
+    repo_path: str, selected_run: dict, selected_revision_id: str | None
+) -> dict | None:
+    """Load the proposal for the requested revision, falling back to the latest proposal."""
+    selected_revision_int = _parse_revision_int(selected_revision_id)
+    if selected_revision_int is not None:
+        try:
+            return load_proposal_revision(repo_path, selected_run["id"], selected_revision_int)
+        except TopicGraphError:
+            return load_proposal(repo_path, selected_run["id"]) if selected_run.get("has_topics") else None
+    return load_proposal(repo_path, selected_run["id"]) if selected_run.get("has_topics") else None
+
+
+def _load_proposal_workspace_state(
+    repo_path: str, selected_run: dict, selected_revision_id: str | None
+) -> dict:
+    """Load proposal/revisions/status/feedback for a run, preserving partial state on error.
+
+    Each value is overwritten only after its load succeeds; on OSError/TopicGraphError
+    only ``proposal`` is reset, leaving any already-accumulated values intact (matching the
+    original inline progressive-mutation semantics).
+    """
+    proposal = None
+    status: dict | None = selected_run
+    wiki = ""
+    revisions: list[dict] = []
+    feedback_threads: list[dict] = []
+    selected_revision = None
+    try:
+        revisions = list_proposal_revisions(repo_path, selected_run["id"])
+        proposal = _load_proposal_for_revision(repo_path, selected_run, selected_revision_id)
+        status = load_proposal_status(repo_path, selected_run["id"])
+        feedback_threads = list_proposal_feedback_threads(
+            repo_path,
+            selected_run["id"],
+            revision_id=proposal.get("revision", {}).get("id") if proposal else None,
+        )
+    except (OSError, TopicGraphError):
+        proposal = None
+    if proposal:
+        selected_revision = proposal.get("revision")
+        if selected_revision is None and revisions:
+            selected_revision = revisions[0]
+        wiki = proposal.get("wiki") or _proposal_wiki(repo_path, selected_run["id"])
+    return {
+        "proposal": proposal,
+        "status": status,
+        "wiki": wiki,
+        "revisions": revisions,
+        "feedback_threads": feedback_threads,
+        "selected_revision": selected_revision,
+    }
+
+
+def _proposal_workspace_payload(
+    repo_path: str,
+    *,
+    selected_proposal_id: str | None,
+    selected_draft_topic_id: str | None,
+    selected_revision_id: str | None,
+) -> dict:
+    runs = [_proposal_run_row(repo_path, run) for run in list_proposal_runs(repo_path)]
+    selected_proposal_id, selected_run = _resolve_selected_proposal(runs, selected_proposal_id)
     proposal = None
     status = selected_run or None
     wiki = ""
@@ -193,51 +331,19 @@ def _proposal_workspace_payload(
     selected_revision = None
 
     if selected_run and (selected_run.get("has_topics") or selected_run.get("has_wiki")):
-        try:
-            revisions = list_proposal_revisions(repo_path, selected_run["id"])
-            if selected_revision_id:
-                try:
-                    selected_revision_int = int(selected_revision_id)
-                except ValueError:
-                    selected_revision_int = None
-            else:
-                selected_revision_int = None
-            if selected_revision_int is not None:
-                try:
-                    proposal = load_proposal_revision(repo_path, selected_run["id"], selected_revision_int)
-                except TopicGraphError:
-                    proposal = load_proposal(repo_path, selected_run["id"]) if selected_run.get("has_topics") else None
-            else:
-                proposal = load_proposal(repo_path, selected_run["id"]) if selected_run.get("has_topics") else None
-            status = load_proposal_status(repo_path, selected_run["id"])
-            feedback_threads = list_proposal_feedback_threads(
-                repo_path,
-                selected_run["id"],
-                revision_id=proposal.get("revision", {}).get("id") if proposal else None,
-            )
-        except (OSError, TopicGraphError):
-            proposal = None
-            selected_revision_int = None
-        if proposal:
-            selected_revision = proposal.get("revision")
-            if selected_revision is None and revisions:
-                selected_revision = revisions[0]
-            wiki = proposal.get("wiki") or _proposal_wiki(repo_path, selected_run["id"])
+        state = _load_proposal_workspace_state(repo_path, selected_run, selected_revision_id)
+        proposal = state["proposal"]
+        status = state["status"]
+        wiki = state["wiki"]
+        revisions = state["revisions"]
+        feedback_threads = state["feedback_threads"]
+        selected_revision = state["selected_revision"]
         topics = proposal.get("topics", []) if proposal else []
         # The `conflicts_with_approved` flag is gone — the DiffPanel
         # consults `/diff`'s `valid_strategies_by_topic` for that signal.
-        topic_feedback_counts: dict[str, int] = {}
-        for feedback_thread in feedback_threads:
-            topic_id = feedback_thread.get("proposal_topic_id")
-            if isinstance(topic_id, str) and topic_id:
-                topic_feedback_counts[topic_id] = topic_feedback_counts.get(topic_id, 0) + 1
-        draft_topic_rows = [
-            _proposal_topic_row(topic, feedback_thread_count=topic_feedback_counts.get(topic.get("id"), 0))
-            for topic in topics
-        ]
-        if not selected_draft_topic_id and draft_topic_rows:
-            selected_draft_topic_id = draft_topic_rows[0]["id"]
-        selected_draft_topic = next((topic for topic in topics if topic.get("id") == selected_draft_topic_id), None)
+        draft_topic_rows, selected_draft_topic_id, selected_draft_topic = _build_draft_topic_rows(
+            topics, feedback_threads, selected_draft_topic_id
+        )
 
     from lib.prompt_templates import list_templates
 
@@ -258,15 +364,7 @@ def _proposal_workspace_payload(
         "selected_revision_id": selected_revision.get("id") if selected_revision else None,
         "selected_revision": selected_revision,
         "feedback_threads": feedback_threads,
-        "feedback_summary": {
-            "thread_count": len(feedback_threads),
-            "open_thread_count": sum(1 for thread in feedback_threads if thread.get("resolution_state") == "open"),
-            "selected_topic_thread_count": sum(
-                1
-                for thread in feedback_threads
-                if selected_draft_topic_id and thread.get("proposal_topic_id") == selected_draft_topic_id
-            ),
-        },
+        "feedback_summary": _feedback_summary(feedback_threads, selected_draft_topic_id),
     }
 
 

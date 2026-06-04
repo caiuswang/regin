@@ -136,3 +136,35 @@ def test_search_includes_tags_in_dict(tmp_db):
     results = search_patterns("")  # empty query returns everything
     assert len(results) == 1
     assert sorted(results[0]["tags"]) == ["tag-one", "tag-two"]
+
+
+def test_search_file_content_match_sets_snippet(tmp_db, tmp_path, monkeypatch):
+    """A query that matches only the file body (not title/slug/tags)
+    still returns the row, with a `snippet` key around the match."""
+    from lib.orm import SessionLocal
+    from lib.settings import settings
+    with SessionLocal() as s:
+        _seed_pattern(s, "doc-slug", "Plain Title")
+        s.commit()
+    # The pattern's file lives at <patterns_dir>/<slug>/SKILL.md.
+    monkeypatch.setattr(settings, "patterns_dir", tmp_path)
+    doc_file = tmp_path / "doc-slug" / "SKILL.md"
+    doc_file.parent.mkdir(parents=True)
+    doc_file.write_text("intro paragraph mentioning ZZUNIQUEZZ in the body")
+
+    # Query appears only in the file body, not title or slug.
+    results = search_patterns("ZZUNIQUEZZ")
+    assert len(results) == 1
+    assert results[0]["slug"] == "doc-slug"
+    assert "ZZUNIQUEZZ" in results[0]["snippet"]
+
+
+def test_search_no_snippet_key_when_matched_via_title(tmp_db):
+    """Rows that match via title/slug (no file read) carry no snippet key."""
+    from lib.orm import SessionLocal
+    with SessionLocal() as s:
+        _seed_pattern(s, "rest-controller", "REST Controller Conventions")
+        s.commit()
+    results = search_patterns("REST")
+    assert len(results) == 1
+    assert "snippet" not in results[0]

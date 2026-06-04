@@ -459,52 +459,76 @@ def _fetch_session_task_list(trace_id: str) -> dict | None:
     # updated) fall back to the TaskCreate span.
     last_span_by_status: dict[str, dict[str, str]] = {}
     for r in rows:
-        try:
-            attrs = json.loads(r.attributes) if r.attributes else {}
-        except (ValueError, TypeError):
-            attrs = {}
-        tid = attrs.get('task_id')
-        if tid is None:
-            continue
-        tid = str(tid)
-        subject = attrs.get('subject')
-        status = attrs.get('status')
-        event: dict = {
-            'span_id': r.span_id,
-            'timestamp': r.start_time,
-            'task_id': tid,
-        }
-        if isinstance(subject, str) and subject:
-            event['subject'] = subject
-        if isinstance(status, str) and status:
-            event['status'] = status
-        events.append(event)
-        entry = state.setdefault(tid, {
-            'task_id': tid,
-            'subject': '',
-            'status': 'pending',
-            # First TaskCreate's span_id — fallback for pending tasks.
-            'created_span_id': r.span_id,
-        })
-        if isinstance(subject, str) and subject and not entry['subject']:
-            entry['subject'] = subject
-        if isinstance(status, str) and status:
-            entry['status'] = status
-            last_span_by_status.setdefault(tid, {})[status] = r.span_id
+        _apply_task_row(r, events, state, last_span_by_status)
     if not events:
         return None
-    # Resolve `current_span_id` per task: the latest span that set the
-    # final status, falling back to the TaskCreate for pending tasks.
+    final = _finalize_task_state(state, last_span_by_status)
+    return {'events': events, 'final': final}
+
+
+def _str_attr(value) -> str:
+    """Coerce an attribute to a non-empty string, or '' otherwise."""
+    return value if isinstance(value, str) and value else ''
+
+
+def _apply_task_row(r, events, state, last_span_by_status) -> None:
+    """Fold one TaskCreate/TaskUpdate span into the event log + state.
+
+    Appends a per-span event (omitting subject/status when absent) and
+    updates the running per-task entry: first non-empty subject wins,
+    every set status both overwrites the entry and records the span_id
+    under that status in `last_span_by_status`.
+    """
+    try:
+        attrs = json.loads(r.attributes) if r.attributes else {}
+    except (ValueError, TypeError):
+        attrs = {}
+    tid = attrs.get('task_id')
+    if tid is None:
+        return
+    tid = str(tid)
+    subject = _str_attr(attrs.get('subject'))
+    status = _str_attr(attrs.get('status'))
+    event: dict = {
+        'span_id': r.span_id,
+        'timestamp': r.start_time,
+        'task_id': tid,
+    }
+    if subject:
+        event['subject'] = subject
+    if status:
+        event['status'] = status
+    events.append(event)
+    entry = state.setdefault(tid, {
+        'task_id': tid,
+        'subject': '',
+        'status': 'pending',
+        # First TaskCreate's span_id — fallback for pending tasks.
+        'created_span_id': r.span_id,
+    })
+    if subject and not entry['subject']:
+        entry['subject'] = subject
+    if status:
+        entry['status'] = status
+        last_span_by_status.setdefault(tid, {})[status] = r.span_id
+
+
+def _finalize_task_state(state, last_span_by_status) -> list[dict]:
+    """Resolve `current_span_id` per task and return the sorted snapshot.
+
+    `current_span_id` is the latest span that set the FINAL status,
+    falling back to the TaskCreate for pending tasks. Numeric task_ids
+    sort numerically; non-digit ids sink to the end then sort lexically.
+    """
     for tid, entry in state.items():
         per_status = last_span_by_status.get(tid, {})
         entry['current_span_id'] = (
             per_status.get(entry['status']) or entry['created_span_id']
         )
-    final = sorted(state.values(), key=lambda t: (
+    return sorted(state.values(), key=lambda t: (
         int(t['task_id']) if t['task_id'].isdigit() else 1_000_000,
         t['task_id'],
     ))
-    return {'events': events, 'final': final}
 
 
 def _pct(value, window) -> float | None:

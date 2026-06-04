@@ -588,15 +588,168 @@ def api_triggers_rules():
     })
 
 
-@rules_bp.route('/api/triggers/rules/<rule_id>')
-def api_triggers_rule_detail(rule_id: str):
-    """Drawer detail for one rule: full guide + files + sessions + events."""
-    from collections import defaultdict
-    from datetime import datetime, timezone
-    from sqlalchemy import func as sa_func
+def _detail_root_stripper(session):
+    """Build the repo-prefix `_strip_root` for the drawer detail.
+
+    Reads the registered repo roots off `session` (mirrors api_triggers)
+    and returns a closure that strips the longest matching prefix off a
+    file_path. Hoisted out of api_triggers_rule_detail so the loop/guard
+    branches land in their own complexity block.
+    """
     from sqlmodel import select as sm_select
     from lib.orm.models import Repo as _Repo
 
+    registered = [
+        r.path for r in session.exec(sm_select(_Repo)).all() if r.path
+    ]
+    roots = sorted(
+        [p.rstrip('/') + '/' for p in registered],
+        key=len, reverse=True,
+    )
+
+    def _strip_root(fp: str) -> str:
+        if not fp:
+            return fp
+        for root in roots:
+            if fp.startswith(root):
+                return fp[len(root):]
+        return fp
+
+    return _strip_root
+
+
+def _resolve_detail_guide(session, rule_id: str, engine_rule) -> str:
+    """Resolve the drawer guide text for one rule.
+
+    Most-recent non-null DB guide is the primary source; engine metadata
+    is the fallback when no row ever carried a guide.
+    """
+    from sqlmodel import select as sm_select
+
+    db_guide = session.exec(
+        sm_select(RuleTrigger.guide)
+        .where(RuleTrigger.rule_id == rule_id)
+        .where(RuleTrigger.guide.isnot(None))
+        .order_by(RuleTrigger.checked_at.desc())
+        .limit(1)
+    ).first()
+    if db_guide is None and engine_rule is not None:
+        return engine_rule.metadata.get('guide') or engine_rule.summary or ''
+    return db_guide or ''
+
+
+def _detail_file_rows(session, rule_id: str, window_start: str, strip_root) -> list[dict]:
+    """Per-file aggregate within window. Suppressed events drop out of
+    fires AND checks here too — same semantics as the list endpoint, so
+    the drawer mirrors the card's headline numbers."""
+    from sqlalchemy import func as sa_func
+    from sqlmodel import select as sm_select
+
+    file_rows = session.exec(
+        sm_select(
+            RuleTrigger.file_path,
+            sa_func.count(RuleTrigger.id).label('checks'),
+            sa_func.coalesce(sa_func.sum(RuleTrigger.triggered), 0).label('fires'),
+            sa_func.max(RuleTrigger.checked_at).label('last_seen'),
+        )
+        .where(RuleTrigger.rule_id == rule_id)
+        .where(RuleTrigger.checked_at >= window_start)
+        .where(RuleTrigger.suppressed == 0)
+        .group_by(RuleTrigger.file_path)
+        .order_by(sa_func.sum(RuleTrigger.triggered).desc())
+    ).all()
+    return [
+        {
+            'file_path': strip_root(fr.file_path),
+            'checks': int(fr.checks),
+            'fires': int(fr.fires),
+            'last_seen': fr.last_seen,
+        }
+        for fr in file_rows
+    ]
+
+
+def _detail_session_rows(session, rule_id: str, window_start: str) -> list[dict]:
+    """Per-session aggregate within window. plan_filename was dropped
+    from the response because Claude's auto-generated plan names carry no
+    signal — the drawer surfaces last_seen instead so the user can spot
+    recent vs. stale sessions at a glance."""
+    from sqlalchemy import func as sa_func
+    from sqlmodel import select as sm_select
+
+    session_rows = session.exec(
+        sm_select(
+            sa_func.coalesce(RuleTrigger.session_id, '').label('session_id'),
+            sa_func.count(RuleTrigger.id).label('checks'),
+            sa_func.coalesce(sa_func.sum(RuleTrigger.triggered), 0).label('fires'),
+            sa_func.max(RuleTrigger.checked_at).label('last_seen'),
+        )
+        .where(RuleTrigger.rule_id == rule_id)
+        .where(RuleTrigger.checked_at >= window_start)
+        .where(RuleTrigger.suppressed == 0)
+        .group_by(sa_func.coalesce(RuleTrigger.session_id, ''))
+        .order_by(sa_func.sum(RuleTrigger.triggered).desc())
+    ).all()
+    return [
+        {
+            'session_id': sr.session_id or None,
+            'checks': int(sr.checks),
+            'fires': int(sr.fires),
+            'last_seen': sr.last_seen,
+        }
+        for sr in session_rows
+    ]
+
+
+def _detail_event_rows(session, rule_id: str, window_start: str, strip_root) -> list[dict]:
+    """Recent matched events: last 20 rows where the rule actually fired.
+
+    The /trace/triggers/raw view (with ?rule=<id>) is the escape hatch
+    for the full check log including misses — this drawer focuses on the
+    rows that matter, which includes suppressed ones so users can un-flag
+    them here. Suppression metadata is pulled in one query.
+    """
+    from sqlmodel import select as sm_select
+    from lib.orm.models import RuleTriggerSuppression
+
+    event_rows = session.exec(
+        sm_select(RuleTrigger)
+        .where(RuleTrigger.rule_id == rule_id)
+        .where(RuleTrigger.checked_at >= window_start)
+        .where(RuleTrigger.triggered == 1)
+        .order_by(RuleTrigger.checked_at.desc(), RuleTrigger.id.desc())
+        .limit(20)
+    ).all()
+
+    event_ids = [r.id for r in event_rows]
+    suppr_meta: dict[int, dict] = {}
+    if event_ids:
+        for s in session.exec(
+            sm_select(RuleTriggerSuppression)
+            .where(RuleTriggerSuppression.rule_trigger_id.in_(event_ids))
+        ).all():
+            suppr_meta[s.rule_trigger_id] = _suppression_to_dict(s)
+
+    return [
+        {
+            'id': r.id,
+            'checked_at': r.checked_at,
+            'file_path': strip_root(r.file_path),
+            'session_id': r.session_id,
+            'span_id': r.span_id,
+            'match_count': r.match_count,
+            'triggered': r.triggered,
+            'suppressed': bool(r.suppressed),
+            'suppression': suppr_meta.get(r.id),  # null when not suppressed
+        }
+        for r in event_rows
+    ]
+
+
+@rules_bp.route('/api/triggers/rules/<rule_id>')
+def api_triggers_rule_detail(rule_id: str):
+    """Drawer detail for one rule: full guide + files + sessions + events."""
+    from datetime import datetime, timezone
     from lib.rules import buckets as _buckets
     from lib.settings import settings as _settings
 
@@ -610,133 +763,14 @@ def api_triggers_rule_detail(rule_id: str):
     now = datetime.now(timezone.utc)
     window_start = _buckets.window_start_iso(range_str, now=now)
 
-    engine_rules = _all_configured_rules()
-    engine_rule = engine_rules.get(rule_id)
+    engine_rule = _all_configured_rules().get(rule_id)
 
     with _pkg.SessionLocal() as session:
-        # Repo-prefix roots for file-path stripping (mirrors api_triggers).
-        registered = [
-            r.path for r in session.exec(sm_select(_Repo)).all() if r.path
-        ]
-        roots = sorted(
-            [p.rstrip('/') + '/' for p in registered],
-            key=len, reverse=True,
-        )
-
-        def _strip_root(fp: str) -> str:
-            if not fp:
-                return fp
-            for root in roots:
-                if fp.startswith(root):
-                    return fp[len(root):]
-            return fp
-
-        # Most-recent non-null DB guide as the primary source; engine
-        # metadata is the fallback when no row ever carried a guide.
-        db_guide = session.exec(
-            sm_select(RuleTrigger.guide)
-            .where(RuleTrigger.rule_id == rule_id)
-            .where(RuleTrigger.guide.isnot(None))
-            .order_by(RuleTrigger.checked_at.desc())
-            .limit(1)
-        ).first()
-        if db_guide is None and engine_rule is not None:
-            guide = engine_rule.metadata.get('guide') or engine_rule.summary or ''
-        else:
-            guide = db_guide or ''
-
-        # Per-file aggregate within window. Suppressed events drop out
-        # of fires AND checks here too — same semantics as the list
-        # endpoint, so the drawer mirrors the card's headline numbers.
-        file_rows = session.exec(
-            sm_select(
-                RuleTrigger.file_path,
-                sa_func.count(RuleTrigger.id).label('checks'),
-                sa_func.coalesce(sa_func.sum(RuleTrigger.triggered), 0).label('fires'),
-                sa_func.max(RuleTrigger.checked_at).label('last_seen'),
-            )
-            .where(RuleTrigger.rule_id == rule_id)
-            .where(RuleTrigger.checked_at >= window_start)
-            .where(RuleTrigger.suppressed == 0)
-            .group_by(RuleTrigger.file_path)
-            .order_by(sa_func.sum(RuleTrigger.triggered).desc())
-        ).all()
-        files = [
-            {
-                'file_path': _strip_root(fr.file_path),
-                'checks': int(fr.checks),
-                'fires': int(fr.fires),
-                'last_seen': fr.last_seen,
-            }
-            for fr in file_rows
-        ]
-
-        # Per-session aggregate within window. plan_filename was dropped
-        # from the response because Claude's auto-generated plan names
-        # carry no signal — the drawer surfaces last_seen instead so the
-        # user can spot recent vs. stale sessions at a glance.
-        session_rows = session.exec(
-            sm_select(
-                sa_func.coalesce(RuleTrigger.session_id, '').label('session_id'),
-                sa_func.count(RuleTrigger.id).label('checks'),
-                sa_func.coalesce(sa_func.sum(RuleTrigger.triggered), 0).label('fires'),
-                sa_func.max(RuleTrigger.checked_at).label('last_seen'),
-            )
-            .where(RuleTrigger.rule_id == rule_id)
-            .where(RuleTrigger.checked_at >= window_start)
-            .where(RuleTrigger.suppressed == 0)
-            .group_by(sa_func.coalesce(RuleTrigger.session_id, ''))
-            .order_by(sa_func.sum(RuleTrigger.triggered).desc())
-        ).all()
-        sessions = [
-            {
-                'session_id': sr.session_id or None,
-                'checks': int(sr.checks),
-                'fires': int(sr.fires),
-                'last_seen': sr.last_seen,
-            }
-            for sr in session_rows
-        ]
-
-        # Recent matched events: last 20 rows where the rule actually
-        # fired. The /trace/triggers/raw view (with ?rule=<id>) is the
-        # escape hatch for the full check log including misses — this
-        # drawer focuses on the rows that matter, which includes
-        # suppressed ones so users can un-flag them here.
-        event_rows = session.exec(
-            sm_select(RuleTrigger)
-            .where(RuleTrigger.rule_id == rule_id)
-            .where(RuleTrigger.checked_at >= window_start)
-            .where(RuleTrigger.triggered == 1)
-            .order_by(RuleTrigger.checked_at.desc(), RuleTrigger.id.desc())
-            .limit(20)
-        ).all()
-
-        # Pull suppression metadata for any of those events in one query.
-        from lib.orm.models import RuleTriggerSuppression
-        event_ids = [r.id for r in event_rows]
-        suppr_meta: dict[int, dict] = {}
-        if event_ids:
-            for s in session.exec(
-                sm_select(RuleTriggerSuppression)
-                .where(RuleTriggerSuppression.rule_trigger_id.in_(event_ids))
-            ).all():
-                suppr_meta[s.rule_trigger_id] = _suppression_to_dict(s)
-
-        events = [
-            {
-                'id': r.id,
-                'checked_at': r.checked_at,
-                'file_path': _strip_root(r.file_path),
-                'session_id': r.session_id,
-                'span_id': r.span_id,
-                'match_count': r.match_count,
-                'triggered': r.triggered,
-                'suppressed': bool(r.suppressed),
-                'suppression': suppr_meta.get(r.id),  # null when not suppressed
-            }
-            for r in event_rows
-        ]
+        strip_root = _detail_root_stripper(session)
+        guide = _resolve_detail_guide(session, rule_id, engine_rule)
+        files = _detail_file_rows(session, rule_id, window_start, strip_root)
+        sessions = _detail_session_rows(session, rule_id, window_start)
+        events = _detail_event_rows(session, rule_id, window_start, strip_root)
 
     return jsonify({
         'rule_id': rule_id,

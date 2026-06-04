@@ -162,6 +162,41 @@ def test_api_rule_detail_returns_rule(flask_client, fake_rules):
     assert body["source_snippet"] is None
 
 
+def test_api_rule_detail_extracts_source_snippet(
+    flask_client, fake_rules, tmp_path, monkeypatch
+):
+    """When the .grit file exists, the `pattern <id>(...)` block is sliced out.
+
+    Characterizes the brace-matching extraction: the snippet starts at the
+    blank-line boundary before `pattern` and ends just past the balanced
+    closing brace, so the preamble and trailing content are excluded.
+    """
+    base = tmp_path / "base"
+    grit_file = base / ".grit/patterns/java/alpha.grit"
+    grit_file.parent.mkdir(parents=True)
+    grit_file.write_text(
+        "language java\n"
+        "\n"
+        "pattern alpha_rule() {\n"
+        "  `class $name { $body }` where { $name <: contains `Entity` }\n"
+        "}\n"
+        "\n"
+        "pattern unrelated() { `x` }\n"
+    )
+    # api_rule_detail derives source_path from dirname(patterns_dir).
+    monkeypatch.setattr(settings, "patterns_dir", base / "patterns")
+
+    resp = flask_client.get("/api/rules/alpha_rule")
+    assert resp.status_code == 200
+    snippet = resp.get_json()["source_snippet"]
+    assert snippet is not None
+    assert snippet.startswith("pattern alpha_rule() {")
+    assert snippet.rstrip().endswith("}")
+    # The balanced-brace scan stops at the first pattern's closing brace.
+    assert "pattern unrelated()" not in snippet
+    assert "language java" not in snippet
+
+
 def test_api_rule_detail_returns_bundle_rule(flask_client, monkeypatch):
     from web.blueprints import rules as rules_bp
 

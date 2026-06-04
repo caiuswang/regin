@@ -274,6 +274,162 @@ _AFTER_ID_ANCHOR_NAMES = (
 )
 
 
+def _page_anchors(conn, trace_id, *, limit, before_id, after_id):
+    """Step 1: page the turn anchors. Returns rows of `(id, start_time)`.
+
+    For after_id, no LIMIT — we want every anchor newer than the cursor
+    (capped server-side by a sane upper bound to defend against runaway
+    growth).
+
+    `OR status_code = 'PENDING'` re-includes the live promptlive-
+    placeholder on every additive reload even though its id is now
+    <= the cursor — without it the in-flight prompt would never
+    reach the live view until its real anchor lands on Stop. Scoped
+    by `name IN (_AFTER_ID_ANCHOR_NAMES)` (prompt + boundaries only),
+    so no pending tool/permission span leaks in. The cursor still
+    advances: the real anchor lands with a higher id and is picked
+    up by `id > ?`. The frontend prunes the stale placeholder when
+    the real anchor arrives, so there's no duplicate.
+    """
+    placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
+    if after_id is not None:
+        after_placeholders = ','.join('?' for _ in _AFTER_ID_ANCHOR_NAMES)
+        return conn.execute(
+            f"""
+            SELECT id, start_time FROM session_spans
+            WHERE trace_id = ?
+              AND name IN ({after_placeholders})
+              AND (id > ? OR status_code = 'PENDING')
+            ORDER BY start_time ASC, id ASC
+            LIMIT 500
+            """,
+            (trace_id, *_AFTER_ID_ANCHOR_NAMES, after_id),
+        ).fetchall()
+    if before_id is not None:
+        return conn.execute(
+            f"""
+            SELECT id, start_time FROM session_spans
+            WHERE trace_id = ?
+              AND name IN ({placeholders})
+              AND id < ?
+            ORDER BY start_time DESC, id DESC
+            LIMIT ?
+            """,
+            (trace_id, *_TURN_ANCHOR_NAMES, before_id, limit),
+        ).fetchall()
+    return conn.execute(
+        f"""
+        SELECT id, start_time FROM session_spans
+        WHERE trace_id = ?
+          AND name IN ({placeholders})
+        ORDER BY start_time DESC, id DESC
+        LIMIT ?
+        """,
+        (trace_id, *_TURN_ANCHOR_NAMES, limit),
+    ).fetchall()
+
+
+def _window_end_for(conn, trace_id, before_id):
+    """Step 2: upper bound for a before_id page.
+
+    Cap the upper bound at the cursor's start_time so the page doesn't
+    bleed in roots from already-loaded later turns (the cursor itself and
+    beyond are owned by the caller's existing tree). For initial and
+    after_id pages, no upper bound — we want everything from the window
+    start onward.
+    """
+    if before_id is None:
+        return None
+    cursor_row = conn.execute(
+        "SELECT start_time FROM session_spans "
+        "WHERE trace_id = ? AND id = ?",
+        (trace_id, before_id),
+    ).fetchone()
+    return cursor_row['start_time'] if cursor_row else None
+
+
+def _compute_has_more_older(conn, trace_id, after_id, window_start):
+    """Step 3: do we have any older anchors? Drives the
+    `↑ More history above` indicator on the frontend.
+
+    Reload (after_id) doesn't care about older history — that's already
+    rendered. Caller passes in its existing has_more_older.
+    """
+    if after_id is not None:
+        return False
+    placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
+    older = conn.execute(
+        f"""
+        SELECT 1 FROM session_spans
+        WHERE trace_id = ?
+          AND name IN ({placeholders})
+          AND start_time < ?
+        LIMIT 1
+        """,
+        (trace_id, *_TURN_ANCHOR_NAMES, window_start),
+    ).fetchone()
+    return older is not None
+
+
+def _fetch_window_rows(conn, trace_id, window_start, window_end):
+    """Step 4: fetch every span in the window, with attributes decoded."""
+    if window_end is not None:
+        raw_rows = conn.execute(
+            """
+            SELECT id, trace_id, span_id, parent_id, name, kind,
+                   start_time, end_time, duration_ms, attributes,
+                   status_code, status_message, turn_uuid,
+                   output_tokens, input_tokens, image_tokens, cost_usd
+            FROM session_spans
+            WHERE trace_id = ?
+              AND start_time >= ?
+              AND start_time < ?
+            ORDER BY start_time ASC, id ASC
+            """,
+            (trace_id, window_start, window_end),
+        ).fetchall()
+    else:
+        raw_rows = conn.execute(
+            """
+            SELECT id, trace_id, span_id, parent_id, name, kind,
+                   start_time, end_time, duration_ms, attributes,
+                   status_code, status_message, turn_uuid,
+                   output_tokens, input_tokens, image_tokens, cost_usd
+            FROM session_spans
+            WHERE trace_id = ? AND start_time >= ?
+            ORDER BY start_time ASC, id ASC
+            """,
+            (trace_id, window_start),
+        ).fetchall()
+    return [
+        {**dict(r), 'attributes': json.loads(r['attributes'])}
+        for r in raw_rows
+    ]
+
+
+def _prompt_ceiling(conn, trace_id):
+    """The GLOBAL max prompt id, threaded into merge_spans so a stray prompt
+    placeholder still drops when it happens to be the newest anchor *within
+    an older window* (window-local max alone would keep it — see
+    merge._drop_stale_blockers)."""
+    ceiling_row = conn.execute(
+        "SELECT MAX(id) FROM session_spans "
+        "WHERE trace_id = ? AND name = 'prompt'",
+        (trace_id,),
+    ).fetchone()
+    return ceiling_row[0] if ceiling_row else None
+
+
+def _compute_retired_ids(raw, grafted):
+    """Placeholder/superseded rows the merge dropped from this window. The
+    append-only store keeps them on disk, so the client's append-only
+    `session.spans` must prune exactly these or the conversation cards
+    show a duplicate (placeholder + resolved). Computed as raw−merged so
+    it's robust to id ordering (a retired row can sort below survivors)."""
+    grafted_ids = {s['span_id'] for s in grafted}
+    return [s['span_id'] for s in raw if s['span_id'] not in grafted_ids]
+
+
 def fetch_session_paginated(
     trace_id: str,
     *,
@@ -308,157 +464,39 @@ def fetch_session_paginated(
         _build_span_tree, _widen_envelopes,
     )
 
-    placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
     conn = get_connection()
     try:
-        # Step 1: page the turn anchors. For after_id, no LIMIT — we
-        # want every anchor newer than the cursor (capped server-side
-        # by a sane upper bound to defend against runaway growth).
-        #
-        # `OR status_code = 'PENDING'` re-includes the live promptlive-
-        # placeholder on every additive reload even though its id is now
-        # <= the cursor — without it the in-flight prompt would never
-        # reach the live view until its real anchor lands on Stop. Scoped
-        # by `name IN (_AFTER_ID_ANCHOR_NAMES)` (prompt + boundaries only),
-        # so no pending tool/permission span leaks in. The cursor still
-        # advances: the real anchor lands with a higher id and is picked
-        # up by `id > ?`. The frontend prunes the stale placeholder when
-        # the real anchor arrives, so there's no duplicate.
-        if after_id is not None:
-            after_placeholders = ','.join('?' for _ in _AFTER_ID_ANCHOR_NAMES)
-            anchors = conn.execute(
-                f"""
-                SELECT id, start_time FROM session_spans
-                WHERE trace_id = ?
-                  AND name IN ({after_placeholders})
-                  AND (id > ? OR status_code = 'PENDING')
-                ORDER BY start_time ASC, id ASC
-                LIMIT 500
-                """,
-                (trace_id, *_AFTER_ID_ANCHOR_NAMES, after_id),
-            ).fetchall()
-        elif before_id is not None:
-            anchors = conn.execute(
-                f"""
-                SELECT id, start_time FROM session_spans
-                WHERE trace_id = ?
-                  AND name IN ({placeholders})
-                  AND id < ?
-                ORDER BY start_time DESC, id DESC
-                LIMIT ?
-                """,
-                (trace_id, *_TURN_ANCHOR_NAMES, before_id, limit),
-            ).fetchall()
-        else:
-            anchors = conn.execute(
-                f"""
-                SELECT id, start_time FROM session_spans
-                WHERE trace_id = ?
-                  AND name IN ({placeholders})
-                ORDER BY start_time DESC, id DESC
-                LIMIT ?
-                """,
-                (trace_id, *_TURN_ANCHOR_NAMES, limit),
-            ).fetchall()
-
+        # Step 1: page the turn anchors.
+        anchors = _page_anchors(
+            conn, trace_id,
+            limit=limit, before_id=before_id, after_id=after_id,
+        )
         if not anchors:
             return [], [], False, []
 
         # Step 2: window = [earliest_anchor_in_page, upper_bound).
-        # For before_id, cap the upper bound at the cursor's
-        # start_time so the page doesn't bleed in roots from
-        # already-loaded later turns (the cursor itself and beyond
-        # are owned by the caller's existing tree). For initial and
-        # after_id pages, no upper bound — we want everything from
-        # the window start onward.
         window_start = min(a['start_time'] for a in anchors)
-        window_end = None
-        if before_id is not None:
-            cursor_row = conn.execute(
-                "SELECT start_time FROM session_spans "
-                "WHERE trace_id = ? AND id = ?",
-                (trace_id, before_id),
-            ).fetchone()
-            if cursor_row:
-                window_end = cursor_row['start_time']
+        window_end = _window_end_for(conn, trace_id, before_id)
 
-        # Step 3: do we have any older anchors? Drives the
-        # `↑ More history above` indicator on the frontend.
-        if after_id is not None:
-            # Reload doesn't care about older history — that's already
-            # rendered. Caller passes in its existing has_more_older.
-            has_more_older = False
-        else:
-            older = conn.execute(
-                f"""
-                SELECT 1 FROM session_spans
-                WHERE trace_id = ?
-                  AND name IN ({placeholders})
-                  AND start_time < ?
-                LIMIT 1
-                """,
-                (trace_id, *_TURN_ANCHOR_NAMES, window_start),
-            ).fetchone()
-            has_more_older = older is not None
+        # Step 3: do we have any older anchors?
+        has_more_older = _compute_has_more_older(
+            conn, trace_id, after_id, window_start,
+        )
 
         # Step 4: fetch every span in the window.
-        if window_end is not None:
-            raw_rows = conn.execute(
-                """
-                SELECT id, trace_id, span_id, parent_id, name, kind,
-                       start_time, end_time, duration_ms, attributes,
-                       status_code, status_message, turn_uuid,
-                       output_tokens, input_tokens, image_tokens, cost_usd
-                FROM session_spans
-                WHERE trace_id = ?
-                  AND start_time >= ?
-                  AND start_time < ?
-                ORDER BY start_time ASC, id ASC
-                """,
-                (trace_id, window_start, window_end),
-            ).fetchall()
-        else:
-            raw_rows = conn.execute(
-                """
-                SELECT id, trace_id, span_id, parent_id, name, kind,
-                       start_time, end_time, duration_ms, attributes,
-                       status_code, status_message, turn_uuid,
-                       output_tokens, input_tokens, image_tokens, cost_usd
-                FROM session_spans
-                WHERE trace_id = ? AND start_time >= ?
-                ORDER BY start_time ASC, id ASC
-                """,
-                (trace_id, window_start),
-            ).fetchall()
-        raw = [
-            {**dict(r), 'attributes': json.loads(r['attributes'])}
-            for r in raw_rows
-        ]
+        raw = _fetch_window_rows(conn, trace_id, window_start, window_end)
 
         # Step 5: standard projection on the windowed subset. merge_spans
         # dedups coexisting placeholder/pending rows (append-only store) then
-        # runs the deterministic reparent ladder. Pass the GLOBAL max prompt id
-        # so a stray prompt placeholder still drops when it happens to be the
-        # newest anchor *within this older window* (window-local max alone
-        # would keep it — see merge._drop_stale_blockers).
-        ceiling_row = conn.execute(
-            "SELECT MAX(id) FROM session_spans "
-            "WHERE trace_id = ? AND name = 'prompt'",
-            (trace_id,),
-        ).fetchone()
-        prompt_ceiling = ceiling_row[0] if ceiling_row else None
-        grafted = merge_spans(raw, prompt_id_ceiling=prompt_ceiling)
+        # runs the deterministic reparent ladder.
+        grafted = merge_spans(
+            raw, prompt_id_ceiling=_prompt_ceiling(conn, trace_id),
+        )
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
         tree = _build_span_tree(widened)
-        # Placeholder/superseded rows the merge dropped from this window. The
-        # append-only store keeps them on disk, so the client's append-only
-        # `session.spans` must prune exactly these or the conversation cards
-        # show a duplicate (placeholder + resolved). Computed as raw−merged so
-        # it's robust to id ordering (a retired row can sort below survivors).
-        grafted_ids = {s['span_id'] for s in grafted}
-        retired_ids = [s['span_id'] for s in raw if s['span_id'] not in grafted_ids]
+        retired_ids = _compute_retired_ids(raw, grafted)
         return widened, tree, has_more_older, retired_ids
     finally:
         conn.close()
@@ -833,6 +871,111 @@ _TURN_SPAN_EXCLUDE = frozenset({
 })
 
 
+def _fetch_turn_usage_rows(conn, trace_id: str) -> tuple[list[dict], list, set]:
+    """Read the three raw inputs `fetch_turn_usage` needs from the DB.
+
+    Returns `(turns, span_rows, server_side_uuids)`. When there are no
+    turns, `span_rows`/`server_side_uuids` are empty (the span queries
+    are skipped, matching the original early-return behavior).
+    """
+    rows = conn.execute("""
+        SELECT turn_uuid, turn_index, timestamp, model,
+               input_tokens, output_tokens,
+               cache_read_tokens, cache_creation_tokens,
+               context_used_tokens, request_id, effort_level
+        FROM turn_usage
+        WHERE trace_id = ?
+        ORDER BY timestamp ASC, turn_index ASC
+    """, (trace_id,)).fetchall()
+    turns = [dict(r) for r in rows]
+    if not turns:
+        return turns, [], set()
+
+    # Exclude live PENDING placeholders so a pending tool span and its
+    # resolved twin don't both land in a turn's span_refs/tool_summary
+    # (the append-only store keeps both until the read-time merge).
+    span_rows = conn.execute("""
+        SELECT span_id, name, start_time, attributes
+        FROM session_spans
+        WHERE trace_id = ?
+          AND status_code != 'PENDING'
+        ORDER BY start_time ASC
+    """, (trace_id,)).fetchall()
+    # Set of turn_uuids whose API call rolled in a server-side
+    # sub-call (advisor today). The parent turn's `context_used`
+    # bundles the sub-call's tokens, so the UI labels those rows
+    # so the user knows that ctx_pct doesn't reflect main context.
+    server_side_uuids = {
+        r[0] for r in conn.execute(
+            """SELECT DISTINCT
+                      COALESCE(turn_uuid,
+                               json_extract(attributes, '$.turn_uuid'))
+                 FROM session_spans
+                WHERE trace_id = ?
+                  AND json_extract(attributes, '$.server_side') = 1
+            """,
+            (trace_id,),
+        ).fetchall()
+        if r[0] is not None
+    }
+    return turns, span_rows, server_side_uuids
+
+
+def _owning_turn_index(dt: datetime, turn_bounds: list) -> Optional[int]:
+    """Index of the first turn whose bound `>= dt` — the turn that owns
+    a span starting at `dt`. `None` when `dt` is after the last turn's
+    timestamp (an in-flight span the next turn_usage fire will adopt).
+    """
+    for i, bound in enumerate(turn_bounds):
+        if bound is not None and dt <= bound:
+            return i
+    return None
+
+
+def _assign_spans_to_turns(span_rows: list, turn_bounds: list) -> list[list[dict]]:
+    """Bucket spans into per-turn lists. The i-th bucket receives spans
+    whose start_time is in `(turn_bounds[i-1], turn_bounds[i]]`.
+    Structural names and unparseable timestamps are skipped.
+    """
+    buckets: list[list[dict]] = [[] for _ in turn_bounds]
+    for sr in span_rows:
+        name = sr['name']
+        if name in _TURN_SPAN_EXCLUDE:
+            continue
+        dt = _to_utc(sr['start_time'])
+        if dt is None:
+            continue
+        idx = _owning_turn_index(dt, turn_bounds)
+        if idx is None:
+            continue
+        try:
+            attrs = json.loads(sr['attributes']) if sr['attributes'] else {}
+        except (TypeError, ValueError):
+            attrs = {}
+        tool_name = attrs.get('tool_name') if isinstance(attrs.get('tool_name'), str) else None
+        buckets[idx].append({
+            'span_id': sr['span_id'],
+            'name': name,
+            'start_time': sr['start_time'],
+            'tool_name': tool_name,
+        })
+    return buckets
+
+
+def _tool_summary(bucket: list[dict]) -> list[dict]:
+    """Deduped `[{name, count}]` for a turn's spans, ranked by count
+    desc then name. Falls back to span `name` when `tool_name` is None.
+    """
+    counts: dict[str, int] = {}
+    for s in bucket:
+        key = s['tool_name'] or s['name']
+        counts[key] = counts.get(key, 0) + 1
+    return sorted(
+        ({'name': k, 'count': v} for k, v in counts.items()),
+        key=lambda e: (-e['count'], e['name']),
+    )
+
+
 def fetch_turn_usage(trace_id: str) -> list[dict]:
     """Return per-turn usage rows for a trace, oldest timestamp first.
 
@@ -857,99 +1000,20 @@ def fetch_turn_usage(trace_id: str) -> list[dict]:
     from lib.orm.engine import get_connection
     conn = get_connection()
     try:
-        rows = conn.execute("""
-            SELECT turn_uuid, turn_index, timestamp, model,
-                   input_tokens, output_tokens,
-                   cache_read_tokens, cache_creation_tokens,
-                   context_used_tokens, request_id, effort_level
-            FROM turn_usage
-            WHERE trace_id = ?
-            ORDER BY timestamp ASC, turn_index ASC
-        """, (trace_id,)).fetchall()
-        turns = [dict(r) for r in rows]
-
-        if not turns:
-            return turns
-
-        # Exclude live PENDING placeholders so a pending tool span and its
-        # resolved twin don't both land in a turn's span_refs/tool_summary
-        # (the append-only store keeps both until the read-time merge).
-        span_rows = conn.execute("""
-            SELECT span_id, name, start_time, attributes
-            FROM session_spans
-            WHERE trace_id = ?
-              AND status_code != 'PENDING'
-            ORDER BY start_time ASC
-        """, (trace_id,)).fetchall()
-        # Set of turn_uuids whose API call rolled in a server-side
-        # sub-call (advisor today). The parent turn's `context_used`
-        # bundles the sub-call's tokens, so the UI labels those rows
-        # so the user knows that ctx_pct doesn't reflect main context.
-        server_side_uuids = {
-            r[0] for r in conn.execute(
-                """SELECT DISTINCT
-                          COALESCE(turn_uuid,
-                                   json_extract(attributes, '$.turn_uuid'))
-                     FROM session_spans
-                    WHERE trace_id = ?
-                      AND json_extract(attributes, '$.server_side') = 1
-                """,
-                (trace_id,),
-            ).fetchall()
-            if r[0] is not None
-        }
+        turns, span_rows, server_side_uuids = _fetch_turn_usage_rows(conn, trace_id)
     finally:
         conn.close()
 
+    if not turns:
+        return turns
+
     turn_bounds = [_to_utc(t.get('timestamp')) for t in turns]
-
-    import json as _json
-
-    # Build parallel buckets, one per turn. The i-th bucket receives
-    # spans whose start_time is in (turn_bounds[i-1], turn_bounds[i]].
-    buckets: list[list[dict]] = [[] for _ in turns]
-    for sr in span_rows:
-        name = sr['name']
-        if name in _TURN_SPAN_EXCLUDE:
-            continue
-        dt = _to_utc(sr['start_time'])
-        if dt is None:
-            continue
-        # Find the first turn whose bound >= dt; that turn owns this span.
-        idx = None
-        for i, bound in enumerate(turn_bounds):
-            if bound is not None and dt <= bound:
-                idx = i
-                break
-        if idx is None:
-            # Span after the last turn's timestamp — drop it. These
-            # would be in-flight spans for the current turn that hasn't
-            # finalised yet; the next turn_usage fire will adopt them.
-            continue
-        try:
-            attrs = _json.loads(sr['attributes']) if sr['attributes'] else {}
-        except (TypeError, ValueError):
-            attrs = {}
-        tool_name = attrs.get('tool_name') if isinstance(attrs.get('tool_name'), str) else None
-        buckets[idx].append({
-            'span_id': sr['span_id'],
-            'name': name,
-            'start_time': sr['start_time'],
-            'tool_name': tool_name,
-        })
+    buckets = _assign_spans_to_turns(span_rows, turn_bounds)
 
     for turn, bucket in zip(turns, buckets):
-        counts: dict[str, int] = {}
-        for s in bucket:
-            key = s['tool_name'] or s['name']
-            counts[key] = counts.get(key, 0) + 1
-        summary = sorted(
-            ({'name': k, 'count': v} for k, v in counts.items()),
-            key=lambda e: (-e['count'], e['name']),
-        )
         turn['span_refs'] = bucket
         turn['span_count'] = len(bucket)
-        turn['tool_summary'] = summary
+        turn['tool_summary'] = _tool_summary(bucket)
         turn['is_server_side'] = turn.get('turn_uuid') in server_side_uuids
 
     return turns

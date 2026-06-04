@@ -309,6 +309,74 @@ def _merge_grit_rules(root: str, slug: str) -> tuple[list[str], list[str], list[
         return [], [], []
 
 
+def _collapse_wrapper_dir(root: str) -> str:
+    """If `root` contains exactly one (non-hidden) subdirectory and that
+    subdir holds the SKILL.md, return the inner dir; otherwise return `root`
+    unchanged."""
+    entries = [e for e in os.listdir(root) if not e.startswith('.')]
+    if len(entries) == 1 and os.path.isdir(os.path.join(root, entries[0])):
+        inner = os.path.join(root, entries[0])
+        if os.path.isfile(os.path.join(inner, 'SKILL.md')):
+            return inner
+    return root
+
+
+def _load_manifest(root: str) -> dict | None:
+    """Load the optional manifest.json from `root`, or None if absent/unreadable."""
+    manifest_path = os.path.join(root, 'manifest.json')
+    if not os.path.isfile(manifest_path):
+        return None
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _load_content_md(root: str) -> str | None:
+    """Load the optional content.md from `root`, or None if absent."""
+    content_md_path = os.path.join(root, 'content.md')
+    if not os.path.isfile(content_md_path):
+        return None
+    with open(content_md_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
+def _resolve_title(manifest: dict | None, fm: dict, derived_slug: str) -> str:
+    """Prefer the bundle's explicit title (producer set it on promote);
+    otherwise use the skill's own name."""
+    manifest_title = (manifest or {}).get('title')
+    if manifest_title:
+        return str(manifest_title).strip()
+    return _derive_title(fm, derived_slug)
+
+
+def _prepare_pattern_dir(slug: str, force: bool) -> str:
+    """Resolve the on-disk pattern dir for `slug`, clearing any existing one
+    when `force` is set (else raising), then ensure the dir exists."""
+    pattern_dir = os.path.join(str(settings.patterns_dir), slug)
+    if os.path.exists(pattern_dir):
+        if not force:
+            raise ImportConflictError(
+                f'patterns/{slug}/ already exists — pick a different name or '
+                'remove the existing pattern first',
+            )
+        # Force: clean up old pattern on disk and in DB.
+        shutil.rmtree(pattern_dir, ignore_errors=True)
+        _remove_pattern_doc(slug)
+    os.makedirs(pattern_dir, exist_ok=True)
+    return pattern_dir
+
+
+def _normalize_manifest_tags(manifest: dict | None) -> list[str]:
+    """Extract manifest tags as a list, coercing a lone string to a 1-element
+    list and missing/empty tags to []."""
+    manifest_tags = (manifest or {}).get('tags') or []
+    if isinstance(manifest_tags, str):
+        manifest_tags = [manifest_tags]
+    return list(manifest_tags)
+
+
 def _import_from_dir(root: str, *, shape: str, force: bool,
                      target_slug: str | None) -> ImportResult:
     """Process a directory containing SKILL.md (+ optional manifest.json,
@@ -318,11 +386,7 @@ def _import_from_dir(root: str, *, shape: str, force: bool,
     this) and `import_skill_directory` (calls this directly).
     """
     # Collapse single top-level dir if the source was wrapped.
-    entries = [e for e in os.listdir(root) if not e.startswith('.')]
-    if len(entries) == 1 and os.path.isdir(os.path.join(root, entries[0])):
-        inner = os.path.join(root, entries[0])
-        if os.path.isfile(os.path.join(inner, 'SKILL.md')):
-            root = inner
+    root = _collapse_wrapper_dir(root)
 
     skill_md_path = os.path.join(root, 'SKILL.md')
     if not os.path.isfile(skill_md_path):
@@ -335,45 +399,17 @@ def _import_from_dir(root: str, *, shape: str, force: bool,
     _validate_slug(derived_slug)
 
     # Load manifest (optional) to recover origin metadata.
-    manifest = None
-    manifest_path = os.path.join(root, 'manifest.json')
-    if os.path.isfile(manifest_path):
-        try:
-            with open(manifest_path, 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            manifest = None
+    manifest = _load_manifest(root)
 
     # Prefer content.md over the shim body if both are present.
-    content_md = None
-    content_md_path = os.path.join(root, 'content.md')
-    if os.path.isfile(content_md_path):
-        with open(content_md_path, 'r', encoding='utf-8') as f:
-            content_md = f.read()
-    body = _choose_body(skill_body, content_md)
+    body = _choose_body(skill_body, _load_content_md(root))
 
-    # Prefer the bundle's explicit title (producer set it on
-    # promote); otherwise use the skill's own name.
-    manifest_title = (manifest or {}).get('title')
-    title = (str(manifest_title).strip()
-             if manifest_title else _derive_title(fm, derived_slug))
+    title = _resolve_title(manifest, fm, derived_slug)
 
     slug = target_slug if target_slug else derived_slug
     _validate_slug(slug)
 
-    pattern_dir = os.path.join(str(settings.patterns_dir), slug)
-
-    if os.path.exists(pattern_dir):
-        if not force:
-            raise ImportConflictError(
-                f'patterns/{slug}/ already exists — pick a different name or '
-                'remove the existing pattern first',
-            )
-        # Force: clean up old pattern on disk and in DB.
-        shutil.rmtree(pattern_dir, ignore_errors=True)
-        _remove_pattern_doc(slug)
-
-    os.makedirs(pattern_dir, exist_ok=True)
+    pattern_dir = _prepare_pattern_dir(slug, force)
 
     # Write the pattern SKILL.md with regin frontmatter.
     out_skill_md = os.path.join(pattern_dir, 'SKILL.md')
@@ -399,10 +435,7 @@ def _import_from_dir(root: str, *, shape: str, force: bool,
         shutil.rmtree(pattern_dir, ignore_errors=True)
         raise
 
-    manifest_tags = (manifest or {}).get('tags') or []
-    if isinstance(manifest_tags, str):
-        manifest_tags = [manifest_tags]
-    _apply_manifest_tags(doc_id, list(manifest_tags))
+    _apply_manifest_tags(doc_id, _normalize_manifest_tags(manifest))
 
     grit_rules, grit_languages, enabled_languages = _merge_grit_rules(root, slug)
 
@@ -649,6 +682,80 @@ def _grit_fields(result: ImportResult) -> dict:
     }
 
 
+def _plan_entry(s: BatchScanEntry, on_conflict: str) -> BatchImportEntry:
+    """Dry-run outcome row for one scanned candidate (status='planned')."""
+    if s.conflict:
+        planned_status = (
+            'skipped' if on_conflict == 'skip'
+            else ('overwritten' if on_conflict == 'overwrite' else 'renamed')
+        )
+    else:
+        planned_status = 'imported'
+    return BatchImportEntry(
+        name=s.name, status='planned', slug=s.derived_slug,
+        title=None, file_count=None,
+        error=f'plan: {planned_status}',
+    )
+
+
+def _resolve_conflict(s: BatchScanEntry, on_conflict: str) -> BatchImportEntry:
+    """Build the outcome row after `import_skill_directory` raised a conflict,
+    applying the configured `on_conflict` policy (skip|overwrite|rename)."""
+    if on_conflict == 'skip':
+        return BatchImportEntry(
+            name=s.name, status='skipped', slug=s.derived_slug,
+            title=None, file_count=None,
+            error='pattern already exists',
+        )
+    elif on_conflict == 'overwrite':
+        try:
+            result = import_skill_directory(s.skill_dir, force=True)
+            return BatchImportEntry(
+                name=s.name, status='overwritten', slug=result.slug,
+                title=result.title, file_count=result.file_count,
+                error=None, **_grit_fields(result),
+            )
+        except ImportError_ as e:
+            return BatchImportEntry(
+                name=s.name, status='failed', slug=s.derived_slug,
+                title=None, file_count=None, error=str(e),
+            )
+    else:  # rename
+        try:
+            new_slug = _next_available_slug(s.derived_slug or s.name)
+            result = import_skill_directory(
+                s.skill_dir, target_slug=new_slug,
+            )
+            return BatchImportEntry(
+                name=s.name, status='renamed', slug=result.slug,
+                title=result.title, file_count=result.file_count,
+                error=None, **_grit_fields(result),
+            )
+        except ImportError_ as e:
+            return BatchImportEntry(
+                name=s.name, status='failed', slug=s.derived_slug,
+                title=None, file_count=None, error=str(e),
+            )
+
+
+def _import_one(s: BatchScanEntry, on_conflict: str) -> BatchImportEntry:
+    """Import a single scanned candidate, returning its outcome row."""
+    try:
+        result = import_skill_directory(s.skill_dir)
+        return BatchImportEntry(
+            name=s.name, status='imported', slug=result.slug,
+            title=result.title, file_count=result.file_count, error=None,
+            **_grit_fields(result),
+        )
+    except ImportConflictError:
+        return _resolve_conflict(s, on_conflict)
+    except ImportError_ as e:
+        return BatchImportEntry(
+            name=s.name, status='failed', slug=s.derived_slug,
+            title=None, file_count=None, error=str(e),
+        )
+
+
 def batch_import_skill_directory(
         root_dir: str, *,
         on_conflict: str = 'skip',
@@ -677,75 +784,10 @@ def batch_import_skill_directory(
                 name=s.name, status='failed', slug=None, title=None,
                 file_count=None, error=s.error,
             )
-            out.append(entry)
-            if progress: progress(entry)
-            continue
-
-        if dry_run:
-            if s.conflict:
-                planned_status = (
-                    'skipped' if on_conflict == 'skip'
-                    else ('overwritten' if on_conflict == 'overwrite' else 'renamed')
-                )
-            else:
-                planned_status = 'imported'
-            entry = BatchImportEntry(
-                name=s.name, status='planned', slug=s.derived_slug,
-                title=None, file_count=None,
-                error=f'plan: {planned_status}',
-            )
-            out.append(entry)
-            if progress: progress(entry)
-            continue
-
-        try:
-            result = import_skill_directory(s.skill_dir)
-            entry = BatchImportEntry(
-                name=s.name, status='imported', slug=result.slug,
-                title=result.title, file_count=result.file_count, error=None,
-                **_grit_fields(result),
-            )
-        except ImportConflictError:
-            if on_conflict == 'skip':
-                entry = BatchImportEntry(
-                    name=s.name, status='skipped', slug=s.derived_slug,
-                    title=None, file_count=None,
-                    error='pattern already exists',
-                )
-            elif on_conflict == 'overwrite':
-                try:
-                    result = import_skill_directory(s.skill_dir, force=True)
-                    entry = BatchImportEntry(
-                        name=s.name, status='overwritten', slug=result.slug,
-                        title=result.title, file_count=result.file_count,
-                        error=None, **_grit_fields(result),
-                    )
-                except ImportError_ as e:
-                    entry = BatchImportEntry(
-                        name=s.name, status='failed', slug=s.derived_slug,
-                        title=None, file_count=None, error=str(e),
-                    )
-            else:  # rename
-                try:
-                    new_slug = _next_available_slug(s.derived_slug or s.name)
-                    result = import_skill_directory(
-                        s.skill_dir, target_slug=new_slug,
-                    )
-                    entry = BatchImportEntry(
-                        name=s.name, status='renamed', slug=result.slug,
-                        title=result.title, file_count=result.file_count,
-                        error=None, **_grit_fields(result),
-                    )
-                except ImportError_ as e:
-                    entry = BatchImportEntry(
-                        name=s.name, status='failed', slug=s.derived_slug,
-                        title=None, file_count=None, error=str(e),
-                    )
-        except ImportError_ as e:
-            entry = BatchImportEntry(
-                name=s.name, status='failed', slug=s.derived_slug,
-                title=None, file_count=None, error=str(e),
-            )
+        elif dry_run:
+            entry = _plan_entry(s, on_conflict)
+        else:
+            entry = _import_one(s, on_conflict)
 
         out.append(entry)
         if progress: progress(entry)

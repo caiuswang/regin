@@ -164,29 +164,22 @@ def api_dashboard():
 _QUICKSEARCH_LIMIT_PER_GROUP = 6
 
 
-@meta_bp.route("/api/quicksearch")
-def api_quicksearch():
-    q = (request.args.get("q") or "").strip()
-    if not q:
-        return jsonify({"query": "", "groups": []})
-
-    q_lower = q.lower()
-    groups: list[dict] = []
-
-    pattern_items: list[dict] = []
+def _quicksearch_patterns(q: str) -> list[dict]:
+    items: list[dict] = []
     try:
         for p in search_patterns(q)[:_QUICKSEARCH_LIMIT_PER_GROUP]:
-            pattern_items.append({
+            items.append({
                 "title": p.get("title") or p.get("slug"),
                 "subtitle": p.get("category") or "",
                 "href": f"/patterns/{p['slug']}",
             })
     except Exception:
-        pattern_items = []
-    if pattern_items:
-        groups.append({"label": "Patterns", "icon": "patterns", "items": pattern_items})
+        return []
+    return items
 
-    skill_items: list[dict] = []
+
+def _quicksearch_skills(q_lower: str) -> list[dict]:
+    items: list[dict] = []
     try:
         for sid in skill_registry.all_ids():
             if q_lower not in sid.lower():
@@ -196,19 +189,20 @@ def api_quicksearch():
                 href = f"/patterns/{entry.get('procedure_id', sid)}"
             else:
                 href = f"/skills/{sid}"
-            skill_items.append({
+            items.append({
                 "title": sid,
                 "subtitle": entry.get("type", "skill"),
                 "href": href,
             })
-            if len(skill_items) >= _QUICKSEARCH_LIMIT_PER_GROUP:
+            if len(items) >= _QUICKSEARCH_LIMIT_PER_GROUP:
                 break
     except Exception:
-        skill_items = []
-    if skill_items:
-        groups.append({"label": "Skills", "icon": "skills", "items": skill_items})
+        return []
+    return items
 
-    session_items: list[dict] = []
+
+def _quicksearch_sessions(q: str) -> list[dict]:
+    items: list[dict] = []
     try:
         with SessionLocal() as session:
             stmt = (
@@ -222,34 +216,52 @@ def api_quicksearch():
             )
             for s in session.exec(stmt).all():
                 day = (s.last_seen or "").split("T", 1)[0]
-                session_items.append({
+                items.append({
                     "title": s.title or s.trace_id[:12],
                     "subtitle": " · ".join(filter(None, [f"{s.span_count} spans", day])),
                     "href": f"/trace/sessions/{s.trace_id}",
                 })
     except Exception:
-        session_items = []
-    if session_items:
-        groups.append({"label": "Sessions", "icon": "trace", "items": session_items})
+        return []
+    return items
 
-    rule_items: list[dict] = []
+
+def _quicksearch_rules(q_lower: str) -> list[dict]:
+    items: list[dict] = []
     try:
         for r in load_rules_index().get("rules", []):
             rule_id = r.get("id") or ""
             guide = r.get("guide") or ""
             if q_lower in rule_id.lower() or q_lower in guide.lower():
-                rule_items.append({
+                items.append({
                     "title": rule_id,
                     "subtitle": guide,
                     "href": f"/rules/{rule_id}",
                 })
-                if len(rule_items) >= _QUICKSEARCH_LIMIT_PER_GROUP:
+                if len(items) >= _QUICKSEARCH_LIMIT_PER_GROUP:
                     break
     except Exception:
-        rule_items = []
-    if rule_items:
-        groups.append({"label": "Rules", "icon": "rules", "items": rule_items})
+        return []
+    return items
 
+
+@meta_bp.route("/api/quicksearch")
+def api_quicksearch():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"query": "", "groups": []})
+
+    q_lower = q.lower()
+    candidates = [
+        ("Patterns", "patterns", _quicksearch_patterns(q)),
+        ("Skills", "skills", _quicksearch_skills(q_lower)),
+        ("Sessions", "trace", _quicksearch_sessions(q)),
+        ("Rules", "rules", _quicksearch_rules(q_lower)),
+    ]
+    groups = [
+        {"label": label, "icon": icon, "items": items}
+        for label, icon, items in candidates if items
+    ]
     return jsonify({"query": q, "groups": groups})
 
 

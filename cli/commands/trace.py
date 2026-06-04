@@ -65,6 +65,92 @@ def _find_transcript(trace_id: str) -> str | None:
     return candidates[0]
 
 
+def _load_backfill_candidates(get_connection, only_missing: bool) -> list[tuple[str, str]]:
+    """Read the (trace_id, model) sessions to consider for backfill."""
+    conn = get_connection()
+    try:
+        where = "WHERE peak_context_tokens IS NULL" if only_missing else ""
+        rows = conn.execute(
+            f"SELECT trace_id, model FROM sessions {where} ORDER BY last_seen DESC"
+        ).fetchall()
+        print(f"Found {len(rows)} candidate sessions.")
+        return [(r['trace_id'], r['model']) for r in rows]
+    finally:
+        conn.close()
+
+
+def _persist_richest_model(get_connection, trace_id: str, usage,
+                           current_model: str) -> str | None:
+    """Resolve and persist a richer model id for `trace_id`.
+
+    Computes the model once (so `infer_window` in `ingest_turn_usage`
+    picks the right window) and writes it back when it differs from the
+    stored value. Returns the resolved model.
+    """
+    conn2 = get_connection()
+    try:
+        model = _richest_model(conn2, trace_id,
+                               fallbacks=(usage.model, current_model))
+        if model and model != current_model:
+            conn2.execute(
+                "UPDATE sessions SET model = ? WHERE trace_id = ?",
+                (model, trace_id),
+            )
+            conn2.commit()
+        return model
+    finally:
+        conn2.close()
+
+
+def _build_turn_payload(trace_id: str, usage, model: str | None) -> list[dict]:
+    """Build the per-turn usage rows; skips turns lacking uuid/timestamp."""
+    payload = []
+    for idx, t in enumerate(usage.turns):
+        if not t.uuid or not t.timestamp:
+            continue
+        payload.append({
+            'trace_id': trace_id,
+            'turn_uuid': t.uuid,
+            'turn_index': idx,
+            'timestamp': t.timestamp,
+            'model': t.model or model,
+            'input_tokens': t.input_tokens,
+            'output_tokens': t.output_tokens,
+            'cache_read_tokens': t.cache_read_tokens,
+            'cache_creation_tokens': t.cache_creation_tokens,
+            'context_used_tokens': t.context_used,
+            'request_id': t.request_id,
+        })
+    return payload
+
+
+def _backfill_one_session(deps, trace_id: str, current_model: str,
+                          counts: dict, total: int) -> None:
+    """Backfill a single session, mutating `counts` in place.
+
+    `deps` bundles the lazily-imported collaborators
+    (`get_connection`, `read_usage`, `ingest_turn_usage`). An
+    empty payload is silently dropped (neither `updated` nor `empty`
+    is bumped) to preserve the original behavior.
+    """
+    transcript = _find_transcript(trace_id)
+    if transcript is None:
+        counts['missing'] += 1
+        return
+    usage = deps['read_usage'](transcript)
+    if usage is None or not usage.turns:
+        counts['empty'] += 1
+        return
+    model = _persist_richest_model(deps['get_connection'], trace_id, usage,
+                                   current_model)
+    payload = _build_turn_payload(trace_id, usage, model)
+    if payload:
+        deps['ingest_turn_usage'](payload)
+        counts['updated'] += 1
+        if counts['updated'] % 50 == 0:
+            print(f"  processed {counts['updated']}/{total}…")
+
+
 @trace_app.command("backfill-tokens",
                    help="Populate per-turn usage rows from on-disk transcripts for existing sessions")
 def cmd_backfill_tokens(
@@ -86,72 +172,21 @@ def cmd_backfill_tokens(
     from lib.trace.transcript_usage import read_usage
     from lib.trace.trace_service import ingest_turn_usage
 
-    conn = get_connection()
-    try:
-        where = ""
-        if only_missing:
-            where = "WHERE peak_context_tokens IS NULL"
-        rows = conn.execute(
-            f"SELECT trace_id, model FROM sessions {where} ORDER BY last_seen DESC"
-        ).fetchall()
-        print(f"Found {len(rows)} candidate sessions.")
-
-        candidates: list[tuple[str, str]] = [(r['trace_id'], r['model']) for r in rows]
-    finally:
-        conn.close()
-
-    updated = 0
-    missing = 0
-    empty = 0
+    candidates = _load_backfill_candidates(get_connection, only_missing)
+    deps = {
+        'get_connection': get_connection,
+        'read_usage': read_usage,
+        'ingest_turn_usage': ingest_turn_usage,
+    }
+    counts = {'updated': 0, 'missing': 0, 'empty': 0}
     for trace_id, current_model in candidates:
-        if limit and updated >= limit:
+        if limit and counts['updated'] >= limit:
             break
-        transcript = _find_transcript(trace_id)
-        if transcript is None:
-            missing += 1
-            continue
-        usage = read_usage(transcript)
-        if usage is None or not usage.turns:
-            empty += 1
-            continue
-        # Compute a richer model once, apply it to every row — so
-        # infer_window in ingest_turn_usage picks the right window.
-        conn2 = get_connection()
-        try:
-            model = _richest_model(conn2, trace_id,
-                                   fallbacks=(usage.model, current_model))
-            if model and model != current_model:
-                conn2.execute(
-                    "UPDATE sessions SET model = ? WHERE trace_id = ?",
-                    (model, trace_id),
-                )
-                conn2.commit()
-        finally:
-            conn2.close()
-
-        payload = []
-        for idx, t in enumerate(usage.turns):
-            if not t.uuid or not t.timestamp:
-                continue
-            payload.append({
-                'trace_id': trace_id,
-                'turn_uuid': t.uuid,
-                'turn_index': idx,
-                'timestamp': t.timestamp,
-                'model': t.model or model,
-                'input_tokens': t.input_tokens,
-                'output_tokens': t.output_tokens,
-                'cache_read_tokens': t.cache_read_tokens,
-                'cache_creation_tokens': t.cache_creation_tokens,
-                'context_used_tokens': t.context_used,
-                'request_id': t.request_id,
-            })
-        if payload:
-            ingest_turn_usage(payload)
-            updated += 1
-            if updated % 50 == 0:
-                print(f"  processed {updated}/{len(candidates)}…")
-    print(f"Done. updated={updated} missing_transcript={missing} empty_usage={empty}")
+        _backfill_one_session(deps, trace_id, current_model, counts, len(candidates))
+    print(
+        f"Done. updated={counts['updated']} "
+        f"missing_transcript={counts['missing']} empty_usage={counts['empty']}"
+    )
 
 
 @trace_app.command("backfill-active-work",

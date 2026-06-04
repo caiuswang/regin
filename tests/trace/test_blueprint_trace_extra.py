@@ -403,3 +403,119 @@ def test_session_status_happy_path_updates_model(flask_client, tmp_db):
 # append-only capture refactor — stray `/workflows` prompt placeholders are
 # now dropped by the serve-time merge (lib/trace/merge.py:_drop_stale_blockers),
 # covered by tests/trace/test_pending_handoff.py.
+
+
+# ── _fetch_session_task_list (characterization) ─────────────
+
+def _seed_task_span(trace_id, span_id, name, start_time, attrs):
+    with SessionLocal() as session:
+        session.add(SessionSpan(
+            trace_id=trace_id, span_id=span_id, parent_id=None,
+            name=name, kind="internal", start_time=start_time,
+            attributes=json.dumps(attrs),
+        ))
+        session.commit()
+
+
+def test_fetch_task_list_none_when_no_task_spans(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    # No TaskCreate/TaskUpdate rows at all -> None.
+    assert _fetch_session_task_list("nope") is None
+
+
+def test_fetch_task_list_none_when_rows_lack_task_id(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    _seed_task_span("t-noid", "s1", "tool.TaskCreate",
+                    "2026-04-22 10:00:00", {"subject": "orphan"})
+    # Rows present but none carry a task_id -> None.
+    assert _fetch_session_task_list("t-noid") is None
+
+
+def test_fetch_task_list_current_span_tracks_final_status_flip_flop(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    tid = "t-flip"
+    _seed_task_span(tid, "A", "tool.TaskCreate", "2026-04-22 10:00:00",
+                    {"task_id": "1", "subject": "Write", "status": "pending"})
+    _seed_task_span(tid, "B", "tool.TaskUpdate", "2026-04-22 10:00:01",
+                    {"task_id": "1", "status": "in_progress"})
+    _seed_task_span(tid, "C", "tool.TaskUpdate", "2026-04-22 10:00:02",
+                    {"task_id": "1", "status": "completed"})
+    _seed_task_span(tid, "D", "tool.TaskUpdate", "2026-04-22 10:00:03",
+                    {"task_id": "1", "status": "in_progress"})
+
+    out = _fetch_session_task_list(tid)
+    assert out is not None
+    final = out["final"]
+    assert len(final) == 1
+    entry = final[0]
+    assert entry["status"] == "in_progress"
+    # current_span_id is the LATEST span that set the FINAL status, not
+    # merely the last update -> D, not C.
+    assert entry["current_span_id"] == "D"
+    assert entry["subject"] == "Write"
+    assert entry["created_span_id"] == "A"
+
+
+def test_fetch_task_list_subject_first_non_empty_wins(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    tid = "t-subj"
+    _seed_task_span(tid, "A", "tool.TaskCreate", "2026-04-22 10:00:00",
+                    {"task_id": "1", "subject": "First"})
+    _seed_task_span(tid, "B", "tool.TaskUpdate", "2026-04-22 10:00:01",
+                    {"task_id": "1", "subject": "Second", "status": "completed"})
+
+    out = _fetch_session_task_list(tid)
+    # First non-empty subject wins; later subjects do not overwrite it.
+    assert out["final"][0]["subject"] == "First"
+
+
+def test_fetch_task_list_pending_falls_back_to_created_span(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    tid = "t-pending"
+    _seed_task_span(tid, "A", "tool.TaskCreate", "2026-04-22 10:00:00",
+                    {"task_id": "1", "subject": "Never updated"})
+
+    entry = _fetch_session_task_list(tid)["final"][0]
+    # Never got a status -> defaults to 'pending', current_span_id falls
+    # back to the TaskCreate span.
+    assert entry["status"] == "pending"
+    assert entry["current_span_id"] == "A"
+
+
+def test_fetch_task_list_sort_numeric_then_nondigit_last(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    tid = "t-sort"
+    _seed_task_span(tid, "A", "tool.TaskCreate", "2026-04-22 10:00:00",
+                    {"task_id": "10", "subject": "ten"})
+    _seed_task_span(tid, "B", "tool.TaskCreate", "2026-04-22 10:00:01",
+                    {"task_id": "2", "subject": "two"})
+    _seed_task_span(tid, "C", "tool.TaskCreate", "2026-04-22 10:00:02",
+                    {"task_id": "foo", "subject": "fff"})
+
+    final = _fetch_session_task_list(tid)["final"]
+    # Numeric ids sort numerically; non-digit ids sink to the end.
+    assert [t["task_id"] for t in final] == ["2", "10", "foo"]
+
+
+def test_fetch_task_list_event_shape_omits_absent_fields(tmp_db):
+    from web.blueprints.trace.sessions import _fetch_session_task_list
+    tid = "t-events"
+    _seed_task_span(tid, "A", "tool.TaskCreate", "2026-04-22 10:00:00",
+                    {"task_id": "1", "subject": "Subj"})
+    _seed_task_span(tid, "B", "tool.TaskUpdate", "2026-04-22 10:00:01",
+                    {"task_id": "1", "status": "completed"})
+
+    events = _fetch_session_task_list(tid)["events"]
+    assert len(events) == 2
+    create_evt, update_evt = events
+    # Per-span, append-only; absent fields are OMITTED, not null.
+    assert create_evt == {
+        "span_id": "A", "timestamp": "2026-04-22 10:00:00",
+        "task_id": "1", "subject": "Subj",
+    }
+    assert "status" not in create_evt
+    assert update_evt == {
+        "span_id": "B", "timestamp": "2026-04-22 10:00:01",
+        "task_id": "1", "status": "completed",
+    }
+    assert "subject" not in update_evt

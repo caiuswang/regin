@@ -508,6 +508,50 @@ def rules_for_guide(procedure_id: str) -> list[dict]:
     return [r for r in data['rules'] if r['id'] in ids]
 
 
+def _find_pattern_block_span(content: str, rule_id: str) -> tuple[int, int] | None:
+    """Locate a rule block (leading @rule comments + pattern decl + braced body).
+
+    Returns ``(start, end)`` character offsets into ``content``, or ``None`` if
+    the pattern declaration is absent.
+    """
+    idx = content.find(f"pattern {rule_id}(")
+    if idx == -1:
+        return None
+
+    # Start: walk back to the blank line preceding the first @rule comment.
+    start = content.rfind('\n\n', 0, idx)
+    start = 0 if start == -1 else start
+
+    # End: match braces to find the close of the pattern body.
+    depth = 0
+    end = idx
+    in_pattern = False
+    for i in range(idx, len(content)):
+        ch = content[i]
+        if ch == '{':
+            depth += 1
+            in_pattern = True
+        elif ch == '}':
+            depth -= 1
+            if in_pattern and depth == 0:
+                end = i + 1
+                break
+    return start, end
+
+
+def _excise_block(content: str, start: int, end: int) -> str:
+    """Remove ``content[start:end]`` plus trailing blank lines, normalizing seams."""
+    after = content[end:]
+    while after.startswith('\n'):
+        after = after[1:]
+    new_content = content[:start]
+    if new_content and not new_content.endswith('\n'):
+        new_content += '\n'
+    if after:
+        new_content += '\n' + after
+    return new_content
+
+
 def delete_rule(rule_id: str) -> bool:
     """Delete a rule from its .grit source file. Returns True if deleted."""
     data = load_rules_index()
@@ -522,41 +566,11 @@ def delete_rule(rule_id: str) -> bool:
     with open(source_path, 'r') as f:
         content = f.read()
 
-    # Find the rule block: @rule comments + pattern declaration + body
-    # Look for the pattern declaration
-    marker = f"pattern {rule_id}("
-    idx = content.find(marker)
-    if idx == -1:
+    span = _find_pattern_block_span(content, rule_id)
+    if span is None:
         return False
 
-    # Find start: walk back to find the first @rule comment
-    start = content.rfind('\n\n', 0, idx)
-    start = 0 if start == -1 else start
-
-    # Find end: match braces to find end of pattern body
-    depth = 0
-    end = idx
-    in_pattern = False
-    for i in range(idx, len(content)):
-        ch = content[i]
-        if ch == '{':
-            depth += 1
-            in_pattern = True
-        elif ch == '}':
-            depth -= 1
-            if in_pattern and depth == 0:
-                end = i + 1
-                break
-
-    # Remove the block (and any trailing blank lines)
-    after = content[end:]
-    while after.startswith('\n'):
-        after = after[1:]
-    new_content = content[:start]
-    if new_content and not new_content.endswith('\n'):
-        new_content += '\n'
-    if after:
-        new_content += '\n' + after
+    new_content = _excise_block(content, *span)
 
     # If file would be empty (or just whitespace), remove it
     if not new_content.strip():
@@ -579,6 +593,57 @@ def delete_rule(rule_id: str) -> bool:
     return True
 
 
+def _find_update_span(content: str, rule_id: str) -> tuple[int, int] | None:
+    """Locate a rule block for in-place update (comments + pattern body).
+
+    Unlike :func:`_find_pattern_block_span`, the start offset skips the blank
+    line preceding the first ``@rule`` comment (``+2``), preserving the splice
+    semantics ``update_rule`` has always used. Returns ``(start, end)`` char
+    offsets, or ``None`` if the pattern declaration is absent.
+    """
+    idx = content.find(f"pattern {rule_id}(")
+    if idx == -1:
+        return None
+
+    start = content.rfind('\n\n', 0, idx)
+    start = 0 if start == -1 else start + 2
+
+    depth = 0
+    end = idx
+    in_pattern = False
+    for i in range(idx, len(content)):
+        ch = content[i]
+        if ch == '{':
+            depth += 1
+            in_pattern = True
+        elif ch == '}':
+            depth -= 1
+            if in_pattern and depth == 0:
+                end = i + 1
+                break
+    return start, end
+
+
+def _rewrite_meta_lines(old_block: str, updates: dict) -> str:
+    """Rewrite only the ``@rule`` metadata lines in ``old_block``.
+
+    Keeps the GritQL body untouched; replaces each recognized metadata line
+    whose key is present in ``updates``.
+    """
+    meta_fields = {
+        k: v for k, v in updates.items()
+        if k in ('summary', 'severity', 'triggers', 'layer', 'guide')
+    }
+    new_lines = []
+    for line in old_block.split('\n'):
+        m = _RULE_LINE_RE.match(line)
+        if m and m.group(1) in meta_fields:
+            new_lines.append(f'// @rule {m.group(1)}={meta_fields[m.group(1)]}')
+        else:
+            new_lines.append(line)
+    return '\n'.join(new_lines)
+
+
 def update_rule(rule_id: str, updates: dict) -> bool:
     """Update a rule's @rule metadata and/or GritQL source in its .grit file.
 
@@ -598,29 +663,10 @@ def update_rule(rule_id: str, updates: dict) -> bool:
     with open(source_path, 'r') as f:
         content = f.read()
 
-    marker = f"pattern {rule_id}("
-    idx = content.find(marker)
-    if idx == -1:
+    span = _find_update_span(content, rule_id)
+    if span is None:
         return False
-
-    # Find the full block (comments + pattern body)
-    start = content.rfind('\n\n', 0, idx)
-    start = 0 if start == -1 else start + 2
-
-    depth = 0
-    end = idx
-    in_pattern = False
-    for i in range(idx, len(content)):
-        ch = content[i]
-        if ch == '{':
-            depth += 1
-            in_pattern = True
-        elif ch == '}':
-            depth -= 1
-            if in_pattern and depth == 0:
-                end = i + 1
-                break
-
+    start, end = span
     old_block = content[start:end]
 
     if 'source' in updates:
@@ -628,16 +674,7 @@ def update_rule(rule_id: str, updates: dict) -> bool:
         new_block = updates['source'].rstrip()
     else:
         # Update only @rule metadata lines, keep GritQL body
-        lines = old_block.split('\n')
-        new_lines = []
-        meta_fields = {k: v for k, v in updates.items() if k in ('summary', 'severity', 'triggers', 'layer', 'guide')}
-        for line in lines:
-            m = _RULE_LINE_RE.match(line)
-            if m and m.group(1) in meta_fields:
-                new_lines.append(f'// @rule {m.group(1)}={meta_fields[m.group(1)]}')
-            else:
-                new_lines.append(line)
-        new_block = '\n'.join(new_lines)
+        new_block = _rewrite_meta_lines(old_block, updates)
 
     new_content = content[:start] + new_block + content[end:]
     with open(source_path, 'w') as f:

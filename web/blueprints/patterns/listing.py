@@ -221,48 +221,68 @@ def api_patterns_reindex():
     return jsonify({"ok": True, "msg": "reindex started"}), 202
 
 
-@patterns_bp.route("/api/patterns/<path:slug>")
-def api_pattern_detail(slug):
+def _resolve_pattern_file(slug):
+    """Return the on-disk path for a pattern's SKILL.md, falling back to a
+    legacy ``<slug>.md`` file. Returns None when neither exists."""
     file_path = os.path.join(str(settings.patterns_dir), slug, "SKILL.md")
-    if not os.path.exists(file_path):
-        legacy = os.path.join(str(settings.patterns_dir), slug + ".md")
-        if os.path.exists(legacy):
-            file_path = legacy
-        else:
-            return jsonify({"error": "not found"}), 404
+    if os.path.exists(file_path):
+        return file_path
+    legacy = os.path.join(str(settings.patterns_dir), slug + ".md")
+    if os.path.exists(legacy):
+        return legacy
+    return None
 
-    with open(file_path, "r") as f:
-        content = f.read()
 
+def _parse_pattern_body(content):
+    """Split frontmatter from body, returning ``(body, procedure_id)``."""
     parts = content.split("---", 2)
     body = parts[2] if len(parts) >= 3 else content
+    if len(parts) < 3:
+        return body, None
+    try:
+        fm = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return body, None
+    return body, (fm.get("procedure") if fm else None)
 
-    procedure_id = None
-    if len(parts) >= 3:
-        try:
-            fm = yaml.safe_load(parts[1])
-            procedure_id = fm.get("procedure") if fm else None
-        except yaml.YAMLError:
-            pass
 
-    skill_id = skill_registry.skill_id_for_procedure(procedure_id) if procedure_id else None
-    skill_state = skill_sync.state(skill_id) if skill_id else None
-    enforcing_rules = rules_for_guide(procedure_id) if procedure_id else []
-    attached_rule_bundles = _attached_rule_bundles_for_pattern(procedure_id)
-    pattern_experiments = experiments.list_for_pattern(procedure_id) if procedure_id else []
-    available_sections = experiments.list_sections(procedure_id) if procedure_id else []
+def _procedure_context(procedure_id):
+    """Resolve skill/rule/experiment metadata tied to a pattern's procedure."""
+    if not procedure_id:
+        return {
+            "skill_id": None,
+            "skill_state": None,
+            "enforcing_rules": [],
+            "attached_rule_bundles": _attached_rule_bundles_for_pattern(procedure_id),
+            "pattern_experiments": [],
+            "available_sections": [],
+        }
+    skill_id = skill_registry.skill_id_for_procedure(procedure_id)
+    return {
+        "skill_id": skill_id,
+        "skill_state": skill_sync.state(skill_id) if skill_id else None,
+        "enforcing_rules": rules_for_guide(procedure_id),
+        "attached_rule_bundles": _attached_rule_bundles_for_pattern(procedure_id),
+        "pattern_experiments": experiments.list_for_pattern(procedure_id),
+        "available_sections": experiments.list_sections(procedure_id),
+    }
 
+
+def _concealed_texts(pattern_experiments):
+    """Collect plain-text headings concealed by active experiments."""
     concealed_headings: set[str] = set()
     for exp in pattern_experiments:
         if exp.get("active"):
             concealed_headings.update(exp.get("sections", []))
-    concealed_texts = []
-    if concealed_headings:
-        for heading in concealed_headings:
-            text = heading.lstrip("#").strip()
-            plain = re.sub(r"`([^`]+)`", r"\1", text)
-            concealed_texts.append(plain)
+    texts = []
+    for heading in concealed_headings:
+        text = heading.lstrip("#").strip()
+        texts.append(re.sub(r"`([^`]+)`", r"\1", text))
+    return texts
 
+
+def _pattern_doc_and_tags(slug):
+    """Fetch the PatternDoc row plus its tags and the full tag catalogue."""
     with SessionLocal() as session:
         doc = session.exec(
             select(PatternDoc)
@@ -288,19 +308,36 @@ def api_pattern_detail(slug):
                 ).all()
             ]
 
+    return doc, tags_rows, all_tags
+
+
+@patterns_bp.route("/api/patterns/<path:slug>")
+def api_pattern_detail(slug):
+    file_path = _resolve_pattern_file(slug)
+    if file_path is None:
+        return jsonify({"error": "not found"}), 404
+
+    with open(file_path, "r") as f:
+        content = f.read()
+
+    body, procedure_id = _parse_pattern_body(content)
+    ctx = _procedure_context(procedure_id)
+    concealed_texts = _concealed_texts(ctx["pattern_experiments"])
+    doc, tags_rows, all_tags = _pattern_doc_and_tags(slug)
+
     return jsonify({
         "doc": _pattern_to_dict(doc) if doc else None,
         "tags": tags_rows,
         "all_tags": all_tags,
         "body_md": body,
         "description": doc.description or "",
-        "skill_id": skill_id,
-        "skill_state": skill_state,
+        "skill_id": ctx["skill_id"],
+        "skill_state": ctx["skill_state"],
         "procedure_id": procedure_id,
-        "enforcing_rules": enforcing_rules,
-        "attached_rule_bundles": attached_rule_bundles,
-        "experiments": pattern_experiments,
-        "available_sections": available_sections,
+        "enforcing_rules": ctx["enforcing_rules"],
+        "attached_rule_bundles": ctx["attached_rule_bundles"],
+        "experiments": ctx["pattern_experiments"],
+        "available_sections": ctx["available_sections"],
         "concealed_texts": concealed_texts,
     })
 

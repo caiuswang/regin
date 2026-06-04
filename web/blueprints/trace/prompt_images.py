@@ -50,6 +50,83 @@ _ALLOWED_IMAGE_MEDIA_TYPES = frozenset({
 })
 
 
+# Per-field guards, applied in order. Each entry maps a field name to its
+# `(predicate, reason)`: the first field whose predicate returns falsy stops
+# validation with that reason. Predicates preserve the original inline checks
+# verbatim (e.g. `isinstance(idx, int)` deliberately still accepts bools).
+_PROMPT_IMAGE_FIELD_GUARDS = (
+    ('trace_id', lambda v: isinstance(v, str) and bool(v), 'trace_id required'),
+    ('prompt_span_id', lambda v: isinstance(v, str) and bool(v),
+     'prompt_span_id required'),
+    ('idx', lambda v: isinstance(v, int) and v >= 1,
+     'idx must be a positive int'),
+    ('media_type', lambda v: v in _ALLOWED_IMAGE_MEDIA_TYPES, None),
+    ('data_b64', lambda v: isinstance(v, str) and bool(v), 'data_b64 required'),
+)
+
+
+def _validate_prompt_image_item(item):
+    """Validate one ingest item → `(row, None)` or `(None, reason)`.
+
+    `row` is the kwargs dict for `PromptImage`. `reason` is the first
+    failing guard's human-readable string (guards short-circuit in
+    declared order). Behavior is preserved verbatim from the original
+    inline loop — predicates are intentionally not "tidied".
+    """
+    import base64
+    import hashlib
+
+    if not isinstance(item, dict):
+        return None, 'not an object'
+
+    for field, ok, reason in _PROMPT_IMAGE_FIELD_GUARDS:
+        value = item.get(field)
+        if not ok(value):
+            # media_type carries its value into the reason; others are static.
+            return None, reason or f'unsupported media_type {value!r}'
+
+    try:
+        raw = base64.b64decode(item['data_b64'], validate=False)
+    except (ValueError, TypeError) as exc:
+        return None, f'bad base64: {exc}'
+    if len(raw) > _PROMPT_IMAGE_INGEST_MAX_BYTES:
+        return None, (f'image too large: {len(raw)} > '
+                      f'{_PROMPT_IMAGE_INGEST_MAX_BYTES}')
+    return {
+        'trace_id': item['trace_id'],
+        'prompt_span_id': item['prompt_span_id'],
+        'idx': item['idx'],
+        'media_type': item['media_type'],
+        'bytes_': raw,
+        'byte_size': len(raw),
+        'sha256': hashlib.sha256(raw).hexdigest(),
+    }, None
+
+
+def _upsert_prompt_image_rows(rows):
+    """Insert validated rows, skipping any already-present PK → `(ingested, skipped)`."""
+    from sqlalchemy import select as _select
+
+    ingested = 0
+    skipped = 0
+    with SessionLocal() as session:
+        for row in rows:
+            existing = session.execute(
+                _select(PromptImage).where(
+                    PromptImage.trace_id == row['trace_id'],
+                    PromptImage.prompt_span_id == row['prompt_span_id'],
+                    PromptImage.idx == row['idx'],
+                )
+            ).first()
+            if existing is not None:
+                skipped += 1
+                continue
+            session.add(PromptImage(**row))
+            ingested += 1
+        session.commit()
+    return ingested, skipped
+
+
 @trace_bp.route('/api/prompt-images', methods=['POST'])
 def api_ingest_prompt_images():
     """Upsert one or more user-submitted prompt images.
@@ -58,10 +135,6 @@ def api_ingest_prompt_images():
     Idempotent on the (trace_id, prompt_span_id, idx) primary key — a
     replay of a transcript that already contributed images is a no-op.
     """
-    import base64
-    import hashlib
-    from sqlalchemy import select as _select
-
     data = request.get_json(silent=True)
     if data is None:
         return jsonify({'ok': False, 'error': 'invalid JSON body'}), 400
@@ -71,69 +144,17 @@ def api_ingest_prompt_images():
     errors = []
     rows: list[dict] = []
     for i, item in enumerate(data):
-        if not isinstance(item, dict):
-            errors.append({'index': i, 'reason': 'not an object'})
-            continue
-        trace_id = item.get('trace_id')
-        span_id = item.get('prompt_span_id')
-        idx = item.get('idx')
-        media_type = item.get('media_type')
-        data_b64 = item.get('data_b64')
-        if not isinstance(trace_id, str) or not trace_id:
-            errors.append({'index': i, 'reason': 'trace_id required'})
-            continue
-        if not isinstance(span_id, str) or not span_id:
-            errors.append({'index': i, 'reason': 'prompt_span_id required'})
-            continue
-        if not isinstance(idx, int) or idx < 1:
-            errors.append({'index': i, 'reason': 'idx must be a positive int'})
-            continue
-        if media_type not in _ALLOWED_IMAGE_MEDIA_TYPES:
-            errors.append({'index': i, 'reason': f'unsupported media_type {media_type!r}'})
-            continue
-        if not isinstance(data_b64, str) or not data_b64:
-            errors.append({'index': i, 'reason': 'data_b64 required'})
-            continue
-        try:
-            raw = base64.b64decode(data_b64, validate=False)
-        except (ValueError, TypeError) as exc:
-            errors.append({'index': i, 'reason': f'bad base64: {exc}'})
-            continue
-        if len(raw) > _PROMPT_IMAGE_INGEST_MAX_BYTES:
-            errors.append({'index': i,
-                           'reason': f'image too large: {len(raw)} > {_PROMPT_IMAGE_INGEST_MAX_BYTES}'})
-            continue
-        rows.append({
-            'trace_id': trace_id,
-            'prompt_span_id': span_id,
-            'idx': idx,
-            'media_type': media_type,
-            'bytes_': raw,
-            'byte_size': len(raw),
-            'sha256': hashlib.sha256(raw).hexdigest(),
-        })
+        row, reason = _validate_prompt_image_item(item)
+        if reason is not None:
+            errors.append({'index': i, 'reason': reason})
+        else:
+            rows.append(row)
 
     if errors:
         return jsonify({'ok': False, 'ingested': 0, 'errors': errors}), 400
 
-    ingested = 0
-    skipped = 0
     try:
-        with SessionLocal() as session:
-            for row in rows:
-                existing = session.execute(
-                    _select(PromptImage).where(
-                        PromptImage.trace_id == row['trace_id'],
-                        PromptImage.prompt_span_id == row['prompt_span_id'],
-                        PromptImage.idx == row['idx'],
-                    )
-                ).first()
-                if existing is not None:
-                    skipped += 1
-                    continue
-                session.add(PromptImage(**row))
-                ingested += 1
-            session.commit()
+        ingested, skipped = _upsert_prompt_image_rows(rows)
     except Exception as exc:
         return jsonify({
             'ok': False,
