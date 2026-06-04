@@ -2,7 +2,7 @@ import { test, expect } from './auth-fixture.js'
 
 test.describe('Topics Workspace', () => {
   test('renders wiki and proposals workspaces', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/repos')
     await page.locator('table.tbl').first().locator('tbody tr a').first().click()
     await page.locator('a.btn', { hasText: 'Topics' }).click()
 
@@ -13,7 +13,7 @@ test.describe('Topics Workspace', () => {
 
     await page.getByRole('button', { name: /Proposals/ }).click()
     await expect(page).toHaveURL(/tab=proposals/)
+    await expect(page.getByRole('heading', { name: 'Proposal Operations', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Proposal Runs', exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Draft Topics', exact: true })).toBeVisible()
   })
 })

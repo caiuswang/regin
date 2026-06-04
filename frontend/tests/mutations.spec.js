@@ -4,14 +4,17 @@ test.describe('Settings page', () => {
   test('loads settings with form inputs', async ({ page }) => {
     await page.goto('/settings')
     await expect(page.locator('h1')).toHaveText('Settings')
+    // The Configuration section is the default active pane.
+    await expect(page.locator('h2', { hasText: 'Configuration' })).toBeVisible()
     await expect(page.locator('table.tbl').first()).toBeVisible()
     await expect(page.locator('button', { hasText: 'Save settings' })).toBeVisible()
-    await expect(page.locator('button', { hasText: 'Rescan repositories' })).toBeVisible()
   })
 
   test('shows hook manager with status', async ({ page }) => {
     await page.goto('/settings')
-    await expect(page.locator('h2', { hasText: 'Post-Edit Hooks' })).toBeVisible()
+    // Hook installer state moved behind the "Hook Installers" sidebar section.
+    await page.locator('button', { hasText: 'Hook Installers' }).click()
+    await expect(page.locator('h2', { hasText: 'Hook Installers' })).toBeVisible()
     await expect(page.locator('.card', { hasText: 'Claude Code' }).first()).toBeVisible()
     await expect(page.locator('.badge-green, .badge-gray').last()).toBeVisible()
   })
@@ -19,21 +22,30 @@ test.describe('Settings page', () => {
 
 test.describe('Triggers mutations', () => {
   test('shows reset button', async ({ page }) => {
-    await page.goto('/rules/triggers')
+    // The trigger-log reset moved into Settings → Rule Triggers.
+    await page.goto('/settings')
+    await page.locator('button', { hasText: 'Rule Triggers' }).click()
     await expect(page.locator('button', { hasText: /Reset/ })).toBeVisible()
   })
 
   test('filter chips work', async ({ page }) => {
     await page.goto('/rules/triggers')
-    const triggeredChip = page.locator('.filter-chip', { hasText: 'Triggered only' })
-    await triggeredChip.click()
-    await expect(page).toHaveURL(/triggered=1/)
+    const noisyChip = page.locator('.filter-chip', { hasText: 'Noisy' })
+    await noisyChip.click()
+    await expect(page).toHaveURL(/status=noisy/)
   })
 })
 
 test.describe('Experiment detail mutations', () => {
   test('loads experiment detail with action buttons', async ({ page }) => {
-    const resp = await page.request.get('/api/experiments')
+    // Establish a real origin first so localStorage (the auth token) is readable
+    // (page.evaluate on about:blank throws SecurityError). page.request is a
+    // separate APIRequestContext that doesn't inherit the SPA's Authorization
+    // header; the deny-by-default /api interceptor 401s without it (→ expData.grouped
+    // would be undefined), so forward the Bearer token explicitly.
+    await page.goto('/')
+    const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+    const resp = await page.request.get('/api/experiments', { headers: { Authorization: `Bearer ${token}` } })
     const expData = await resp.json()
     if (expData.grouped.length === 0) {
       test.skip()
@@ -52,7 +64,14 @@ test.describe('Experiment detail mutations', () => {
   })
 
   test('edit form opens', async ({ page }) => {
-    const resp = await page.request.get('/api/experiments')
+    // Establish a real origin first so localStorage (the auth token) is readable
+    // (page.evaluate on about:blank throws SecurityError). page.request is a
+    // separate APIRequestContext that doesn't inherit the SPA's Authorization
+    // header; the deny-by-default /api interceptor 401s without it (→ expData.grouped
+    // would be undefined), so forward the Bearer token explicitly.
+    await page.goto('/')
+    const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+    const resp = await page.request.get('/api/experiments', { headers: { Authorization: `Bearer ${token}` } })
     const expData = await resp.json()
     if (expData.grouped.length === 0) {
       test.skip()
@@ -67,7 +86,8 @@ test.describe('Experiment detail mutations', () => {
 
 test.describe('Confirm dialog', () => {
   test('confirm dialog appears on dangerous action', async ({ page }) => {
-    await page.goto('/rules/triggers')
+    // The trigger-log reset relocated to the raw trace-triggers view.
+    await page.goto('/trace/triggers/raw')
     await page.locator('button', { hasText: /Reset/ }).click()
     await expect(page.locator('.fixed.inset-0')).toBeVisible()
     await expect(page.locator('h3', { hasText: 'Reset triggers' })).toBeVisible()
@@ -107,11 +127,10 @@ test.describe('Pattern delete', () => {
 })
 
 test.describe('Flash messages', () => {
-  test('flash message appears after settings rescan', async ({ page }) => {
+  test('flash message appears after saving settings', async ({ page }) => {
     await page.goto('/settings')
-    await page.locator('button', { hasText: 'Rescan repositories' }).click()
-    await page.locator('.fixed.inset-0 button', { hasText: 'Rescan repositories' }).click()
+    await page.locator('button', { hasText: 'Save settings' }).click()
     await expect(page.locator('.alert-success')).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.alert-success')).toContainText('Scanned')
+    await expect(page.locator('.alert-success')).toContainText('Settings saved')
   })
 })

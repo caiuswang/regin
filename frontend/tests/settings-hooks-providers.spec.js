@@ -105,6 +105,9 @@ test.describe('Settings hook providers', () => {
 
     await page.goto('/settings')
 
+    // Provider installer cards live behind the "Hook Installers" section.
+    await page.locator('button', { hasText: 'Hook Installers' }).click()
+
     await expect(page.locator('h3', { hasText: 'Claude Code' })).toBeVisible()
     await expect(page.locator('code', { hasText: '/tmp/claude-settings.json' })).toBeVisible()
     await expect(page.locator('h3', { hasText: 'OpenAI Codex' })).toBeVisible()

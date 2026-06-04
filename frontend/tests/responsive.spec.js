@@ -5,22 +5,22 @@ test.describe('Responsive layout', () => {
     test.skip(!viewport || viewport.width >= 768, 'mobile-viewport-only assertion')
     await page.goto('/')
 
-    const hamburger = page.locator('nav button[aria-label="Open navigation"]')
+    const hamburger = page.locator('button.mobile-menu-btn[aria-label="Open navigation"]')
     await expect(hamburger).toBeVisible()
 
-    await expect(page.locator('nav .nav-link', { hasText: 'Patterns' })).toBeHidden()
+    await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'Patterns' })).toBeHidden()
   })
 
   test('mobile hamburger opens drawer with nav links', async ({ page, viewport }) => {
     test.skip(!viewport || viewport.width >= 768, 'mobile-viewport-only assertion')
     await page.goto('/')
 
-    await page.locator('nav button[aria-label="Open navigation"]').click()
+    await page.locator('button.mobile-menu-btn[aria-label="Open navigation"]').click()
 
     const drawer = page.locator('.p-drawer')
     await expect(drawer).toBeVisible()
     for (const label of ['Patterns', 'Skills', 'Rules', 'Trace', 'Settings']) {
-      await expect(drawer.locator('.nav-link', { hasText: label })).toBeVisible()
+      await expect(drawer.locator('nav a', { hasText: label })).toBeVisible()
     }
   })
 
@@ -28,7 +28,7 @@ test.describe('Responsive layout', () => {
     test.skip(!viewport || viewport.width < 768, 'tablet+-viewport-only assertion')
     await page.goto('/')
 
-    await expect(page.locator('nav button[aria-label="Open navigation"]')).toBeHidden()
-    await expect(page.locator('nav .nav-link', { hasText: 'Patterns' })).toBeVisible()
+    await expect(page.locator('button.mobile-menu-btn[aria-label="Open navigation"]')).toBeHidden()
+    await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'Patterns' })).toBeVisible()
   })
 })

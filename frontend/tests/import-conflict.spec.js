@@ -60,7 +60,7 @@ test.describe('Pattern import conflict', () => {
 
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser.setFiles(built.skillDir)
 
@@ -74,7 +74,7 @@ test.describe('Pattern import conflict', () => {
     await page.goto('/patterns')
     const [fileChooser1] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser1.setFiles(built.skillDir)
     await expect(page.locator('.alert-success')).toBeVisible({ timeout: 5000 })
@@ -83,7 +83,7 @@ test.describe('Pattern import conflict', () => {
     // Second import with same slug triggers conflict dialog
     const [fileChooser2] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser2.setFiles(built.skillDir)
 
@@ -106,7 +106,7 @@ test.describe('Pattern import conflict', () => {
     await page.goto('/patterns')
     const [fileChooser1] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser1.setFiles(built.skillDir)
     await expect(page.locator('.alert-success')).toBeVisible({ timeout: 5000 })
@@ -115,7 +115,7 @@ test.describe('Pattern import conflict', () => {
     // Second import → overwrite
     const [fileChooser2] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser2.setFiles(built.skillDir)
 
@@ -132,7 +132,7 @@ test.describe('Pattern import conflict', () => {
     await page.goto('/patterns')
     const [fileChooser1] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser1.setFiles(built.skillDir)
     await expect(page.locator('.alert-success')).toBeVisible({ timeout: 5000 })
@@ -142,7 +142,7 @@ test.describe('Pattern import conflict', () => {
     const newSlug = `${testSlug}-renamed`
     const [fileChooser2] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser2.setFiles(built.skillDir)
 

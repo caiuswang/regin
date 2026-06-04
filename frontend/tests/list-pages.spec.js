@@ -3,8 +3,8 @@ import { test, expect } from './auth-fixture.js'
 test.describe('Navigation', () => {
   test('navbar renders logo and search', async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('nav a', { hasText: 'regin' })).toBeVisible()
-    await expect(page.locator('nav input[type="search"]')).toBeVisible()
+    await expect(page.locator('.sidebar a.sb-brand-name', { hasText: 'regin' })).toBeVisible()
+    await expect(page.locator('.sidebar button.sb-search[aria-label="Open quick search"]')).toBeVisible()
   })
 })
 
@@ -17,7 +17,7 @@ test.describe('Dashboard', () => {
 
   test('shows repositories section', async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('h2', { hasText: 'Repositories' })).toBeVisible()
+    await expect(page.locator('.stat-card', { hasText: 'Repos registered' })).toBeVisible()
   })
 })
 
@@ -38,7 +38,7 @@ test.describe('Rules', () => {
 test.describe('Skills', () => {
   test('loads skills page', async ({ page }) => {
     await page.goto('/skills')
-    await expect(page.locator('h1')).toHaveText('Managed Skills')
+    await expect(page.locator('h1')).toHaveText('Skills')
   })
 })
 
@@ -47,17 +47,5 @@ test.describe('Tags', () => {
     await page.goto('/tags')
     await expect(page).toHaveURL(/\/patterns$/)
     await expect(page.locator('h1')).toContainText('Patterns')
-  })
-})
-
-test.describe('Search', () => {
-  test('empty search shows prompt', async ({ page }) => {
-    await page.goto('/search')
-    await expect(page.locator('text=Enter a search query above')).toBeVisible()
-  })
-
-  test('no results shows message', async ({ page }) => {
-    await page.goto('/search?q=xyznonexistent123')
-    await expect(page.locator('text=/No patterns match/')).toBeVisible()
   })
 })

@@ -57,7 +57,7 @@ test.describe('Pattern folder import', () => {
 
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser'),
-      page.locator('button', { hasText: 'Import skill' }).click(),
+      page.getByRole('button', { name: 'Browse for a skill folder to import' }).click(),
     ])
     await fileChooser.setFiles(built.skillDir)
 
