@@ -204,6 +204,32 @@ def _rates_for_context(rates: dict, context_tokens: int | None) -> dict:
     return eff
 
 
+def cost_components(model: str | None, breakdown: TokenBreakdown,
+                    context_tokens: int | None = None) -> Optional[dict]:
+    """Per-component USD cost `{input, output, cache_read, cache_write}`, or
+    None when the model isn't in the catalogue.
+
+    Same rate resolution as `cost()` (the >200K context tier applies when
+    `context_tokens` crosses a published threshold), but left split so
+    callers can show where a turn's money actually went. The split matters:
+    cache reads bill at ~1/10 the fresh-input rate, so the token-count and
+    cost views of the same turn tell very different stories — a long
+    session is ~90% cache-read by tokens but only ~a third by dollars.
+    """
+    rates = model_rates(model)
+    if rates is None:
+        return None
+    eff = _rates_for_context(rates, context_tokens)
+    return {
+        'input': (eff.get('input') or 0) * breakdown.input_tokens / 1_000_000,
+        'output': (eff.get('output') or 0) * breakdown.output_tokens / 1_000_000,
+        'cache_read': (eff.get('cache_read') or 0)
+        * breakdown.cache_read_tokens / 1_000_000,
+        'cache_write': (eff.get('cache_write') or 0)
+        * breakdown.cache_creation_tokens / 1_000_000,
+    }
+
+
 def cost(model: str | None, breakdown: TokenBreakdown,
          context_tokens: int | None = None) -> Optional[float]:
     """USD cost for a token breakdown under the given model. None if unknown.
@@ -212,16 +238,10 @@ def cost(model: str | None, breakdown: TokenBreakdown,
     and the model publishes context tiers, the >threshold rate is used.
     Omit it (or pass 0/None) for the flat top-level rate.
     """
-    rates = model_rates(model)
-    if rates is None:
+    comps = cost_components(model, breakdown, context_tokens)
+    if comps is None:
         return None
-    eff = _rates_for_context(rates, context_tokens)
-    return (
-        (eff.get('input') or 0) * breakdown.input_tokens
-        + (eff.get('output') or 0) * breakdown.output_tokens
-        + (eff.get('cache_read') or 0) * breakdown.cache_read_tokens
-        + (eff.get('cache_write') or 0) * breakdown.cache_creation_tokens
-    ) / 1_000_000
+    return sum(comps.values())
 
 
 def reset_cache() -> None:

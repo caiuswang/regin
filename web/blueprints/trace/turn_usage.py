@@ -144,10 +144,16 @@ def api_session_tool_rollup(trace_id):
     """Per-tool token rollup for one session.
 
     Returns `{rollup: [{name, calls, input_tokens, output_tokens,
-    image_tokens, cost_usd}, ...], attributed_input, attributed_output,
-    attributed_cost, session_input, session_output}`. The frontend
-    derives `untagged = session_X - attributed_X`. SUM in SQL so we
-    don't ship hundreds of spans just for the bar chart.
+    image_tokens, cost_usd}, ...]}` plus the session-level totals: the
+    `attributed_*` per-tool sums, the recorded main-model `session_*` token
+    aggregate (incl. `session_cache_read_tokens` /
+    `session_cache_creation_tokens` / `session_total_tokens`), the per-bucket
+    `*_cost_usd` dollar split, the `subagent_*` server-side sub-model spend
+    (the advisor, excluded from `session_cost_usd`), the `total_spend_*`
+    (main bill + sub-agent = true spend) denominator, and the `untagged_*`
+    output remainder. The frontend uses these to reconcile the panel to true
+    spend (cache dominates tokens but not cost). SUM in SQL so we don't ship
+    hundreds of spans just for the bar chart.
     """
     rollup, totals = trace_service.fetch_tool_token_rollup(trace_id)
     return jsonify({'rollup': rollup, **totals})

@@ -641,6 +641,98 @@ def _rollup_row(r, targets_by_tool: dict) -> dict:
     }
 
 
+def _session_bill_cost(conn, trace_id: str) -> dict:
+    """Per-bucket USD cost for the full recorded session bill, keyed
+    `{input, output, cache_read, cache_write}`.
+
+    Summed per-turn from `turn_usage`, each turn priced at its own context
+    tier — mirroring ingest's `_insert_one_turn_row` — so the bucket costs
+    reconcile to `sessions.cost_usd`. It can't be derived from the `sessions`
+    aggregate row: the >200K tier rate is per-request, and cache reads bill
+    at ~1/10 the input rate, so the cost split (≈ even thirds across
+    cache-read / cache-write / output here) looks nothing like the token
+    split (≈ 90% cache-read). 'Tokens by tool' attributes only output by
+    activity; this is the dollar context that view omits. Zeros when no turn
+    carries a model the catalogue knows.
+    """
+    from lib.tokens.pricing import TokenBreakdown, cost_components
+
+    out = {'input': 0.0, 'output': 0.0, 'cache_read': 0.0, 'cache_write': 0.0}
+    rows = conn.execute(
+        "SELECT model, input_tokens, output_tokens, cache_read_tokens, "
+        "cache_creation_tokens, context_used_tokens FROM turn_usage "
+        "WHERE trace_id = ?",
+        (trace_id,),
+    ).fetchall()
+    for r in rows:
+        comps = cost_components(
+            r['model'],
+            TokenBreakdown(
+                input_tokens=int(r['input_tokens'] or 0),
+                output_tokens=int(r['output_tokens'] or 0),
+                cache_read_tokens=int(r['cache_read_tokens'] or 0),
+                cache_creation_tokens=int(r['cache_creation_tokens'] or 0),
+            ),
+            context_tokens=int(r['context_used_tokens'] or 0),
+        )
+        if comps:
+            for k in out:
+                out[k] += comps[k]
+    return out
+
+
+def _rollup_totals(rollup: list[dict], sess_row, bill_cost: dict,
+                   subagent_cost: float = 0.0,
+                   subagent_tokens: int = 0) -> dict:
+    """Assemble the session-level totals payload for `fetch_tool_token_rollup`.
+
+    `attributed_*` sum the per-tool rows; `session_*` come from the recorded
+    `sessions` aggregate (main model only); `untagged_*` is the output the
+    rollup couldn't pin to a tool; the `*_cost_usd` quartet is the
+    per-turn-priced dollar split (`_session_bill_cost`); `subagent_*` is the
+    server-side sub-model spend (the advisor) that `sessions.cost_usd`
+    excludes. `total_spend_*` = main bill + sub-agent is true spend — the
+    honest footer total and the "$X of $Y" denominator. Kept out of the
+    caller so it stays under the cyclomatic-complexity grade.
+    """
+    def _cell(key: str) -> int:
+        return int((sess_row[key] if sess_row else 0) or 0)
+
+    attributed_in = sum(r['input_tokens'] for r in rollup)
+    attributed_out = sum(r['output_tokens'] for r in rollup)
+    session_in = _cell('input_tokens')
+    session_out = _cell('output_tokens')
+    session_cache_read = _cell('cache_read_tokens')
+    session_cache_write = _cell('cache_creation_tokens')
+    session_total = (session_in + session_out
+                     + session_cache_read + session_cache_write)
+    session_cost = float((sess_row['cost_usd'] if sess_row else 0) or 0.0)
+    return {
+        'attributed_input_tokens': attributed_in,
+        'attributed_output_tokens': attributed_out,
+        'attributed_cost_usd': sum(r['cost_usd'] for r in rollup),
+        'session_input_tokens': session_in,
+        'session_output_tokens': session_out,
+        'session_cache_read_tokens': session_cache_read,
+        'session_cache_creation_tokens': session_cache_write,
+        'session_total_tokens': session_total,
+        'session_cost_usd': session_cost,
+        'untagged_input_tokens': max(0, session_in - attributed_in),
+        'untagged_output_tokens': max(0, session_out - attributed_out),
+        # Per-bucket dollar split of the main-model bill (cache reads bill
+        # ~10x cheaper than fresh input, so the cost story ≠ the token story).
+        'input_cost_usd': bill_cost['input'],
+        'output_cost_usd': bill_cost['output'],
+        'cache_read_cost_usd': bill_cost['cache_read'],
+        'cache_write_cost_usd': bill_cost['cache_write'],
+        # Server-side sub-model spend (advisor), excluded from session_cost_usd.
+        'subagent_cost_usd': subagent_cost,
+        'subagent_tokens': subagent_tokens,
+        'total_spend_usd': session_cost + subagent_cost,
+        'total_spend_tokens': session_total + subagent_tokens,
+    }
+
+
 def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
     """Aggregate per-tool token cost for one session.
 
@@ -649,8 +741,16 @@ def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
     by `attributes.tool_name` (falling back to the span name) so MCP
     tools group under their full `mcp__server__tool` name.
 
-    Returns (per_tool_rows, totals) where totals carries the session-
-    level numbers needed to compute the untagged remainder.
+    Returns (per_tool_rows, totals). `totals` carries the session-level
+    numbers the frontend needs to put the attribution in context: the
+    recorded `session_*` token aggregate (main model, incl. cache
+    read/write), the per-bucket `*_cost_usd` dollar split
+    (`_session_bill_cost`), the `subagent_*` server-side sub-model spend
+    (the advisor) that `sessions.cost_usd` excludes, the `total_spend_*`
+    (main bill + sub-agent = true spend) used as the "$X of $Y" denominator
+    and footer total, and the `untagged_*` output remainder — so the panel
+    reconciles to true spend instead of presenting attributed tokens as the
+    whole.
     """
     from lib.orm.engine import get_connection
 
@@ -686,27 +786,33 @@ def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
         breakdown = _tool_target_breakdown(conn, trace_id)
         rollup = [_rollup_row(r, breakdown) for r in rows]
         sess_row = conn.execute(
-            "SELECT input_tokens, output_tokens FROM sessions WHERE trace_id = ?",
+            "SELECT input_tokens, output_tokens, cache_read_tokens, "
+            "cache_creation_tokens, cost_usd FROM sessions WHERE trace_id = ?",
+            (trace_id,),
+        ).fetchone()
+        bill_cost = _session_bill_cost(conn, trace_id)
+        # Server-side sub-models (the advisor; web_search / web_fetch) bill on
+        # their OWN model, so their cost lands on the span but never in
+        # turn_usage / `sessions.cost_usd`. The advisor alone is often the bulk
+        # of the attributed cost, so folding it in is what lets the footer
+        # total reflect TRUE spend rather than the main-model-only bill — and
+        # keeps the "$X of $Y" numerator a real subset of its denominator.
+        subagent = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0) AS cost, "
+            "COALESCE(SUM(COALESCE(input_tokens, 0) "
+            "+ COALESCE(output_tokens, 0)), 0) AS tokens "
+            "FROM session_spans WHERE trace_id = ? "
+            "AND json_extract(attributes, '$.server_side') = 1",
             (trace_id,),
         ).fetchone()
     finally:
         conn.close()
 
-    attributed_in = sum(r['input_tokens'] for r in rollup)
-    attributed_out = sum(r['output_tokens'] for r in rollup)
-    attributed_cost = sum(r['cost_usd'] for r in rollup)
-    session_in = int((sess_row[0] if sess_row else 0) or 0)
-    session_out = int((sess_row[1] if sess_row else 0) or 0)
-    totals = {
-        'attributed_input_tokens': attributed_in,
-        'attributed_output_tokens': attributed_out,
-        'attributed_cost_usd': attributed_cost,
-        'session_input_tokens': session_in,
-        'session_output_tokens': session_out,
-        'untagged_input_tokens': max(0, session_in - attributed_in),
-        'untagged_output_tokens': max(0, session_out - attributed_out),
-    }
-    return rollup, totals
+    return rollup, _rollup_totals(
+        rollup, sess_row, bill_cost,
+        subagent_cost=float(subagent['cost']),
+        subagent_tokens=int(subagent['tokens']),
+    )
 
 
 def _to_utc(ts: str | None) -> datetime | None:

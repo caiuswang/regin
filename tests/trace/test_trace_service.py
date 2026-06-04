@@ -1176,3 +1176,147 @@ def test_tool_rollup_drill_down_hook_path_command(tmp_db):
     # Grep resolves its pattern target with a real span_id (jump enabled).
     assert by_name["Grep"]["targets"] == [
         {"target": "TODO", "label": "TODO", "tokens": 60, "calls": 1, "span_id": "g1"}]
+
+
+def _insert_session_and_turns(db_path, trace_id, *, session_row, turns):
+    """Seed a `sessions` aggregate row plus its `turn_usage` rows for the bill
+    reconciliation. `session_row` is the recorded token/cost aggregate the
+    footer shows; `turns` are (model, input, output, cache_read, cache_write,
+    context_used) tuples the per-turn dollar split is summed from."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen, "
+            "input_tokens, output_tokens, cache_read_tokens, "
+            "cache_creation_tokens, cost_usd) VALUES (?,?,?,?,?,?,?,?)",
+            (trace_id, "2026-06-02T10:00:00", "2026-06-02T10:05:00",
+             session_row["input"], session_row["output"],
+             session_row["cache_read"], session_row["cache_write"],
+             session_row["cost_usd"]),
+        )
+        for i, (model, intok, outtok, cr, cw, ctx) in enumerate(turns):
+            conn.execute(
+                "INSERT INTO turn_usage (trace_id, turn_uuid, turn_index, "
+                "timestamp, model, input_tokens, output_tokens, "
+                "cache_read_tokens, cache_creation_tokens, context_used_tokens) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (trace_id, f"u{i}", i, f"2026-06-02T10:00:0{i}", model,
+                 intok, outtok, cr, cw, ctx),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _insert_server_side_span(db_path, trace_id, span_id, name, *,
+                             input_tokens, output_tokens, cost_usd):
+    """Insert one server-side sub-model span (the advisor), carrying its own
+    `cost_usd` and the `server_side` marker `_session_bill_cost`'s sibling
+    sub-agent query keys off. Separate from `_insert_tool_spans` because that
+    helper never writes cost_usd."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
+            "input_tokens, output_tokens, cost_usd, attributes) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (trace_id, span_id, name, "2026-06-02T10:01:00",
+             input_tokens, output_tokens, cost_usd,
+             json.dumps({"tool_name": name[5:], "server_side": True})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_tool_rollup_session_bill_reconciles(tmp_db, monkeypatch):
+    """fetch_tool_token_rollup exposes the full recorded session bill — cache
+    read/write, base input, output — with a per-bucket USD split summed
+    per-turn, so the panel reconciles to `session_cost_usd` instead of passing
+    off the (output-only) attributed cost as the session total. Cache reads
+    bill ~10x cheaper than input, so the cost split must not echo the token
+    split (here cache_read is the largest token bucket but a tiny cost one)."""
+    # Flat rates (no tiers) so each bucket's cost is exactly rate * tokens.
+    rates = {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25}
+    monkeypatch.setattr("lib.tokens.pricing.model_rates", lambda model: rates)
+
+    _insert_tool_spans(tmp_db, "bill", [
+        ("t1", "tool.Bash", 0, 100, {"tool_name": "Bash"}),
+    ])
+    _insert_session_and_turns(
+        tmp_db, "bill",
+        session_row={"input": 15, "output": 300, "cache_read": 1000,
+                     "cache_write": 70, "cost_usd": 0.0085125},
+        turns=[
+            ("m", 10, 100, 0, 50, 60),
+            ("m", 5, 200, 1000, 20, 1025),
+        ],
+    )
+    # A server-side sub-model span (the advisor) bills on its OWN model — real
+    # spend that sessions.cost_usd excludes — so it must surface as subagent_*
+    # and lift total_spend above the main-model bill (its $0.05 dwarfs the
+    # $0.0085 main bill, the very over/under-claim that motivated this).
+    _insert_server_side_span(tmp_db, "bill", "adv", "tool.advisor",
+                             input_tokens=2000, output_tokens=500, cost_usd=0.05)
+
+    _rollup, t = trace_service.fetch_tool_token_rollup("bill")
+
+    # Recorded token aggregate + sub-agent + true total (one assert keeps the
+    # function under the cyclomatic-complexity grade).
+    token_keys = ("session_cache_read_tokens", "session_cache_creation_tokens",
+                  "session_input_tokens", "session_output_tokens",
+                  "session_total_tokens", "subagent_tokens", "total_spend_tokens")
+    assert {k: t[k] for k in token_keys} == {
+        "session_cache_read_tokens": 1000,
+        "session_cache_creation_tokens": 70,
+        "session_input_tokens": 15,
+        "session_output_tokens": 300,
+        "session_total_tokens": 1385,             # 15 + 300 + 1000 + 70
+        "subagent_tokens": 2500,                  # advisor 2000 + 500
+        "total_spend_tokens": 3885,               # 1385 + 2500
+    }
+
+    # Per-bucket cost = flat rate * tokens / 1e6. cache_read is the biggest
+    # token bucket (1000) yet a tiny cost ($0.0005) — the token-heavy,
+    # cost-light bucket the footer exists to expose. total_spend adds the
+    # advisor on top of the main-model bill.
+    cost_keys = ("input_cost_usd", "output_cost_usd", "cache_read_cost_usd",
+                 "cache_write_cost_usd", "session_cost_usd", "subagent_cost_usd",
+                 "total_spend_usd")
+    assert {k: t[k] for k in cost_keys} == pytest.approx({
+        "input_cost_usd": 15 * 5 / 1e6,
+        "output_cost_usd": 300 * 25 / 1e6,
+        "cache_read_cost_usd": 1000 * 0.5 / 1e6,
+        "cache_write_cost_usd": 70 * 6.25 / 1e6,
+        "session_cost_usd": 0.0085125,
+        "subagent_cost_usd": 0.05,
+        "total_spend_usd": 0.0585125,             # 0.0085125 + 0.05
+    })
+
+    # The four main buckets reconcile to the recorded session cost, and
+    # total_spend = that bill + the sub-agent — the invariant the "$X of $Y"
+    # label and footer total depend on.
+    bill = (t["input_cost_usd"] + t["output_cost_usd"]
+            + t["cache_read_cost_usd"] + t["cache_write_cost_usd"])
+    assert bill == pytest.approx(t["session_cost_usd"])
+    assert t["total_spend_usd"] == pytest.approx(
+        t["session_cost_usd"] + t["subagent_cost_usd"])
+
+
+def test_tool_rollup_session_bill_absent_when_no_session(tmp_db):
+    """With tool spans but no `sessions`/`turn_usage` rows (e.g. an in-flight
+    session before the first usage flush), the bill fields stay zeroed rather
+    than raising — `_session_bill_cost` and the `None` session row degrade to
+    zeros so the frontend simply hides the footer."""
+    _insert_tool_spans(tmp_db, "nosess", [
+        ("t1", "tool.Bash", 0, 100, {"tool_name": "Bash"}),
+    ])
+
+    _rollup, t = trace_service.fetch_tool_token_rollup("nosess")
+
+    assert t["session_total_tokens"] == 0
+    assert t["session_cost_usd"] == 0.0
+    assert t["cache_read_cost_usd"] == 0.0
+    assert t["cache_write_cost_usd"] == 0.0
+    assert t["subagent_cost_usd"] == 0.0
+    assert t["total_spend_usd"] == 0.0

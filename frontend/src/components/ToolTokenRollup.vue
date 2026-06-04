@@ -104,9 +104,63 @@ const toolRollupSummary = computed(() => {
     attributedIn: raw.attributed_input_tokens || 0,
     attributedOut: raw.attributed_output_tokens || 0,
     attributedCost: raw.attributed_cost_usd || 0,
+    // True spend (main-model bill + server-side sub-agent), the honest
+    // "$X of $Y" denominator. Falls back to the main-model cost pre-upgrade.
+    totalSpend: raw.total_spend_usd || raw.session_cost_usd || 0,
     untaggedIn: raw.untagged_input_tokens || 0,
     untaggedOut: raw.untagged_output_tokens || 0,
     hasData: Array.isArray(raw.rollup) && raw.rollup.length > 0,
+  }
+})
+
+const _pct = (n, total) => (total > 0 ? Math.round((100 * n) / total) + '%' : '')
+const _num = (o, k) => o[k] || 0
+
+// Static descriptor of the main-model bill rows: which `totals` fields feed
+// each bucket's tokens/cost. Kept out of the computed so the per-field `|| 0`
+// defaults live in `_num`, not as inline branches (cyclomatic budget).
+const _BILL_ROWS = [
+  { key: 'cache_read', label: 'context replay (cache read)',
+    tok: 'session_cache_read_tokens', cost: 'cache_read_cost_usd' },
+  { key: 'cache_write', label: 'cache write',
+    tok: 'session_cache_creation_tokens', cost: 'cache_write_cost_usd' },
+  { key: 'output', label: 'model output', ref: '↑',
+    note: 'model output — broken down by tool above',
+    tok: 'session_output_tokens', cost: 'output_cost_usd' },
+  { key: 'input', label: 'base input',
+    tok: 'session_input_tokens', cost: 'input_cost_usd' },
+]
+
+// The full recorded session bill — the dollar context "Tokens by tool" is
+// missing. The per-tool rows above attribute only model OUTPUT by activity;
+// the bulk of a long session is cache reads (re-sending the conversation each
+// turn) — ~90% of tokens but, billed at ~1/10 the input rate, only ~a third
+// of the cost. Showing tokens AND cost side by side keeps that from misleading
+// in either direction. The server-side sub-agent (the advisor) bills on its
+// own model and is absent from session_cost_usd, so it gets its own row and
+// the total is true spend (total_spend_*), not the main-model-only bill.
+const sessionBill = computed(() => {
+  const raw = props.rollupData
+  if (!raw) return null
+  const total = _num(raw, 'total_spend_tokens') || _num(raw, 'session_total_tokens')
+  if (!total) return null
+  const rows = _BILL_ROWS.map(r => ({
+    key: r.key, label: r.label, ref: r.ref, note: r.note,
+    tokens: _num(raw, r.tok), cost: _num(raw, r.cost),
+  }))
+  // Sub-agent (advisor): a separate model whose cost sessions.cost_usd omits.
+  // Listed as a tool above too, so flag the overlap rather than imply a dupe.
+  const subTokens = _num(raw, 'subagent_tokens')
+  const subCost = _num(raw, 'subagent_cost_usd')
+  if (subTokens || subCost) {
+    rows.push({ key: 'subagent', label: 'sub-agent (advisor)', ref: '↑',
+      note: 'separate model — shown as a tool above; not part of the main-model bill',
+      tokens: subTokens, cost: subCost })
+  }
+  return {
+    rows: rows.map(r => ({ ...r, pct: _pct(r.tokens, total) })),
+    total,
+    cost: _num(raw, 'total_spend_usd') || _num(raw, 'session_cost_usd'),
   }
 })
 </script>
@@ -134,8 +188,8 @@ const toolRollupSummary = computed(() => {
         <span
           v-if="toolRollupSummary.attributedCost > 0"
           class="font-mono text-slate-500"
-          :title="'cost computed from session model rates via models.dev'"
-        >· {{ fmtCost(toolRollupSummary.attributedCost) }} attributed</span>
+          :title="'Attributed to tools (incl. the advisor sub-agent) — of total spend (models.dev rates). The rest is cache read/write + base input; expand for the full bill.'"
+        >· {{ fmtCost(toolRollupSummary.attributedCost) }}<template v-if="toolRollupSummary.totalSpend > 0"> of {{ fmtCost(toolRollupSummary.totalSpend) }}</template> attributed</span>
         <span class="font-mono text-slate-400">· {{ toolTokenRollup.length }} tools</span>
       </button>
       <div
@@ -240,18 +294,41 @@ const toolRollupSummary = computed(() => {
       </div>
     </div>
 
-    <!-- Untagged remainder: shown in both views as a trailing note. -->
+    <!-- Full session bill: the recorded token total split into the four
+         buckets that drive the cost. 'Tokens by tool' above attributes only
+         model output by activity; cache (dominant in tokens, ~a third of the
+         bill) and base input live only here. Tokens AND cost are shown so
+         cache's token-heaviness doesn't read as cost-heaviness — cache reads
+         bill at ~1/10 the input rate. Reconciles to session_total / cost. -->
     <div
-      v-if="rollupExpanded && toolRollupSummary.untaggedIn + toolRollupSummary.untaggedOut > 0"
-      class="mt-1.5 pt-1.5 border-t border-slate-100 font-mono text-[11px]"
+      v-if="rollupExpanded && sessionBill"
+      class="mt-2 pt-2 border-t border-slate-100 font-mono text-[11px]"
     >
-      <span
-        class="inline-flex items-center gap-1"
-        :title="'in: ' + toolRollupSummary.untaggedIn + ' · out: ' + toolRollupSummary.untaggedOut + ' — system prompt, conversation history, untracked prose'"
-      >
-        <span class="text-slate-400 italic">untagged</span>
-        <span class="text-slate-400">{{ fmtTokens(toolRollupSummary.untaggedIn + toolRollupSummary.untaggedOut) }}</span>
-      </span>
+      <!-- Fixed-width grid kept to its content (`w-max`) so the bill reads as a
+           tidy left-aligned table instead of stretching label-to-far-edge across
+           a wide viewport; tokens / % / cost each get their own right-aligned
+           column so they can't collide. -->
+      <div class="grid w-max grid-cols-[15rem_4.5rem_2.75rem_4.5rem] gap-x-3 gap-y-0.5 items-baseline">
+        <span class="text-[9px] uppercase tracking-wider text-slate-400">full session bill</span>
+        <span class="text-[9px] uppercase tracking-wider text-slate-400 text-right">tokens</span>
+        <span aria-hidden="true"></span>
+        <span class="text-[9px] uppercase tracking-wider text-slate-400 text-right">cost</span>
+
+        <template v-for="row in sessionBill.rows" :key="row.key">
+          <span class="text-slate-500 truncate" :title="row.note || row.label">{{ row.label
+            }}<span v-if="row.ref" class="text-slate-300"> {{ row.ref }}</span></span>
+          <span class="text-right text-slate-500 tabular-nums">{{ fmtTokens(row.tokens) }}</span>
+          <span class="text-right text-slate-400 tabular-nums">{{ row.pct }}</span>
+          <span class="text-right text-slate-600 tabular-nums">{{ fmtCost(row.cost) }}</span>
+        </template>
+
+        <span class="col-span-4 mt-0.5 border-t border-slate-100" aria-hidden="true"></span>
+        <span class="text-slate-600 font-medium"
+              title="True spend — main-model bill plus the advisor sub-agent (which sessions.cost_usd omits).">total spend</span>
+        <span class="text-right text-slate-700 font-medium tabular-nums">{{ fmtTokens(sessionBill.total) }}</span>
+        <span aria-hidden="true"></span>
+        <span class="text-right text-slate-700 font-medium tabular-nums">{{ fmtCost(sessionBill.cost) }}</span>
+      </div>
     </div>
   </div>
 </template>
