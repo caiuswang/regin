@@ -1024,6 +1024,29 @@ def test_turn_total_duration_patched_from_system_entry(tmp_path):
     assert stop.turn_uuid == "asst-1"
 
 
+def test_away_summary_captured_as_system_event(tmp_path):
+    """`system: away_summary` is the recap Claude Code writes when the
+    session goes idle. It carries its prose in the top-level `content`
+    string and must surface as a traced system event tied to the turn
+    it followed."""
+    path = _write(
+        tmp_path,
+        _user("user-1", None, timestamp="2026-04-27T12:00:00Z"),
+        _asst_with_content(msg_id="m1", uuid="asst-1", parent="user-1",
+                            content=[{"type": "text", "text": "answer"}],
+                            timestamp="2026-04-27T12:00:03Z"),
+        {"type": "system", "subtype": "away_summary",
+         "uuid": "sys-recap-1", "parentUuid": "asst-1",
+         "content": "We diagnosed the misplaced span; next decide the fix.",
+         "timestamp": "2026-04-27T12:05:00Z"},
+    )
+    u = read_usage(path)
+    assert u is not None
+    recap = next(e for e in u.system_events if e.subtype == "away_summary")
+    assert recap.turn_uuid == "asst-1"
+    assert recap.payload.get("content").startswith("We diagnosed")
+
+
 def test_inference_duration_uses_prior_tool_result_timestamp(tmp_path):
     """For a turn that follows a tool_result (multi-iteration prompt
     cycle), the per-call latency measures from the tool_result

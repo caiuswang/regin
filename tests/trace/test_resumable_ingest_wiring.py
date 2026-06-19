@@ -66,6 +66,40 @@ def test_ingest_resumable_posts_prompt_and_response_spans(tmp_path, monkeypatch)
     assert state is not None and state.offset > 0
 
 
+def test_ingest_resumable_posts_recap_span_for_away_summary(tmp_path, monkeypatch):
+    """A `system: away_summary` recap entry becomes a `harness.recap`
+    span (id `sys-<uuid[:13]>`), carrying its prose content."""
+    monkeypatch.setenv("REGIN_TURN_TRACE_STATE_DIR", str(tmp_path / "state"))
+    posted: list = []
+
+    def _fake_post_span(*a, **k):
+        posted.append((k.get("span_id"), k.get("name"), k.get("attributes")))
+        return True
+
+    monkeypatch.setattr("lib.hook_plugin.post_span", _fake_post_span)
+    monkeypatch.setattr("lib.hook_plugin.post_event", lambda *a, **k: True)
+    path = _write(
+        tmp_path, "main.jsonl",
+        {"type": "user", "uuid": "p0", "parentUuid": None,
+         "timestamp": "2026-05-20T10:00:00Z", "message": {"content": "hello"}},
+        _assistant_with_text("a0", "p0", "2026-05-20T10:00:05Z", "m0", "hi back"),
+        {"type": "system", "subtype": "away_summary", "uuid": "recap0",
+         "parentUuid": "a0", "timestamp": "2026-05-20T10:05:00Z",
+         "content": "Recap of the work so far."},
+    )
+    from hook_manager.handlers.turn_trace.entry import (
+        ingest_transcript_usage_resumable,
+    )
+    ingest_transcript_usage_resumable("trace-1", path, None)
+    recap = next((p for p in posted if p[1] == "harness.recap"), None)
+    assert recap is not None, posted
+    span_id, _, attrs = recap
+    assert span_id == "sys-recap0"
+    assert attrs.get("subtype") == "away_summary"
+    assert attrs.get("content") == "Recap of the work so far."
+    assert attrs.get("content_truncated") is False
+
+
 def test_ingest_resumable_second_poll_parses_only_appended_bytes(tmp_path, monkeypatch):
     monkeypatch.setenv("REGIN_TURN_TRACE_STATE_DIR", str(tmp_path / "state"))
     _patch_hook_io(monkeypatch)

@@ -18,8 +18,83 @@ const CONVERSATIONAL_ROOT_NAMES = new Set([
   'prompt',
   'compact.pre',
   'compact.post',
+  'rewind',
   'task.notification',
 ])
+
+// Map each backend `turn_usage` row to the prompt group that owns it.
+// One user prompt drives MANY API turns, so this is a bucketing, not a
+// 1:1 pairing. Primary key: the `turn_uuid` stamped on the prompt's
+// loaded descendant spans. Subtrees load lazily, so a collapsed prompt
+// has no descendants client-side — its turns fall back to a timestamp
+// partition over the prompt anchors. Turns older than the oldest loaded
+// prompt belong to a page that isn't loaded and stay unassigned.
+function bucketTurnsByPrompt(turnList, groups) {
+  const buckets = groups.map(() => [])
+  if (!turnList?.length || !groups.length) return buckets
+  const promptIdxByTurnUuid = new Map()
+  groups.forEach((entry, idx) => {
+    for (const { span } of entry.descendants) {
+      const uuid = span.turn_uuid || span.attributes?.turn_uuid
+      if (uuid && !promptIdxByTurnUuid.has(uuid)) promptIdxByTurnUuid.set(uuid, idx)
+    }
+  })
+  const promptStarts = groups.map((e) =>
+    e.prompt.start_time ? new Date(e.prompt.start_time).getTime() : NaN,
+  )
+  for (const turn of turnList) {
+    const idx = promptIdxByTurnUuid.get(turn.turn_uuid)
+      ?? promptIdxByTimestamp(turn, promptStarts)
+    if (idx != null) buckets[idx].push(turn)
+  }
+  return buckets
+}
+
+// Latest prompt submitted before the turn's API response — null when the
+// turn predates every loaded prompt (it belongs to an older, unloaded page).
+function promptIdxByTimestamp(turn, promptStarts) {
+  const ts = turn.timestamp ? new Date(turn.timestamp).getTime() : NaN
+  if (!Number.isFinite(ts)) return null
+  let owner = null
+  for (let i = 0; i < promptStarts.length; i++) {
+    if (!Number.isFinite(promptStarts[i]) || promptStarts[i] > ts) continue
+    if (owner == null || promptStarts[i] >= promptStarts[owner]) owner = i
+  }
+  return owner
+}
+
+// Footer rollup over one prompt's turn bucket. `lastTurn` carries the
+// fields that only make sense per-turn (context_used_tokens, effort_level).
+function aggregateTurns(bucket) {
+  if (!bucket?.length) return null
+  let inputTokens = 0
+  let outputTokens = 0
+  for (const t of bucket) {
+    inputTokens += (t.input_tokens || 0) + (t.cache_creation_tokens || 0)
+    outputTokens += t.output_tokens || 0
+  }
+  return {
+    count: bucket.length,
+    inputTokens,
+    outputTokens,
+    lastTurn: bucket[bucket.length - 1],
+  }
+}
+
+function countToolish(descendants) {
+  const toolCounts = {}
+  for (const { span } of descendants) {
+    const name = span.name
+    if (name.startsWith('tool.')) {
+      toolCounts['tool'] = (toolCounts['tool'] || 0) + 1
+    } else if (name === 'skill.read' || name === 'skill.invoke') {
+      toolCounts['skill'] = (toolCounts['skill'] || 0) + 1
+    } else if (name === 'file.edit' || name === 'plan.edit') {
+      toolCounts['edit'] = (toolCounts['edit'] || 0) + 1
+    }
+  }
+  return toolCounts
+}
 
 /**
  * useSpanTree — span-list → tree derivations for the conversation view.
@@ -228,23 +303,10 @@ export function useSpanTree(spansInput, turnsInput = null) {
   )
 
   const turnItems = computed(() => {
-    const turnList = turns()
+    const turnBuckets = bucketTurnsByPrompt(turns(), promptGroups.value)
     return promptGroups.value.map((entry, idx) => {
-      const toolCounts = {}
-      for (const { span } of entry.descendants) {
-        const name = span.name
-        if (name.startsWith('tool.')) {
-          toolCounts['tool'] = (toolCounts['tool'] || 0) + 1
-        } else if (name === 'skill.read' || name === 'skill.invoke') {
-          toolCounts['skill'] = (toolCounts['skill'] || 0) + 1
-        } else if (name === 'file.edit' || name === 'plan.edit') {
-          toolCounts['edit'] = (toolCounts['edit'] || 0) + 1
-        }
-      }
-      // Pair with the backend `turns[]` record (if loaded) by
-      // chronological index — both lists are 1:1 aligned:
-      // turn[i] ⇔ promptGroup[i].
-      const turn = turnList ? turnList[idx] || null : null
+      const toolCounts = countToolish(entry.descendants)
+      const promptTurns = turnBuckets[idx]
       const startTime = entry.prompt.start_time
       const lastSpan =
         entry.descendants[entry.descendants.length - 1]?.span || entry.prompt
@@ -261,7 +323,8 @@ export function useSpanTree(spansInput, turnsInput = null) {
         endMs,
         durationMs: Math.max(0, endMs - startMs),
         toolCounts,
-        turn,
+        turns: promptTurns,
+        turnAgg: aggregateTurns(promptTurns),
       }
     })
   })

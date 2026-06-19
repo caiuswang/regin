@@ -5,8 +5,9 @@ a prompt just submitted (its real `prompt-<uuid>` anchor isn't written until
 the turn flushes), an `AskUserQuestion` / `ExitPlanMode` awaiting an answer,
 or a permission request awaiting grant/deny. It is emitted immediately with a
 deterministic span_id under a RESERVED PREFIX so it can never collide with a
-real span, and `ingest_session_spans` deletes it the moment the resolved span
-lands — see `pending_id_for_resolved`.
+real span. The store is append-only: ingest never deletes the placeholder;
+`lib/trace/merge.py` drops it at read time once the resolved span is present
+in the window — see `pending_id_for_resolved`.
 
 The id is the handoff key:
 - prompt   → `promptlive-<sha1(session + text-prefix)>`  (matched by text)

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from flask import request, jsonify, Response
 
 from lib import hook_plugin as _hp
+from lib.providers import canonical_agent_kind
 from lib.orm import SessionLocal
 from lib.orm.models import (
     PlanSession, PromptImage, RuleTrigger, Session as SessionModel,
@@ -148,6 +149,7 @@ def api_sessions():
         scope = 'title'
     since = (request.args.get('since') or '').strip()
     until = (request.args.get('until') or '').strip()
+    date_filtered = bool(since or until)
     workflow = (request.args.get('workflow') or 'show').strip().lower()
     if workflow not in ('hide', 'show', 'only'):
         workflow = 'show'
@@ -176,15 +178,22 @@ def api_sessions():
         # main-conversation peak (terminal-matching, used as headline);
         # `context_pct_all` is the all-inclusive peak (rolled-in
         # advisor / server-side sub-call tokens) — UI shows it as a
-        # secondary chip only when the two diverge.
+        # secondary chip only when the two diverge. The headline divides
+        # the *live* peak (main-flow high-water mark since the last
+        # `/compact`) so the % drops when the session compacts; the
+        # all-time peaks still drive window inference and the
+        # pre-compaction hint.
         peak_full = d.get('peak_context_tokens')
         peak_main = d.get('peak_main_context_tokens')
+        live = d.get('live_context_tokens')
         model = d.get('model')
         if isinstance(peak_full, int):
             win = _infer_window(model, peak_full)
             d['context_window_tokens'] = win  # override stored hint
             d['context_pct_all'] = round(peak_full * 100.0 / win, 1) if win > 0 else None
-            main_for_pct = peak_main if isinstance(peak_main, int) else peak_full
+            main_for_pct = next(
+                (v for v in (live, peak_main, peak_full) if isinstance(v, int)),
+                peak_full)
             d['context_pct'] = round(main_for_pct * 100.0 / win, 1) if win > 0 else None
         else:
             d['context_pct'] = None
@@ -207,17 +216,13 @@ def api_sessions():
             d['active_pct'] = None
             d['idle_ms'] = None
 
-        # Canonical agent kind: 'claude', 'codex', or 'generic'. agent_type
-        # is now vendor-only ('claude' | 'codex' | NULL) — "workflow" no
-        # longer lives here; it moved to the orthogonal `origin` axis below.
-        # Keep raw agent_type for display (tooltip uses it verbatim).
-        raw = str(d.get('agent_type') or '').lower()
-        if 'claude' in raw:
-            d['agent_kind'] = 'claude'
-        elif 'codex' in raw or 'openai' in raw:
-            d['agent_kind'] = 'codex'
-        else:
-            d['agent_kind'] = 'generic' if raw else None
+        # Canonical agent kind: 'claude' | 'codex' | 'kimi' | 'generic' | None.
+        # Delegated to the provider registry so the vendor→kind mapping lives
+        # in one place (lib/providers/registry.canonical_agent_kind) rather
+        # than a substring chain copied into this blueprint. agent_type is
+        # vendor-only here — "workflow" moved to the orthogonal `origin` axis
+        # below. Keep raw agent_type for display (tooltip uses it verbatim).
+        d['agent_kind'] = canonical_agent_kind(d.get('agent_type'))
 
         # `origin` is what KIND of row this is: 'session' (a real interactive
         # agent session, the default) or 'workflow' (a captured dynamic-
@@ -242,7 +247,7 @@ def api_sessions():
         .label('plans')
     )
 
-    def _apply_filters(s):
+    def _apply_filters(s, skip_date=False):
         """Apply the shared WHERE set (kind/is_test, trace_id, active,
         title/prompt search, since/until, repo) to a statement and return it.
 
@@ -250,6 +255,8 @@ def api_sessions():
         an identical filter set — the count must reflect exactly the rows the
         page would have shown but for the `workflow` origin filter. The
         workflow/origin clause is applied by the caller, NOT here.
+        `skip_date=True` omits the since/until bounds so callers can count
+        rows outside the current date window.
         """
         if kind == 'real':
             s = s.where(SessionModel.is_test == 0)
@@ -296,10 +303,11 @@ def api_sessions():
             search_clause = {'title': title_clause, 'prompt': prompt_clause}.get(
                 scope, _or(title_clause, prompt_clause))
             s = s.where(search_clause)
-        if since:
-            s = s.where(SessionModel.last_seen >= since)
-        if until:
-            s = s.where(SessionModel.last_seen < until)
+        if not skip_date:
+            if since:
+                s = s.where(SessionModel.last_seen >= since)
+            if until:
+                s = s.where(SessionModel.last_seen < until)
         return _filter_sessions_by_repo(s, request.args.get('repo'))
 
     with SessionLocal() as session:
@@ -318,6 +326,7 @@ def api_sessions():
             SessionModel.input_tokens, SessionModel.output_tokens,
             SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
             SessionModel.peak_context_tokens, SessionModel.peak_main_context_tokens,
+            SessionModel.live_context_tokens,
             SessionModel.context_window_tokens,
             SessionModel.active_work_ms,
         ))
@@ -341,6 +350,21 @@ def api_sessions():
         else:
             hidden_workflow_count = None
 
+        # When showing only runs and a date filter is active, count how many
+        # workflow rows the date filter excluded, for a "widen date range" hint.
+        if workflow == 'only' and date_filtered:
+            wf_all = session.exec(
+                _apply_filters(_select(_func.count()).select_from(SessionModel), skip_date=True)
+                .where(SessionModel.origin == 'workflow')
+            ).one()
+            wf_dated = session.exec(
+                _apply_filters(_select(_func.count()).select_from(SessionModel))
+                .where(SessionModel.origin == 'workflow')
+            ).one()
+            workflow_date_hidden_count = max(0, wf_all - wf_dated)
+        else:
+            workflow_date_hidden_count = None
+
         page = keyset_page_stmt(
             session, stmt,
             order_cols=[(SessionModel.last_seen, 'DESC'),
@@ -353,6 +377,7 @@ def api_sessions():
     envelope['sessions'] = envelope['items']  # legacy field
     envelope['search'] = search
     envelope['workflow_hidden_count'] = hidden_workflow_count
+    envelope['workflow_date_hidden_count'] = workflow_date_hidden_count
     return jsonify(envelope)
 
 
@@ -570,6 +595,7 @@ def _session_summary(trace_id: str) -> dict:
                 SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
                 SessionModel.peak_context_tokens,
                 SessionModel.peak_main_context_tokens,
+                SessionModel.live_context_tokens,
                 SessionModel.active_work_ms,
                 SessionModel.started_at,
                 SessionModel.ended_at,
@@ -581,15 +607,17 @@ def _session_summary(trace_id: str) -> dict:
     if not row:
         return {}
     (model, input_tokens, output_tokens,
-     cache_read, cache_creation, peak, peak_main, active_work_ms,
+     cache_read, cache_creation, peak, peak_main, live, active_work_ms,
      started_at, ended_at, last_seen, title, title_source) = row
     # Compute window at read time from the session's richer `model` id —
     # see _row_to_dict() for the rationale. Window inference uses the
-    # all-inclusive peak; the headline `context_pct` divides the main
-    # peak by it (terminal-matching), `context_pct_all` divides the full
-    # peak (shown alongside only when they diverge).
+    # all-inclusive peak; the headline `context_pct` divides the *live*
+    # peak by it (main-flow high-water mark since the last `/compact`, so
+    # it drops when the session compacts), `context_pct_all` divides the
+    # full peak (shown alongside only when they diverge).
     window = _infer_window(model, peak) if isinstance(peak, int) else None
-    main_for_pct = peak_main if isinstance(peak_main, int) else peak
+    main_for_pct = next(
+        (v for v in (live, peak_main, peak) if isinstance(v, int)), peak)
     return {
         'model': model,
         # Workflow runs have no single context window (peak is NULL), so the
@@ -605,6 +633,7 @@ def _session_summary(trace_id: str) -> dict:
         'cache_creation_tokens': cache_creation,
         'peak_context_tokens': peak,
         'peak_main_context_tokens': peak_main,
+        'live_context_tokens': live,
         'context_window_tokens': window,
         'context_pct': _pct(main_for_pct, window),
         'context_pct_all': _pct(peak, window),
@@ -661,6 +690,24 @@ def api_session_span_children(trace_id, span_id):
     })
 
 
+# Attribute keys the light structural map preserves after the strip: the
+# `/rewind` signal the frontend needs to collapse the discarded branch and
+# label the marker without a content round-trip. The marker's heavier attrs
+# (orphan_keys, rolled_back_files) are dropped here and loaded lazily via
+# /spans/<id>/rewind.
+_MAP_KEEP_ATTR_KEYS = (
+    'rewound_away', 'rewind_fork_id',
+    'abandoned_prompt_count', 'rolled_back_count',
+)
+
+
+def _kept_map_attrs(attrs) -> dict:
+    """The small subset of a span's attributes the structural map keeps."""
+    if not isinstance(attrs, dict):
+        return {}
+    return {k: attrs[k] for k in _MAP_KEEP_ATTR_KEYS if k in attrs}
+
+
 def _structural_map_spans(trace_id: str) -> list[dict]:
     """The full structural span list for the non-shallow `/map` (Terminal tab).
 
@@ -683,7 +730,7 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
                 SessionSpan.start_time, SessionSpan.end_time,
                 SessionSpan.duration_ms, SessionSpan.status_code,
                 SessionSpan.status_message, SessionSpan.attributes,
-                SessionSpan.turn_uuid,
+                SessionSpan.turn_uuid, SessionSpan.source,
             )
             .where(SessionSpan.trace_id == trace_id)
             .order_by(SessionSpan.start_time.asc(), SessionSpan.id.asc())
@@ -698,8 +745,11 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
         spans.append(d)
     grafted = merge_spans(spans)
     for s in grafted:
+        kept = _kept_map_attrs(s.get('attributes'))
         s.pop('attributes', None)
         s.pop('turn_uuid', None)
+        if kept:
+            s['attributes'] = kept
     return grafted
 
 
@@ -817,6 +867,41 @@ def api_span_content(trace_id, span_id):
         'trace_id': trace_id,
         'span_id': span_id,
         'attributes': json.loads(attrs_json or '{}'),
+    })
+
+
+@trace_bp.route('/api/sessions/<trace_id>/spans/<span_id>/rewind')
+def api_span_rewind(trace_id, span_id):
+    """Lazy before/after content for a `/rewind` marker's rolled-back files.
+
+    The map carries only `rolled_back_count`; the file list + `@vN` refs live
+    in the marker's full attributes, and the actual file copies live in
+    `~/.claude/file-history/<session>/`. This route joins them on demand so a
+    code-rollback diff never bloats the map payload. `session_id == trace_id`
+    (regin keys sessions by the Claude Code session id, which also names the
+    file-history dir)."""
+    from sqlmodel import select as _select
+    from lib.trace.file_history import diff_versions
+
+    with SessionLocal() as session:
+        attrs_json = session.exec(
+            _select(SessionSpan.attributes)
+            .where(SessionSpan.trace_id == trace_id)
+            .where(SessionSpan.span_id == span_id)
+        ).first()
+    if attrs_json is None:
+        return jsonify({'error': 'span not found'}), 404
+    attrs = json.loads(attrs_json or '{}')
+    if attrs.get('kind') != 'rewind':
+        return jsonify({'error': 'not a rewind marker'}), 400
+    files = [
+        diff_versions(trace_id, entry)
+        for entry in (attrs.get('rolled_back_files') or [])
+    ]
+    return jsonify({
+        'trace_id': trace_id,
+        'span_id': span_id,
+        'files': files,
     })
 
 

@@ -337,6 +337,32 @@ def test_graft_orphans_reattaches_turn_span_near_next_prompt():
     assert by_id['t1']['parent_id'] == 'p1'
 
 
+def test_graft_orphans_reattaches_memory_recall_to_following_prompt():
+    """A `memory.recall` span is emitted by the memory_recall handler on
+    UserPromptSubmit — which runs BEFORE prompt_trace — so it sorts a few
+    ms ahead of its own prompt's anchor. Like `turn` spans, it must
+    re-attach to the FOLLOWING prompt (the one it was injected into), not
+    the previous prompt the chronological graft would otherwise pick."""
+    spans = [
+        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt', 'attributes': {},
+         'start_time': '2026-01-01T00:00:00.000000', 'end_time': None,
+         'duration_ms': 0},
+        # Injection span fires 8 ms before the new prompt's anchor.
+        {'span_id': 'mr', 'parent_id': None, 'name': 'memory.recall',
+         'attributes': {'hit_count': 2},
+         'start_time': '2026-01-01T00:01:29.992000', 'end_time': None,
+         'duration_ms': 0},
+        {'span_id': 'p2', 'parent_id': None, 'name': 'prompt', 'attributes': {},
+         'start_time': '2026-01-01T00:01:30.000000', 'end_time': None,
+         'duration_ms': 0},
+    ]
+    out = app_module._graft_orphans(spans)
+    by_id = {s['span_id']: s for s in out}
+    assert by_id['mr']['parent_id'] == 'p2', (
+        "memory.recall landing within 1 s before p2 must nest under p2"
+    )
+
+
 def test_graft_orphans_nests_subagent_tool_spans_under_subagent_start():
     """Claude Code tags every hook firing inside a subagent with
     `agent_id`. Tool spans that carry that id must nest under their
@@ -651,6 +677,9 @@ def test_session_map_span_dict_has_exact_projection_keys(client, trace_db):
         'id', 'trace_id', 'span_id', 'parent_id', 'name', 'kind',
         'start_time', 'end_time', 'duration_ms',
         'status_code', 'status_message',
+        # Capture-source discriminator ('hook' | 'transcript'), surfaced in
+        # the span-detail rail — see SpanDetailPanel.vue.
+        'source',
     }
     assert set(span.keys()) == expected_keys, (
         f"span dict keys drifted: have {sorted(span.keys())}, "
@@ -679,6 +708,73 @@ def test_span_content_404_when_missing(client, trace_db):
     across the ORM migration."""
     resp = client.get('/api/sessions/no-such-trace/spans/no-such-span/content')
     assert resp.status_code == 404
+
+
+def test_session_map_preserves_rewind_flags(client, trace_db):
+    """The structural map strips most attributes but keeps the `/rewind`
+    signal so the frontend can collapse the discarded branch without a
+    content round-trip. The marker's heavy attrs (orphan_keys,
+    rolled_back_files) are dropped — loaded lazily via /spans/<id>/rewind."""
+    trace_id = 'rewind-map-1'
+    ab = 'aaaaaaaa-bbbb'
+    _seed(trace_db, [
+        {'trace_id': trace_id, 'span_id': 'conversation-x', 'name': 'conversation',
+         'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': trace_id, 'span_id': f'rewind-{ab}', 'name': 'rewind',
+         'start_time': '2026-01-01T00:00:05',
+         'attributes': {'kind': 'rewind', 'orphan_keys': [ab],
+                        'abandoned_prompt_keys': [ab],
+                        'abandoned_prompt_count': 1, 'rolled_back_count': 2,
+                        'rolled_back_files': [{'path': '/a', 'before_ref': 'h@v2',
+                                               'after_ref': 'h@v1'}]}},
+        {'trace_id': trace_id, 'span_id': f'prompt-{ab}', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:06'},
+    ])
+    spans = {s['span_id']: s for s in client.get(
+        f'/api/sessions/{trace_id}/map').get_json()['spans']}
+    # Abandoned prompt keeps the flags and is re-parented under the marker.
+    abandoned = spans[f'prompt-{ab}']
+    assert abandoned['attributes']['rewound_away'] is True
+    assert abandoned['attributes']['rewind_fork_id'] == f'rewind-{ab}'
+    assert abandoned['parent_id'] == f'rewind-{ab}'
+    # Marker keeps its small label counts but NOT the heavy lists.
+    marker_attrs = spans[f'rewind-{ab}']['attributes']
+    assert marker_attrs.get('rolled_back_count') == 2
+    assert 'orphan_keys' not in marker_attrs
+    assert 'rolled_back_files' not in marker_attrs
+
+
+def test_span_rewind_route_returns_before_after(client, trace_db, monkeypatch, tmp_path):
+    """The lazy /rewind route joins a marker's file refs with the on-disk
+    backup store and returns before/after text per rolled-back file."""
+    import lib.trace.file_history as fh
+    monkeypatch.setattr(fh, '_store_root', lambda base_dir: str(tmp_path))
+    trace_id = 'rewind-route-1'
+    sdir = tmp_path / trace_id
+    sdir.mkdir()
+    (sdir / 'h@v1').write_text('old\n', encoding='utf-8')
+    (sdir / 'h@v2').write_text('old\nnew\n', encoding='utf-8')
+    _seed(trace_db, [
+        {'trace_id': trace_id, 'span_id': 'rewind-z', 'name': 'rewind',
+         'start_time': '2026-01-01T00:00:00',
+         'attributes': {'kind': 'rewind', 'rolled_back_files': [
+             {'path': '/x.py', 'before_ref': 'h@v2', 'after_ref': 'h@v1'}]}},
+    ])
+    body = client.get(f'/api/sessions/{trace_id}/spans/rewind-z/rewind').get_json()
+    assert len(body['files']) == 1
+    f = body['files'][0]
+    assert f['path'] == '/x.py'
+    assert f['before_text'] == 'old\nnew\n'
+    assert f['after_text'] == 'old\n'
+
+
+def test_span_rewind_route_rejects_non_marker(client, trace_db):
+    _seed(trace_db, [
+        {'trace_id': 'r2', 'span_id': 'p', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:00', 'attributes': {'text': 'hi'}},
+    ])
+    resp = client.get('/api/sessions/r2/spans/p/rewind')
+    assert resp.status_code == 400
 
 
 def test_workflow_runs_endpoint_lists_launched_runs(client, trace_db):

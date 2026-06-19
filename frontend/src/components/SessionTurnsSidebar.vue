@@ -10,6 +10,7 @@
 import { fmtTokens } from '../utils/traceFormatters.js'
 import { barColor, toolBadgeColor } from '../utils/spanColors.js'
 import Card from './Card.vue'
+import Button from './ui/Button.vue'
 
 const props = defineProps({
   turns: { type: Array, default: null },
@@ -97,13 +98,13 @@ function turnCtxClass(pct) {
         >· stale</span>
       </button>
       <h2 v-else class="text-sm font-semibold text-slate-700">Turns</h2>
-      <button
+      <Button
         v-if="turns == null"
-        type="button"
-        class="text-xs text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"
+        variant="link"
+        size="sm"
         :disabled="turnsLoading"
         @click="$emit('load')"
-      >{{ turnsLoading ? 'loading…' : 'load' }}</button>
+      >{{ turnsLoading ? 'loading…' : 'load' }}</Button>
       <span v-else class="text-xs text-gray-400">
         {{ turnsLoading ? 'loading…' : `${turns.length} turns` }}
       </span>

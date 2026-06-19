@@ -148,13 +148,13 @@ const sessionBill = computed(() => {
     key: r.key, label: r.label, ref: r.ref, note: r.note,
     tokens: _num(raw, r.tok), cost: _num(raw, r.cost),
   }))
-  // Sub-agent (advisor): a separate model whose cost sessions.cost_usd omits.
-  // Listed as a tool above too, so flag the overlap rather than imply a dupe.
+  // Sub-agent spend sessions.cost_usd omits: the server-side advisor and
+  // Task-tool subagents (isolated transcripts), billed on a separate channel.
   const subTokens = _num(raw, 'subagent_tokens')
   const subCost = _num(raw, 'subagent_cost_usd')
   if (subTokens || subCost) {
-    rows.push({ key: 'subagent', label: 'sub-agent (advisor)', ref: '↑',
-      note: 'separate model — shown as a tool above; not part of the main-model bill',
+    rows.push({ key: 'subagent', label: 'sub-agent',
+      note: 'subagents (advisor + Task tool) — billed separately from the main-model bill',
       tokens: subTokens, cost: subCost })
   }
   return {

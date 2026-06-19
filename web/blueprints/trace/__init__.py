@@ -39,6 +39,7 @@ trace_bp = Blueprint('trace', __name__)
 # Submodule imports register routes onto trace_bp via side effects.
 # Keep these AFTER trace_bp is defined so the submodules can import it.
 from web.blueprints.trace import (  # noqa: E402,F401
+    agent_messages,
     ingest_errors,
     mcp_calls,
     prompt_images,

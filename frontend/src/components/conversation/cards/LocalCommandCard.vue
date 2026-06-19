@@ -1,6 +1,6 @@
 <script setup>
 import { fmtClock, fmtDuration, fullLabel, dotColor } from '../../../utils/traceFormatters.js'
-import { useCopy } from '../../../composables/useCopy.js'
+import CopyButton from './CopyButton.vue'
 
 // Local command (`!ls` bang/bash or `/clear` slash): one-liner showing the
 // command, expandable into a dark terminal panel with stdout/stderr — mirrors
@@ -13,7 +13,6 @@ defineProps({
   folding: { type: Object, required: true },
 })
 defineEmits(['activate'])
-const { copyText } = useCopy()
 </script>
 
 <template>
@@ -36,7 +35,7 @@ const { copyText } = useCopy()
     </div>
     <div
       v-if="folding.bashExpanded(span.span_id) && (span.attributes?.stdout || span.attributes?.stderr)"
-      class="ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
+      class="code-surface ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
     >
       <div v-if="span.attributes?.stdout" class="px-3 py-2">
         <div class="flex items-center gap-2 mb-1">
@@ -45,12 +44,7 @@ const { copyText } = useCopy()
             v-if="span.attributes?.stdout_truncated"
             class="text-[10px] text-amber-300 bg-amber-900/40 border border-amber-700/60 px-1 rounded"
           >truncated</span>
-          <button
-            type="button"
-            class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-slate-400 hover:bg-slate-700/60 focus-visible:outline-2 focus-visible:outline-slate-500"
-            title="Copy"
-            @click.stop="copyText(span.attributes.stdout)"
-          >Copy</button>
+          <CopyButton :text="span.attributes.stdout" />
         </div>
         <pre class="text-[12px] text-slate-100 whitespace-pre-wrap break-words font-mono leading-snug max-h-96 overflow-auto">{{ span.attributes.stdout }}</pre>
       </div>
@@ -65,12 +59,7 @@ const { copyText } = useCopy()
             v-if="span.attributes?.stderr_truncated"
             class="text-[10px] text-amber-300 bg-amber-900/40 border border-amber-700/60 px-1 rounded"
           >truncated</span>
-          <button
-            type="button"
-            class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-red-400 hover:bg-red-900/40 focus-visible:outline-2 focus-visible:outline-red-500"
-            title="Copy"
-            @click.stop="copyText(span.attributes.stderr)"
-          >Copy</button>
+          <CopyButton :text="span.attributes.stderr" tint="text-red-400 hover:bg-red-900/40" />
         </div>
         <pre class="text-[12px] text-red-300 whitespace-pre-wrap break-words font-mono leading-snug max-h-64 overflow-auto">{{ span.attributes.stderr }}</pre>
       </div>

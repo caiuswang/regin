@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { AGENT_RESULT_PREVIEW_CHARS } from '../../../composables/useAgentLaunchMerge.js'
+import Button from '../../ui/Button.vue'
 
 // Deferred agent RESULT card (workflow runs): the span-tree projection emits
 // this AFTER the agent's turns, so each agent reads prompt → work → result.
@@ -21,12 +22,13 @@ const expanded = computed(() => props.folding.isAgentResultExpanded(props.span.s
   <div class="mt-1 mb-2 rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-2">
     <div class="flex items-center justify-between gap-2 mb-1">
       <span class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">result</span>
-      <button
+      <Button
         v-if="resultText.length > AGENT_RESULT_PREVIEW_CHARS"
-        type="button"
-        class="text-[11px] font-medium text-emerald-700 hover:text-emerald-900 rounded focus-visible:outline-2 focus-visible:outline-emerald-500"
+        variant="link"
+        size="sm"
+        class="text-[11px] font-medium text-emerald-700 hover:text-emerald-900"
         @click.stop="folding.toggleAgentResult(span.span_id)"
-      >{{ expanded ? 'Collapse' : `Show full · ${resultText.length} chars` }}</button>
+      >{{ expanded ? 'Collapse' : `Show full · ${resultText.length} chars` }}</Button>
     </div>
     <div
       class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono"

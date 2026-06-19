@@ -20,24 +20,40 @@ export function useAgentLaunchMerge(getSpans, childrenOf) {
     const merged = new Set()    // tool.Agent span_ids folded into a subagent row
     const spans = getSpans() || []
     const launches = spans.filter(s => s.name === 'tool.Agent')
+    const starts = spans.filter(s => s.name === 'subagent.start')
     const claimed = new Set()
-    for (const start of spans.filter(s => s.name === 'subagent.start')) {
+    function bestLaunch(start, requireParent) {
       const aType = start.attributes?.agent_type || ''
       let best = null
       let bestDt = Infinity
       for (const lc of launches) {
         if (claimed.has(lc.span_id)) continue
-        if ((lc.parent_id || null) !== (start.parent_id || null)) continue
+        if (requireParent && (lc.parent_id || null) !== (start.parent_id || null)) continue
         if ((lc.attributes?.subagent_type || '') !== aType) continue
         const dt = Math.abs(new Date(lc.start_time) - new Date(start.start_time))
         if (dt < bestDt) { bestDt = dt; best = lc }
       }
-      if (best) {
-        byStart.set(start.span_id, best)
-        merged.add(best.span_id)
-        claimed.add(best.span_id)
+      return best
+    }
+    function pairStarts(requireParent) {
+      for (const start of starts) {
+        if (byStart.has(start.span_id)) continue
+        const best = bestLaunch(start, requireParent)
+        if (best) {
+          byStart.set(start.span_id, best)
+          merged.add(best.span_id)
+          claimed.add(best.span_id)
+        }
       }
     }
+    // Two passes: same-parent pairs first (the strong signal), then a
+    // parent-blind sweep for the rest. Live, the two spans often sit on
+    // different branches until the next reconcile — the launch gets
+    // turn-attributed to its think-/resp- anchor while subagent.start is
+    // still grafted at the prompt root — so requiring equal parents would
+    // leave the running agent's row without its goal.
+    pairStarts(true)
+    pairStarts(false)
     return { byStart, merged }
   })
 

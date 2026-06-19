@@ -12,6 +12,7 @@
 // the parent, which still owns the data model.
 import { ref, computed } from 'vue'
 import { fmtTokens } from '../utils/traceFormatters.js'
+import Button from './ui/Button.vue'
 
 // Date/duration formatters kept local (exact copies of SessionTraceView's)
 // rather than imported: traceFormatters exposes differently-behaved variants
@@ -116,6 +117,35 @@ const activePct = computed(() => {
   return (props.activeWorkMs / props.traceDuration) * 100
 })
 
+// Pre-compaction high-water mark. The headline ctx% is the *live* peak
+// (since the last /compact); when the session compacted, the all-time
+// main peak sat higher — surface it as a muted "peaked X%" chip so the
+// drop is legible rather than looking like lost data. Null when no
+// compaction reclaimed context (peaks coincide).
+const contextPeakPct = computed(() => {
+  const s = props.session
+  const win = s?.context_window_tokens
+  const peak = s?.peak_main_context_tokens ?? s?.peak_context_tokens
+  const live = s?.live_context_tokens
+  if (!win || win <= 0 || !Number.isFinite(peak) || !Number.isFinite(live)) return null
+  if (peak - live <= 0) return null
+  return Math.round(peak * 1000.0 / win) / 10
+})
+
+// "+sub" chip: the all-inclusive peak exceeds the main peak because an
+// advisor / server-side sub-call rolled its tokens into a parent turn's
+// usage. Compare the two all-time peaks directly (>1% of window) — NOT
+// the headline ctx%, which now tracks the post-compaction live peak and
+// would otherwise make every compacted session look like advisor spill.
+const contextSubDiverges = computed(() => {
+  const s = props.session
+  const win = s?.context_window_tokens
+  const full = s?.peak_context_tokens
+  const main = s?.peak_main_context_tokens
+  if (!win || win <= 0 || !Number.isFinite(full) || !Number.isFinite(main)) return false
+  return (full - main) > win * 0.01
+})
+
 // Tasks summary for the header badge: counts of every status across the
 // session's final task-list snapshot.
 const taskSummary = computed(() => {
@@ -175,13 +205,13 @@ function contextBadgeClass(pct) {
         v-if="sessionTitleNeedsExpand"
         class="mt-1.5"
       >
-        <button
-          type="button"
-          class="text-xs font-medium text-blue-600 hover:text-blue-800 focus-visible:outline-2 focus-visible:outline-blue-500 rounded"
+        <Button
+          variant="link"
+          size="sm"
           @click="sessionTitleExpanded = !sessionTitleExpanded"
         >
           {{ sessionTitleExpanded ? 'Collapse title' : 'Show full title' }}
-        </button>
+        </Button>
       </div>
       <p class="mt-1.5 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500 m-0">
         <code class="font-mono text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ session.trace_id }}</code>
@@ -215,22 +245,31 @@ function contextBadgeClass(pct) {
           </span>
         </template>
         <template v-if="session.context_pct != null">
-          <!-- Headline is main-conversation peak (matches terminal). -->
+          <!-- Headline is the live main-conversation peak: the high-water
+               mark since the last /compact (matches the terminal, which
+               resets on compaction). -->
           <span
             class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ml-1"
             :class="contextBadgeClass(session.context_pct)"
-            :title="`main-conversation peak: ${session.peak_main_context_tokens || session.peak_context_tokens} / ${session.context_window_tokens} tokens`"
+            :title="`live context peak (since last /compact): ${(session.live_context_tokens ?? session.peak_main_context_tokens ?? session.peak_context_tokens) || 0} / ${session.context_window_tokens} tokens`"
           >ctx {{ session.context_pct }}%
-            <span class="opacity-75 font-mono">{{ fmtTokens(session.peak_main_context_tokens || session.peak_context_tokens) }} / {{ fmtTokens(session.context_window_tokens) }}</span>
+            <span class="opacity-75 font-mono">{{ fmtTokens(session.live_context_tokens ?? session.peak_main_context_tokens ?? session.peak_context_tokens) }} / {{ fmtTokens(session.context_window_tokens) }}</span>
           </span>
+          <!-- Pre-compaction high-water mark, shown only when a /compact
+               freed context so the headline drop reads as a reset, not
+               missing data. -->
+          <span
+            v-if="contextPeakPct != null"
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
+            :title="`peaked at ${(session.peak_main_context_tokens || session.peak_context_tokens || 0).toLocaleString()} tokens (${contextPeakPct}% of window) before /compact; the headline ctx% tracks the live context since the most recent compaction.`"
+          >peaked {{ contextPeakPct }}%</span>
           <!-- All-inclusive peak only when it diverges (advisor turns).
                Shown as an absolute token count, not a % of window: it
                can exceed the window (server-side sub-call tokens are
                summed into one turn's bill), so a percentage reads as
                broken. -->
           <span
-            v-if="session.context_pct_all != null
-                  && (session.context_pct_all - session.context_pct) > 1"
+            v-if="contextSubDiverges"
             class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
             :title="`all-inclusive peak turn: ${(session.peak_context_tokens || 0).toLocaleString()} tokens (vs ${(session.context_window_tokens || 0).toLocaleString()} window). Includes advisor/server-side sub-call tokens that Anthropic rolls into the parent turn's usage, so it can exceed the window — the headline ctx% excludes these.`"
           >+sub <span class="opacity-75 font-mono">{{ fmtTokens(session.peak_context_tokens) }}</span></span>
@@ -401,6 +440,7 @@ function contextBadgeClass(pct) {
             { id: 'conversation', label: 'Conversation' },
             { id: 'timeline', label: 'Timeline' },
             { id: 'terminal', label: 'Terminal' },
+            { id: 'messages', label: 'Messages' },
           ]"
           :key="opt.id"
           type="button"
@@ -413,16 +453,16 @@ function contextBadgeClass(pct) {
       </div>
       <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
         <span v-if="lastReloadedAt">updated {{ fmtLocalClock(lastReloadedAt.toISOString()) }}</span>
-        <button
-          type="button"
-          class="text-blue-600 hover:text-blue-800 hover:underline disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-blue-500"
+        <Button
+          variant="link"
+          size="sm"
           :disabled="reloading || loading"
           :title="'Re-fetch spans' + (hasTurns ? ' and turns' : '') + ' from the server'"
           @click="$emit('reload')"
         >
           <span :class="reloading ? 'animate-spin inline-block' : 'inline-block'">↻</span>
           {{ reloading ? 'Reloading…' : 'Reload' }}
-        </button>
+        </Button>
       </div>
     </div>
   </header>

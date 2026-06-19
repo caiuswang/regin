@@ -22,6 +22,9 @@ export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, on
   // `tool.Workflow` launch (its re-parented `subagent.start` markers).
   const expandedAgents = ref(new Set())
   const expandedWorkflows = ref(new Set())
+  // A `/rewind` marker hides its discarded branch by default — the abandoned
+  // prompt + work collapse behind the rose divider; expanding pulls the subtree.
+  const expandedRewinds = ref(new Set())
   // Per-subagent prompt / result card expand state (separate sets so the two
   // collapse independently on the same span).
   const expandedAgentPrompts = ref(new Set())
@@ -54,6 +57,15 @@ export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, on
     expandedAgents.value = next
   }
   function collapseAllAgents() { expandedAgents.value = new Set() }
+
+  // ── Rewind markers ──────────────────────────────────────────
+  function isRewindExpanded(spanId) { return expandedRewinds.value.has(spanId) }
+  function toggleRewindExpanded(spanId) {
+    const next = new Set(expandedRewinds.value)
+    if (next.has(spanId)) next.delete(spanId)
+    else { next.add(spanId); onLoadSubtree(spanId) }
+    expandedRewinds.value = next
+  }
 
   // ── Workflows ───────────────────────────────────────────────
   function isWorkflowExpanded(spanId) { return expandedWorkflows.value.has(spanId) }
@@ -127,6 +139,7 @@ export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, on
     expandedPromptIds,
     isAgentExpanded, toggleAgentExpanded, agentHasChildren,
     foldableAgentIds, allAgentsExpanded, expandAllAgents, collapseAllAgents,
+    isRewindExpanded, toggleRewindExpanded,
     isWorkflowExpanded, toggleWorkflowExpanded, workflowAgentCount,
     isPromptExpanded, isPromptBodyExpanded, togglePromptExpanded, togglePromptBodyExpanded,
     bashExpanded, toggleBashExpanded,

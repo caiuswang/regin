@@ -194,6 +194,39 @@ def _insert_turn_usage_rows(conn, rows) -> tuple[int, int, set[str]]:
     return inserted, skipped, touched_traces
 
 
+def _live_context_peak(conn, trace_id, main_rows, peak_main):
+    """Main-flow context high-water mark *since the most recent `/compact`*.
+
+    `main_rows` is `[(timestamp, context_used_tokens), …]` for the
+    session's main-conversation turns. A compaction (manual or auto)
+    resets Claude Code's live context window, so we restrict the peak to
+    turns at/after the latest `compact.post` boundary — the all-time peak
+    otherwise stays pinned at the pre-compaction high.
+
+    Falls back to the all-time `peak_main` when the session never
+    compacted, or when the boundary has landed but no following turn has
+    been ingested yet (so the headline never regresses below a sensible
+    default). Timestamps are normalised to UTC before comparison: turn
+    timestamps are UTC-with-`Z`, the boundary span's `start_time` is
+    naive host-local, so a raw string compare would mis-bracket them.
+    """
+    from lib.trace.trace_service.queries import _to_utc
+
+    cut_row = conn.execute(
+        "SELECT MAX(start_time) FROM session_spans "
+        "WHERE trace_id = ? AND name = 'compact.post'",
+        (trace_id,),
+    ).fetchone()
+    cut = _to_utc(cut_row[0]) if cut_row and cut_row[0] else None
+    if cut is None:
+        return peak_main
+    seg = [
+        ctx for ts, ctx in main_rows
+        if isinstance(ctx, int) and (tsu := _to_utc(ts)) and tsu >= cut
+    ]
+    return max(seg) if seg else peak_main
+
+
 def _refresh_session_aggregates(conn, trace_ids) -> None:
     """Re-derive session-row aggregates from turn_usage so the
     header/list views stay authoritative."""
@@ -211,17 +244,19 @@ def _refresh_session_aggregates(conn, trace_ids) -> None:
         if not row or row[5] == 0:
             continue
         (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot) = row
-        # "Main" peak excludes turns whose API call rolled in a
+        # "Main" turns exclude those whose API call rolled in a
         # server-side sub-call. Anthropic charges the advisor's
-        # internal iterations to the parent turn's `usage`, so the
-        # raw peak overstates main-conversation context size. The
+        # internal iterations to the parent turn's `usage`, so those
+        # turns overstate main-conversation context size. The
         # corresponding span carries attributes.server_side=true.
         # The turn_uuid column on session_spans is populated lazily
         # by ingest_tool_attribution, so we COALESCE with the value
         # the hook stamped into attributes.turn_uuid — guaranteed
         # present from the first ingest of any server_side span.
-        peak_main_row = conn.execute("""
-            SELECT MAX(tu.context_used_tokens)
+        # We pull the per-turn rows (not a bare MAX) to derive two
+        # numbers from them: the all-time main peak, and the live peak.
+        main_rows = conn.execute("""
+            SELECT tu.timestamp, tu.context_used_tokens
               FROM turn_usage tu
              WHERE tu.trace_id = ?
                AND NOT EXISTS (
@@ -232,8 +267,17 @@ def _refresh_session_aggregates(conn, trace_ids) -> None:
                           = tu.turn_uuid
                       AND json_extract(ss.attributes, '$.server_side') = 1
                )
-        """, (tid,)).fetchone()
-        peak_main = peak_main_row[0] if peak_main_row else None
+        """, (tid,)).fetchall()
+        main_ctx = [r[1] for r in main_rows if isinstance(r[1], int)]
+        peak_main = max(main_ctx) if main_ctx else None
+        # Live context peak: the high-water mark *since the most recent
+        # `/compact`*. A compaction (manual or auto) resets Claude
+        # Code's live context window, but the all-time peaks above stay
+        # pinned at the pre-compaction high and misrepresent how full
+        # the window is now. `live_context_tokens` drives the headline
+        # ctx% so it drops when the session compacts; the all-time peaks
+        # remain for window inference and the pre-compaction hint.
+        live = _live_context_peak(conn, tid, main_rows, peak_main)
         # Read sessions.model (may be None for a freshly-ingesting
         # session) to compute the window; infer_window handles the
         # None case gracefully. Window inference still uses the
@@ -251,10 +295,11 @@ def _refresh_session_aggregates(conn, trace_ids) -> None:
                 cache_read_tokens = ?, cache_creation_tokens = ?,
                 peak_context_tokens = ?,
                 peak_main_context_tokens = ?,
+                live_context_tokens = ?,
                 context_window_tokens = ?,
                 cost_usd = ?
             WHERE trace_id = ?
-        """, (in_tot, out_tot, cread, ccreate, peak, peak_main, window,
+        """, (in_tot, out_tot, cread, ccreate, peak, peak_main, live, window,
               cost_tot, tid))
 
 

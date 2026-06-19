@@ -9,7 +9,9 @@ import BashCard from './cards/BashCard.vue'
 import DiffCard from './cards/DiffCard.vue'
 import ToolSearchCard from './cards/ToolSearchCard.vue'
 import RuleCheckRow from './cards/RuleCheckRow.vue'
+import MemoryRecallRow from './cards/MemoryRecallRow.vue'
 import LocalCommandCard from './cards/LocalCommandCard.vue'
+import RecapCard from './cards/RecapCard.vue'
 import WorkflowPhaseBand from './cards/WorkflowPhaseBand.vue'
 import SubagentCard from './cards/SubagentCard.vue'
 import AgentResultCard from './cards/AgentResultCard.vue'
@@ -86,9 +88,19 @@ defineEmits(['activate'])
     :span="span" :selected-span="selectedSpan"
     @activate="$emit('activate', $event)"
   />
+  <MemoryRecallRow
+    v-else-if="span.name === 'memory.recall'"
+    :span="span" :selected-span="selectedSpan"
+    @activate="$emit('activate', $event)"
+  />
   <LocalCommandCard
     v-else-if="span.name === 'harness.local_command'"
     :span="span" :selected-span="selectedSpan" :folding="folding"
+    @activate="$emit('activate', $event)"
+  />
+  <RecapCard
+    v-else-if="span.name === 'harness.recap'"
+    :span="span" :selected-span="selectedSpan"
     @activate="$emit('activate', $event)"
   />
   <WorkflowPhaseBand

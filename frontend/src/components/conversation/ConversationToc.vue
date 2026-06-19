@@ -3,6 +3,7 @@ import { computed, watch, nextTick, ref } from 'vue'
 import { fmtTime, fmtDuration, fmtTokens, fmtModel, truncate } from '../../utils/traceFormatters.js'
 import { useStickyMaxHeight } from '../../composables/useStickyMaxHeight.js'
 import { useConversationRail } from '../../composables/useConversationRail.js'
+import Button from '../ui/Button.vue'
 
 // Left-rail table of contents for the conversation spine. Two modes:
 //   • regular session → a flat list of turns (prompt previews + token meta)
@@ -98,12 +99,13 @@ function jumpToLive() {
     <div class="flex items-baseline justify-between mb-2 shrink-0">
       <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
       <div class="flex items-baseline gap-2">
-        <button
+        <Button
           v-if="foldableAgentIds.length"
-          type="button"
-          class="text-[11px] text-blue-600 hover:text-blue-800 rounded px-0.5 focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="link"
+          size="sm"
+          class="text-[11px]"
           @click="allAgentsExpanded ? $emit('collapse-all-agents') : $emit('expand-all-agents')"
-        >{{ allAgentsExpanded ? 'collapse all' : 'expand all' }}</button>
+        >{{ allAgentsExpanded ? 'collapse all' : 'expand all' }}</Button>
         <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
       </div>
     </div>
@@ -252,16 +254,17 @@ function jumpToLive() {
           <span>{{ fmtTime(item.timestamp) }}</span>
           <span v-if="item.durationMs" class="text-slate-300">·</span>
           <span v-if="item.durationMs">{{ fmtDuration(item.durationMs) }}</span>
-          <span v-if="item.turn?.input_tokens" class="text-slate-300">·</span>
-          <span v-if="item.turn?.input_tokens">↑{{ fmtTokens((item.turn.input_tokens || 0) + (item.turn.cache_creation_tokens || 0)) }}</span>
+          <span v-if="item.turnAgg?.inputTokens" class="text-slate-300">·</span>
+          <span v-if="item.turnAgg?.inputTokens">↑{{ fmtTokens(item.turnAgg.inputTokens) }}</span>
         </div>
       </div>
     </div>
-    <button
-      type="button"
-      class="shrink-0 block mt-2 pt-2 border-t border-slate-100 text-[11px] text-blue-600 hover:text-blue-700 hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500 rounded"
+    <Button
+      variant="link"
+      size="sm"
+      class="shrink-0 block mt-2 pt-2 border-t border-slate-100 text-[11px]"
       title="Scroll to the most recent turn"
       @click="jumpToLive"
-    >↓ Jump to live</button>
+    >↓ Jump to live</Button>
   </aside>
 </template>

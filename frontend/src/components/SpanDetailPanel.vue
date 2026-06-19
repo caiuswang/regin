@@ -10,8 +10,10 @@
 import { ref, computed } from 'vue'
 import { mcpParts, fmtTokens } from '../utils/traceFormatters.js'
 import Card from './Card.vue'
+import McpCallDetail from './McpCallDetail.vue'
 import MarkdownContent from './MarkdownContent.vue'
 import SuppressButton from './triggers/SuppressButton.vue'
+import Button from './ui/Button.vue'
 
 const props = defineProps({
   selectedSpan: { type: Object, default: null },
@@ -20,9 +22,36 @@ const props = defineProps({
   workflowRunsById: { type: Object, default: () => ({}) },
 })
 
-defineEmits(['suppress-changed'])
+defineEmits(['suppress-changed', 'view-message'])
 
 const promptExpanded = ref(false)
+
+// A send_to_user MCP call: its `user_message` is full markdown prose that the
+// Messages tab already renders properly. Don't dump the raw text in the
+// attributes table — offer a jump to the rendered feed instead.
+const isSendToUser = computed(() =>
+  /send[_-]to[_-]user/i.test(props.selectedSpan?.name || '')
+  || /send[_-]to[_-]user/i.test(props.selectedSpan?.attributes?.tool_name || ''))
+
+// An MCP tool call (e.g. memory recall): show the params asked and the
+// result returned as a dedicated round-trip, so the keys aren't just dumped
+// as opaque rows in the generic attributes table. send_to_user is excluded —
+// it has its own "View in Messages" affordance.
+const mcpCall = computed(() => {
+  const span = props.selectedSpan
+  if (!span || isSendToUser.value) return null
+  const a = span.attributes || {}
+  if (!a.mcp && !mcpParts(span.name)) return null
+  if (a.mcp_input == null && a.mcp_result == null) return null
+  return {
+    input: a.mcp_input,
+    inputDropped: a.mcp_input_truncated_bytes,
+    result: a.mcp_result,
+    resultDropped: a.mcp_result_truncated_bytes,
+  }
+})
+const MCP_HIDDEN_KEYS = ['mcp', 'mcp_input', 'mcp_result',
+  'mcp_input_truncated_bytes', 'mcp_result_truncated_bytes', 'tool_input_keys']
 
 // Local date/duration formatters — exact copies of SessionTraceView's, kept
 // local to avoid the differently-behaved traceFormatters variants (see that
@@ -69,6 +98,12 @@ const visibleAttributeKeys = computed(() => {
   if (!span || !span.attributes) return []
   const keys = Object.keys(span.attributes)
   const attrs = span.attributes
+  if (isSendToUser.value) {
+    return keys.filter(k => k !== 'user_message')
+  }
+  if (mcpCall.value) {
+    return keys.filter(k => !MCP_HIDDEN_KEYS.includes(k))
+  }
   if (span.name === 'assistant_response' || span.name === 'prompt') {
     return keys.filter(k => k !== 'text' && k !== 'estimated_start_time')
   }
@@ -167,6 +202,20 @@ function annotationNote(q) {
         <div>{{ selectedSpan.kind }}</div>
       </div>
       <div>
+        <div class="text-xs text-gray-400">Source</div>
+        <div>
+          <span
+            class="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded border"
+            :class="selectedSpan.source === 'transcript'
+              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+              : 'bg-slate-50 border-slate-200 text-slate-600'"
+            :title="selectedSpan.source === 'transcript'
+              ? 'Written by the transcript scan (prompt / response / thinking anchors, local commands)'
+              : 'Written by live hook events (tool timing, permissions, skill reads)'"
+          >{{ selectedSpan.source || 'hook' }}</span>
+        </div>
+      </div>
+      <div>
         <div class="text-xs text-gray-400">Status</div>
         <div>{{ selectedSpan.status_code }}</div>
       </div>
@@ -201,14 +250,15 @@ function annotationNote(q) {
           <span class="text-[10px] font-mono text-slate-500">
             {{ selectedSpan.attributes.chars || selectedPromptText.length }} chars
           </span>
-          <button
+          <Button
             v-if="selectedPromptNeedsExpand"
-            type="button"
-            class="text-[11px] font-medium text-blue-600 hover:text-blue-800 focus-visible:outline-2 focus-visible:outline-blue-500 rounded"
+            variant="link"
+            size="sm"
+            class="text-[11px]"
             @click="promptExpanded = !promptExpanded"
           >
             {{ promptExpanded ? 'Collapse' : 'Show full prompt' }}
-          </button>
+          </Button>
         </div>
       </div>
       <div
@@ -466,6 +516,21 @@ function annotationNote(q) {
         >{{ selectedSpan.attributes.deny_kind === 'chat' ? 'chat instead' : 'Interrupted' }}</span>
       </div>
       {{ selectedSpan.attributes.denial_reason }}
+    </div>
+    <!-- MCP call: show the params asked and the result returned. -->
+    <McpCallDetail v-if="mcpCall" :call="mcpCall" />
+    <!-- send_to_user: jump to the rendered message in the Messages tab. -->
+    <div v-if="isSendToUser" class="mb-4">
+      <div class="text-xs text-gray-400 mb-1.5">Agent message</div>
+      <button
+        type="button"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-300 bg-blue-50 text-sm font-medium text-blue-700 hover:bg-blue-100 focus-visible:outline-2 focus-visible:outline-blue-500"
+        title="Open this message in the Messages tab, rendered as markdown"
+        @click="$emit('view-message', selectedSpan)"
+      >
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+        View in Messages →
+      </button>
     </div>
     <div v-if="visibleAttributeKeys.length">
       <div class="text-xs text-gray-400 mb-1">Attributes</div>

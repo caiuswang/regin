@@ -10,6 +10,8 @@
 // different output shape (e.g. "1m05s" vs this view's "1m5s"), so reusing
 // them would change what the row renders.
 import { fmtTokens } from '../utils/traceFormatters.js'
+import { useCopy } from '../composables/useCopy.js'
+import Checkbox from './ui/Checkbox.vue'
 
 defineProps({
   s: { type: Object, required: true },
@@ -19,8 +21,10 @@ defineProps({
 
 const emit = defineEmits(['toggle', 'delete'])
 
-function onToggle(e) {
-  emit('toggle', e.target.checked)
+const { copyText } = useCopy()
+
+function onToggle(checked) {
+  emit('toggle', checked)
 }
 
 const STALE_FALLBACK_WINDOW_MS = 10 * 60 * 1000
@@ -98,6 +102,7 @@ function agentTypeLabel(s) {
   if (s.origin === 'workflow') return 'Workflow run'
   if (s.agent_kind === 'claude') return 'Claude Code session'
   if (s.agent_kind === 'codex') return 'OpenAI Codex session'
+  if (s.agent_kind === 'kimi') return 'Kimi Code session'
   return s.agent_type ? `Agent session: ${s.agent_type}` : 'Agent session'
 }
 
@@ -105,6 +110,7 @@ function agentTypeClass(s) {
   if (s.origin === 'workflow') return 'agent-icon--workflow'
   if (s.agent_kind === 'claude') return 'agent-icon--claude'
   if (s.agent_kind === 'codex') return 'agent-icon--codex'
+  if (s.agent_kind === 'kimi') return 'agent-icon--kimi'
   return 'agent-icon--generic'
 }
 
@@ -168,11 +174,10 @@ function activityMoreTitle(s) {
 <template>
   <tr :class="{ 'tbl-row-active': selected }">
     <td class="w-6" @click.stop>
-      <input
-        type="checkbox"
-        class="h-4 w-4 align-middle focus-visible:outline-2 focus-visible:outline-blue-500"
-        :checked="selected"
-        @change="onToggle"
+      <Checkbox
+        class="align-middle"
+        :model-value="selected"
+        @update:model-value="onToggle"
         :aria-label="`Select session ${s.trace_id.slice(0, 8)}`"
       />
     </td>
@@ -198,13 +203,28 @@ function activityMoreTitle(s) {
           <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
           </svg>
+          <svg v-else-if="s.agent_kind === 'kimi'" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M5 3v10M5 8l5-5M5 8.5l5 4.5" />
+          </svg>
           <svg v-else viewBox="0 0 16 16" aria-hidden="true">
             <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
           </svg>
         </span>
         <router-link :to="`/trace/sessions/${s.trace_id}`" class="table-link">
-          <code class="cell-code">{{ s.trace_id.slice(0, 12) }}…</code>
+          <code class="cell-code"><span class="min-[1700px]:hidden">{{ s.trace_id.slice(0, 12) }}…</span><span class="hidden min-[1700px]:inline">{{ s.trace_id }}</span></code>
         </router-link>
+        <button
+          type="button"
+          class="copy-id focus-visible:outline-2 focus-visible:outline-blue-500"
+          title="Copy session id"
+          :aria-label="`Copy session id ${s.trace_id}`"
+          @click.stop="copyText(s.trace_id)"
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.2" />
+            <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" />
+          </svg>
+        </button>
       </div>
       <span
         v-if="isActive(s)"
@@ -333,6 +353,43 @@ function activityMoreTitle(s) {
   /* Touch / non-hover pointers can't reveal on hover — keep it visible. */
   .sessions-tbl .row-delete { opacity: 1; }
 }
+/* Copy-id button sits next to the truncated trace id. Hidden until the row
+ * is hovered or focus lands inside it (same affordance as .row-delete) so it
+ * doesn't clutter the resting state, but always reachable by keyboard. */
+.sessions-tbl .copy-id {
+  align-items: center;
+  border-radius: 0.25rem;
+  color: var(--color-gray-400);
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 1.25rem;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+  width: 1.25rem;
+}
+.sessions-tbl tbody tr:hover .copy-id,
+.sessions-tbl tbody tr:focus-within .copy-id {
+  opacity: 1;
+}
+.sessions-tbl .copy-id:hover {
+  color: var(--color-gray-700);
+}
+.sessions-tbl .copy-id:focus-visible {
+  opacity: 1;
+}
+.sessions-tbl .copy-id svg {
+  fill: none;
+  height: 0.875rem;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+  width: 0.875rem;
+}
+@media (hover: none) {
+  .sessions-tbl .copy-id { opacity: 1; }
+}
 .agent-icon {
   align-items: center;
   border: 1px solid currentColor;
@@ -353,19 +410,23 @@ function activityMoreTitle(s) {
   width: 0.875rem;
 }
 .agent-icon--claude {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--color-orange-50);
+  color: var(--color-orange-700);
 }
 .agent-icon--codex {
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--color-indigo-50);
+  color: var(--color-indigo-700);
+}
+.agent-icon--kimi {
+  background: var(--color-purple-50);
+  color: var(--color-purple-700);
 }
 .agent-icon--generic {
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
 }
 .agent-icon--workflow {
-  background: #ecfdf5;
-  color: #0f766e;
+  background: var(--color-emerald-50);
+  color: var(--color-teal-700);
 }
 </style>

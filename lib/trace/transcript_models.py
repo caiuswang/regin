@@ -183,6 +183,52 @@ class TranscriptLocalCommand:
 
 
 @dataclass(frozen=True)
+class RewindFork:
+    """One `/rewind` event recovered from the transcript's parentUuid graph.
+
+    A rewind leaves no explicit marker in the JSONL — it surfaces as a
+    *fork*: the user rewound to an earlier message and submitted a new
+    prompt, so the discarded turns and the new (live) turn share the same
+    `parentUuid`. The discarded branch is never deleted; it stays in the
+    file, orphaned (nothing on the live-leaf chain descends from it).
+
+    `fork_uuid` is the live node both branches hang off; `orphan_root` is
+    the first message of the discarded branch; `orphan_uuids` is its whole
+    subtree. The spans built from those uuids are flagged `rewound_away`
+    (deterministic ids: `prompt-`/`resp-`/`think-`/`cmd-<uuid[:13]>`, tool
+    spans via `turn_uuid`), and one synthetic `rewind` boundary span
+    (`span_id=rewind-<fork_uuid[:13]>`) anchors the collapsed branch in the
+    UI. `rolled_back_files` (populated from `file-history-snapshot` rows
+    when the rewind reverted code) lists the paths whose edits were undone,
+    with `@vN` refs for an on-demand before/after diff.
+
+    See `lib.trace.rewind_detect.detect_rewinds` (conversation fork) and
+    `lib.trace.file_history` (code rollback).
+    """
+
+    fork_uuid: str
+    orphan_root: str
+    orphan_uuids: frozenset[str]
+    abandoned_prompt_uuids: tuple[str, ...]
+    live_child_uuid: str | None
+    fork_timestamp: str | None
+    # {path, before_ref, after_ref} per file whose edits the rewind undid.
+    # Empty for a conversation-only rewind. Refs are `<pathhash>@vN`
+    # backup names; content is read lazily (never inlined here).
+    rolled_back_files: tuple[dict, ...] = ()
+
+    @property
+    def span_id(self) -> str:
+        """Deterministic id of this fork's `rewind` boundary span.
+
+        Keyed on `orphan_root` (unique per discarded branch — each node has
+        exactly one parent), NOT `fork_uuid`: rewinding twice to the same
+        node yields two discarded branches sharing a `fork_uuid`, and each
+        needs its own marker span."""
+        return f'rewind-{self.orphan_root[:13]}'
+
+
+@dataclass(frozen=True)
 class TranscriptUsage:
     turns: list[TurnUsage]
     model: str | None  # model on the most recent assistant turn
@@ -216,3 +262,14 @@ class TranscriptUsage:
     # parent backfill (turn_trace) set `parent_id = resp-<turn_uuid>`
     # deterministically without re-deriving the issuing turn at write time.
     tool_use_to_turn_uuid: dict[str, str] = field(default_factory=dict)
+    # `/rewind` events recovered from the parentUuid graph (see RewindFork).
+    # Empty on the overwhelming majority of sessions that never rewind.
+    rewinds: tuple[RewindFork, ...] = ()
+    # Tool calls a provider denied *outside* regin and recorded only in its
+    # transcript (Kimi resolves permissions in its own TUI, then logs a
+    # `permission.record_approval_result`). A denied call fires no PostToolUse,
+    # so its PENDING tool span is never resolved and the serve-time merge drops
+    # it — turn_trace re-materialises it as a `tool.<name>` deny span from these.
+    # Each: {tool_use_id, tool_name, denial_reason, timestamp}. Empty for Claude
+    # (its denials arrive live via the PermissionDenied hook).
+    permission_denials: tuple[dict, ...] = ()

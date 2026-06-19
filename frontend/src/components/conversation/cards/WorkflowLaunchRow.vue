@@ -1,5 +1,6 @@
 <script setup>
 import { fmtClock, fmtDuration } from '../../../utils/traceFormatters.js'
+import Button from '../../ui/Button.vue'
 
 // Dynamic-workflow launch: the Workflow tool call as a first-class row with an
 // inline jump to the captured run. `workflow_run_id` + `workflow_name` are
@@ -23,13 +24,14 @@ defineEmits(['activate'])
     @click="$emit('activate', span)"
   >
     <!-- Fold the run's re-parented agent markers behind the card. -->
-    <button
+    <Button
       v-if="folding.workflowAgentCount(span.span_id)"
-      type="button"
-      class="shrink-0 text-slate-400 hover:text-emerald-700 focus-visible:outline-2 focus-visible:outline-emerald-500 rounded"
+      variant="ghost"
+      size="sm"
+      class="shrink-0 h-auto px-0.5 text-slate-400 hover:bg-transparent hover:text-emerald-700"
       :title="folding.isWorkflowExpanded(span.span_id) ? 'Collapse agents' : `Expand ${folding.workflowAgentCount(span.span_id)} agent markers`"
       @click.stop="folding.toggleWorkflowExpanded(span.span_id)"
-    >{{ folding.isWorkflowExpanded(span.span_id) ? '▾' : '▸' }}</button>
+    >{{ folding.isWorkflowExpanded(span.span_id) ? '▾' : '▸' }}</Button>
     <span v-else class="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-500"></span>
     <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
     <span class="font-medium text-emerald-700 shrink-0">⚙ Workflow</span>

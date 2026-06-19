@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
+import pytest
+
 from lib.tokens.model_windows import DEFAULT_WINDOW, infer_window, window_for
+
+
+# Stand-in for the models.dev catalogue: a model the builtin table does
+# not know, published with a 1M window.
+_FAKE_CATALOGUE = {"claude-fable-6": 1_000_000}
+
+
+@pytest.fixture(autouse=True)
+def _stub_catalogue(monkeypatch):
+    # window_for falls back to the models.dev catalogue, which would hit
+    # the network on a miss — stub it so tests stay hermetic.
+    import lib.tokens.pricing as pricing
+    monkeypatch.setattr(
+        pricing, "model_context_limit", lambda m: _FAKE_CATALOGUE.get(m)
+    )
 
 
 # ── window_for: per-model lookup ────────────────────────────────
@@ -44,6 +61,30 @@ def test_unknown_dated_alias_strips_to_base():
     assert window_for("claude-opus-4-7-20260101") == 1_000_000
 
 
+# ── window_for: models.dev catalogue fallback ───────────────────
+
+def test_new_model_resolves_via_catalogue():
+    # Not in the builtin table — must come from the catalogue, not the
+    # 200K default.
+    assert window_for("claude-fable-6") == 1_000_000
+
+
+def test_new_model_1m_suffix_resolves_via_catalogue():
+    # The `[1m]` suffix is stripped before the catalogue lookup.
+    assert window_for("claude-fable-6[1m]") == 1_000_000
+
+
+def test_new_model_dated_alias_resolves_via_catalogue():
+    # Dated alias of a catalogue-only model strips to the base id.
+    assert window_for("claude-fable-6-20270101") == 1_000_000
+
+
+def test_unknown_model_with_1m_tag_honors_the_tag():
+    # Neither table nor catalogue knows it, but `[1m]` explicitly names
+    # the 1M-context variant.
+    assert window_for("brand-new-model[1m]") == 1_000_000
+
+
 # ── infer_window: cap behavior ──────────────────────────────────
 
 def test_infer_window_returns_known_window_when_peak_fits():
@@ -54,6 +95,11 @@ def test_infer_window_does_not_grow_past_known_window():
     # Even if peak somehow exceeds a known model's window, we trust the
     # configured value over the observation — no silent inflation.
     assert infer_window("claude-haiku-4-5", 250_000) == 200_000
+
+
+def test_infer_window_trusts_catalogue_window_over_peak():
+    # Catalogue-known model: trust its window even when peak exceeds it.
+    assert infer_window("claude-fable-6", 1_200_000) == 1_000_000
 
 
 def test_infer_window_falls_back_to_peak_for_unknown_family():

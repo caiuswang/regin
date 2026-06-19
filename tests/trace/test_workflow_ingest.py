@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from lib.orm.engine import get_connection
 from lib.trace import workflow_ingest as W
 
@@ -217,6 +219,10 @@ def test_build_flat_spans_agent_state_and_tokens(tmp_path):
     assert agents["aAAA"]["attributes"]["result_preview"] == '{"ok":true}'
     # an un-finished agent has no result yet — neither field is stamped.
     assert agents["aBBB"]["attributes"].get("result_full") is None
+    # the dispatched prompt (the transcript's first user message) is stamped
+    # live — a still-running agent shows its task prompt, not just a done one.
+    assert agents["aBBB"]["attributes"]["prompt"] == "do X"
+    assert agents["aAAA"]["attributes"]["prompt"] == "do X"
 
 
 def test_build_flat_spans_expands_live_agent_turns(tmp_path):
@@ -571,6 +577,50 @@ def test_session_tokens_are_real_split_not_manifest_total(tmp_path):
     assert row["input_tokens"] == 44
     assert row["cache_read_tokens"] == 0
     assert row["cache_creation_tokens"] == 0
+
+
+def test_workflow_bill_is_priced_not_zero(tmp_path):
+    """A workflow run's agents never hit the live turn-usage hook, so the run
+    used to carry no turn_usage and a NULL cost — the whole 'FULL SESSION BILL'
+    rendered $0 despite real token spend. Ingest now inserts a priced turn_usage
+    row per agent turn and stamps the summed cost, so the bill is real."""
+    from lib.trace.trace_service import fetch_tool_token_rollup
+
+    W.ingest_run(W.discover_runs(_make_run(tmp_path, with_manifest=True))[0],
+                 deep=True, is_test=True)
+    conn = get_connection()
+    try:
+        cost = conn.execute(
+            "SELECT cost_usd FROM sessions WHERE trace_id=?", (RUN_ID,)).fetchone()[0]
+        # 2 agents × 2 turns each, namespaced turn_uuid so no PK collision.
+        n_turns = conn.execute(
+            "SELECT COUNT(*) FROM turn_usage WHERE trace_id=?", (RUN_ID,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert n_turns == 4
+    assert cost and cost > 0
+
+    _, totals = fetch_tool_token_rollup(RUN_ID)
+    # The per-bucket bill split (from turn_usage) and the footer are now real.
+    assert totals["output_cost_usd"] > 0
+    assert totals["session_cost_usd"] == pytest.approx(cost)
+    assert totals["total_spend_usd"] > 0
+
+
+def test_reingest_does_not_double_count_cost(tmp_path):
+    """`_clear_run` wipes turn_usage too, so re-ingesting a run replaces its
+    priced turns rather than stacking a second copy (which would double the
+    cost and the turn count)."""
+    projects = _make_run(tmp_path, with_manifest=True)
+    W.ingest_run(W.discover_runs(projects)[0], deep=True, is_test=True)
+    W.ingest_run(W.discover_runs(projects)[0], deep=True, is_test=True)
+    conn = get_connection()
+    try:
+        n_turns = conn.execute(
+            "SELECT COUNT(*) FROM turn_usage WHERE trace_id=?", (RUN_ID,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert n_turns == 4
 
 
 def test_terminal_ingest_sets_origin_workflow_and_vendor_claude(tmp_path):

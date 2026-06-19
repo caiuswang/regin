@@ -1695,6 +1695,55 @@ def test_peak_main_excludes_server_side_turns(client, trace_db):
     assert row[1] == 50_600    # main peak: advisor turn excluded
 
 
+def test_live_context_resets_after_compaction(client, trace_db):
+    """A `/compact` (manual or auto) resets Claude Code's live context
+    window. `peak_context_tokens` / `peak_main_context_tokens` keep the
+    all-time high-water mark, but `live_context_tokens` tracks only the
+    segment SINCE the last `compact.post` — so the headline ctx% drops
+    after the session compacts instead of staying pinned at the peak."""
+    client.post('/api/session-spans', json=_make_span(
+        span_id='s0', name='session.start',
+        attributes={'source': 'startup', 'model': 'claude-opus-4-7'},
+    ))
+    # Pre-compaction turn: context climbs near the window.
+    client.post('/api/turn-usage', json=_turn_row(
+        turn_uuid='t-pre', turn_index=0,
+        timestamp='2026-04-20T10:00:00.000Z',
+        context_used_tokens=180_000,
+    ))
+    # The /compact boundary lands between the two turns. Tz-aware (`Z`)
+    # so the test is host-timezone-independent; in production the hook
+    # writes a naive host-local start_time and _to_utc reconciles it.
+    client.post('/api/session-spans', json=_make_span(
+        span_id='s-cpost', name='compact.post',
+        start_time='2026-04-20T10:00:30.000Z',
+        attributes={'trigger': 'manual'},
+    ))
+    # Post-compaction turn: context resets far lower.
+    client.post('/api/turn-usage', json=_turn_row(
+        turn_uuid='t-post', turn_index=1,
+        timestamp='2026-04-20T10:01:00.000Z',
+        context_used_tokens=42_000,
+    ))
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        row = conn.execute(
+            "SELECT peak_context_tokens, peak_main_context_tokens, "
+            "live_context_tokens FROM sessions WHERE trace_id = 't1'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row[0] == 180_000   # all-time peak: pre-compaction high stands
+    assert row[1] == 180_000   # all-time main peak: same (no advisor turns)
+    assert row[2] == 42_000    # live peak: only the post-compaction segment
+
+    # The headline ctx% the detail endpoint serves reflects the live peak.
+    body = client.get('/api/sessions/t1?shallow=1').get_json()
+    assert body['live_context_tokens'] == 42_000
+    assert body['context_pct'] == 4.2          # 42_000 / 1_000_000
+    assert body['context_pct_all'] == 18.0     # 180_000 / 1_000_000 (peak)
+
+
 def test_turn_usage_populates_cost_usd(client, trace_db, monkeypatch):
     """Each turn_usage row is priced via lib.tokens.pricing.cost() and the
     USD figure lands both on the row and on the session aggregate.

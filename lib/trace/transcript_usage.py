@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from lib.tokens.token_estimator import (
     estimate_content_tokens,
@@ -38,6 +38,7 @@ from lib.tokens.token_estimator import (
     estimate_tool_use_tokens,
 )
 from lib.trace.transcript_models import (
+    RewindFork,
     TranscriptAttachment,
     TranscriptLocalCommand,
     TranscriptSystemEvent,
@@ -45,6 +46,12 @@ from lib.trace.transcript_models import (
     TurnUsage,
     has_encrypted_thinking,
 )
+from lib.trace.file_history import (
+    parse_snapshot_rows,
+    rolled_back_files,
+    version_map_for,
+)
+from lib.trace.rewind_detect import detect_rewinds
 from lib.trace.prompt_images_resolve import extract_image_parts
 from lib.trace.transcript_parsers import (
     _assistant_message,
@@ -111,9 +118,15 @@ _TRACED_ATTACHMENT_KINDS: frozenset[str] = frozenset({
 #                         hookCount/hookErrors. Useful for spotting
 #                         a slow hook that's adding seconds to every
 #                         turn.
+#   * away_summary      — the "recap" Claude Code writes when the
+#                         session goes idle: a prose summary of what
+#                         the turn was doing, in the top-level
+#                         `content` string. Surfaced as a span so the
+#                         trace shows the recap inline.
 _TRACED_SYSTEM_SUBTYPES: frozenset[str] = frozenset({
     'turn_duration',
     'stop_hook_summary',
+    'away_summary',
 })
 
 
@@ -244,6 +257,22 @@ def _user_prompt_text(content: object) -> str | None:
         return content or None
     blocks = _extract_text_blocks(content)
     return '\n'.join(blocks) if blocks else None
+
+
+def queued_prompt_content(att_payload: dict) -> tuple[str | None, list[dict]]:
+    """Text + inline base64 image parts of a prompt-mode `queued_command`
+    attachment payload (normalized keys).
+
+    `prompt` is a bare string for a plain queued prompt, but a list of
+    content blocks (text + image) when the queued prompt carried pasted
+    images — same dual shape as a user entry's `message.content`. A
+    non-prompt `command_mode` (queued slash command) returns `(None, [])`:
+    it is not a model prompt and never anchors a turn."""
+    mode = att_payload.get('command_mode')
+    if mode is not None and mode != 'prompt':
+        return None, []
+    prompt = att_payload.get('prompt')
+    return _user_prompt_text(prompt), extract_image_parts(prompt)
 
 
 # Claude Code emits a second synthetic user entry alongside an image prompt
@@ -663,6 +692,18 @@ class _TranscriptScan:
     # it has a direct isMeta child (its skill expansion), so this gates
     # `command_prompt_uuids` down to genuine prompt-expanding commands.
     meta_expansion_parents: set[str] = field(default_factory=set)
+    # uuid → ISO timestamp for every entry that has both (positions the
+    # `rewind` marker and corroborates fork gaps). Distinct from
+    # `prev_entry_timestamp`, which tracks only the latency baseline.
+    entry_ts: dict[str, str] = field(default_factory=dict)
+    # `/rewind` detection inputs, captured during the single scan:
+    #   * the latest `last-prompt` row's `leafUuid` (the active branch tip
+    #     Claude Code itself records) and the file-tail uuid seed the
+    #     live-branch walk;
+    #   * raw `file-history-snapshot` rows feed the code-rollback diff.
+    last_prompt_leaf: str | None = None
+    file_tail_uuid: str | None = None
+    snapshot_rows: list[dict] = field(default_factory=list)
 
     def process_entry(self, entry: object) -> None:
         entry_n = _normalize_dict_keys(entry)
@@ -671,14 +712,17 @@ class _TranscriptScan:
         eparent = _maybe_str(entry_n.get('parent_uuid'))
         is_user = (etype == 'user' or role == 'user')
 
+        # `/rewind` bookkeeping rows carry no uuid/message of their own and
+        # must not flow into the turn/anchor machinery — handle and return.
+        if self._capture_rewind_inputs(entry, entry_n, etype, euuid):
+            return
+
         if is_user and euuid:
             self._handle_user_entry(entry_n, eparent)
         if euuid:
             self.entry_parent[euuid] = eparent
         if is_user:
-            ts = entry_n.get('timestamp')
-            if isinstance(ts, str) and ts:
-                self.prev_entry_timestamp = ts
+            self._track_prev_timestamp(entry_n)
 
         self._collect_local_command(entry_n, etype, euuid, eparent)
 
@@ -689,6 +733,36 @@ class _TranscriptScan:
             self._handle_attachment(entry_n, euuid, eparent)
             return
         self._handle_assistant(entry_n, euuid, eparent)
+
+    def _track_prev_timestamp(self, entry_n: dict) -> None:
+        ts = entry_n.get('timestamp')
+        if isinstance(ts, str) and ts:
+            self.prev_entry_timestamp = ts
+
+    def _capture_rewind_inputs(
+        self,
+        entry: object,
+        entry_n: dict,
+        etype: str | None,
+        euuid: str | None,
+    ) -> bool:
+        """Capture `/rewind` detection inputs. Returns True when the row is a
+        bookkeeping row (`last-prompt` / `file-history-snapshot`) that the
+        caller must NOT feed into the turn/anchor machinery."""
+        if etype == 'last-prompt':
+            leaf = _maybe_str(entry_n.get('leaf_uuid'))
+            if leaf:
+                self.last_prompt_leaf = leaf
+            return True
+        if etype == 'file-history-snapshot':
+            self.snapshot_rows.append(entry)
+            return True
+        if euuid:
+            self.file_tail_uuid = euuid
+            ts = entry_n.get('timestamp')
+            if isinstance(ts, str) and ts:
+                self.entry_ts[euuid] = ts
+        return False
 
     # ---- user / tool_result --------------------------------------------------
 
@@ -964,9 +1038,8 @@ class _TranscriptScan:
         `prompt_texts` — no duplicate anchor from _post_prompt_anchor_spans."""
         if att_n.get('type') != 'queued_command':
             return
-        mode = att_n.get('command_mode')
-        text = att_n.get('prompt')
-        if (mode is None or mode == 'prompt') and isinstance(text, str) and text:
+        text, images = queued_prompt_content(att_n)
+        if text or images:
             self.real_prompt_uuids.add(euuid)
 
     # ---- assistant -----------------------------------------------------------
@@ -1261,6 +1334,51 @@ class _TranscriptScan:
             if builder.uuid
         }
 
+    def _live_ancestors(self, uuid: str | None) -> list[str]:
+        """The fork node and every live-branch ancestor up to the root —
+        i.e. the file state that existed *before* the rewound edits, used as
+        the rollback baseline. Cycle-guarded."""
+        out: list[str] = []
+        seen: set[str] = set()
+        cur = uuid
+        while cur is not None and cur not in seen:
+            seen.add(cur)
+            out.append(cur)
+            cur = self.entry_parent.get(cur)
+        return out
+
+    def _compute_rewinds(self) -> tuple[RewindFork, ...]:
+        """Detect `/rewind` forks and enrich each with the files its rewind
+        reverted (when it rolled back code). Empty on the vast majority of
+        sessions that never rewind."""
+        forks = detect_rewinds(
+            self.entry_parent,
+            self.entry_kind,
+            self.real_prompt_uuids,
+            [self.last_prompt_leaf, self.file_tail_uuid],
+            entry_ts=self.entry_ts,
+        )
+        if not forks:
+            return ()
+        snapshots = parse_snapshot_rows(self.snapshot_rows)
+        if not snapshots:
+            return tuple(forks)
+        order = {u: i for i, u in enumerate(self.entry_parent)}
+        enriched: list[RewindFork] = []
+        for fork in forks:
+            orphan_ordered = sorted(
+                fork.orphan_uuids, key=lambda u: order.get(u, 0),
+            )
+            abandoned = version_map_for(orphan_ordered, snapshots)
+            baseline = version_map_for(
+                self._live_ancestors(fork.fork_uuid), snapshots,
+            )
+            files = rolled_back_files(abandoned, baseline)
+            enriched.append(
+                replace(fork, rolled_back_files=tuple(files)) if files else fork
+            )
+        return tuple(enriched)
+
     def finalize(self, *, max_text_bytes: int | None) -> TranscriptUsage | None:
         counted = self._counted_builders()
         if not self._has_emit_worthy_rows(counted):
@@ -1284,6 +1402,7 @@ class _TranscriptScan:
             prompt_timestamps=anchor_ts,
             prompt_image_parts=anchor_images,
             tool_use_to_turn_uuid=self._tool_use_to_turn_uuid(),
+            rewinds=self._compute_rewinds(),
         )
 
     def _anchor_side_tables(

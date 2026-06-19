@@ -91,6 +91,35 @@ def api_ingest_tool_attribution():
     return jsonify({'ok': True, 'updated': updated, 'skipped': skipped})
 
 
+@trace_bp.route('/api/kimi-subagents', methods=['POST'])
+def api_ingest_kimi_subagents():
+    """Nest a Kimi session's flat subagent spans under their subagent trace.
+
+    Body: `{trace_id}`. Posted by the Kimi `SubagentStop` hook (and the
+    backfill CLI). The service reads the session's sibling
+    `agents/agent-*/wire.jsonl` streams, stamps `agent_id` onto the
+    subagent-owned tool spans, enriches the `subagent.start` / `subagent.stop`
+    markers, and replays the subagents' assistant turns. Idempotent; a no-op
+    for non-Kimi sessions or sessions without subagents. See
+    `lib.trace.kimi_subagents.reconcile_kimi_subagents`.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'ok': False, 'error': 'body must be an object'}), 400
+    trace_id = data.get('trace_id')
+    if not isinstance(trace_id, str) or not trace_id:
+        return jsonify({'ok': False, 'error': 'trace_id is required'}), 400
+    try:
+        from lib.trace.kimi_subagents import reconcile_kimi_subagents
+        result = reconcile_kimi_subagents(trace_id)
+    except Exception as exc:
+        return jsonify({
+            'ok': False,
+            'error': f'{type(exc).__name__}: {exc}',
+        }), 500
+    return jsonify({'ok': True, **result})
+
+
 @trace_bp.route('/api/session-status', methods=['POST'])
 def api_ingest_session_status():
     """Persist an authoritative model + context snapshot for a session.
@@ -159,6 +188,42 @@ def api_session_tool_rollup(trace_id):
     return jsonify({'rollup': rollup, **totals})
 
 
+def _parse_iso(s):
+    """Parse an ISO timestamp (tolerating a trailing `Z`), or None."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _duration_ms(prev_ts, ts) -> int | None:
+    """Milliseconds between two ISO timestamps, or None if either is unparseable."""
+    t0 = _parse_iso(prev_ts)
+    t1 = _parse_iso(ts)
+    return max(0, int((t1 - t0).total_seconds() * 1000)) if t0 and t1 else None
+
+
+def _ctx_pct(ctx, window) -> float | None:
+    """Context usage as a clamped 0–100% of the window, or None."""
+    if isinstance(ctx, int) and window and window > 0:
+        return round(max(0.0, min(100.0, ctx * 100.0 / window)), 1)
+    return None
+
+
+def _augment_turn_rows(rows: list, window) -> int:
+    """Stamp `duration_ms` (ms since the previous turn) and `ctx_pct` onto each
+    turn row in place, returning the max single-turn consumption."""
+    max_consumption = 0
+    for i, t in enumerate(rows):
+        c = (t.get('input_tokens') or 0) + (t.get('cache_creation_tokens') or 0) + (t.get('output_tokens') or 0)
+        max_consumption = max(max_consumption, c)
+        t['duration_ms'] = _duration_ms(rows[i - 1].get('timestamp'), t.get('timestamp')) if i > 0 else None
+        t['ctx_pct'] = _ctx_pct(t.get('context_used_tokens'), window)
+    return max_consumption
+
+
 @trace_bp.route('/api/sessions/<trace_id>/turn-usage')
 def api_session_turn_usage(trace_id):
     """Return per-turn usage rows for a session, oldest-first.
@@ -172,7 +237,6 @@ def api_session_turn_usage(trace_id):
     all turns — so the frontend can scale per-row consumption bars
     without a client-side reduce.
     """
-    from datetime import datetime as _dt
     from sqlmodel import select as _select
     from lib.tokens.model_windows import infer_window as _infer_window
 
@@ -197,32 +261,7 @@ def api_session_turn_usage(trace_id):
         if isinstance(peak_full, int):
             window = _infer_window(model, peak_full)
 
-    def _parse_iso(s):
-        if not s:
-            return None
-        try:
-            return _dt.fromisoformat(s.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
-
-    max_consumption = 0
-    for i, t in enumerate(rows):
-        c = (t.get('input_tokens') or 0) + (t.get('cache_creation_tokens') or 0) + (t.get('output_tokens') or 0)
-        if c > max_consumption:
-            max_consumption = c
-
-        if i > 0:
-            t0 = _parse_iso(rows[i - 1].get('timestamp'))
-            t1 = _parse_iso(t.get('timestamp'))
-            t['duration_ms'] = max(0, int((t1 - t0).total_seconds() * 1000)) if t0 and t1 else None
-        else:
-            t['duration_ms'] = None
-
-        ctx = t.get('context_used_tokens')
-        if isinstance(ctx, int) and window and window > 0:
-            t['ctx_pct'] = round(max(0.0, min(100.0, ctx * 100.0 / window)), 1)
-        else:
-            t['ctx_pct'] = None
+    max_consumption = _augment_turn_rows(rows, window)
 
     return jsonify({
         'trace_id': trace_id,

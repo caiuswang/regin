@@ -3,13 +3,17 @@ import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import CursorControls from '../components/CursorControls.vue'
 import SessionRow from '../components/SessionRow.vue'
+import Button from '../components/ui/Button.vue'
+import Checkbox from '../components/ui/Checkbox.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
+import { useCopy } from '../composables/useCopy'
 import { useCursor } from '../composables/useCursor'
 import { useStickyHeader } from '../composables/useStickyHeader'
 
 const { confirm } = useConfirm()
 const { flash } = useFlash()
+const { copyText } = useCopy()
 
 const TEST_TOGGLE_KEY = 'regin_sessions_show_tests'  // legacy; migrates into KIND_KEY on first read
 const KIND_KEY = 'regin_sessions_kind'
@@ -170,6 +174,10 @@ const {
 // hint below. `extras` updates on load() (not loadMore), which is correct —
 // it describes the whole filtered set, not the current page.
 const hiddenWorkflowCount = computed(() => extras.value?.workflow_hidden_count || 0)
+
+// How many workflow runs the date filter excluded, reported only when
+// workflow=only and a date bound is active. Drives the "widen date range" hint.
+const workflowDateHiddenCount = computed(() => extras.value?.workflow_date_hidden_count || 0)
 
 const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
 
@@ -389,6 +397,7 @@ function agentTypeLabel(s) {
   if (s.origin === 'workflow') return 'Workflow run'
   if (s.agent_kind === 'claude') return 'Claude Code session'
   if (s.agent_kind === 'codex') return 'OpenAI Codex session'
+  if (s.agent_kind === 'kimi') return 'Kimi Code session'
   return s.agent_type ? `Agent session: ${s.agent_type}` : 'Agent session'
 }
 
@@ -396,6 +405,7 @@ function agentTypeClass(s) {
   if (s.origin === 'workflow') return 'agent-icon--workflow'
   if (s.agent_kind === 'claude') return 'agent-icon--claude'
   if (s.agent_kind === 'codex') return 'agent-icon--codex'
+  if (s.agent_kind === 'kimi') return 'agent-icon--kimi'
   return 'agent-icon--generic'
 }
 
@@ -474,27 +484,23 @@ function timeTitle(s) {
             <option v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </div>
-        <button
-          type="submit"
-          class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
-        >Search</button>
-        <button
+        <Button type="submit" variant="primary">Search</Button>
+        <Button
           v-if="activeSearch || activeTraceId"
-          type="button"
-          class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="secondary"
           @click="clearSearch"
-        >Clear</button>
+        >Clear</Button>
         <span v-if="activeSearch" class="text-xs text-slate-500">
           {{ searchScope }}: <code class="cell-code">{{ activeSearch }}</code>
         </span>
 
-        <button
+        <Button
           v-if="selectionCount"
-          type="button"
-          class="btn btn-danger ml-auto focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="danger"
+          class="ml-auto"
           :disabled="batchDeleting"
           @click="batchDelete"
-        >{{ batchDeleting ? 'Deleting…' : `Delete selected (${selectionCount})` }}</button>
+        >{{ batchDeleting ? 'Deleting…' : `Delete selected (${selectionCount})` }}</Button>
       </div>
 
       <!-- Row 2: faceted filters as labeled pill dropdowns. The trace-id
@@ -585,13 +591,23 @@ function timeTitle(s) {
 
     <!-- Hidden-runs hint: when runs are hidden but some matched the other
          filters, offer a one-click jump to "Only runs". -->
-    <button
+    <Button
       v-if="workflowFilter === 'hide' && hiddenWorkflowCount > 0"
-      type="button"
-      class="mb-3 inline-flex items-center gap-1 text-xs text-teal-700 hover:text-teal-900 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"
+      variant="link"
+      class="mb-3 gap-1 text-xs text-teal-700 hover:text-teal-900"
       title="Show only the captured dynamic-workflow runs"
       @click="workflowFilter = 'only'"
-    >⚙ {{ hiddenWorkflowCount }} workflow run{{ hiddenWorkflowCount === 1 ? '' : 's' }} hidden →</button>
+    >⚙ {{ hiddenWorkflowCount }} workflow run{{ hiddenWorkflowCount === 1 ? '' : 's' }} hidden →</Button>
+
+    <!-- Date-range hint: when showing only runs but some fall outside the
+         current date window, offer a one-click jump to "All time". -->
+    <Button
+      v-if="workflowFilter === 'only' && workflowDateHiddenCount > 0"
+      variant="link"
+      class="mb-3 gap-1 text-xs text-amber-700 hover:text-amber-900"
+      title="Expand date range to show all workflow runs"
+      @click="range = 'all'"
+    >⚙ {{ workflowDateHiddenCount }} workflow run{{ workflowDateHiddenCount === 1 ? '' : 's' }} outside date range — show all time →</Button>
 
     <div class="split-card">
       <div v-if="sessions.length" class="hidden sm:block overflow-x-auto">
@@ -635,11 +651,10 @@ function timeTitle(s) {
       <ul v-if="sessions.length" class="sm:hidden flex flex-col divide-y divide-gray-200">
         <li v-for="s in sessions" :key="s.trace_id" class="p-3 text-sm" :class="{ 'bg-blue-50': isSelected(s.trace_id) }">
           <div class="flex items-start gap-2">
-            <input
-              type="checkbox"
-              class="h-4 w-4 mt-1 shrink-0"
-              :checked="isSelected(s.trace_id)"
-              @change="toggleOne(s.trace_id, $event.target.checked)"
+            <Checkbox
+              class="mt-1 shrink-0"
+              :model-value="isSelected(s.trace_id)"
+              @update:model-value="toggleOne(s.trace_id, $event)"
               :aria-label="`Select session ${s.trace_id.slice(0, 8)}`"
             />
             <div class="flex-1 min-w-0">
@@ -664,6 +679,9 @@ function timeTitle(s) {
                   <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
                   </svg>
+                  <svg v-else-if="s.agent_kind === 'kimi'" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M5 3v10M5 8l5-5M5 8.5l5 4.5" />
+                  </svg>
                   <svg v-else viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
                   </svg>
@@ -671,6 +689,19 @@ function timeTitle(s) {
                 <router-link :to="`/trace/sessions/${s.trace_id}`" class="text-blue-600 hover:underline font-medium">
                   <code class="text-xs">{{ s.trace_id.slice(0, 12) }}…</code>
                 </router-link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 text-gray-400 hover:text-gray-700"
+                  title="Copy session id"
+                  :aria-label="`Copy session id ${s.trace_id}`"
+                  @click.stop="copyText(s.trace_id)"
+                >
+                  <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="5.5" y="5.5" width="8" height="8" rx="1.2" />
+                    <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" />
+                  </svg>
+                </Button>
                 <span
                   v-if="isActive(s)"
                   class="inline-flex items-center gap-1 rounded bg-green-100 text-green-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
@@ -726,12 +757,12 @@ function timeTitle(s) {
                 </div>
               </dl>
               <div class="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  class="text-xs text-red-600 hover:text-red-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
+                <Button
+                  variant="link"
+                  class="text-xs text-red-600 hover:text-red-800 disabled:cursor-wait"
                   :disabled="deleting === s.trace_id"
                   @click="deleteSession(s)"
-                >{{ deleting === s.trace_id ? 'Deleting…' : 'Delete' }}</button>
+                >{{ deleting === s.trace_id ? 'Deleting…' : 'Delete' }}</Button>
               </div>
             </div>
           </div>
@@ -756,9 +787,9 @@ function timeTitle(s) {
 
 <style scoped>
 .split-card {
-  background: #fff;
+  background: var(--color-white);
   border-radius: 0.5rem;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-gray-200);
   margin-bottom: 1rem;
   overflow: hidden;
 }
@@ -811,20 +842,24 @@ function timeTitle(s) {
   width: 0.875rem;
 }
 .agent-icon--claude {
-  background: #fff7ed;
-  color: #c2410c;
+  background: var(--color-orange-50);
+  color: var(--color-orange-700);
 }
 .agent-icon--codex {
-  background: #eef2ff;
-  color: #4338ca;
+  background: var(--color-indigo-50);
+  color: var(--color-indigo-700);
+}
+.agent-icon--kimi {
+  background: var(--color-purple-50);
+  color: var(--color-purple-700);
 }
 .agent-icon--generic {
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
 }
 .agent-icon--workflow {
-  background: #ecfdf5;
-  color: #0f766e;
+  background: var(--color-emerald-50);
+  color: var(--color-teal-700);
 }
 
 /* Visually-joined input + scope selector. Pulling the select tight
@@ -843,9 +878,9 @@ function timeTitle(s) {
 .search-group .search-scope {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  border-left: 1px solid #cbd5e1;
-  background: #f8fafc;
-  color: #475569;
+  border-left: 1px solid var(--color-slate-300);
+  background: var(--color-slate-50);
+  color: var(--color-slate-600);
   font-size: 0.8125rem;
   padding-left: 0.5rem;
   padding-right: 1.75rem;
@@ -874,7 +909,7 @@ function timeTitle(s) {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #64748b;
+  color: var(--color-slate-500);
   margin-right: 0.125rem;
 }
 
@@ -884,24 +919,24 @@ function timeTitle(s) {
 .facet-pill {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-slate-200);
   border-radius: 0.5rem;
-  background: #f8fafc;
+  background: var(--color-slate-50);
   overflow: hidden;
   transition: border-color 0.15s ease, background 0.15s ease;
   cursor: pointer;
 }
-.facet-pill:hover { border-color: #cbd5e1; }
+.facet-pill:hover { border-color: var(--color-slate-300); }
 .facet-pill:focus-within {
-  border-color: #3b82f6;
-  background: #ffffff;
+  border-color: var(--color-blue-500);
+  background: var(--color-white);
 }
 .facet-pill--active {
-  border-color: #2563eb;
-  background: #eff6ff;
+  border-color: var(--color-blue-600);
+  background: var(--color-blue-50);
 }
 .facet-pill--active .facet-pill__label {
-  color: #1d4ed8;
+  color: var(--color-blue-700);
   background: rgba(37, 99, 235, 0.08);
   border-right-color: rgba(37, 99, 235, 0.2);
 }
@@ -914,8 +949,8 @@ function timeTitle(s) {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: #64748b;
-  border-right: 1px solid #e2e8f0;
+  color: var(--color-slate-500);
+  border-right: 1px solid var(--color-slate-200);
   user-select: none;
 }
 
@@ -926,7 +961,7 @@ function timeTitle(s) {
   padding: 0.25rem 1.5rem 0.25rem 0.625rem;
   font-size: 0.8125rem;
   font-weight: 500;
-  color: #1e293b;
+  color: var(--color-slate-800);
   cursor: pointer;
   /* Restore native chevron — clipped by border-radius otherwise. */
   appearance: auto;
@@ -941,14 +976,14 @@ function timeTitle(s) {
   padding: 0.25rem 0.625rem;
   font-size: 0.8125rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #1e293b;
+  color: var(--color-slate-800);
   width: 11rem;
 }
-.facet-pill__input::placeholder { color: #94a3b8; font-family: inherit; }
+.facet-pill__input::placeholder { color: var(--color-slate-400); font-family: inherit; }
 .facet-pill__clear {
   background: transparent;
   border: 0;
-  color: #64748b;
+  color: var(--color-slate-500);
   cursor: pointer;
   font-size: 1.125rem;
   line-height: 1;
@@ -957,5 +992,5 @@ function timeTitle(s) {
   align-items: center;
   border-radius: 0.375rem;
 }
-.facet-pill__clear:hover { color: #1e293b; background: rgba(15, 23, 42, 0.06); }
+.facet-pill__clear:hover { color: var(--color-slate-800); background: rgba(15, 23, 42, 0.06); }
 </style>

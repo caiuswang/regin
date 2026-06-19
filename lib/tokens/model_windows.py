@@ -3,11 +3,17 @@
 Values come from Anthropic's official model docs
 (https://platform.claude.com/docs/en/docs/about-claude/models/overview):
 
-- Claude Opus 4.7   -> 1M tokens (native)
+- Claude Fable 5    -> 1M tokens (native)
+- Claude Opus 4.8 / 4.7 -> 1M tokens (native)
 - Claude Sonnet 4.6 -> 1M tokens (native)
 - Claude Opus 4.6   -> 1M tokens (native)
 - Claude Haiku 4.5  -> 200K tokens
 - Older 4.x Sonnet/Opus (4.5, 4.1, 4)   -> 200K tokens
+
+Models missing from this table resolve through the models.dev catalogue
+(`lib.tokens.pricing.model_context_limit`, the same source pricing uses),
+so a just-launched model gets its real window instead of the 200K default.
+The 200K fallback only applies when the model is in neither place.
 
 The historical `[1m]` suffix predates Opus 4.7 / Sonnet 4.6 having a 1M
 native window; it's kept here as an alias so transcripts written by older
@@ -23,6 +29,8 @@ from __future__ import annotations
 # Built-in defaults. Override via `settings.model_context_windows`.
 _BUILTIN_WINDOWS: dict[str, int] = {
     # Current frontier models
+    "claude-fable-5": 1_000_000,
+    "claude-opus-4-8": 1_000_000,
     "claude-opus-4-7": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,
     "claude-haiku-4-5": 200_000,
@@ -66,9 +74,25 @@ def _table() -> dict[str, int]:
     return merged
 
 
-def window_for(model: str | None) -> int:
-    if not model:
-        return DEFAULT_WINDOW
+def _catalogue_window(bare: str, base: str) -> int | None:
+    """Context limit from the models.dev catalogue (pricing's cache).
+
+    Keeps brand-new models (e.g. `claude-fable-5`) from silently landing
+    on the 200K default until someone hand-edits the builtin table.
+    Degrades to None offline — pricing never raises.
+    """
+    try:
+        from lib.tokens.pricing import model_context_limit
+    except ImportError:
+        return None
+    limit = model_context_limit(bare)
+    if limit is None and base != bare:
+        limit = model_context_limit(base)
+    return limit
+
+
+def _resolve_window(model: str) -> int | None:
+    """Window for a known model, or None when nothing matched."""
     table = _table()
     if model in table:
         return table[model]
@@ -85,7 +109,22 @@ def window_for(model: str | None) -> int:
     # trailing date and retry against the base id. Operate on the
     # suffix-stripped id so dated `[1m]` variants resolve too.
     base = bare.rsplit('-', 1)[0] if bare.count('-') >= 3 else bare
-    return table.get(base, DEFAULT_WINDOW)
+    if base in table:
+        return table[base]
+    limit = _catalogue_window(bare, base)
+    if limit:
+        return limit
+    # The `[1m]` tag explicitly names the 1M-context variant; honor it
+    # even when the model id is otherwise unknown.
+    if bare != model and model.endswith('[1m]'):
+        return 1_000_000
+    return None
+
+
+def window_for(model: str | None) -> int:
+    if not model:
+        return DEFAULT_WINDOW
+    return _resolve_window(model) or DEFAULT_WINDOW
 
 
 def infer_window(model: str | None, peak_tokens: int) -> int:
@@ -100,17 +139,17 @@ def infer_window(model: str | None, peak_tokens: int) -> int:
     """
     if not model:
         return DEFAULT_WINDOW
-    base = window_for(model)
+    known = _resolve_window(model)
+    base = known or DEFAULT_WINDOW
     if peak_tokens <= base:
         return base
-    table = _table()
-    extended = table.get(f"{model}[1m]")
+    extended = _table().get(f"{model}[1m]")
     if extended and extended > base:
         return extended
-    # Model is known but observed peak exceeds it. Trust the configured
-    # window over the observation — the % can show >100% rather than
-    # silently inflating the denominator.
-    if model in table or model.rsplit('-', 1)[0] in table:
+    # Model is known (table, override, or catalogue) but observed peak
+    # exceeds it. Trust the configured window over the observation — the
+    # % can show >100% rather than silently inflating the denominator.
+    if known:
         return base
     # Truly unknown model: fall back to peak so we never divide by zero.
     return max(base, peak_tokens)

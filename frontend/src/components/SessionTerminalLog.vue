@@ -163,6 +163,7 @@ function dotColor(name) {
     'rule.check': 'bg-red-500',
     'session.start': 'bg-slate-500',
     'session.end': 'bg-slate-400',
+    'environment.git_status': 'bg-cyan-600',
     'compact.pre': 'bg-amber-500',
     'compact.post': 'bg-amber-600',
     'subagent.start': 'bg-pink-500',

@@ -1,8 +1,9 @@
 <script setup>
-import { ref, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import PromptBody from './PromptBody.vue'
 import ConversationToc from './conversation/ConversationToc.vue'
 import ConversationSpanCard from './conversation/ConversationSpanCard.vue'
+import RewindCard from './conversation/RewindCard.vue'
 import { useSpanTree } from '../composables/useSpanTree.js'
 import { useConversationPins } from '../composables/useConversationPins.js'
 import { useConversationFolding } from '../composables/useConversationFolding.js'
@@ -10,7 +11,7 @@ import { useAgentLaunchMerge } from '../composables/useAgentLaunchMerge.js'
 import { useCopy } from '../composables/useCopy.js'
 import {
   fmtClock, fmtTokens, fullLabel, dotColor, toolDisplayName,
-  promptPreviewText, promptPreviewMeta,
+  promptPreviewText, promptPreviewMeta, isUnresolvedPrompt,
 } from '../utils/traceFormatters.js'
 
 const props = defineProps({
@@ -23,6 +24,9 @@ const props = defineProps({
   // from /workflow-runs, so an inline `tool.Workflow` row can render a rich
   // collapsed summary linking to the captured run.
   workflowRunsById: { type: Object, default: () => ({}) },
+  // Set of span_ids whose `deep=1` subtree fetch has settled — lets a lazily
+  // loaded card (e.g. RewindCard) tell "still loading" from "loaded, empty".
+  loadedSubtrees: { default: () => new Set() },
 })
 
 const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live'])
@@ -50,6 +54,16 @@ const {
   entries, promptGroups, turnItems, isWorkflow, phaseItems,
   hasPhaseSpans, phasePlan,
 } = useSpanTree(() => props.spans, () => props.turns)
+
+// A surviving `promptlive-` placeholder is only "stranded" once the session
+// can no longer resolve it — i.e. it has ended. While live, the newest
+// placeholder is just the in-flight prompt. Gate the unresolved styling on
+// `session.end` being present so a live prompt is never flagged. See
+// `isUnresolvedPrompt`.
+const sessionEnded = computed(() => props.spans.some(s => s.name === 'session.end'))
+function promptUnresolved(prompt) {
+  return sessionEnded.value && isUnresolvedPrompt(prompt)
+}
 
 // ── Pin a span / follow tail ──────────────────────────────────
 // Pin holds a chosen span at its on-screen position across the live poll;
@@ -107,8 +121,18 @@ const {
   expandedPromptIds,
   isPromptExpanded, isPromptBodyExpanded, togglePromptExpanded, togglePromptBodyExpanded,
   isAgentExpanded, toggleAgentExpanded, isWorkflowExpanded,
+  isRewindExpanded, toggleRewindExpanded,
   foldableAgentIds, allAgentsExpanded, expandAllAgents, collapseAllAgents,
 } = folding
+
+// Context bundle the discarded-branch span cards (rendered inside RewindCard)
+// need — passed as one prop so the marker's template footprint stays small.
+const rewindCtx = computed(() => ({
+  selectedSpan: props.selectedSpan,
+  folding,
+  agentMerge,
+  workflowRunsById: props.workflowRunsById,
+}))
 
 // Climb the parent_id chain to the nearest enclosing agent (inclusive), so a
 // span selected from the TOC or a deep-link can auto-expand the agent that
@@ -125,11 +149,18 @@ function agentAncestorId(spanId) {
 // Fold collapsed agents/workflows out of an expanded prompt's descendant list.
 // Reads the fold predicates so it stays reactive — keep it here (not in a
 // card) so toggling a chevron reflows the spine and re-registers spanRefs.
-function renderableDescendants(entry) {
+function renderableDescendants(entry, keepRewound = false) {
   const merged = agentMerge.agentLaunchMerge.value.merged
+  // Discarded `/rewind` turns are surfaced only behind their marker — never
+  // inline in the live branch — so drop any that slipped into a descendant
+  // list. `keepRewound` is the one exception: the marker's own card renders
+  // its discarded subtree, so it asks for those spans back.
+  const live = keepRewound
+    ? entry.descendants
+    : entry.descendants.filter(({ span }) => !span.attributes?.rewound_away)
   const base = merged.size
-    ? entry.descendants.filter(({ span }) => !merged.has(span.span_id))
-    : entry.descendants
+    ? live.filter(({ span }) => !merged.has(span.span_id))
+    : live
   // Every row inside an agent carries `inAgent` (set once flattenDescendants
   // crosses a `subagent.start`), so a collapsed agent's rows are a contiguous
   // run from its header to the next agent/phase. Drop those — keep the header.
@@ -271,6 +302,16 @@ function turnCtxPct(turn) {
   return Math.max(0, Math.min(100, (turn.context_used_tokens / window) * 100))
 }
 
+// Per-prompt footer disclosure: which prompts show their full API-turn list.
+const expandedTurnFooters = ref(new Set())
+function isTurnFooterExpanded(promptId) { return expandedTurnFooters.value.has(promptId) }
+function toggleTurnFooter(promptId) {
+  const next = new Set(expandedTurnFooters.value)
+  if (next.has(promptId)) next.delete(promptId)
+  else next.add(promptId)
+  expandedTurnFooters.value = next
+}
+
 // ── On-demand content fetching ────────────────────────────────
 function needsContentFetch(span) {
   if (!span) return false
@@ -278,6 +319,9 @@ function needsContentFetch(span) {
   return (
     (span.name === 'prompt' && !a.text) ||
     (span.name === 'assistant_response' && !a.text) ||
+    // memory.recall carries the injected block lazily — fetch it so the
+    // MemoryRecallRow `block` toggle and the detail panel can show it.
+    (span.name === 'memory.recall' && !a.block) ||
     // Server-side tools (e.g. advisor) carry their textual response in
     // `response_text` rather than producing a tool_result.
     (a.server_side && !a.response_text) ||
@@ -317,6 +361,8 @@ function toolChipsForEntry(entry) {
       add('Edit', 'bg-orange-50 text-orange-700 border-orange-200')
     } else if (n === 'rule.check') {
       add('rule', 'bg-red-50 text-red-700 border-red-200')
+    } else if (n === 'memory.recall') {
+      add('recall', 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200')
     } else if (n.startsWith('subagent.')) {
       add('subagent', 'bg-pink-50 text-pink-700 border-pink-200')
     }
@@ -363,6 +409,7 @@ function toolChipsForEntry(entry) {
             :class="[
               selectedSpan && selectedSpan.span_id === entry.prompt.span_id ? 'ring-2 ring-purple-300' : '',
               pinnedSpanId === entry.prompt.span_id ? 'ring-2 ring-amber-400' : '',
+              promptUnresolved(entry.prompt) ? 'border-dashed !border-amber-300 !bg-amber-50/50' : '',
             ]"
             @click="onPromptClick(entry.prompt)"
           >
@@ -377,6 +424,11 @@ function toolChipsForEntry(entry) {
             >📌</button>
             <div class="flex items-center gap-2 text-[11px] font-mono text-purple-700/80 mb-0.5">
               <span class="font-semibold uppercase tracking-wider text-[10px]">USER</span>
+              <span
+                v-if="promptUnresolved(entry.prompt)"
+                class="px-1 rounded bg-amber-200/70 text-amber-800 text-[9px] font-semibold uppercase tracking-wider not-italic"
+                title="Unresolved — a live prompt placeholder whose real anchor never landed. Usually a scheduled/loop wakeup (delivered as a plain prompt, never anchored) or an interrupted final prompt, not a turn the user typed."
+              >unresolved</span>
               <span class="text-purple-300">·</span>
               <span>{{ fmtClock(entry.prompt.start_time) }}</span>
               <button
@@ -496,30 +548,72 @@ function toolChipsForEntry(entry) {
             >hide details ▴</button>
           </template>
 
-          <!-- Turn metadata footer -->
+          <!-- Turn metadata footer: rollup of every API turn this prompt drove -->
           <div
-            v-if="turnItems[entryIdx]?.turn"
-            class="text-[11px] text-slate-400 flex items-center gap-2 pl-2"
+            v-if="turnItems[entryIdx]?.turnAgg"
+            class="text-[11px] text-slate-400 pl-2"
           >
-            <span>Turn #{{ turnItems[entryIdx].idx + 1 }}</span>
-            <span class="text-slate-300">·</span>
-            <span v-if="turnItems[entryIdx].turn.input_tokens != null">↑{{ fmtTokens((turnItems[entryIdx].turn.input_tokens || 0) + (turnItems[entryIdx].turn.cache_creation_tokens || 0)) }}</span>
-            <span v-if="turnItems[entryIdx].turn.output_tokens != null">↓{{ fmtTokens(turnItems[entryIdx].turn.output_tokens) }}</span>
-            <span
-              v-if="turnCtxPct(turnItems[entryIdx].turn) != null"
-              class="inline-flex items-center px-1 rounded text-[10px] text-white"
-              :class="turnCtxPct(turnItems[entryIdx].turn) >= 80
-                ? 'bg-red-500'
-                : turnCtxPct(turnItems[entryIdx].turn) >= 50
-                  ? 'bg-amber-500'
-                  : 'bg-green-500'"
-            >{{ Math.round(turnCtxPct(turnItems[entryIdx].turn)) }}%</span>
-            <span
-              v-if="turnItems[entryIdx].turn.effort_level"
-              class="inline-flex items-center px-1 rounded text-[10px] bg-violet-100 text-violet-700"
-              :title="'reasoning effort level for this turn: ' + turnItems[entryIdx].turn.effort_level"
-            >{{ turnItems[entryIdx].turn.effort_level }}</span>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="cursor-pointer hover:text-slate-700 rounded focus-visible:outline-2 focus-visible:outline-blue-500"
+                :title="'API turns #' + turnItems[entryIdx].turns[0].turn_index + '–#' + turnItems[entryIdx].turnAgg.lastTurn.turn_index + ' answered this prompt — click to list them'"
+                @click="toggleTurnFooter(entry.prompt.span_id)"
+              >{{ turnItems[entryIdx].turnAgg.count }} {{ turnItems[entryIdx].turnAgg.count === 1 ? 'turn' : 'turns' }} {{ isTurnFooterExpanded(entry.prompt.span_id) ? '▴' : '▾' }}</button>
+              <span class="text-slate-300">·</span>
+              <span>↑{{ fmtTokens(turnItems[entryIdx].turnAgg.inputTokens) }}</span>
+              <span>↓{{ fmtTokens(turnItems[entryIdx].turnAgg.outputTokens) }}</span>
+              <span
+                v-if="turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn) != null"
+                class="inline-flex items-center px-1 rounded text-[10px] text-white"
+                :class="turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn) >= 80
+                  ? 'bg-red-500'
+                  : turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn) >= 50
+                    ? 'bg-amber-500'
+                    : 'bg-green-500'"
+                title="context occupancy after this prompt's last turn"
+              >{{ Math.round(turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn)) }}%</span>
+              <span
+                v-if="turnItems[entryIdx].turnAgg.lastTurn.effort_level"
+                class="inline-flex items-center px-1 rounded text-[10px] bg-violet-100 text-violet-700"
+                :title="'reasoning effort level on this prompt\'s last turn: ' + turnItems[entryIdx].turnAgg.lastTurn.effort_level"
+              >{{ turnItems[entryIdx].turnAgg.lastTurn.effort_level }}</span>
+            </div>
+            <div
+              v-if="isTurnFooterExpanded(entry.prompt.span_id)"
+              class="mt-1 space-y-0.5 font-mono text-[10px]"
+            >
+              <div
+                v-for="t in turnItems[entryIdx].turns"
+                :key="t.turn_uuid"
+                class="flex items-center gap-2"
+              >
+                <span class="w-8 text-right shrink-0">#{{ t.turn_index }}</span>
+                <span>{{ fmtClock(t.timestamp) }}</span>
+                <span>↑{{ fmtTokens((t.input_tokens || 0) + (t.cache_creation_tokens || 0)) }}</span>
+                <span>↓{{ fmtTokens(t.output_tokens || 0) }}</span>
+                <span v-if="turnCtxPct(t) != null">ctx {{ Math.round(turnCtxPct(t)) }}%</span>
+              </div>
+            </div>
           </div>
+        </div>
+
+        <!-- Rewind boundary divider (collapsed discarded branch + file rollback) -->
+        <div
+          v-else-if="entry.span.name === 'rewind'"
+          :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
+        >
+          <RewindCard
+            :span="entry.span"
+            :trace-id="props.traceId"
+            :descendants="renderableDescendants(entry, true)"
+            :ctx="rewindCtx"
+            :expanded="isRewindExpanded(entry.span.span_id)"
+            :loaded="props.loadedSubtrees.has(entry.span.span_id)"
+            @select="onSelectSpan"
+            @toggle="toggleRewindExpanded(entry.span.span_id)"
+            @activate="onActivate"
+          />
         </div>
 
         <!-- Compaction boundary divider (PreCompact / PostCompact) -->

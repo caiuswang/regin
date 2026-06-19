@@ -1,6 +1,6 @@
 <script setup>
 import { fmtClock, toolDisplayName } from '../../../utils/traceFormatters.js'
-import { useCopy } from '../../../composables/useCopy.js'
+import CopyButton from './CopyButton.vue'
 
 // Tool-failure card: surface tool_name + the input that failed (Bash command
 // or file_path) + full error text inline (red tint). The error is capped at
@@ -10,7 +10,6 @@ defineProps({
   selectedSpan: { type: Object, default: null },
 })
 defineEmits(['activate'])
-const { copyText } = useCopy()
 </script>
 
 <template>
@@ -28,13 +27,11 @@ const { copyText } = useCopy()
         v-if="span.attributes?.is_interrupt"
         class="text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded font-sans"
       >user interrupt</span>
-      <button
+      <CopyButton
         v-if="span.attributes?.error"
-        type="button"
-        class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-red-600 hover:bg-red-200/60 focus-visible:outline-2 focus-visible:outline-red-400"
-        title="Copy"
-        @click.stop="copyText(span.attributes.error)"
-      >Copy</button>
+        :text="span.attributes.error"
+        tint="text-red-600 hover:bg-red-200/60"
+      />
     </div>
     <!-- Bash failure: show the command with a $ prompt prefix. Falls back to
          command_preview if the full text wasn't captured. -->

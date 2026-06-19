@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import CursorControls from '../components/CursorControls.vue'
+import Checkbox from '../components/ui/Checkbox.vue'
 import { useCursor } from '../composables/useCursor'
 import { useStickyHeader } from '../composables/useStickyHeader'
 
@@ -85,10 +86,7 @@ function shortTestName(nodeid) {
     <p class="page-subtitle mb-4">Traces from the PostToolUse hook (matcher <code class="cell-code">mcp__.*</code>). Every MCP tool Claude actually invoked.</p>
 
     <div class="toolbar">
-      <label class="toolbar-checkbox cursor-pointer">
-        <input type="checkbox" v-model="showTests" aria-label="Show test sessions">
-        <span>Show test sessions</span>
-      </label>
+      <Checkbox v-model="showTests" label="Show test sessions" aria-label="Show test sessions" />
       <span class="toolbar-divider"></span>
       <button type="button"
         class="filter-chip focus-visible:outline-2 focus-visible:outline-blue-500"
@@ -221,7 +219,7 @@ function shortTestName(nodeid) {
   position: sticky;
   top: calc(var(--regin-trace-header-h, 0px) - 1rem);
   z-index: 5;
-  background: #f8fafc;
+  background: var(--color-slate-50);
 }
 @media (min-width: 1024px) {
   .sticky-page-root :deep(.tbl > thead > tr > th) {

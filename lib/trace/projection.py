@@ -49,7 +49,7 @@ def _fetch_spans(conn, trace_id: str) -> list[dict]:
                start_time, end_time, duration_ms, attributes,
                status_code, status_message,
                output_tokens, input_tokens, image_tokens, cost_usd,
-               tool_use_id, turn_uuid
+               tool_use_id, turn_uuid, source
         FROM session_spans
         WHERE trace_id = ?
         ORDER BY start_time ASC, id ASC
@@ -62,11 +62,18 @@ def _fetch_spans(conn, trace_id: str) -> list[dict]:
 
 _SESSION_LIFECYCLE_NAMES = frozenset({'session.start', 'session.end'})
 _COMPACT_BOUNDARY_NAMES = frozenset({'compact.pre', 'compact.post'})
+# A `/rewind` marker: a conversation-level divider at the fork point. Like
+# the other boundaries it stays a top-level node (grafted to the conversation
+# root, never under a prompt), but unlike them it ADOPTS the discarded turns
+# as children so the UI can collapse the abandoned branch behind it.
+_REWIND_BOUNDARY_NAMES = frozenset({'rewind'})
 # Boundary spans never nest under a prompt — they delimit conversation-level
-# events (session start/end, /compact runs). Grafting them under the most
-# recent prompt would hide the boundary inside an unrelated turn's
+# events (session start/end, /compact runs, /rewind). Grafting them under the
+# most recent prompt would hide the boundary inside an unrelated turn's
 # descendants and lose the visual divider.
-_FIRST_CLASS_BOUNDARY_NAMES = _SESSION_LIFECYCLE_NAMES | _COMPACT_BOUNDARY_NAMES
+_FIRST_CLASS_BOUNDARY_NAMES = (
+    _SESSION_LIFECYCLE_NAMES | _COMPACT_BOUNDARY_NAMES | _REWIND_BOUNDARY_NAMES
+)
 
 
 def _is_pending(span: dict) -> bool:
@@ -81,6 +88,11 @@ _LADDER_SKIP_NAMES = (
     frozenset({'prompt', 'conversation', 'subagent.start', 'subagent.stop'})
     | _FIRST_CLASS_BOUNDARY_NAMES
 )
+
+# The per-turn response/thinking anchors. They are PEERS of each other under
+# the turn's prompt — never parent/child — so the ladder must not let one nest
+# under the other (that forms a 2-cycle the tree builder silently drops).
+_RESP_THINK_ANCHOR_NAMES = frozenset({'assistant_response', 'assistant.thinking'})
 
 
 def _turn_uuid_of(span: dict) -> str | None:
@@ -126,7 +138,19 @@ def _ladder_orphans_by_turn(out: list[dict], by_id: dict) -> None:
         t = _turn_uuid_of(s)
         if not t:
             continue
-        for cand in (f'resp-{t[:13]}', f'think-{t[:13]}', prompt_by_turn.get(t)):
+        # The `resp-`/`think-` anchors of a turn are PEERS, not parent/child.
+        # An orphan anchor (a turn with no write-time prompt parent — chiefly a
+        # `task.notification`/background-completion turn that had no user-prompt
+        # anchor) must skip the anchor rungs, or `think-<t>` and `resp-<t>` pick
+        # each other and form a 2-cycle that `_build_span_tree` can't root,
+        # silently dropping the whole turn (and its child tools). Anchors take
+        # the prompt rung only; the chronological `_graft_orphans_under_prompt`
+        # fallback catches them when no prompt anchor exists for the turn.
+        if s['name'] in _RESP_THINK_ANCHOR_NAMES:
+            cands = (prompt_by_turn.get(t),)
+        else:
+            cands = (f'resp-{t[:13]}', f'think-{t[:13]}', prompt_by_turn.get(t))
+        for cand in cands:
             if cand and cand in by_id and cand != s['span_id']:
                 s['parent_id'] = cand
                 break
@@ -193,17 +217,26 @@ def _attach_turn_to_following_prompt(
             return
 
 
+# Spans that fire on UserPromptSubmit a few ms BEFORE the new prompt's
+# anchor lands, so a chronological graft would wrongly attach them to the
+# PREVIOUS prompt. `turn`: the per-turn usage marker; `memory.recall`: the
+# `<recalled_experience>` injection span (emitted by the memory_recall
+# handler, which runs before prompt_trace). Both carry no deterministic
+# parent, so they need this chronological nudge onto the following prompt.
+_SUBMIT_LOOKAHEAD_NAMES = frozenset({'turn', 'memory.recall'})
+
+
 def _relabel_turns_by_lookahead(out: list[dict]) -> None:
-    """Re-attribute `turn` spans that landed a few ms before a LATER
-    prompt back onto that prompt. See `_TURN_LOOKAHEAD_SECONDS`. `turn`
-    spans carry no deterministic parent, so this chronological nudge
-    stays."""
+    """Re-attribute submit-time spans that landed a few ms before a LATER
+    prompt back onto that prompt. See `_TURN_LOOKAHEAD_SECONDS` and
+    `_SUBMIT_LOOKAHEAD_NAMES`. These spans carry no deterministic parent,
+    so this chronological nudge stays."""
     prompts_by_start = sorted(
         (s for s in out if s['name'] == 'prompt' and not _is_pending(s)),
         key=lambda s: s['start_time'],
     )
     for s in out:
-        if s['name'] != 'turn':
+        if s['name'] not in _SUBMIT_LOOKAHEAD_NAMES:
             continue
         try:
             s_start_dt = datetime.fromisoformat(s['start_time'])
@@ -242,6 +275,59 @@ def _reparent_subagents(out: list[dict]) -> None:
             s['parent_id'] = target
 
 
+def _span_id_suffix(span_id: str) -> str:
+    """The `<uuid[:13]>` tail of a deterministic span id (`prompt-<u13>`,
+    `resp-<u13>`, …). Empty for ids without a prefix. The tail is matched
+    against a rewind's orphan key set."""
+    return span_id.split('-', 1)[1] if '-' in span_id else ''
+
+
+def _belongs_to_branch(span: dict, keys: set) -> bool:
+    """True when `span` is part of a rewind's discarded branch: its
+    deterministic-id tail is an orphan key (`prompt-`/`resp-`/`think-`/`cmd-`),
+    or its `turn_uuid` belongs to an orphan turn — the path for tool spans,
+    which are keyed by their issuing turn rather than their own id. Both match
+    against the same `<uuid[:13]>` key set."""
+    if _span_id_suffix(span['span_id']) in keys:
+        return True
+    tu = _turn_uuid_of(span)
+    return bool(tu and tu[:13] in keys)
+
+
+def _stamp_rewound(span: dict, fork_id: str, abandoned_prompt_ids: set) -> None:
+    """Mark one span as belonging to a discarded branch; re-parent it under
+    the marker when it is one of the branch's abandoned prompt anchors."""
+    attrs = dict(span.get('attributes') or {})
+    attrs['rewound_away'] = True
+    attrs['rewind_fork_id'] = fork_id
+    span['attributes'] = attrs
+    if span['span_id'] in abandoned_prompt_ids:
+        span['parent_id'] = fork_id
+
+
+def _apply_rewind_marker(out: list[dict], marker: dict) -> None:
+    """Stamp `rewound_away` + `rewind_fork_id` onto every span belonging to
+    one rewind's discarded branch, and re-parent its abandoned prompt anchors
+    under the marker so the branch collapses behind it."""
+    a = marker.get('attributes') or {}
+    keys = set(a.get('orphan_keys') or ())
+    abandoned_prompt_ids = {f'prompt-{k}' for k in (a.get('abandoned_prompt_keys') or ())}
+    fork_id = marker['span_id']
+    for s in out:
+        if s['span_id'] == fork_id or s['name'] in _REWIND_BOUNDARY_NAMES:
+            continue
+        if _belongs_to_branch(s, keys):
+            _stamp_rewound(s, fork_id, abandoned_prompt_ids)
+
+
+def _mark_rewound_away(out: list[dict]) -> None:
+    """Apply every `/rewind` marker present in the window. No-op (one cheap
+    scan) on the overwhelming majority of sessions that never rewind."""
+    markers = [s for s in out if s['name'] in _REWIND_BOUNDARY_NAMES]
+    for marker in markers:
+        _apply_rewind_marker(out, marker)
+
+
 def _graft_orphans(spans: list[dict]) -> list[dict]:
     """Return a copy of `spans` with parentage filled in. Does not mutate
     inputs or any DB row.
@@ -278,6 +364,10 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
     _graft_orphans_under_prompt(sorted_spans, by_id)
     _relabel_turns_by_lookahead(out)
     _reparent_subagents(out)
+    # Last: override the parentage above for discarded branches so abandoned
+    # prompts collapse under their `rewind` marker instead of sitting as
+    # conversation roots. Pure no-op when the window has no rewind markers.
+    _mark_rewound_away(out)
     return out
 
 
@@ -359,7 +449,7 @@ _ACTIVE_GAP_THRESHOLD_MS = 60_000   # gaps ≤ this count as active processing
 _ACTIVE_CONTAINER_NAMES = frozenset({
     'prompt', 'task.notification', 'conversation',
     'session.start', 'session.end',
-    'compact.pre', 'compact.post',
+    'compact.pre', 'compact.post', 'rewind',
     'subagent.start', 'subagent.stop',
 })
 

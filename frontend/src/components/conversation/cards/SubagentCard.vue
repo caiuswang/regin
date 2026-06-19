@@ -5,6 +5,7 @@ import {
   fmtClock, fmtModel, fmtTokens, fmtDuration, fullLabel, toolRowDotClass,
 } from '../../../utils/traceFormatters.js'
 import { AGENT_PROMPT_PREVIEW_CHARS } from '../../../composables/useAgentLaunchMerge.js'
+import Button from '../../ui/Button.vue'
 
 // Subagent launch: subagent.start with its tool.Agent (description + prompt)
 // folded in. Workflow agents have no launch span, so description/prompt fall
@@ -42,14 +43,14 @@ function selectAgentPrompt() {
       <!-- Fold toggle: collapses the agent's whole subtree to just this header.
            Shown only when the agent has captured descendants to hide. Click
            target is the chevron only — the row body still selects the span. -->
-      <button
+      <Button
         v-if="folding.agentHasChildren(span.span_id)"
-        type="button"
-        class="shrink-0 -my-1 px-0.5 text-slate-400 hover:text-slate-700 font-mono text-[11px] leading-none focus-visible:outline-2 focus-visible:outline-blue-500 rounded"
+        variant="ghost"
+        class="shrink-0 h-auto -my-1 px-0.5 text-slate-400 hover:bg-transparent hover:text-slate-700 font-mono text-[11px] leading-none"
         :title="folding.isAgentExpanded(span.span_id) ? 'Collapse agent' : 'Expand agent'"
         :aria-expanded="folding.isAgentExpanded(span.span_id)"
         @click.stop="folding.toggleAgentExpanded(span.span_id)"
-      >{{ folding.isAgentExpanded(span.span_id) ? '▾' : '▸' }}</button>
+      >{{ folding.isAgentExpanded(span.span_id) ? '▾' : '▸' }}</Button>
       <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="toolRowDotClass(span)"></span>
       <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
       <!-- Label: normal subagents read `subagent: <type> · <desc>`. Workflow
@@ -85,12 +86,13 @@ function selectAgentPrompt() {
     >
       <div class="flex items-center justify-between gap-2 mb-1">
         <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">task prompt</span>
-        <button
+        <Button
           v-if="prompt.length > AGENT_PROMPT_PREVIEW_CHARS"
-          type="button"
-          class="text-[11px] font-medium text-blue-600 hover:text-blue-800 rounded focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="link"
+          size="sm"
+          class="text-[11px] font-medium text-blue-600 hover:text-blue-800"
           @click.stop="folding.toggleAgentPrompt(span.span_id)"
-        >{{ folding.isAgentPromptExpanded(span.span_id) ? 'Collapse' : `Show full prompt · ${prompt.length} chars` }}</button>
+        >{{ folding.isAgentPromptExpanded(span.span_id) ? 'Collapse' : `Show full prompt · ${prompt.length} chars` }}</Button>
       </div>
       <div :class="folding.isAgentPromptExpanded(span.span_id) ? 'max-h-[32rem] overflow-y-auto' : ''">
         <MarkdownContent

@@ -1,7 +1,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
+import api from '../api'
 import Card from '../components/Card.vue'
+import Button from '../components/ui/Button.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
 import SessionConversationView from '../components/SessionConversationView.vue'
@@ -10,6 +12,7 @@ import { dropRetiredSpans } from '../utils/traceFormatters.js'
 import { useTraceScroll } from '../composables/useTraceScroll.js'
 import { useStickyHeader } from '../composables/useStickyHeader.js'
 import { useViewMode } from '../composables/useViewMode.js'
+import { useFilterState } from '../composables/useFilterState.js'
 import { useRuleTriggers } from '../composables/useRuleTriggers.js'
 import { useTraceTimeline } from '../composables/useTraceTimeline.js'
 import { useCompactWatch } from '../composables/useCompactWatch.js'
@@ -63,13 +66,62 @@ const {
   treeNodes,
   hasMoreOlder, loadingOlder,
   loadSession, reloadLiveTail, loadOlder,
+  subtreeLoaded,
   ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded,
   ensureTerminalSpansLoaded, ensureWorkflowSpansLoaded,
 } = useTraceData(route, { session, allSpans, selectedSpan })
 
-// View mode: 'conversation' | 'timeline' | 'terminal'. Resolution order:
-// `?view=` query param > localStorage > default (see useViewMode).
+// View mode: 'conversation' | 'timeline' | 'terminal' | 'messages'.
+// Resolution order: `?view=` query param > localStorage > default (see useViewMode).
 const { viewMode, setViewMode } = useViewMode(route)
+
+// The conversation tab defaults to the clean centered feed: the right rail
+// (span details + turns) stays hidden until explicitly opened, so selecting
+// a span doesn't squeeze the feed. Timeline/terminal keep the rail whenever
+// a span is selected. Persisted so the choice survives navigation.
+const detailRailOpen = useFilterState('regin.trace.detailRail', false,
+  v => typeof v === 'boolean')
+
+// send_to_user messages (Messages tab). Null until first load so the tab
+// can distinguish "not fetched yet" from "fetched, empty". Refreshed by
+// reload() while the tab is active, so the live poll keeps it current.
+const agentMessages = ref(null)
+const sessionGoal = ref(null)
+async function ensureAgentMessagesLoaded() {
+  const data = await api.get(`/sessions/${route.params.id}/agent-messages`)
+  agentMessages.value = data.messages
+  sessionGoal.value = data.session_goal
+}
+
+// Jump from a send_to_user span (right rail) to its rendered card in the
+// Messages tab. The span and the agent message share a span_id, which anchors
+// each <li>. Briefly highlight the target so it's findable after the scroll.
+const highlightedMessageSpan = ref(null)
+async function goToMessage(span) {
+  if (!span?.span_id) return
+  setViewMode('messages')
+  await ensureAgentMessagesLoaded()
+  await nextTick()
+  const el = document.getElementById(`msg-${span.span_id}`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  highlightedMessageSpan.value = span.span_id
+  setTimeout(() => {
+    if (highlightedMessageSpan.value === span.span_id) highlightedMessageSpan.value = null
+  }, 2400)
+}
+
+// Pill colour for a non-progress message type (matches InboxMessageCard).
+const MESSAGE_TYPE_CLASS = {
+  result: 'bg-emerald-100 text-emerald-700',
+  summary: 'bg-indigo-100 text-indigo-700',
+  warning: 'bg-amber-100 text-amber-800',
+  blocker: 'bg-red-100 text-red-700',
+  note: 'bg-slate-100 text-slate-600',
+}
+function messageTypeClass(t) {
+  return MESSAGE_TYPE_CLASS[t] || 'bg-slate-100 text-slate-600'
+}
 
 // Header pivot metadata: plans this session authored, workflow runs it
 // launched, and (when this session IS a run) its stale-snapshot marker +
@@ -118,6 +170,7 @@ onMounted(async () => {
   await Promise.all([rollupP, plansP, wfRunsP])
   startLivePoll()
   if (viewMode.value === 'terminal') ensureTerminalSpansLoaded()
+  if (viewMode.value === 'messages') ensureAgentMessagesLoaded()
   // Scroll/wheel/touch auto-reload listeners are attached by useTraceScroll();
   // the sticky-header ResizeObserver is owned by useStickyHeader.
 })
@@ -135,6 +188,8 @@ onUnmounted(() => {
 watch(viewMode, async (mode) => {
   if (mode === 'terminal') {
     await ensureTerminalSpansLoaded()
+  } else if (mode === 'messages') {
+    await ensureAgentMessagesLoaded()
   } else if (mode === 'conversation') {
     if (turns.value == null && !turnsLoading.value) {
       turnsLoading.value = true
@@ -148,6 +203,8 @@ async function reload() {
   reloading.value = true
   try {
     const tasks = [reloadLiveTail(), fetchToolRollup()]
+    // Messages tab rides the same live poll: cheap per-session query.
+    if (viewMode.value === 'messages') tasks.push(ensureAgentMessagesLoaded())
     // Only refetch turns if they're loaded AND visible. While folded the
     // user isn't reading them, so defer the cost; mark stale and let the
     // unfold action pull the fresh copy in.
@@ -430,6 +487,7 @@ const {
           :trace-id="session?.trace_id"
           :context-window-tokens="session?.context_window_tokens"
           :workflow-runs-by-id="workflowRunsById"
+          :loaded-subtrees="subtreeLoaded"
           class="flex-1 min-w-0"
           @select-span="selectedSpan = $event"
           @fetch-content="fetchSpanContent"
@@ -462,11 +520,92 @@ const {
               @load-subtree="ensureSpanSubtreeLoaded"
             />
           </template>
+
+          <!-- Messages view: send_to_user feed as a vertical timeline -->
+          <template v-else-if="viewMode === 'messages'">
+            <div class="px-4 py-8 lg:px-8">
+              <div v-if="agentMessages == null" class="text-slate-500 text-sm py-16 text-center">
+                Loading messages…
+              </div>
+              <div v-else-if="!agentMessages.length" class="text-slate-500 text-sm py-16 text-center">
+                No send_to_user messages in this session.
+              </div>
+              <div v-else class="w-full">
+                <div
+                  v-if="sessionGoal"
+                  class="mb-8 rounded-lg border border-slate-200 bg-slate-50 px-5 py-4"
+                >
+                  <div class="flex items-center gap-1.5 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    <svg class="w-3.5 h-3.5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" />
+                    </svg>
+                    Session goal
+                  </div>
+                  <div class="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap">{{ sessionGoal }}</div>
+                </div>
+                <ol class="relative ml-2 border-l-2 border-slate-100 space-y-7 pb-2">
+                  <li
+                    v-for="(m, i) in agentMessages"
+                    :key="m.id ?? m.span_id"
+                    :id="m.span_id ? `msg-${m.span_id}` : undefined"
+                    class="relative pl-7 scroll-mt-28"
+                  >
+                    <span
+                      class="absolute -left-[9px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white border-2 transition-colors duration-200"
+                      :class="i === agentMessages.length - 1 ? 'border-blue-500' : 'border-slate-300'"
+                    >
+                      <span
+                        class="h-1.5 w-1.5 rounded-full"
+                        :class="i === agentMessages.length - 1 ? 'bg-blue-500' : 'bg-slate-300'"
+                      ></span>
+                    </span>
+                    <div class="flex items-baseline gap-2 mb-1.5">
+                      <span class="text-xs font-semibold text-slate-700">#{{ i + 1 }}</span>
+                      <span
+                        v-if="m.msg_type && m.msg_type !== 'progress'"
+                        class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                        :class="messageTypeClass(m.msg_type)"
+                      >{{ m.msg_type }}</span>
+                      <span v-if="m.title" class="text-xs font-semibold text-slate-800">{{ m.title }}</span>
+                      <span class="text-[11px] font-mono text-slate-500">
+                        {{ new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}
+                      </span>
+                    </div>
+                    <div
+                      class="rounded-lg border bg-white px-4 py-3 shadow-sm transition-colors duration-200"
+                      :class="highlightedMessageSpan === m.span_id
+                        ? 'border-blue-400 ring-2 ring-blue-300'
+                        : 'border-slate-200 hover:border-slate-300'"
+                    >
+                      <MarkdownContent :markdown="m.body" />
+                    </div>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </template>
         </Card>
       </template>
 
+      <!-- Span detail rail is irrelevant on the Messages tab (no span
+           selection there) and would squeeze the centered feed. On the
+           Conversation tab it is opt-in (detailRailOpen) for the same
+           density reason; the sticky tab below reopens it. -->
+      <Button
+        v-if="viewMode === 'conversation' && selectedSpan && !detailRailOpen"
+        variant="ghost"
+        class="sticky self-start shrink-0 z-10 gap-1 px-2 py-1.5 h-auto rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
+        :style="{ top: stickyHeaderHeight ? `calc(${stickyHeaderHeight}px - 1rem)` : '5rem' }"
+        aria-label="Show span details"
+        @click="detailRailOpen = true"
+      >
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+        Details
+      </Button>
       <aside
-        v-if="selectedSpan"
+        v-if="selectedSpan && viewMode !== 'messages' && (viewMode !== 'conversation' || detailRailOpen)"
         class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:self-start lg:overflow-y-auto z-10"
         :style="{
           /* Page header is sticky-pinned with top: -1.5rem (lg padding-top)
@@ -476,6 +615,19 @@ const {
           maxHeight: stickyHeaderHeight ? `calc(100vh - ${stickyHeaderHeight}px - 2rem)` : 'calc(100vh - 6rem)',
         }"
       >
+        <div v-if="viewMode === 'conversation'" class="flex justify-end mb-2">
+          <Button
+            variant="ghost"
+            class="gap-1 px-2 py-1 h-auto rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
+            aria-label="Hide span details"
+            @click="detailRailOpen = false"
+          >
+            Hide
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </Button>
+        </div>
         <SpanDetailPanel
           :key="selectedSpan && selectedSpan.span_id"
           :selected-span="selectedSpan"
@@ -483,6 +635,7 @@ const {
           :can-suppress-rule="canSuppressRule"
           :workflow-runs-by-id="workflowRunsById"
           @suppress-changed="loadTriggersForSelectedSpan"
+          @view-message="goToMessage"
         />
 
         <SessionTurnsSidebar
@@ -542,7 +695,7 @@ const {
      pins flush below it, so subtract the same offset. */
   top: calc(var(--regin-trace-header-h, 0px) - 1rem);
   z-index: 5;
-  background: #ffffff;
+  background: var(--color-white);
 }
 @media (min-width: 1024px) {
   .trace-detail-root :deep(.p-treetable-thead > tr > th) {

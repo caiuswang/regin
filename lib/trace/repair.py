@@ -75,10 +75,10 @@ def _turn_expected_span_ids(turn, capture_text: bool) -> set[str]:
 def _queued_command_expected_span_id(att) -> str | None:
     """`prompt-<uuid[:13]>` for a prompt-mode queued command, else None.
     Mirrors `span_posters._post_queued_command_span`."""
-    payload = att.payload or {}
-    mode = payload.get('command_mode')
-    text = payload.get('prompt')
-    if (mode is None or mode == 'prompt') and isinstance(text, str) and text:
+    from lib.trace.transcript_usage import queued_prompt_content
+
+    text, images = queued_prompt_content(att.payload or {})
+    if text or images:
         return f'prompt-{att.uuid[:13]}'
     return None
 
@@ -160,7 +160,8 @@ def _expected_span_ids_by_uuid(trace_id: str, transcript_path: str) -> dict[str,
         out[att.uuid] = _attachment_expected_span_ids(trace_id, att)
 
     for ev in usage.system_events:
-        out[ev.uuid] = {f'sys-{ev.uuid[:13]}'} if ev.subtype == 'stop_hook_summary' else set()
+        spanned = ev.subtype in ('stop_hook_summary', 'away_summary')
+        out[ev.uuid] = {f'sys-{ev.uuid[:13]}'} if spanned else set()
 
     _add_local_command_expected(out, usage.local_commands)
 

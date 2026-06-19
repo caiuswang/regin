@@ -11,6 +11,7 @@ export function barColor(name) {
     'file.edit': 'bg-orange-500',
     'plan.edit': 'bg-green-600',
     'rule.check': 'bg-red-500',
+    'memory.recall': 'bg-fuchsia-500',
     'plan session': 'bg-green-500',
     'plan.session': 'bg-green-600',
     'plan.draft': 'bg-green-500',
@@ -22,6 +23,7 @@ export function barColor(name) {
     'conversation': 'bg-slate-600',
     'compact.pre': 'bg-amber-500',
     'compact.post': 'bg-amber-600',
+    'rewind': 'bg-rose-500',
   }
   if (map[name]) return map[name]
   if (name.startsWith('tool.')) return 'bg-cyan-500'

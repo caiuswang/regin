@@ -1,14 +1,13 @@
 <script setup>
 import MarkdownContent from '../../MarkdownContent.vue'
 import { fmtClock, fmtDuration, fullLabel } from '../../../utils/traceFormatters.js'
-import { useCopy } from '../../../composables/useCopy.js'
+import CopyButton from './CopyButton.vue'
 
 defineProps({
   span: { type: Object, required: true },
   selectedSpan: { type: Object, default: null },
 })
 defineEmits(['activate'])
-const { copyText } = useCopy()
 </script>
 
 <template>
@@ -29,13 +28,11 @@ const { copyText } = useCopy()
           : `inference ${fmtDuration(span.duration_ms)}`"
       >· {{ fmtDuration(span.duration_ms) }}</span>
       <span v-if="span.attributes?.truncated" class="text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded text-[10px]">truncated</span>
-      <button
+      <CopyButton
         v-if="span.attributes?.text"
-        type="button"
-        class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:bg-slate-200/60 focus-visible:outline-2 focus-visible:outline-slate-400"
-        title="Copy"
-        @click.stop="copyText(span.attributes.text)"
-      >Copy</button>
+        :text="span.attributes.text"
+        tint="text-slate-500 hover:bg-slate-200/60"
+      />
     </div>
     <div class="text-[13.5px] text-slate-800">
       <MarkdownContent v-if="span.attributes?.text" :markdown="span.attributes.text" />

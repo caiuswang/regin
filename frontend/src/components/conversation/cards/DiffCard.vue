@@ -3,7 +3,7 @@ import DiffBlock from '../../DiffBlock.vue'
 import {
   fmtClock, fmtDuration, fmtBytes, dotColor, diffOpLabel, diffFileName,
 } from '../../../utils/traceFormatters.js'
-import { useCopy } from '../../../composables/useCopy.js'
+import CopyButton from './CopyButton.vue'
 
 // Edit / Write / MultiEdit diff card. Mirrors the Claude TUI's
 // `Update(path) +N -M` view: a flat header row that expands into a dark
@@ -15,7 +15,6 @@ defineProps({
   folding: { type: Object, required: true },
 })
 defineEmits(['activate'])
-const { copyText } = useCopy()
 </script>
 
 <template>
@@ -46,7 +45,7 @@ const { copyText } = useCopy()
     </div>
     <div
       v-if="folding.diffExpanded(span.span_id)"
-      class="ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
+      class="code-surface ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
     >
       <div class="flex items-center gap-2 px-3 py-1.5 border-b border-slate-800">
         <span class="font-mono text-[11px] text-slate-300">
@@ -59,12 +58,7 @@ const { copyText } = useCopy()
           v-if="span.attributes?.diff_truncated_bytes"
           class="text-[10px] text-amber-300 bg-amber-900/40 border border-amber-700/60 px-1 rounded"
         >truncated {{ fmtBytes(span.attributes.diff_truncated_bytes) }}</span>
-        <button
-          type="button"
-          class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-slate-400 hover:bg-slate-700/60 focus-visible:outline-2 focus-visible:outline-slate-500"
-          title="Copy"
-          @click.stop="copyText(span.attributes.diff)"
-        >Copy</button>
+        <CopyButton :text="span.attributes.diff" />
       </div>
       <DiffBlock :diff="span.attributes.diff" :file-path="span.attributes?.file_path || ''" />
     </div>

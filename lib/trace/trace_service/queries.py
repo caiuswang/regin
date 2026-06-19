@@ -379,7 +379,8 @@ def _fetch_window_rows(conn, trace_id, window_start, window_end):
             SELECT id, trace_id, span_id, parent_id, name, kind,
                    start_time, end_time, duration_ms, attributes,
                    status_code, status_message, turn_uuid,
-                   output_tokens, input_tokens, image_tokens, cost_usd
+                   output_tokens, input_tokens, image_tokens, cost_usd,
+                   source
             FROM session_spans
             WHERE trace_id = ?
               AND start_time >= ?
@@ -394,7 +395,8 @@ def _fetch_window_rows(conn, trace_id, window_start, window_end):
             SELECT id, trace_id, span_id, parent_id, name, kind,
                    start_time, end_time, duration_ms, attributes,
                    status_code, status_message, turn_uuid,
-                   output_tokens, input_tokens, image_tokens, cost_usd
+                   output_tokens, input_tokens, image_tokens, cost_usd,
+                   source
             FROM session_spans
             WHERE trace_id = ? AND start_time >= ?
             ORDER BY start_time ASC, id ASC
@@ -791,18 +793,23 @@ def fetch_tool_token_rollup(trace_id: str) -> tuple[list[dict], dict]:
             (trace_id,),
         ).fetchone()
         bill_cost = _session_bill_cost(conn, trace_id)
-        # Server-side sub-models (the advisor; web_search / web_fetch) bill on
-        # their OWN model, so their cost lands on the span but never in
-        # turn_usage / `sessions.cost_usd`. The advisor alone is often the bulk
-        # of the attributed cost, so folding it in is what lets the footer
-        # total reflect TRUE spend rather than the main-model-only bill — and
-        # keeps the "$X of $Y" numerator a real subset of its denominator.
+        # Sub-agent spend that `sessions.cost_usd` (main transcript only)
+        # omits, from two sources billed on a separate channel:
+        #  * server-side sub-models (the Kimi advisor; web_search / web_fetch)
+        #    whose cost lands on the span but never in turn_usage; and
+        #  * Claude Task-tool *and* workflow subagents, whose isolated
+        #    transcripts (`subagents/[workflows/<wf>/]agent-*.jsonl`)
+        #    reconcile_claude_subagents totals onto each `subagent.stop` marker.
+        # Folding both in lets the footer total reflect TRUE spend rather than
+        # the main-model-only bill, and keeps the "$X of $Y" numerator a real
+        # subset of its denominator.
         subagent = conn.execute(
             "SELECT COALESCE(SUM(cost_usd), 0) AS cost, "
             "COALESCE(SUM(COALESCE(input_tokens, 0) "
             "+ COALESCE(output_tokens, 0)), 0) AS tokens "
             "FROM session_spans WHERE trace_id = ? "
-            "AND json_extract(attributes, '$.server_side') = 1",
+            "AND (json_extract(attributes, '$.server_side') = 1 "
+            "     OR (name = 'subagent.stop' AND cost_usd IS NOT NULL))",
             (trace_id,),
         ).fetchone()
     finally:

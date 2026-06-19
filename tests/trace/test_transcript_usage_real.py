@@ -252,3 +252,40 @@ def test_real_transcript_end_to_end_ingest(real_transcript, tmp_path, monkeypatc
     # shows >100%) instead of inflating the denominator, so peak may exceed it.
     assert window == infer_window(model, peak)
     assert isinstance(model, str) and model
+
+
+# ── /rewind detection on the known real session ────────────────────────
+#   cbd00068 used `/rewind` (conversation-only): after exploring an
+#   "embedding" tangent the user rewound and continued with "i already done
+#   it". Auto-skips when that transcript isn't on this box.
+
+_REWIND_SESSION = "cbd00068-dfba-4e92-8505-732a2e4167c3"
+
+
+def _rewind_transcript() -> str | None:
+    root = str(get_active_provider().transcript_projects_dir())
+    matches = glob.glob(
+        os.path.join(root, "**", f"{_REWIND_SESSION}.jsonl"), recursive=True,
+    )
+    return matches[0] if matches else None
+
+
+def test_known_rewind_session_detects_single_fork():
+    path = _rewind_transcript()
+    if path is None:
+        pytest.skip(f"{_REWIND_SESSION} transcript not on disk")
+    usage = read_usage(path)
+    assert usage is not None
+    assert len(usage.rewinds) == 1, (
+        f"expected exactly one rewind fork, got {len(usage.rewinds)}"
+    )
+    fork = usage.rewinds[0]
+    # The fork hangs off the interrupted tool-use node; the discarded
+    # branch begins with the "stop use embeding" prompt.
+    assert fork.fork_uuid.startswith("0d0832fc")
+    assert fork.orphan_root.startswith("ca0c8f98")
+    assert fork.span_id == "rewind-ca0c8f98-d2f8"
+    assert len(fork.orphan_uuids) > 1
+    assert fork.abandoned_prompt_uuids  # at least one abandoned prompt
+    # Conversation-only rewind — no code was rolled back.
+    assert fork.rolled_back_files == ()

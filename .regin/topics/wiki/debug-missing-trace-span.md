@@ -20,11 +20,11 @@ Run the steps in order. Substitute `<trace_id>` (the provider session UUID). Ste
 
 ### Step 1 — Check the hook activity log
 
-The single biggest cause of a missing span is that the relevant hook never fired (or failed before reaching the emit pipeline). The hook dispatcher (`hook_manager/runner.py:111`) binds an activity-log channel under feature `hooks` and writes one of three event names per handler invocation:
+The single biggest cause of a missing span is that the relevant hook never fired (or failed before reaching the emit pipeline). The hook dispatcher (`hook_manager/runner.py:117`) binds an activity-log channel under feature `hooks` and writes one of three event names per handler invocation:
 
-* `handler_dispatched` (line 123) — handler returned normally; carries `handler` + `elapsed_ms`.
-* `handler_failed` (line 128) — handler raised; carries `error_type` and a traceback via `exc_info=True`.
-* `handler_slow` (line 133) — handler exceeded `HOOK_MANAGER_SLOW_MS` (default 500 ms); carries `elapsed_ms` + `threshold_ms`.
+* `handler_dispatched` (line 132) — handler returned normally; carries `handler` + `elapsed_ms`.
+* `handler_failed` (line 137) — handler raised; carries `error_type` and a traceback via `exc_info=True`.
+* `handler_slow` (line 142) — handler exceeded `HOOK_MANAGER_SLOW_MS` (default 500 ms); carries `elapsed_ms` + `threshold_ms`.
 
 The activity log lives at `settings.log_dir/regin.log` (default `<data_dir>/logs/regin.log`); the `regin logs` CLI in `cli/commands/logs.py` is the canonical view.
 
@@ -44,7 +44,7 @@ The runner also writes the same failure/slow signals as JSON lines to `<provider
 
 ### Step 2 — Check the ingest-errors log
 
-Every time `lib.hook_plugin.post_event` fails to deliver a span to the web server, it appends to `<provider.traces_dir()>/ingest-errors.jsonl` (`lib/hook_plugin.py:35` resolves the path; `lib/hook_plugin.py:175` is `_log_ingest_error`). `post_event` (`lib/hook_plugin.py:358-424`) retries transient failures up to `REGIN_INGEST_RETRIES` (default 3) with exponential jittered backoff and logs `attempt`, `max_attempts`, and `gave_up` per attempt — `gave_up: true` marks a permanent loss; `gave_up: false` is a retryable transient. The HTTP surface for the same log is `/api/ingest-errors` (`web/blueprints/trace/ingest_errors.py:41`), which also aggregates `by_endpoint` / `by_error_type` / `by_gave_up` over the last ~4000 lines.
+Every time `lib.hook_plugin.post_event` fails to deliver a span to the web server, it appends to `<provider.traces_dir()>/ingest-errors.jsonl` (`lib/hook_plugin.py:35` resolves the path; `lib/hook_plugin.py:175` is `_log_ingest_error`). `post_event` (`lib/hook_plugin.py:368-434`) retries transient failures up to `REGIN_INGEST_RETRIES` (default 3) with exponential jittered backoff and logs `attempt`, `max_attempts`, and `gave_up` per attempt — `gave_up: true` marks a permanent loss; `gave_up: false` is a retryable transient. The HTTP surface for the same log is `/api/ingest-errors` (`web/blueprints/trace/ingest_errors.py:41`), which also aggregates `by_endpoint` / `by_error_type` / `by_gave_up` over the last ~4000 lines.
 
 ```
 tail -n 200 ~/.claude/traces/ingest-errors.jsonl
@@ -77,7 +77,7 @@ With no record of the missing turn in the JSONL, this topic does not apply — t
 
 ### Step 4 — Compare the seen-uuid cache against `session_spans`
 
-The seen-uuid cache lives at `~/.local/share/regin/turn_trace_state/<trace_id>.txt` — or `$REGIN_TURN_TRACE_STATE_DIR/<trace_id>.txt` when the env var is set (see `hook_manager/handlers/turn_trace/cache.py:26-36`). One transcript-entry uuid per line. The ingested spans live in `~/.local/share/regin/regin.db::session_spans`:
+The seen-uuid cache lives at `~/.local/share/regin/turn_trace_state/<trace_id>.txt` — or `$REGIN_TURN_TRACE_STATE_DIR/<trace_id>.txt` when the env var is set (see `hook_manager/handlers/turn_trace/cache.py:26-48`). One transcript-entry uuid per line. The ingested spans live in `~/.local/share/regin/regin.db::session_spans`:
 
 ```
 wc -l ~/.local/share/regin/turn_trace_state/<trace_id>.txt
@@ -111,7 +111,7 @@ If the listening server is from the wrong checkout, restart the right one before
 
 ### Step 5 — Run the repair
 
-Two equivalent entry points. **Prefer the direct-Python path** — it surfaces tracebacks and bypasses the auth interceptor (`web/app.py:_install_auth_gate`, line 169).
+Two equivalent entry points. **Prefer the direct-Python path** — it surfaces tracebacks and bypasses the auth interceptor (`web/app.py:_install_auth_gate`, line 228).
 
 **Direct Python (recommended)** — run from the regin checkout root so the venv resolves:
 
@@ -124,9 +124,9 @@ print(json.dumps(repair_session_spans('<trace_id>'), indent=2))
 "
 ```
 
-This still requires the regin web server running on `http://127.0.0.1:8321`, because `lib.trace.repair.repair_session_spans` (`lib/trace/repair.py:227-302`) re-runs the live emit pipeline and that pipeline posts spans via `lib.hook_plugin.post_span` to the public ingest endpoint `trace.api_ingest_session_span` (allowlisted in `web/app.py:154-166`).
+This still requires the regin web server running on `http://127.0.0.1:8321`, because `lib.trace.repair.repair_session_spans` (`lib/trace/repair.py:264-351`) re-runs the live emit pipeline and that pipeline posts spans via `lib.hook_plugin.post_span` to the public ingest endpoint `trace.api_ingest_session_span` (allowlisted in `web/app.py:195-207`).
 
-**HTTP via curl** — the endpoint at `web/blueprints/trace/sessions.py:917-937` is not in `PUBLIC_API_ENDPOINTS`, so an Authorization header is required:
+**HTTP via curl** — the endpoint at `web/blueprints/trace/sessions.py:1102-1126` is not in `PUBLIC_API_ENDPOINTS`, so an Authorization header is required:
 
 ```
 TOKEN=$(curl -s -X POST http://127.0.0.1:8321/api/auth/login \
@@ -169,7 +169,7 @@ sqlite3 ~/.local/share/regin/regin.db \
 
 The new row counts for `assistant_response`, `assistant.thinking`, `harness.local_command`, `harness.skill_listing`, `harness.task_reminder`, `harness.tools_delta`, `srvtool*`, `askdeny*`, `tooldeny*`, `toolerr*`, `sys-*`, `prompt-*` should account for `spans_recovered`.
 
-When the user is browsing a previously-materialised session view, the projection cache also needs a kick. The repair path only touches `session_spans`; the projection's `_graft_orphans` (`lib/trace/projection.py:72`) and `_widen_envelopes` (`lib/trace/projection.py:176`) re-run only on materialise (`web/blueprints/trace/sessions.py:899-902`):
+When the user is browsing a previously-materialised session view, the projection cache also needs a kick. The repair path only touches `session_spans`; the projection's `_graft_orphans` (`lib/trace/projection.py:271`) and `_widen_envelopes` (`lib/trace/projection.py:310`) re-run only on materialise (`web/blueprints/trace/sessions.py:1075-1099`):
 
 ```
 curl -X POST -H "Authorization: Bearer $TOKEN" \
@@ -178,7 +178,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ### Step 8 — Read the activity log to confirm repair telemetry
 
-`repair_session_spans` writes one `span_repair_completed` line via `lib.activity_log.get_activity_logger('trace_ingest')` (`lib/trace/repair.py:289-293`), tagged with `uuids_dropped`, `spans_recovered`, and `transcript_path`. Re-emit failures from the same run show up under the same feature (the emit path itself logs through `trace_ingest`):
+`repair_session_spans` writes one `span_repair_completed` line via `lib.activity_log.get_activity_logger('trace_ingest')` (`lib/trace/repair.py:339`), tagged with `uuids_dropped`, `spans_recovered`, and `transcript_path`. Re-emit failures from the same run show up under the same feature (the emit path itself logs through `trace_ingest`):
 
 ```
 .venv/bin/python cli/regin.py logs grep span_repair_completed --feature trace_ingest
@@ -189,9 +189,9 @@ A `span_repair_completed` row whose `spans_recovered` matches the HTTP response 
 
 ## Background: why a span can go missing
 
-regin's transcript ingest runs from a hook handler, not from a long-lived process. Every `UserPromptSubmit` / `SessionEnd` / `Stop` / `PostToolUse` event fires `hook_manager/handlers/turn_trace/entry.py::handle` (line 39), which dispatches to `_emit_span` (full path) or `_emit_assistant_response_only` (the lean PostToolUse fast path). Both ultimately call `_ingest_transcript_usage` (`entry.py:94`), which (re-)reads the entire JSONL via `lib.trace.transcript_usage.read_usage` and emits per-turn / per-attachment / per-system-event / per-local-command spans.
+regin's transcript ingest runs from a hook handler, not from a long-lived process. Every `UserPromptSubmit` / `SessionEnd` / `Stop` / `PostToolUse` event fires `hook_manager/handlers/turn_trace/entry.py::handle` (line 40), which dispatches to `_emit_span` (full path) or `_emit_assistant_response_only` (the lean PostToolUse fast path). Both ultimately call `_ingest_transcript_usage` (`entry.py:158`), which (re-)reads the entire JSONL via `lib.trace.transcript_usage.read_usage` and emits per-turn / per-attachment / per-system-event / per-local-command spans.
 
-Without throttling, a PostToolUse-heavy turn would replay every prior row on every tool call, so each session keeps a uuid-based cache on disk: `~/.local/share/regin/turn_trace_state/<trace_id>.txt` (`cache.py:_state_dir`, `_load_seen`, `_mark_seen`, lines 26-58).
+Without throttling, a PostToolUse-heavy turn would replay every prior row on every tool call, so each session keeps a uuid-based cache on disk: `~/.local/share/regin/turn_trace_state/<trace_id>.txt` (`cache.py:_state_dir` at line 26, `_load_seen` at line 39, `_mark_seen` at line 48).
 
 The key invariant: **the cache key is the transcript-entry uuid, not the resulting span_id.** For simple cases the emitted `span_id` derives from that uuid — `resp-<uuid[:13]>`, `att-<uuid[:13]>`, `sys-<uuid[:13]>`, `cmd-<uuid[:13]>`. Synthetic tool spans key off the nested `tool_use_id` instead: `srvtool-<tu[:13]>`, `askdeny-<tu[:13]>`, `tooldeny-<tu[:13]>`, `toolerr-<tu[:13]>` (`lib/trace/repair.py::_tool_call_expected_span_id`, line 33). One turn-uuid can therefore correspond to multiple expected span_ids, and a `resp-*` row can be present while a child `toolerr-*` is still absent.
 
@@ -199,28 +199,28 @@ The key invariant: **the cache key is the transcript-entry uuid, not the resulti
 
 The live handler avoids creating *new* losses with a mark-on-success discipline:
 
-* `lib.hook_plugin.post_span` returns `bool`, `True` iff the ingest accepted the span (`lib/hook_plugin.py:467-497`); it builds on `post_event` (`lib/hook_plugin.py:358-424`), which retries transient failures up to `REGIN_INGEST_RETRIES` (default 3) and writes every failed attempt to `ingest-errors.jsonl` with `gave_up` set on the final attempt.
+* `lib.hook_plugin.post_span` returns `bool`, `True` iff the ingest accepted the span (`lib/hook_plugin.py:493-523`); it builds on `post_event` (`lib/hook_plugin.py:368-434`), which retries transient failures up to `REGIN_INGEST_RETRIES` (default 3) and writes every failed attempt to `ingest-errors.jsonl` with `gave_up` set on the final attempt.
 * Each emitter in `hook_manager/handlers/turn_trace/span_posters.py` collects `new_uuids` only after a successful post and then calls `_mark_seen`:
-  * `_post_system_event_spans` (`span_posters.py:89-105`).
-  * `_post_attachment_spans` (`span_posters.py:231-252`).
-  * `_post_local_command_spans` (`span_posters.py:258-313`).
-  * `_post_live_turn_data` (`span_posters.py:695-729`); the per-turn helper `_maybe_emit_assistant_span` (lines 619-672) returns the post's bool so its uuid is cached only on success.
+  * `_post_system_event_spans` (`span_posters.py:125-143`).
+  * `_post_attachment_spans` (`span_posters.py:304-338`).
+  * `_post_local_command_spans` (`span_posters.py:344-399`).
+  * `_post_live_turn_data` (`span_posters.py:1035-1069`); the per-turn helper `_maybe_emit_assistant_span` (lines 963-1011) returns the post's bool so its uuid is cached only on success.
 
 New losses are bounded to a single hook fire — the next event retries the uuid. Historical losses (e.g. surfaced as `gave_up: true` runs in `ingest-errors.jsonl`, or accumulated from a stale running web server) are what `repair_session_spans` recovers.
 
 ## How the repair works
 
-`lib/trace/repair.py::repair_session_spans` (lines 227-302) is idempotent — re-running on a healed session is a no-op because the cache no longer holds any uuid whose expected spans are missing. The algorithm:
+`lib/trace/repair.py::repair_session_spans` (lines 264-351) is idempotent — re-running on a healed session is a no-op because the cache no longer holds any uuid whose expected spans are missing. The algorithm:
 
-1. `_find_transcript(trace_id)` (`repair.py:155-175`) scans the active provider's `transcript_projects_dir()` for the matching `<trace_id>.jsonl`. Missing → returns `{ok: false, error: 'no transcript found for ...'}` (HTTP 404).
-2. `_load_cache` (`repair.py:205-212`) reads the seen-uuid file; `_existing_span_ids` (`repair.py:189-202`) snapshots existing span_ids from `session_spans`.
-3. `_expected_span_ids_by_uuid` (`repair.py:113-152`) walks the transcript via `read_usage` and asks `_turn_expected_span_ids`, `_attachment_expected_span_ids`, and `_add_local_command_expected` what span_ids each cached uuid should map to. Local-command is subtle: a slash command's caveat uuid and stdout uuid never appear in their own span_id, so all three (command / caveat / stdout) share the command-uuid's `cmd-*` expected set (`repair.py:98-110`). Without this fold, repair would unlock the caveat/stdout uuids on every run.
+1. `_find_transcript(trace_id)` (`repair.py:171-191`) scans the active provider's `transcript_projects_dir()` for the matching `<trace_id>.jsonl`. Missing → returns `{ok: false, error: 'no transcript found for ...'}` (HTTP 404).
+2. `_load_cache` (`repair.py:221-228`) reads the seen-uuid file; `_existing_span_ids` (`repair.py:205-218`) snapshots existing span_ids from `session_spans`.
+3. `_expected_span_ids_by_uuid` (`repair.py:131-168`) walks the transcript via `read_usage` and asks `_turn_expected_span_ids`, `_attachment_expected_span_ids`, and `_add_local_command_expected` what span_ids each cached uuid should map to. Local-command is subtle: a slash command's caveat uuid and stdout uuid never appear in their own span_id, so all three (command / caveat / stdout) share the command-uuid's `cmd-*` expected set (`repair.py:98-110`). Without this fold, repair would unlock the caveat/stdout uuids on every run.
 4. Walk the cache; keep uuids whose expected set is already a subset of `existing`; drop the rest.
-5. Rewrite the cache **before** re-emitting (`_save_cache`, atomic via `os.replace`, `repair.py:215-224`) — a failed rewrite would risk double-caching.
+5. Rewrite the cache **before** re-emitting (`_save_cache`, atomic via `os.replace`, `repair.py:231-240`) — a failed rewrite would risk double-caching.
 6. Re-run the live emit pipeline by building a synthetic `HookPayload(event='UserPromptSubmit', session_id=trace_id, transcript_path=...)` and calling `hook_manager.handlers.turn_trace.handle`. Reusing the production path means bug fixes there benefit recovery too — no duplicate emit logic.
 7. Diff the span_id set before vs. after; return `{ok, trace_id, transcript_path, cached_uuids_before, cached_uuids_after, uuids_unlocked, spans_recovered}` and log `span_repair_completed` via `lib.activity_log` (feature `trace_ingest`).
 
-Replay safety relies on the span ingest path using `INSERT OR REPLACE INTO session_spans` on `(trace_id, span_id)` (`lib/trace/trace_service/ingest.py:910`). Deterministic span_ids (`resp-*`, `think-*`, `srvtool-*`, `askdeny-*`, `tooldeny-*`, `toolerr-*`, `sys-*`, `att-*`, `cmd-*`, `prompt-*`, `skill-init-*`, `sttl-*`) guarantee a replayed transcript only upserts.
+Replay safety relies on the span ingest path using `INSERT OR REPLACE INTO session_spans` on `(trace_id, span_id)` (guaranteed by the deterministic-span-id contract; see `lib/trace/repair.py:17`). Deterministic span_ids (`resp-*`, `think-*`, `srvtool-*`, `askdeny-*`, `tooldeny-*`, `toolerr-*`, `sys-*`, `att-*`, `cmd-*`, `prompt-*`, `skill-init-*`, `sttl-*`) guarantee a replayed transcript only upserts.
 
 ## Tests
 
@@ -229,9 +229,9 @@ Replay safety relies on the span ingest path using `INSERT OR REPLACE INTO sessi
 
 ## Related surfaces
 
-* Transcript parser the whole pipeline reads from: `lib.trace.transcript_usage.read_usage` — design notes in `docs/trace/assistant_response_capture_vs_claudecodeui.md`; span vocabulary in `docs/trace/SPAN_DESIGN.md`.
-* The projection that turns raw spans into the rendered tree: `lib/trace/projection.py::_graft_orphans` (line 72; anchors orphan `assistant_response` spans under the nearest prior `prompt` span, so recovered responses may show as orphans until the corresponding prompt uuid is also unlocked) and `_widen_envelopes` (line 176).
+* Transcript parser the whole pipeline reads from: `lib.trace.transcript_usage.read_usage` — design notes in `docs/trace/TURN_USAGE.md`; span vocabulary in `docs/trace/SPAN_DESIGN.md`.
+* The projection that turns raw spans into the rendered tree: `lib/trace/projection.py::_graft_orphans` (line 271; anchors orphan `assistant_response` spans under the nearest prior `prompt` span, so recovered responses may show as orphans until the corresponding prompt uuid is also unlocked) and `_widen_envelopes` (line 310).
 * The provider abstraction for the active transcript directory: `lib.providers.get_active_provider().transcript_projects_dir()` — Claude at `lib/providers/claude/__init__.py:128`, Codex at `lib/providers/codex/__init__.py:135`, generic at `lib/providers/generic/__init__.py:72`.
-* The auth interceptor that gates the HTTP repair endpoint: `web/app.py:_install_auth_gate` (line 169), with the `PUBLIC_API_ENDPOINTS` allowlist (line 154).
+* The auth interceptor that gates the HTTP repair endpoint: `web/app.py:_install_auth_gate` (line 228), with the `PUBLIC_API_ENDPOINTS` allowlist (line 195).
 * The ingest-error observability surfaces: file `<provider.traces_dir()>/ingest-errors.jsonl` + HTTP `/api/ingest-errors` (`web/blueprints/trace/ingest_errors.py:41`).
 * The activity-log viewer: `cli/commands/logs.py` exposes `regin logs {list,tail,grep,prune,path} --feature <name>`. The two features that matter for this topic are `hooks` (dispatcher) and `trace_ingest` (repair + emit telemetry).

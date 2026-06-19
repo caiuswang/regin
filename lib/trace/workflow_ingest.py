@@ -218,8 +218,10 @@ def _manifest_status(path: Path) -> str | None:
     return status if isinstance(status, str) else "completed"
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    out: list[dict] = []
+def _iter_jsonl(path: Path):
+    """Yield parsed entries lazily — lets head-only readers (e.g.
+    `_agent_full_prompt`) stop after the first hit instead of parsing a whole
+    streaming transcript on every live re-ingest poll."""
     try:
         with open(path, encoding="utf-8") as fh:
             for line in fh:
@@ -227,12 +229,15 @@ def _read_jsonl(path: Path) -> list[dict]:
                 if not line:
                     continue
                 try:
-                    out.append(json.loads(line))
+                    yield json.loads(line)
                 except ValueError:
                     continue
     except OSError:
-        return []
-    return out
+        return
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return list(_iter_jsonl(path))
 
 
 def _preview(value: object) -> str | None:
@@ -1033,8 +1038,10 @@ def build_full_spans(manifest: dict, agents_dir: Path, *, deep: bool = True,
 
 def _agent_full_prompt(agents_dir: Path, agent_id: str) -> str | None:
     """The agent's full dispatched prompt = its transcript's first user
-    message (the manifest only carries a ~400-char preview)."""
-    for entry in _read_jsonl(agents_dir / f"agent-{agent_id}.jsonl"):
+    message (the manifest only carries a ~400-char preview). Iterates lazily —
+    the prompt is the transcript's first entry, so the live poll path reads
+    one line, not the whole streaming file."""
+    for entry in _iter_jsonl(agents_dir / f"agent-{agent_id}.jsonl"):
         if entry.get("type") != "user":
             continue
         content = entry.get("message", {}).get("content")
@@ -1189,6 +1196,10 @@ def _flat_agent_span(run_ref: RunRef, parent_id: str, agent_id: str,
         attrs={"agent_id": agent_id, "agent_type": meta.get("agentType"),
                "label": label, "agent_name": label, "phase_title": phase_title,
                "state": "done" if agent_id in results else "running",
+               # Dispatched prompt, available from the transcript the moment
+               # the agent starts — mirrors `_full_agent_spans` so the task
+               # prompt shows while the agent is still running.
+               "prompt": _agent_full_prompt(run_ref.agents_dir, agent_id),
                "result_full": result_full,
                "result_preview": _preview(result_full),
                "tokens": usage.output_tokens if usage else None},
@@ -1305,7 +1316,8 @@ def _clear_run(run_id: str) -> None:
     conn = get_connection()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        for table in ("session_spans", "session_trace_map", "sessions"):
+        for table in ("session_spans", "session_trace_map", "sessions",
+                      "turn_usage"):
             conn.execute(f"DELETE FROM {table} WHERE trace_id = ?", (run_id,))
         conn.commit()
     finally:
@@ -1357,6 +1369,94 @@ def _set_session_tokens(run_id: str, split: dict) -> None:
             "cache_read_tokens = ?, cache_creation_tokens = ? WHERE trace_id = ?",
             (split["input"], split["output"], split["cache_read"],
              split["cache_creation"], run_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _run_turn_usage_rows(agents_dir: Path, agent_ids: list[str]) -> list[dict]:
+    """Per-turn usage rows for a run's agents, sourced from the agent
+    transcripts via ``read_usage`` and priced per-turn at each turn's own
+    context tier — the same source and pricing the main session bill uses.
+
+    Workflow agents never reach the live turn-usage hook, so the run otherwise
+    has no ``turn_usage`` rows at all: ``_session_bill_cost`` (which reads
+    turn_usage) then returns a zeroed split and the whole bill renders $0. These
+    rows let the workflow trace bill exactly like a normal session.
+
+    ``turn_uuid`` is namespaced by agent id (``<agent_id>:<uuid|idx>``) because a
+    run's agents can legitimately reuse a turn uuid (and tests share one
+    transcript across agents) — without the prefix they'd collide on the
+    ``(trace_id, turn_uuid)`` primary key and over-write each other.
+    """
+    from lib.trace.transcript_usage import read_usage
+
+    rows: list[dict] = []
+    for aid in agent_ids:
+        if not aid:
+            continue
+        usage = read_usage(str(agents_dir / f"agent-{aid}.jsonl"), max_text_bytes=0)
+        if usage is None:
+            continue
+        for idx, turn in enumerate(usage.turns):
+            rows.append(_turn_usage_row(aid, idx, turn, usage.model))
+    return rows
+
+
+def _turn_usage_row(aid: str, idx: int, turn, default_model: str | None) -> dict:
+    """One ``turn_usage`` row dict for a workflow agent turn, priced at its own
+    context tier (cache reads/writes fold into ``cost_usd``)."""
+    from lib.tokens.pricing import TokenBreakdown, cost as price_cost
+
+    in_tok = int(turn.input_tokens or 0)
+    out_tok = int(turn.output_tokens or 0)
+    cache_r = int(turn.cache_read_tokens or 0)
+    cache_w = int(turn.cache_creation_tokens or 0)
+    ctx = in_tok + cache_r + cache_w
+    model = turn.model or default_model
+    usd = price_cost(model, TokenBreakdown(
+        input_tokens=in_tok, output_tokens=out_tok,
+        cache_read_tokens=cache_r, cache_creation_tokens=cache_w,
+    ), context_tokens=ctx) if model else None
+    return {
+        "turn_uuid": f"{aid}:{turn.uuid or idx}", "turn_index": idx,
+        "timestamp": turn.timestamp or "", "model": model,
+        "input_tokens": in_tok, "output_tokens": out_tok,
+        "cache_read_tokens": cache_r, "cache_creation_tokens": cache_w,
+        "context_used_tokens": ctx, "cost_usd": usd,
+    }
+
+
+def _set_session_cost(run_id: str, agents_dir: Path, agent_ids: list[str]) -> None:
+    """Persist the run's per-turn usage + total cost onto its trace.
+
+    Inserts one ``turn_usage`` row per agent turn (priced at its context tier)
+    so the rollup's per-bucket bill split computes, and stamps the summed cost on
+    ``sessions.cost_usd`` so the footer total is real — mirroring how the normal
+    per-turn aggregator bills an interactive session (a path workflow runs never
+    hit). ``_clear_run`` wipes the run's turn_usage first, so the insert is the
+    final, deterministic value. No-op when no turn carries usage.
+    """
+    rows = _run_turn_usage_rows(agents_dir, agent_ids)
+    if not rows:
+        return
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.executemany(
+            "INSERT OR REPLACE INTO turn_usage (trace_id, turn_uuid, turn_index, "
+            "timestamp, model, input_tokens, output_tokens, cache_read_tokens, "
+            "cache_creation_tokens, context_used_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(run_id, r["turn_uuid"], r["turn_index"], r["timestamp"], r["model"],
+              r["input_tokens"], r["output_tokens"], r["cache_read_tokens"],
+              r["cache_creation_tokens"], r["context_used_tokens"], r["cost_usd"])
+             for r in rows])
+        conn.execute(
+            "UPDATE sessions SET cost_usd = ? WHERE trace_id = ?",
+            (sum(r["cost_usd"] or 0.0 for r in rows), run_id))
         conn.commit()
     finally:
         conn.close()
@@ -1634,6 +1734,7 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
         _, agent_ids = _manifest_agents(manifest)
         _set_session_tokens(run_ref.run_id,
                             _session_token_split(run_ref.agents_dir, agent_ids))
+        _set_session_cost(run_ref.run_id, run_ref.agents_dir, agent_ids)
         name = manifest.get("workflowName")
         _set_session_title(run_ref.run_id, name or manifest.get("summary"))
         _set_session_origin(run_ref.run_id)
@@ -1644,6 +1745,7 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
     started, _ = _journal_agents(_read_jsonl(run_ref.journal_path))
     _set_session_tokens(run_ref.run_id,
                         _session_token_split(run_ref.agents_dir, started))
+    _set_session_cost(run_ref.run_id, run_ref.agents_dir, started)
     name = _parse_script_meta(run_ref.script_path)[0]
     _set_session_title(run_ref.run_id, name)
     _set_session_origin(run_ref.run_id)

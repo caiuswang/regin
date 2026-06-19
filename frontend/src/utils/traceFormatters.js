@@ -196,6 +196,17 @@ export function ruleCheckOneLiner(span) {
   return `rule · ${file} — ${total} passed`
 }
 
+// One-liner for a `memory.recall` span: how many memories were injected
+// into the prompt as `<recalled_experience>`. The full block + per-hit
+// list render in the dedicated MemoryRecallRow card and the span detail
+// panel. Delegated (like ruleCheckOneLiner) so the fullLabel/spanLabel
+// twins don't grow another inline branch.
+export function memoryRecallOneLiner(span) {
+  const a = span.attributes || {}
+  const n = a.hit_count ?? (a.hits ? a.hits.length : 0)
+  return `recalled ${n} ${n === 1 ? 'memory' : 'memories'}`
+}
+
 // NOTE: `fullLabel` (conversation view) and `spanLabel` (timeline/tree view,
 // below) are drifted twins — both turn a span into a one-line label but cover
 // different span families (fullLabel: task.notification / assistant_response /
@@ -209,6 +220,7 @@ export function fullLabel(span) {
   if (name === 'prompt') return a.text || 'prompt'
   if (name === 'task.notification') return a.summary || 'background task'
   if (name === 'assistant_response') return a.text || 'response'
+  if (name === 'harness.recap') return a.content || 'recap'
   if (name === 'tool.failure') {
     const tool = toolDisplayLabel(a.tool_name || 'tool')
     const bits = [`failed: ${tool}`]
@@ -226,6 +238,8 @@ export function fullLabel(span) {
         : `${tool}: ${a.reject_reason}`
     }
     if (a.command_preview) return `${tool}: ${a.command_preview}`
+    const agentLaunch = name === 'tool.Agent' && agentLaunchLabel(a, tool)
+    if (agentLaunch) return agentLaunch
     if (name === 'tool.TaskCreate' && a.subject) {
       return a.task_id ? `${tool} #${a.task_id}: ${a.subject}` : `${tool}: ${a.subject}`
     }
@@ -258,6 +272,7 @@ export function fullLabel(span) {
       return `${tool}: ${short}`
     }
     if (a.query) return `${tool}: ${a.query}`
+    if (a.url) return `${tool}: ${a.url}`
     if (a.pattern && fp) return `${tool}: ${a.pattern} in ${fp.split('/').pop()}`
     if (a.pattern) return `${tool}: ${a.pattern}`
     if (fp) return `${tool}: ${fp.split('/').pop()}`
@@ -269,6 +284,7 @@ export function fullLabel(span) {
     case 'file.edit': return `edit: ${a.file_path ? a.file_path.split('/').pop() : ''}`
     case 'plan.edit': return `plan edit: ${a.file_path ? a.file_path.split('/').pop() : ''}`
     case 'rule.check': return ruleCheckOneLiner(span)
+    case 'memory.recall': return memoryRecallOneLiner(span)
     case 'subagent.start': return `subagent: ${a.agent_type || ''}`
     case 'subagent.stop': return 'subagent done'
   }
@@ -278,6 +294,16 @@ export function fullLabel(span) {
 // Subagent identity tag: the explicit agent_type, else a short agent_id.
 function subagentTag(a) {
   return a.agent_type || (a.agent_id ? a.agent_id.slice(0, 8) : '')
+}
+
+// One-line goal for a `tool.Agent` launch row: the launch `description` is
+// the run's purpose. Most launches are folded into their subagent row
+// (useAgentLaunchMerge); this covers the unpaired ones — chiefly the PENDING
+// twin emitted at PreToolUse before `subagent.start` lands. Shared by
+// fullLabel/toolLabel so the drifted twins can't diverge on this branch.
+function agentLaunchLabel(a, tool) {
+  if (!a.description) return ''
+  return a.subagent_type ? `${tool} (${a.subagent_type}): ${a.description}` : `${tool}: ${a.description}`
 }
 
 // `compact.post` row label. Appends the serve-time reclaim delta
@@ -292,12 +318,25 @@ function compactPostLabel(a) {
   return `context compacted${tr}${freed}`
 }
 
+// Row label for a `/rewind` marker. Counts come from the shallow map's
+// preserved attributes (`abandoned_prompt_count`, `rolled_back_count`).
+function rewindLabel(a) {
+  const p = a.abandoned_prompt_count || 0
+  const f = a.rolled_back_count || 0
+  const parts = []
+  if (p) parts.push(`${p} prompt${p === 1 ? '' : 's'}`)
+  if (f) parts.push(`${f} file${f === 1 ? '' : 's'}`)
+  return parts.length ? `↩ rewound — ${parts.join(', ')}` : '↩ rewound'
+}
+
 // Row label for a `tool.*` span (or any tool-shaped attribute bag `a` with a
 // `fallback` tool name). Private to `spanLabel`. Mirrors the tool.* branch of
 // `fullLabel` but keyed off `a.tool_name`/`fallback` rather than the span name.
 function toolLabel(a, fallback) {
   const tool = toolDisplayLabel(a.tool_name || fallback)
   if (a.command_preview) return `${tool}: ${a.command_preview}`
+  const agentLaunch = (a.tool_name === 'Agent' || fallback === 'Agent') && agentLaunchLabel(a, tool)
+  if (agentLaunch) return agentLaunch
   // Task tools: subject is the entire signal. Without this branch the
   // Timeline view renders 53 bare "TaskCreate"/"TaskUpdate" rows
   // indistinguishable from each other.
@@ -320,6 +359,7 @@ function toolLabel(a, fallback) {
     return `${tool}: ${tsTools.map(t => t.split('__').pop()).join(', ')}`
   }
   if (a.query) return `${tool}: ${a.query}`
+  if (a.url) return `${tool}: ${a.url}`
   if (a.pattern && a.file_path) return `${tool}: ${a.pattern} in ${a.file_path.split('/').pop()}`
   if (a.pattern) return `${tool}: ${a.pattern}`
   if (a.file_path) return `${tool}: ${a.file_path.split('/').pop()}`
@@ -337,6 +377,7 @@ export function spanLabel(span) {
     case 'file.edit': return `edit: ${a.file_path ? a.file_path.split('/').pop() : ''}`
     case 'plan.edit': return `plan edit: ${a.file_path ? a.file_path.split('/').pop() : ''}`
     case 'rule.check': return ruleCheckOneLiner(span)
+    case 'memory.recall': return memoryRecallOneLiner(span)
     case 'plan.session': return `plan session: ${a.plan_filename || ''}`
     case 'plan.draft': return `plan draft: ${a.plan_filename || ''}`
     case 'plan.review': return `plan review: ${a.plan_filename || ''}`
@@ -349,12 +390,15 @@ export function spanLabel(span) {
       return `context compacting${tr}${ci}`
     }
     case 'compact.post': return compactPostLabel(a)
+    case 'rewind': return rewindLabel(a)
     case 'prompt': return a.text ? a.text.slice(0, 60) : 'prompt'
     case 'conversation': return 'conversation start'
     case 'harness.local_command': {
       const cmd = a.command_name || 'command'
       return a.args ? `${cmd} ${a.args}` : cmd
     }
+    case 'harness.recap':
+      return a.content ? `recap: ${a.content.slice(0, 60)}` : 'recap'
     case 'workflow.phase':
       return a.title ? `phase: ${a.title}` : 'phase'
     case 'subagent.start': {
@@ -421,6 +465,7 @@ const _TERMINAL_IDENTITY_LABELS = new Set([
   'skill.read', 'skill.invoke', 'skill.launch',
   'rule.check', 'subagent.start', 'subagent.stop',
   'session.start', 'session.end', 'compact.pre', 'compact.post',
+  'environment.git_status', 'rewind',
 ])
 
 export function terminalSpanLabel(span) {
@@ -449,6 +494,12 @@ const _TERMINAL_DETAIL_BUILDERS = {
   'subagent.stop': (a) => a.agent_type || '',
   'session.start': (a) => a.cwd || a.model || '',
   'session.end': (a) => a.reason || '',
+  'environment.git_status': (a) => {
+    const br = a.branch ? `[${a.branch}]` : ''
+    const n = a.changed_count
+    const changes = n ? `${n} change${n === 1 ? '' : 's'}` : 'clean'
+    return `${br} ${changes}`.trim()
+  },
   'compact.pre': (a) => {
     const tr = a.trigger ? `[${a.trigger}]` : ''
     const ci = a.custom_instructions ? ` ${_terminalTruncate(a.custom_instructions, 80)}` : ''
@@ -458,6 +509,12 @@ const _TERMINAL_DETAIL_BUILDERS = {
     const tr = a.trigger ? `[${a.trigger}]` : ''
     const sum = a.summary ? ` summary: ${_terminalTruncate(a.summary, 70)}` : ''
     return `${tr}${sum}`.trim()
+  },
+  rewind: (a) => {
+    const parts = []
+    if (a.abandoned_prompt_count) parts.push(`${a.abandoned_prompt_count}p`)
+    if (a.rolled_back_count) parts.push(`${a.rolled_back_count}f`)
+    return parts.length ? `[${parts.join(', ')}]` : ''
   },
 }
 
@@ -502,6 +559,7 @@ function _terminalToolDetail(n, a) {
     return tsTools.map(t => t.split('__').pop()).join(', ')
   }
   if (a.query) return a.query
+  if (a.url) return a.url
   return _terminalToolFile(a)
 }
 
@@ -562,8 +620,11 @@ export function dotColor(name) {
     'file.edit': 'bg-orange-500',
     'plan.edit': 'bg-green-600',
     'rule.check': 'bg-red-500',
+    'memory.recall': 'bg-fuchsia-500',
     'subagent.start': 'bg-pink-500',
     'harness.local_command': 'bg-teal-500',
+    'harness.recap': 'bg-indigo-400',
+    'environment.git_status': 'bg-cyan-600',
   }
   if (map[name]) return map[name]
   if (name && name.startsWith('tool.')) return 'bg-blue-500'
@@ -662,6 +723,23 @@ export function promptPreviewMeta(prompt) {
   const imageTokens = prompt?.attributes?.image_tokens_estimate || 0
   const truncated = promptPreviewText(prompt) !== text
   return { imageCount, imageTokens, truncated }
+}
+
+// A prompt row that is still a live `promptlive-` placeholder (its real
+// `prompt-<uuid>` anchor never landed) is "unresolved": the serve-time merge
+// would have dropped it the moment the anchor arrived. The only such row that
+// survives to the client is the single newest one — in a live session that's
+// the in-flight prompt, so callers gate on the session having ended before
+// treating it as stranded. A stranded placeholder is typically a scheduled /
+// loop wakeup (delivered as a plain UserPromptSubmit, never anchored) or an
+// interrupted final prompt — neither is a turn the user actually typed.
+export function isUnresolvedPrompt(prompt) {
+  return (
+    prompt?.name === 'prompt' &&
+    prompt?.status_code === 'PENDING' &&
+    typeof prompt?.span_id === 'string' &&
+    prompt.span_id.startsWith('promptlive-')
+  )
 }
 
 // ── AskUserQuestion answer rendering ────────────────────────

@@ -72,3 +72,8 @@ def api_mcp_calls():
     return jsonify(envelope)
 
 
+# NOTE: the per-session `/agent-messages` feed + the cross-session inbox
+# moved to `web.blueprints.trace.agent_messages`, backed by the canonical
+# `agent_messages` table (this file only owns the MCP-call dashboard now).
+
+
