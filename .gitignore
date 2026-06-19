@@ -13,6 +13,10 @@ CLAUDE.local.md
 # Codex CLI's per-project skills cache. Same class as .claude/.
 .codex/
 
+.agent/
+
+.kimi-code/
+
 # regin's per-project topic state. The dir is machine-local EXCEPT the
 # git-tracked approved graph (topic.json) and its per-topic wiki
 # narratives, which travel with the repo. The topic.local.json overlay

@@ -118,10 +118,15 @@ Populated live by the `hook_manager` handlers and surfaced under the **Trace** m
 | `session_spans` | OpenTelemetry-style span log (`session.start`, `turn`, `prompt`, `tool.*`, plan-mode spans, etc.) |
 | `turn_usage` | Per-API-call token usage, keyed `(trace_id, turn_uuid)`; see [`docs/trace/TURN_USAGE.md`](docs/trace/TURN_USAGE.md) |
 | `sessions` | Per-session aggregates: title, counters, model, token totals (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `peak_context_tokens`, `context_window_tokens`) rolled up from `turn_usage` |
-| `skill_reads` | Skill-read events from the `Read` PostToolUse hook |
+| `skill_reads` | Skill-invocation events (`source` = `launch` / `invoke` / `read`); see *Skill Invocation Tracing* below |
 | `plan_sessions` | Durable session→plan mapping; populated on attributable plan touches (see *Plan Mode Session Tracing* below) |
+| `agent_messages` | Canonical store for `send_to_user` agent→human messages (typed, supersedable, read/ack state); see *Agent Messages (send_to_user inbox)* below |
 
 Token counters on `sessions` are part of the baseline schema (`db/schema.sql`, anchored by `alembic/versions/0001_baseline.py`).
+
+### Agent memory database
+
+A third database, at `db/regin_memory.db` (override via `settings.agent_memory.db_path`). It is **self-initializing** — the memory engine creates its own schema on first use, so its tables are deliberately absent from `db/schema.sql` and Alembic, and accumulated experience survives `regin init` / `rebuild`. See *Agent Memory (cross-session experience)* below.
 
 ## Authentication
 
@@ -178,9 +183,9 @@ A fresh install ships no patterns. Add them through one of:
 
 Once a pattern exists, regin tracks it in `pattern_docs`, auto-tags it
 via `lib/tags/tag_manager.py`, and deploys it as a Claude skill via
-`lib/skills/skill_deployer.py`. The shim+companion pattern (see *Skill
-Read Tracing* below) lets the trace layer observe which patterns the
-agent actually consults.
+`lib/skills/skill_deployer.py`. Invocations are observed via the `Skill`
+tool / slash-command hooks (see *Skill Invocation Tracing* below), so the
+trace layer can show which patterns the agent actually consulted.
 
 ### Frontmatter conventions
 
@@ -207,8 +212,8 @@ written on create/import but not consumed by regin core:
   the bundle manifest. `imported_at` is a human-readable stamp the
   importer writes and no code consumes.
 
-The body is free-form markdown; the deployer reads only the frontmatter
-when building the shim `SKILL.md` for Claude.
+The body is free-form markdown; the deployer rewrites only the frontmatter
+(to `name` + `description`) and keeps the body inline in the deployed `SKILL.md`.
 
 ## Rule engines
 
@@ -315,36 +320,46 @@ cd frontend && npx vite                         # Vite dev server on :5173 (HMR,
 cd frontend && ./node_modules/.bin/playwright test
 ```
 
-## Skill Read Tracing
+## Skill Invocation Tracing
 
-Because providers typically inject `SKILL.md` into the system prompt, there is
-no native way to observe *which* skills were actually consulted in a session.
-We work around this by splitting every deployed skill into a **thin shim** +
-**companion content file**.
+regin records which skills a session actually used, in the `skill_reads` table,
+via three disjoint signals — each a separate hook posting to `POST /api/skill-reads`:
 
-### Shim + Companion Pattern
+| `source` | Hook | Fires when |
+|---|---|---|
+| `launch` | `hook_manager.handlers.skill_launch` — `PostToolUse` on the `Skill` tool | the assistant invokes a skill via the native `Skill` tool |
+| `invoke` | `hook_manager.handlers.skill_invoke` — `UserPromptExpansion` | the user types a `/slash` command |
+| `read` | `hook_manager.handlers.skill_read` — `PostToolUse` on `Read` of `<provider>/skills/*/content.md` | a legacy `content.md` is read (see below) |
 
-- `SKILL.md` — a short shim with only frontmatter and an emphatic instruction to `Read` `content.md` first.
-- `content.md` — the real skill body (exemplars, Disciplines, Anti-Patterns, etc.).
+`launch` + `invoke` cover every modern invocation, because the native `Skill`
+tool loads the skill body on invocation and that call is observable via
+`PostToolUse`.
 
-When the agent follows the instruction, it issues a `Read` tool call on
-`<provider skills dir>/<id>/content.md` (Claude default:
-`~/.claude/skills/<id>/content.md`). Tool calls are observable via
-`PostToolUse` hooks.
+### Single-file SKILL.md
 
-### Deployment
+Deployed skills are a **single self-contained `SKILL.md`**: the regin frontmatter
+is rewritten to the provider format (`name` + `description`) and the full guide
+body is kept inline. `deploy_pattern_as_skill` and `deploy_rules_index_skill`
+(`lib/skills/skill_deployer.py`) both produce this shape.
 
-`lib/skills/skill_deployer.py` and `lib/skills/skill_sync.py` automatically create this pair for:
-- **Pattern skills** (`deploy_pattern_as_skill`)
-- **Auto skills** (`deploy_rules_index_skill`)
-- **Standalone skills** remain as full `SKILL.md` in source (no auto-shim) so drift detection stays accurate
+> **History — why no more shim.** Earlier, every skill was split into a thin
+> `SKILL.md` shim plus a companion `content.md`, on the assumption that providers
+> inject the whole `SKILL.md` into the prompt with no way to observe consultation;
+> forcing a `Read content.md` made it an observable tool call. Two things retired
+> that: (1) the native `Skill` tool now loads the body on invocation and fires an
+> observable `PostToolUse` (captured by `skill_launch`), and (2) measurement showed
+> the shim's "read `content.md` first" pointer was skipped ~50% of the time, so the
+> real guidance never reached the model. The single-file form fixes that disclosure
+> gap while keeping invocation observable.
 
-### Trace Hook
+### content.md back-compat
 
-`hook_manager.handlers.skill_read` runs on `PostToolUse` with matcher `Read`. It:
-1. Checks if the read target is `<provider>/skills/*/content.md`
-2. Parses `skill_id` from the path
-3. POSTs an event to `POST /api/skill-reads` (stored in the `skill_reads` table)
+regin no longer writes `content.md`, but the **read path is retained**: the
+`skill_read` hook, the provider `skill_id_from_read_path` helpers, and the
+importer/promoter bundle format still recognise a `content.md` when present, so
+already-deployed skills and externally-authored bundles keep working until
+redeployed. Drift detection (`_deployed_body` in `lib/skills/skill_sync.py`) reads
+`content.md` if present and falls back to the `SKILL.md` body otherwise.
 
 ### Dashboard
 
@@ -411,3 +426,77 @@ session→plan mapping in `plan_sessions` the same way.
 
 - **Session trace** shows `plan.exit` boundary markers, tagged with the plan filename only on the attributable `ExitPlanMode`-with-text path (otherwise a bare marker).
 - **Sessions list** joins `plan_sessions` to surface the associated plan name alongside each session; the `plan_sessions` table is the read-optimised cache populated on attributable plan touches.
+
+## Agent Messages (send_to_user inbox)
+
+`send_to_user` is an MCP tool an agent calls to push a message at the user mid-task — a progress update, a partial result, or a blocker that needs eyes. It is the agent→human channel; distinct from `lib/trace/` (which records what the agent *did*).
+
+**Why the hook is the writer, not the MCP server.** A stdio MCP server is *session-blind* — it never learns which Claude Code session invoked it. The PostToolUse hook does. So the server (`lib/agent_messages/mcp_server.py`) only declares the typed parameter schema and acknowledges; the hook (`hook_manager/handlers/post_tool_trace._record_agent_message`) reads the tool input, knows the session/agent/span, and writes the durable row via `lib/agent_messages/store.py`. The hook also pins the tool span's `span_id` up front so the message can deep-link back into the trace.
+
+| Piece | Role |
+|-------|------|
+| `lib/orm/models/agent_messages.py` | `AgentMessage` model + `MESSAGE_TYPES` severity ordering (`progress < note < lesson < result < summary < warning < blocker`) |
+| `lib/agent_messages/store.py` | The only writer: insert, **supersede-by-`key`** (a keyed message updates in place — "building… 40%" → "done" stays one card), list, inbox, unread count, read/ack/dismiss |
+| `lib/agent_messages/webhook.py` | Opt-in outbound POST for messages at/above `settings.agent_messages.webhook_min_severity` (off unless `webhook_url` is set) |
+| `web/blueprints/trace/agent_messages.py` | `/api/sessions/<id>/agent-messages` (per-session feed, with legacy span fallback) + `/api/agent-messages/{inbox,unread-count,read,<id>/ack,<id>/dismiss,<id>/pin}` |
+| `frontend/src/views/InboxView.vue` + `components/InboxMessageCard.vue` | Cross-session **Inbox** with a live unread **badge** (`composables/useInboxUnread.js`); the per-session **Messages** tab in `SessionTraceView.vue` renders the same rows |
+
+The store is the **canonical** record — not reconstructed from `session_spans` at read time, so a dropped span can't make a message vanish. Unlike `session_spans` it is *mutable* (read/ack/dismiss timestamps change after insert), so it does not follow the append-only span convention. The `agent_messages` DDL lives in `db/schema.sql`.
+
+**Webhook latency note:** dispatch is synchronous inside the hook, so a configured webhook adds its round-trip (≤ `webhook_timeout_seconds`) to the hook return — but only for messages that clear the severity gate (warning/blocker are rare), and only when a webhook is configured at all.
+
+A message of type `lesson` is additionally teed into the agent-memory store (next section) — `send_to_user(type=lesson)` is the explicit capture endpoint for cross-session experience.
+
+## Agent Memory (cross-session experience)
+
+`lib/memory/` learns from past sessions and surfaces that experience into future ones. The lifecycle is **capture → consolidate (`reflect`) → recall → reinforce**; `send_to_user(type=lesson)` is one capture endpoint into the system (see *Agent Messages* above), not the system itself.
+
+**Separate, self-initializing database.** Memory lives in its own SQLite file (see *Agent memory database* above), wired as the third instance of the multi-engine pattern: `get_memory_engine()` / `MemorySessionLocal()` in `lib/memory/engine.py` reuse `lib/orm/engine._build_engine` (WAL pragmas, busy timeout). The models declare their **own** `MetaData` (`lib/memory/models.py`) — the explicit `metadata = MetaData()` assignment is load-bearing: SQLModel subclasses otherwise share the global metadata, and `create_all(memory_engine)` would build regin's entire schema into the memory file.
+
+**Ports, not providers.** The engine depends on four Protocols in `lib/memory/ports.py` — `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink` — and every port degrades gracefully: no embedder → FTS-only recall; no LLM → reflect still dedups (text-ratio) but skips contradiction judging *and synthesis*, and distill proposes nothing (and never supersedes) (the LLM *is* the abstraction step — heuristics alone can detect signal but not turn it into a reusable rule); no sink → no outbound export (the default). Concrete adapters (SkillRouter embeddings, an external-agent LLM command) live only in `lib/memory/adapters.py` and are injected at the edge; removing any of them is a zero-diff change to the engine.
+
+| Piece | Role |
+|-------|------|
+| `lib/memory/__init__.py` | Facade: `remember / recall / reflect / get / update / forget / supersede / stats` over a lazily-constructed default store |
+| `lib/memory/store.py` | SQLite `MemoryStore`: one `memories` table carrying both tiers (`working` → `episodic`) plus `memory_embeddings` / `memory_validations` / `injection_events` side tables; recall is FTS5 + dense + RRF + cross-encoder rerank — the `pattern_router` pipeline shape against the memory corpus — then **quality-weighted**: a bounded `[0.9, 1.3]` `_quality_factor` (importance · veracity · deliberate-recall count · recency half-life) re-ranks the relevance order so a sharp, proven memory beats a mundane one of equal lexical match without ever overriding relevance (`recall_quality_weighting`) |
+| `lib/memory/reflect.py` | Consolidation: near-duplicate dedup (embedding cosine, or text-ratio fallback), LLM-judged contradictions in the similarity gray zone, working→episodic promotion with `recall_count`-driven importance reinforcement, **synthesis** — clusters of *related but distinct* episodic rows (cosine in `[0.55, dedup_threshold)`) are handed to the LLM to abstract one higher-order rule per cluster (Generative-Agents reflection, the step past dedup/GC; needs both an embedder and an LLM, `synthesis_enabled`; sources are kept and marked `synthesized` so the pass is idempotent), content-hash-skipped embedding, **forget-stale** — episodic rows aged past `forget_after_days` with `recall_count==0` are retired (the negative half of the usefulness loop: speculative inject doesn't reinforce, so a long-aged never-recalled row never earned its keep), and **decay** — a never-positively-validated episodic row that either drew `decay_ignored_threshold` (default 5) feedback `ignored` verdicts or was auto-injected `decay_injected_threshold` (default 8) times without one reinforcement loses 0.1 importance per run (floored at 0.1, never retired from this signal; either threshold at 0 disables that half). The injection-volume trigger reads `injection_events` directly, so the negative loop stays alive even for the common session that never triggers a grade (the `ignored`-validation trigger fires only at grade time) |
+| `lib/memory/distill.py` | Implicit capture from a finished session, **LLM-only by contract** — the model is the abstraction step. **Agentic** (`resolve_distiller` grants the read-only `trace dump`/`trace span` commands): the distiller is handed the trace id + the high-signal hints (the *grader findings* and *Notable signals* tags) and **self-fetches** only the spans it needs — the raw trace is never folded into the prompt, so size stays constant with session length (same scaling fix as the deep-tier judge). Heuristic detectors (failure→fix chains, user corrections) only surface as hints, never write proposals directly (that produced "running-account" noise); the prompt carries a BAD/GOOD few-shot demanding the reusable **rule**, not the episode. Each draft is schema-validated (required rule-shaped title, body ≥ 60 chars) and **self-scores `importance` in [0,1]**; `_finalize_status` then **drops** it below `distill_min_importance`, **auto-approves** (`status='active'`) at/above `auto_approve_importance`, or **queues** it (`status='proposed'`) for human review in the gray band. Returning `[]` is legitimate; no LLM configured → nothing proposed. Before writing, each draft is reconciled against existing memories: a near-duplicate **reinforces** the existing row instead of inserting (dedup-at-write), and a draft the LLM judges to **contradict** one (same-topic, incompatible claim in the lexical gray band) **supersedes** it — the old row retired `veracity=false`, `distill_supersede_on_conflict` — the immediate, lexical complement to reflect's batch embedding-based gray-zone check. Auto-resolves the session's repo scope via `session_repos` and stamps `distill`/`llm` provenance tags |
+| `lib/memory/scoping.py` | Scope policy wrapper (`global` / `per-repo` / `per-repo-tagged`, default `per-repo-tagged`: repo-stamped writes, globally visible recall); the store only ever sees opaque scope strings |
+| `lib/memory/mcp_server.py` | The `recall` MCP tool for deeper mid-task pulls; the server process is session-long-lived, so the dense + rerank legs are affordable there |
+| `hook_manager/handlers/memory_recall.py` | UserPromptSubmit auto-inject: routes eligible prompts through recall and returns a `<recalled_experience>` block. Recall defaults to borrowing the warm `regin serve` process for the full dense + rerank pull (`inject_dense_via_server`: a fresh hook process can't load the embedder, so it POSTs `/api/memory/recall` over loopback — granted a loopback-only auth exemption in `web/app.py` — with a short timeout and a clean fall back to in-process FTS-only when the server is down). Speculative surfacing never reinforces and is overlap-gated (`inject_min_overlap` distinct content tokens — BM25 always ranks *something*, so an ungated inject attaches tangential memories to every prompt as the store grows). Same-session deduped (`inject_dedup_session`, tracked in `injection_events`) so the same memory isn't re-rendered every turn; slash commands recall on their argument text, not the bare `/command`. When it injects, it records a `memory.recall` span (rendered block + per-hit metadata, gated by `agent_memory.trace_recall`) so the trace shows exactly what was fed to each prompt — see *Session trace* below. A routed `<topic_context>` is recorded in `topic_injections`, and a route graded irrelevant too often is *proposed* for suppression but withheld only on a human-approved decision (`_topic_suppressed` reads `topic_route_decisions`) — see the **Topic-routing feedback loop** under *Session Grader* |
+| `web/blueprints/memory.py` + `frontend/src/views/MemoryView.vue` | `/api/memory/*` + the **Memory** view: list/edit, approve proposals, retire/forget, recall probe, run-reflect |
+| `cli/commands/memory.py` | `regin memory {recall,list,stats,reflect,distill,approve,forget}` |
+
+**Capture paths** both land through the store's `remember`: the PostToolUse hook tees `type=lesson` messages in with span/agent/scope provenance and a `send_to_user` tag (`post_tool_trace._remember_lesson`, guarded so neither store's failure blocks the other), and `regin memory distill <session>` proposes from the trace. **Reinforcement** is asymmetric on purpose: deliberate pulls (MCP tool, CLI, API probe-less recalls) bump `recall_count` (which reflect folds into importance); speculative auto-inject does not — *except* a memory injected earlier in a session that matches again on a later prompt is reinforced once (`reinforce_resurfaced`), since repeated relevance across a session is an earned usefulness signal rather than a one-off speculative surface.
+
+Memory rows are **mutable by design** — updated, superseded (`superseded_by` chains), retired, deleted — the opposite of the append-only `session_spans` convention; curation is the point. Settings live under `settings.agent_memory` (enabled flag, DB path, auto-inject knobs, scope policy, dedup thresholds, the distill self-score band `distill_min_importance` / `auto_approve_importance`, at-write conflict resolution `distill_supersede_on_conflict`, reflect synthesis `synthesis_enabled`, recall quality weighting `recall_quality_weighting` / `recall_recency_half_life_days`, the `forget_after_days` stale-retirement window, and the decay triggers `decay_ignored_threshold` / `decay_injected_threshold`).
+
+## Session Grader (post-hoc rubric grades)
+
+`lib/grader/` grades a *completed* session's trace on two independent axes that are deliberately **never fused into one number**: `correctness` (did the agent's claims hold up against the evidence?) and `process` (was the trajectory efficient?). The core re-framing: every resolved `tool_use` span and its recorded output is a citable source, so the grader's unit of work is *"for every assertion the agent made, find the span that backs it — and judge the link, not the assertion."*
+
+**Correctness axis** — a three-criterion pipeline over a typed **claim ledger** extracted from the final deliverable (`extraction.py`): each claim is typed `state` / `result` / `external` / `diagnostic`, which selects its grounding bar (`grounding.py`: a `state` claim needs a Read/Edit span showing the cited code, a `result` claim needs a Bash span whose command matches and status confirms — "tests pass" with no run is `UNGROUNDED`, a failed run is `CONTRADICTED`, and a run that *predates a later edit* is `STALE` — the timeline rule only regin's timestamped spans make checkable). `coverage.py` checks a required-items checklist derived from the *task alone before grading* (anti-gaming: the agent can't define coverage down), and `source_quality.py` classifies each grounding source authoritative-vs-proxy (a README read or a grep pattern-match is a `PROXY` for a code-behavior claim; Q&A/blog domains are proxies for external facts). Gates fire before ratios: a load-bearing `CONTRADICTED` claim ⇒ `fail`; any `MISSING` item, not-`GROUNDED` claim, or proxy-backed load-bearing claim ⇒ at most `needs_revision`. Every ledger gets the synthetic load-bearing claim `c0` ("the session accomplished the task"), grounded by the checklist, so terse code-only sessions still give the gate something to bite.
+
+**Process axis** (`process.py`) — grades trajectory *properties*, never a prescribed step list: P1 tool-use appropriateness (`SUBOPTIMAL` shell `cat`/`grep` where dedicated tools exist; `WASTED` reads whose output fed nothing downstream), P2 redundancy (re-reads of an unchanged target, ≥K same-shape failing commands with no intervening edit), P3 reliability (errors recovered vs ignored; an ignored error feeding a load-bearing claim caps the verdict at `acceptable`), and P4 cost-proportionality (cost percentile against other captured sessions of the same task class, cost-per-covered-item, and the cache-read-share context-bloat sub-check — the part generic graders can't see because they don't have regin's token split). The axis is *conditioned* on the correctness verdict (high spend on a correct session is proportionate, not wasteful) but never merged with it; the cross-axis aggregate is `pareto.py`'s cost-per-correct-outcome analytics, which flags *cheaply-wrong* and *expensively-right* sessions as the off-frontier cases worth a human look.
+
+**Two-tier cost strategy** (`service.py`): the `screen` tier is fully mechanical — no LLM, deterministic, cheap enough to run on everything. The `deep` tier injects an external judge agent (same subprocess `LLMProvider` contract as memory distill; `settings.grader.external_agent` names a key in `topic_proposal_external_agents`) for claim extraction, a completeness-critic second pass, checklist derivation, and grounding rescue — with two anti-gaming guards baked in: the **verbatim-provenance guard** (an extracted claim whose `raw_text` isn't a substring of the artifact is dropped — the extractor can't invent claims) and the **anti-paraphrase guard** (a judge rescue must quote verbatim from the span excerpt or its answer is discarded — the agent's restatement of a tool result is never evidence). `tier="auto"` screens first and escalates only borderline/failing sessions. Grades are **triage, not truth** — they surface suspicious sessions with evidence-cited bullets for human spot-checking, with tier/judge/rubric provenance stamped on every row.
+
+**One combined deep judge** (`combined_agentic.py`): the deep tier runs a **single** self-fetching judge subprocess that grades every requested dimension — correctness, process, and any selected aspects — in one investigation, returning one JSON parsed section-by-section through the existing builders/gates (so the quote-guard and rubric thresholds are unchanged; only the prompt is unified). This is one captured session per grade instead of one `<role>` judge session per axis, plus a single `trace dump --index`. A dimension the judge omits or mangles falls back to the mechanical tier (axes) or is simply absent (aspects, which are LLM-only). The per-run dimensions are chosen by the caller — `grade_session(axes=…, aspects=…)`, the API `axes`/`aspects`, the CLI `--axis`/`--aspect` — and a run needs at least one axis *or* aspect. **Gradeable aspects** are reviewer-defined dimensions (`settings.grader.aspects`, non-builtin) graded holistically: the judge returns a `satisfied`/`needs_revision`/`fail` verdict with span-cited findings (hallucinated span_ids dropped), stored under the aspect key like any axis. The builtin aspects (`correctness`/`process`) mirror the grounded axes and are graded as axes, never as generic aspects.
+
+**Grade→memory loop** — a grade isn't a dead-end verdict; it feeds the systems that improve future runs. Two stages, both reusing the [Agent Memory](#agent-memory-cross-session-experience) rail rather than a parallel store: (1) *per-session* — when a persisted, non-test grade flags any axis (verdict ≠ `satisfied`/`efficient`), `service.py` hands the grade's findings (non-`GROUNDED` claims with referents, `MISSING` coverage, `WASTED` spans) to `lib/memory/distill.py` as the highest-priority candidates, so the durable rule behind each problem becomes a recallable lesson (with a `distill_importance_bonus` since a grade is independent corroboration). Distilling is a **per-run decision** — `grade_session(distill=…)`, the CLI `--distill/--no-distill`, and the API `distill` flag opt in or out; the UI checkbox defaults off, and an unset flag falls back to `settings.grader.distill_on_fail`. (2) *cross-session* — `lib/grader/aggregate.py` buckets every failing session's problems into stable **mode keys** (`failure_modes.py`: `claim:state:UNGROUNDED`, `coverage:MISSING`, `process:WASTED`, …); a mode recurring across ≥ `settings.grader.aggregate_min_sessions` distinct sessions is consolidated into one idempotent lesson (refreshed in place via a `grade-aggregate:<mode>` tag) carrying the rule plus its remediation. Both land `proposed` (human-gated); the loop is `needs_revision → distilled lesson → recalled as <recalled_experience> next matching session → better next grade`.
+
+**Topic-routing feedback loop** — the auto-inject hook's `<topic_context>` banner (`topic_route_inject`) was otherwise fire-and-forget: it routed a prompt through the topic graph and never learned whether the route fit. A **gradeable aspect** closes that loop as the *outcome* signal the deterministic engagement proxy (`feedback.py`, referent overlap) structurally can't produce. With `topic_relevance_feedback` on: (1) every injected topic is recorded in `topic_injections` (the topic analog of `injection_events`); (2) at grade time `service.py` stamps the verdict of the aspect named by `topic_relevance_aspect` (default `injectedrelated` — a reviewer-defined aspect that judges whether the injected topics/memories actually fit the user's goal, citing the `memory.recall` span) onto that session's rows; (3) a topic whose scored injections clear `topic_relevance_min_scored` *and* a fail rate ≥ `topic_relevance_fail_rate` is surfaced as a **suppression proposal** — but it keeps routing. **Withholding is human-gated**, the same precision-first `proposed → approved` contract every memory write goes through: `_route_topic` withholds a route only when a human has written a `suppressed` decision in `topic_route_decisions` (`store.set_topic_decision`; `allowed` pins a route on / rejects a proposal; no row = `auto`, routes and stays re-proposable). The gate is driven from the CLI (`regin memory topic-decide <topic> suppress|allow|auto`), the API (`POST /api/memory/topic-feedback/<topic>/decision`), and the **Topic routing feedback** panel in the Memory view (status + approve/keep-routing/reset buttons); `regin memory topic-feedback` lists the per-topic stats and status. So a proposal isn't invisible until someone opens that panel, each one is pushed to the [agent inbox](#agent-messages-send_to_user-inbox) as a `warning` (`topic_relevance_notify`, `lib/grader/topic_notify.py`): one durable card per topic under a synthetic session so the keyed supersede dedups it across grading sessions, resolved (dismissed) when a decision is made. The whole loop is best-effort: a feedback fault never costs a useful route or fails a grade.
+
+| Piece | Role |
+|-------|------|
+| `lib/grader/rubric.py` | Rubric-as-data (criteria, verdicts, bars, gates) + `RUBRIC_VERSION` stamped onto every grade |
+| `lib/grader/evidence.py` | Trace → evidence index: reads/edits/bash/fetches by target with timeline order, prompt + final assistant text |
+| `lib/grader/extraction.py` → `correctness.py` | Claim ledger → groundedness/coverage/source-quality → gates → the mandated scoreboard-then-bullets report |
+| `lib/grader/process.py` + `pareto.py` | P1–P4 trajectory grading + the cost-per-correct-outcome analytics layer |
+| `lib/grader/combined_agentic.py` | the single deep judge: one investigation → per-dimension verdicts (axes + gradeable aspects), parsed via the axis builders |
+| `lib/grader/store.py` | `session_grades` in the primary DB — append-only; readers take the latest row per (trace, axis) |
+| `lib/grader/failure_modes.py` + `aggregate.py` | Grade `detail` → stable mode keys → cross-session consolidation into agent-memory lessons |
+| `web/blueprints/grades.py` + `frontend/src/views/GradesView.vue` | `/api/grades*` + the **Grades** view (per-dimension verdict badges, expandable reports, grade-now with per-run axis + gradeable-aspect selection and a distill opt-in) |
+| `cli/commands/grader.py` | `regin grade {run,show,list,pareto,reflect}` |
+
+Settings live under `settings.grader` (`enabled`, `external_agent`, `auto_escalate`, `deep_max_claims`, `distill_on_fail`, `distill_importance_bonus`, `aggregate_min_sessions`); the numeric bars are rubric data in `rubric.py`, versioned with the rubric rather than the deployment.
