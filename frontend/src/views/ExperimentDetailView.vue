@@ -5,6 +5,8 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
+import Button from '../components/ui/Button.vue'
+import Checkbox from '../components/ui/Checkbox.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -131,20 +133,18 @@ function ruleRate(checks, fired) {
         </p>
       </div>
       <div class="page-actions">
-        <button v-if="data.exp.active"
-          type="button"
-          class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
+        <Button v-if="data.exp.active"
+          variant="secondary"
           :disabled="processing" @click="deactivate">
           {{ processing ? 'Deactivating…' : 'Deactivate' }}
-        </button>
-        <button v-else
-          type="button"
-          class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
+        </Button>
+        <Button v-else
+          variant="primary"
           :disabled="processing" @click="activate">
           {{ processing ? 'Activating…' : 'Activate' }}
-        </button>
-        <button type="button" class="btn btn-danger focus-visible:outline-2 focus-visible:outline-blue-500"
-          :disabled="processing" @click="deleteExp">Delete</button>
+        </Button>
+        <Button variant="danger"
+          :disabled="processing" @click="deleteExp">Delete</Button>
       </div>
     </header>
 
@@ -250,16 +250,19 @@ function ruleRate(checks, fired) {
           <div class="mb-3">
             <label class="field-label">Sections to conceal</label>
             <div v-if="data.available_sections?.length" class="flex flex-wrap gap-x-4 gap-y-1 mt-1">
-              <label v-for="s in data.available_sections" :key="s" class="check-chip">
-                <input type="checkbox" :value="s" v-model="editSections" :aria-label="s">
+              <Checkbox
+                v-for="s in data.available_sections" :key="s"
+                :model-value="editSections.includes(s)"
+                :aria-label="s"
+                @update:model-value="checked => checked ? editSections.push(s) : (editSections = editSections.filter(x => x !== s))"
+              >
                 <code class="cell-code">{{ s }}</code>
-              </label>
+              </Checkbox>
             </div>
             <span v-else class="text-slate-400 text-sm">No headings available.</span>
             <p v-if="editErrors.sections" class="field-error">{{ editErrors.sections }}</p>
           </div>
-          <button type="button" class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
-            @click="saveEdit">Save changes</button>
+          <Button variant="primary" @click="saveEdit">Save changes</Button>
         </div>
       </details>
     </Card>
@@ -268,8 +271,8 @@ function ruleRate(checks, fired) {
 
 <style scoped>
 .metric-card {
-    background: #F8FAFC;
-    border: 1px solid #F1F5F9;
+    background: var(--color-slate-50);
+    border: 1px solid var(--color-slate-100);
     border-radius: 0.75rem;
     padding: 1rem 1.125rem;
 }
@@ -277,10 +280,10 @@ function ruleRate(checks, fired) {
     font-size: 0.8125rem;
     font-weight: 600;
     margin: 0 0 0.75rem;
-    color: #0F172A;
+    color: var(--color-slate-900);
 }
 .metric-card-meta {
-    color: #94A3B8;
+    color: var(--color-slate-400);
     font-weight: 400;
     margin-left: 0.25rem;
 }
@@ -290,8 +293,8 @@ function ruleRate(checks, fired) {
     gap: 0.25rem 1rem;
     font-size: 0.8125rem;
 }
-.metric-list dt { color: #64748B; }
-.metric-list dd { color: #0F172A; font-weight: 500; }
+.metric-list dt { color: var(--color-slate-500); }
+.metric-list dd { color: var(--color-slate-900); font-weight: 500; }
 
 .edit-toggle {
     display: inline-flex;
@@ -299,32 +302,23 @@ function ruleRate(checks, fired) {
     padding: 0.4375rem 0.875rem;
     font-size: 0.8125rem;
     font-weight: 500;
-    background: #F1F5F9;
-    color: #475569;
+    background: var(--color-slate-100);
+    color: var(--color-slate-600);
     border-radius: 0.625rem;
     cursor: pointer;
     list-style: none;
     border: 0;
 }
-.edit-toggle:hover { background: #E2E8F0; color: #0F172A; }
+.edit-toggle:hover { background: var(--color-slate-200); color: var(--color-slate-900); }
 .edit-toggle::marker, .edit-toggle::-webkit-details-marker { display: none; }
 
 .input.is-invalid {
-    border-color: #F87171;
+    border-color: var(--color-red-600);
     box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15);
 }
 .field-error {
     font-size: 0.6875rem;
-    color: #DC2626;
+    color: var(--color-red-600);
     margin-top: 0.25rem;
 }
-
-.check-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    font-size: 0.8125rem;
-    cursor: pointer;
-}
-.check-chip input { accent-color: #1E40AF; }
 </style>

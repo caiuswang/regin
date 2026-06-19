@@ -1,6 +1,7 @@
 <script setup>
 import api from '../api'
 import Badge from './Badge.vue'
+import Button from './ui/Button.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -143,20 +144,20 @@ function bundleDisabledIds(bundle) {
       </li>
     </ul>
     <div class="btn-row">
-      <button
+      <Button
         v-if="enabledRuleCount"
-        type="button"
-        class="btn btn-danger text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
+        variant="danger"
+        size="sm"
         @click="disableRules">
         Disable {{ enabledRuleCount }} rule{{ enabledRuleCount !== 1 ? 's' : '' }}
-      </button>
-      <button
+      </Button>
+      <Button
         v-if="disabledRuleCount"
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
+        variant="secondary"
+        size="sm"
         @click="enableRules">
         Re-enable {{ disabledRuleCount }}
-      </button>
+      </Button>
     </div>
   </div>
 
@@ -171,20 +172,20 @@ function bundleDisabledIds(bundle) {
         <Badge color="blue" :label="bundle.engine_id" />
         <span class="text-xs text-gray-500">{{ bundle.rules.length }} rule{{ bundle.rules.length !== 1 ? 's' : '' }}</span>
         <span class="flex-1"></span>
-        <button
+        <Button
           v-if="bundleEnabledIds(bundle).length"
-          type="button"
-          class="btn btn-danger text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="danger"
+          size="sm"
           @click="toggleBundleAll(bundle.engine_id, bundleEnabledIds(bundle), true)">
           Disable {{ bundleEnabledIds(bundle).length }}
-        </button>
-        <button
+        </Button>
+        <Button
           v-if="bundleDisabledIds(bundle).length"
-          type="button"
-          class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="secondary"
+          size="sm"
           @click="toggleBundleAll(bundle.engine_id, bundleDisabledIds(bundle), false)">
           Re-enable {{ bundleDisabledIds(bundle).length }}
-        </button>
+        </Button>
       </div>
       <p class="pdv-bundle-desc">{{ bundle.description }}</p>
       <p class="pdv-bundle-invocation">
@@ -231,21 +232,21 @@ function bundleDisabledIds(bundle) {
 .pdv-section-title {
   font-size: 1rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-slate-900);
   margin: 0;
 }
 
 /* Attached rule bundle header copy */
 .pdv-bundle-desc {
   font-size: 0.8125rem;
-  color: #475569;
+  color: var(--color-slate-600);
   margin: 0 0 0.5rem 0;
   line-height: 1.55;
 }
 .pdv-bundle-invocation {
   margin: 0 0 0.875rem 0;
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--color-slate-500);
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -255,16 +256,16 @@ function bundleDisabledIds(bundle) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   font-size: 0.6875rem;
   flex-shrink: 0;
 }
 .pdv-bundle-invocation code {
   font-size: 0.75rem;
   padding: 0.125rem 0.4375rem;
-  background: #f1f5f9;
+  background: var(--color-slate-100);
   border-radius: 0.25rem;
-  color: #1e293b;
+  color: var(--color-slate-800);
   word-break: break-all;
 }
 .pdv-bundle-rules-head {
@@ -272,7 +273,7 @@ function bundleDisabledIds(bundle) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin: 0.5rem 0 0.5rem 0;
   display: flex;
   align-items: center;
@@ -282,8 +283,8 @@ function bundleDisabledIds(bundle) {
   display: inline-block;
   padding: 0 0.375rem;
   font-size: 0.6875rem;
-  background: #e2e8f0;
-  color: #475569;
+  background: var(--color-slate-200);
+  color: var(--color-slate-600);
   border-radius: 999px;
   letter-spacing: 0;
 }
@@ -295,19 +296,19 @@ function bundleDisabledIds(bundle) {
   padding: 0;
 }
 .pdv-bundle-rule-list .pdv-rule-card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
   border-radius: 0.5rem;
   padding: 0.75rem 1rem;
   gap: 0.375rem;
   transition: border-color 120ms, background 120ms, box-shadow 120ms;
 }
 .pdv-bundle-rule-list .pdv-rule-card:last-child {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-gray-200);
 }
 .pdv-bundle-rule-list .pdv-rule-card:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
+  background: var(--color-slate-50);
+  border-color: var(--color-slate-300);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .pdv-bundle-rule-list .pdv-rule-head {
@@ -316,12 +317,12 @@ function bundleDisabledIds(bundle) {
 .pdv-bundle-rule-list .pdv-rule-head code {
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-slate-900);
   background: transparent;
   padding: 0;
 }
 .pdv-bundle-rule-list .pdv-rule-desc {
-  color: #64748b;
+  color: var(--color-slate-500);
   font-size: 0.8125rem;
 }
 
@@ -336,7 +337,7 @@ function bundleDisabledIds(bundle) {
   flex-direction: column;
   gap: 0.375rem;
   padding: 0.625rem 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-slate-100);
 }
 .pdv-rule-card:last-child { border-bottom: 0; }
 .pdv-rule-card-disabled { opacity: 0.55; }
@@ -352,7 +353,7 @@ function bundleDisabledIds(bundle) {
 .pdv-rule-spacer { flex: 1; }
 .pdv-rule-desc {
   font-size: 0.8125rem;
-  color: #475569;
+  color: var(--color-slate-600);
   margin: 0;
   line-height: 1.5;
 }
@@ -360,16 +361,16 @@ function bundleDisabledIds(bundle) {
   font-size: 0.75rem;
   padding: 0.125rem 0.5rem;
   background: transparent;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-slate-300);
   border-radius: 0.25rem;
-  color: #475569;
+  color: var(--color-slate-600);
   cursor: pointer;
   white-space: nowrap;
 }
-.pdv-rule-toggle:hover { background: #f1f5f9; color: #0f172a; }
+.pdv-rule-toggle:hover { background: var(--color-slate-100); color: var(--color-slate-900); }
 .pdv-rule-toggle-danger {
-  color: #b91c1c;
-  border-color: #fecaca;
+  color: var(--color-red-700);
+  border-color: var(--color-red-200);
 }
-.pdv-rule-toggle-danger:hover { background: #fef2f2; color: #991b1b; }
+.pdv-rule-toggle-danger:hover { background: var(--color-red-50); color: var(--color-red-800); }
 </style>

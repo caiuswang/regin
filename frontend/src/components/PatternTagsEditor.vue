@@ -2,6 +2,8 @@
 import { ref, watch } from 'vue'
 import api from '../api'
 import { useFlash } from '../composables/useFlash'
+import Button from './ui/Button.vue'
+import Checkbox from './ui/Checkbox.vue'
 
 // Extracted from PatternDetailView (PR 2.4a). Owns its three pieces of
 // local state (editingTags, selectedTags, newTagName) plus the
@@ -50,6 +52,12 @@ async function save() {
 function cancel() {
   editing.value = false
 }
+
+function toggleTag(name) {
+  const i = selectedTags.value.indexOf(name)
+  if (i === -1) selectedTags.value.push(name)
+  else selectedTags.value.splice(i, 1)
+}
 </script>
 
 <template>
@@ -68,18 +76,13 @@ function cancel() {
   </template>
   <div v-else class="pdv-edit-form">
     <div class="flex flex-wrap gap-x-4 gap-y-1">
-      <label
+      <Checkbox
         v-for="t in allTags"
         :key="t.name"
-        class="flex items-center gap-1.5 text-sm">
-        <input
-          type="checkbox"
-          :value="t.name"
-          v-model="selectedTags"
-          :aria-label="t.name"
-          class="rounded border-gray-300">
-        {{ t.name }}
-      </label>
+        :model-value="selectedTags.includes(t.name)"
+        :label="t.name"
+        :aria-label="t.name"
+        @update:model-value="toggleTag(t.name)" />
     </div>
     <div class="flex gap-2 items-end mt-3">
       <label class="pdv-field flex-1 max-w-xs">
@@ -90,14 +93,8 @@ function cancel() {
           aria-label="New tag name"
           placeholder="tag-name">
       </label>
-      <button
-        type="button"
-        class="btn btn-primary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="save">Save tags</button>
-      <button
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="cancel">Cancel</button>
+      <Button variant="primary" size="sm" @click="save">Save tags</Button>
+      <Button variant="secondary" size="sm" @click="cancel">Cancel</Button>
     </div>
   </div>
 </template>

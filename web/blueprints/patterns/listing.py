@@ -24,6 +24,7 @@ from lib.orm.models import DocTag, PatternDeployment, PatternDoc, Tag
 
 from lib import audit, experiments
 from lib.patterns import pattern_deployments
+from lib.providers import active_provider_skill_paths, enabled_provider_skill_paths
 from lib.skills import skill_registry, skill_sync
 
 from web.blueprints.patterns import patterns_bp
@@ -339,6 +340,8 @@ def api_pattern_detail(slug):
         "experiments": ctx["pattern_experiments"],
         "available_sections": ctx["available_sections"],
         "concealed_texts": concealed_texts,
+        "provider": active_provider_skill_paths(),
+        "enabled_providers": enabled_provider_skill_paths(),
     })
 
 

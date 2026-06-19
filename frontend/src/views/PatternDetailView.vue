@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
@@ -12,6 +12,8 @@ import PatternContentEditor from '../components/PatternContentEditor.vue'
 import PatternDescriptionEditor from '../components/PatternDescriptionEditor.vue'
 import PatternProjectsPicker from '../components/PatternProjectsPicker.vue'
 import PatternRulesPanel from '../components/PatternRulesPanel.vue'
+import Button from '../components/ui/Button.vue'
+import Tabs from '../components/ui/Tabs.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useFeatures } from '../composables/useFeatures'
@@ -41,6 +43,9 @@ const repos = ref([])
 const expProcessing = ref(null)
 
 const notFound = ref(false)
+
+const provider = computed(() => data.value?.provider || {})
+const projectSubpath = computed(() => provider.value.project_subpath || '.claude/skills')
 
 async function load() {
   // Wiki rows share the pattern_docs table with `source_kind='wiki'`
@@ -239,6 +244,19 @@ const ruleCount = computed(() => {
   return direct + bundles
 })
 
+const detailTabs = computed(() => {
+  const tabs = [
+    { value: 'overview', label: 'Overview' },
+    { value: 'content', label: 'Content' },
+  ]
+  if (hasRules.value) tabs.push({ value: 'rules', label: `Rules ${ruleCount.value}` })
+  if (hasExperiments.value) {
+    const n = data.value?.experiments?.length
+    tabs.push({ value: 'experiments', label: n ? `Experiments ${n}` : 'Experiments' })
+  }
+  return tabs
+})
+
 const globalSkillStatus = computed(() => {
   const b = skillBadge[data.value?.skill_state]
   return b ? { color: b.color, label: b.label, scope: b.scope } : null
@@ -338,10 +356,9 @@ const ruleEnforcementKebab = computed(() => {
         No pattern with slug <code class="cell-code">{{ route.params.slug }}</code> exists.
         It may have been deleted.
       </p>
-      <router-link to="/patterns"
-        class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500">
+      <Button :as="RouterLink" to="/patterns" variant="primary">
         Back to Patterns
-      </router-link>
+      </Button>
     </Card>
   </div>
   <div v-else>
@@ -362,24 +379,7 @@ const ruleEnforcementKebab = computed(() => {
 
     <div class="pdv-grid">
       <main class="pdv-main">
-        <nav class="pdv-tabs" role="tablist" aria-label="Pattern detail sections">
-          <button type="button" role="tab" :aria-selected="activeTab === 'overview'"
-            :class="['pdv-tab', { 'pdv-tab-active': activeTab === 'overview' }, 'focus-visible:outline-2 focus-visible:outline-blue-500']"
-            @click="activeTab = 'overview'">Overview</button>
-          <button type="button" role="tab" :aria-selected="activeTab === 'content'"
-            :class="['pdv-tab', { 'pdv-tab-active': activeTab === 'content' }, 'focus-visible:outline-2 focus-visible:outline-blue-500']"
-            @click="activeTab = 'content'">Content</button>
-          <button v-if="hasRules" type="button" role="tab" :aria-selected="activeTab === 'rules'"
-            :class="['pdv-tab', { 'pdv-tab-active': activeTab === 'rules' }, 'focus-visible:outline-2 focus-visible:outline-blue-500']"
-            @click="activeTab = 'rules'">
-            Rules <span class="pdv-tab-count">{{ ruleCount }}</span>
-          </button>
-          <button v-if="hasExperiments" type="button" role="tab" :aria-selected="activeTab === 'experiments'"
-            :class="['pdv-tab', { 'pdv-tab-active': activeTab === 'experiments' }, 'focus-visible:outline-2 focus-visible:outline-blue-500']"
-            @click="activeTab = 'experiments'">
-            Experiments <span v-if="data.experiments?.length" class="pdv-tab-count">{{ data.experiments.length }}</span>
-          </button>
-        </nav>
+        <Tabs v-model="activeTab" :tabs="detailTabs" variant="underline" class="pdv-tabs" />
 
         <!-- Overview -->
         <section v-show="activeTab === 'overview'" class="pdv-panel" role="tabpanel">
@@ -448,12 +448,12 @@ const ruleEnforcementKebab = computed(() => {
               <router-link :to="`/experiments/${e.id}`" class="font-semibold text-blue-600 hover:underline">{{ e.name }}</router-link>
               <Badge :color="e.active ? 'green' : 'gray'" :label="e.active ? 'active' : 'idle'" />
               <span class="flex-1"></span>
-              <button v-if="e.active" type="button" class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500" :disabled="expProcessing === e.id" @click="deactivateExp(e.id)">
+              <Button v-if="e.active" variant="secondary" size="sm" :disabled="expProcessing === e.id" @click="deactivateExp(e.id)">
                 {{ expProcessing === e.id ? 'Deactivating...' : 'Deactivate' }}
-              </button>
-              <button v-else type="button" class="btn btn-primary text-xs focus-visible:outline-2 focus-visible:outline-blue-500" :disabled="expProcessing === e.id" @click="activateExp(e.id)">
+              </Button>
+              <Button v-else variant="primary" size="sm" :disabled="expProcessing === e.id" @click="activateExp(e.id)">
                 {{ expProcessing === e.id ? 'Activating...' : 'Activate' }}
-              </button>
+              </Button>
             </div>
             <div class="mt-2 text-sm text-gray-600">
               <span class="text-xs font-medium text-gray-500">Concealed:</span>
@@ -486,6 +486,7 @@ const ruleEnforcementKebab = computed(() => {
           :skill-id="data.skill_id"
           :repos="repos"
           :deployments="deployments"
+          :project-subpath="projectSubpath"
           @saved="loadDeployments" />
 
         <ChannelRow
@@ -536,52 +537,18 @@ const ruleEnforcementKebab = computed(() => {
 }
 
 .pdv-main {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
   border-radius: 0.75rem;
   overflow: hidden;
   min-width: 0;
 }
 
 .pdv-tabs {
-  display: flex;
-  gap: 0.25rem;
-  padding: 0.5rem 0.5rem 0 0.5rem;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fafafa;
+  padding: 0.5rem 0.75rem 0 0.75rem;
+  background: var(--color-zinc-50);
   overflow-x: auto;
 }
-.pdv-tab {
-  padding: 0.5rem 0.875rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: #64748b;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 0.375rem 0.375rem 0 0;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  cursor: pointer;
-  transition: color 150ms, background-color 150ms, border-color 150ms;
-  white-space: nowrap;
-}
-.pdv-tab:hover { color: #0f172a; background: #f1f5f9; }
-.pdv-tab-active {
-  color: #1e40af;
-  background: #fff;
-  border-color: #e5e7eb;
-  border-bottom-color: #2563eb;
-}
-.pdv-tab-count {
-  display: inline-block;
-  margin-left: 0.25rem;
-  padding: 0 0.375rem;
-  font-size: 0.6875rem;
-  background: #e5e7eb;
-  color: #475569;
-  border-radius: 999px;
-}
-.pdv-tab-active .pdv-tab-count { background: #dbeafe; color: #1e40af; }
 
 .pdv-panel {
   padding: 1.25rem 1.5rem 1.5rem 1.5rem;
@@ -597,7 +564,7 @@ const ruleEnforcementKebab = computed(() => {
 .pdv-section-title {
   font-size: 1rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-slate-900);
   margin: 0;
 }
 
@@ -618,12 +585,12 @@ const ruleEnforcementKebab = computed(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--color-slate-400);
 }
 .pdv-meta-row dd {
   margin: 0;
   font-size: 0.875rem;
-  color: #0f172a;
+  color: var(--color-slate-900);
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
@@ -635,8 +602,8 @@ const ruleEnforcementKebab = computed(() => {
 
 /* Right rail ---------------------------------------------------------- */
 .pdv-rail {
-  background: #fafafa;
-  border: 1px solid #e5e7eb;
+  background: var(--color-zinc-50);
+  border: 1px solid var(--color-gray-200);
   border-radius: 0.75rem;
   padding: 1rem;
   display: flex;
@@ -647,18 +614,18 @@ const ruleEnforcementKebab = computed(() => {
 .pdv-rail-title {
   font-size: 0.9375rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-slate-900);
   margin: 0;
 }
 .pdv-rail-sub {
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--color-slate-500);
   margin: 0.125rem 0 0 0;
 }
 
 .pdv-skillhub-offline {
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin: 0.25rem 0 0 0.25rem;
   font-style: italic;
 }
@@ -666,14 +633,14 @@ const ruleEnforcementKebab = computed(() => {
 /* Attached rule bundle header copy */
 .pdv-bundle-desc {
   font-size: 0.8125rem;
-  color: #475569;
+  color: var(--color-slate-600);
   margin: 0 0 0.5rem 0;
   line-height: 1.55;
 }
 .pdv-bundle-invocation {
   margin: 0 0 0.875rem 0;
   font-size: 0.75rem;
-  color: #64748b;
+  color: var(--color-slate-500);
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -683,16 +650,16 @@ const ruleEnforcementKebab = computed(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   font-size: 0.6875rem;
   flex-shrink: 0;
 }
 .pdv-bundle-invocation code {
   font-size: 0.75rem;
   padding: 0.125rem 0.4375rem;
-  background: #f1f5f9;
+  background: var(--color-slate-100);
   border-radius: 0.25rem;
-  color: #1e293b;
+  color: var(--color-slate-800);
   word-break: break-all;
 }
 .pdv-bundle-rules-head {
@@ -700,7 +667,7 @@ const ruleEnforcementKebab = computed(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin: 0.5rem 0 0.5rem 0;
   display: flex;
   align-items: center;
@@ -710,8 +677,8 @@ const ruleEnforcementKebab = computed(() => {
   display: inline-block;
   padding: 0 0.375rem;
   font-size: 0.6875rem;
-  background: #e2e8f0;
-  color: #475569;
+  background: var(--color-slate-200);
+  color: var(--color-slate-600);
   border-radius: 999px;
   letter-spacing: 0;
 }
@@ -723,19 +690,19 @@ const ruleEnforcementKebab = computed(() => {
   padding: 0;
 }
 .pdv-bundle-rule-list .pdv-rule-card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
   border-radius: 0.5rem;
   padding: 0.75rem 1rem;
   gap: 0.375rem;
   transition: border-color 120ms, background 120ms, box-shadow 120ms;
 }
 .pdv-bundle-rule-list .pdv-rule-card:last-child {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-gray-200);
 }
 .pdv-bundle-rule-list .pdv-rule-card:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
+  background: var(--color-slate-50);
+  border-color: var(--color-slate-300);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .pdv-bundle-rule-list .pdv-rule-head {
@@ -744,12 +711,12 @@ const ruleEnforcementKebab = computed(() => {
 .pdv-bundle-rule-list .pdv-rule-head code {
   font-size: 0.8125rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-slate-900);
   background: transparent;
   padding: 0;
 }
 .pdv-bundle-rule-list .pdv-rule-desc {
-  color: #64748b;
+  color: var(--color-slate-500);
   font-size: 0.8125rem;
 }
 
@@ -764,7 +731,7 @@ const ruleEnforcementKebab = computed(() => {
   flex-direction: column;
   gap: 0.375rem;
   padding: 0.625rem 0;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-slate-100);
 }
 .pdv-rule-card:last-child { border-bottom: 0; }
 .pdv-rule-card-disabled { opacity: 0.55; }
@@ -780,7 +747,7 @@ const ruleEnforcementKebab = computed(() => {
 .pdv-rule-spacer { flex: 1; }
 .pdv-rule-desc {
   font-size: 0.8125rem;
-  color: #475569;
+  color: var(--color-slate-600);
   margin: 0;
   line-height: 1.5;
 }
@@ -788,37 +755,37 @@ const ruleEnforcementKebab = computed(() => {
   font-size: 0.75rem;
   padding: 0.125rem 0.5rem;
   background: transparent;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-slate-300);
   border-radius: 0.25rem;
-  color: #475569;
+  color: var(--color-slate-600);
   cursor: pointer;
   white-space: nowrap;
 }
-.pdv-rule-toggle:hover { background: #f1f5f9; color: #0f172a; }
+.pdv-rule-toggle:hover { background: var(--color-slate-100); color: var(--color-slate-900); }
 .pdv-rule-toggle-danger {
-  color: #b91c1c;
-  border-color: #fecaca;
+  color: var(--color-red-700);
+  border-color: var(--color-red-200);
 }
-.pdv-rule-toggle-danger:hover { background: #fef2f2; color: #991b1b; }
+.pdv-rule-toggle-danger:hover { background: var(--color-red-50); color: var(--color-red-800); }
 
 /* Danger zone */
 .pdv-danger-zone {
   margin-top: 0.5rem;
   padding-top: 0.75rem;
-  border-top: 1px dashed #e5e7eb;
+  border-top: 1px dashed var(--color-gray-200);
 }
 .pdv-danger-head {
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin-bottom: 0.375rem;
 }
 .pdv-danger-link {
   background: transparent;
   border: 0;
-  color: #b91c1c;
+  color: var(--color-red-700);
   cursor: pointer;
   padding: 0;
   font-size: 0.8125rem;
@@ -827,7 +794,7 @@ const ruleEnforcementKebab = computed(() => {
 .pdv-danger-link:hover { text-decoration: underline; }
 .pdv-danger-hint {
   font-size: 0.6875rem;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin: 0.25rem 0 0 0;
 }
 </style>

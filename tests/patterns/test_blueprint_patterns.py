@@ -144,6 +144,8 @@ def test_api_pattern_detail_envelope(
     assert body["enforcing_rules"] == []
     assert body["attached_rule_bundles"] == []
     assert body["experiments"] == []
+    assert body["provider"]["id"] == "claude"
+    assert body["provider"]["project_subpath"] == ".claude/skills"
 
 
 def test_api_pattern_detail_includes_attached_bundle_engine(

@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import api from '../api'
 import { useFlash } from '../composables/useFlash'
+import Button from './ui/Button.vue'
+import Checkbox from './ui/Checkbox.vue'
 
 // Extracted from PatternDetailView (PR 2.4c). Owns the create-experiment
 // form: name + sections checkbox group + inline validation. The
@@ -40,6 +42,12 @@ async function create() {
   open.value = false
   emit('saved')
 }
+
+function toggleSection(s) {
+  const i = sections.value.indexOf(s)
+  if (i === -1) sections.value.push(s)
+  else sections.value.splice(i, 1)
+}
 </script>
 
 <template>
@@ -64,25 +72,21 @@ async function create() {
       <div class="mb-3">
         <label class="text-sm text-gray-500">Sections to conceal</label>
         <div class="flex flex-wrap gap-x-4 gap-y-1 mt-1">
-          <label
+          <Checkbox
             v-for="s in availableSections"
             :key="s"
-            class="flex items-center gap-1.5 text-sm">
-            <input
-              type="checkbox"
-              :value="s"
-              v-model="sections"
-              :aria-label="s"
-              class="rounded border-gray-300">
+            :model-value="sections.includes(s)"
+            :aria-label="s"
+            @update:model-value="toggleSection(s)">
             <code class="text-xs">{{ s }}</code>
-          </label>
+          </Checkbox>
         </div>
         <p v-if="errors.sections" class="text-xs text-red-600 mt-1">{{ errors.sections }}</p>
       </div>
-      <button
-        type="button"
-        class="btn btn-primary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="create">Create</button>
+      <Button
+        variant="primary"
+        size="sm"
+        @click="create">Create</Button>
     </div>
   </details>
 </template>

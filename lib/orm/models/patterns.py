@@ -76,6 +76,11 @@ class PatternDeployment(Base, table=True):
     scope: str = Field(sa_column=Column("scope", String, nullable=False))
     project_id: Optional[int] = Field(default=None,
                                       sa_column=Column("project_id", Integer))
+    # Provider id (claude/codex/kimi/generic) that owns this deployment row.
+    # NULL means "active provider at the time of migration" for backward
+    # compatibility; new rows always set this explicitly.
+    provider: Optional[str] = Field(default=None,
+                                    sa_column=Column("provider", String))
     deployed_path: str = Field(sa_column=Column("deployed_path", String, nullable=False))
     deployed_at: Optional[str] = Field(
         default=None,

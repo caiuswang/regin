@@ -4,6 +4,7 @@ import api from '../api'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import ChannelRow from './ChannelRow.vue'
+import Button from './ui/Button.vue'
 
 // Extracted from PatternDetailView's deployment rail (PR 2.4f). Owns:
 //   * the repo typeahead picker (selectedRepos / repoQuery / repoPickerOpen)
@@ -20,6 +21,7 @@ const props = defineProps({
   skillId: { type: String, required: true },
   repos: { type: Array, default: () => [] },
   deployments: { type: Array, default: () => [] },
+  projectSubpath: { type: String, default: '.claude/skills' },
 })
 const emit = defineEmits(['saved'])
 
@@ -141,7 +143,7 @@ async function backfillDeployment(projectId, projectName) {
 async function removeProjectDeployment(projectId, projectName) {
   const ok = await confirm(
     'Remove project deployment',
-    `Delete ${props.skillId} from ${projectName} (.claude/skills/)? Source stays.`,
+    `Delete ${props.skillId} from ${projectName} (${props.projectSubpath}/)? Source stays.`,
     true,
   )
   if (!ok) return
@@ -211,9 +213,9 @@ async function removeProjectDeployment(projectId, projectName) {
           class="pdv-picker-search"
           aria-label="Filter project repos">
       </div>
-      <button
-        type="button"
-        class="btn btn-primary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
+      <Button
+        variant="primary"
+        size="sm"
         :disabled="!selectedRepos.length || pushing"
         @click="pushToProject()">
         {{ pushing
@@ -221,7 +223,7 @@ async function removeProjectDeployment(projectId, projectName) {
           : selectedRepos.length > 1
             ? `Push to ${selectedRepos.length}`
             : 'Push' }}
-      </button>
+      </Button>
 
       <aside
         v-if="repoPickerOpen && filteredRepos.length"
@@ -273,13 +275,13 @@ async function removeProjectDeployment(projectId, projectName) {
   align-items: center;
   gap: 0.5rem;
   padding: 0.375rem 0.5rem;
-  background: #fff;
-  border: 1px solid #f1f5f9;
+  background: var(--color-white);
+  border: 1px solid var(--color-slate-100);
   border-radius: 0.375rem;
   font-size: 0.8125rem;
 }
 .pdv-project-name {
-  color: #047857;
+  color: var(--color-emerald-700);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -287,7 +289,7 @@ async function removeProjectDeployment(projectId, projectName) {
   flex: 1;
   min-width: 0;
   font-size: 0.6875rem;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -295,13 +297,13 @@ async function removeProjectDeployment(projectId, projectName) {
 .pdv-project-remove {
   background: transparent;
   border: 0;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   cursor: pointer;
   padding: 0 0.25rem;
   font-size: 1rem;
   line-height: 1;
 }
-.pdv-project-remove:hover { color: #b91c1c; }
+.pdv-project-remove:hover { color: var(--color-red-700); }
 
 .pdv-project-untracked {
   flex-shrink: 0;
@@ -309,8 +311,8 @@ async function removeProjectDeployment(projectId, projectName) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #b45309;
-  background: #fef3c7;
+  color: var(--color-amber-700);
+  background: var(--color-amber-100);
   border-radius: 0.25rem;
   padding: 0.0625rem 0.3125rem;
 }
@@ -318,13 +320,13 @@ async function removeProjectDeployment(projectId, projectName) {
   flex-shrink: 0;
   font-size: 0.6875rem;
   font-weight: 500;
-  color: #1d4ed8;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
+  color: var(--color-blue-700);
+  background: var(--color-blue-50);
+  border: 1px solid var(--color-blue-200);
   border-radius: 0.25rem;
   padding: 0.125rem 0.4375rem;
   cursor: pointer;
 }
-.pdv-project-backfill:hover:not(:disabled) { background: #dbeafe; }
+.pdv-project-backfill:hover:not(:disabled) { background: var(--color-blue-100); }
 .pdv-project-backfill:disabled { opacity: 0.6; cursor: default; }
 </style>

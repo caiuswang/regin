@@ -3,6 +3,9 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import Card from './Card.vue'
+import Button from './ui/Button.vue'
+import Input from './ui/Input.vue'
+import Textarea from './ui/Textarea.vue'
 import { useFlash } from '../composables/useFlash'
 
 // Extracted from PatternsView. Owns the "Create new pattern" form. All of its
@@ -11,8 +14,9 @@ import { useFlash } from '../composables/useFlash'
 // gates this with v-if="showCreate" (so the form mounts fresh, matching the
 // old behavior where Cancel/Create always left the fields cleared) and listens
 // for `close` to drop showCreate.
-defineProps({
+const props = defineProps({
   tags: { type: Array, default: () => [] },
+  redirectTo: { type: String, default: 'patterns' },
 })
 const emit = defineEmits(['close'])
 
@@ -43,7 +47,7 @@ async function createPattern() {
   creating.value = false
   if (result.ok) {
     flash(result.msg)
-    router.push(`/patterns/${result.slug}`)
+    router.push(`/${props.redirectTo}/${result.slug}`)
   } else {
     flash(result.msg || 'Failed to create', 'error')
   }
@@ -56,18 +60,15 @@ async function createPattern() {
     <div class="grid grid-cols-2 gap-4 max-w-2xl">
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
-        <input v-model="newTitle" type="text" aria-label="Pattern title" @blur="autoSlug" placeholder="e.g. Distributed Lock with RLockUtil"
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+        <Input v-model="newTitle" type="text" aria-label="Pattern title" @blur="autoSlug" placeholder="e.g. Distributed Lock with RLockUtil" />
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Slug</label>
-        <input v-model="newSlug" type="text" aria-label="Pattern slug" placeholder="auto-generated from title"
-          class="input font-mono focus-visible:outline-2 focus-visible:outline-blue-500">
+        <Input v-model="newSlug" type="text" aria-label="Pattern slug" placeholder="auto-generated from title" class="font-mono" />
       </div>
       <div class="col-span-2">
         <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
-        <textarea v-model="newDescription" rows="2" aria-label="Pattern description" placeholder="What this pattern covers…"
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500"></textarea>
+        <Textarea v-model="newDescription" :rows="2" aria-label="Pattern description" placeholder="What this pattern covers…" />
       </div>
       <div class="col-span-2" v-if="tags?.length">
         <label class="block text-sm font-medium text-slate-700 mb-1">Tags</label>
@@ -81,14 +82,12 @@ async function createPattern() {
       </div>
     </div>
     <div class="mt-4 flex gap-2">
-      <button type="button" @click="createPattern" :disabled="creating"
-              class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500">
+      <Button variant="primary" @click="createPattern" :disabled="creating">
         {{ creating ? 'Creating…' : 'Create' }}
-      </button>
-      <button type="button" @click="emit('close')"
-              class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500">
+      </Button>
+      <Button variant="secondary" @click="emit('close')">
         Cancel
-      </button>
+      </Button>
     </div>
   </Card>
 </template>
@@ -100,15 +99,15 @@ async function createPattern() {
     align-items: center;
     gap: 0.25rem;
     font-size: 0.75rem;
-    background: #F1F5F9;
-    color: #475569;
+    background: var(--color-slate-100);
+    color: var(--color-slate-600);
     border-radius: 0.375rem;
     padding: 0.25rem 0.625rem;
     cursor: pointer;
     transition: background-color 150ms, color 150ms;
 }
 
-.tag-pick:hover { background: #E2E8F0; }
+.tag-pick:hover { background: var(--color-slate-200); }
 
-.tag-pick.is-active { background: #DBEAFE; color: #1E40AF; font-weight: 500; }
+.tag-pick.is-active { background: var(--color-blue-100); color: var(--color-blue-800); font-weight: 500; }
 </style>

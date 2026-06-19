@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import api from '../api'
 import { useFlash } from '../composables/useFlash'
+import Button from './ui/Button.vue'
 
 // Extracted from PatternDetailView (PR 2.4e). Owns the description
 // editor's 3 refs (editing/edit/saving) and its 2 helpers. The parent
@@ -60,15 +61,15 @@ function cancel() {
       aria-label="Pattern description"
       placeholder="One- or two-sentence summary shown in the deployed skill listing." />
     <div class="btn-row mt-3">
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        size="sm"
         :disabled="saving"
-        class="btn btn-primary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="save">{{ saving ? 'Saving…' : 'Save description' }}</button>
-      <button
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="cancel">Cancel</button>
+        @click="save">{{ saving ? 'Saving…' : 'Save description' }}</Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        @click="cancel">Cancel</Button>
     </div>
   </div>
 </template>

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import api from '../api'
 import { useFlash } from '../composables/useFlash'
 import MarkdownContent from './MarkdownContent.vue'
+import Button from './ui/Button.vue'
 
 // Extracted from PatternDetailView (PR 2.4d). Owns editing/editBody/
 // saving refs + startEditing/saveContent. Renders the body markdown
@@ -51,23 +52,23 @@ function cancel() {
   <div class="pdv-section-head">
     <h2 class="pdv-section-title">Content</h2>
     <div v-if="!editing">
-      <button
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="startEditing">Edit</button>
+      <Button
+        variant="secondary"
+        size="sm"
+        @click="startEditing">Edit</Button>
     </div>
     <div v-else class="btn-row">
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        size="sm"
         :disabled="saving"
-        class="btn btn-primary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
         @click="save">
         {{ saving ? 'Saving...' : 'Save' }}
-      </button>
-      <button
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="cancel">Cancel</button>
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        @click="cancel">Cancel</Button>
     </div>
   </div>
   <div v-if="editing">

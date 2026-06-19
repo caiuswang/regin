@@ -670,6 +670,135 @@ def route(query: str, *, top_k: int = 5, retrieval_k: int = 20,
     return _build_route_results(ordered, meta, score_kind, top_k)
 
 
+# ── Unified routing: patterns + wikis (shared index) + agent memory ──
+#
+# Patterns and wikis live in the shared `pattern_docs` dense index and are
+# ranked by `route()` above. Cross-session memories live in their own
+# self-initializing DB (`lib.memory.engine`) and are ranked by
+# `lib.memory.store.recall`. Both legs score with the *same* SkillRouter
+# cross-encoder (memory then layers its quality/intent multipliers on top —
+# see `_merge_route_results`), so `route_unified` can merge the two ranked
+# lists into one. We deliberately do NOT index memory bodies
+# into `pattern_docs`: that would force the disk-reading reranker
+# (`_body_at`) to special-case DB-resident bodies and would leak memory
+# content into the rebuild-able main DB, defeating the memory DB's
+# survives-`regin init` design. Aggregating at this surface keeps memory's
+# store (and its quality-factor + intent ranking) fully intact.
+
+_MEMORY_HEADER_SNIPPET = 80
+
+
+def _route_snippet(text: str, cap: int = _MEMORY_HEADER_SNIPPET) -> str:
+    """First non-empty line of `text`, capped — a title stand-in for memories
+    that carry no explicit title."""
+    line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    return line if len(line) <= cap else line[: cap - 1] + "…"
+
+
+def _memory_header(m: dict) -> str:
+    """One-line context for a memory result, mirroring the wiki `header`
+    convention (metadata the on-disk/body content doesn't itself carry)."""
+    segments = [f"Memory: {m.get('kind') or 'lesson'}"]
+    scope = m.get("scope") or "global"
+    segments.append(f"scope:{scope}")
+    rc = m.get("recall_count") or 0
+    if rc:
+        segments.append(f"recalled {rc}×")
+    imp = m.get("importance")
+    if isinstance(imp, (int, float)):
+        segments.append(f"importance {imp:.2f}")
+    return " | ".join(segments)
+
+
+def _memory_route_results(query: str, top_k: int,
+                          repo: Optional[str]) -> list[dict]:
+    """Agent-memory recall hits, mapped into the `route()` result dict shape.
+
+    Returns [] when memory is disabled, empty, or errors — routing must
+    never break because the optional memory leg failed (same degrade-never-
+    raise contract as `index_wikis_best_effort`). `reinforce=False` keeps
+    exploratory routing from bumping `recall_count`; only deliberate recall
+    should reinforce. `repo` narrows repo-scoped memories the way the wiki
+    `repo` filter narrows wikis — `global` rows always pass through.
+    """
+    try:
+        from lib import memory as _memory
+    except Exception:  # noqa: BLE001 — memory subsystem optional
+        return []
+    if not _memory.enabled():
+        return []
+    try:
+        hits = _memory.recall(
+            query, top_k=top_k, mode="auto", reinforce=False,
+        )
+    except Exception:  # noqa: BLE001 — degrade, never break routing
+        _patterns_log().error("memory_route_recall_failed", exc_info=True)
+        return []
+    out: list[dict] = []
+    for h in hits:
+        m = h.memory
+        scope = m.get("scope") or "global"
+        if repo and scope not in ("global", f"repo:{repo}"):
+            continue
+        repo_name = scope.split(":", 1)[1] if scope.startswith("repo:") else None
+        out.append({
+            "id": m.get("id"),
+            "slug": f"memory/{m.get('id')}",
+            "title": m.get("title") or _route_snippet(m.get("body", "")),
+            "category": m.get("kind"),
+            "file_path": None,  # memory lives in the memory DB, not on disk
+            "source_kind": "memory",
+            "repo_id": None,
+            "repo_name": repo_name,
+            "header": _memory_header(m),
+            "body": m.get("body"),
+            "score": float(h.score),
+            "score_kind": h.score_kind,
+        })
+    return out
+
+
+def route_unified(query: str, *, top_k: int = 5, retrieval_k: int = 20,
+                  rerank: bool = True,
+                  kinds: Optional[list[str]] = None,
+                  repo: Optional[str] = None,
+                  embed_model_id: str = skill_router.EMBEDDING_MODEL_ID,
+                  rerank_model_id: str = skill_router.RERANKER_MODEL_ID
+                  ) -> dict:
+    """Route a query into two complementary sections, NOT one merged list.
+
+    A pattern or wiki is a *procedure* ("how to do this task"); a memory is
+    an *atom* — a gotcha, fact, or past decision ("keep this in mind while
+    you do it"). They answer different questions, so they must not compete
+    for the same ranked slot: a caveat scored above a procedure would invite
+    an agent to mistake "watch out for X" for "how to do Y". This returns
+
+        {"guidance": [pattern/wiki results, ranked],
+         "memories": [memory results,     ranked]}
+
+    each section independently ranked within its own (consistent) score
+    scale — which is also why there is no cross-source score merge to get
+    wrong. `kinds` accepts any of `pattern`, `wiki`, `memory`; None
+    (default) returns all three. The pattern/wiki leg goes through `route()`
+    unchanged; the memory leg goes through `_memory_route_results` and
+    degrades to an empty `memories` list when memory is disabled or errors.
+    `repo` narrows both wiki and repo-scoped memory rows; global
+    patterns/memories pass through unchanged."""
+    want = set(kinds) if kinds else {"pattern", "wiki", "memory"}
+    guidance: list[dict] = []
+    memories: list[dict] = []
+    pw_kinds = [k for k in ("pattern", "wiki") if k in want]
+    if pw_kinds:
+        guidance = route(
+            query, top_k=top_k, retrieval_k=retrieval_k, rerank=rerank,
+            kinds=pw_kinds, repo=repo,
+            embed_model_id=embed_model_id, rerank_model_id=rerank_model_id,
+        )
+    if "memory" in want:
+        memories = _memory_route_results(query, top_k, repo)
+    return {"guidance": guidance, "memories": memories}
+
+
 def index_patterns_best_effort(*, progress=None) -> Optional[dict]:
     """Embed if router deps are installed; otherwise silently return None.
 

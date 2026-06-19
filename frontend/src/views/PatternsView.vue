@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
+import Checkbox from '../components/ui/Checkbox.vue'
 import PatternFolderImportModal from '../components/PatternFolderImportModal.vue'
 import PatternCreateForm from '../components/PatternCreateForm.vue'
 import { useFlash } from '../composables/useFlash'
@@ -263,23 +265,21 @@ const skillBadge = {
         <p class="page-subtitle">Curated procedure guides synced from sibling source repos. {{ data.docs.length }} pattern{{ data.docs.length === 1 ? '' : 's' }} shown.</p>
       </div>
       <div class="page-actions">
-        <button
-          type="button"
-          class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
+        <Button
+          variant="secondary"
           aria-label="Batch import"
           @click="folderVisible = true"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
           Batch import
-        </button>
-        <button
-          type="button"
-          class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
+        </Button>
+        <Button
+          variant="primary"
           @click="showCreate = true"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           New pattern
-        </button>
+        </Button>
         <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
       </div>
     </header>
@@ -317,11 +317,10 @@ const skillBadge = {
       <span class="toolbar-count">{{ visibleDocs.length }} {{ visibleDocs.length === 1 ? 'pattern' : 'patterns' }}</span>
 
       <template v-if="features.experimental_dense_search">
-        <label class="dense-toggle">
-          <input type="checkbox" v-model="denseOn" aria-label="Toggle dense search" />
-          Dense search
+        <span class="dense-toggle">
+          <Checkbox v-model="denseOn" label="Dense search" aria-label="Toggle dense search" />
           <Badge color="amber" label="EXPERIMENTAL" />
-        </label>
+        </span>
         <span
           v-if="denseOn && coverage"
           class="coverage-chip"
@@ -350,15 +349,14 @@ const skillBadge = {
           class="input dense-input focus-visible:outline-2 focus-visible:outline-blue-500"
           @keyup.enter="runDenseSearch"
         />
-        <button
+        <Button
           v-if="denseOn"
-          type="button"
-          class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="secondary"
           :disabled="denseLoading || !denseQuery.trim()"
           @click="runDenseSearch"
         >
           {{ denseLoading ? 'Routing…' : 'Route' }}
-        </button>
+        </Button>
       </template>
     </div>
     <div v-if="denseActive && denseError" class="text-amber-700 text-sm mb-2">{{ denseError }}</div>
@@ -505,10 +503,10 @@ const skillBadge = {
             </div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500" @click="conflictCancel">Cancel</button>
-            <button v-if="!conflictRenaming" type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500" @click="conflictRenaming = true">Rename</button>
-            <button v-if="conflictRenaming" type="button" class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500" @click="conflictRename">Import as new name</button>
-            <button type="button" class="btn btn-danger focus-visible:outline-2 focus-visible:outline-blue-500" @click="conflictOverwrite">Overwrite</button>
+            <Button variant="secondary" @click="conflictCancel">Cancel</Button>
+            <Button v-if="!conflictRenaming" variant="secondary" @click="conflictRenaming = true">Rename</Button>
+            <Button v-if="conflictRenaming" variant="primary" @click="conflictRename">Import as new name</Button>
+            <Button variant="danger" @click="conflictOverwrite">Overwrite</Button>
           </div>
         </div>
       </aside>
@@ -520,7 +518,7 @@ const skillBadge = {
         <template v-if="denseActive">No dense results — enter a query and press Enter.</template>
         <template v-else>No patterns match the current filters.</template>
       </p>
-      <button v-if="activeFilterCount && !denseActive" type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500" @click="clearFilters">Clear filters</button>
+      <Button v-if="activeFilterCount && !denseActive" variant="secondary" @click="clearFilters">Clear filters</Button>
     </div>
     <Card v-else :no-padding="true">
       <table class="tbl">
@@ -588,32 +586,32 @@ const skillBadge = {
     padding: 0.4375rem 0.75rem;
     font-size: 0.8125rem;
     font-weight: 500;
-    color: #475569;
-    background: #fff;
-    border: 1px solid #E2E8F0;
+    color: var(--color-slate-600);
+    background: var(--color-white);
+    border: 1px solid var(--color-slate-200);
     border-radius: 0.625rem;
     cursor: pointer;
     transition: background-color 150ms, color 150ms, border-color 150ms;
 }
 
-.filter-toggle:hover { background: #F8FAFC; color: #0F172A; }
-.filter-toggle.is-open { background: #EFF6FF; color: #1E40AF; border-color: #BFDBFE; }
+.filter-toggle:hover { background: var(--color-slate-50); color: var(--color-slate-900); }
+.filter-toggle.is-open { background: var(--color-blue-50); color: var(--color-blue-800); border-color: var(--color-blue-200); }
 
 .filter-toggle-count {
     font-size: 0.625rem;
     padding: 0.0625rem 0.375rem;
     border-radius: 9999px;
-    background: #F1F5F9;
-    color: #64748B;
+    background: var(--color-slate-100);
+    color: var(--color-slate-500);
     font-weight: 600;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.filter-toggle.is-open .filter-toggle-count { background: #DBEAFE; color: #1E40AF; }
+.filter-toggle.is-open .filter-toggle-count { background: var(--color-blue-100); color: var(--color-blue-800); }
 
 .filter-clear {
     font-size: 0.75rem;
-    color: #64748B;
+    color: var(--color-slate-500);
     background: transparent;
     border: 0;
     cursor: pointer;
@@ -621,7 +619,7 @@ const skillBadge = {
     border-radius: 0.375rem;
 }
 
-.filter-clear:hover { color: #1E40AF; text-decoration: underline; }
+.filter-clear:hover { color: var(--color-blue-800); text-decoration: underline; }
 
 .filter-chip-count {
     font-size: 0.625rem;
@@ -639,26 +637,26 @@ const skillBadge = {
     display: flex;
     align-items: center;
     gap: 0.875rem;
-    border: 1.5px dashed #CBD5E1;
+    border: 1.5px dashed var(--color-slate-300);
     border-radius: 0.75rem;
-    background: #F8FAFC;
+    background: var(--color-slate-50);
     padding: 0.875rem 1.25rem;
     transition: background-color 150ms, border-color 150ms;
 }
 
 .drop-zone.is-dragging .drop-target {
-    background: #EFF6FF;
-    border-color: #3B82F6;
+    background: var(--color-blue-50);
+    border-color: var(--color-blue-500);
 }
 
 .drop-target-icon {
     flex: none;
-    color: #94A3B8;
+    color: var(--color-slate-400);
     transition: color 150ms;
 }
 
 .drop-zone.is-dragging .drop-target-icon {
-    color: #3B82F6;
+    color: var(--color-blue-500);
 }
 
 .drop-target-copy {
@@ -669,20 +667,20 @@ const skillBadge = {
 .drop-target-title {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: #334155;
+    color: var(--color-slate-700);
 }
 
 .drop-target-hint {
     font-size: 0.75rem;
-    color: #94A3B8;
+    color: var(--color-slate-400);
     line-height: 1.6;
     margin-top: 0.125rem;
 }
 
 .drop-target-hint code {
     font-size: 0.6875rem;
-    background: #F1F5F9;
-    color: #475569;
+    background: var(--color-slate-100);
+    color: var(--color-slate-600);
     padding: 0.0625rem 0.3125rem;
     border-radius: 0.25rem;
 }
@@ -691,7 +689,7 @@ const skillBadge = {
     flex: none;
     font-size: 0.75rem;
     font-weight: 500;
-    color: #2563EB;
+    color: var(--color-blue-600);
     background: none;
     border: none;
     cursor: pointer;
@@ -701,29 +699,29 @@ const skillBadge = {
 }
 
 .drop-browse:hover:not(:disabled) {
-    color: #1D4ED8;
-    background: #EFF6FF;
+    color: var(--color-blue-700);
+    background: var(--color-blue-50);
 }
 
 .drop-browse:disabled {
-    color: #94A3B8;
+    color: var(--color-slate-400);
     cursor: default;
 }
 
 .input {
     width: 100%;
-    border: 1px solid #E2E8F0;
-    background: #fff;
+    border: 1px solid var(--color-slate-200);
+    background: var(--color-white);
     border-radius: 0.5rem;
     padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
-    color: #0F172A;
+    color: var(--color-slate-900);
     outline: none;
     transition: border-color 150ms, box-shadow 150ms;
 }
 
 .input:focus {
-    border-color: #3B82F6;
+    border-color: var(--color-blue-500);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
@@ -741,7 +739,7 @@ const skillBadge = {
 }
 
 .modal-card {
-    background: #fff;
+    background: var(--color-white);
     border-radius: 1rem;
     max-width: 28rem;
     width: 100%;
@@ -754,18 +752,18 @@ const skillBadge = {
 .modal-title {
     font-size: 1rem;
     font-weight: 600;
-    color: #0F172A;
+    color: var(--color-slate-900);
     margin-bottom: 0.375rem;
 }
 
-.modal-text { font-size: 0.875rem; color: #64748B; }
+.modal-text { font-size: 0.875rem; color: var(--color-slate-500); }
 
 .modal-footer {
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
     padding: 0.75rem 1.25rem 1rem;
-    border-top: 1px solid #F1F5F9;
+    border-top: 1px solid var(--color-slate-100);
 }
 
 .dense-toggle {
@@ -774,7 +772,7 @@ const skillBadge = {
     gap: 0.375rem;
     margin-left: auto;
     font-size: 0.8125rem;
-    color: #475569;
+    color: var(--color-slate-600);
     cursor: pointer;
     user-select: none;
 }
@@ -790,23 +788,23 @@ const skillBadge = {
     align-items: center;
     gap: 0.3rem;
     font-size: 0.6875rem;
-    color: #475569;
-    background: #F1F5F9;
+    color: var(--color-slate-600);
+    background: var(--color-slate-100);
     border-radius: 9999px;
     padding: 0.125rem 0.5rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .coverage-chip.has-drift {
-    background: #FEF3C7;
-    color: #92400E;
+    background: var(--color-amber-100);
+    color: var(--color-amber-800);
 }
 
 .coverage-drift { font-weight: 600; }
 
 .coverage-reembed {
     font-size: 0.6875rem;
-    color: #1E40AF;
+    color: var(--color-blue-800);
     background: transparent;
     border: 0;
     cursor: pointer;
@@ -814,19 +812,19 @@ const skillBadge = {
     text-decoration: underline;
 }
 
-.coverage-reembed:disabled { color: #94A3B8; cursor: default; text-decoration: none; }
+.coverage-reembed:disabled { color: var(--color-slate-400); cursor: default; text-decoration: none; }
 
 /* Tag filter panel */
 .tag-panel {
-    border: 1px solid #E2E8F0;
+    border: 1px solid var(--color-slate-200);
     border-radius: 0.75rem;
     padding: 0.625rem 0.875rem 0.75rem;
-    background: #fff;
+    background: var(--color-white);
     transition: border-color 150ms, background-color 150ms;
 }
 .tag-panel.is-manage {
-    border-color: #F59E0B;
-    box-shadow: 0 0 0 1px #FDE68A inset;
+    border-color: var(--color-amber-500);
+    box-shadow: 0 0 0 1px var(--color-amber-200) inset;
 }
 .tag-panel-header {
     display: flex;
@@ -840,12 +838,12 @@ const skillBadge = {
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #64748B;
+    color: var(--color-slate-500);
 }
-.tag-panel.is-manage .tag-panel-title { color: #92400E; }
+.tag-panel.is-manage .tag-panel-title { color: var(--color-amber-800); }
 .tag-panel-action {
     font-size: 0.75rem;
-    color: #1E40AF;
+    color: var(--color-blue-800);
     background: transparent;
     border: 0;
     cursor: pointer;
@@ -853,7 +851,7 @@ const skillBadge = {
     border-radius: 0.375rem;
 }
 .tag-panel-action:hover { text-decoration: underline; }
-.tag-panel-action.is-done { color: #047857; font-weight: 500; }
+.tag-panel-action.is-done { color: var(--color-emerald-700); font-weight: 500; }
 
 .tag-panel-row {
     padding: 0.25rem 0;
@@ -863,21 +861,21 @@ const skillBadge = {
 .tag-group-header {
     font-size: 0.75rem;
     font-weight: 600;
-    color: #1E40AF;
+    color: var(--color-blue-800);
     margin: 0.5rem 0 0.125rem;
 }
-.tag-panel.is-manage .tag-group-header { color: #92400E; }
+.tag-panel.is-manage .tag-group-header { color: var(--color-amber-800); }
 
 .filter-chip.is-editable {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    background: #fff;
-    border: 1px solid #FDE68A;
+    background: var(--color-white);
+    border: 1px solid var(--color-amber-200);
     padding: 0.25rem 0.375rem 0.25rem 0.625rem;
     cursor: default;
 }
-.filter-chip.is-editable:hover { background: #FEF3C7; color: #475569; }
+.filter-chip.is-editable:hover { background: var(--color-amber-100); color: var(--color-slate-600); }
 
 .chip-delete {
     display: inline-flex;
@@ -888,18 +886,18 @@ const skillBadge = {
     border-radius: 9999px;
     border: 0;
     background: transparent;
-    color: #B91C1C;
+    color: var(--color-red-700);
     font-size: 0.875rem;
     line-height: 1;
     cursor: pointer;
     padding: 0;
 }
-.chip-delete:hover { background: #FECACA; }
+.chip-delete:hover { background: var(--color-red-200); }
 
 .filter-chip.is-renaming {
     padding: 0.125rem 0.375rem;
-    background: #fff;
-    border: 1px solid #3B82F6;
+    background: var(--color-white);
+    border: 1px solid var(--color-blue-500);
     cursor: text;
 }
 .rename-input {
@@ -908,28 +906,28 @@ const skillBadge = {
     outline: none;
     font: inherit;
     font-size: 0.8125rem;
-    color: #0F172A;
+    color: var(--color-slate-900);
     background: transparent;
     padding: 0;
 }
 
 .filter-chip.is-unused {
-    background: #FECACA;
-    color: #B91C1C;
+    background: var(--color-red-200);
+    color: var(--color-red-700);
     border: 0;
     font-weight: 500;
 }
-.filter-chip.is-unused:hover { background: #FCA5A5; color: #7F1D1D; }
+.filter-chip.is-unused:hover { background: var(--color-red-300); color: var(--color-red-900); }
 
 .unused-block { margin-top: 0.75rem; }
 .unused-summary {
     font-size: 0.75rem;
-    color: #64748B;
+    color: var(--color-slate-500);
     cursor: pointer;
     list-style: none;
     padding: 0.25rem 0;
     border-radius: 0.25rem;
 }
-.unused-summary:hover { color: #0F172A; }
+.unused-summary:hover { color: var(--color-slate-900); }
 .unused-summary::marker, .unused-summary::-webkit-details-marker { display: none; }
 </style>

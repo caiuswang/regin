@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import api from '../api'
 import Badge from './Badge.vue'
+import Button from './ui/Button.vue'
+import RadioGroup from './ui/RadioGroup.vue'
 import { useFlash } from '../composables/useFlash'
 
 // Extracted from PatternsView. Owns the batch-import-from-folder modal: its
@@ -18,6 +20,7 @@ const emit = defineEmits(['update:visible', 'imported'])
 
 const { flash } = useFlash()
 
+const defaultFolderPath = ref('~/.claude/skills')
 const folderPath = ref('~/.claude/skills')
 const folderOnConflict = ref('skip')
 const folderScanning = ref(false)
@@ -28,6 +31,19 @@ const folderResults = ref([])        // [{name, status, slug, ...}] after import
 const folderResultPath = ref('')
 const folderCounts = ref({})
 
+onMounted(async () => {
+  try {
+    const providers = await api.get('/providers')
+    const paths = providers?.skill_paths
+    if (paths?.global_dir) {
+      defaultFolderPath.value = paths.global_dir
+      folderPath.value = paths.global_dir
+    }
+  } catch {
+    // keep Claude default
+  }
+})
+
 // Partial reset on each open — mirrors the old openFolderImport: clears the
 // scan/result state but deliberately preserves folderPath + folderOnConflict.
 watch(() => props.visible, (on) => {
@@ -37,6 +53,10 @@ watch(() => props.visible, (on) => {
   folderCounts.value = {}
   folderResolvedPath.value = ''
   folderResultPath.value = ''
+  // If the user never edited the path, keep it synced with the active provider.
+  if (folderPath.value === '~/.claude/skills' || folderPath.value === defaultFolderPath.value) {
+    folderPath.value = defaultFolderPath.value
+  }
 })
 
 function closeFolderImport() {
@@ -133,15 +153,15 @@ const folderResultGlyph = {
               v-model="folderPath"
               type="text"
               aria-label="Folder path to scan"
-              placeholder="~/.claude/skills"
+              :placeholder="defaultFolderPath"
               class="input font-mono flex-1 focus-visible:outline-2 focus-visible:outline-blue-500"
               @keydown.enter.prevent="scanFolder"
             />
-            <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
+            <Button variant="secondary"
                     :disabled="folderScanning || folderImporting"
                     @click="scanFolder">
               {{ folderScanning ? 'Scanning…' : 'Scan' }}
-            </button>
+            </Button>
           </div>
           <p v-if="folderResolvedPath" class="text-[11px] text-slate-500 mt-1 font-mono">
             resolved → {{ folderResolvedPath }}
@@ -168,17 +188,14 @@ const folderResultGlyph = {
 
           <div v-if="folderCandidates.length" class="mt-4">
             <label class="block text-sm font-medium text-slate-700 mb-1">On conflict:</label>
-            <div class="flex gap-3 text-sm">
-              <label class="inline-flex items-center gap-1.5">
-                <input type="radio" v-model="folderOnConflict" value="skip" aria-label="On conflict: skip" /> Skip
-              </label>
-              <label class="inline-flex items-center gap-1.5">
-                <input type="radio" v-model="folderOnConflict" value="overwrite" aria-label="On conflict: overwrite" /> Overwrite
-              </label>
-              <label class="inline-flex items-center gap-1.5">
-                <input type="radio" v-model="folderOnConflict" value="rename" aria-label="On conflict: rename" /> Rename (-2, -3, …)
-              </label>
-            </div>
+            <RadioGroup
+              v-model="folderOnConflict"
+              inline
+              :options="[
+                { value: 'skip', label: 'Skip' },
+                { value: 'overwrite', label: 'Overwrite' },
+                { value: 'rename', label: 'Rename (-2, -3, …)' },
+              ]" />
           </div>
 
           <div v-if="folderResults.length" class="mt-4 max-h-72 overflow-y-auto border border-slate-200 rounded">
@@ -215,19 +232,18 @@ const folderResultGlyph = {
           </div>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500"
+          <Button variant="secondary"
                   :disabled="folderScanning || folderImporting"
                   @click="closeFolderImport">
             {{ folderResults.length ? 'Close' : 'Cancel' }}
-          </button>
-          <button v-if="folderCandidates.length && !folderResults.length"
-                  type="button"
-                  class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
+          </Button>
+          <Button v-if="folderCandidates.length && !folderResults.length"
+                  variant="primary"
                   :disabled="folderImporting || folderImportableCount === 0"
                   @click="runFolderImport">
             {{ folderImporting ? 'Importing…'
                : `Import ${folderImportableCount} skill${folderImportableCount === 1 ? '' : 's'}` }}
-          </button>
+          </Button>
         </div>
       </div>
     </aside>
@@ -248,7 +264,7 @@ const folderResultGlyph = {
 }
 
 .modal-card {
-    background: #fff;
+    background: var(--color-white);
     border-radius: 1rem;
     max-width: 28rem;
     width: 100%;
@@ -271,17 +287,17 @@ const folderResultGlyph = {
 .modal-title {
     font-size: 1rem;
     font-weight: 600;
-    color: #0F172A;
+    color: var(--color-slate-900);
     margin-bottom: 0.375rem;
 }
 
-.modal-text { font-size: 0.875rem; color: #64748B; }
+.modal-text { font-size: 0.875rem; color: var(--color-slate-500); }
 
 .modal-footer {
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
     padding: 0.75rem 1.25rem 1rem;
-    border-top: 1px solid #F1F5F9;
+    border-top: 1px solid var(--color-slate-100);
 }
 </style>

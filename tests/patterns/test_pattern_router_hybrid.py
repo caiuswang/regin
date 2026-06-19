@@ -128,3 +128,83 @@ def test_upsert_fts_is_idempotent(tmp_db):
 
     assert len(rows) == 1
     assert rows[0] == ("second desc", "body2", "t2")
+
+
+# ── Unified routing: memory mapping + merge + composition ───────
+
+def test_route_snippet_first_nonempty_line_capped():
+    assert pattern_router._route_snippet("\n\n  hello world  \nsecond") == "hello world"
+    long = "x" * 100
+    out = pattern_router._route_snippet(long, cap=10)
+    assert out == "x" * 9 + "…"
+    assert pattern_router._route_snippet("") == ""
+
+
+def test_memory_header_formats_kind_scope_and_signals():
+    h = pattern_router._memory_header({
+        "kind": "gotcha", "scope": "repo:regin",
+        "recall_count": 3, "importance": 0.85,
+    })
+    assert h == "Memory: gotcha | scope:repo:regin | recalled 3× | importance 0.85"
+    # zero recall_count is omitted; missing fields degrade gracefully
+    assert pattern_router._memory_header({}) == "Memory: lesson | scope:global"
+
+
+def test_route_unified_separates_guidance_from_memories(monkeypatch):
+    """Procedures (pattern/wiki) and memories live in distinct sections — a
+    high-scoring memory never displaces a lower-scoring procedure, because
+    they are not in the same ranked list at all."""
+    def fake_route(query, *, kinds=None, **kw):
+        return [{"slug": "pat", "source_kind": "pattern", "score": 0.4,
+                 "score_kind": "rerank"}]
+
+    def fake_mem(query, top_k, repo):
+        return [{"slug": "memory/x", "source_kind": "memory", "score": 0.9,
+                 "score_kind": "rerank"}]
+
+    monkeypatch.setattr(pattern_router, "route", fake_route)
+    monkeypatch.setattr(pattern_router, "_memory_route_results", fake_mem)
+
+    out = pattern_router.route_unified("q", top_k=5)
+    assert [r["slug"] for r in out["guidance"]] == ["pat"]
+    assert [r["slug"] for r in out["memories"]] == ["memory/x"]
+
+
+def test_route_unified_kinds_select_legs(monkeypatch):
+    """`kinds` decides which legs run: pattern/wiki → route(), memory →
+    _memory_route_results. Neither leg is invoked for a source not requested."""
+    calls = {}
+
+    def fake_route(query, *, kinds=None, **kw):
+        calls["route_kinds"] = kinds
+        return [{"slug": "pat", "source_kind": "pattern", "score": 0.4,
+                 "score_kind": "rerank"}]
+
+    def fake_mem(query, top_k, repo):
+        calls["mem"] = True
+        return [{"slug": "memory/x", "source_kind": "memory", "score": 0.7,
+                 "score_kind": "rerank"}]
+
+    monkeypatch.setattr(pattern_router, "route", fake_route)
+    monkeypatch.setattr(pattern_router, "_memory_route_results", fake_mem)
+
+    # default: both legs, route scoped to pattern+wiki
+    calls.clear()
+    out = pattern_router.route_unified("q", top_k=5)
+    assert calls["route_kinds"] == ["pattern", "wiki"] and calls.get("mem")
+    assert [r["slug"] for r in out["guidance"]] == ["pat"]
+    assert [r["slug"] for r in out["memories"]] == ["memory/x"]
+
+    # memory-only: route() not called, guidance empty
+    calls.clear()
+    out = pattern_router.route_unified("q", kinds=["memory"])
+    assert "route_kinds" not in calls and calls.get("mem")
+    assert out["guidance"] == []
+    assert [r["slug"] for r in out["memories"]] == ["memory/x"]
+
+    # pattern-only: memory leg not called, memories empty
+    calls.clear()
+    out = pattern_router.route_unified("q", kinds=["pattern"])
+    assert calls["route_kinds"] == ["pattern"] and "mem" not in calls
+    assert [r["slug"] for r in out["guidance"]] == ["pat"]
+    assert out["memories"] == []
