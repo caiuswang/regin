@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import DiffPanel from './DiffPanel.vue'
@@ -365,7 +366,7 @@ function reviewStatusColor(status) {
     <p class="text-sm text-slate-600">
       Run <code class="text-xs">{{ route.query.proposal }}</code> not found.
     </p>
-    <button type="button" class="btn btn-secondary mt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" @click="backToList">← Back to runs</button>
+    <Button variant="secondary" class="mt-3" @click="backToList">← Back to runs</Button>
   </div>
   <div v-else class="topics-run-detail">
     <Card>
@@ -401,11 +402,12 @@ function reviewStatusColor(status) {
             <div class="topics-detail-copy">
               <div class="flex items-center justify-between gap-2 flex-wrap">
                 <p class="topics-detail-eyebrow">Draft Topic</p>
-                <button
-                  type="button"
-                  class="btn btn-secondary text-xs xl:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  class="xl:hidden"
                   @click="commentsDrawerOpen = true"
-                >Comments ({{ totalCommentsCount }})</button>
+                >Comments ({{ totalCommentsCount }})</Button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <h2 class="topics-detail-title">{{ selectedDraftTopic.label }}</h2>
@@ -422,18 +424,18 @@ function reviewStatusColor(status) {
               </p>
               <div v-if="selectedRevisionIsHistorical" class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span>You are viewing a historical revision. Editing, review-state changes, apply, and new comments are disabled here.</span>
-                <button
-                  type="button"
-                  class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   @click="chooseRevision(undefined)"
-                >Back to latest revision</button>
-                <button
-                  type="button"
-                  class="btn btn-primary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                >Back to latest revision</Button>
+                <Button
+                  variant="primary"
+                  size="sm"
                   :disabled="isBusy('restore-revision')"
                   :title="`Append a new revision based on r${selectedRevision?.revision_number}`"
                   @click="restoreRevision"
-                >{{ isBusy('restore-revision') ? 'Restoring…' : `Restore this revision` }}</button>
+                >{{ isBusy('restore-revision') ? 'Restoring…' : `Restore this revision` }}</Button>
               </div>
             </div>
             <div class="topics-detail-actions">
@@ -441,30 +443,27 @@ function reviewStatusColor(status) {
                 <Badge :color="reviewStatusColor(selectedDraftTopic.review_status || 'pending')" :label="selectedDraftTopic.review_status || 'pending'" />
               </div>
               <div class="topics-detail-button-row btn-row">
-                <button
+                <Button
                   v-if="selectedDraftTopic.review_status !== 'accepted'"
-                  type="button"
-                  class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  variant="secondary"
                   :disabled="isBusy() || !selectedRevisionIsLatest"
                   @click="editProposedTopic(selectedDraftTopic)"
-                >Edit</button>
-                <button
+                >Edit</Button>
+                <Button
                   v-if="(!selectedDraftTopic.review_status
                         || selectedDraftTopic.review_status === 'pending')
                         && applyingTopicId !== selectedDraftTopic.id"
-                  type="button"
-                  class="btn btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  variant="primary"
                   :disabled="isBusy() || !proposalReadyToApply || !selectedRevisionIsLatest"
                   data-testid="apply-proposed-topic"
                   @click="openApplyPanel(selectedDraftTopic)"
-                >Apply</button>
-                <button
+                >Apply</Button>
+                <Button
                   v-if="!selectedDraftTopic.review_status"
-                  type="button"
-                  class="btn btn-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  variant="danger"
                   :disabled="isBusy() || !selectedRevisionIsLatest"
                   @click="ignoreProposedTopic(selectedDraftTopic)"
-                >Ignore</button>
+                >Ignore</Button>
               </div>
             </div>
           </div>
@@ -477,11 +476,11 @@ function reviewStatusColor(status) {
               Browse previous revisions to compare drafts. Historical revisions are read-only.
             </p>
             <div class="flex flex-wrap gap-2">
-              <button
+              <Button
                 v-for="revision in data.revisions"
                 :key="revision.id"
-                type="button"
-                class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                variant="secondary"
+                size="sm"
                 :class="{ 'border-blue-300 bg-blue-50 text-blue-900': revision.id === data.selected_revision_id }"
                 @click="chooseRevision(revision.id)"
               >
@@ -493,7 +492,7 @@ function reviewStatusColor(status) {
                   from approved graph
                 </span>
                 <span v-if="revision.is_latest" class="ml-1 text-slate-500">latest</span>
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -529,8 +528,8 @@ function reviewStatusColor(status) {
               <textarea v-model="proposalDraft.exclude_globs" rows="3" aria-label="Exclude globs" class="mt-1 w-full topics-input font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"></textarea>
             </label>
             <div class="md:col-span-2 btn-row">
-              <button type="button" class="btn btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="isBusy() || !selectedRevisionIsLatest" @click="saveProposedTopic(selectedDraftTopic)">Save</button>
-              <button type="button" class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="isBusy()" @click="editingProposalTopicId = null">Cancel</button>
+              <Button variant="primary" :disabled="isBusy() || !selectedRevisionIsLatest" @click="saveProposedTopic(selectedDraftTopic)">Save</Button>
+              <Button variant="secondary" :disabled="isBusy()" @click="editingProposalTopicId = null">Cancel</Button>
             </div>
           </div>
 
@@ -665,11 +664,11 @@ function reviewStatusColor(status) {
         >
           <header class="topics-comments-drawer-header">
             <h3 class="text-sm font-semibold text-slate-700">Review comments</h3>
-            <button
-              type="button"
-              class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+            <Button
+              variant="secondary"
+              size="sm"
               @click="commentsDrawerOpen = false"
-            >Close</button>
+            >Close</Button>
           </header>
           <div class="topics-comments-drawer-body">
             <ProposalCommentsSidebar

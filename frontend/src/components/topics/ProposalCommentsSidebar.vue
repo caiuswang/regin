@@ -4,6 +4,8 @@ import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import { fmtLocalDateTime } from '../../utils/traceFormatters'
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
+import Select from '../ui/Select.vue'
 
 const { confirm } = useConfirm()
 
@@ -292,36 +294,37 @@ watch(
         <Badge color="purple" :label="String(threads.length)" />
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
-        <button
-          type="button"
-          class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        <Button
+          variant="secondary"
+          size="sm"
           :class="{ 'border-blue-300 bg-blue-50 text-blue-900': filterMode === 'all' }"
           @click="filterMode = 'all'"
         >
           All threads
-        </button>
-        <button
+        </Button>
+        <Button
           v-if="selectedTopic"
-          type="button"
-          class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          variant="secondary"
+          size="sm"
           :class="{ 'border-blue-300 bg-blue-50 text-blue-900': filterMode === 'selected' }"
           @click="filterMode = 'selected'"
         >
           Selected topic
           <span class="ml-1 text-slate-500">({{ selectedTopicThreadCount }})</span>
-        </button>
+        </Button>
       </div>
     </header>
 
     <div class="space-y-2 rounded border border-slate-200 bg-slate-50 p-3">
       <label class="block text-xs text-slate-600">
         Anchor
-        <select
+        <Select
           v-model="composerAnchor"
-          class="mt-1 w-full topics-input text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-        >
-          <option v-for="option in anchorOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-        </select>
+          :options="anchorOptions"
+          block
+          aria-label="Anchor"
+          class="mt-1"
+        />
       </label>
       <label class="block text-xs text-slate-600">
         Comment
@@ -337,14 +340,13 @@ watch(
         Historical revisions are read-only. Switch back to the latest revision to add comments or replies.
       </p>
       <div v-else class="flex justify-end">
-        <button
-          type="button"
-          class="btn btn-primary text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        <Button
+          variant="primary"
           :disabled="composerBusy || !proposalId"
           @click="createThread"
         >
           {{ composerBusy ? 'Adding…' : 'Add thread' }}
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -383,42 +385,42 @@ watch(
               class="mt-1 w-full topics-input text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
             />
             <div class="mt-1 flex justify-end gap-2">
-              <button
-                type="button"
-                class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              <Button
+                variant="secondary"
+                size="sm"
                 :disabled="commentBusy"
                 @click="cancelEditComment"
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                class="btn btn-primary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
                 :disabled="commentBusy || !editDraft.trim()"
                 @click="saveEditComment(thread.id, comment.id)"
               >
                 {{ commentBusy ? 'Saving…' : 'Save' }}
-              </button>
+              </Button>
             </div>
           </template>
           <template v-else>
             <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
             <div v-if="!readonly" class="mt-1 flex justify-end gap-2">
-              <button
-                type="button"
-                class="text-[11px] text-slate-500 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              <Button
+                variant="link"
+                class="text-[11px] text-slate-500 hover:text-blue-700"
                 @click="startEditComment(comment)"
               >
                 Edit
-              </button>
-              <button
-                type="button"
-                class="text-[11px] text-slate-500 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              </Button>
+              <Button
+                variant="link"
+                class="text-[11px] text-slate-500 hover:text-red-700"
                 :disabled="commentBusy"
                 @click="deleteComment(thread.id, comment.id, (thread.comments || []).length === 1)"
               >
                 Delete
-              </button>
+              </Button>
             </div>
           </template>
         </article>
@@ -432,50 +434,50 @@ watch(
           placeholder="Reply to this thread"
         />
         <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="secondary"
+            size="sm"
             :disabled="replyBusy"
             @click="cancelReply"
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             :disabled="replyBusy"
             @click="submitReply(thread.id)"
           >
             {{ replyBusy ? 'Replying…' : 'Reply' }}
-          </button>
+          </Button>
         </div>
       </div>
        <div v-else-if="!readonly" class="flex justify-end gap-2">
-        <button
+        <Button
           v-if="!isResolvedThread(thread)"
-          type="button"
-          class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          variant="secondary"
+          size="sm"
           :disabled="resolveBusyThreadId === thread.id"
           @click="setResolution(thread.id, 'resolved')"
         >
           {{ resolveBusyThreadId === thread.id ? 'Resolving…' : 'Resolve' }}
-        </button>
-        <button
+        </Button>
+        <Button
           v-else
-          type="button"
-          class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          variant="secondary"
+          size="sm"
           :disabled="resolveBusyThreadId === thread.id"
           @click="setResolution(thread.id, 'open')"
         >
           {{ resolveBusyThreadId === thread.id ? 'Reopening…' : 'Reopen' }}
-        </button>
-        <button
-          type="button"
-          class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
           @click="startReply(thread.id)"
         >
           Reply
-        </button>
+        </Button>
       </div>
     </div>
   </section>

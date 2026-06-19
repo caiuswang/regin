@@ -31,6 +31,16 @@ topics_app = typer.Typer(
 )
 
 
+def _registered_repo_by_name(repo: str) -> Path | None:
+    """Resolve a bare repo name (e.g. `regin`) against `settings.repo_paths`,
+    returning the registered tree only if it carries a `.regin/` directory."""
+    for candidate in settings.repo_paths or []:
+        candidate_path = Path(candidate).expanduser().resolve()
+        if candidate_path.name == repo and (candidate_path / ".regin").is_dir():
+            return candidate_path
+    return None
+
+
 def _repo_path(repo: str | None) -> Path:
     """Resolve `--repo` to an absolute repo root, with a useful error when
     the argument doesn't look like a real repo. Accepts either a path
@@ -45,11 +55,19 @@ def _repo_path(repo: str | None) -> Path:
     if (resolved / ".regin").is_dir():
         return resolved
 
-    # Try name lookup against settings.repo_paths.
-    for candidate in settings.repo_paths or []:
-        candidate_path = Path(candidate).expanduser().resolve()
-        if candidate_path.name == repo and (candidate_path / ".regin").is_dir():
-            return candidate_path
+    # Name lookup against settings.repo_paths takes precedence over a bare
+    # existing directory so the common typo `--repo regin` (which would
+    # resolve cwd-relative) still finds the registered tree.
+    named = _registered_repo_by_name(repo)
+    if named is not None:
+        return named
+
+    # Fall back to any existing directory: `bootstrap` creates `.regin/` (so it
+    # must accept a tree that doesn't have one yet) and `import` must no-op
+    # gracefully on an un-bootstrapped repo from the post-merge git hook. The
+    # other subcommands surface a missing graph as their own error downstream.
+    if resolved.is_dir():
+        return resolved
 
     known = [str(Path(p).expanduser().resolve()) for p in (settings.repo_paths or [])]
     hint = (
@@ -57,7 +75,7 @@ def _repo_path(repo: str | None) -> Path:
         else "\n  (no repo_paths registered — pass an absolute path)"
     )
     raise typer.BadParameter(
-        f"--repo {repo!r} doesn't resolve to a repo with a .regin/ directory"
+        f"--repo {repo!r} doesn't resolve to an existing repo directory"
         f" (tried {resolved}).{hint}"
     )
 
@@ -337,16 +355,43 @@ def cmd_topics_wiki(
         print(path)
 
 
+def _render_topic_wiki(result: dict) -> str:
+    """The routed topic's wiki pages as plain markdown — the content the
+    `<topic_context>` pointer promises, surfaced directly. The JSON envelope
+    sorts `wiki_pages` below the (often long) `refs` list, so an agent that
+    pipes the JSON through `head` never reaches the content; `--wiki` prints
+    it content-first instead."""
+    pages = result.get("wiki_pages") or []
+    if not pages:
+        return f"(no wiki pages for topic {result.get('query', '')!r})"
+    out = []
+    for page in pages:
+        path = page.get("path")
+        if path:
+            out.append(f"<!-- {path} -->")
+        out.append(page.get("content", ""))
+        if page.get("truncated"):
+            out.append("_(wiki page truncated — read the file for the full text)_")
+    return "\n\n".join(out).strip()
+
+
 @topics_app.command("route", help="Resolve a query into approved topic context")
 def cmd_topics_route(
     query: str = typer.Argument(..., help="Topic query"),
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    wiki: bool = typer.Option(
+        False, "--wiki",
+        help="Print the topic's wiki markdown (content-first) instead of the "
+             "JSON envelope, which buries the wiki below the refs list."),
 ) -> None:
     try:
         result = route_topic(_repo_path(repo), query)
     except TopicGraphError as exc:
         print(f"Topic route failed: {exc}")
         raise typer.Exit(1)
+    if wiki:
+        print(_render_topic_wiki(result))
+        return
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

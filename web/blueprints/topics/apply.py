@@ -44,6 +44,7 @@ from lib.topics.proposals import (
     _find_proposed_topic,
     load_proposal,
 )
+from lib.topics.proposals.topic_actions import _VALID_EDGE_TYPES
 from lib.topics.snapshots import (
     latest_snapshot,
     list_snapshots,
@@ -234,6 +235,74 @@ def _restore_pruned_inbound_edges_after_apply(
     export_overlay_to_disk(repo_path, graph)
 
 
+def _forward_sibling_edge(
+    edge: Any, *, sibling_ids: set[str], live_ids: set[str],
+) -> tuple[str, str] | None:
+    """Return `(edge_type, target)` iff `edge` is a forward reference to a
+    not-yet-applied sibling in the same proposal; else None."""
+    if not isinstance(edge, dict):
+        return None
+    target = edge.get("target") or edge.get("to")
+    edge_type = edge.get("type") or edge.get("rel") or "related"
+    if not isinstance(target, str) or edge_type not in _VALID_EDGE_TYPES:
+        return None
+    if target in live_ids or target not in sibling_ids:
+        return None
+    return edge_type, target
+
+
+def _stage_forward_sibling_edges(
+    repo_path: str, proposal: dict, proposed: dict, approved: dict,
+    *, strategy: str,
+) -> None:
+    """Stash edges from the just-applied topic to siblings in the SAME
+    proposal that aren't in the approved graph yet.
+
+    A multi-doc proposal can have doc1 reference doc3. If doc1 is applied
+    first, `_approved_topic_from_proposal` prunes the doc1→doc3 edge (its
+    target isn't in the live graph) so the apply stays valid — but the
+    edge is then lost forever, because applying doc3 later never revisits
+    doc1. We record the dropped edge into
+    `proposal.metadata.pruned_inbound_edges[doc3] = {doc1: [edge]}`,
+    reusing the exact format + restore path the downgrade round-trip uses
+    (`_restore_pruned_inbound_edges_after_apply` re-attaches it onto doc1
+    once doc3 lands). Idempotent: never records a duplicate.
+
+    Scoped to create/replace — for those the applied topic's graph id is
+    `approved["id"]`; merge folds edges into a different target id.
+    """
+    if strategy not in ("create", "replace"):
+        return
+    source_id = approved["id"]
+    sibling_ids = {
+        t.get("id") for t in proposal.get("topics", [])
+        if isinstance(t, dict) and t.get("id") and t.get("id") != source_id
+    }
+    if not sibling_ids:
+        return
+    live_ids = set(load_authoritative_graph(repo_path).get("topics", {}).keys())
+    bucket = proposal.setdefault("metadata", {}).setdefault("pruned_inbound_edges", {})
+    for edge in proposed.get("edges") or []:
+        forward = _forward_sibling_edge(
+            edge, sibling_ids=sibling_ids, live_ids=live_ids,
+        )
+        if forward is None:
+            continue
+        edge_type, target = forward
+        edges = bucket.setdefault(target, {}).setdefault(source_id, [])
+        _append_edge_once(edges, edge_type=edge_type, target=target)
+
+
+def _append_edge_once(
+    edges: list[dict], *, edge_type: str, target: str,
+) -> None:
+    """Append `{type, target}` to `edges` unless an equal edge is present."""
+    for existing in edges:
+        if existing.get("target") == target and existing.get("type") == edge_type:
+            return
+    edges.append({"type": edge_type, "target": target})
+
+
 def _already_applied_noop_snapshot(
     repo_id: int,
     proposal_id: str,
@@ -407,6 +476,15 @@ def api_repo_topic_proposal_apply(name, proposal_id, proposed_topic_id):
     # now that the topic is in the graph again.
     _restore_pruned_inbound_edges_after_apply(
         repo_path, proposal, resolved,
+    )
+
+    # Multi-doc proposal forward refs: if this topic edges to a sibling
+    # that hasn't been applied yet, the prune dropped that edge to keep
+    # the apply valid. Stash it so applying the sibling later re-attaches
+    # it (same machinery as the downgrade round-trip above). Without this,
+    # approving docs one at a time silently loses the inter-doc edges.
+    _stage_forward_sibling_edges(
+        repo_path, proposal, proposed, approved, strategy=strategy,
     )
 
     from lib.topics.proposals import save_proposal
@@ -692,7 +770,12 @@ def api_repo_wiki_reindex(name):
     from lib.patterns.wiki_indexer import index_wikis
     from lib.skills import skill_router
     try:
-        counts = index_wikis(repo)
+        # force=True: this is the manual "force-refresh" button (see the
+        # tooltip in RepoTopicsView). Without it, index_wikis short-circuits
+        # every unchanged page on its content-hash skip gate and always
+        # reports indexed=0. The CLI path (cli/commands/wiki.py) already
+        # passes force; the web route used to omit it.
+        counts = index_wikis(repo, force=True)
     except skill_router.DependencyError as exc:
         return jsonify({
             "ok": False,

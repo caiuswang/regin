@@ -63,6 +63,7 @@ from lib.topics.scan import (
     validate,
 )
 from lib.topics.route import (
+    best_topic_for_text,
     generate_topic_router_skill,
     match_topic,
     ordered_refs,
@@ -103,6 +104,7 @@ __all__ = [
     "load_graph_merged",
     "load_local_graph",
     "match_glob",
+    "best_topic_for_text",
     "match_topic",
     "merge_graphs",
     "normalize",

@@ -5,6 +5,8 @@ import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import Badge from '../Badge.vue'
 import Card from '../Card.vue'
+import Button from '../ui/Button.vue'
+import Select from '../ui/Select.vue'
 import { fmtAgo } from '../../utils/traceFormatters'
 
 const props = defineProps({
@@ -177,21 +179,21 @@ function activityTs(run) {
         placeholder="Search by run id, provider, agent…"
         aria-label="Search proposal runs"
       >
-      <select v-model="stateFilter" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label="Filter by state">
-        <option v-for="opt in STATE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <select v-model="reviewFilter" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label="Filter by review state">
-        <option v-for="opt in REVIEW_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <select v-model="sort" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label="Sort runs">
-        <option v-for="opt in SORT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <button
+      <span class="inline-block w-40">
+        <Select v-model="stateFilter" :options="STATE_OPTIONS" block aria-label="Filter by state" />
+      </span>
+      <span class="inline-block w-40">
+        <Select v-model="reviewFilter" :options="REVIEW_OPTIONS" block aria-label="Filter by review state" />
+      </span>
+      <span class="inline-block w-40">
+        <Select v-model="sort" :options="SORT_OPTIONS" block aria-label="Sort runs" />
+      </span>
+      <Button
         v-if="hasActiveFilter"
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        variant="secondary"
+        size="sm"
         @click="clearFilters"
-      >Clear</button>
+      >Clear</Button>
     </div>
     <table class="tbl tbl-workbench">
       <thead>
@@ -234,12 +236,12 @@ function activityTs(run) {
           <td class="text-right">{{ run.draft_topic_count }}</td>
           <td class="text-right">{{ run.reviewed_count }}</td>
           <td class="text-right">
-            <button
-              type="button"
-              class="btn btn-danger text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+            <Button
+              variant="danger"
+              size="sm"
               :disabled="busy"
               @click.stop="onDelete(run)"
-            >Delete</button>
+            >Delete</Button>
           </td>
         </tr>
         <tr v-if="!allRuns.length">
@@ -248,15 +250,15 @@ function activityTs(run) {
         <tr v-else-if="!pagedRuns.length">
           <td colspan="8" class="text-gray-500">
             No runs match the current filters.
-            <button type="button" class="ml-2 text-blue-600 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" @click="clearFilters">Clear filters</button>
+            <Button variant="link" class="ml-2" @click="clearFilters">Clear filters</Button>
           </td>
         </tr>
       </tbody>
     </table>
     <div v-if="totalPages > 1" class="topics-runs-pagination">
-      <button type="button" class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="page <= 1" @click="page--">← Prev</button>
+      <Button variant="secondary" size="sm" :disabled="page <= 1" @click="page--">← Prev</Button>
       <span class="text-xs text-slate-600">Page {{ page }} of {{ totalPages }} · {{ filtered.length }} run{{ filtered.length === 1 ? '' : 's' }}</span>
-      <button type="button" class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="page >= totalPages" @click="page++">Next →</button>
+      <Button variant="secondary" size="sm" :disabled="page >= totalPages" @click="page++">Next →</Button>
     </div>
   </Card>
 </template>

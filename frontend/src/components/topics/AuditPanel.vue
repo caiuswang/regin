@@ -12,6 +12,8 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
+import Button from '../ui/Button.vue'
+import Checkbox from '../ui/Checkbox.vue'
 
 const props = defineProps({
   repoName: { type: String, required: true },
@@ -136,24 +138,22 @@ onMounted(refresh)
         </p>
       </div>
       <div class="btn-row flex gap-2">
-        <button
-          type="button"
-          class="btn btn-secondary text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        <Button
+          variant="secondary"
           :disabled="loading || fixing"
           @click="refresh"
         >
           {{ loading ? 'Refreshing…' : 'Refresh' }}
-        </button>
-        <button
+        </Button>
+        <Button
           v-if="selectableCount > 0"
-          type="button"
-          class="btn btn-primary text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          variant="primary"
           :disabled="!selectedCount || fixing || loading"
           data-testid="audit-fix-selected"
           @click="fixSelected"
         >
           {{ fixing ? 'Fixing…' : `Fix selected (${selectedCount})` }}
-        </button>
+        </Button>
       </div>
     </header>
 
@@ -178,21 +178,21 @@ onMounted(refresh)
     </p>
 
     <div v-if="selectableCount > 0" class="flex items-center gap-3 text-xs">
-      <button
-        type="button"
-        class="text-blue-700 hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      <Button
+        variant="link"
+        size="sm"
         @click="selectAllFixable"
       >
         Select all auto-fixable
-      </button>
-      <button
+      </Button>
+      <Button
         v-if="selectedCount > 0"
-        type="button"
-        class="text-slate-600 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        variant="link"
+        size="sm"
         @click="clearSelection"
       >
         Clear ({{ selectedCount }})
-      </button>
+      </Button>
     </div>
 
     <div
@@ -202,18 +202,15 @@ onMounted(refresh)
       data-testid="audit-group"
     >
       <div class="flex items-center justify-between">
-        <label class="flex items-center gap-2">
-          <input
-            type="checkbox"
-            :disabled="!isAutoFixable(code)"
-            :checked="selectedCodes.has(code)"
-            class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :title="isAutoFixable(code) ? 'Auto-fixable — select to bulk fix' : 'Manual resolution only — fix via DiffPanel or the originating proposal'"
-            @change="toggleCode(code)"
-          >
+        <Checkbox
+          :disabled="!isAutoFixable(code)"
+          :model-value="selectedCodes.has(code)"
+          :title="isAutoFixable(code) ? 'Auto-fixable — select to bulk fix' : 'Manual resolution only — fix via DiffPanel or the originating proposal'"
+          @update:model-value="toggleCode(code)"
+        >
           <code class="text-xs font-semibold">{{ code }}</code>
           <span v-if="!isAutoFixable(code)" class="text-[10px] uppercase tracking-wide text-slate-500 ml-1">manual</span>
-        </label>
+        </Checkbox>
         <span class="text-xs">{{ byCode[code].length }} issue<span v-if="byCode[code].length !== 1">s</span></span>
       </div>
       <ul class="text-xs space-y-0.5">

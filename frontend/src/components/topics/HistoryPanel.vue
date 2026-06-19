@@ -8,6 +8,7 @@
  */
 import { onMounted, ref } from 'vue'
 import api from '../../api'
+import Button from '../ui/Button.vue'
 
 const props = defineProps({
   repoName: { type: String, required: true },
@@ -132,14 +133,13 @@ onMounted(refresh)
           Newest first. Restore creates a new snapshot mirroring the chosen one.
         </p>
       </div>
-      <button
-        type="button"
-        class="btn btn-secondary text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      <Button
+        variant="secondary"
         :disabled="loading"
         @click="refresh"
       >
         {{ loading ? 'Refreshing…' : 'Refresh' }}
-      </button>
+      </Button>
     </header>
 
     <p v-if="error" class="text-sm text-red-700">{{ error }}</p>
@@ -170,22 +170,22 @@ onMounted(refresh)
           </div>
         </div>
         <div class="btn-row flex gap-2">
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="secondary"
+            size="sm"
             :disabled="acting === snap.id"
             @click="togglePin(snap)"
           >
             {{ snap.pinned ? 'Unpin' : 'Pin' }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             :disabled="acting === snap.id || snap.is_latest"
             @click="openPreview(snap)"
           >
             {{ acting === snap.id ? '…' : (snap.is_latest ? 'Live' : 'Restore…') }}
-          </button>
+          </Button>
         </div>
       </li>
     </ul>
@@ -208,14 +208,14 @@ onMounted(refresh)
               {{ previewSnap.reason }} · {{ previewSnap.taken_at }}
             </p>
           </div>
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="secondary"
+            size="sm"
             aria-label="Close preview"
             @click="closePreview"
           >
             Close
-          </button>
+          </Button>
         </header>
 
         <div class="px-4 py-3 space-y-3 text-xs">
@@ -276,21 +276,21 @@ onMounted(refresh)
         </div>
 
         <footer class="px-4 py-3 border-t border-slate-200 flex justify-end gap-2">
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="secondary"
+            size="sm"
             @click="closePreview"
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             :disabled="previewLoading || acting === previewSnap.id"
             @click="confirmRestore"
           >
             {{ acting === previewSnap.id ? 'Restoring…' : 'Confirm restore' }}
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

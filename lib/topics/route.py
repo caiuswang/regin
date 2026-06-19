@@ -102,65 +102,157 @@ def _identity_substring_match(needle: str, topic_id: str, topic: dict[str, Any])
     return needle in normalize(haystack)
 
 
-# Ordered list of single-match strategies. The first topic that any
-# strategy matches wins; strategies are applied in priority order, so
-# an alias-exact match on a different topic still beats a ref-substring
-# match on this one. Each predicate runs only when `needle` is truthy.
+# Ordered list of single-match strategies, each paired with a human label
+# for the route explanation. The first topic that any strategy matches wins;
+# strategies are applied in priority order, so an alias-exact match on a
+# different topic still beats a ref-substring match on this one. Each
+# predicate runs only when `needle` is truthy.
 _MATCH_STRATEGIES = (
-    _alias_exact_match,
-    _ref_exact_match,
-    _ref_substring_match,
-    _identity_substring_match,
+    (_alias_exact_match, "alias / label (exact)"),
+    (_ref_exact_match, "ref path (exact)"),
+    (_ref_substring_match, "ref path (substring)"),
+    (_identity_substring_match, "label / intent (substring)"),
 )
 
 
-def _keyword_score_for_topic(
+# Function words carry no topical signal, yet a prose prompt is full of
+# them — left in, the fuzzy fallback "matches" every topic on `we/that/to/…`
+# and routes on noise (see `_fuzzy_best`). 2-char tokens are folded in here
+# so genuine short keywords (`ui`, `db`, `js`, `go`) still survive the
+# `len >= 2` filter.
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do",
+    "for", "from", "has", "have", "he", "her", "him", "his", "how", "if",
+    "in", "into", "is", "it", "its", "me", "my", "no", "not", "of", "on",
+    "or", "our", "out", "she", "so", "some", "still", "than", "that", "the",
+    "their", "them", "then", "there", "these", "they", "this", "those", "to",
+    "up", "us", "use", "via", "was", "we", "were", "what", "when", "which",
+    "who", "will", "with", "would", "you", "your",
+})
+
+# A fuzzy route needs at least this many distinct meaningful keyword hits.
+# One coincidental word (a prompt's "apply" landing on the "apply/stop"
+# stage in a topic label) is not evidence of topical intent — below this
+# the fallback declines and the prompt routes nowhere.
+_FUZZY_MIN_HITS = 2
+
+
+def _meaningful_keywords(needle: str) -> list[str]:
+    """The ≥2-char, non-stopword tokens of `needle`, de-duplicated in order —
+    the tokens that actually carry topical signal for the fuzzy fallback."""
+    return list(dict.fromkeys(
+        w for w in needle.split() if len(w) >= 2 and w not in _STOPWORDS))
+
+
+def _keyword_hits_for_topic(
     keywords: list[str], topic_id: str, topic: dict[str, Any],
-) -> tuple[int, int]:
-    """Return (identity_hits, refs_hits) for one topic against keywords."""
+) -> tuple[list[str], list[str]]:
+    """Return (identity_hits, ref_hits) — the keywords that appear in this
+    topic's identity text and in its ref paths, respectively."""
     identity = normalize(" ".join([
         topic_id, topic.get("label", ""), topic.get("intent", ""),
         *topic.get("aliases", []),
     ]))
     refs_text = normalize(" ".join(_ref_paths(topic)))
-    id_score = sum(1 for kw in keywords if kw in identity)
-    ref_score = sum(1 for kw in keywords if kw in refs_text)
-    return id_score, ref_score
+    id_hits = [kw for kw in keywords if kw in identity]
+    ref_hits = [kw for kw in keywords if kw in refs_text]
+    return id_hits, ref_hits
 
 
-def _multi_keyword_best(needle: str, topics: dict[str, Any]) -> str | None:
-    """Fallback for queries like "trace skill reads view loading": pick
-    the topic with the highest (identity_hits, refs_hits) score over the
-    needle's ≥2-char keywords. Requires at least 2 keywords."""
-    keywords = [w for w in needle.split() if len(w) >= 2]
+def _keyword_score_for_topic(
+    keywords: list[str], topic_id: str, topic: dict[str, Any],
+) -> tuple[int, int]:
+    """Return (identity_hits, refs_hits) counts for one topic against keywords."""
+    id_hits, ref_hits = _keyword_hits_for_topic(keywords, topic_id, topic)
+    return len(id_hits), len(ref_hits)
+
+
+def _fuzzy_best(
+    needle: str, topics: dict[str, Any],
+) -> tuple[str | None, list[str]]:
+    """Fallback for queries like "trace skill reads view loading": pick the
+    topic with the highest (identity_hits, ref_hits) score over the needle's
+    *meaningful* keywords, requiring ≥2 keywords overall and ≥`_FUZZY_MIN_HITS`
+    distinct keyword hits on the winner. Returns `(topic_id, matched_keywords)`
+    or `(None, [])` — so the caller can explain the route, not just assert it."""
+    keywords = _meaningful_keywords(needle)
     if len(keywords) < 2:
-        return None
-    scores: dict[str, tuple[int, int]] = {}
+        return None, []
+    best_id: str | None = None
+    best_score = (0, 0)
+    best_hits: list[str] = []
     for topic_id, topic in topics.items():
-        score = _keyword_score_for_topic(keywords, topic_id, topic)
-        if score[0] or score[1]:
-            scores[topic_id] = score
-    if not scores:
+        id_hits, ref_hits = _keyword_hits_for_topic(keywords, topic_id, topic)
+        score = (len(id_hits), len(ref_hits))
+        if score > best_score:
+            best_score, best_id = score, topic_id
+            best_hits = list(dict.fromkeys([*id_hits, *ref_hits]))
+    if len(best_hits) < _FUZZY_MIN_HITS:
+        return None, []
+    return best_id, best_hits
+
+
+def best_topic_for_text(repo_path: str | Path, text: str, *,
+                        min_ref_hits: int = 1) -> str | None:
+    """High-precision match for *long* text (a memory body, not a query).
+
+    The `match_topic` strategies test ``needle in haystack`` — built for
+    short keyword queries, so a full memory body never satisfies them and
+    always drops to the fuzzy multi-keyword fallback, which over-links. For
+    long text the trustworthy signal is the reverse: does the text *contain*
+    a topic's ref path (a specific file path is a strong "this is about that
+    topic" marker). Returns the topic id whose ref paths appear most often
+    in `text`, requiring at least `min_ref_hits`, else None."""
+    graph = load_authoritative_graph(repo_path)
+    needle = normalize(text)
+    if not needle:
         return None
-    return max(scores, key=lambda tid: scores[tid])
+    best_id: str | None = None
+    best_hits = 0
+    for topic_id, topic in graph.get("topics", {}).items():
+        hits = sum(1 for p in _ref_paths(topic)
+                   if p and normalize(p) in needle)
+        if hits > best_hits:
+            best_hits, best_id = hits, topic_id
+    return best_id if best_hits >= min_ref_hits else None
 
 
-def match_topic(repo_path: str | Path, query: str) -> dict[str, Any] | None:
+def _route_match(
+    repo_path: str | Path, query: str,
+) -> tuple[str | None, dict[str, Any]]:
+    """The keyword route plus *why* it fired: `(topic_id, explanation)` where
+    explanation is `{strategy, keywords}`. A precise strategy matched the whole
+    query phrase, so it carries no per-keyword breakdown (`keywords: []`); the
+    fuzzy fallback lists the meaningful keywords that drove it. `(None, ...)`
+    when nothing matched — the honest answer for prose with no topical word."""
+    none = {"strategy": None, "keywords": []}
     graph = load_authoritative_graph(repo_path)
     needle = normalize(query)
     if not needle:
-        return None
+        return None, none
     topics = graph.get("topics", {})
 
-    for strategy in _MATCH_STRATEGIES:
+    for strategy, label in _MATCH_STRATEGIES:
         for topic_id, topic in topics.items():
             if strategy(needle, topic_id, topic):
-                return topic_detail(repo_path, topic_id)
+                return topic_id, {"strategy": label, "keywords": []}
 
-    best_id = _multi_keyword_best(needle, topics)
+    best_id, hits = _fuzzy_best(needle, topics)
     if best_id is not None:
-        return topic_detail(repo_path, best_id)
-    return None
+        return best_id, {"strategy": "fuzzy keyword overlap", "keywords": hits}
+    return None, none
+
+
+def match_topic(repo_path: str | Path, query: str) -> dict[str, Any] | None:
+    topic_id, _ = _route_match(repo_path, query)
+    return topic_detail(repo_path, topic_id) if topic_id is not None else None
+
+
+def route_explain(repo_path: str | Path, query: str) -> dict[str, Any]:
+    """`{id, strategy, keywords}` — the keyword route plus its basis, for the
+    topic-route playground. `id` is None when the query routes nowhere."""
+    topic_id, why = _route_match(repo_path, query)
+    return {"id": topic_id, **why}
 
 
 def route_topic(

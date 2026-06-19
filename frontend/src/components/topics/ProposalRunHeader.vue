@@ -1,5 +1,6 @@
 <script setup>
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
 import { fmtAgo } from '../../utils/traceFormatters'
 
 const props = defineProps({
@@ -49,11 +50,11 @@ function proposalReviewColor(status) {
 <template>
   <div class="topics-run-header-strip">
     <div class="topics-run-header-left">
-      <button
-        type="button"
-        class="topics-back-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      <Button
+        variant="link"
+        class="topics-back-link"
         @click="emit('back')"
-      >← Back to runs</button>
+      >← Back to runs</Button>
       <h2 class="topics-run-title" :title="selectedRun.topic_request || ''">{{ selectedRun.title || 'Untitled run' }}</h2>
       <div class="topics-run-header-id">
         <code class="text-xs text-slate-500">{{ selectedRun.id }}</code>
@@ -72,55 +73,50 @@ function proposalReviewColor(status) {
       </div>
     </div>
     <div class="topics-run-header-actions btn-row">
-      <button
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      <Button
+        variant="secondary"
+        size="sm"
         :disabled="!prevRun"
         :title="prevRun ? `Previous: ${prevRun.id}` : 'No earlier run'"
         @click="emit('choose-run', prevRun?.id)"
-      >← Prev</button>
-      <button
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      >← Prev</Button>
+      <Button
+        variant="secondary"
+        size="sm"
         :disabled="!nextRun"
         :title="nextRun ? `Next: ${nextRun.id}` : 'No later run'"
         @click="emit('choose-run', nextRun?.id)"
-      >Next →</button>
+      >Next →</Button>
       <span class="topics-run-header-divider" aria-hidden="true"></span>
-      <button
+      <Button
         v-if="isActiveRun"
-        type="button"
-        class="btn btn-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        variant="danger"
         :disabled="isBusy()"
         title="Terminate the running agent and cancel this run"
         @click="emit('stop')"
-      >{{ isBusy('stop-proposal') ? 'Stopping…' : 'Stop' }}</button>
-      <button
+      >{{ isBusy('stop-proposal') ? 'Stopping…' : 'Stop' }}</Button>
+      <Button
         v-if="!['applied', 'partially_applied'].includes(selectedProposalReviewState)"
-        type="button"
-        class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        variant="secondary"
         :disabled="isBusy() || !selectedRevisionIsLatest"
         @click="emit('update-review-state', 'changes_requested')"
-      >Request changes</button>
-      <button
+      >Request changes</Button>
+      <Button
         v-if="!['ready_to_apply', 'partially_applied', 'applied'].includes(selectedProposalReviewState)"
-        type="button"
-        class="btn btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        variant="primary"
         :disabled="isBusy() || !selectedRevisionIsLatest"
         @click="emit('update-review-state', 'ready_to_apply')"
-      >Mark ready</button>
-      <button
-        type="button"
-        class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      >Mark ready</Button>
+      <Button
+        variant="secondary"
         :disabled="isBusy() || !selectedProposalId || !selectedRevisionIsLatest"
         @click="emit('regenerate')"
-      >Regenerate</button>
-      <button
-        type="button"
-        class="btn btn-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      >Regenerate</Button>
+      <Button
+        variant="danger"
         :disabled="isBusy()"
         @click="emit('delete')"
-      >Delete Run</button>
+      >Delete Run</Button>
     </div>
   </div>
 </template>

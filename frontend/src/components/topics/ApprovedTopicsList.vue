@@ -2,7 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
+import Select from '../ui/Select.vue'
 
 const props = defineProps({
   data: { type: Object, default: null },
@@ -121,21 +123,21 @@ function chooseTopic(id) {
         placeholder="Search by label, intent, alias…"
         aria-label="Search approved topics"
       >
-      <select v-model="statusFilter" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label="Filter by status">
-        <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <select v-model="brokenFilter" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label="Filter by broken refs">
-        <option v-for="opt in BROKEN_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <select v-model="sort" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" aria-label="Sort topics">
-        <option v-for="opt in SORT_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-      </select>
-      <button
+      <span class="inline-block w-40">
+        <Select v-model="statusFilter" :options="statusOptions" block aria-label="Filter by status" />
+      </span>
+      <span class="inline-block w-40">
+        <Select v-model="brokenFilter" :options="BROKEN_OPTIONS" block aria-label="Filter by broken refs" />
+      </span>
+      <span class="inline-block w-40">
+        <Select v-model="sort" :options="SORT_OPTIONS" block aria-label="Sort topics" />
+      </span>
+      <Button
         v-if="hasActiveFilter"
-        type="button"
-        class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        variant="secondary"
+        size="sm"
         @click="clearFilters"
-      >Clear</button>
+      >Clear</Button>
     </div>
     <table class="tbl tbl-workbench">
       <thead>
@@ -155,13 +157,13 @@ function chooseTopic(id) {
           @click="chooseTopic(topic.id)"
         >
           <td>
-            <button
-              type="button"
-              class="topics-row-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+            <Button
+              variant="link"
+              class="topics-row-button"
               @click.stop="chooseTopic(topic.id)"
             >
               <div class="topics-row-title">{{ topic.label }}</div>
-            </button>
+            </Button>
           </td>
           <td><Badge :color="topic.broken_ref_count ? 'red' : 'green'" :label="topic.status" /></td>
           <td class="text-right">{{ topic.ref_count }}</td>
@@ -174,15 +176,15 @@ function chooseTopic(id) {
         <tr v-else-if="!pagedTopics.length">
           <td colspan="5" class="text-gray-500">
             No topics match the current filters.
-            <button type="button" class="ml-2 text-blue-600 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" @click="clearFilters">Clear filters</button>
+            <Button variant="link" size="sm" class="ml-2" @click="clearFilters">Clear filters</Button>
           </td>
         </tr>
       </tbody>
     </table>
     <div v-if="totalPages > 1" class="topics-runs-pagination">
-      <button type="button" class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="page <= 1" @click="page--">← Prev</button>
+      <Button variant="secondary" size="sm" :disabled="page <= 1" @click="page--">← Prev</Button>
       <span class="text-xs text-slate-600">Page {{ page }} of {{ totalPages }} · {{ filtered.length }} topic{{ filtered.length === 1 ? '' : 's' }}</span>
-      <button type="button" class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="page >= totalPages" @click="page++">Next →</button>
+      <Button variant="secondary" size="sm" :disabled="page >= totalPages" @click="page++">Next →</Button>
     </div>
   </Card>
 </template>

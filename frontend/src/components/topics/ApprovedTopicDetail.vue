@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 
@@ -122,21 +123,21 @@ function roleColor(role) {
     <p class="text-sm text-slate-600">
       Topic <code class="text-xs">{{ route.query.topic }}</code> not found.
     </p>
-    <button
-      type="button"
-      class="btn btn-secondary mt-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+    <Button
+      variant="secondary"
+      class="mt-3"
       @click="backToList"
-    >← Back to topics</button>
+    >← Back to topics</Button>
   </div>
   <div v-else class="topics-run-detail">
     <Card>
       <div class="topics-run-header-strip">
         <div class="topics-run-header-left">
-          <button
-            type="button"
-            class="topics-back-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="link"
+            class="topics-back-link"
             @click="backToList"
-          >← Back to topics</button>
+          >← Back to topics</Button>
           <h2 class="topics-run-title">{{ selectedTopic.label }}</h2>
           <div class="topics-run-header-id">
             <code class="text-xs text-slate-500">{{ selectedTopic.id }}</code>
@@ -145,34 +146,32 @@ function roleColor(role) {
           </div>
         </div>
         <div class="topics-run-header-actions btn-row">
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="secondary"
+            size="sm"
             :disabled="!prevTopic"
             :title="prevTopic ? `Previous: ${prevTopic.label}` : 'No earlier topic'"
             @click="chooseTopic(prevTopic?.id)"
-          >← Prev</button>
-          <button
-            type="button"
-            class="btn btn-secondary text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          >← Prev</Button>
+          <Button
+            variant="secondary"
+            size="sm"
             :disabled="!nextTopic"
             :title="nextTopic ? `Next: ${nextTopic.label}` : 'No later topic'"
             @click="chooseTopic(nextTopic?.id)"
-          >Next →</button>
+          >Next →</Button>
           <span class="topics-run-header-divider" aria-hidden="true"></span>
-          <button
-            type="button"
-            class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="secondary"
             :disabled="isBusy()"
             @click="downgradeToDraft"
-          >{{ isBusy('downgrade-topic') ? 'Downgrading…' : 'Downgrade to Draft' }}</button>
-          <button
-            type="button"
-            class="btn btn-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+          >{{ isBusy('downgrade-topic') ? 'Downgrading…' : 'Downgrade to Draft' }}</Button>
+          <Button
+            variant="danger"
             :disabled="isBusy()"
             title="Permanently delete this topic and its wiki"
             @click="deleteTopic"
-          >{{ isBusy('delete-topic') ? 'Deleting…' : 'Delete' }}</button>
+          >{{ isBusy('delete-topic') ? 'Deleting…' : 'Delete' }}</Button>
         </div>
       </div>
     </Card>
@@ -194,15 +193,14 @@ function roleColor(role) {
         <div v-if="selectedTopic.related?.length" class="topics-insight-strip">
           <div class="topics-strip-label">Related topics</div>
           <div class="flex flex-wrap gap-2">
-            <button
+            <Button
               v-for="edge in selectedTopic.related"
               :key="`${edge.type}:${edge.id}`"
-              type="button"
-              class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              variant="secondary"
               @click="chooseTopic(edge.id)"
             >
               {{ edge.type }}: {{ edge.label }}
-            </button>
+            </Button>
           </div>
         </div>
 

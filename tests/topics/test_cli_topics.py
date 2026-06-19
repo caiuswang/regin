@@ -109,11 +109,36 @@ def test_cmd_topics_route_prints_json(monkeypatch, capsys, tmp_path):
         lambda repo, query: {"status": "approved", "query": query, "topic": {"id": "web"}},
     )
 
-    topics_cmd.cmd_topics_route("web", repo=str(tmp_path))
+    topics_cmd.cmd_topics_route("web", repo=str(tmp_path), wiki=False)
 
     out = capsys.readouterr().out
     assert '"status": "approved"' in out
     assert '"id": "web"' in out
+
+
+def test_render_topic_wiki_is_content_first():
+    """`--wiki` renders the wiki markdown content-first and omits the refs
+    list — the JSON envelope buries wiki_pages below refs, so an agent that
+    pipes through `head` never reaches it."""
+    out = topics_cmd._render_topic_wiki({
+        "query": "demo",
+        "refs": [{"path": f"lib/m{i}.py"} for i in range(30)],
+        "wiki_pages": [
+            {"path": ".regin/topics/wiki/demo.md",
+             "content": "# Demo\n\nbody", "truncated": False},
+            {"path": ".regin/topics/wiki/index.md",
+             "content": "## Index", "truncated": True},
+        ],
+    })
+    assert out.startswith("<!-- .regin/topics/wiki/demo.md -->")
+    assert "# Demo" in out and "## Index" in out
+    assert "truncated" in out                 # marker for the truncated page
+    assert "lib/m0.py" not in out             # refs are NOT in the wiki output
+
+
+def test_render_topic_wiki_handles_no_pages():
+    out = topics_cmd._render_topic_wiki({"query": "x", "wiki_pages": []})
+    assert "no wiki pages" in out and "x" in out
 
 
 def test_cmd_topics_bootstrap_exits_on_error(monkeypatch, tmp_path):

@@ -476,3 +476,109 @@ def test_snapshots_restore_clones_and_flips_latest(stub_proposal_provider, flask
             select(func.count(GraphSnapshot.id)).where(GraphSnapshot.is_latest == 1)
         ).first()
     assert latest_count == 1
+
+
+# ── multi-doc proposal forward-edge staging ─────────────────────────
+#
+# A proposal can hold several topics that reference one another. When the
+# user approves them one at a time, applying doc1 (which edges to a
+# not-yet-applied doc3) prunes the doc1→doc3 edge to keep the graph valid.
+# `_stage_forward_sibling_edges` stashes that edge so applying doc3 later
+# re-attaches it — otherwise the inter-doc edges are silently lost.
+
+
+def _proposal_with_forward_edge() -> dict:
+    """doc1 --related--> doc3; doc2 stands alone. None applied yet."""
+    return {
+        "topics": [
+            {"id": "doc1", "label": "Doc 1",
+             "edges": [{"type": "related", "target": "doc3"}]},
+            {"id": "doc2", "label": "Doc 2", "edges": []},
+            {"id": "doc3", "label": "Doc 3", "edges": []},
+        ],
+    }
+
+
+def test_stage_forward_sibling_edges_records_dropped_forward_ref(monkeypatch):
+    from web.blueprints.topics import apply as apply_mod
+
+    # Live graph holds only doc1 (just applied); doc3 not yet present.
+    monkeypatch.setattr(
+        apply_mod, "load_authoritative_graph",
+        lambda _p: {"topics": {"doc1": {"id": "doc1", "edges": []}}},
+    )
+    proposal = _proposal_with_forward_edge()
+    proposed = proposal["topics"][0]            # doc1
+    approved = {"id": "doc1", "edges": []}      # post-prune shape
+
+    apply_mod._stage_forward_sibling_edges(
+        "/repo", proposal, proposed, approved, strategy="create",
+    )
+
+    # Keyed by the not-yet-applied TARGET, valued by {source: [edge]} —
+    # the exact format _restore_pruned_inbound_edges_after_apply consumes.
+    bucket = proposal["metadata"]["pruned_inbound_edges"]
+    assert bucket == {"doc3": {"doc1": [{"type": "related", "target": "doc3"}]}}
+
+
+def test_stage_forward_sibling_edges_skips_already_present_target(monkeypatch):
+    from web.blueprints.topics import apply as apply_mod
+
+    # doc3 is ALREADY in the graph, so the edge survives the normal apply
+    # and must NOT be staged (it would double-restore).
+    monkeypatch.setattr(
+        apply_mod, "load_authoritative_graph",
+        lambda _p: {"topics": {"doc1": {}, "doc3": {}}},
+    )
+    proposal = _proposal_with_forward_edge()
+    apply_mod._stage_forward_sibling_edges(
+        "/repo", proposal, proposal["topics"][0], {"id": "doc1"}, strategy="create",
+    )
+    assert not proposal.get("metadata", {}).get("pruned_inbound_edges")
+
+
+def test_stage_forward_sibling_edges_ignores_non_sibling_and_merge(monkeypatch):
+    from web.blueprints.topics import apply as apply_mod
+
+    monkeypatch.setattr(
+        apply_mod, "load_authoritative_graph", lambda _p: {"topics": {}},
+    )
+    # Edge target is not a sibling in this proposal → not our concern.
+    proposal = {
+        "topics": [{"id": "doc1", "edges": [{"type": "related", "target": "stranger"}]}],
+    }
+    apply_mod._stage_forward_sibling_edges(
+        "/repo", proposal, proposal["topics"][0], {"id": "doc1"}, strategy="create",
+    )
+    assert not proposal.get("metadata", {}).get("pruned_inbound_edges")
+
+    # merge folds edges into a different target id — out of scope, skip.
+    proposal2 = _proposal_with_forward_edge()
+    apply_mod._stage_forward_sibling_edges(
+        "/repo", proposal2, proposal2["topics"][0], {"id": "doc1"}, strategy="merge",
+    )
+    assert not proposal2.get("metadata", {}).get("pruned_inbound_edges")
+
+
+def test_forward_edge_survives_stage_then_restore_round_trip(monkeypatch):
+    """End-to-end: stage the edge when doc1 is applied first, then prove the
+    existing restore helper re-attaches it once doc3 lands."""
+    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import _restore_pruned_edges
+
+    monkeypatch.setattr(
+        apply_mod, "load_authoritative_graph",
+        lambda _p: {"topics": {"doc1": {"id": "doc1", "edges": []}}},
+    )
+    proposal = _proposal_with_forward_edge()
+    apply_mod._stage_forward_sibling_edges(
+        "/repo", proposal, proposal["topics"][0], {"id": "doc1"}, strategy="create",
+    )
+
+    # Now doc3 is applied: the live graph has doc1 and doc3. Replay the
+    # restore the apply route runs (bucket keyed by the just-applied id).
+    live_topics = {"doc1": {"id": "doc1", "edges": []}, "doc3": {"id": "doc3", "edges": []}}
+    pruned = proposal["metadata"]["pruned_inbound_edges"]["doc3"]
+    _restore_pruned_edges(live_topics, pruned)
+
+    assert live_topics["doc1"]["edges"] == [{"type": "related", "target": "doc3"}]

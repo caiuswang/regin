@@ -16,6 +16,9 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import api from '../../api'
+import Button from '../ui/Button.vue'
+import Checkbox from '../ui/Checkbox.vue'
+import Select from '../ui/Select.vue'
 
 const props = defineProps({
   repoName: { type: String, required: true },
@@ -209,9 +212,10 @@ function deltaIsEmpty(d) {
           <code class="diffpanel__topic-id">{{ topic.id }}</code>
         </h4>
       </div>
-      <button
-        type="button"
-        class="diffpanel__close focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      <Button
+        variant="ghost"
+        size="icon"
+        class="diffpanel__close"
         aria-label="Cancel"
         :disabled="applying"
         @click="$emit('cancelled')"
@@ -219,7 +223,7 @@ function deltaIsEmpty(d) {
         <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true">
           <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
         </svg>
-      </button>
+      </Button>
     </header>
 
     <div class="diffpanel__body">
@@ -247,14 +251,14 @@ function deltaIsEmpty(d) {
         <div v-if="strategy === 'merge'" class="diffpanel__merge-target">
           <template v-if="mergeTargets.length">
             <label class="diffpanel__merge-label">Merge into</label>
-            <select
+            <Select
               v-model="targetTopicId"
-              class="topics-input text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+              :options="mergeTargets"
+              placeholder="Pick a topic…"
+              class="topics-input text-xs"
+              aria-label="Merge into"
               data-testid="diff-merge-target"
-            >
-              <option value="" disabled>Pick a topic…</option>
-              <option v-for="id in mergeTargets" :key="id" :value="id">{{ id }}</option>
-            </select>
+            />
           </template>
           <div v-else class="diffpanel__merge-empty">
             <svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 flex-shrink-0" aria-hidden="true">
@@ -270,29 +274,26 @@ function deltaIsEmpty(d) {
         <div class="diffpanel__section-label">Resolution</div>
         <ul class="diffpanel__options">
           <li>
-            <label class="diffpanel__option">
-              <input type="checkbox" v-model="options.prune_orphan_edges" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+            <Checkbox v-model="options.prune_orphan_edges" class="diffpanel__option">
               <span>
                 <span class="diffpanel__option-title">Drop edges to non-existent topics</span>
                 <span class="diffpanel__option-hint">Default — matches legacy behavior</span>
               </span>
-            </label>
+            </Checkbox>
           </li>
           <li>
-            <label class="diffpanel__option">
-              <input type="checkbox" v-model="options.drop_dead_refs" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+            <Checkbox v-model="options.drop_dead_refs" class="diffpanel__option">
               <span>
                 <span class="diffpanel__option-title">Drop refs to deleted files</span>
               </span>
-            </label>
+            </Checkbox>
           </li>
           <li>
-            <label class="diffpanel__option">
-              <input type="checkbox" v-model="options.dedupe_aliases" class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+            <Checkbox v-model="options.dedupe_aliases" class="diffpanel__option">
               <span>
                 <span class="diffpanel__option-title">Drop aliases that clash with sibling topics</span>
               </span>
-            </label>
+            </Checkbox>
           </li>
         </ul>
       </section>
@@ -446,23 +447,21 @@ function deltaIsEmpty(d) {
     <footer class="diffpanel__footer">
       <div v-if="error" class="diffpanel__error" data-testid="diff-error">{{ error }}</div>
       <div class="diffpanel__footer-actions">
-        <button
-          type="button"
-          class="btn btn-secondary text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        <Button
+          variant="secondary"
           :disabled="applying"
           @click="$emit('cancelled')"
         >
           Cancel
-        </button>
-        <button
-          type="button"
-          class="btn btn-primary text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        </Button>
+        <Button
+          variant="primary"
           :disabled="!canApply"
           data-testid="diff-apply"
           @click="apply"
         >
           {{ applying ? 'Applying…' : 'Apply' }}
-        </button>
+        </Button>
       </div>
     </footer>
   </div>
@@ -471,13 +470,13 @@ function deltaIsEmpty(d) {
 <style scoped>
 /* ── Shell ──────────────────────────────────────────────────────── */
 .diffpanel {
-  background: #fff;
-  border: 1px solid #E2E8F0;
+  background: var(--color-white);
+  border: 1px solid var(--color-slate-200);
   border-radius: 0.75rem;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.08);
   overflow: hidden;
   font-size: 0.8125rem;
-  color: #0F172A;
+  color: var(--color-slate-900);
 }
 
 .diffpanel code {
@@ -492,16 +491,16 @@ function deltaIsEmpty(d) {
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.875rem 1rem;
-  border-bottom: 1px solid #F1F5F9;
-  background: linear-gradient(180deg, #FAFBFC 0%, #fff 100%);
+  border-bottom: 1px solid var(--color-slate-100);
+  background: linear-gradient(180deg, var(--color-gray-50) 0%, var(--color-white) 100%);
 }
 
 .diffpanel__topic-id {
   display: inline-block;
   padding: 0.125rem 0.5rem;
-  background: #F1F5F9;
+  background: var(--color-slate-100);
   border-radius: 0.375rem;
-  color: #1E293B;
+  color: var(--color-slate-800);
   font-weight: 500;
   font-size: 0.8125rem;
 }
@@ -517,18 +516,18 @@ function deltaIsEmpty(d) {
   width: 1.75rem;
   height: 1.75rem;
   border-radius: 0.5rem;
-  color: #64748B;
+  color: var(--color-slate-500);
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
   flex-shrink: 0;
   transition: background-color 150ms, color 150ms, border-color 150ms;
 }
-.diffpanel__close:hover { background: #F1F5F9; color: #0F172A; }
+.diffpanel__close:hover { background: var(--color-slate-100); color: var(--color-slate-900); }
 .diffpanel__close:disabled { opacity: 0.5; cursor: not-allowed; }
 .diffpanel__close:focus-visible {
   outline: none;
-  border-color: #3B82F6;
+  border-color: var(--color-blue-500);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 
@@ -546,7 +545,7 @@ function deltaIsEmpty(d) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #64748B;
+  color: var(--color-slate-500);
 }
 
 /* ── Segmented strategy control ─────────────────────────────────── */
@@ -555,7 +554,7 @@ function deltaIsEmpty(d) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.375rem;
   padding: 0.25rem;
-  background: #F1F5F9;
+  background: var(--color-slate-100);
   border-radius: 0.625rem;
 }
 
@@ -570,29 +569,29 @@ function deltaIsEmpty(d) {
   border-radius: 0.5rem;
   cursor: pointer;
   text-align: left;
-  color: #475569;
+  color: var(--color-slate-600);
   transition: background-color 150ms, color 150ms, box-shadow 150ms, border-color 150ms;
 }
 .diffpanel__segment:hover:not(:disabled):not(.diffpanel__segment--active) {
   background: rgba(255, 255, 255, 0.6);
-  color: #0F172A;
+  color: var(--color-slate-900);
 }
 .diffpanel__segment--active {
-  background: #fff;
-  color: #0F172A;
+  background: var(--color-white);
+  color: var(--color-slate-900);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(255, 255, 255, 0.5) inset;
-  border-color: #E2E8F0;
+  border-color: var(--color-slate-200);
 }
 .diffpanel__segment:disabled { opacity: 0.4; cursor: not-allowed; }
 .diffpanel__segment:focus-visible {
   outline: none;
-  border-color: #3B82F6;
+  border-color: var(--color-blue-500);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 
 .diffpanel__segment-label { font-size: 0.8125rem; font-weight: 600; line-height: 1.1; }
-.diffpanel__segment-desc { font-size: 0.6875rem; color: #94A3B8; line-height: 1.2; }
-.diffpanel__segment--active .diffpanel__segment-desc { color: #64748B; }
+.diffpanel__segment-desc { font-size: 0.6875rem; color: var(--color-slate-400); line-height: 1.2; }
+.diffpanel__segment--active .diffpanel__segment-desc { color: var(--color-slate-500); }
 
 /* ── Resolution options ─────────────────────────────────────────── */
 .diffpanel__options { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem; }
@@ -605,21 +604,21 @@ function deltaIsEmpty(d) {
   cursor: pointer;
   transition: background-color 150ms;
 }
-.diffpanel__option:hover { background: #F8FAFC; }
+.diffpanel__option:hover { background: var(--color-slate-50); }
 .diffpanel__option input[type="checkbox"] {
   margin-top: 0.125rem;
-  accent-color: #2563EB;
+  accent-color: var(--color-blue-600);
   width: 0.875rem;
   height: 0.875rem;
   flex-shrink: 0;
 }
 .diffpanel__option input[type="checkbox"]:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
 }
 .diffpanel__option > span:last-child { display: flex; flex-direction: column; gap: 0.125rem; }
-.diffpanel__option-title { font-size: 0.8125rem; color: #0F172A; line-height: 1.3; }
-.diffpanel__option-hint { font-size: 0.6875rem; color: #94A3B8; }
+.diffpanel__option-title { font-size: 0.8125rem; color: var(--color-slate-900); line-height: 1.3; }
+.diffpanel__option-hint { font-size: 0.6875rem; color: var(--color-slate-400); }
 
 /* ── Hint / spinner ─────────────────────────────────────────────── */
 .diffpanel__hint {
@@ -627,13 +626,13 @@ function deltaIsEmpty(d) {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
-  color: #64748B;
+  color: var(--color-slate-500);
 }
 .diffpanel__spinner {
   width: 0.75rem;
   height: 0.75rem;
-  border: 2px solid #CBD5E1;
-  border-top-color: #2563EB;
+  border: 2px solid var(--color-slate-300);
+  border-top-color: var(--color-blue-600);
   border-radius: 999px;
   animation: diffpanel-spin 700ms linear infinite;
 }
@@ -648,9 +647,9 @@ function deltaIsEmpty(d) {
   flex-direction: column;
   gap: 0.375rem;
 }
-.diffpanel__callout--error { background: #FEF2F2; border-color: #FECACA; color: #991B1B; }
-.diffpanel__callout--warn  { background: #FFFBEB; border-color: #FDE68A; color: #92400E; }
-.diffpanel__callout--muted { background: #F8FAFC; border-color: #E2E8F0; color: #475569; }
+.diffpanel__callout--error { background: var(--color-red-50); border-color: var(--color-red-200); color: var(--color-red-800); }
+.diffpanel__callout--warn  { background: var(--color-amber-50); border-color: var(--color-amber-200); color: var(--color-amber-800); }
+.diffpanel__callout--muted { background: var(--color-slate-50); border-color: var(--color-slate-200); color: var(--color-slate-600); }
 
 .diffpanel__callout-head {
   display: inline-flex;
@@ -662,7 +661,7 @@ function deltaIsEmpty(d) {
 
 .diffpanel__issue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; }
 .diffpanel__issue-list li { display: flex; align-items: flex-start; gap: 0.375rem; flex-wrap: wrap; }
-.diffpanel__issue-list--muted li { color: #475569; }
+.diffpanel__issue-list--muted li { color: var(--color-slate-600); }
 
 .diffpanel__code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -675,9 +674,9 @@ function deltaIsEmpty(d) {
 
 /* ── Delta cards ────────────────────────────────────────────────── */
 .diffpanel__delta {
-  border: 1px solid #E2E8F0;
+  border: 1px solid var(--color-slate-200);
   border-radius: 0.625rem;
-  background: #fff;
+  background: var(--color-white);
   overflow: hidden;
 }
 .diffpanel__delta-head {
@@ -685,8 +684,8 @@ function deltaIsEmpty(d) {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  background: #F8FAFC;
-  border-bottom: 1px solid #E2E8F0;
+  background: var(--color-slate-50);
+  border-bottom: 1px solid var(--color-slate-200);
 }
 .diffpanel__kind-badge {
   font-size: 0.6875rem;
@@ -704,7 +703,7 @@ function deltaIsEmpty(d) {
 .diffpanel__empty {
   padding: 0.75rem;
   font-size: 0.75rem;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   font-style: italic;
 }
 
@@ -719,7 +718,7 @@ function deltaIsEmpty(d) {
 }
 .diffpanel__field dt {
   font-weight: 500;
-  color: #64748B;
+  color: var(--color-slate-500);
   text-transform: capitalize;
 }
 .diffpanel__field dd {
@@ -728,19 +727,19 @@ function deltaIsEmpty(d) {
   align-items: center;
   gap: 0.375rem;
   flex-wrap: wrap;
-  color: #0F172A;
+  color: var(--color-slate-900);
 }
 .diffpanel__field-before {
   text-decoration: line-through;
-  color: #94A3B8;
-  background: #FEF2F2;
+  color: var(--color-slate-400);
+  background: var(--color-red-50);
   padding: 0.0625rem 0.375rem;
   border-radius: 0.25rem;
 }
-.diffpanel__field-empty { color: #CBD5E1; }
+.diffpanel__field-empty { color: var(--color-slate-300); }
 .diffpanel__field-after {
-  background: #ECFDF5;
-  color: #065F46;
+  background: var(--color-emerald-50);
+  color: var(--color-emerald-800);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   max-width: 60ch;
@@ -760,7 +759,7 @@ function deltaIsEmpty(d) {
 .diffpanel__merge-label {
   font-size: 0.75rem;
   font-weight: 500;
-  color: #475569;
+  color: var(--color-slate-600);
 }
 .diffpanel__merge-target .topics-input {
   flex: 1;
@@ -772,9 +771,9 @@ function deltaIsEmpty(d) {
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   font-size: 0.75rem;
-  color: #92400E;
-  background: #FFFBEB;
-  border: 1px solid #FDE68A;
+  color: var(--color-amber-800);
+  background: var(--color-amber-50);
+  border: 1px solid var(--color-amber-200);
   border-radius: 0.5rem;
   width: 100%;
 }
@@ -786,7 +785,7 @@ function deltaIsEmpty(d) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #94A3B8;
+  color: var(--color-slate-400);
 }
 .diffpanel__group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.125rem; }
 .diffpanel__group li {
@@ -808,10 +807,10 @@ function deltaIsEmpty(d) {
   line-height: 1;
   flex-shrink: 0;
 }
-.diffpanel__sign--add    { background: #DCFCE7; color: #15803D; }
-.diffpanel__sign--remove { background: #FEE2E2; color: #B91C1C; }
-.diffpanel__add    { color: #166534; }
-.diffpanel__remove { color: #991B1B; }
+.diffpanel__sign--add    { background: var(--color-green-100); color: var(--color-green-700); }
+.diffpanel__sign--remove { background: var(--color-red-100); color: var(--color-red-700); }
+.diffpanel__add    { color: var(--color-green-800); }
+.diffpanel__remove { color: var(--color-red-800); }
 
 .diffpanel__path {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -821,26 +820,26 @@ function deltaIsEmpty(d) {
 }
 .diffpanel__role {
   font-size: 0.6875rem;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   padding: 0.0625rem 0.3125rem;
-  background: #F1F5F9;
+  background: var(--color-slate-100);
   border-radius: 0.25rem;
 }
 
 /* ── Footer ─────────────────────────────────────────────────────── */
 .diffpanel__footer {
-  border-top: 1px solid #F1F5F9;
+  border-top: 1px solid var(--color-slate-100);
   padding: 0.75rem 1rem;
-  background: #FAFBFC;
+  background: var(--color-gray-50);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 .diffpanel__error {
   font-size: 0.75rem;
-  color: #B91C1C;
-  background: #FEF2F2;
-  border: 1px solid #FECACA;
+  color: var(--color-red-700);
+  background: var(--color-red-50);
+  border: 1px solid var(--color-red-200);
   padding: 0.375rem 0.625rem;
   border-radius: 0.5rem;
 }

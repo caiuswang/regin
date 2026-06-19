@@ -140,6 +140,32 @@ def test_match_topic_uses_partial_ref_path(fake_git_repo):
     assert path_match["id"] == "web"
 
 
+def test_best_topic_for_text_matches_on_ref_path_in_body(fake_git_repo):
+    """Long text (a memory body) links to a topic only when one of that
+    topic's ref file paths appears in the body — the precision signal the
+    backfill relies on, where `match_topic`'s short-query strategies would
+    instead fall to the over-eager fuzzy fallback."""
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "web": {
+            "label": "Web", "aliases": [], "intent": "Web routes.",
+            "status": "active",
+            "refs": [{"path": "web/app.py", "role": "entrypoint"}],
+            "edges": [], "commands": [],
+            "include_globs": ["web/**"], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    body = ("When the Flask blueprint in web/app.py 500s, restart the "
+            "backend so the route table reloads.")
+    assert topics.best_topic_for_text(fake_git_repo, body) == "web"
+    # A body that merely shares common words links to nothing.
+    assert topics.best_topic_for_text(
+        fake_git_repo, "remember to restart the backend after edits") is None
+
+
 def test_route_topic_returns_ordered_refs_wiki_and_related(fake_git_repo):
     (fake_git_repo / "web").mkdir()
     (fake_git_repo / "web" / "app.py").write_text("app")

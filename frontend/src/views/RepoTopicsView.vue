@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Badge from '../components/Badge.vue'
 import Card from '../components/Card.vue'
+import Button from '../components/ui/Button.vue'
+import Select from '../components/ui/Select.vue'
 import AuditPanel from '../components/topics/AuditPanel.vue'
 import HistoryPanel from '../components/topics/HistoryPanel.vue'
 import ApprovedTopicsList from '../components/topics/ApprovedTopicsList.vue'
@@ -498,10 +500,10 @@ onUnmounted(() => {
           <p class="topics-mode-description">Maintain the canonical wiki-backed topic graph and inspect the references, edges, and wiki output behind each approved topic.</p>
         </div>
         <div class="topics-mode-actions btn-row">
-          <button type="button" class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="isBusy()" @click="syncFromGit" title="Import teammate-committed topics from git into your local snapshot and rebuild the wiki search index. (The graph also auto-syncs whenever you open this page; this refreshes search too.)">{{ isBusy('sync-git') ? 'Syncing…' : 'Sync from git' }}</button>
-          <button type="button" class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="isBusy()" @click="generateWiki">Generate Wiki</button>
-          <button type="button" class="btn btn-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="isBusy()" @click="reindexWikis" title="Refresh the dense pattern index for this repo's per-topic wiki pages. Auto-runs after every accept; click to force-refresh.">{{ isBusy('reindex-wikis') ? 'Indexing…' : 'Re-index Wikis' }}</button>
-          <button type="button" class="btn btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" :disabled="isBusy()" @click="scanTopics">{{ isBusy('scan') ? 'Working...' : 'Scan Topics' }}</button>
+          <Button variant="secondary" :disabled="isBusy()" @click="syncFromGit" title="Import teammate-committed topics from git into your local snapshot and rebuild the wiki search index. (The graph also auto-syncs whenever you open this page; this refreshes search too.)">{{ isBusy('sync-git') ? 'Syncing…' : 'Sync from git' }}</Button>
+          <Button variant="secondary" :disabled="isBusy()" @click="generateWiki">Generate Wiki</Button>
+          <Button variant="secondary" :disabled="isBusy()" @click="reindexWikis" title="Refresh the dense pattern index for this repo's per-topic wiki pages. Auto-runs after every accept; click to force-refresh.">{{ isBusy('reindex-wikis') ? 'Indexing…' : 'Re-index Wikis' }}</Button>
+          <Button variant="primary" :disabled="isBusy()" @click="scanTopics">{{ isBusy('scan') ? 'Working...' : 'Scan Topics' }}</Button>
         </div>
       </section>
 
@@ -532,26 +534,33 @@ onUnmounted(() => {
 
       <Card>
         <div class="topics-proposal-controls">
-          <select v-model="selectedProvider" aria-label="Proposal provider" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
-            <option v-for="provider in (proposalData?.providers || [])" :key="provider.id" :value="provider.id">
-              {{ provider.label }}{{ provider.network && !provider.configured ? ' (not configured)' : '' }}
-              {{ provider.id === 'external-agent' && !provider.configured ? ' (not configured)' : '' }}
-            </option>
-          </select>
-          <select v-model="selectedComplexity" aria-label="Proposal complexity" class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
-            <option value="auto">Auto</option>
-            <option value="simple">Simple</option>
-            <option value="standard">Standard</option>
-            <option value="complex">Complex</option>
-          </select>
-          <select
+          <Select
+            v-model="selectedProvider"
+            aria-label="Proposal provider"
+            block
+            class="topics-input"
+            :options="(proposalData?.providers || []).map(p => ({ value: p.id, label: `${p.label}${(p.network && !p.configured) || (p.id === 'external-agent' && !p.configured) ? ' (not configured)' : ''}` }))"
+          />
+          <Select
+            v-model="selectedComplexity"
+            aria-label="Proposal complexity"
+            block
+            class="topics-input"
+            :options="[
+              { value: 'auto', label: 'Auto' },
+              { value: 'simple', label: 'Simple' },
+              { value: 'standard', label: 'Standard' },
+              { value: 'complex', label: 'Complex' },
+            ]"
+          />
+          <Select
             v-if="selectedProposalProvider?.id === 'external-agent'"
             v-model="selectedAgent"
             aria-label="External agent"
-            class="topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-          >
-            <option v-for="agent in selectedProviderAgents" :key="agent" :value="agent">{{ agent }}</option>
-          </select>
+            block
+            class="topics-input"
+            :options="selectedProviderAgents"
+          />
           <input
             v-model="proposalTopicRequest"
             type="text"
@@ -559,14 +568,13 @@ onUnmounted(() => {
             class="topics-input topics-input-grow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
             placeholder="Optional focus, boundary, or subsystem"
           >
-          <button
-            type="button"
-            class="btn btn-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          <Button
+            variant="primary"
             :disabled="isBusy() || ((selectedProposalProvider?.network || selectedProposalProvider?.id === 'external-agent') && !selectedProposalProvider?.configured)"
             @click="createProposal"
           >
             {{ isBusy('create-proposal') ? 'Working...' : 'Generate Proposal' }}
-          </button>
+          </Button>
         </div>
         <div v-if="availableTemplates.length" class="topics-template-chips">
           <span class="topics-template-chips-label">Prompt templates:</span>

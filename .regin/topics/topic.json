@@ -1,6 +1,212 @@
 {
   "repo": "regin",
   "topics": {
+    "add-new-agent-provider": {
+      "aliases": [
+        "support a new coding agent",
+        "plug in another CLI agent",
+        "provider capability matrix",
+        "wire up a Kimi-style integration",
+        "agent-agnostic capture seam"
+      ],
+      "commands": [
+        ".venv/bin/python -m pytest tests/core/test_providers.py tests/skills/test_provider_parity.py tests/hooks/test_kimi_hooks_toml.py tests/trace/test_kimi_transcript.py"
+      ],
+      "edges": [
+        {
+          "target": "session-trace-design",
+          "type": "related"
+        },
+        {
+          "target": "rule-engine-design",
+          "type": "related"
+        },
+        {
+          "target": "topic-proposal-pipeline",
+          "type": "related"
+        }
+      ],
+      "exclude_globs": [
+        "**/__pycache__/**"
+      ],
+      "include_globs": [
+        "lib/providers/**"
+      ],
+      "intent": "Show a future agent the exact contract and integration points for teaching regin about a new coding-agent CLI (Kimi/Codex-style): subclass the AgentProvider adapter, register it, and wire transcript parsing, hook install, and skill deployment so regin captures the agent's sessions without hard-coding vendor paths or payload shapes across the shared pipeline.",
+      "label": "Adding a new agent provider (AgentProvider adapter playbook: contract, registry, hook/transcript wiring)",
+      "refs": [
+        {
+          "path": "lib/providers/base.py",
+          "role": "architecture"
+        },
+        {
+          "path": "lib/providers/registry.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/providers/__init__.py",
+          "role": "overview"
+        },
+        {
+          "path": "lib/providers/claude/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/providers/kimi/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/providers/kimi_hooks.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/providers/codex/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/providers/generic/__init__.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/kimi_transcript.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/transcript_models.py",
+          "role": "schema"
+        },
+        {
+          "path": "hook_manager/core.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/runner.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/entry.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/post_tool_trace.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/session_lifecycle.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/post_tool_failure.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/settings.py",
+          "role": "config"
+        },
+        {
+          "path": "web/blueprints/hooks.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/meta.py",
+          "role": "api"
+        },
+        {
+          "path": "web/blueprints/skills.py",
+          "role": "api"
+        },
+        {
+          "path": "frontend/src/components/SettingsProviders.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/composables/useProviderPaths.js",
+          "role": "implementation"
+        },
+        {
+          "path": "alembic/versions/0004_pattern_deployment_provider.py",
+          "role": "migration"
+        },
+        {
+          "path": "db/schema.sql",
+          "role": "schema"
+        },
+        {
+          "path": "tests/core/test_providers.py",
+          "role": "test"
+        },
+        {
+          "path": "tests/skills/test_provider_parity.py",
+          "role": "test"
+        },
+        {
+          "path": "tests/hooks/test_kimi_hooks_toml.py",
+          "role": "test"
+        },
+        {
+          "path": "tests/trace/test_kimi_transcript.py",
+          "role": "test"
+        }
+      ],
+      "status": "active"
+    },
+    "agent-memory-architecture": {
+      "aliases": [
+        "cross-session experience store",
+        "how regin remembers across sessions",
+        "memory engine seam",
+        "regin_memory.db design",
+        "remember recall reflect facade"
+      ],
+      "commands": [
+        ".venv/bin/python -m pytest tests/memory/test_store.py tests/memory/test_capture.py"
+      ],
+      "edges": [
+        {
+          "target": "session-trace-design",
+          "type": "related"
+        }
+      ],
+      "exclude_globs": [
+        "**/__pycache__/**"
+      ],
+      "include_globs": [
+        "lib/memory/**"
+      ],
+      "intent": "Orient a future agent in regin's cross-session memory subsystem before touching any of it: the capture \u2192 consolidate \u2192 recall \u2192 reinforce lifecycle, the four ports (EmbeddingProvider, LLMProvider, MemoryStore, MemorySink) that every concrete provider is injected behind so the engine stays provider-free, the single mutable `memories` table with its tier/kind/status/veracity axes and side tables, and why memory lives in its own self-initializing SQLite DB with its own MetaData so `regin init`/`rebuild` and Alembic can never wipe or migrate it.",
+      "label": "Agent memory architecture (ports/adapters engine, self-initializing DB, tiers & lifecycle model)",
+      "refs": [
+        {
+          "path": "lib/memory/__init__.py",
+          "role": "overview"
+        },
+        {
+          "path": "lib/memory/ports.py",
+          "role": "architecture"
+        },
+        {
+          "path": "lib/memory/engine.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/models.py",
+          "role": "schema"
+        },
+        {
+          "path": "lib/memory/adapters.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/scoping.py",
+          "role": "config"
+        },
+        {
+          "path": "ARCHITECTURE.md",
+          "role": "architecture"
+        }
+      ],
+      "status": "active"
+    },
     "multi-user-topic-sharing": {
       "aliases": [
         "how other users see my topics",
