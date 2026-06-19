@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Workflow PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "Workflow"},
+    "tool_input": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "script": {"type": "string"},
+        "scriptPath": {"type": "string"},
+        "name": {"type": "string"},
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "resumeFromRunId": {"type": "string"},
+        "args": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,9 +1,13 @@
 <script setup>
+import { computed } from 'vue'
 import Badge from './Badge.vue'
 import DiffBlock from './DiffBlock.vue'
 import DriftDetailGrid from './DriftDetailGrid.vue'
+import Button from './ui/Button.vue'
+import Tabs from './ui/Tabs.vue'
+import { driftKindColor } from '../composables/useBadgeColor'
 
-defineProps({
+const props = defineProps({
   s: { type: Object, required: true },
   activeTab: { type: String, required: true },
   schemaDoc: { type: Object, default: null },
@@ -14,13 +18,25 @@ defineProps({
   expandedDrift: { type: [Number, String], default: null },
 })
 
-defineEmits(['set-tab', 'toggle-drift', 'ratify', 'ignore', 'discard'])
+const emit = defineEmits(['set-tab', 'toggle-drift', 'ratify', 'ignore', 'discard'])
 
-const KIND_COLOR = {
-  unknown_field: 'blue', missing_required: 'red',
-  type_mismatch: 'yellow', enum_violation: 'yellow', unknown_tool: 'gray',
-  unknown_event: 'gray',
-}
+// Tab definitions. The Diff tab is conditional on pending drift (the
+// original `v-if="s.pending > 0"`); Schema and Findings are always shown.
+// Counts ride along as a label suffix so the segmented control keeps the
+// pending badge the old `.seg-count` pill carried.
+const tabs = computed(() => {
+  const list = [{ value: 'schema', label: 'Schema' }]
+  if (props.s.pending > 0) list.push({ value: 'diff', label: `Diff ${props.s.pending}` })
+  list.push({ value: 'findings', label: props.s.pending ? `Findings ${props.s.pending}` : 'Findings' })
+  return list
+})
+
+// Tabs v-model emits `set-tab` upward so the parent keeps owning activeTab.
+const activeTabModel = computed({
+  get: () => props.activeTab,
+  set: (v) => emit('set-tab', v),
+})
+
 const KIND_LABEL = {
   unknown_field: 'unknown field', missing_required: 'missing required',
   type_mismatch: 'type mismatch', enum_violation: 'enum violation',
@@ -40,33 +56,7 @@ function pretty(obj) {
 
 <template>
   <div class="expansion">
-    <div class="segmented">
-      <button
-        type="button"
-        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'is-active': activeTab === 'schema' }"
-        @click.stop="$emit('set-tab', 'schema')"
-      >Schema</button>
-      <button
-        v-if="s.pending > 0"
-        type="button"
-        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'is-active': activeTab === 'diff' }"
-        @click.stop="$emit('set-tab', 'diff')"
-      >
-        Diff
-        <span class="seg-count">{{ s.pending }}</span>
-      </button>
-      <button
-        type="button"
-        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'is-active': activeTab === 'findings' }"
-        @click.stop="$emit('set-tab', 'findings')"
-      >
-        Findings
-        <span v-if="s.pending" class="seg-count">{{ s.pending }}</span>
-      </button>
-    </div>
+    <Tabs v-model="activeTabModel" :tabs="tabs" variant="segmented" />
 
     <!-- Schema tab -->
     <div v-if="activeTab === 'schema'" class="tab-panel">
@@ -145,7 +135,7 @@ function pretty(obj) {
               <td><code class="cell-code">{{ r.field_path }}</code></td>
               <td>
                 <Badge
-                  :color="KIND_COLOR[r.drift_kind] || 'gray'"
+                  :color="driftKindColor(r.drift_kind)"
                   :label="KIND_LABEL[r.drift_kind] || r.drift_kind"
                 />
               </td>
@@ -153,23 +143,26 @@ function pretty(obj) {
               <td><code class="cell-code">{{ r.claude_version || '—' }}</code></td>
               <td class="text-right tabular">{{ r.occurrence_count }}</td>
               <td class="actions-col">
-                <button
+                <Button
                   v-if="r.drift_kind === 'unknown_field'"
-                  type="button"
-                  class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
+                  variant="primary"
+                  size="sm"
+                  class="ml-1"
                   title="Add this field to your local overlay"
                   @click.stop="$emit('ratify', r)"
-                >Ratify</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost focus-visible:outline-2 focus-visible:outline-blue-500"
+                >Ratify</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="ml-1"
                   @click.stop="$emit('ignore', r)"
-                >Ignore</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-danger focus-visible:outline-2 focus-visible:outline-blue-500"
+                >Ignore</Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  class="ml-1"
                   @click.stop="$emit('discard', r)"
-                >Discard</button>
+                >Discard</Button>
               </td>
             </tr>
 
@@ -191,9 +184,9 @@ function pretty(obj) {
 <style scoped>
 .tab-panel { display: flex; flex-direction: column; gap: 0.625rem; }
 .tab-panel--flush { padding: 0; gap: 0; }
-.tab-help { font-size: 0.8125rem; color: #475569; line-height: 1.5; margin: 0; }
+.tab-help { font-size: 0.8125rem; color: var(--color-slate-600); line-height: 1.5; margin: 0; }
 .diff-wrap {
-  background: #0F172A;
+  background: var(--code-bg);
   border-radius: 0.5rem;
   overflow: hidden;
 }
@@ -201,20 +194,6 @@ function pretty(obj) {
 .expansion {
   padding: 0.875rem 1.125rem;
   display: flex; flex-direction: column; gap: 0.875rem;
-}
-
-.seg-count {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 1.25rem; height: 1.125rem;
-  padding: 0 0.375rem; margin-left: 0.375rem;
-  background: rgba(148, 163, 184, 0.18);
-  border-radius: 999px;
-  font-size: 0.6875rem; font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.segmented-item.is-active .seg-count {
-  background: rgba(30, 64, 175, 0.12);
-  color: #1E40AF;
 }
 
 /* Tables — column widths so expanded JSON can't reflow header cols. */
@@ -230,34 +209,34 @@ function pretty(obj) {
 .row-clickable { cursor: pointer; }
 
 .caret {
-  color: #94A3B8; font-size: 0.75rem;
+  color: var(--color-slate-400); font-size: 0.75rem;
   transition: transform 120ms ease;
   display: inline-block;
 }
-.caret.open { transform: rotate(90deg); color: #1E40AF; }
+.caret.open { transform: rotate(90deg); color: var(--color-blue-800); }
 
 .tabular { font-variant-numeric: tabular-nums; }
 .text-right { text-align: right; }
 
-.sample { color: #475569; word-break: break-all; }
+.sample { color: var(--color-slate-600); word-break: break-all; }
 
 /* Findings table (nested inside the expansion) -------------------- */
 .findings-tbl {
-  background: #fff;
-  border: 1px solid #E2E8F0;
+  background: var(--color-white);
+  border: 1px solid var(--color-slate-200);
   border-radius: 0.625rem;
   font-size: 0.8125rem;
 }
-.findings-tbl thead { background: #F8FAFC; }
+.findings-tbl thead { background: var(--color-slate-50); }
 .expansion-row--inner > td {
-  background: #FAFCFE;
-  border-top: 1px solid #E2E8F0;
+  background: var(--color-slate-50);
+  border-top: 1px solid var(--color-slate-200);
 }
 /* Base .expansion-row td styling lived in the parent's scoped block, but the
    inner .expansion-row element moved into this child — re-scope here so it
    isn't stranded (padding:0!important + border-bottom; background is left to
    the --inner rule above). */
-.expansion-row > td { padding: 0 !important; border-bottom: 1px solid #E2E8F0; }
+.expansion-row > td { padding: 0 !important; border-bottom: 1px solid var(--color-slate-200); }
 .expansion-row:hover { background: transparent; }
 
 /* Schema/detail key-value rows ------------------------------------ */
@@ -268,13 +247,13 @@ function pretty(obj) {
   margin: 0;
   font-size: 0.8125rem;
 }
-.meta-kv dt { color: #94A3B8; font-weight: 500; }
-.meta-kv dd { margin: 0; color: #1E293B; min-width: 0; }
+.meta-kv dt { color: var(--color-slate-400); font-weight: 500; }
+.meta-kv dd { margin: 0; color: var(--color-slate-800); min-width: 0; }
 .meta-kv__overlay { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
 /* Code blocks — dark only because they show code/JSON. */
 .code-block {
-  background: #0F172A; color: #E2E8F0;
+  background: var(--code-bg); color: var(--code-fg);
   padding: 0.625rem 0.75rem;
   border-radius: 0.5rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -286,32 +265,8 @@ function pretty(obj) {
 
 .empty-state-inline {
   font-size: 0.8125rem;
-  color: #64748B;
+  color: var(--color-slate-500);
   margin: 0;
 }
 .empty-state-inline.pad { padding: 0.75rem 0.25rem; }
-
-/* Buttons -------------------------------------------------------- */
-.btn {
-  background: #fff;
-  border: 1px solid #E2E8F0;
-  color: #334155;
-  font-size: 0.75rem; font-weight: 500;
-  padding: 0.25rem 0.625rem;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  margin-left: 0.25rem;
-  transition: background-color 120ms, border-color 120ms, color 120ms;
-}
-.btn:hover { background: #F8FAFC; border-color: #CBD5E1; }
-.btn-primary {
-  background: #1E40AF; color: #fff; border-color: #1E40AF;
-}
-.btn-primary:hover { background: #1E3A8A; border-color: #1E3A8A; }
-.btn-ghost {
-  background: transparent; border-color: transparent; color: #475569;
-}
-.btn-ghost:hover { background: #F1F5F9; border-color: #E2E8F0; }
-.btn-ghost.btn-danger { color: #B91C1C; }
-.btn-ghost.btn-danger:hover { background: #FEF2F2; border-color: #FECACA; }
 </style>

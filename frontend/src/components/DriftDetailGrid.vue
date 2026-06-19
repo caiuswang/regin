@@ -67,13 +67,13 @@ function relevantSubschema(detail) {
   margin: 0;
   font-size: 0.8125rem;
 }
-.meta-kv dt { color: #94A3B8; font-weight: 500; }
-.meta-kv dd { margin: 0; color: #1E293B; min-width: 0; }
+.meta-kv dt { color: var(--color-slate-400); font-weight: 500; }
+.meta-kv dd { margin: 0; color: var(--color-slate-800); min-width: 0; }
 .meta-kv__overlay { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
 /* Code blocks — dark only because they show code/JSON. */
 .code-block {
-  background: #0F172A; color: #E2E8F0;
+  background: var(--code-bg); color: var(--code-fg);
   padding: 0.625rem 0.75rem;
   border-radius: 0.5rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -83,9 +83,9 @@ function relevantSubschema(detail) {
   white-space: pre;
 }
 .code-block-add {
-  background: #052E2A;
-  color: #BBF7D0;
-  box-shadow: inset 3px 0 0 #10B981;
+  background: var(--color-teal-950);
+  color: var(--color-green-200);
+  box-shadow: inset 3px 0 0 var(--color-emerald-500);
 }
 
 .detail-grid {
@@ -96,14 +96,14 @@ function relevantSubschema(detail) {
 }
 .detail-heading {
   font-size: 0.6875rem; font-weight: 600;
-  color: #64748B;
+  color: var(--color-slate-500);
   text-transform: uppercase; letter-spacing: 0.06em;
   margin-bottom: 0.375rem;
 }
 
 .empty-state-inline {
   font-size: 0.8125rem;
-  color: #64748B;
+  color: var(--color-slate-500);
   margin: 0;
 }
 </style>

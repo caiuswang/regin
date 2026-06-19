@@ -4,7 +4,8 @@
   "type": "object",
   "additionalProperties": true,
   "x-claude-versions": [
-    "2.1.158"
+    "2.1.158",
+    "2.1.177"
   ],
   "properties": {
     "file_path": {
@@ -14,6 +15,9 @@
       "type": "string"
     },
     "load_reason": {
+      "type": "string"
+    },
+    "parent_file_path": {
       "type": "string"
     },
     "agent_type": {

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import difflib
-import hashlib
 import json
 import os
 import tempfile
@@ -21,10 +20,11 @@ from sqlalchemy import text
 from lib import audit
 from lib.auth import get_current_user, require_editor
 from lib.orm import SessionLocal
-from lib.providers import get_active_provider
+from lib.providers import build_provider, get_active_provider, is_provider_id
+from lib.trace.payload_drift_store import _sha256
 from lib.trace.payload_validation import (
     _BASELINE_DIR, _load_schema, _overlay_dir,
-    baseline_schema_path, overlay_schema_path,
+    baseline_schema_path, effective_baseline_path, overlay_schema_path,
 )
 
 
@@ -101,7 +101,7 @@ def api_schema_drift_schemas():
 def _schema_row(agent: str, name: str, subject_kind: str, counts: dict) -> dict | None:
     """Build one /schemas row for (agent, name, subject_kind), or None when
     neither a baseline nor an overlay file exists for it."""
-    baseline = baseline_schema_path(agent, name, subject_kind).is_file()
+    baseline = effective_baseline_path(agent, name, subject_kind).is_file()
     overlay = overlay_schema_path(agent, name, subject_kind).is_file()
     if not baseline and not overlay:
         return None
@@ -299,7 +299,7 @@ def api_schema_drift_detail(drift_id: int):
         'baseline_path': str(baseline_schema_path(agent, tool, kind)),
         'overlay_path': str(overlay_schema_path(agent, tool, kind)),
         'overlay_exists': overlay_schema_path(agent, tool, kind).is_file(),
-        'payload': _lookup_payload(drift.get('sample_payload_sha')),
+        'payload': _lookup_payload(drift.get('sample_payload_sha'), agent),
         'proposed_change': _propose_change(drift),
     })
 
@@ -341,13 +341,24 @@ def _load_full_drift_row(drift_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def _lookup_payload(target_sha: str | None) -> dict | None:
-    """Find the raw payload in the active provider's hook-payloads.jsonl
-    by sha256 of the line. Returns the parsed entry's `payload` dict,
-    or None if the log rotated past it / hash missing."""
+def _payload_log_path_for(agent: str | None) -> Path:
+    """Resolve the hook-payloads.jsonl path for a drift row's agent.
+
+    Each provider writes its payloads to its own log (Claude →
+    ~/.claude, Kimi → ~/.kimi-code, …), so a kimi finding must be looked
+    up in kimi's log even when Claude is the active provider. Falls back
+    to the active provider for an unknown/missing agent."""
+    provider = build_provider(agent) if is_provider_id(agent) else get_active_provider()
+    return Path(str(provider.hook_payload_log_path()))
+
+
+def _lookup_payload(target_sha: str | None, agent: str | None = None) -> dict | None:
+    """Find the raw payload in the agent's hook-payloads.jsonl by sha256
+    of the line. Returns the parsed entry's `payload` dict, or None if
+    the log rotated past it / hash missing."""
     if not target_sha:
         return None
-    path = Path(str(get_active_provider().hook_payload_log_path()))
+    path = _payload_log_path_for(agent)
     if not path.is_file():
         return None
     try:
@@ -357,11 +368,7 @@ def _lookup_payload(target_sha: str | None) -> dict | None:
                 payload = entry.get('payload')
                 if payload is None:
                     continue
-                line_sha = hashlib.sha256(
-                    json.dumps(payload, sort_keys=True, default=str,
-                               ensure_ascii=False).encode('utf-8'),
-                ).hexdigest()
-                if line_sha == target_sha:
+                if _sha256(payload) == target_sha:
                     return payload
     except (OSError, json.JSONDecodeError, ValueError):
         return None
@@ -559,7 +566,9 @@ def _load_or_seed_overlay(
     path = overlay_schema_path(agent, tool_name, subject_kind)
     if path.is_file():
         return path, json.loads(path.read_text())
-    baseline = baseline_schema_path(agent, tool_name, subject_kind)
+    # Seed from the lineage-resolved baseline so an inheriting provider
+    # (e.g. kimi → claude) can still ratify onto its own overlay.
+    baseline = effective_baseline_path(agent, tool_name, subject_kind)
     if not baseline.is_file():
         raise FileNotFoundError(f"no baseline schema for {agent}/{tool_name}")
     return path, {

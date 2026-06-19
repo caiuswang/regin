@@ -23,7 +23,12 @@ from flask import Blueprint, jsonify, request
 from lib import audit
 from lib.auth import get_current_user, require_editor
 from lib.settings import save_settings
-from lib.providers import get_active_provider
+from lib.providers import (
+    build_provider,
+    get_active_provider,
+    is_provider_id,
+    list_provider_ids,
+)
 
 
 diagnostics_bp = Blueprint('diagnostics', __name__)
@@ -68,27 +73,54 @@ def api_diagnostics_state_set():
 # ── Payload log browser ────────────────────────────────────────────
 
 
+def _payload_log_agents() -> list[str]:
+    """Provider ids worth an agent tab on the payload-log page.
+
+    Each provider writes to its own hook-payloads.jsonl (Claude →
+    ~/.claude, Kimi → ~/.kimi-code, …), so "switch by agent" is a switch
+    between log files. Show a tab for any provider whose log exists on
+    disk, plus the active provider (always shown so the page opens to a
+    real tab even before that provider has captured anything)."""
+    found = {get_active_provider().provider_id}
+    for pid in list_provider_ids():
+        path = Path(str(build_provider(pid).hook_payload_log_path()))
+        if path.is_file():
+            found.add(pid)
+    return sorted(found)
+
+
 @diagnostics_bp.route('/api/diagnostics/payload-log', methods=['GET'])
 def api_payload_log():
-    """Tail recent entries from the active provider's hook-payloads.jsonl.
+    """Tail recent entries from a provider's hook-payloads.jsonl.
 
     Filters:
+      ?agent=kimi          - which provider's log to read (default: active)
       ?event=PostToolUse   - hook_event_name filter (exact match)
       ?tool=Bash           - tool_name filter inside the payload
       ?limit=200           - max entries returned (default 200, cap 1000)
+
+    `agents` lists every provider with a log to switch between; the UI
+    renders these as tabs.
     """
     event_filter = request.args.get('event')
     tool_filter = request.args.get('tool')
+    agent = request.args.get('agent')
     try:
         limit = min(int(request.args.get('limit', 200)), 1000)
     except ValueError:
         limit = 200
 
-    path = Path(str(get_active_provider().hook_payload_log_path()))
+    # Read the requested agent's log when it names a known provider;
+    # otherwise fall back to the active provider.
+    provider = build_provider(agent) if is_provider_id(agent) else get_active_provider()
+    agents = _payload_log_agents()
+    path = Path(str(provider.hook_payload_log_path()))
     if not path.is_file():
         return jsonify({
             'path': str(path), 'exists': False, 'entries': [],
             'total_scanned': 0,
+            'agent': provider.provider_id, 'agents': agents,
+            'diagnostics_enabled': _diagnostics_enabled(),
         })
 
     entries = _scan_payload_log(path, event_filter, tool_filter, limit)
@@ -99,6 +131,8 @@ def api_payload_log():
         'size_bytes': size_bytes,
         'entries': entries,
         'returned': len(entries),
+        'agent': provider.provider_id,
+        'agents': agents,
         'diagnostics_enabled': _diagnostics_enabled(),
     })
 

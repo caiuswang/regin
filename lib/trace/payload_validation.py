@@ -74,6 +74,16 @@ def _envelope_keys(subject_kind: str) -> frozenset[str]:
     return _HOOK_COMMON_KEYS if subject_kind == 'hook_event' else _ENVELOPE_KEYS
 
 
+# Always-known keys directly under `tool_response`. `output` is regin's
+# canonical single-result-blob key: providers that return one undifferentiated
+# result blob (e.g. Kimi's `{output, isError}` envelope) land it here, and
+# `_apply_tool_field_aliases` wraps a bare-string `tool_output` as
+# `{'output': …}` too. Treating it as known means a tool that inherits another
+# provider's per-tool schema (Kimi → Claude) doesn't flag the blob as drift,
+# without enumerating `output` in every per-tool `tool_response`.
+_RESULT_ENVELOPE_KEYS: frozenset[str] = frozenset({'output'})
+
+
 @dataclass(frozen=True)
 class DriftFinding:
     """One observed schema drift on a payload."""
@@ -105,6 +115,32 @@ def _schema_relpath(tool_name: str, subject_kind: str) -> Path:
 def baseline_schema_path(agent: str, tool_name: str, subject_kind: str = 'tool') -> Path:
     """Repo-tracked baseline schema path (`lib/trace/payload_schemas/<agent>/`)."""
     return _BASELINE_DIR / agent / _schema_relpath(tool_name, subject_kind)
+
+
+# Schema lineage: a provider whose tool/hook payloads are 1:1 with a parent
+# provider reuses the parent's committed schemas until it ships its own. Kimi
+# Code mirrors Claude Code's hook+tool payload surface (event names and the
+# common fields line up 1:1 — see `lib/providers/kimi`), so kimi inherits
+# claude's schemas instead of flagging every call as `unknown_tool`.
+_SCHEMA_PARENT: dict[str, str] = {'kimi': 'claude'}
+
+
+def effective_baseline_path(
+    agent: str, tool_name: str, subject_kind: str = 'tool',
+) -> Path:
+    """Baseline path resolved through schema lineage: the agent's own
+    baseline if it exists, else its parent's (`_SCHEMA_PARENT`). Falls back
+    to the agent's own (possibly missing) path when neither exists, so
+    callers can still detect 'no baseline'."""
+    own = baseline_schema_path(agent, tool_name, subject_kind)
+    if own.is_file():
+        return own
+    parent = _SCHEMA_PARENT.get(agent)
+    if parent:
+        inherited = baseline_schema_path(parent, tool_name, subject_kind)
+        if inherited.is_file():
+            return inherited
+    return own
 
 
 def overlay_schema_path(agent: str, tool_name: str, subject_kind: str = 'tool') -> Path:
@@ -174,7 +210,7 @@ def _load_schema(agent: str, tool_name: str, subject_kind: str = 'tool') -> dict
     `settings.payload_schemas_overlay_dir` copy if present, deep-merging
     `properties` / `required` / `x-claude-versions` so user ratifies
     never block baseline upgrades from `git pull`."""
-    baseline = _load_json(baseline_schema_path(agent, tool_name, subject_kind))
+    baseline = _load_json(effective_baseline_path(agent, tool_name, subject_kind))
     overlay = _load_json(overlay_schema_path(agent, tool_name, subject_kind))
     if baseline is None and overlay is None:
         return None
@@ -278,9 +314,12 @@ def _walk_dict(
     props = schema.get('properties') or {}
     known = _known_keys(props)
     # Top-level payload keys include the always-present envelope fields;
-    # which envelope set depends on the subject_kind axis.
+    # which envelope set depends on the subject_kind axis. Directly under
+    # `tool_response`, the canonical single-blob `output` key is always known.
     if not path:
         known = known | _envelope_keys(subject_kind)
+    elif path == 'tool_response':
+        known = known | _RESULT_ENVELOPE_KEYS
     for key, value in payload.items():
         full = f'{path}.{key}' if path else key
         if not _is_known_key(key, known):

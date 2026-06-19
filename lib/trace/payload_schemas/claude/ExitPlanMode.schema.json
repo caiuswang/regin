@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExitPlanMode PostToolUse payload",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "ExitPlanMode"
+    },
+    "tool_input": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "plan": {
+          "type": "string"
+        },
+        "allowed_prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "plan": {
+          "type": "string"
+        },
+        "is_agent": {
+          "type": "boolean"
+        },
+        "file_path": {
+          "type": "string"
+        }
+      }
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "effort": {
+      "type": "object"
+    }
+  },
+  "x-claude-versions": [
+    "2.1.177"
+  ]
+}

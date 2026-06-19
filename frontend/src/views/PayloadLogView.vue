@@ -6,6 +6,8 @@ import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import StatCard from '../components/StatCard.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import Button from '../components/ui/Button.vue'
+import Select from '../components/ui/Select.vue'
 
 const { enabled: diagEnabled, setEnabled: setDiag } = useDiagnosticsState()
 
@@ -18,18 +20,30 @@ const loading = ref(false)
 const error = ref('')
 const expandedIdx = ref(null)
 
+const allAgents = ref([])               // provider ids with a log to switch between
+const agentFilter = ref('')             // selected provider id ('' until first load resolves it)
+let didInit = false                     // first load adopts the server-resolved active agent
+
 const EVENT_OPTIONS = [
   '', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit', 'SessionStart',
   'SessionEnd', 'SubagentStart', 'SubagentStop', 'PermissionRequest',
 ]
+const eventOptions = EVENT_OPTIONS.map(ev => ({ value: ev, label: ev || 'All' }))
+const limitOptions = [50, 200, 500, 1000].map(n => ({ value: String(n), label: String(n) }))
 
 const fileSizeMB = computed(() => (meta.value.size_bytes / 1024 / 1024).toFixed(1))
+
+// One pill per provider that has a log. Unlike Schema drift (which holds
+// every agent's rows in one fetch and filters client-side), each provider's
+// payloads live in a separate file, so switching tabs re-hits the server.
+const agentTabs = computed(() => allAgents.value.map(a => ({ value: a, label: a })))
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
     const params = new URLSearchParams()
+    if (agentFilter.value) params.set('agent', agentFilter.value)
     if (eventFilter.value) params.set('event', eventFilter.value)
     if (toolFilter.value) params.set('tool', toolFilter.value)
     params.set('limit', String(limit.value))
@@ -41,11 +55,25 @@ async function load() {
       size_bytes: resp.size_bytes || 0,
       returned: resp.returned || 0,
     }
+    allAgents.value = resp.agents || []
+    // Adopt the server-resolved active provider as the selected tab on the
+    // first load, so the tab highlights the log we actually rendered.
+    if (!didInit) {
+      didInit = true
+      if (resp.agent) agentFilter.value = resp.agent
+    }
   } catch (e) {
     error.value = e.message || String(e)
   } finally {
     loading.value = false
   }
+}
+
+function setAgent(a) {
+  if (agentFilter.value === a) return
+  agentFilter.value = a
+  expandedIdx.value = null
+  load()
 }
 
 function toggle(idx) {
@@ -103,6 +131,23 @@ onMounted(load)
       Diagnostics is off — new payloads aren't being logged. Entries below are historical.
     </div>
 
+    <div
+      v-if="agentTabs.length > 1"
+      class="agent-tabs"
+      role="tablist"
+      aria-label="Agent"
+    >
+      <Button
+        v-for="t in agentTabs" :key="t.value"
+        size="sm"
+        class="text-xs"
+        role="tab"
+        :aria-selected="agentFilter === t.value"
+        :variant="agentFilter === t.value ? 'primary' : 'secondary'"
+        @click="setAgent(t.value)"
+      >{{ t.label }}</Button>
+    </div>
+
     <div class="kpi-grid">
       <StatCard>
         <div class="stat-label">File size</div>
@@ -124,12 +169,11 @@ onMounted(load)
     <div class="toolbar">
       <label class="field">
         <span class="field-label">Event</span>
-        <select
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500"
-          v-model="eventFilter" @change="load"
-        >
-          <option v-for="ev in EVENT_OPTIONS" :key="ev" :value="ev">{{ ev || 'All' }}</option>
-        </select>
+        <Select
+          v-model="eventFilter"
+          :options="eventOptions"
+          @update:model-value="load"
+        />
       </label>
       <label class="field">
         <span class="field-label">Tool</span>
@@ -141,21 +185,13 @@ onMounted(load)
       </label>
       <label class="field">
         <span class="field-label">Limit</span>
-        <select
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500"
-          v-model.number="limit" @change="load"
-        >
-          <option :value="50">50</option>
-          <option :value="200">200</option>
-          <option :value="500">500</option>
-          <option :value="1000">1000</option>
-        </select>
+        <Select
+          :model-value="String(limit)"
+          :options="limitOptions"
+          @update:model-value="v => { limit = Number(v); load() }"
+        />
       </label>
-      <button
-        type="button"
-        class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="load"
-      >Refresh</button>
+      <Button variant="primary" @click="load">Refresh</Button>
       <span class="toolbar-count">{{ entries.length }} entr<span v-if="entries.length === 1">y</span><span v-else>ies</span></span>
     </div>
 
@@ -225,7 +261,7 @@ onMounted(load)
 }
 .stat-unit {
   font-size: 0.875rem;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   font-weight: 500;
   margin-left: 0.125rem;
 }
@@ -233,7 +269,7 @@ onMounted(load)
 .kpi-path-value {
   font-size: 0.8125rem;
   word-break: break-all;
-  color: #1E293B;
+  color: var(--color-slate-800);
   line-height: 1.4;
   padding-top: 0.125rem;
 }
@@ -245,8 +281,17 @@ onMounted(load)
   font-size: 0.8125rem;
   margin-bottom: 1rem;
 }
-.banner-warn { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
-.banner-error { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
+.banner-warn { background: var(--color-amber-50); color: var(--color-amber-800); border: 1px solid var(--color-amber-200); }
+.banner-error { background: var(--color-red-50); color: var(--color-red-800); border: 1px solid var(--color-red-200); }
+
+/* Agent tabs (claude | kimi | …) — pill row that scopes the page to one
+   provider's payload log. Mirrors the Schema drift agent tabs. */
+.agent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
 
 .field {
   display: inline-flex;
@@ -256,7 +301,7 @@ onMounted(load)
   gap: 0.5rem;
 }
 .field-label {
-  font-size: 0.75rem; color: #64748B;
+  font-size: 0.75rem; color: var(--color-slate-500);
   text-transform: uppercase; letter-spacing: 0.05em;
   font-weight: 500;
   line-height: 1;
@@ -289,23 +334,23 @@ onMounted(load)
 .row-clickable { cursor: pointer; }
 
 .caret {
-  color: #94A3B8; font-size: 0.75rem;
+  color: var(--color-slate-400); font-size: 0.75rem;
   transition: transform 120ms ease;
   display: inline-block;
 }
-.caret.open { transform: rotate(90deg); color: #1E40AF; }
+.caret.open { transform: rotate(90deg); color: var(--color-blue-800); }
 
-.text-muted { color: #94A3B8; }
+.text-muted { color: var(--color-slate-400); }
 
 .expansion-row > td {
-  background: #F8FAFC;
+  background: var(--color-slate-50);
   padding: 0.75rem 1rem !important;
-  border-bottom: 1px solid #E2E8F0;
+  border-bottom: 1px solid var(--color-slate-200);
 }
 .expansion-row:hover { background: transparent; }
 
 .code-block {
-  background: #0F172A; color: #E2E8F0;
+  background: var(--code-bg); color: var(--code-fg);
   padding: 0.625rem 0.75rem;
   border-radius: 0.5rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -314,22 +359,6 @@ onMounted(load)
   overflow: auto; margin: 0;
   white-space: pre;
 }
-
-.btn {
-  background: #fff;
-  border: 1px solid #E2E8F0;
-  color: #334155;
-  font-size: 0.75rem; font-weight: 500;
-  padding: 0.3125rem 0.75rem;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  transition: background-color 120ms, border-color 120ms, color 120ms;
-}
-.btn:hover { background: #F8FAFC; border-color: #CBD5E1; }
-.btn-primary {
-  background: #1E40AF; color: #fff; border-color: #1E40AF;
-}
-.btn-primary:hover { background: #1E3A8A; border-color: #1E3A8A; }
 
 @media (max-width: 800px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }

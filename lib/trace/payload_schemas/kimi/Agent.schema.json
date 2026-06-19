@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent PostToolUse payload (Kimi)",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "Agent"
+    },
+    "tool_input": {
+      "type": "object",
+      "required": [
+        "prompt",
+        "subagent_type"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "subagent_type": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "run_in_background": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CronDelete PostToolUse payload",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "CronDelete"
+    },
+    "tool_input": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object"
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "effort": {
+      "type": "object"
+    }
+  }
+}

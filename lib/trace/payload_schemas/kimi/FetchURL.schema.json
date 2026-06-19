@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FetchURL PostToolUse payload (Kimi)",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "FetchURL"
+    },
+    "tool_input": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

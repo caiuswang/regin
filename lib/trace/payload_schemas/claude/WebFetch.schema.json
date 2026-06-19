@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WebFetch PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "WebFetch"},
+    "tool_input": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": true,
+      "properties": {
+        "url": {"type": "string"},
+        "prompt": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "bytes": {"type": "integer"},
+        "code": {"type": "integer"},
+        "codeText": {"type": "string"},
+        "result": {"type": "string"},
+        "durationMs": {"type": "integer"},
+        "url": {"type": "string"}
+      }
+    }
+  }
+}

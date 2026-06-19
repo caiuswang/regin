@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CronCreate PostToolUse payload",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "CronCreate"
+    },
+    "tool_input": {
+      "type": "object",
+      "required": [
+        "cron",
+        "prompt"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "cron": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "recurring": {
+          "type": "boolean"
+        },
+        "durable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object"
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "effort": {
+      "type": "object"
+    }
+  }
+}

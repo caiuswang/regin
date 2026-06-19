@@ -47,10 +47,11 @@ def _read_log(home: Path) -> list[dict]:
 
 # --- stdout contract: response shape ----------------------------------------
 
-def test_pretooluse_response_carries_specific_output(tmp_path):
-    """PreToolUse accepts hookSpecificOutput per spec — debug hook must supply
-    the sentinel `additionalContext` so its presence in Claude's recent-context
-    proves the hook actually fired."""
+def test_pretooluse_response_injects_no_context(tmp_path):
+    """The debugger fires on every event, so it must NOT return
+    `additionalContext` — echoing a sentinel back would inject a junk line
+    into the model's context on every tool call. Its job is the log file;
+    stdout is suppressed and carries no hookSpecificOutput."""
     payload = json.dumps({
         'hook_event_name': 'PreToolUse',
         'session_id': 's1',
@@ -60,22 +61,23 @@ def test_pretooluse_response_carries_specific_output(tmp_path):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out['suppressOutput'] is True
-    assert out['hookSpecificOutput']['hookEventName'] == 'PreToolUse'
-    assert out['hookSpecificOutput']['additionalContext'] == 'hook-payload-debug: logged'
+    assert 'hookSpecificOutput' not in out
 
 
-def test_userpromptsubmit_response_carries_specific_output(tmp_path):
+def test_userpromptsubmit_response_injects_no_context(tmp_path):
     payload = json.dumps({'hook_event_name': 'UserPromptSubmit', 'session_id': 's1'})
     r = _run(payload, tmp_path)
     out = json.loads(r.stdout)
-    assert out['hookSpecificOutput']['hookEventName'] == 'UserPromptSubmit'
+    assert out['suppressOutput'] is True
+    assert 'hookSpecificOutput' not in out
 
 
-def test_posttooluse_response_carries_specific_output(tmp_path):
+def test_posttooluse_response_injects_no_context(tmp_path):
     payload = json.dumps({'hook_event_name': 'PostToolUse', 'session_id': 's1', 'tool_name': 'Edit'})
     r = _run(payload, tmp_path)
     out = json.loads(r.stdout)
-    assert out['hookSpecificOutput']['hookEventName'] == 'PostToolUse'
+    assert out['suppressOutput'] is True
+    assert 'hookSpecificOutput' not in out
 
 
 def test_sessionstart_response_omits_specific_output(tmp_path):

@@ -14,10 +14,30 @@ import os
 import sys
 from datetime import datetime
 
-_LOG_PATH = os.path.expanduser('~/.claude/hook-payloads.jsonl')
+_DEFAULT_LOG_PATH = '~/.claude/hook-payloads.jsonl'
 
 
-def main() -> None:
+def _parse_args(args: list[str]) -> tuple[str, bool]:
+    """Tiny arg parser: an optional log path and a `--silent` flag.
+
+    The installer passes each provider's own log path (Kimi logs to
+    ``~/.kimi-code/...`` not ``~/.claude/...``) and, for agents whose CLI shows
+    raw hook stdout (Kimi), ``--silent`` so we emit nothing. With no args the
+    Claude default is preserved byte-for-byte.
+    """
+    log = _DEFAULT_LOG_PATH
+    silent = False
+    for arg in args:
+        if arg == '--silent':
+            silent = True
+        elif not arg.startswith('-'):
+            log = arg
+    return os.path.expanduser(log), silent
+
+
+def main(argv: list[str] | None = None) -> None:
+    log_path, silent = _parse_args(argv if argv is not None else sys.argv[1:])
+
     try:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
@@ -30,19 +50,24 @@ def main() -> None:
         'payload': payload,
     }
 
-    os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
-    with open(_LOG_PATH, 'a') as f:
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, 'a') as f:
         f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
-    # Emit a schema-valid response so Claude Code continues normally.
-    # Only PreToolUse/UserPromptSubmit/PostToolUse accept hookSpecificOutput.
-    events_with_specific_output = {'PreToolUse', 'UserPromptSubmit', 'PostToolUse'}
+    # `--silent`: write nothing to stdout. Agents like Kimi Code render any
+    # hook stdout verbatim in their UI, so even `{"suppressOutput": true}` —
+    # which is Claude-only JSON — would show up as junk. The payload is already
+    # captured to the log above; that is the whole job. Exit 0, silent.
+    if silent:
+        return
+
+    # Claude default: emit a schema-valid response so it continues normally.
+    # Deliberately NO `additionalContext`: this debugger fires on every event
+    # (PreToolUse/PostToolUse/UserPromptSubmit/...), so echoing a line back
+    # would inject "hook-payload-debug: logged" into the model's context on
+    # every single tool call. We only suppress our own stdout so it never
+    # reaches the transcript.
     resp: dict = {'suppressOutput': True}
-    if entry['hook_event'] in events_with_specific_output:
-        resp['hookSpecificOutput'] = {
-            'hookEventName': entry['hook_event'],
-            'additionalContext': 'hook-payload-debug: logged',
-        }
     json.dump(resp, sys.stdout)
     sys.stdout.write('\n')
     sys.stdout.flush()

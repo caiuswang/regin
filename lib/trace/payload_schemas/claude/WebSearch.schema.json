@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WebSearch PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {"const": "WebSearch"},
+    "tool_input": {
+      "type": "object",
+      "required": ["query"],
+      "additionalProperties": true,
+      "properties": {
+        "query": {"type": "string"},
+        "allowed_domains": {"type": "array", "items": {"type": "string"}},
+        "blocked_domains": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -4,7 +4,8 @@
   "type": "object",
   "additionalProperties": true,
   "x-claude-versions": [
-    "2.1.158"
+    "2.1.158",
+    "2.1.177"
   ],
   "properties": {
     "permission_mode": {
@@ -18,6 +19,13 @@
     },
     "tool_input": {
       "type": "object"
+    },
+    "permission_suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
     },
     "agent_type": {
       "type": "string"

@@ -224,6 +224,62 @@ def test_ratify_writes_to_overlay_and_merges(
     assert leftover == []
 
 
+# ── Schema lineage (kimi inherits claude) ──────────────────────────
+
+
+def test_kimi_inherits_claude_schema():
+    """Kimi shares Claude's tool payload surface, so a kimi payload
+    validates against claude's baseline — real field drift, not a
+    blanket unknown_tool — with every finding tagged agent='kimi'."""
+    clean = _bash_fixture()
+    assert validate('Bash', clean, agent='kimi') == []
+
+    drifted = _bash_fixture()
+    drifted['tool_input']['kimi_only_field'] = 'x'
+    findings = validate('Bash', drifted, agent='kimi')
+    assert {(f.agent, f.drift_kind, f.field_path) for f in findings} == {
+        ('kimi', 'unknown_field', 'tool_input.kimi_only_field'),
+    }
+
+
+def test_kimi_unknown_tool_still_flags_when_no_lineage_schema():
+    """A tool absent from *both* kimi and claude still drifts as unknown_tool."""
+    findings = validate('TotallyMadeUp', {
+        'hook_event_name': 'PostToolUse',
+        'tool_name': 'TotallyMadeUp',
+        'tool_input': {},
+    }, agent='kimi')
+    assert [f.drift_kind for f in findings] == ['unknown_tool']
+    assert findings[0].agent == 'kimi'
+
+
+def test_kimi_ratify_seeds_from_claude_baseline(clean_drift_table, isolated_overlay):
+    """Ratifying a kimi unknown_field seeds the overlay from claude's
+    inherited baseline and writes to kimi's *own* overlay dir, leaving
+    claude's overlay and the repo baseline untouched."""
+    from web.blueprints.schema_drift import _apply_ratify_to_schema
+
+    drift = {
+        'id': 1, 'agent': 'kimi', 'subject_kind': 'tool', 'tool_name': 'Bash',
+        'drift_kind': 'unknown_field', 'field_path': 'tool_input.kimi_field',
+        'sample_value': '"v"', 'claude_version': None,
+    }
+    _apply_ratify_to_schema(drift)
+
+    overlay_path = isolated_overlay / 'kimi' / 'Bash.schema.json'
+    assert overlay_path.is_file(), 'ratify should create the kimi overlay'
+    overlay = json.loads(overlay_path.read_text())
+    assert 'kimi_field' in overlay['properties']['tool_input']['properties']
+    # x-claude-versions is claude-specific; kimi overlays must not carry it.
+    assert 'x-claude-versions' not in overlay
+    assert not (isolated_overlay / 'claude' / 'Bash.schema.json').exists()
+
+    _load_schema.cache_clear()
+    drifted = _bash_fixture()
+    drifted['tool_input']['kimi_field'] = 'v'
+    assert validate('Bash', drifted, agent='kimi') == []
+
+
 def test_overlay_only_schema_validates(isolated_overlay):
     """Validator works for tools that exist only in the overlay (no baseline)."""
     overlay_path = isolated_overlay / 'claude' / 'CustomTool.schema.json'

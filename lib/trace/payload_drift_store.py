@@ -14,7 +14,6 @@ from typing import Iterable
 from sqlalchemy import text as sa_text
 
 from lib.orm import SessionLocal
-from lib.trace.claude_version import current_claude_version
 from lib.trace.payload_validation import DriftFinding
 
 
@@ -39,11 +38,15 @@ _UPSERT_SQL = sa_text("""
 
 
 def _client_version_for(agent: str) -> str | None:
-    """Per-agent CLI version. Today only Claude is wired; other agents
-    return None until their version probe lands."""
-    if agent == 'claude':
-        return current_claude_version()
-    return None
+    """Per-provider CLI version for the drift fingerprint. Dispatches to the
+    provider adapter's `client_version()` so a new provider's version probe is
+    just an override — no vendor `if` here. (The `claude_version` column keeps
+    its legacy name but holds whichever provider's version applies.) Today only
+    Claude's probe is wired; others return None until theirs lands."""
+    from lib.providers import build_provider, is_provider_id
+    if not is_provider_id(agent):
+        return None
+    return build_provider(agent).client_version()
 
 
 def record_findings(findings: Iterable[DriftFinding], payload: dict) -> int:

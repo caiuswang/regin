@@ -50,6 +50,21 @@
         },
         "no_output_expected": {
           "type": "boolean"
+        },
+        "return_code_interpretation": {
+          "type": "string"
+        },
+        "background_task_id": {
+          "type": "string"
+        },
+        "assistant_auto_backgrounded": {
+          "type": "boolean"
+        },
+        "persisted_output_path": {
+          "type": "string"
+        },
+        "persisted_output_size": {
+          "type": "integer"
         }
       }
     },
@@ -61,6 +76,7 @@
     }
   },
   "x-claude-versions": [
-    "2.1.150"
+    "2.1.150",
+    "2.1.177"
   ]
 }

@@ -1,21 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "UserPromptSubmit hook payload",
+  "title": "PermissionDenied hook payload",
   "type": "object",
   "additionalProperties": true,
   "x-claude-versions": [
-    "2.1.158",
     "2.1.177"
   ],
   "properties": {
     "permission_mode": {
       "type": "string"
     },
-    "prompt": {
+    "effort": {
+      "type": "object"
+    },
+    "tool_name": {
       "type": "string"
     },
-    "session_title": {
-      "type": "string"
+    "tool_input": {
+      "type": "object"
+    },
+    "permission_suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
     },
     "agent_type": {
       "type": "string"

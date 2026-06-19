@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CronList PostToolUse payload",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "CronList"
+    },
+    "tool_input": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "tool_response": {
+      "type": "object"
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "effort": {
+      "type": "object"
+    }
+  }
+}

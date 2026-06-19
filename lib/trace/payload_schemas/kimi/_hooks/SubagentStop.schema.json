@@ -1,23 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "UserPromptSubmit hook payload",
+  "title": "SubagentStop hook payload (Kimi)",
   "type": "object",
   "additionalProperties": true,
-  "x-claude-versions": [
-    "2.1.158",
-    "2.1.177"
-  ],
   "properties": {
-    "permission_mode": {
-      "type": "string"
-    },
-    "prompt": {
-      "type": "string"
-    },
-    "session_title": {
-      "type": "string"
-    },
     "agent_type": {
+      "type": "string"
+    },
+    "agent_name": {
+      "type": "string"
+    },
+    "response": {
       "type": "string"
     }
   },

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PreCompact hook payload (Kimi)",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "agent_type": {
+      "type": "string"
+    },
+    "trigger": {
+      "type": "string"
+    },
+    "token_count": {
+      "type": "integer"
+    }
+  },
+  "required": []
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TodoList PostToolUse payload (Kimi)",
+  "type": "object",
+  "required": [
+    "tool_name",
+    "tool_input"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "tool_name": {
+      "const": "TodoList"
+    },
+    "tool_input": {
+      "type": "object",
+      "required": [
+        "todos"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "todos": {
+          "type": "array"
+        }
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

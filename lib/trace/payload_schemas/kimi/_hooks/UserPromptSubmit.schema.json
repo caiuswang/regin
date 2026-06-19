@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UserPromptSubmit hook payload (Kimi)",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "agent_type": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": ["array", "string"],
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": []
+}

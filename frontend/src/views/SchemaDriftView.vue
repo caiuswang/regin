@@ -8,6 +8,8 @@ import Badge from '../components/Badge.vue'
 import StatCard from '../components/StatCard.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import SchemaExpansionPanel from '../components/SchemaExpansionPanel.vue'
+import Button from '../components/ui/Button.vue'
+import Tabs from '../components/ui/Tabs.vue'
 
 const { confirm } = useConfirm()
 const { enabled: diagEnabled, setEnabled: setDiag } = useDiagnosticsState()
@@ -18,8 +20,8 @@ async function toggleDiagnostics() {
 }
 
 const schemas = ref([])
-const kpi = ref({ total: 0, clean: 0, drift: 0, overlaid: 0, pending_findings: 0 })
 const allAgents = ref([])
+let didInit = false                     // first load picks a default agent tab
 const driftsBySchema = ref({})          // `${agent}::${tool}` -> drift rows
 const schemaBySchema = ref({})          // `${agent}::${tool}` -> merged schema doc
 const diffBySchema = ref({})            // `${agent}::${tool}` -> {current, proposed, unified_diff}
@@ -53,17 +55,48 @@ const kindChips = [
   { value: 'hook_event', label: 'Hooks' },
 ]
 
+// Rows scoped to the selected agent tab (empty tab value = "All agents").
+// KPIs read off this so the strip reflects the active tab; the search/state
+// chips narrow further in `filtered` without disturbing the counts.
+const agentRows = computed(() =>
+  agentFilter.value
+    ? schemas.value.filter(s => s.agent === agentFilter.value)
+    : schemas.value,
+)
+
+const kpi = computed(() => ({
+  total: agentRows.value.length,
+  clean: agentRows.value.filter(s => s.state === 'clean').length,
+  drift: agentRows.value.filter(s => s.state === 'drift').length,
+  overlaid: agentRows.value.filter(s => s.state === 'overlaid').length,
+  pending_findings: agentRows.value.reduce((n, s) => n + (s.pending || 0), 0),
+}))
+
 const filtered = computed(() => {
   const term = search.value.trim().toLowerCase()
-  return schemas.value.filter(s => {
-    if (agentFilter.value && s.agent !== agentFilter.value) return false
+  return agentRows.value.filter(s => {
     if (stateFilter.value !== 'all' && s.state !== stateFilter.value) return false
     if (term && !s.tool.toLowerCase().includes(term)) return false
     return true
   })
 })
 
-const showAgentColumn = computed(() => allAgents.value.length > 1)
+// One pill per agent, plus an "All agents" tab when more than one exists.
+const agentTabs = computed(() => {
+  const tabs = allAgents.value.map(a => ({ value: a, label: a }))
+  if (allAgents.value.length > 1) tabs.unshift({ value: '', label: 'All agents' })
+  return tabs
+})
+
+// The Agent column is redundant once a single-agent tab is active.
+const showAgentColumn = computed(() => !agentFilter.value && allAgents.value.length > 1)
+
+function setAgent(a) {
+  if (agentFilter.value === a) return
+  agentFilter.value = a
+  expandedSchema.value = null
+  expandedDrift.value = null
+}
 
 // Key on subject_kind too: a tool and a hook event can share a name
 // (e.g. nothing stops a future tool called `Stop`), so the kind must
@@ -74,12 +107,22 @@ async function loadSchemas() {
   loading.value = true
   error.value = ''
   try {
+    // Always fetch the full multi-agent set: the agent tabs filter client
+    // side, so a re-fetch per tab switch is unnecessary and would also
+    // collapse `agents` to the single filtered agent server-side.
     const params = new URLSearchParams({ kind: kindFilter.value })
-    if (agentFilter.value) params.set('agent', agentFilter.value)
     const resp = await api.get(`/schema-drift/schemas?${params}`)
     schemas.value = resp.rows || []
-    kpi.value = resp.kpi || kpi.value
     allAgents.value = resp.agents || []
+    if (!didInit) {
+      didInit = true
+      // Open scoped to the first agent instead of a mixed multi-agent dump.
+      if (allAgents.value.length) agentFilter.value = allAgents.value[0]
+    } else if (agentFilter.value && !allAgents.value.includes(agentFilter.value)) {
+      // The selected agent disappeared (its last finding was ratified away) —
+      // fall back to the first remaining agent.
+      agentFilter.value = allAgents.value[0] || ''
+    }
   } catch (e) {
     error.value = e.message || String(e)
   } finally {
@@ -253,16 +296,30 @@ onMounted(loadSchemas)
       Diagnostics is off — no new drift will be recorded. Rows below are historical.
     </div>
 
-    <div class="segmented kind-switch" role="tablist" aria-label="Subject kind">
-      <button
-        v-for="k in kindChips" :key="k.value"
-        type="button"
+    <Tabs
+      class="kind-switch"
+      :model-value="kindFilter"
+      :tabs="kindChips"
+      variant="segmented"
+      aria-label="Subject kind"
+      @update:model-value="setKind"
+    />
+
+    <div
+      v-if="agentTabs.length > 1"
+      class="agent-tabs"
+      role="tablist"
+      aria-label="Agent"
+    >
+      <Button
+        v-for="t in agentTabs" :key="t.value || '__all__'"
+        size="sm"
+        class="text-xs"
         role="tab"
-        :aria-selected="kindFilter === k.value"
-        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'is-active': kindFilter === k.value }"
-        @click="setKind(k.value)"
-      >{{ k.label }}</button>
+        :aria-selected="agentFilter === t.value"
+        :variant="agentFilter === t.value ? 'primary' : 'secondary'"
+        @click="setAgent(t.value)"
+      >{{ t.label }}</Button>
     </div>
 
     <div class="kpi-grid">
@@ -300,18 +357,6 @@ onMounted(loadSchemas)
           v-model="search"
         />
       </div>
-      <template v-if="showAgentColumn">
-        <span class="toolbar-label">Agent</span>
-        <select
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500"
-          v-model="agentFilter"
-          @change="loadSchemas"
-          aria-label="Filter by agent"
-        >
-          <option value="">all</option>
-          <option v-for="a in allAgents" :key="a" :value="a">{{ a }}</option>
-        </select>
-      </template>
       <span class="toolbar-count">{{ filtered.length }} schema<span v-if="filtered.length !== 1">s</span></span>
     </div>
 
@@ -416,12 +461,22 @@ onMounted(loadSchemas)
   font-size: 0.8125rem;
   margin-bottom: 1rem;
 }
-.banner-warn { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
-.banner-error { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
+.banner-warn { background: var(--color-amber-50); color: var(--color-amber-800); border: 1px solid var(--color-amber-200); }
+.banner-error { background: var(--color-red-50); color: var(--color-red-800); border: 1px solid var(--color-red-200); }
 
 /* Kind switch (Tools | Hooks) — primary axis above the KPI strip. */
 .kind-switch {
   display: inline-flex;
+  margin-bottom: 1rem;
+}
+
+/* Agent tabs (All agents | claude | codex | …) — pill row that scopes the
+   whole page to one agent. Replaces the old dropdown so switching back is
+   always one click away. */
+.agent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin-bottom: 1rem;
 }
 
@@ -446,21 +501,21 @@ onMounted(loadSchemas)
 .row-clickable { cursor: pointer; }
 
 .caret {
-  color: #94A3B8; font-size: 0.75rem;
+  color: var(--color-slate-400); font-size: 0.75rem;
   transition: transform 120ms ease;
   display: inline-block;
 }
-.caret.open { transform: rotate(90deg); color: #1E40AF; }
+.caret.open { transform: rotate(90deg); color: var(--color-blue-800); }
 
 .tabular { font-variant-numeric: tabular-nums; }
 .text-right { text-align: right; }
-.text-muted { color: #94A3B8; }
+.text-muted { color: var(--color-slate-400); }
 
 /* Expansion panel host — the inner content lives in SchemaExpansionPanel. */
 .expansion-row > td {
-  background: #F8FAFC;
+  background: var(--color-slate-50);
   padding: 0 !important;
-  border-bottom: 1px solid #E2E8F0;
+  border-bottom: 1px solid var(--color-slate-200);
 }
 .expansion-row:hover { background: transparent; }
 </style>

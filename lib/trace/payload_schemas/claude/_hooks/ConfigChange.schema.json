@@ -1,20 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "UserPromptSubmit hook payload",
+  "title": "ConfigChange hook payload",
   "type": "object",
   "additionalProperties": true,
   "x-claude-versions": [
-    "2.1.158",
     "2.1.177"
   ],
   "properties": {
-    "permission_mode": {
+    "source": {
       "type": "string"
     },
-    "prompt": {
-      "type": "string"
-    },
-    "session_title": {
+    "file_path": {
       "type": "string"
     },
     "agent_type": {
