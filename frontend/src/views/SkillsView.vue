@@ -3,15 +3,38 @@ import { ref, onMounted, computed } from 'vue'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
+import PatternCreateForm from '../components/PatternCreateForm.vue'
+import PatternFolderImportModal from '../components/PatternFolderImportModal.vue'
+import { useSkillImport } from '../composables/useSkillImport'
+import { useProviderPaths } from '../composables/useProviderPaths'
 
 const data = ref(null)
 const loading = ref(true)
+const showCreate = ref(false)
+const folderVisible = ref(false)
+const allTags = ref([])
 
-onMounted(async () => {
-  data.value = await api.get('/skills?include_deployments=1')
+const {
+  importInput,
+  onImportPick,
+} = useSkillImport()
+
+async function load() {
+  loading.value = true
+  const [skills, tags] = await Promise.all([
+    api.get('/skills?include_deployments=1'),
+    api.get('/tags').catch(() => []),
+  ])
+  data.value = skills
+  allTags.value = tags || []
   loading.value = false
-})
+}
 
+onMounted(load)
+
+const { provider, enabledProviders, globalDir, projectSubpath, providerName, providerBadge } =
+  useProviderPaths(data)
 const deploymentsBySkill = computed(() => data.value?.deployments_by_skill || {})
 const deploymentsByProject = computed(() => data.value?.deployments_by_project || [])
 const projectDeployments = computed(() => (data.value?.deployments || []).filter(d => d.scope === 'project'))
@@ -48,10 +71,36 @@ const typeDescriptions = {
         <Badge color="green" :label="`${projectDeployments.length} project deploy${projectDeployments.length !== 1 ? 's' : ''}`" />
         <Badge v-if="data.drift_count" color="yellow" :label="`${data.drift_count} drifted`" />
         <Badge v-else color="gray" label="all in sync" />
+        <span class="text-xs text-slate-400">enabled:</span>
+        <Badge
+          v-for="p in enabledProviders"
+          :key="p.id"
+          :color="p.id === provider.id ? 'blue' : 'gray'"
+          :label="p.name"
+        />
+        <Button
+          variant="secondary"
+          aria-label="Batch import skills"
+          @click="folderVisible = true"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
+          Import
+        </Button>
+        <Button
+          variant="primary"
+          @click="showCreate = true"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          New skill
+        </Button>
+        <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
       </div>
     </header>
 
-    <h2 class="section-heading">Global · <code class="cell-code">~/.claude/skills/</code></h2>
+    <PatternFolderImportModal v-model:visible="folderVisible" @imported="load" />
+    <PatternCreateForm v-if="showCreate" :tags="allTags" redirect-to="skills" @close="showCreate = false" />
+
+    <h2 class="section-heading">Global · <code class="cell-code">{{ globalDir }}/</code></h2>
 
     <template v-for="typeName in ['auto', 'pattern']" :key="typeName">
       <Card v-if="data.by_type[typeName]?.length" :no-padding="true" class="mb-5">
@@ -67,7 +116,7 @@ const typeDescriptions = {
             <col style="width:30%"><col style="width:14%"><col style="width:10%"><col style="width:46%">
           </colgroup>
           <thead>
-            <tr><th>Skill</th><th>Claude Code</th><th>Scope</th><th>Source</th></tr>
+            <tr><th>Skill</th><th>{{ providerName }}</th><th>Scope</th><th>Source</th></tr>
           </thead>
           <tbody>
             <tr v-for="r in data.by_type[typeName]" :key="r.id">
@@ -95,7 +144,7 @@ const typeDescriptions = {
       </Card>
     </template>
 
-    <h2 class="section-heading">Per-project · <code class="cell-code">&lt;repo&gt;/.claude/skills/</code></h2>
+    <h2 class="section-heading">Per-project · <code class="cell-code">&lt;repo&gt;/{{ projectSubpath }}/</code></h2>
 
     <Card v-if="deploymentsByProject.length === 0" class="empty-state">
       No project-level deployments yet. Open any pattern skill and use
@@ -109,23 +158,26 @@ const typeDescriptions = {
           <span class="text-xs text-slate-400 font-normal ml-1">{{ proj.items.length }} skill{{ proj.items.length !== 1 ? 's' : '' }}</span>
         </h3>
         <p class="card-group-meta truncate" :title="proj.project_path">
-          <code>{{ proj.project_path }}/.claude/skills/</code>
+          <code>{{ proj.project_path }}/{{ projectSubpath }}/</code>
         </p>
       </div>
       <table class="tbl" style="table-layout:fixed;width:100%">
         <colgroup>
-          <col style="width:30%"><col style="width:22%"><col style="width:48%">
+          <col style="width:30%"><col style="width:18%"><col style="width:22%"><col style="width:30%">
         </colgroup>
         <thead>
-          <tr><th>Skill</th><th>Deployed at</th><th>Path</th></tr>
+          <tr><th>Skill</th><th>Provider</th><th>Deployed at</th><th>Path</th></tr>
         </thead>
         <tbody>
-          <tr v-for="d in proj.items" :key="d.id">
+          <tr v-for="d in proj.items" :key="`${d.id}:${d.provider || 'active'}`">
             <td>
               <router-link :to="`/skills/${d.pattern_slug}`"
                 class="table-link focus-visible:outline-2 focus-visible:outline-blue-500">
                 <code>{{ d.pattern_slug }}</code>
               </router-link>
+            </td>
+            <td>
+              <Badge color="gray" :label="providerBadge(d.provider)" />
             </td>
             <td class="text-xs text-slate-500">{{ d.deployed_at }}</td>
             <td class="text-slate-500 truncate" :title="d.deployed_path"><code class="cell-code">{{ d.deployed_path }}</code></td>

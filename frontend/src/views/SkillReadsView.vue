@@ -5,6 +5,8 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import CursorControls from '../components/CursorControls.vue'
+import Button from '../components/ui/Button.vue'
+import Checkbox from '../components/ui/Checkbox.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useCursor } from '../composables/useCursor'
@@ -99,10 +101,7 @@ function shortTestName(nodeid) {
     <p class="page-subtitle mb-4">Skills Claude read (<code class="cell-code">source=read</code>), explicitly invoked via slash command (<code class="cell-code">source=invoke</code>), or launched via the Skill tool (<code class="cell-code">source=launch</code>).</p>
 
     <div class="toolbar">
-      <label class="toolbar-checkbox cursor-pointer">
-        <input type="checkbox" v-model="showTests" aria-label="Show test sessions">
-        <span>Show test sessions</span>
-      </label>
+      <Checkbox v-model="showTests" label="Show test sessions" aria-label="Show test sessions" />
       <span class="toolbar-divider"></span>
       <button type="button"
         class="filter-chip focus-visible:outline-2 focus-visible:outline-blue-500"
@@ -118,10 +117,9 @@ function shortTestName(nodeid) {
         <button type="button" class="badge-x focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label="Clear session filter" @click="filterBy('session', null)">&times;</button>
       </Badge>
-      <button type="button" class="btn btn-danger text-xs ml-auto focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="resetReads">
+      <Button variant="danger" size="sm" class="ml-auto" @click="resetReads">
         {{ skillFilter || sessionFilter ? 'Reset filtered' : 'Reset all' }}
-      </button>
+      </Button>
     </div>
     </div>
     <!-- /sticky page header -->
@@ -244,7 +242,7 @@ function shortTestName(nodeid) {
   position: sticky;
   top: calc(var(--regin-trace-header-h, 0px) - 1rem);
   z-index: 5;
-  background: #f8fafc;
+  background: var(--color-slate-50);
 }
 @media (min-width: 1024px) {
   .sticky-page-root :deep(.tbl > thead > tr > th) {

@@ -1,8 +1,8 @@
 """Unit tests for lib.skills.skill_deployer.
 
-Covers id validation, path resolution, deployment (including the
-shim+content.md split), discovery, and undeploy. Uses tmp_db so the
-experiments lookup inside deploy_pattern_as_skill goes against an
+Covers id validation, path resolution, deployment (single self-contained
+SKILL.md — no shim/content.md split), discovery, and undeploy. Uses tmp_db
+so the experiments lookup inside deploy_pattern_as_skill goes against an
 empty DB.
 """
 
@@ -102,27 +102,25 @@ def test_get_deployed_procedures_missing_dir_returns_empty(tmp_path, monkeypatch
 
 # ── deploy_pattern_as_skill ──────────────────────────────────
 
-def test_deploy_pattern_writes_shim_and_content_md(
+def test_deploy_pattern_writes_single_self_contained_skill_md(
         tmp_db, tmp_skills_dir, tmp_path):
     src = _make_pattern_source(tmp_path, "api-bean", body="## Disciplines\n\n- x")
     deployed = skill_deployer.deploy_pattern_as_skill(
         str(src), "api-bean", "API Bean",
     )
-    # Shim + content both exist.
     skill_dir = tmp_skills_dir / "api-bean"
-    shim = skill_dir / "SKILL.md"
-    content = skill_dir / "content.md"
-    assert shim.exists()
-    assert content.exists()
-    assert str(deployed) == str(shim)
-    # Shim points at the absolute content.md path.
-    shim_text = shim.read_text()
-    assert "content.md" in shim_text
-    assert "description: \"API Bean - procedure guide from regin\"" in shim_text
-    assert f"name: api-bean" in shim_text
-    # Content body doesn't have frontmatter.
-    assert "---" not in content.read_text()
-    assert "## Disciplines" in content.read_text()
+    skill_md = skill_dir / "SKILL.md"
+    assert skill_md.exists()
+    # No separate content.md shim — the body lives inline in SKILL.md so the
+    # Skill tool loads it directly on invocation.
+    assert not (skill_dir / "content.md").exists()
+    assert str(deployed) == str(skill_md)
+    text = skill_md.read_text()
+    assert "description: \"API Bean - procedure guide from regin\"" in text
+    assert "name: api-bean" in text
+    # The full guide body is inline, under exactly one frontmatter block.
+    assert "## Disciplines" in text
+    assert text.count("---") == 2
 
 
 def test_deploy_pattern_uses_frontmatter_description(
@@ -248,7 +246,7 @@ def test_display_path_leaves_non_home_untouched():
 
 # ── deploy_rules_index_skill ────────────────────────────────
 
-def test_deploy_rules_index_skill_writes_shim_and_content_md(configured_grit_engine, tmp_skills_dir, tmp_path):
+def test_deploy_rules_index_skill_writes_single_self_contained_skill_md(configured_grit_engine, tmp_skills_dir, tmp_path):
     rules_md = tmp_path / "RULES.md"
     rules_md.write_text("# Rules\n\n- rule-one: a\n- rule-two: b\n")
 
@@ -256,14 +254,26 @@ def test_deploy_rules_index_skill_writes_shim_and_content_md(configured_grit_eng
 
     skill_dir = tmp_skills_dir / skill_deployer.RULES_INDEX_SKILL_ID
     assert str(skill_path) == str(skill_dir / "SKILL.md")
-    assert (skill_dir / "SKILL.md").exists()
-    content = (skill_dir / "content.md").read_text()
-    assert "rule-one" in content
-    assert "rule-two" in content
+    skill_md = (skill_dir / "SKILL.md").read_text()
+    # The full rule index is inline; no content.md shim.
+    assert not (skill_dir / "content.md").exists()
+    assert f"name: {skill_deployer.RULES_INDEX_SKILL_ID}" in skill_md
+    assert "rule-one" in skill_md
+    assert "rule-two" in skill_md
 
-    shim = (skill_dir / "SKILL.md").read_text()
-    assert f"name: {skill_deployer.RULES_INDEX_SKILL_ID}" in shim
-    assert "content.md" in shim
+
+def test_deploy_rules_index_skill_removes_stale_content_md(configured_grit_engine, tmp_skills_dir, tmp_path):
+    """A legacy shim deploy left a content.md; redeploy must drop it since this
+    path doesn't rebuild the skill dir from scratch."""
+    rules_md = tmp_path / "RULES.md"
+    rules_md.write_text("# Rules\n\n- rule-one: a\n")
+    skill_dir = tmp_skills_dir / skill_deployer.RULES_INDEX_SKILL_ID
+    skill_dir.mkdir()
+    (skill_dir / "content.md").write_text("stale legacy body")
+
+    skill_deployer.deploy_rules_index_skill(str(rules_md))
+
+    assert not (skill_dir / "content.md").exists()
 
 
 def test_deploy_rules_index_skill_missing_source_raises(

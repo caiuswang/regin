@@ -1,4 +1,4 @@
-"""Deploy pattern guides as global skills for the active provider."""
+"""Deploy pattern guides as skills for the active agent provider."""
 
 import os
 import re
@@ -54,7 +54,7 @@ def get_deployed_procedures(target_dir=None):
 
 
 def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=None):
-    """Deploy a pattern directory as a Claude Code skill.
+    """Deploy a pattern directory as a skill for the active agent provider.
 
     A pattern source directory is laid out like any other skill:
 
@@ -66,13 +66,13 @@ def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=
 
     This function copies the entire directory to `<target_dir>/<procedure_id>/`
     (defaulting to the active provider global dir when `target_dir` is None) and rewrites
-    only the `SKILL.md` frontmatter into the Claude Code format
+    only the `SKILL.md` frontmatter into the provider-neutral skill format
     (`name` + `description`). All sibling files/directories are copied
     verbatim so patterns can ship references, scripts, etc. alongside the
     guide. Returns the path to the deployed `SKILL.md`.
 
     Pass `target_dir` to deploy into a project-local skills directory
-    (e.g. `<repo>/.claude/skills/`) instead of the global one.
+    (e.g. `<repo>/.kimi-code/skills/`) instead of the global one.
     """
     _validate_id(procedure_id)
 
@@ -90,7 +90,13 @@ def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=
         shutil.rmtree(skill_dir)
     shutil.copytree(pattern_source_dir, skill_dir)
 
-    # Deploy as shim + companion content.md.
+    # Rewrite the frontmatter into the provider-neutral skill format
+    # (name + description) and keep the full guide body inline in SKILL.md.
+    # The Skill tool loads
+    # this body directly on invocation, so there is no separate content.md hop
+    # to skip — invocation is captured by the skill_launch hook instead. (The
+    # old shim + content.md split lost the body ~50% of the time, when the
+    # model invoked the skill but never followed the "read content.md" pointer.)
     deployed_skill_md = os.path.join(skill_dir, 'SKILL.md')
     with open(deployed_skill_md, 'r') as f:
         content = f.read()
@@ -105,18 +111,10 @@ def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=
     if active:
         body = experiments.apply_conceal(body, active[1])
 
-    # Write the real body to content.md and replace SKILL.md with a shim.
-    content_md = os.path.join(skill_dir, 'content.md')
-    with open(content_md, 'w') as f:
-        f.write(body)
-
-    # Point the shim at the absolute content.md path so it resolves correctly
-    # whether the skill lives under global skills or project-local skills.
-    content_md_pointer = _display_path(content_md)
     frontmatter = _parse_simple_frontmatter(content)
     description = frontmatter.get("description") or f"{title} - procedure guide from regin"
-    # The shim writes description as a single-line double-quoted scalar, so any
-    # embedded newlines from YAML block scalars must be collapsed first.
+    # description is a single-line double-quoted scalar, so any embedded
+    # newlines from YAML block scalars must be collapsed first.
     description = re.sub(r"\s+", " ", str(description)).strip()
     description = description.replace('"', '\\"')
     skill_content = (
@@ -124,9 +122,7 @@ def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=
         f"name: {procedure_id}\n"
         f"description: \"{description}\"\n"
         f"---\n\n"
-        f"CRITICAL: Before using any guidance from this skill, read the full procedure content from:\n"
-        f"`{content_md_pointer}`\n\n"
-        f"Do not act on partial knowledge. Always read `content.md` first, then follow its instructions.\n"
+        f"{body.lstrip(chr(10))}"
     )
     with open(deployed_skill_md, 'w') as f:
         f.write(skill_content)
@@ -213,22 +209,23 @@ def deploy_rules_index_skill(rules_md_path: str) -> str:
     skill_dir = os.path.dirname(skill_path)
     os.makedirs(skill_dir, exist_ok=True)
 
-    # Write body to content.md and shim to SKILL.md.
-    content_md = os.path.join(skill_dir, 'content.md')
-    with open(content_md, 'w') as f:
-        f.write(f"{preamble}\n{rules_body}\n")
-
+    # Write the full rule index inline in SKILL.md — the Skill tool loads it
+    # directly on invocation (no content.md shim).
     skill_content = (
         f"---\n"
         f"name: {RULES_INDEX_SKILL_ID}\n"
         f"description: \"{rules_index_description()}\"\n"
         f"---\n\n"
-        f"CRITICAL: Before using any guidance from this skill, read the full rule index from:\n"
-        f"`~/{get_active_provider().skill_content_relpath(RULES_INDEX_SKILL_ID)}`\n\n"
-        f"Do not act on partial knowledge. Always read `content.md` first, then follow its instructions.\n"
+        f"{preamble}\n{rules_body}\n"
     )
     with open(skill_path, 'w') as f:
         f.write(skill_content)
+
+    # This deploy path doesn't rebuild the skill dir from scratch, so drop a
+    # stale content.md left by an older shim-style deploy.
+    legacy_content_md = os.path.join(skill_dir, 'content.md')
+    if os.path.isfile(legacy_content_md):
+        os.remove(legacy_content_md)
 
     # Runner scripts ship from the regin repo's `scripts/`; the .grit sources
     # ship from the engine's configured grit_dir (user-local). check_grit.sh

@@ -9,7 +9,15 @@ from flask import Blueprint, jsonify, request
 from sqlmodel import select
 
 from lib.auth import get_current_user, require_editor
-from lib.providers import get_active_provider
+from lib.providers import (
+    active_provider_skill_paths,
+    build_provider,
+    enabled_provider_ids,
+    enabled_provider_skill_paths,
+    get_active_provider,
+    get_enabled_providers,
+    is_provider_id,
+)
 from lib.rule_engines import get as get_rule_engine
 from lib.orm import SessionLocal
 from lib.orm.models import Repo
@@ -25,7 +33,6 @@ from lib.skills import skill_registry, skill_sync
 
 
 skills_bp = Blueprint('skills', __name__)
-_PROVIDER = get_active_provider()
 
 
 def require_known_skill(view):
@@ -73,6 +80,8 @@ def api_skills():
         'by_type': by_type,
         'drift_count': drift_count,
         'total': len(rows),
+        'provider': active_provider_skill_paths(),
+        'enabled_providers': enabled_provider_skill_paths(),
     }
     if request.args.get('include_deployments') in ('1', 'true'):
         all_deps = pattern_deployments.list_deployments()
@@ -136,6 +145,8 @@ def api_skill_detail(skill_id):
         'deployed': deployed,
         'body_md': body_md,
         'files': files,
+        'provider': active_provider_skill_paths(),
+        'enabled_providers': enabled_provider_skill_paths(),
     })
 
 
@@ -164,16 +175,91 @@ def api_skills_push(skill_id):
         user = get_current_user()
         deployed = skill_registry.deployed_path(skill_id)
         pattern_deployments.record_deployment(
-            skill_id, 'global', None, deployed, user['id'] if user else None,
+            skill_id, 'global', None, deployed,
+            user['id'] if user else None,
+            provider=get_active_provider().provider_id,
         )
         audit.log_action(
             user['id'] if user else None,
             user['username'] if user else 'anon',
             'deploy_pattern',
             f'pattern:{skill_id}',
-            {'scope': 'global', 'path': deployed},
+            {'scope': 'global', 'path': deployed,
+             'provider': get_active_provider().provider_id},
         )
     return jsonify({'ok': ok, 'msg': result})
+
+
+def _push_skill_to_provider(skill_id, provider, repo, force):
+    """Push one skill to one provider's project skills dir; return a result row."""
+    pid = provider.provider_id
+    target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
+    try:
+        result = skill_sync.push(skill_id, force=force, target_dir=target_dir)
+    except FileNotFoundError as exc:
+        return {'provider': pid, 'ok': False, 'msg': f'cannot deploy: {exc}'}
+    if result.startswith('confirm-force:'):
+        return {'provider': pid, 'ok': False, 'confirm_force': True,
+                'msg': result[len('confirm-force: '):]}
+    ok = not result.startswith(('refused:', 'skipped:'))
+    return {'provider': pid, 'ok': ok, 'msg': result, 'target_dir': target_dir}
+
+
+def _record_project_deployment(skill_id, repo, provider_id, deployed_path, user,
+                               action='deploy_pattern'):
+    """Write the pattern_deployments row + audit entry for one project deploy."""
+    uid = user['id'] if user else None
+    pattern_deployments.record_deployment(
+        skill_id, 'project', repo.id, deployed_path, uid, provider=provider_id,
+    )
+    audit.log_action(
+        uid, user['username'] if user else 'anon',
+        action, f'pattern:{skill_id}',
+        {'scope': 'project', 'project_id': repo.id, 'project_name': repo.name,
+         'path': deployed_path, 'provider': provider_id},
+    )
+
+
+def _drift_response(results):
+    """JSON response if any provider reports drift needing force, else None."""
+    needs_force = [r for r in results if r.get('confirm_force')]
+    if not needs_force:
+        return None
+    drifted = ', '.join(r['provider'] for r in needs_force)
+    return jsonify({
+        'ok': False,
+        'confirm_force': True,
+        'msg': f"Drift detected on {drifted}. Force overwrite?",
+        'per_provider': results,
+    })
+
+
+def _finalize_project_push(skill_id, repo, results):
+    """Turn per-provider push results into a JSON response, recording a
+    deployment row for each provider that succeeded."""
+    drift = _drift_response(results)
+    if drift is not None:
+        return drift
+
+    succeeded = [r for r in results if r['ok']]
+    failed = [r for r in results if not r['ok']]
+
+    user = get_current_user() if succeeded else None
+    for r in succeeded:
+        _record_project_deployment(
+            skill_id, repo, r['provider'],
+            os.path.join(r['target_dir'], skill_id), user,
+        )
+
+    if failed:
+        problems = '; '.join(f"{r['provider']}: {r['msg']}" for r in failed)
+        return jsonify({'ok': False, 'msg': problems, 'per_provider': results})
+
+    return jsonify({
+        'ok': True,
+        'msg': f'Pushed {skill_id} to {len(succeeded)} provider(s) in {repo.name}',
+        'per_provider': results,
+    })
 
 
 @skills_bp.route('/api/skills/<skill_id>/push-to-project', methods=['POST'])
@@ -197,31 +283,9 @@ def api_skills_push_to_project(skill_id):
     if repo is None:
         return jsonify({'ok': False, 'msg': f'project {project_id} not found or inactive'}), 404
 
-    target_dir = os.path.join(repo.path, *_PROVIDER.project_skills_subpath())
-    try:
-        result = skill_sync.push(skill_id, force=force, target_dir=target_dir)
-    except FileNotFoundError as exc:
-        return jsonify({'ok': False, 'msg': f'cannot deploy: {exc}'}), 400
-
-    if result.startswith('confirm-force:'):
-        return jsonify({'ok': False, 'confirm_force': True, 'msg': result[len('confirm-force: '):]})
-    ok = not result.startswith(('refused:', 'skipped:'))
-    if ok:
-        user = get_current_user()
-        deployed_path_val = os.path.join(target_dir, skill_id)
-        pattern_deployments.record_deployment(
-            skill_id, 'project', repo.id, deployed_path_val,
-            user['id'] if user else None,
-        )
-        audit.log_action(
-            user['id'] if user else None,
-            user['username'] if user else 'anon',
-            'deploy_pattern',
-            f'pattern:{skill_id}',
-            {'scope': 'project', 'project_id': repo.id,
-             'project_name': repo.name, 'path': deployed_path_val},
-        )
-    return jsonify({'ok': ok, 'msg': result})
+    results = [_push_skill_to_provider(skill_id, p, repo, force)
+               for p in _enabled_skill_providers()]
+    return _finalize_project_push(skill_id, repo, results)
 
 
 # ── Deployment listing + removal ───────────────────────────────
@@ -257,43 +321,65 @@ def api_skills_backfill_deployment(skill_id):
     if repo is None:
         return jsonify({'ok': False, 'msg': f'project {project_id} not found'}), 404
 
-    target_dir = os.path.join(repo.path, *_PROVIDER.project_skills_subpath())
-    deployed_path_val = os.path.join(target_dir, skill_id)
-    if not os.path.isdir(deployed_path_val):
-        return jsonify({
-            'ok': False,
-            'msg': f'{skill_id} is not deployed at {deployed_path_val}',
-        }), 400
+    # If caller specifies a provider, backfill only that one; otherwise scan
+    # every enabled provider's project skills dir.
+    providers, err = _providers_for_request(data.get('provider'))
+    if err:
+        return err
 
     user = get_current_user()
-    pattern_deployments.record_deployment(
-        skill_id, 'project', repo.id, deployed_path_val,
-        user['id'] if user else None,
-    )
-    audit.log_action(
-        user['id'] if user else None,
-        user['username'] if user else 'anon',
-        'backfill_deployment',
-        f'pattern:{skill_id}',
-        {'scope': 'project', 'project_id': repo.id,
-         'project_name': repo.name, 'path': deployed_path_val},
-    )
-    return jsonify({'ok': True, 'msg': f'Recorded {skill_id} → {repo.name}'})
+    recorded = []
+    for provider in providers:
+        pid = provider.provider_id
+        target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
+        deployed_path_val = os.path.join(target_dir, skill_id)
+        if not os.path.isdir(deployed_path_val):
+            continue
+        _record_project_deployment(
+            skill_id, repo, pid, deployed_path_val, user,
+            action='backfill_deployment',
+        )
+        recorded.append(pid)
+
+    if not recorded:
+        return jsonify({
+            'ok': False,
+            'msg': f'{skill_id} is not deployed under any enabled provider in {repo.name}',
+        }), 400
+
+    return jsonify({
+        'ok': True,
+        'msg': f'Recorded {skill_id} → {repo.name} ({", ".join(recorded)})',
+    })
 
 
 @skills_bp.route('/api/skills/<skill_id>/project-deployment/<int:project_id>', methods=['DELETE'])
 @require_editor
 @require_known_skill
 def api_skills_remove_project_deployment(skill_id, project_id):
+    providers, err = _providers_for_request(request.args.get('provider'))
+    if err:
+        return err
 
     with SessionLocal() as session:
         repo = session.get(Repo, project_id)
     if repo is None:
         return jsonify({'ok': False, 'msg': f'project {project_id} not found'}), 404
 
-    target_dir = os.path.join(repo.path, *_PROVIDER.project_skills_subpath())
-    fs_removed = undeploy_skill(skill_id, target_dir=target_dir)
-    row_removed = pattern_deployments.remove_deployment(skill_id, 'project', project_id)
+    fs_removed_any = False
+    row_removed_any = False
+    provider_ids = []
+    for provider in providers:
+        pid = provider.provider_id
+        provider_ids.append(pid)
+        target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
+        fs_removed = undeploy_skill(skill_id, target_dir=target_dir)
+        row_removed = pattern_deployments.remove_deployment(
+            skill_id, 'project', project_id, provider=pid,
+        )
+        fs_removed_any = fs_removed_any or fs_removed
+        row_removed_any = row_removed_any or row_removed
+
     # Also strip the pattern's grit rules from the repo's `.grit/` (mirror of
     # the sync done on project push). Best-effort — never block the undeploy.
     try:
@@ -310,12 +396,13 @@ def api_skills_remove_project_deployment(skill_id, project_id):
         f'pattern:{skill_id}',
         {'scope': 'project', 'project_id': repo.id,
          'project_name': repo.name,
-         'filesystem_removed': fs_removed, 'row_removed': row_removed},
+         'filesystem_removed': fs_removed_any, 'row_removed': row_removed_any,
+         'providers': provider_ids},
     )
     return jsonify({
         'ok': True,
         'msg': f'removed {skill_id} from {repo.name}'
-               f' (files: {"yes" if fs_removed else "no"}, row: {"yes" if row_removed else "no"})',
+               f' (files: {"yes" if fs_removed_any else "no"}, row: {"yes" if row_removed_any else "no"})',
     })
 
 
@@ -329,12 +416,51 @@ def api_pattern_deployments_list():
     return jsonify({'deployments': pattern_deployments.list_deployments()})
 
 
+def _enabled_skill_providers():
+    """Enabled providers that actually support skills deployment."""
+    return [p for p in get_enabled_providers() if p.capabilities.skills]
+
+
+def _providers_for_request(requested_provider):
+    """Resolve the provider(s) a skill op targets from request input.
+
+    A blank value fans out over every enabled provider. A non-blank value is
+    validated against the registry first so a malformed `?provider=` returns a
+    400 instead of letting `build_provider` raise an uncaught ValueError (a
+    500) — matching the guard the diagnostics/schema-drift/settings blueprints
+    already apply. Returns `(providers, error)` where `error` is a ready
+    `(json, status)` response tuple, or None when the resolution succeeded.
+    """
+    if not requested_provider:
+        return _enabled_skill_providers(), None
+    if not is_provider_id(requested_provider):
+        return None, (
+            jsonify({'ok': False, 'msg': f'unknown provider: {requested_provider}'}),
+            400,
+        )
+    return [build_provider(requested_provider)], None
+
+
 @skills_bp.route('/api/skills/<skill_id>/undeploy', methods=['POST'])
 @require_editor
 @require_known_skill
 def api_skills_undeploy(skill_id):
-    msg = skill_sync.undeploy(skill_id)
-    return jsonify({'ok': True, 'msg': msg})
+    # Undeploy from every enabled provider's global skills dir. Disable linked
+    # rules only on the first call to avoid redundant rule edits.
+    msgs = []
+    providers = _enabled_skill_providers()
+    for idx, provider in enumerate(providers):
+        target_dir = str(provider.global_skills_dir())
+        try:
+            result = skill_sync.undeploy(
+                skill_id, target_dir=target_dir,
+                provider_id=provider.provider_id,
+                disable_linked_rules=(idx == 0),
+            )
+            msgs.append(f'{provider.provider_id}: {result}')
+        except Exception as exc:
+            msgs.append(f'{provider.provider_id}: {exc}')
+    return jsonify({'ok': True, 'msg': '; '.join(msgs)})
 
 
 # ── Auto-skill regeneration (grit-rules and friends) ───────

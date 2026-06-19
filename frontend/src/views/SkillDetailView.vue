@@ -6,8 +6,13 @@ import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
+import Button from '../components/ui/Button.vue'
+import PatternContentEditor from '../components/PatternContentEditor.vue'
+import PatternDescriptionEditor from '../components/PatternDescriptionEditor.vue'
+import PatternTagsEditor from '../components/PatternTagsEditor.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
+import { useProviderPaths } from '../composables/useProviderPaths'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,14 +36,36 @@ const stateBadge = {
   project_only: { color: 'green', label: 'deployed', scope: 'project' },
 }
 
+const { globalDir, projectSubpath, providerName, providerBadge } = useProviderPaths(data)
+const isPatternSkill = computed(() => data.value?.entry?.type === 'pattern')
+const deployedPath = computed(() => data.value?.deployed || `${globalDir.value}/${data.value?.skill_id || ''}`)
+
 async function load() {
   try {
     const result = await api.get(`/skills/${route.params.id}`)
     if (result.redirect) {
-      router.replace(result.redirect)
-      return
+      // Pattern skills are managed inline from the skill page. Load the
+      // pattern detail alongside the skill metadata.
+      const slug = result.redirect.replace(/^\/patterns\//, '')
+      const pattern = await api.get(`/patterns/${slug}`)
+      data.value = {
+        skill_id: route.params.id,
+        entry: { type: 'pattern', procedure_id: slug },
+        state: pattern.skill_state,
+        source_rel: pattern.doc?.file_path || '',
+        deployed: '',
+        body_md: pattern.body_md,
+        description: pattern.description,
+        tags: pattern.tags,
+        all_tags: pattern.all_tags,
+        doc: pattern.doc,
+        provider: pattern.provider,
+        concealed_texts: pattern.concealed_texts || [],
+        _pattern: pattern,
+      }
+    } else {
+      data.value = result
     }
-    data.value = result
     loading.value = false
     await loadDeployments()
   } catch {
@@ -132,12 +159,29 @@ async function regenerate() {
   await load()
 }
 async function undeploy() {
-  const ok = await confirm('Undeploy', `Remove ~/.claude/skills/${data.value.skill_id}/? Source stays. Re-push later.`, true)
+  const ok = await confirm('Undeploy', `Remove ${globalDir}/${data.value.skill_id}/? Source stays. Re-push later.`, true)
   if (!ok) return
   const result = await api.post(`/skills/${data.value.skill_id}/undeploy`)
   if (!result.ok) { flash(result.msg || 'Failed to undeploy', 'error'); return }
   flash(result.msg)
   await load()
+}
+async function deleteSkill() {
+  if (!isPatternSkill.value) {
+    flash('Only pattern skills can be deleted', 'error')
+    return
+  }
+  const slug = data.value.entry.procedure_id
+  const ok = await confirm(
+    'Delete skill',
+    `Permanently delete "${data.value.doc?.title || slug}"? This removes the source directory, any deployed skill copies, and deployment records.`,
+    true,
+  )
+  if (!ok) return
+  const result = await api.post(`/patterns/${slug}/delete`)
+  if (!result.ok) { flash(result.msg || 'Failed to delete', 'error'); return }
+  flash(result.msg || `Deleted ${slug}`)
+  router.push('/skills')
 }
 async function pushToProject(opts = {}) {
   if (!selectedRepos.value.length) {
@@ -183,7 +227,7 @@ async function pushToProject(opts = {}) {
 async function removeProjectDeployment(projectId, projectName) {
   const ok = await confirm(
     'Remove project deployment',
-    `Delete ${data.value.skill_id} from ${projectName} (.claude/skills/)? Source stays.`,
+    `Delete ${data.value.skill_id} from ${projectName} (${projectSubpath}/)? Source stays.`,
     true,
   )
   if (!ok) return
@@ -203,7 +247,7 @@ async function removeProjectDeployment(projectId, projectName) {
     ]" />
     <div class="empty-state">
       <p class="text-gray-500 text-sm">
-        <code class="cell-code">{{ route.params.id }}</code> is not managed by regin — it may be a bundled Claude skill or installed externally.
+        <code class="cell-code">{{ route.params.id }}</code> is not managed by regin — it may be a bundled {{ providerName }} skill or installed externally.
       </p>
       <router-link to="/skills" class="text-link text-sm mt-3 inline-block">← Back to Skills</router-link>
     </div>
@@ -232,7 +276,7 @@ async function removeProjectDeployment(projectId, projectName) {
         <dt>Source</dt>
         <dd><code class="cell-code">{{ data.source_rel }}</code></dd>
         <dt>Deployed</dt>
-        <dd><code class="cell-code">{{ data.deployed }}</code></dd>
+        <dd><code class="cell-code">{{ deployedPath }}</code></dd>
         <template v-if="data.entry.type === 'pattern'">
           <dt>Guide</dt>
           <dd>
@@ -246,15 +290,16 @@ async function removeProjectDeployment(projectId, projectName) {
     </Card>
 
     <Card>
-      <h2 class="card-header">Claude Code</h2>
+      <h2 class="card-header">{{ providerName }}</h2>
       <div class="btn-row">
         <template v-if="data.entry.type !== 'auto'">
-          <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500" @click="pull">Pull (deployed &rarr; source)</button>
-          <button type="button" class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500" @click="push">Push (source &rarr; deployed)</button>
-          <button v-if="data.state === 'drifted'" type="button" class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500" @click="forcePush">Force push</button>
+          <Button variant="secondary" @click="pull">Pull (deployed &rarr; source)</Button>
+          <Button variant="secondary" @click="push">Push (source &rarr; deployed)</Button>
+          <Button v-if="data.state === 'drifted'" variant="primary" @click="forcePush">Force push</Button>
         </template>
-        <button v-else type="button" class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500" @click="regenerate">Regenerate</button>
-        <button v-if="['in_sync','drifted','deployed_only'].includes(data.state)" type="button" class="btn btn-danger focus-visible:outline-2 focus-visible:outline-blue-500" @click="undeploy">Undeploy</button>
+        <Button v-else variant="primary" @click="regenerate">Regenerate</Button>
+        <Button v-if="['in_sync','drifted','deployed_only'].includes(data.state)" variant="danger" @click="undeploy">Undeploy</Button>
+        <Button v-if="isPatternSkill" variant="danger" @click="deleteSkill">Delete skill</Button>
       </div>
     </Card>
 
@@ -265,36 +310,39 @@ async function removeProjectDeployment(projectId, projectName) {
         <Badge color="green" :label="`${projectDeployments.length} project${projectDeployments.length !== 1 ? 's' : ''}`" />
       </h2>
       <p class="text-xs text-gray-500 mb-4">
-        <strong>Global</strong> = <code>~/.claude/skills/</code> (visible everywhere).
-        <strong>Project</strong> = <code>&lt;repo&gt;/.claude/skills/</code> (visible only in that repo).
+        <strong>Global</strong> = <code>{{ globalDir }}/</code> (visible everywhere).
+        <strong>Project</strong> = <code>&lt;repo&gt;/{{ projectSubpath }}/</code> (visible only in that repo).
       </p>
 
       <!-- Global row -->
       <div v-if="globalDeployment"
         class="flex items-center gap-3 px-3 py-2 bg-blue-50/50 border border-blue-100 rounded-md text-sm mb-3">
         <Badge color="blue" label="global" />
+        <Badge color="gray" :label="providerBadge(globalDeployment.provider)" />
         <code class="text-xs text-gray-600 flex-1 truncate">{{ globalDeployment.deployed_path }}</code>
         <span class="text-xs text-gray-400">{{ globalDeployment.deployed_at }}</span>
       </div>
 
       <!-- Project rows -->
       <ul v-if="projectDeployments.length" class="space-y-2 mb-4">
-        <li v-for="d in projectDeployments" :key="d.id"
+        <li v-for="d in projectDeployments" :key="`${d.id}:${d.provider || 'active'}`"
           class="group flex items-center gap-3 px-3 py-2 bg-green-50/40 border border-green-100 hover:bg-green-50 rounded-md text-sm transition-colors">
           <Badge color="green" label="project" />
+          <Badge color="gray" :label="providerBadge(d.provider)" />
           <span class="font-medium text-green-800">{{ d.project_name }}</span>
           <code class="text-xs text-gray-500 flex-1 truncate" :title="d.deployed_path">{{ d.deployed_path }}</code>
           <span class="text-xs text-gray-400">{{ d.deployed_at }}</span>
-          <button
-            type="button"
-            class="text-gray-400 hover:text-red-600 opacity-60 group-hover:opacity-100 transition-opacity focus-visible:outline-2 focus-visible:outline-blue-500"
+          <Button
+            variant="ghost"
+            size="icon"
+            class="text-gray-400 hover:text-red-600 opacity-60 group-hover:opacity-100 transition-opacity"
             :title="`Remove from ${d.project_name}`"
             :aria-label="`Remove ${data.skill_id} from ${d.project_name}`"
             @click="removeProjectDeployment(d.project_id, d.project_name)">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </button>
+          </Button>
         </li>
       </ul>
 
@@ -328,10 +376,10 @@ async function removeProjectDeployment(projectId, projectName) {
                 aria-label="Filter project repos">
             </div>
           </div>
-          <button type="button" class="btn btn-primary whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-500"
+          <Button variant="primary" class="whitespace-nowrap"
             :disabled="!selectedRepos.length || pushing" @click="pushToProject()">
             {{ pushing ? 'Pushing…' : selectedRepos.length > 1 ? `Push to ${selectedRepos.length} Projects` : 'Push to Project' }}
-          </button>
+          </Button>
         </div>
 
         <aside v-if="repoPickerOpen && filteredRepos.length"
@@ -367,9 +415,33 @@ async function removeProjectDeployment(projectId, projectName) {
       </ul>
     </Card>
 
+    <Card v-if="isPatternSkill && data.doc">
+      <h2 class="card-header">Description</h2>
+      <PatternDescriptionEditor
+        :slug="data.entry.procedure_id"
+        :description="data.description"
+        @saved="load" />
+    </Card>
+
+    <Card v-if="isPatternSkill">
+      <h2 class="card-header">Tags</h2>
+      <PatternTagsEditor
+        :slug="data.entry.procedure_id"
+        :tags="data.tags"
+        :all-tags="data.all_tags"
+        @saved="load" />
+    </Card>
+
     <Card v-if="data.body_md">
       <h2 class="card-header">SKILL.md preview</h2>
-      <MarkdownContent :markdown="data.body_md" />
+      <template v-if="isPatternSkill">
+        <PatternContentEditor
+          :slug="data.entry.procedure_id"
+          :body-md="data.body_md"
+          :concealed-texts="data.concealed_texts"
+          @saved="load" />
+      </template>
+      <MarkdownContent v-else :markdown="data.body_md" />
     </Card>
   </div>
 </template>

@@ -69,6 +69,8 @@ def test_api_skills_returns_rows_and_totals(
     assert body["rows"][0]["id"] == "example-pat"
     assert body["rows"][0]["href"] == "/patterns/example-pat"
     assert body["by_type"]["pattern"][0]["id"] == "example-pat"
+    assert body["provider"]["id"] == "claude"
+    assert body["provider"]["project_subpath"] == ".claude/skills"
 
 
 # ── require_known_skill guard ───────────────────────────────
@@ -104,6 +106,8 @@ def test_known_auto_skill_returns_detail(
     assert body["skill_id"] == "grit-rules"
     assert body["entry"]["type"] == "auto"
     assert "## Rules" in body["body_md"]
+    assert body["provider"]["id"] == "claude"
+    assert body["provider"]["project_subpath"] == ".claude/skills"
 
 
 # ── POST /api/skills/<id>/pull ──────────────────────────────
@@ -331,8 +335,8 @@ def test_backfill_records_when_on_disk(
         rid = repo.id
 
     # Place the skill dir on disk at the active provider's project subpath.
-    from web.blueprints.skills import _PROVIDER
-    skill_dir = repo_path.joinpath(*_PROVIDER.project_skills_subpath(), "p")
+    from lib.providers import get_active_provider
+    skill_dir = repo_path.joinpath(*get_active_provider().project_skills_subpath(), "p")
     skill_dir.mkdir(parents=True)
 
     from lib import audit
@@ -421,8 +425,10 @@ def test_undeploy_success(flask_client, tmp_db, isolated_dirs,
                              monkeypatch):
     _seed_pattern(isolated_dirs["patterns"], "p")
     from lib.skills import skill_sync
-    monkeypatch.setattr(skill_sync, "undeploy",
-                        lambda _id: "removed p")
+    monkeypatch.setattr(
+        skill_sync, "undeploy",
+        lambda _id, target_dir=None, provider_id=None, disable_linked_rules=True: "removed p",
+    )
     resp = flask_client.post("/api/skills/p/undeploy",
                                headers=_editor_auth())
     body = resp.get_json()

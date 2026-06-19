@@ -246,18 +246,27 @@ def _set_linked_rules_disabled(skill_id, disabled):
 
 # ---------- undeploy ------------------------------------------------------
 
-def undeploy(skill_id):
+def undeploy(skill_id, target_dir=None, provider_id=None,
+             disable_linked_rules=True):
     """Remove global deployed skill and, for pattern skills, also
     disable every rule linked to the procedure guide so the PostToolUse
     hook stops reporting violations for a pattern the agent no longer has.
+
+    ``target_dir`` overrides the provider's global skills dir. ``provider_id``
+    is used for the status message and capability check when ``target_dir``
+    is supplied.
     """
-    ok, provider_name = _provider_supports_skills()
-    if not ok:
-        return f"refused: skill deployment is not supported for {provider_name}"
+    from lib.providers import build_provider
+    provider = build_provider(provider_id) if provider_id else get_active_provider()
+    if not provider.capabilities.skills:
+        return f"refused: skill deployment is not supported for {provider.display_name}"
     from lib.skills.skill_deployer import undeploy_skill as _undeploy
-    removed = _undeploy(skill_id)
-    disabled = _set_linked_rules_disabled(skill_id, True)
-    skills_dir = get_active_provider().global_skills_dir()
+    removed = _undeploy(skill_id, target_dir=target_dir)
+    if disable_linked_rules:
+        disabled = _set_linked_rules_disabled(skill_id, True)
+    else:
+        disabled = []
+    skills_dir = target_dir or provider.global_skills_dir()
     if not removed:
         return f"{skill_id} was not deployed"
     if disabled:

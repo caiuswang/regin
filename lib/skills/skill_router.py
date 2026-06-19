@@ -21,6 +21,12 @@ from typing import Any
 # under Flask's threaded request handler.
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+# Silence HF download progress bars. They go to stderr, but the Bash tool captures
+# stdout+stderr merged, so an agent reading a `--json` command's output sees the
+# bars spliced ahead of the JSON and can't parse it. The transformers weight-load
+# bar is disabled separately in ensure_deps() (env var only covers hub downloads).
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+
 
 EMBEDDING_MODEL_ID = "pipizhao/SkillRouter-Embedding-0.6B"
 RERANKER_MODEL_ID = "pipizhao/SkillRouter-Reranker-0.6B"
@@ -54,6 +60,9 @@ def ensure_deps():
             "SkillRouter inference needs torch + transformers + numpy. "
             "Install with: pip install -r requirements-router.txt"
         ) from exc
+    # Disable the transformers "Loading weights" tqdm bar emitted on every
+    # from_pretrained. Idempotent; keeps machine-readable CLI output clean.
+    transformers.utils.logging.disable_progress_bar()
 
 
 def get_device():
