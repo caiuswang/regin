@@ -47,8 +47,13 @@ def handle_denied(payload: HookPayload) -> HookResponse | None:
 
 def _maybe_notify_push(payload: HookPayload, attrs: dict) -> None:
     """Opt-in: surface a pending permission prompt to the inbox + push
-    channels. Isolated so a notify failure can't disturb the trace span."""
+    channels — but only when it actually awaits a human. A request the
+    harness auto-resolves (e.g. `bypassPermissions`, or an edit under
+    `acceptEdits`) is not a blocker, so skip it rather than seed noise.
+    Isolated so a notify failure can't disturb the trace span."""
     try:
+        if not payload.resolved_provider.permission_awaits_human(payload):
+            return
         from lib.agent_messages import event_notify  # type: ignore
         event_notify.notify_permission_request(
             trace_id=payload.session_id, attrs=attrs)

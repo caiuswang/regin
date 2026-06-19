@@ -44,7 +44,11 @@ def _already_pushed(trace_id: str, key: str, body: str) -> bool:
 def notify_permission_request(*, trace_id: str | None, attrs: dict) -> bool:
     """Surface a pending permission prompt. `attrs` is the dict built by
     `permission_events._build_perm_attrs` (tool_name, requested_permission,
-    reason, option_count, questions, tool_use_id). Returns True if pushed."""
+    reason, option_count, questions, tool_use_id). Returns True if pushed.
+
+    Whether the prompt actually awaits a human (vs. one the harness
+    auto-resolves) is decided upstream by the provider before this is
+    called — see `permission_events._maybe_notify_push`."""
     if not settings.agent_messages.push_permission_events or not trace_id:
         return False
     try:

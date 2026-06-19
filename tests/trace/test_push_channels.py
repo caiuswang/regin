@@ -15,6 +15,19 @@ from lib.agent_messages.push.webhook import WebhookChannel
 from lib.settings import settings
 
 
+@pytest.fixture(autouse=True)
+def _clean_channels(monkeypatch):
+    """Start every test from a no-channels-configured baseline.
+
+    `settings` loads real config (including a developer's local Telegram
+    token in `settings.local.json`), which would otherwise make the
+    "nothing configured" assertions fan out for real. Clear the keys each
+    channel's `is_configured` reads; tests that need a channel set it back
+    via `_cfg`."""
+    for key in ("webhook_url", "telegram_bot_token", "telegram_chat_id"):
+        monkeypatch.setattr(settings.agent_messages, key, None)
+
+
 @pytest.fixture
 def captured(monkeypatch):
     """Capture every outbound POST instead of sending it; (url, payload)."""
@@ -54,6 +67,15 @@ def test_webhook_only_sends_json_payload(monkeypatch, captured):
     assert payload["event"] == "agent_message"
     assert payload["type"] == "blocker"
     assert payload["session_url"].endswith("/trace/sessions/s1")
+
+
+def test_webhook_session_url_deep_links_to_span(monkeypatch, captured):
+    # A message tied to a span (e.g. a permission blocker) deep-links to it,
+    # mirroring the in-app inbox card so the link lands on the prompt.
+    _cfg(monkeypatch, webhook_url="http://hook.test/x")
+    registry.maybe_dispatch(_msg(span_id="tu_42"))
+    payload = next(p for _, p in captured if "session_url" in p)
+    assert payload["session_url"].endswith("/trace/sessions/s1?span=tu_42")
 
 
 def test_telegram_only_sends_bot_api_text(monkeypatch, captured):

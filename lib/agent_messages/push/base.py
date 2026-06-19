@@ -51,9 +51,22 @@ def build_push_message(msg: dict) -> PushMessage:
         body=msg.get("body"),
         links=msg.get("links"),
         session_id=trace_id,
-        session_url=f"{base}/trace/sessions/{trace_id}" if trace_id else None,
+        session_url=_session_url(base, trace_id, msg.get("span_id")),
         timestamp=msg.get("created_at"),
     )
+
+
+def _session_url(base: str, trace_id: str, span_id: Optional[str]) -> Optional[str]:
+    """Deep-link to the originating span when known, else the session.
+
+    Mirrors the in-app inbox card (`InboxMessageCard.sessionHref`): a
+    `?span=` query is what `useTraceData` reads to focus/scroll to the exact
+    span, so a permission-blocker push lands on the prompt it's about rather
+    than the top of the session."""
+    if not trace_id:
+        return None
+    url = f"{base}/trace/sessions/{trace_id}"
+    return f"{url}?span={span_id}" if span_id else url
 
 
 def http_post_json(url: str, payload: dict, *, timeout: float,

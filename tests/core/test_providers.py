@@ -117,6 +117,49 @@ def test_claude_skill_content_path_detection():
     assert p.skill_id_from_read_path("/home/u/.claude/plans/x.md", home="/home/u") is None
 
 
+def _perm_payload(mode, tool="Bash"):
+    from hook_manager.core import HookPayload
+    return HookPayload.from_stdin_json("PermissionRequest", {
+        "hook_event_name": "PermissionRequest", "session_id": "s1",
+        "permission_mode": mode, "tool_name": tool,
+        "tool_input": {"command": "ls"}})
+
+
+@pytest.mark.parametrize("mode,tool,expected", [
+    # bypassPermissions: nothing ever prompts a human.
+    ("bypassPermissions", "Bash", False),
+    ("bypassPermissions", "Edit", False),
+    # acceptEdits: edit tools auto-accepted; everything else still asks.
+    ("acceptEdits", "Edit", False),
+    ("acceptEdits", "Write", False),
+    ("acceptEdits", "MultiEdit", False),
+    ("acceptEdits", "NotebookEdit", False),
+    ("acceptEdits", "Bash", True),
+    ("acceptEdits", "WebFetch", True),
+    # default / plan / unknown / absent: the harness waits on a human.
+    ("default", "Edit", True),
+    ("plan", "Edit", True),
+    ("weird-future-mode", "Bash", True),
+    (None, "Bash", True),
+    # AskUserQuestion is a direct question to the user, not a gated tool —
+    # it blocks on a human in *every* mode, including the bypass modes that
+    # suppress every other tool's prompt.
+    ("bypassPermissions", "AskUserQuestion", True),
+    ("acceptEdits", "AskUserQuestion", True),
+    ("default", "AskUserQuestion", True),
+])
+def test_claude_permission_awaits_human(mode, tool, expected):
+    p = build_provider("claude")
+    assert p.permission_awaits_human(_perm_payload(mode, tool)) is expected
+
+
+def test_base_provider_permission_awaits_human_defaults_true():
+    # Codex (and any provider without auto-grant semantics) is conservative:
+    # a permission request is always treated as needing a human.
+    p = build_provider("codex")
+    assert p.permission_awaits_human(_perm_payload("bypassPermissions")) is True
+
+
 def test_codex_provider_capabilities_are_enabled():
     p = build_provider("codex")
     assert p.capabilities.skills is True

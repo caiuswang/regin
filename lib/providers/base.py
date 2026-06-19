@@ -105,6 +105,24 @@ class AgentProvider:
         from hook_manager.core import HookResponse
         return HookResponse()
 
+    def permission_awaits_human(self, payload: "HookPayload") -> bool:
+        """Whether a permission request genuinely stops to ask a *person*.
+
+        A `permission.request` is only a **blocker** worth surfacing to the
+        inbox / push channels when the harness will actually wait on a human
+        decision. Some permission modes auto-resolve the request (grant or
+        deny) with no human in the loop — recording those as a blocker is
+        pure noise (the complaint that motivated this hook).
+
+        It cannot be read off the mode string alone: under Claude's
+        `acceptEdits`, an `Edit` is auto-accepted but a `Bash` still prompts —
+        the answer is a function of *mode and tool together*, which only the
+        provider knows. Default here is conservative: assume a human is
+        needed. A provider that knows its own auto-grant semantics overrides
+        to narrow it; over-notifying beats silently swallowing a real
+        blocker."""
+        return True
+
     def tool_failure_error_text(self, raw_error: object) -> str:
         """Normalize a `PostToolUseFailure` payload's `error` field to a plain
         display string.

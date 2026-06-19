@@ -18,6 +18,12 @@ from hook_manager.core import (
 
 _SKILL_READ_CONTENT_RE = re.compile(r"^\.claude/skills/([^/]+)/content\.md$")
 
+# Tools whose permission `acceptEdits` ("auto-accept edits") grants without
+# prompting. Everything else (Bash, WebFetch, …) still stops for a human even
+# in that mode, so the request stays a real blocker.
+_AUTO_ACCEPTED_EDIT_TOOLS = frozenset(
+    {"Edit", "Write", "MultiEdit", "NotebookEdit"})
+
 
 class ClaudeProvider(AgentProvider):
     provider_id = "claude"
@@ -108,6 +114,37 @@ class ClaudeProvider(AgentProvider):
             behavior="allow",
             updated_permissions=option.updated_permissions,
         ))
+
+    def permission_awaits_human(self, payload: HookPayload) -> bool:
+        """Resolve "does a human actually have to decide this?" for Claude
+        Code's four permission modes (the full set):
+
+          * ``bypassPermissions`` — every tool auto-allowed; no prompt ever
+            reaches a person → never a blocker.
+          * ``acceptEdits`` — file-edit tools auto-accepted, but other tools
+            (Bash, WebFetch, …) still prompt → a blocker only for non-edit
+            tools.
+          * ``plan`` — the run is paused for the human to approve/reject the
+            plan, and edits/commands are gated → a blocker.
+          * ``default`` (and an absent/unknown mode) — asks unless a standing
+            allow/deny rule already matched; since the harness only fires
+            ``PermissionRequest`` when it decided to ask, treat it as a
+            blocker.
+
+        ``AskUserQuestion`` is the exception that ignores the mode entirely:
+        it is the agent *directly asking the user a question*, not a tool the
+        harness gates. ``bypassPermissions`` / ``acceptEdits`` skip
+        tool-permission prompts, but the question UI still surfaces and waits
+        for an answer — so it always blocks on a human, in every mode.
+        """
+        if payload.tool_name == "AskUserQuestion":
+            return True
+        mode = payload.permission_mode
+        if mode == "bypassPermissions":
+            return False
+        if mode == "acceptEdits":
+            return payload.tool_name not in _AUTO_ACCEPTED_EDIT_TOOLS
+        return True
 
     def skill_invoke_path(self, skill_id: str) -> str:
         return f".claude/skills/{skill_id}/invoke"
