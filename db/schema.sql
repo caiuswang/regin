@@ -124,6 +124,64 @@ CREATE INDEX IF NOT EXISTS idx_plan_sessions_session ON plan_sessions(session_id
 CREATE INDEX IF NOT EXISTS idx_plan_sessions_plan ON plan_sessions(plan_filename);
 CREATE INDEX IF NOT EXISTS idx_plan_sessions_started ON plan_sessions(started_at);
 
+-- Agent → human message channel (the `send_to_user` inbox). Canonical,
+-- mutable store written by the PostToolUse hook when an
+-- `mcp__*__send_to_user` call lands — NOT reconstructed from session_spans.
+-- msg_key supersedes a prior message in place (progress that resolves to
+-- done); read/ack/dismiss timestamps drive the cross-session unread badge.
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id        TEXT NOT NULL,
+    span_id         TEXT,
+    agent_id        TEXT,
+    agent_type      TEXT,
+    msg_type        TEXT NOT NULL DEFAULT 'progress',
+    title           TEXT,
+    body            TEXT NOT NULL DEFAULT '',
+    msg_key         TEXT,
+    links           TEXT,
+    pinned          INTEGER NOT NULL DEFAULT 0,
+    version         INTEGER NOT NULL DEFAULT 1,
+    webhook_status  TEXT,
+    read_at         TEXT,
+    acked_at        TEXT,
+    dismissed_at    TEXT,
+    is_test         INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_messages_trace ON agent_messages(trace_id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_created ON agent_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_unread ON agent_messages(read_at);
+-- Supersede lookup: one live keyed message per (session, key).
+CREATE INDEX IF NOT EXISTS idx_agent_messages_key ON agent_messages(trace_id, msg_key);
+
+-- Post-hoc rubric grades for captured sessions (lib/grader/). Two
+-- independent axes per session — 'correctness' (claim groundedness /
+-- coverage / source quality) and 'process' (tool-use, redundancy,
+-- reliability, cost-proportionality) — graded separately and never fused.
+-- Append-only: re-grading inserts a new row; readers take the latest row
+-- per (trace_id, axis).
+CREATE TABLE IF NOT EXISTS session_grades (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id        TEXT NOT NULL,
+    axis            TEXT NOT NULL,                   -- 'correctness' | 'process'
+    verdict         TEXT NOT NULL,                   -- correctness: satisfied|needs_revision|fail
+                                                     -- process: efficient|acceptable|wasteful
+    tier            TEXT NOT NULL DEFAULT 'screen',  -- 'screen' (mechanical) | 'deep' (LLM-assisted)
+    scoreboard      TEXT NOT NULL DEFAULT '{}',      -- JSON per-criterion counters/ratios
+    report          TEXT NOT NULL DEFAULT '',        -- scoreboard-then-failure-bullets text
+    detail          TEXT NOT NULL DEFAULT '{}',      -- JSON claim ledger / process episodes
+    rubric_version  TEXT,
+    judge           TEXT,                            -- 'mechanical' or external agent id
+    is_test         INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_grades_trace ON session_grades(trace_id, axis);
+CREATE INDEX IF NOT EXISTS idx_session_grades_created ON session_grades(created_at DESC);
+
 -- OpenTelemetry-inspired session spans for unified execution tracing.
 -- trace_id = Claude session_id. parent_id = null for root spans.
 CREATE TABLE IF NOT EXISTS session_spans (
@@ -194,6 +252,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     cache_creation_tokens INTEGER,
     peak_context_tokens   INTEGER,
     peak_main_context_tokens INTEGER,
+    live_context_tokens   INTEGER,        -- main peak since the last /compact (headline ctx%)
     context_window_tokens INTEGER,
     cost_usd              REAL,
     active_work_ms        INTEGER,
@@ -286,10 +345,11 @@ CREATE TABLE IF NOT EXISTS pattern_deployments (
     pattern_slug    TEXT NOT NULL,
     scope           TEXT NOT NULL,
     project_id      INTEGER,
+    provider        TEXT,
     deployed_path   TEXT NOT NULL,
     deployed_at     TEXT NOT NULL DEFAULT (datetime('now')),
     deployed_by     INTEGER,
-    UNIQUE(pattern_slug, scope, project_id)
+    UNIQUE(pattern_slug, scope, project_id, provider)
 );
 
 -- Structural projection of session_spans, dual-written by the ingest

@@ -105,3 +105,79 @@ def test_post_settings_save_coerces_int_fields(
     assert shared["web_port"] == 8888  # int
 
 
+# ── GET /api/settings/providers ──────────────────────────────
+
+def test_get_provider_settings_returns_providers(
+        flask_client, isolated_settings_files):
+    resp = flask_client.get("/api/settings/providers")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "providers" in body
+    assert "handler_defaults" in body
+    claude = next((p for p in body["providers"] if p["id"] == "claude"), None)
+    assert claude is not None
+    assert claude["active"] is True
+    assert claude["enabled"] is True
+    assert "path_overrides" in claude
+    assert "disabled_handlers" in claude
+    assert "priority_overrides" in claude
+
+
+# ── PUT /api/settings/providers ──────────────────────────────
+
+def test_put_provider_settings_without_auth_rejected(
+        anon_client, isolated_settings_files):
+    resp = anon_client.put(
+        "/api/settings/providers",
+        json={"providers": {"claude": {"enabled": True}}},
+    )
+    assert resp.status_code == 401
+
+
+def test_put_provider_settings_persists_local(
+        flask_client, isolated_settings_files):
+    resp = flask_client.put(
+        "/api/settings/providers",
+        json={
+            "providers": {
+                "kimi": {
+                    "enabled": True,
+                    "disabled_handlers": ["trace_payload"],
+                    "priority_overrides": {"rule_check": 200},
+                }
+            }
+        },
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+
+    local = json.loads(isolated_settings_files["local"].read_text())
+    assert local["providers"]["kimi"]["enabled"] is True
+    assert local["providers"]["kimi"]["disabled_handlers"] == ["trace_payload"]
+    assert local["providers"]["kimi"]["priority_overrides"] == {"rule_check": 200}
+
+
+def test_put_provider_settings_rejects_unknown_provider(
+        flask_client, isolated_settings_files):
+    resp = flask_client.put(
+        "/api/settings/providers",
+        json={"providers": {"unknown": {"enabled": True}}},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 400
+    assert "unknown provider" in resp.get_json()["errors"][0]
+
+
+def test_put_provider_settings_rejects_bad_priority(
+        flask_client, isolated_settings_files):
+    resp = flask_client.put(
+        "/api/settings/providers",
+        json={"providers": {"claude": {"priority_overrides": {"rule_check": "x"}}}},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 400
+    errors = resp.get_json()["errors"]
+    assert any("priority_overrides" in e for e in errors)
+
+

@@ -1,28 +1,30 @@
 {
-  "_about": "Reference for every configurable field. Copy individual keys into config/settings.json (shared, git-tracked) or config/settings.local.json (machine-local, gitignored). Precedence high→low: REGIN_* env > settings.local.json > settings.json > defaults. Unknown keys are ignored — pydantic-settings runs with extra='ignore'. Authoritative source: lib/settings.py.",
-
+  "_about": "Reference for every configurable field. Copy individual keys into config/settings.json (shared, git-tracked) or config/settings.local.json (machine-local, gitignored). Precedence high\u2192low: REGIN_* env > settings.local.json > settings.json > defaults. Unknown keys are ignored \u2014 pydantic-settings runs with extra='ignore'. Authoritative source: lib/settings.py.",
   "_paths": "All path values support a leading ~ (expanded at boot). Setting only REGIN_DATA_DIR (or data_dir) rebases patterns_dir, grit_dir, tags_path, auto_tag_rules_path, log_dir, and payload_schemas_overlay_dir to live under it.",
-
   "data_dir": "~/.local/share/regin",
   "patterns_dir": "~/.local/share/regin/patterns",
   "grit_dir": "~/.local/share/regin/grit",
   "tags_path": "~/.local/share/regin/config/tags.yaml",
   "auto_tag_rules_path": "~/.local/share/regin/config/auto_tag_rules.yaml",
   "payload_schemas_overlay_dir": "~/.local/share/regin/payload_schemas",
-
   "rule_engines": [
     {
       "id": "grit",
       "kind": "grit",
       "enabled": true,
       "grit_dir": "~/.local/share/regin/grit",
-      "language_ids": ["python", "java"]
+      "language_ids": [
+        "python",
+        "java"
+      ]
     },
     {
       "id": "radon",
       "kind": "radon",
       "enabled": true,
-      "language_ids": ["python"],
+      "language_ids": [
+        "python"
+      ],
       "min_grade": "C",
       "severity": "warn"
     },
@@ -35,18 +37,30 @@
   ],
   "bundle_autoload": false,
   "language_extensions": {
-    "kotlin": [".kt", ".kts"]
+    "kotlin": [
+      ".kt",
+      ".kts"
+    ]
   },
-
   "_logs": "Activity-log JSONL stream (lib/activity_log.py). Distinct from session trace capture below.",
   "log_dir": "~/.local/share/regin/logs",
   "log_retention_days": 14,
   "log_max_bytes_per_file": 52428800,
   "activity_log_features": [
-    "hooks", "patterns", "sync", "web", "cli", "rules",
-    "trace_ingest", "topics", "auth", "other"
+    "hooks",
+    "patterns",
+    "sync",
+    "web",
+    "cli",
+    "rules",
+    "trace_ingest",
+    "topics",
+    "auth",
+    "agent_messages",
+    "memory",
+    "grader",
+    "other"
   ],
-
   "_providers": "Per-provider deploy targets. active_provider selects the default; providers{} carries optional per-provider path overrides. Flip experimental_providers to surface codex/generic in the Settings UI.",
   "active_provider": "claude",
   "experimental_providers": false,
@@ -71,46 +85,52 @@
       "transcript_projects_dir": "~/.codex/sessions"
     }
   },
-
   "_experiments": "Feature gates for UI surfaces in progress / off-by-default.",
   "experimental_conceal": false,
   "experimental_dense_search": false,
   "diagnostics_enabled": false,
-
   "_pattern_search": "Hybrid (BM25 + dense + cross-encoder) router config. Set pattern_router_dense_enabled=false to skip the embedding leg entirely (saves ~1.2GB model download).",
   "pattern_router_dense_enabled": true,
   "dense_rerank_min_corpus": 1,
-
   "_repos": "Repositories registered for indexing. Managed by /repos UI or `regin add-repo` / `regin remove-repo`. Editing here directly works too.",
   "repo_paths": [
     "/Users/you/project-a",
     "/Users/you/project-b"
   ],
-
   "_web": "Flask JSON API port.",
   "web_port": 8321,
-
   "_mode": "standalone = local SQLite for auth/audit. shared = MySQL (set database_url).",
   "mode": "standalone",
   "database_url": null,
   "skillhub_url": "http://127.0.0.1:8322",
-
   "_topics": "External commands that draft topic proposals. Keyed by agent id; the UI exposes each by key.",
   "topic_proposal_external_agents": {
     "claude": {
       "command": "claude",
-      "args": ["--print", "--permission-mode", "acceptEdits"],
+      "args": [
+        "--print",
+        "--permission-mode",
+        "acceptEdits"
+      ],
       "timeout_seconds": 600,
       "cwd": null
     },
     "codex": {
       "command": "codex",
-      "args": ["exec"],
+      "args": [
+        "exec"
+      ],
       "timeout_seconds": 600
     }
   },
   "topic_snapshot_keep": 50,
-
+  "_grader": "Post-hoc session rubric grader (lib/grader). The screen tier is mechanical (no LLM); the deep tier consults an external agent from topic_proposal_external_agents (external_agent names a key; null = first). auto_escalate re-grades borderline screen results deep when a judge is configured.",
+  "grader": {
+    "enabled": true,
+    "external_agent": null,
+    "auto_escalate": true,
+    "deep_max_claims": 40
+  },
   "_rule_trigger_thresholds": "Classifies rules on /trace/triggers as active / noisy / dead.",
   "rule_trigger_thresholds": {
     "noisy_min_rate_pct": 30,
@@ -118,19 +138,16 @@
     "dead_min_checks": 3,
     "default_range": "7d"
   },
-
   "_trace_capture": "Session trace capture knobs (per-turn response text and prompt images).",
   "capture_assistant_response": true,
   "assistant_response_max_bytes": 50000,
   "capture_prompt_images": true,
   "prompt_image_max_bytes": 5000000,
   "prompt_images_max_count": 10,
-
-  "_model_context_windows": "Per-model override (model id → token count) merged on top of lib/tokens/model_windows.py.",
+  "_model_context_windows": "Per-model override (model id \u2192 token count) merged on top of lib/tokens/model_windows.py.",
   "model_context_windows": {
     "claude-opus-4-7": 1000000
   },
-
   "_env_only_vars": {
     "_note": "Read at call time, NOT mirrored on the Settings class. Set in the shell / launcher, not here. See module docstring in lib/settings.py.",
     "REGIN_DATA_DIR": "Overrides data_dir at module import; rebases all derived paths.",

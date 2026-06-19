@@ -116,6 +116,14 @@ class SessionSpan(Base, table=True):
         default=None,
         sa_column=Column("turn_uuid", String),
     )
+    # Capture source: 'hook' (live hook events) or 'transcript' (the
+    # transcript scan). The append-only store keeps both; lib/trace/merge.py
+    # selects winners at read time. Mirrors db/schema.sql + web/startup.py.
+    source: str = Field(
+        default="hook",
+        sa_column=Column("source", Text, nullable=False,
+                         server_default=text("'hook'")),
+    )
     created_at: Optional[str] = Field(
         default=None,
         sa_column=Column("created_at", Text, nullable=False,
@@ -205,6 +213,15 @@ class Session(Base, table=True):
     peak_main_context_tokens: Optional[int] = Field(
         default=None,
         sa_column=Column("peak_main_context_tokens", Integer),
+    )
+    # Main-flow context peak since the most recent `/compact`. A
+    # compaction (manual or auto) resets the live context window, so the
+    # all-time peaks above stay pinned at the pre-compaction high. This
+    # tracks the live segment and drives the headline ctx% so it drops
+    # after the session compacts; equals peak_main when no compaction.
+    live_context_tokens: Optional[int] = Field(
+        default=None,
+        sa_column=Column("live_context_tokens", Integer),
     )
     context_window_tokens: Optional[int] = Field(default=None,
                                                  sa_column=Column("context_window_tokens", Integer))

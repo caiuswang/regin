@@ -46,8 +46,20 @@ def _find_transcript(trace_id: str) -> str | None:
 
     Claude default:
     ``~/.claude/projects/<cwd-munged>/<session_id>.jsonl``.
+
+    Providers whose on-disk layout differs from Claude's flat
+    ``<projects>/*/<id>.jsonl`` (e.g. Kimi's
+    ``<sessions>/wd_*/<id>/agents/main/wire.jsonl``) implement
+    ``resolve_transcript_path``; route through it so the backfill matches
+    the live ingest path instead of the Claude-only glob below.
     """
     provider = get_active_provider()
+    from hook_manager.core import HookPayload
+    resolved = provider.resolve_transcript_path(
+        HookPayload(event="backfill", session_id=trace_id)
+    )
+    if resolved:
+        return resolved
     projects_root = str(provider.transcript_projects_dir())
     candidates = glob.glob(os.path.join(projects_root, "*", f"{trace_id}.jsonl"))
     if not candidates:
@@ -151,6 +163,39 @@ def _backfill_one_session(deps, trace_id: str, current_model: str,
             print(f"  processed {counts['updated']}/{total}…")
 
 
+@trace_app.command("dump",
+                   help="Print a session's gradeable evidence (prompts, "
+                        "final deliverable, ordered tool spans) as JSON")
+def cmd_dump(
+    trace_id: str = typer.Argument(..., help="Session (trace) id"),
+    index: bool = typer.Option(
+        False, "--index",
+        help="Compact catalog only (no large span content) — pair with "
+             "`trace span` to read the spans you need"),
+) -> None:
+    import json as _json
+
+    from lib.grader.dump import dump_session
+    print(_json.dumps(dump_session(trace_id, index_only=index),
+                      indent=2, ensure_ascii=False))
+
+
+@trace_app.command("span",
+                   help="Print one span's full untruncated recorded content")
+def cmd_span(
+    trace_id: str = typer.Argument(..., help="Session (trace) id"),
+    span_id: str = typer.Argument(..., help="Span id within the session"),
+) -> None:
+    import json as _json
+
+    from lib.grader.dump import dump_span
+    out = dump_span(trace_id, span_id)
+    if out is None:
+        print(f"error: span {span_id} not found in session {trace_id}")
+        raise typer.Exit(1)
+    print(_json.dumps(out, indent=2, ensure_ascii=False))
+
+
 @trace_app.command("backfill-tokens",
                    help="Populate per-turn usage rows from on-disk transcripts for existing sessions")
 def cmd_backfill_tokens(
@@ -169,13 +214,15 @@ def cmd_backfill_tokens(
         raise typer.Exit(2)
 
     from lib.orm.engine import get_connection
-    from lib.trace.transcript_usage import read_usage
     from lib.trace.trace_service import ingest_turn_usage
 
     candidates = _load_backfill_candidates(get_connection, only_missing)
     deps = {
         'get_connection': get_connection,
-        'read_usage': read_usage,
+        # Route through the active provider so non-Claude on-disk formats
+        # (Kimi's wire.jsonl) parse correctly instead of the Claude-only
+        # read_usage; the live ingest path uses the same method.
+        'read_usage': provider.parse_transcript,
         'ingest_turn_usage': ingest_turn_usage,
     }
     counts = {'updated': 0, 'missing': 0, 'empty': 0}
@@ -186,6 +233,74 @@ def cmd_backfill_tokens(
     print(
         f"Done. updated={counts['updated']} "
         f"missing_transcript={counts['missing']} empty_usage={counts['empty']}"
+    )
+
+
+@trace_app.command(
+    "backfill-kimi-subagents",
+    help="Nest existing Kimi sessions' flat subagent spans under their subagent trace",
+)
+def cmd_backfill_kimi_subagents(
+    limit: int = typer.Option(
+        0, "--limit", help="Stop after this many sessions (0 = no limit)",
+    ),
+) -> None:
+    from lib.trace.kimi_subagents import (
+        discover_subagent_sessions, reconcile_kimi_subagents,
+    )
+    sessions = discover_subagent_sessions()
+    if not sessions:
+        print("No Kimi sessions with subagent dirs found.")
+        return
+    totals = {"sessions": 0, "subagents": 0, "tool_spans": 0, "turns": 0}
+    for trace_id in sessions:
+        if limit and totals["sessions"] >= limit:
+            break
+        result = reconcile_kimi_subagents(trace_id)
+        if not result["subagents"]:
+            continue
+        totals["sessions"] += 1
+        for key in ("subagents", "tool_spans", "turns"):
+            totals[key] += result[key]
+        print(f"  {trace_id}: {result}")
+    print(
+        f"Done. sessions={totals['sessions']} subagents={totals['subagents']} "
+        f"tool_spans={totals['tool_spans']} turns={totals['turns']}"
+    )
+
+
+@trace_app.command(
+    "backfill-claude-subagents",
+    help="Attribute existing Claude sessions' subagent (Task tool) API spend "
+         "onto their bill",
+)
+def cmd_backfill_claude_subagents(
+    limit: int = typer.Option(
+        0, "--limit", help="Stop after this many sessions (0 = no limit)",
+    ),
+) -> None:
+    from lib.trace.claude_subagents import (
+        discover_subagent_sessions, reconcile_claude_subagents,
+    )
+    sessions = discover_subagent_sessions()
+    if not sessions:
+        print("No Claude sessions with subagent dirs found.")
+        return
+    totals = {"sessions": 0, "subagents": 0, "stamped": 0, "cost_usd": 0.0}
+    for trace_id in sessions:
+        if limit and totals["sessions"] >= limit:
+            break
+        result = reconcile_claude_subagents(trace_id)
+        if not result["stamped"]:
+            continue
+        totals["sessions"] += 1
+        totals["subagents"] += result["subagents"]
+        totals["stamped"] += result["stamped"]
+        totals["cost_usd"] += result["cost_usd"]
+        print(f"  {trace_id}: {result}")
+    print(
+        f"Done. sessions={totals['sessions']} subagents={totals['subagents']} "
+        f"stamped={totals['stamped']} cost_usd=${totals['cost_usd']:.2f}"
     )
 
 

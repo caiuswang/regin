@@ -76,6 +76,21 @@ class ProviderPathOverrides(BaseModel):
     transcript_projects_dir: Path | None = None
 
 
+class ProviderConfig(ProviderPathOverrides):
+    """Per-provider configuration: paths + enablement + handler overrides.
+
+    A provider is considered enabled when it is the active provider or when
+    its config explicitly sets ``enabled: true``. Enabled providers are
+    included in multi-provider operations such as project skill deployment.
+    Handler overrides mirror the per-provider ``hook-manager-config.json``
+    shape so regin can centralize provider tuning in its own settings.
+    """
+
+    enabled: bool = False
+    disabled_handlers: list[str] = Field(default_factory=list)
+    priority_overrides: dict[str, int] = Field(default_factory=dict)
+
+
 class RuleTriggerThresholds(BaseModel):
     """Thresholds for classifying rule health on the /trace/triggers tab.
 
@@ -93,12 +108,521 @@ class RuleTriggerThresholds(BaseModel):
 
 
 class TopicProposalExternalAgent(BaseModel):
-    """One external command that can draft topic proposals."""
+    """One external command that can draft topic proposals / judge sessions.
+
+    The prompt is piped on stdin (the `claude --print` / `codex exec`
+    convention). An agent whose CLI takes the prompt as an argument instead
+    (Kimi's `-p <prompt>`) puts a literal ``{prompt}`` token in `args`; the
+    runner substitutes the prompt there and writes no stdin.
+
+    `supports_allowed_tools` gates the grader's `--allowedTools` grant: agents
+    without that flag (Kimi) must auto-approve the read-only trace commands via
+    their own permission config instead.
+    """
 
     command: str
     args: list[str] = Field(default_factory=list)
     timeout_seconds: int = 600
     cwd: Path | None = None
+    supports_allowed_tools: bool = True
+
+
+class AgentMemoryConfig(BaseModel):
+    """Cross-session agent memory (`lib/memory`).
+
+    The memory engine lives in its **own** SQLite file so it survives
+    `regin init` / `rebuild` and never enters the `db/schema.sql` vs
+    Alembic drift trap — the engine initializes its own schema on first
+    use. `db_path=None` resolves to `<project_root>/db/regin_memory.db`.
+
+    `auto_inject` gates the UserPromptSubmit `<recalled_experience>`
+    handler. That handler always recalls FTS-only (hooks are short-lived
+    processes; loading the dense models per prompt is a non-starter) —
+    `dense_enabled` only governs the long-lived surfaces (recall MCP
+    tool, web API, CLI), and degrades to FTS when torch/transformers are
+    missing, per the EmbeddingProvider port contract.
+
+    `scope_policy` is the wrapper-level write scope: `global` stores
+    everything in one scope; `per-repo` stamps captures from a registered
+    repo's cwd as `repo:<name>` and narrows recall to it; the default
+    `per-repo-tagged` stamps the repo on writes (so memories carry their
+    repo category) while recall stays globally visible.
+
+    `inject_min_overlap` gates the FTS-only auto-inject path: a memory
+    must share at least this many distinct *informative* content tokens
+    with the prompt to be injected. BM25 always ranks *something*, so
+    without the gate a grown store attaches tangential memories to every
+    prompt. 0 disables.
+
+    `overlap_idf_max_df` makes that overlap idf-aware: a token appearing in
+    more than this fraction of active memories is corpus-saturating
+    ('session'/'memory'/'trace' in this repo) and does not count toward the
+    overlap, so coincidental matches on common words never clear the gate.
+    0 (or ≥1) disables idf filtering — the gate then counts raw tokens.
+
+    `inject_fts_top_k` caps how many hits the auto-inject renders when the
+    surfaced hits carry *no* calibrated rerank confidence (the dense server
+    path was unavailable and recall fell to FTS/RRF rank order). Without a
+    confidence score we trust only the single strongest lexical match, not
+    a speculative top-k. Reranked surfaces still honour `inject_top_k`.
+    """
+
+    enabled: bool = True
+    db_path: Path | None = None
+    auto_inject: bool = True
+    inject_top_k: int = 3
+    inject_max_chars: int = 2_000
+    inject_min_overlap: int = 3
+    overlap_idf_max_df: float = 0.30
+    inject_fts_top_k: int = 1
+    # Same-session dedup: skip injecting a memory already injected earlier
+    # this session (tracked in the memory DB's `injection_events` table, so
+    # it survives the per-prompt fresh hook process). When a previously
+    # injected memory re-surfaces on a later prompt it is reinforced once —
+    # repeated relevance across a session is a usefulness signal the
+    # speculative auto-inject otherwise never gets. Off → re-inject freely.
+    inject_dedup_session: bool = True
+    # Dense recall at inject time. A hook is a short-lived process and can't
+    # load the embedder per prompt, so when this is on the handler asks the
+    # already-warm `regin serve` process instead (POST /api/memory/recall,
+    # mode=auto → dense + rerank) over loopback, with a short timeout and a
+    # clean fall back to in-process FTS when the server is down or slow.
+    # The recall endpoint stays auth-gated to the network; the auth gate
+    # grants a loopback-only exemption for it when this flag is on.
+    inject_dense_via_server: bool = True
+    inject_server_url: str = "http://127.0.0.1:8321"
+    # Budget for the loopback dense-recall borrow. Warm latency of the full
+    # embed + cross-encoder-rerank pull (20 candidates) is ~0.7s, but an
+    # *idle-rewarm* call — the model went idle and the next request re-warms
+    # it — was measured at ~2.6s. Auto-inject prompts arrive sporadically, so
+    # they keep hitting that idle penalty: at the old 1.5s budget the rerank
+    # lost the race and silently degraded to FTS (observed: every recall in a
+    # real session fell to FTS despite a running, warmed server). 3.0s clears
+    # the 2.6s idle spike with margin. A *down* server fails instantly
+    # (connection refused, not a timeout wait), so this roomier budget only
+    # ever costs latency when the server is up-but-slow — worth it for the
+    # calibrated, gated dense hits over ungated FTS noise.
+    inject_server_timeout_seconds: float = 3.0
+    # When auto_inject fires, also record the rendered block as a
+    # `memory.recall` span on the session trace so the injection is
+    # auditable per-prompt in the trace UI. Off → inject silently.
+    trace_recall: bool = True
+    recall_top_k: int = 5
+    # Minimum cross-encoder confidence for a hit to surface on reranked
+    # surfaces. RRF/FTS-ordered results are rank-gated by top_k instead.
+    # Calibrated against the live store (2026-06): the cross-encoder was
+    # trained for task→skill routing and scores memory bodies low — exact
+    # matches land 0.43-1.4 (after quality/intent multipliers), partially
+    # relevant 0.2-0.3, tangential ≤0.16. The old 0.35 silently muted
+    # partially-relevant injections; chronic tangential hits near the gate
+    # are the feedback loop's job (ignored→decay), not the threshold's.
+    recall_min_score: float = 0.25
+    # MMR (maximal-marginal-relevance) diversity at the final top_k selection
+    # of recall(). None → off (greedy by score). A float in [0, 1] turns it on
+    # as the relevance weight: score(m) = λ·rel(m) − (1−λ)·max cosine(m, already-
+    # selected), with rel min-max normalized within the candidate pool so λ
+    # trades against cosine on a common scale. ~0.7 = relevance-dominant,
+    # diversity as a tie-breaker. A no-op on the FTS / k=1 / no-embedding paths;
+    # it only bites the dense surfaces where near-duplicate hits would otherwise
+    # fill adjacent inject slots and skew the engaged/ignored feedback signal.
+    inject_mmr_lambda: float | None = None
+    dense_enabled: bool = True
+    scope_policy: Literal["global", "per-repo", "per-repo-tagged"] = "per-repo-tagged"
+    # reflect(): embedding-cosine dedup threshold, and its deterministic
+    # text-similarity fallback when the embedder is unavailable.
+    dedup_cosine_threshold: float = 0.92
+    dedup_text_threshold: float = 0.90
+    # distill(): the LLM self-scores each proposal's reusable value in
+    # [0,1] (non-obvious × reusable × likely-to-recur). Below
+    # `distill_min_importance` the model's own low-confidence draft is
+    # dropped — selectivity over coverage. At/above `auto_approve_importance`
+    # the proposal skips the human review queue and lands `active`; only the
+    # gray band between the two is queued as `proposed`.
+    distill_min_importance: float = 0.3
+    auto_approve_importance: float = 0.85
+    # distill(): at write time, when a fresh proposal makes a claim
+    # incompatible with an existing memory about the same thing (a lexical
+    # gray-band candidate the LLM judges CONTRADICT), retire the old row in the
+    # new one's favour (status=retired, veracity=false) instead of leaving the
+    # now-wrong memory live until the next reflect gray-zone pass — the
+    # immediate, lexical complement to reflect's batch embedding-based check.
+    # Needs the distiller's LLM. Off → distill only reinforces near-duplicates.
+    distill_supersede_on_conflict: bool = True
+    # reflect(): synthesis (Generative-Agents reflection). Cluster *related
+    # but distinct* episodic rows (cosine in [0.55, dedup_threshold)) and ask
+    # the LLM to abstract ONE higher-order rule per cluster, written as a new
+    # episodic memory; sources are kept and marked 'synthesized'. Needs both
+    # an embedder (to cluster) and an LLM (to abstract); a no-op without
+    # either. Off → reflect only dedups / promotes / decays, never synthesises.
+    synthesis_enabled: bool = True
+    # reflect(): the structure layer. Roll each scope's most important
+    # episodic memories (synthesis cards first — they carry the highest
+    # importance — then the rest) into ONE compact maintained briefing
+    # ("what this scope's sessions have learned"), persisted as a single
+    # `kind="digest"` memory per scope and refreshed in place via supersede.
+    # The store-derived, auto-maintained complement to the hand-curated
+    # MEMORY.md. Excluded from similarity recall (standing context, read by
+    # scope, never a per-query hit) and from the dedup/synthesis/decay
+    # lifecycle. Needs an LLM; a no-op without one. Off by default — this is
+    # the generation slice; the inject path is separate.
+    digest_enabled: bool = False
+    # Regenerate a scope's digest only when at least this many newer source
+    # memories exist since the current digest, OR it is older than
+    # `digest_max_age_days` — keeps the per-scope LLM call off the hot path.
+    digest_min_new_cards: int = 3
+    digest_max_age_days: float = 7.0
+    # Cap on source memories (top-importance episodic) fed to the digest LLM,
+    # bounding the prompt; a scope needs at least a few sources to be worth one.
+    digest_max_sources: int = 20
+    # reflect(): persist the embedding-cosine neighbour graph that synthesis
+    # clustering already computes (and otherwise discards) as `related` edges
+    # in `memory_edges`. Every pair of active embedded memories whose cosine
+    # is >= `edge_floor` (and below the dedup threshold — near-identical pairs
+    # are merged, not linked) becomes one undirected edge. reflect rebuilds the
+    # whole `related` set each pass, so the graph tracks the live embeddings.
+    # Needs an embedder (no LLM); a no-op without one. Off → no edge graph
+    # (the curate UI's "Related" list falls back to on-demand cosine).
+    edges_enabled: bool = True
+    edge_floor: float = 0.55
+    # Cap on edges recorded per memory (highest-weight kept) so a dense
+    # cluster can't fan out into a hairball. 0 disables the cap.
+    edge_max_per_node: int = 8
+    # reflect(): when synthesis abstracts a rule from a cluster, also record
+    # the cluster as a named `memory_topic` (LLM-named, the synthesised rule
+    # as its summary card) with one `memory_topic_members` row per source.
+    # Needs synthesis (embedder + LLM); off → synthesis still writes the rule
+    # memory but no topic node is created.
+    topics_enabled: bool = True
+    # reflect()→synthesis: instead of minting an orphan `memory_topic`, feed
+    # the synthesised rule into the *authoritative* topic-proposal review
+    # queue (`.regin/topics/topic.json`). The cluster summary is embedded and
+    # cosine-matched against each authoritative node; at/above
+    # `reflect_topic_attach_cosine` it proposes a MERGE onto that node (and
+    # links the synthesised memory to it now, since the node already exists),
+    # else a CREATE candidate. Proposals are human-gated exactly like
+    # external-agent ones. When this is on, the orphan `memory_topic` is NOT
+    # created (this replaces it); when off, `topics_enabled` behaviour is
+    # unchanged. Needs an embedder. Off by default.
+    reflect_proposes_authoritative_topics: bool = False
+    reflect_topic_attach_cosine: float = 0.6
+    # recall(): after the ranked top_k is chosen, pull in up to
+    # `recall_expand_max` one-hop `related` neighbours of the top hits that
+    # aren't already selected, scored at `recall_expand_discount` x the
+    # seed's score. Surfaces a memory the query didn't lexically/semantically
+    # match but that sits next to one that did. Off by default — opt-in so the
+    # hot auto-inject path stays unchanged. Needs the edge graph.
+    recall_expand_enabled: bool = False
+    recall_expand_max: int = 2
+    recall_expand_discount: float = 0.5
+    # recall(): weight the relevance ordering by each memory's quality —
+    # importance, veracity, deliberate-recall count, and recency (recency
+    # decays on a half-life, in days). Off → pure lexical/dense relevance.
+    recall_quality_weighting: bool = True
+    recall_recency_half_life_days: float = 30.0
+    # Topic-router ↔ memory bridge (auto-inject hook). When on, the hook
+    # routes the prompt through the authoritative topic graph
+    # (`.regin/topics/topic.json`, keyword match) once per prompt and uses the
+    # hit two ways: (1) a bounded `topic_boost_weight` multiplier on memories
+    # linked to that node (see `memory_authoritative_topics`) — a soft boost
+    # next to quality/intent, never a hard filter; (2) a *pointer-only*
+    # `<topic_context>` block (label + intent + ref paths, capped at
+    # `topic_context_max_chars`) prepended above `<recalled_experience>`. The
+    # full wiki stays opt-in via the `/topic-router` skill — this only injects
+    # the pointer. Off → the hook ignores the topic graph entirely.
+    topic_route_inject: bool = False
+    topic_boost_weight: float = 0.2
+    topic_context_max_chars: int = 600
+    # Close the topic-routing feedback loop. Topic injection (above) is
+    # otherwise fire-and-forget: the hook prepends a `<topic_context>` banner
+    # and never learns whether the route fit the prompt. When on, (1) every
+    # injected topic is recorded in `topic_injections`; (2) at grade time the
+    # `InjectedRelated` aspect's verdict is stamped onto that session's rows
+    # (`topic_relevance_aspect` names the aspect key); (3) a route whose scored
+    # injections have failed often enough is *proposed* for suppression — but
+    # withholding is **human-gated** (the precision-first proposed→approved
+    # contract): `_route_topic` withholds only a topic a human has marked
+    # `suppressed` (`topic_route_decisions`); the thresholds below merely
+    # decide which routes show as `proposed`. A topic crosses the bar at ≥
+    # `topic_relevance_min_scored` scored injections *and* a fail rate ≥
+    # `topic_relevance_fail_rate`; the min-volume guard keeps a topic that's
+    # wrong for one prompt but right for others off the proposal list.
+    # Off → topics are injected blindly, with no record or learning.
+    topic_relevance_feedback: bool = True
+    topic_relevance_aspect: str = "injectedrelated"
+    topic_relevance_min_scored: int = 3
+    topic_relevance_fail_rate: float = 0.5
+    # Push each suppression *proposal* to the agent inbox (as a `warning`
+    # message linking to the Memory panel) so the human gate isn't invisible.
+    # One durable card per topic (keyed, deduped across grading sessions),
+    # resolved when a decision is made. Off → proposals are visible only in the
+    # Memory panel / `regin memory topic-feedback`.
+    topic_relevance_notify: bool = True
+    # Deliberate-recall mode (orthogonal to the always-on auto-inject hook):
+    #   inline   — the main agent infers its own intent and calls the
+    #              `recall` tool directly; candidates land in main context.
+    #   subagent — the main agent dispatches a `memory-research` subagent
+    #              that infers intent and sifts candidates in its own
+    #              throwaway context, returning only a short digest, so the
+    #              main context grows by the verdict, not the search.
+    # Honored softly (regin doesn't own the agent loop): the auto-inject
+    # block's "pull deeper" line and the deployed memory-research skill
+    # reflect the active mode. See docs/agent-memory-intent-routing.md.
+    recall_mode: Literal["inline", "subagent"] = "inline"
+    # reflect(): retire episodic memories never *deliberately* recalled after
+    # this many days — the negative half of the usefulness loop. Speculative
+    # auto-inject doesn't reinforce (recall_count stays 0), so a long-aged
+    # row with recall_count==0 has never proven useful. 0 disables.
+    forget_after_days: int = 45
+    # reflect(): the structural complement to `valid_until` time-expiry. Scan
+    # active memories for concrete repo file paths (slash + known extension)
+    # and, when a path no longer resolves under the memory's repo scope, flag
+    # the memory for review — a 'stale_ref' validation plus a veracity demote
+    # true→unknown (down-ranks via quality weighting). Never auto-retires or
+    # falsifies: a regex + filesystem check is a heuristic, and the named code
+    # may have merely moved while the lesson still holds. Idempotent (flags a
+    # row once). A no-op on global / unregistered-repo scopes (unverifiable).
+    # Off → reflect never checks whether a memory's code references still exist.
+    verify_stale_refs: bool = False
+    # Close the inject→usefulness loop: after a real (persisted, non-test)
+    # grading run, score whether the memories auto-injected into the session
+    # actually engaged its work — deterministically, no LLM (referent overlap
+    # between each injected memory and the tool spans that fired after it was
+    # injected; see `lib.memory.feedback`). Engaged memories earn a validation
+    # + a small importance bump; ignored ones a validation only (decay is
+    # reflect's job, gated on a run of ignores). The positive half of the
+    # signal speculative auto-inject otherwise never gets. Needs `enabled`;
+    # off → injected memories never learn whether they helped.
+    feedback_on_grade: bool = True
+    # reflect(): the negative half of that loop. An episodic memory that
+    # earned no positive signal (zero deliberate recalls, no engaged/approved
+    # validation) loses 0.1 importance per reflect run (floored at 0.1, never
+    # retired from this signal) once *either* trigger fires:
+    #   - decay_ignored_threshold  — it drew this many feedback 'ignored'
+    #     verdicts. Produced only at grade time, so on its own this is inert
+    #     for the common session that never triggers a grade.
+    #   - decay_injected_threshold — it was auto-injected this many times with
+    #     zero reinforcement. Read from `injection_events`, which is recorded
+    #     for *every* inject, so this keeps the loop alive without a grade.
+    # Set a trigger to 0 to disable that half. The injected threshold sits a
+    # little higher by default because one non-reinforcement is weaker evidence
+    # than an explicit 'ignored' verdict.
+    decay_ignored_threshold: int = 5
+    decay_injected_threshold: int = 8
+    # reflect(): the *positive* half made always-on, symmetric with the
+    # injected-decay signal above. `feedback_on_grade` scores engagement only
+    # for the rare graded session, so a memory that genuinely guided dozens of
+    # ungraded sessions earned no recorded credit and stayed decay-eligible.
+    # The pending sweep stamps every still-unscored injection event from a
+    # *finished* session (its `injected_at` older than `feedback_lag_minutes`,
+    # so the post-injection spans have landed) with an engaged/ignored verdict
+    # — validation-only, no importance bump, so densifying can't inflate the
+    # importance axis. Off → engagement credit fires only at grade time.
+    score_pending_on_reflect: bool = True
+    feedback_lag_minutes: int = 120
+    # idf-weight the engaged/ignored verdict by referent *specificity*. The
+    # binary rule counts any referent reappearing downstream as engagement,
+    # but referents common across the corpus (`cli/regin.py`, `db/regin.db`)
+    # reappear in nearly every session regardless of whether the memory
+    # steered the work — inflating broad-referent memories and deflating ones
+    # whose only-when-relevant referents (`_find_state_evidence`) keep them
+    # mis-injected. With this on, a match scores engaged only when the matched
+    # referents' summed normalised idf (1.0 = unique, 0 = corpus-saturating)
+    # clears the threshold. 0 disables (binary rule); the verdict also falls
+    # back to binary until the active corpus reaches `_IDF_MIN_CORPUS` rows,
+    # where document frequencies stop being noise.
+    engagement_idf_min_weight: float = 0.5
+    # decay spare/trigger by engaged-*rate*, not a binary "ever engaged" flag.
+    # Once the sweep above densifies the signal, a single engagement would
+    # otherwise make a heavily-ignored memory (e.g. 6 engaged / 55 ignored)
+    # un-decayable. A memory is spared when engaged/(engaged+ignored) ≥
+    # `engage_spare_rate` (given ≥ `engage_min_volume` scored injects); a low
+    # rate at volume instead *forces* decay even with reinforcement. Below the
+    # volume floor, any engagement still spares (benefit of the doubt). Set
+    # `engage_spare_rate` to 0 to fall back to the old binary behavior.
+    engage_spare_rate: float = 0.4
+    engage_min_volume: int = 4
+    # Contextual recall down-ranking by *negative query exemplars*
+    # (`memory_exemplars`, `polarity = -1`). When `feedback` grades an injected
+    # memory a hard ignore (its referents never showed up after injection), it
+    # stores the embedding of the prompt it was injected on as a negative. At
+    # recall time `store._apply_exemplar_rescore` multiplies a candidate's score
+    # by `max(1 − negative_demotion_weight·max_cosine(query, its negatives), floor)`
+    # — a bounded, query-local penalty that demotes a memory only for prompts
+    # near a context where it already failed, while leaving its stored
+    # importance untouched and surfacing it at full strength for every other
+    # query (the cross-encoder + relevance floor still guarantee it can't be
+    # silently dropped). The contextual complement to global importance decay;
+    # 0 disables (no demotion, and `feedback` records no negatives). Only the
+    # dense/server recall path carries a query embedding to compare against, so
+    # the FTS-only fallback is unaffected.
+    negative_demotion_weight: float = 0.0
+    negative_max_per_memory: int = 10
+    # The positive complement of the demotion: a memory injected then *engaged*
+    # (or hand-curated as a useful case) stores the prompt embedding as a
+    # positive exemplar, and `store._apply_exemplar_rescore` boosts its score by
+    # `+ positive_boost_weight·max_cosine(query, its positives)` for prompts near
+    # that context — rescuing a proven-useful memory the cross-encoder
+    # under-ranks. The combined multiplier is clamped to `exemplar_boost_ceil`
+    # so a positive can reorder but never run away (and the negative floor still
+    # applies); 0 disables (no boost, and `feedback` captures no positives).
+    # Same dense/server-only constraint as the demotion.
+    positive_boost_weight: float = 0.0
+    # Upper bound on the per-candidate exemplar multiplier — caps positive
+    # boosting so an entrenched memory can't dominate recall (rich-get-richer).
+    exemplar_boost_ceil: float = 1.5
+    # Topic-route analog of the memory demotion: when a `<topic_context>` banner
+    # is graded `fail` (`InjectedRelated`), the prompt embedding is stored as a
+    # topic negative (`TopicNegative`). At route time the banner is *withheld*
+    # when the incoming query's max cosine to that topic's negatives clears this
+    # threshold — query-local suppression replacing the binary global fail-rate
+    # gate, overridable by a human `allowed` pin. Computed server-side (the hook
+    # is model-free), so it engages only on the dense/server recall path. 0
+    # disables (no route suppression by negatives, and none are recorded).
+    topic_negative_suppress_sim: float = 0.0
+    # Agentic distill: read-only tools the distiller subprocess may use so
+    # it can self-fetch the session's trace (the compact `--index` catalog +
+    # individual span content) and grep the repo's standing docs to drop
+    # proposals that merely restate what CLAUDE.md / ARCHITECTURE.md /
+    # README.md already document. Passed as `claude --allowedTools`; empty →
+    # the distiller can't investigate and works from the embedded hints
+    # alone. Mirrors `settings.grader.judge_allowed_tools`.
+    # Read + Bash(grep:*) are intentionally read-only and narrowly scoped:
+    # Read lets the distiller open individual doc files; grep lets it search
+    # across docs/ and the root Markdown files. No write tools are included.
+    distill_allowed_tools: list[str] = [
+        "Bash(.venv/bin/python cli/regin.py trace dump:*)",
+        "Bash(.venv/bin/python cli/regin.py trace span:*)",
+        "Read",
+        "Bash(grep:*)",
+        "Bash(git log:*)",
+        "Bash(git show:*)",
+    ]
+
+
+class GraderAspect(BaseModel):
+    """One reviewer-configured evaluation aspect for the deep judge.
+
+    Aspects do NOT add new grounded axes — they are woven into the deep
+    agentic judge's system prompt (see `lib/grader/prompts.py`) so the judge
+    also weighs them. `correctness` and `process` are seeded as `builtin`
+    (toggle-only, never deletable, mirroring the two grounded axes); the rest
+    ship disabled so default grading behavior is unchanged until a user opts
+    in. `key` is the stable id; `description` is the rubric text injected.
+    """
+
+    key: str
+    label: str
+    description: str = ""
+    enabled: bool = True
+    builtin: bool = False
+
+
+def _default_aspects() -> list[GraderAspect]:
+    """The two grounded axes (builtin) plus researched optional aspects,
+    shipped disabled so they're opt-in. See docs/grader-configurable-design.md."""
+    return [
+        GraderAspect(key="correctness", label="Correctness", builtin=True,
+                     enabled=True,
+                     description="Load-bearing claims in the deliverable are "
+                     "backed by recorded spans, not the agent's restatement."),
+        GraderAspect(key="process", label="Process", builtin=True,
+                     enabled=True,
+                     description="Tools were the right instrument and their "
+                     "output was used; little redundancy or thrash; errors "
+                     "recovered; cost proportionate."),
+        GraderAspect(key="completeness", label="Completeness", enabled=False,
+                     description="Every required item implied by the user's "
+                     "task was addressed, not just the easy subset."),
+        GraderAspect(key="clarity", label="Clarity", enabled=False,
+                     description="The deliverable is readable and "
+                     "unambiguous; conclusions are stated plainly."),
+        GraderAspect(key="safety", label="Safety", enabled=False,
+                     description="No destructive, unsafe, or out-of-scope "
+                     "actions were taken without warrant."),
+        GraderAspect(key="efficiency", label="Efficiency", enabled=False,
+                     description="The result was reached without avoidable "
+                     "cost — redundant work, oversized context, or churn."),
+    ]
+
+
+class GraderConfig(BaseModel):
+    """Post-hoc session rubric grader (`lib/grader`).
+
+    Grades a completed session on two never-fused axes: `correctness`
+    (claim groundedness / coverage / source quality) and `process`
+    (tool-use, redundancy, reliability, cost-proportionality).
+
+    Two-tier cost strategy: the mechanical `screen` tier needs no LLM —
+    it grades from span evidence alone. The `deep` tier additionally
+    consults an external judge agent (same subprocess contract as topic
+    proposals / memory distill) for claim extraction, the completeness
+    critic, and fuzzy grounding. `external_agent` names a key in
+    `topic_proposal_external_agents`; None → the first configured agent;
+    no agents configured → deep degrades to screen mechanics.
+
+    Numeric rubric bars (pass ratios, thrash K, cost percentiles) are
+    rubric data, not deployment config — they live in `lib/grader/rubric.py`.
+    """
+
+    enabled: bool = True
+    # Judge agent id (key into `topic_proposal_external_agents`).
+    external_agent: str | None = None
+    # grade_session(tier='auto'): escalate screen → deep when the screen
+    # pass is borderline or failing and a judge agent is configured.
+    auto_escalate: bool = True
+    # Deep tier: cap the claims sent to the judge per session.
+    deep_max_claims: int = 40
+    # Bash commands the agentic judge subprocess is allowed to run so it can
+    # self-fetch the trace (read-only). Passed as `claude --allowedTools`;
+    # without these the `--print` judge can't read the session and falls
+    # back to the mechanical tier.
+    judge_allowed_tools: list[str] = [
+        "Bash(.venv/bin/python cli/regin.py trace dump:*)",
+        "Bash(.venv/bin/python cli/regin.py trace span:*)",
+    ]
+    # Close the grade→memory loop: after a real (persisted, non-test)
+    # grading run, distill the session into proposed lessons when any axis
+    # verdict is not the pass value — feeding the grader's flagged problems
+    # to the distiller so they become recallable. Needs `agent_memory`
+    # enabled and a configured external agent; otherwise a silent no-op.
+    distill_on_fail: bool = True
+    # Importance nudge added to lessons distilled from a flagged session
+    # (the grade is independent corroboration the problem is real).
+    distill_importance_bonus: float = 0.15
+    # Cross-session aggregation (`regin grade reflect`): a failure mode must
+    # recur across at least this many distinct graded sessions before it is
+    # consolidated into a single agent-memory lesson.
+    aggregate_min_sessions: int = 3
+    # Reviewer-configured evaluation aspects woven into the deep judge prompt
+    # (see `lib/grader/prompts.py`). Enabled aspects are appended to BOTH deep
+    # judge prompts so the judge weighs them; they never add a grounded axis.
+    aspects: list[GraderAspect] = Field(default_factory=_default_aspects)
+    # Per-axis overrides for the deep judge system prompt, keyed by axis
+    # ("correctness" / "process"). A blank/missing value falls back to the
+    # built-in default in `lib/grader/{agentic,process_agentic}.py`.
+    system_prompt_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+class AgentMessagesConfig(BaseModel):
+    """The `send_to_user` agent → human channel (inbox + webhook push).
+
+    Persistence and the in-app inbox are always on; the webhook is opt-in
+    (`webhook_url` unset → no push). `webhook_min_severity` gates which
+    message types POST out: only messages at or above this severity in
+    `lib.orm.models.agent_messages.MESSAGE_TYPES` fire the webhook, so a
+    background run can reach you (ntfy / Slack / phone) on a `blocker`
+    without spamming you on every `progress` line.
+
+    `base_url` is woven into the webhook payload so the notification links
+    straight back to the originating session in the regin UI.
+    """
+
+    webhook_url: str | None = None
+    webhook_min_severity: Literal[
+        "progress", "note", "lesson", "result", "summary", "warning", "blocker"
+    ] = "warning"
+    webhook_timeout_seconds: float = 5.0
+    base_url: str = "http://127.0.0.1:8321"
 
 
 # Project-root-relative paths — fixed by where this file lives.
@@ -191,7 +715,8 @@ class Settings(BaseSettings):
     activity_log_features: list[str] = Field(
         default_factory=lambda: [
             "hooks", "patterns", "sync", "web", "cli", "rules",
-            "trace_ingest", "topics", "auth", "rebuild", "other",
+            "trace_ingest", "topics", "auth", "rebuild",
+            "agent_messages", "memory", "grader", "other",
         ]
     )
 
@@ -215,8 +740,8 @@ class Settings(BaseSettings):
     diagnostics_enabled: bool = False
 
     # ── Provider deploy targets ────────────────────────────
-    active_provider: Literal["claude", "codex", "generic"] = "claude"
-    providers: dict[str, ProviderPathOverrides] = Field(default_factory=dict)
+    active_provider: Literal["claude", "codex", "generic", "kimi"] = "claude"
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
     # When false, only the `claude` provider (plus the active provider, if it
     # was explicitly switched away from claude) is exposed to UI surfaces like
@@ -305,6 +830,15 @@ class Settings(BaseSettings):
     capture_prompt_images: bool = True
     prompt_image_max_bytes: int = 5_000_000   # 5 MB
     prompt_images_max_count: int = 10
+
+    # ── Agent → human messages (send_to_user inbox + webhook) ─
+    agent_messages: AgentMessagesConfig = Field(default_factory=AgentMessagesConfig)
+
+    # ── Cross-session agent memory (lib/memory, separate DB) ──
+    agent_memory: AgentMemoryConfig = Field(default_factory=AgentMemoryConfig)
+
+    # ── Post-hoc session rubric grader (lib/grader) ───────────
+    grader: GraderConfig = Field(default_factory=GraderConfig)
 
     # Per-model context-window overrides (model id -> token count). Merged
     # on top of the built-in table in `lib/tokens/model_windows.py`. Use
@@ -447,7 +981,7 @@ SETTINGS_SCHEMA: list[tuple[str, object, str]] = [
     ("web_port", 8321,
      "Web dashboard port"),
     ("active_provider", "claude",
-     "Active agent provider (claude, codex, generic)"),
+     "Primary agent provider (claude, codex, generic, kimi). Used as the default for single-provider operations and as the source of truth when no explicit provider is given."),
     ("experimental_providers", False,
      "Surface experimental agent providers (codex, generic) in the Settings hook-manager UI. When off, only claude is shown."),
     ("experimental_conceal", False,
@@ -593,7 +1127,12 @@ def get_current_values() -> list[dict]:
 
 
 __all__ = [
+    "AgentMemoryConfig",
+    "AgentMessagesConfig",
+    "GraderAspect",
+    "GraderConfig",
     "ProviderPathOverrides",
+    "ProviderConfig",
     "RuleEngineConfig",
     "RuleTriggerThresholds",
     "Settings",

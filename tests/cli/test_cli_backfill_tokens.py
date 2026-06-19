@@ -3,9 +3,13 @@
 Pins the observable behavior of `cmd_backfill_tokens` before a
 complexity refactor: the printed summary counters and the payload
 handed to `ingest_turn_usage`. All external collaborators
-(`get_connection`, `_find_transcript`, `read_usage`,
+(`get_connection`, `_find_transcript`, `provider.parse_transcript`,
 `_richest_model`, `ingest_turn_usage`) are monkeypatched so the test
 exercises only the command's own control flow.
+
+Transcript parsing now routes through the active provider's
+`parse_transcript` (so non-Claude on-disk formats like Kimi's
+wire.jsonl parse correctly), so the fake provider exposes that method.
 """
 
 from __future__ import annotations
@@ -76,6 +80,7 @@ def _install(monkeypatch, *, sessions_rows, transcripts, usages,
     provider = types.SimpleNamespace(
         capabilities=types.SimpleNamespace(transcript_usage=True),
         display_name="FakeProvider",
+        parse_transcript=lambda path: usages.get(path),
     )
     monkeypatch.setattr(trace_cmd, "get_active_provider", lambda: provider)
 
@@ -87,9 +92,6 @@ def _install(monkeypatch, *, sessions_rows, transcripts, usages,
         trace_cmd, "_find_transcript",
         lambda tid: transcripts.get(tid),
     )
-
-    import lib.trace.transcript_usage as tu_mod
-    monkeypatch.setattr(tu_mod, "read_usage", lambda path: usages.get(path))
 
     monkeypatch.setattr(
         trace_cmd, "_richest_model",

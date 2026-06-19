@@ -3,11 +3,14 @@ import { ref, onMounted, computed, watch } from 'vue'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
 import HookCard from '../components/HookCard.vue'
 import HookLifecycleDiagram from '../components/HookLifecycleDiagram.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ListInput from '../components/ListInput.vue'
 import SettingsRuleTriggers from '../components/SettingsRuleTriggers.vue'
+import SettingsBlock from '../components/SettingsBlock.vue'
+import SettingsProviders from '../components/SettingsProviders.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
 import { useConfirm } from '../composables/useConfirm'
@@ -32,10 +35,28 @@ const hooks = ref({})
 const hooksLoading = ref({})
 const providerHandlers = ref({})
 const providerConfigPaths = ref({})
+const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
 const activeSection = ref('config')
+
+// ── Nested settings blocks (Agent Memory, Agent Messages) ──────
+// Keyed by API name → { fields, form, saving }. One reactive bag + one set
+// of generic load/save fns keeps this already-large view's top-level surface
+// area flat no matter how many blocks are added.
+const blocks = ref({})
+
+const BLOCK_META = {
+  'agent-memory': {
+    title: 'Agent Memory',
+    description: 'How sessions are distilled into memories, how recall ranks them, and when stale ones are retired. Saved to the shared agent_memory config; applies on the next memory operation (no restart).',
+  },
+  'agent-messages': {
+    title: 'Agent Messages',
+    description: 'The send_to_user → human channel. The webhook pushes high-severity messages (ntfy / Slack / phone) and is off until a URL is set. Stored machine-local, since the URL can carry a secret token.',
+  },
+}
 
 // ── Rule trigger thresholds section ────────────────────────────
 const triggerThresholds = ref(null)            // last known persisted values
@@ -93,6 +114,36 @@ async function onSelectTriggers() {
   if (triggerThresholds.value == null) await loadTriggerSettings()
 }
 
+async function loadBlock(name) {
+  const data = await api.get(`/settings/${name}`)
+  const fields = data.fields || []
+  const form = {}
+  for (const f of fields) form[f.key] = f.value
+  blocks.value = { ...blocks.value, [name]: { fields, form, saving: false } }
+}
+
+async function onSelectBlock(name) {
+  activeSection.value = name
+  if (!blocks.value[name]) await loadBlock(name)
+}
+
+async function saveBlock(name) {
+  const b = blocks.value[name]
+  if (!b) return
+  b.saving = true
+  try {
+    const res = await api.put(`/settings/${name}`, b.form)
+    if (!res.ok) {
+      flash(res.errors ? res.errors.join('; ') : (res.error || 'Failed to save'), 'error')
+      return
+    }
+    flash(res.msg || 'Saved')
+    await loadBlock(name)
+  } finally {
+    b.saving = false
+  }
+}
+
 // Rows that would be deleted at the currently-selected policy.
 // `older_than` is a {7: N, 30: N, 90: N, 365: N} map from /stats;
 // policy=0 (All time) just shows the grand total.
@@ -145,6 +196,7 @@ async function loadHookState() {
     const data = await api.get(`/hooks/handlers?provider=${encodeURIComponent(provider.id)}`)
     providerHandlers.value[provider.id] = data.handlers || []
     providerConfigPaths.value[provider.id] = data.config_path || ''
+    providerSupportedEvents.value[provider.id] = data.supported_events || []
   }
 }
 
@@ -314,6 +366,15 @@ watch([activeSection, selectedProvider], ([section]) => {
         <button
           type="button"
           class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'providers' }"
+          @click="activeSection = 'providers'"
+        >
+          Providers
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
           :class="{ active: activeSection === 'hooks' }"
           @click="activeSection = 'hooks'"
         >
@@ -337,6 +398,24 @@ watch([activeSection, selectedProvider], ([section]) => {
           @click="onSelectTriggers"
         >
           Rule Triggers
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'agent-memory' }"
+          @click="onSelectBlock('agent-memory')"
+        >
+          Agent Memory
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'agent-messages' }"
+          @click="onSelectBlock('agent-messages')"
+        >
+          Agent Messages
         </button>
 
         <button
@@ -417,8 +496,13 @@ watch([activeSection, selectedProvider], ([section]) => {
         </div>
 
         <div class="mt-5 flex items-center gap-3">
-          <button type="button" class="btn btn-primary focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1" @click="save">Save settings</button>
+          <Button variant="primary" @click="save">Save settings</Button>
         </div>
+      </template>
+
+      <!-- Providers -->
+      <template v-else-if="activeSection === 'providers'">
+        <SettingsProviders />
       </template>
 
       <!-- Rule Triggers -->
@@ -436,6 +520,18 @@ watch([activeSection, selectedProvider], ([section]) => {
           :reset-label="triggerResetLabel"
           @save-thresholds="saveTriggerThresholds"
           @reset-log="resetTriggerLog"
+        />
+      </template>
+
+      <!-- Nested settings blocks (Agent Memory, Agent Messages) -->
+      <template v-else-if="BLOCK_META[activeSection]">
+        <SettingsBlock
+          :title="BLOCK_META[activeSection].title"
+          :description="BLOCK_META[activeSection].description"
+          :fields="blocks[activeSection]?.fields || []"
+          :form="blocks[activeSection]?.form || null"
+          :saving="blocks[activeSection]?.saving || false"
+          @save="saveBlock(activeSection)"
         />
       </template>
 
@@ -464,16 +560,15 @@ watch([activeSection, selectedProvider], ([section]) => {
         </div>
 
         <div class="flex flex-wrap gap-2 mb-4">
-          <button
+          <Button
             v-for="provider in hookProviders"
             :key="provider.id"
-            type="button"
-            class="btn text-xs focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-            :class="selectedProvider === provider.id ? 'btn-primary' : 'btn-secondary'"
+            size="sm"
+            :variant="selectedProvider === provider.id ? 'primary' : 'secondary'"
             @click="selectedProvider = provider.id"
           >
             {{ provider.name }}
-          </button>
+          </Button>
         </div>
 
         <div v-if="showDiagram" class="mb-6">
@@ -482,6 +577,7 @@ watch([activeSection, selectedProvider], ([section]) => {
             :handlers-by-event="handlersByEvent"
             :handler-loading="handlerLoading"
             :selected-provider="selectedProvider"
+            :supported-events="providerSupportedEvents[selectedProvider] || []"
             @toggle-handler="toggleHandler"
             @set-priority="setHandlerPriority"
             @reset-priority="resetHandlerPriority"
@@ -581,7 +677,7 @@ watch([activeSection, selectedProvider], ([section]) => {
         </div>
 
         <div class="flex items-center gap-3 mb-4">
-          <button type="button" class="btn btn-secondary text-xs focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1" @click="fetchDebugPayloads">Refresh payloads</button>
+          <Button variant="secondary" size="sm" @click="fetchDebugPayloads">Refresh payloads</Button>
           <span v-if="debugPayloadsLoading" class="text-xs text-gray-400">loading…</span>
           <span v-else-if="debugPayloads.length" class="text-xs text-gray-400">{{ debugPayloads.length }} entries</span>
         </div>
@@ -608,24 +704,24 @@ watch([activeSection, selectedProvider], ([section]) => {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 0;
-  border: 1px solid #F1F5F9;
+  border: 1px solid var(--color-slate-100);
   border-radius: 0.875rem;
   overflow: hidden;
-  background: #fff;
+  background: var(--color-white);
   min-height: 480px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 .sv-sidebar {
-  border-right: 1px solid #F1F5F9;
+  border-right: 1px solid var(--color-slate-100);
   padding: 1.25rem 0.75rem;
-  background: #F8FAFC;
+  background: var(--color-slate-50);
 }
 .sv-sidebar-heading {
   font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   padding: 0 0.75rem;
   margin-bottom: 0.625rem;
 }
@@ -642,7 +738,7 @@ watch([activeSection, selectedProvider], ([section]) => {
   padding: 0.5rem 0.75rem;
   border-radius: 0.625rem;
   font-size: 0.8125rem;
-  color: #475569;
+  color: var(--color-slate-600);
   background: none;
   border: none;
   cursor: pointer;
@@ -650,11 +746,11 @@ watch([activeSection, selectedProvider], ([section]) => {
   text-align: left;
 }
 .sv-nav-item:hover {
-  background: #E2E8F0;
-  color: #0F172A;
+  background: var(--color-slate-200);
+  color: var(--color-slate-900);
 }
 .sv-nav-item.active {
-  background: linear-gradient(135deg, #1E40AF, #3B82F6);
+  background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
   color: #fff;
   font-weight: 500;
   box-shadow: 0 4px 12px rgba(30, 64, 175, 0.2);
@@ -667,77 +763,46 @@ watch([activeSection, selectedProvider], ([section]) => {
   height: 1.25rem;
   padding: 0 0.375rem;
   border-radius: 9999px;
-  background: #F1F5F9;
+  background: var(--color-slate-100);
   font-size: 0.625rem;
   font-weight: 600;
-  color: #64748B;
+  color: var(--color-slate-500);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.sv-pill-green { background: #DCFCE7; color: #15803D; }
-.sv-pill-red   { background: #FEE2E2; color: #B91C1C; }
-.sv-pill-gray  { background: #F1F5F9; color: #94A3B8; }
+.sv-pill-green { background: var(--color-green-100); color: var(--color-green-700); }
+.sv-pill-red   { background: var(--color-red-100); color: var(--color-red-700); }
+.sv-pill-gray  { background: var(--color-slate-100); color: var(--color-slate-400); }
 .sv-nav-item.active .sv-pill { background: rgba(255, 255, 255, 0.2); color: #fff; }
 .sv-content {
   padding: 1.75rem 2rem;
   min-width: 0;
   overflow: auto;
 }
-.sv-section-header {
-  margin-bottom: 1.5rem;
-  padding-bottom: 1.125rem;
-  border-bottom: 1px solid #F1F5F9;
-}
 .sv-view-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   padding: 0.25rem 0.625rem;
-  border: 1px solid #E2E8F0;
+  border: 1px solid var(--color-slate-200);
   border-radius: 0.375rem;
-  background: #FFFFFF;
+  background: var(--color-white);
   font-size: 0.75rem;
-  color: #475569;
+  color: var(--color-slate-600);
   cursor: pointer;
   transition: background-color 0.12s, border-color 0.12s, color 0.12s;
   white-space: nowrap;
 }
 .sv-view-toggle:hover {
-  border-color: #CBD5E1;
-  color: #1E293B;
+  border-color: var(--color-slate-300);
+  color: var(--color-slate-800);
 }
 .sv-view-toggle.is-active {
-  border-color: #2563EB;
-  background: #EFF6FF;
-  color: #1D4ED8;
+  border-color: var(--color-blue-600);
+  background: var(--color-blue-50);
+  color: var(--color-blue-700);
 }
 .sv-view-toggle:focus-visible {
-  outline: 2px solid #2563EB;
+  outline: 2px solid var(--color-blue-600);
   outline-offset: 2px;
-}
-.sv-section-title {
-  font-size: 1.0625rem;
-  font-weight: 700;
-  color: #0F172A;
-  letter-spacing: -0.01em;
-}
-.sv-section-desc {
-  margin-top: 0.375rem;
-  font-size: 0.8125rem;
-  line-height: 1.65;
-  color: #64748B;
-  max-width: 52rem;
-}
-.sv-group-label {
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #94A3B8;
-  margin-bottom: 0.5rem;
-}
-.sv-group-meta {
-  font-size: 0.8125rem;
-  color: #94A3B8;
-  margin-bottom: 0.625rem;
 }
 </style>

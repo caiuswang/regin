@@ -19,7 +19,7 @@ import typer
 
 from lib.activity_log import configure_activity_log, get_activity_logger
 from lib.logging_setup import configure_logging
-from cli.commands import db, logs, meta, patterns, repo, route, rules, schema, server, skills, topics, trace, users, wiki
+from cli.commands import db, grader, logs, memory, meta, patterns, repo, route, rules, schema, server, skills, topics, trace, users, wiki
 
 
 app = typer.Typer(
@@ -90,6 +90,8 @@ schema.register(app)  # schema group + flat bootstrap-hook-schemas
 app.add_typer(trace.trace_app)
 app.add_typer(wiki.wiki_app)
 app.add_typer(logs.logs_app)
+app.add_typer(memory.memory_app)
+app.add_typer(grader.grade_app)
 
 
 __all__ = ["app"]

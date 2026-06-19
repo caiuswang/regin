@@ -60,6 +60,7 @@ def test_providers_returns_active_and_capabilities(flask_client, tmp_db):
     assert any(p.get("id") == body["active_provider"] for p in providers)
     for p in providers:
         assert {"id", "name", "active", "capabilities"} <= set(p.keys())
+    assert {"id", "name", "global_dir", "project_subpath"} <= set(body.get("skill_paths", {}).keys())
 
 def test_status_empty_when_no_repos(flask_client, tmp_db):
     resp = flask_client.get("/api/status")

@@ -167,6 +167,34 @@ def tmp_db(tmp_path, monkeypatch) -> Path:
     _engine_module.dispose_engine()
 
 
+@pytest.fixture(autouse=True)
+def tmp_memory_db(tmp_path, monkeypatch) -> Path:
+    """Isolated agent-memory DB per test (autouse), mirroring `tmp_db`'s
+    guarantee for the main DB: no test can write the real
+    `db/regin_memory.db` by accident. The memory engine self-initializes
+    its schema on first use, so pointing the setting at a tmp file is the
+    whole setup. Dense recall is pinned off so no test loads the
+    SkillRouter models implicitly — tests that exercise the dense leg
+    inject a stub EmbeddingProvider instead. The auto-inject server leg
+    is pinned off too so no test makes a live HTTP call to a dev server
+    that happens to be on :8321 — its own tests stub `urlopen`."""
+    db_path = tmp_path / "memory_test.db"
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "db_path", db_path)
+    monkeypatch.setattr(settings.agent_memory, "dense_enabled", False)
+    monkeypatch.setattr(settings.agent_memory, "inject_dense_via_server", False)
+
+    import lib.memory as memory
+    from lib.memory.engine import dispose_memory_engine
+    dispose_memory_engine()
+    memory.reset_store()
+
+    yield db_path
+
+    dispose_memory_engine()
+    memory.reset_store()
+
+
 # ── Config isolation ──────────────────────────────────────────
 
 @pytest.fixture

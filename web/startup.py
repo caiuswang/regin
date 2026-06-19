@@ -53,6 +53,10 @@ def init_session_spans_schema(conn) -> None:
                 cost_usd        REAL,
                 tool_use_id     TEXT,
                 turn_uuid       TEXT,
+                -- Capture source: 'hook' (live hook events) or 'transcript'
+                -- (the transcript scan). See lib/trace/merge.py. Mirrors
+                -- db/schema.sql; keep the two in step.
+                source          TEXT NOT NULL DEFAULT 'hook',
                 created_at      TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
@@ -66,6 +70,13 @@ def init_session_spans_schema(conn) -> None:
         conn.execute(
             "CREATE UNIQUE INDEX ux_session_spans_trace_span "
             "ON session_spans(trace_id, span_id)"
+        )
+    elif 'source' not in _column_names(conn, 'session_spans'):
+        # Additive repair for DBs created before the append-only capture
+        # split (migration 0002) added the source discriminator.
+        conn.execute(
+            "ALTER TABLE session_spans ADD COLUMN source TEXT NOT NULL "
+            "DEFAULT 'hook'"
         )
     conn.commit()
 
@@ -102,6 +113,7 @@ def init_sessions_schema(conn) -> None:
                 is_test       INTEGER NOT NULL DEFAULT 0,
                 test_name     TEXT,
                 agent_type    TEXT,
+                origin        TEXT DEFAULT 'session',
                 model         TEXT,
                 cwd           TEXT,
                 input_tokens          INTEGER,
@@ -110,6 +122,7 @@ def init_sessions_schema(conn) -> None:
                 cache_creation_tokens INTEGER,
                 peak_context_tokens   INTEGER,
                 peak_main_context_tokens INTEGER,
+                live_context_tokens   INTEGER,
                 context_window_tokens INTEGER,
                 cost_usd              REAL,
                 active_work_ms        INTEGER,
@@ -118,9 +131,19 @@ def init_sessions_schema(conn) -> None:
         """)
         conn.execute("CREATE INDEX idx_sessions_last_seen ON sessions(last_seen DESC)")
         conn.execute("CREATE INDEX idx_sessions_title_nocase ON sessions(title COLLATE NOCASE)")
-    elif 'cwd' not in _column_names(conn, 'sessions'):
-        # Additive repair for DBs created before the repo-filter feature.
-        conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+    else:
+        # Additive repairs for DBs created before later columns landed.
+        cols = _column_names(conn, 'sessions')
+        if 'cwd' not in cols:  # repo-filter feature
+            conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+        if 'origin' not in cols:  # sessions.origin axis (migration 0002)
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN origin TEXT DEFAULT 'session'"
+            )
+        if 'live_context_tokens' not in cols:  # segment-aware ctx% (post-/compact)
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN live_context_tokens INTEGER"
+            )
     conn.commit()
 
 
@@ -209,6 +232,92 @@ def init_prompt_images_schema(conn) -> None:
         conn.execute(
             "CREATE INDEX idx_prompt_images_trace ON prompt_images(trace_id)"
         )
+    conn.commit()
+
+
+def init_session_grades_schema(conn) -> None:
+    """Create `session_grades` (post-hoc rubric grades) if missing."""
+    if not _table_exists(conn, "session_grades"):
+        conn.execute("""
+            CREATE TABLE session_grades (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id        TEXT NOT NULL,
+                axis            TEXT NOT NULL,
+                verdict         TEXT NOT NULL,
+                tier            TEXT NOT NULL DEFAULT 'screen',
+                scoreboard      TEXT NOT NULL DEFAULT '{}',
+                report          TEXT NOT NULL DEFAULT '',
+                detail          TEXT NOT NULL DEFAULT '{}',
+                rubric_version  TEXT,
+                judge           TEXT,
+                is_test         INTEGER NOT NULL DEFAULT 0,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX idx_session_grades_trace ON session_grades(trace_id, axis)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_session_grades_created ON session_grades(created_at DESC)"
+        )
+    conn.commit()
+
+
+def init_pattern_deployments_schema(conn) -> None:
+    """Bring an older `pattern_deployments` table up to the multi-provider
+    shape if it predates the `provider` column.
+
+    `regin init` builds the current schema from db/schema.sql, but an install
+    upgraded in place never re-runs it and nothing auto-runs the alembic 0004
+    migration. Without the `provider` column every skill push/undeploy/backfill
+    — which all read and write it — raises "no such column: provider". Rebuild
+    the table exactly as migration 0004 does: add the column AND the
+    provider-aware UNIQUE (`record_deployment` needs the latter so the same
+    skill can deploy to two providers in one project — the old
+    UNIQUE(pattern_slug, scope, project_id) would block the second), then
+    backfill each legacy row's owning provider from its on-disk path.
+
+    Idempotent: a table that already has the column is left untouched, and a
+    fresh install (column already present from schema.sql) skips the rebuild.
+    """
+    if not _table_exists(conn, 'pattern_deployments'):
+        return
+    if 'provider' in _column_names(conn, 'pattern_deployments'):
+        return
+    conn.executescript("""
+        CREATE TABLE pattern_deployments_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_slug    TEXT NOT NULL,
+            scope           TEXT NOT NULL,
+            project_id      INTEGER,
+            provider        TEXT,
+            deployed_path   TEXT NOT NULL,
+            deployed_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            deployed_by     INTEGER,
+            UNIQUE(pattern_slug, scope, project_id, provider)
+        );
+        INSERT INTO pattern_deployments_new
+            (id, pattern_slug, scope, project_id, provider,
+             deployed_path, deployed_at, deployed_by)
+        SELECT id, pattern_slug, scope, project_id, NULL,
+               deployed_path, deployed_at, deployed_by
+        FROM pattern_deployments;
+        DROP TABLE pattern_deployments;
+        ALTER TABLE pattern_deployments_new RENAME TO pattern_deployments;
+        UPDATE pattern_deployments SET provider = CASE
+            WHEN deployed_path LIKE '%/.codex/%'     THEN 'codex'
+            WHEN deployed_path LIKE '%/.kimi-code/%' THEN 'kimi'
+            WHEN deployed_path LIKE '%/.agent/%'     THEN 'generic'
+            ELSE 'claude'
+        END
+        WHERE provider IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_pattern_deployments_pattern
+            ON pattern_deployments(pattern_slug);
+        CREATE INDEX IF NOT EXISTS idx_pattern_deployments_project
+            ON pattern_deployments(project_id);
+        CREATE INDEX IF NOT EXISTS idx_pattern_deployments_scope
+            ON pattern_deployments(scope);
+    """)
     conn.commit()
 
 

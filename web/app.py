@@ -12,7 +12,9 @@ to modify one of those helpers, edit it in its own module — this file
 should never grow them back.
 """
 
+import logging
 import os
+import threading
 import time
 import uuid
 
@@ -42,6 +44,8 @@ from web.startup import (
     init_turn_usage_schema as _init_turn_usage_schema,
     init_prompt_images_schema as _init_prompt_images_schema,
     init_topic_proposal_schema as _init_topic_proposal_schema,
+    init_session_grades_schema as _init_session_grades_schema,
+    init_pattern_deployments_schema as _init_pattern_deployments_schema,
 )
 
 
@@ -61,6 +65,8 @@ def create_app():
         _init_turn_usage_schema(conn)
         _init_prompt_images_schema(conn)
         _init_topic_proposal_schema(conn)
+        _init_session_grades_schema(conn)
+        _init_pattern_deployments_schema(conn)
     finally:
         conn.close()
 
@@ -134,12 +140,51 @@ def create_app():
     from web.blueprints.diagnostics import diagnostics_bp
     app.register_blueprint(diagnostics_bp)
 
+    # ── Agent memory (cross-session experience store) ─────────────
+    from web.blueprints.memory import memory_bp
+    app.register_blueprint(memory_bp)
+
+    # ── Session grades (post-hoc rubric grader, lib/grader) ───────
+    from web.blueprints.grades import grades_bp
+    app.register_blueprint(grades_bp)
+    from web.blueprints.grader_config import grader_config_bp
+    app.register_blueprint(grader_config_bp)
+
     # Auth gate installed last so it can validate its allowlist against the
     # fully-registered route table.
     _install_auth_gate(app)
 
     _install_spa_routes(app)
+    _start_memory_warmup()
     return app
+
+
+def _start_memory_warmup() -> None:
+    """Eagerly load the dense recall models in a background thread.
+
+    The auto-inject hook borrows this process's warm models over loopback
+    with a sub-second timeout; on a freshly started server the first
+    request would otherwise pay the model load, time out, and silently
+    degrade every early prompt to FTS-only recall. The warm-up recall also
+    triggers the lazy embedding backfill, so coverage heals at boot rather
+    than on the first real query. Best-effort: failures only mean the old
+    lazy behavior."""
+    from lib.settings import settings
+
+    cfg = settings.agent_memory
+    if not (cfg.enabled and cfg.dense_enabled):
+        return
+
+    def _warm() -> None:
+        try:
+            import lib.memory as memory
+            memory.recall("warmup", top_k=1, mode="auto", reinforce=False)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "memory warmup failed", exc_info=True)
+
+    threading.Thread(target=_warm, name="memory-warmup",
+                     daemon=True).start()
 
 
 # Endpoints reachable without a valid JWT. Two groups:
@@ -159,11 +204,30 @@ PUBLIC_API_ENDPOINTS = frozenset({
     "trace.api_ingest_skill_read",
     "trace.api_ingest_turn_usage",
     "trace.api_ingest_tool_attribution",
+    "trace.api_ingest_kimi_subagents",
     "trace.api_ingest_session_status",
     "trace.api_ingest_prompt_images",
     "plans.api_ingest_plan_session",
     "rules.api_ingest_rule_trigger",
 })
+
+
+_LOOPBACK_ADDRS = frozenset({"127.0.0.1", "::1"})
+
+
+def _inject_recall_loopback_ok() -> bool:
+    """The agent-memory auto-inject hook borrows this process's warm dense
+    models via `POST /api/memory/recall`. A fresh hook process per prompt
+    can't carry a JWT, so grant *that one endpoint* a loopback-only bypass
+    when the feature is on. Deliberately NOT a PUBLIC_API_ENDPOINTS entry:
+    that allowlist is network-public, whereas this stays bound to 127.0.0.1
+    so distilled memory content never leaves the host."""
+    from lib.settings import settings
+    if request.endpoint != "memory.api_memory_recall":
+        return False
+    if not settings.agent_memory.inject_dense_via_server:
+        return False
+    return (request.remote_addr or "") in _LOOPBACK_ADDRS
 
 
 def _install_auth_gate(app: Flask) -> None:
@@ -193,6 +257,8 @@ def _install_auth_gate(app: Flask) -> None:
             return None  # app-level routes (SPA catch-all, unmatched /api/*)
         if request.endpoint in PUBLIC_API_ENDPOINTS:
             return None
+        if _inject_recall_loopback_ok():
+            return None  # local auto-inject hook → warm dense models
         if get_current_user() is None:
             return jsonify({"error": "Authentication required"}), 401
         return None

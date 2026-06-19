@@ -17,7 +17,7 @@ from lib import rule_engines
 from lib.skills import skill_registry, skill_sync as _ss
 from lib.doctor import run_checks
 from lib.rules.grit_rule_index import load_rules_index
-from lib.providers import active_provider_id, provider_capability_rows
+from lib.providers import active_provider_id, active_provider_skill_paths, provider_capability_rows
 from lib.orm import SessionLocal
 from lib.orm.models import (
     Branch, PatternDeployment, PatternDoc, Repo, RuleTrigger,
@@ -34,6 +34,7 @@ def api_providers():
     return jsonify({
         "active_provider": active_provider_id(),
         "providers": provider_capability_rows(),
+        "skill_paths": active_provider_skill_paths(),
     })
 
 
