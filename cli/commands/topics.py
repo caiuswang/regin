@@ -17,6 +17,7 @@ from lib.topics import (
     install_topic_hooks,
     load_graph,
     load_local_graph,
+    promote_all_topics,
     promote_topic,
     route_topic,
     scan,
@@ -140,25 +141,52 @@ def cmd_topics_list(
         print(f"  {tid}")
 
 
+def _print_promote_all(result: dict) -> None:
+    """Render the `topics promote --all` summary."""
+    added, removed = result["added"], result["removed"]
+    if not added and not removed:
+        print("Nothing to promote: local overlay has no pending changes.")
+        return
+    if added:
+        print(f"Added to topic.json ({len(added)}): {', '.join(added)}")
+    if removed:
+        print(f"Removed from topic.json ({len(removed)}): {', '.join(removed)}")
+    print("Cleared the overlay. Commit .regin/topics/ (+ wikis) to share it.")
+
+
 @topics_app.command(
     "promote",
-    help="Promote a local-overlay topic into the git-tracked topic.json",
+    help="Promote local-overlay topic changes into the git-tracked topic.json",
 )
 def cmd_topics_promote(
-    topic_id: str = typer.Argument(..., help="Topic id present in topic.local.json"),
+    topic_id: str | None = typer.Argument(
+        None, help="Topic id present in topic.local.json (omit with --all)"
+    ),
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    promote_all: bool = typer.Option(
+        False, "--all",
+        help="Promote every overlay-added topic and tombstoned deletion at once",
+    ),
 ) -> None:
     """Move an approved/edited topic out of the machine-local overlay and
     into the shared base `topic.json` so it travels via git. The topic is
-    already live locally; this only makes it shareable.
+    already live locally; this only makes it shareable. Pass `--all` to
+    promote every pending overlay change in one pass instead of an id.
     """
+    if promote_all == (topic_id is not None):
+        raise typer.BadParameter("pass a topic id or --all (exactly one)")
+
     try:
-        result = promote_topic(_repo_path(repo), topic_id)
+        if promote_all:
+            _print_promote_all(promote_all_topics(_repo_path(repo)))
+            return
+        single = promote_topic(_repo_path(repo), topic_id)
     except TopicGraphError as exc:
         print(f"Promote failed: {exc}")
         raise typer.Exit(1)
-    where = "added to" if result["action"] == "added" else "removed from"
-    print(f"Promoted '{result['topic_id']}': {where} topic.json; cleared from overlay.")
+
+    where = "added to" if single["action"] == "added" else "removed from"
+    print(f"Promoted '{single['topic_id']}': {where} topic.json; cleared from overlay.")
     print("Commit .regin/topics/topic.json (+ its wiki) to share it.")
 
 

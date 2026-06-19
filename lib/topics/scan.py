@@ -372,6 +372,47 @@ def promote_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     return {"topic_id": topic_id, "action": action}
 
 
+def promote_all_topics(repo_path: str | Path) -> dict[str, Any]:
+    """Promote every pending change in the local overlay into the base graph
+    in a single pass: all overlay-added/overridden topics are copied into the
+    git-tracked `topic.json`, and all tombstoned deletions are removed from it.
+
+    Equivalent to calling `promote_topic` for each id in the overlay, but it
+    reads, mutates, and writes the two graphs once instead of per topic.
+    Returns the ids that were added and removed (a no-op leaves both empty).
+    """
+    try:
+        base = load_graph(repo_path)
+    except TopicGraphError:
+        base = empty_graph(repo_path)  # first promote bootstraps the base
+    overlay = load_local_graph(repo_path)
+    base_topics = base.setdefault("topics", {})
+    overlay_topics = overlay.setdefault("topics", {})
+    tombstones = overlay.setdefault("deleted_topics", [])
+
+    added = sorted(overlay_topics.keys())
+    removed = sorted(tombstones)
+    for topic_id in added:
+        base_topics[topic_id] = overlay_topics[topic_id]
+    for topic_id in removed:
+        base_topics.pop(topic_id, None)
+    overlay["topics"] = {}
+    overlay["deleted_topics"] = []
+
+    if not added and not removed:
+        return {"added": [], "removed": []}
+
+    # Preserve base top-level fields (no re-stamp) so the merged disk stays
+    # hash-equal to the snapshot; promotion never changes the live graph.
+    write_json(topic_path(repo_path), base)
+    save_local_graph(repo_path, overlay)
+    _topics_log().write(
+        "topics_promoted_all",
+        added=added, removed=removed, repo_path=str(repo_path),
+    )
+    return {"added": added, "removed": removed}
+
+
 def _prune_inbound_edges(topics: dict[str, Any], target_id: str) -> int:
     """Drop edges whose target is `target_id` from each topic, in place.
 

@@ -23,7 +23,12 @@ from lib.topics.core import (
     topic_local_path,
     topic_path,
 )
-from lib.topics import TopicGraphError, delete_topic, promote_topic
+from lib.topics import (
+    TopicGraphError,
+    delete_topic,
+    promote_all_topics,
+    promote_topic,
+)
 from lib.topics.diff import diff_against_graph
 from lib.topics.graph_io import _graph_hash, load_authoritative_graph
 from lib.topics.snapshots import latest_snapshot, resolve_or_create_repo
@@ -231,6 +236,40 @@ def test_promote_bootstraps_base_when_absent(fake_git_repo):
 
     assert topic_path(fake_git_repo).exists()
     assert "x" in load_graph(fake_git_repo)["topics"]
+
+
+# ── promote_all_topics (whole overlay → base) ───────────────────────────
+
+
+def test_promote_all_moves_adds_and_removes_in_one_pass(fake_git_repo):
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    topic_path(fake_git_repo).write_text(
+        json.dumps(_base(topics={"a": _topic("a"), "old": _topic("old")}))
+    )
+    save_local_graph(
+        fake_git_repo,
+        {"topics": {"b": _topic("b"), "c": _topic("c")}, "deleted_topics": ["old"]},
+    )
+
+    before = load_graph_merged(fake_git_repo)
+    result = promote_all_topics(fake_git_repo)
+
+    assert result == {"added": ["b", "c"], "removed": ["old"]}
+    base = load_graph(fake_git_repo)["topics"]
+    assert set(base) == {"a", "b", "c"}
+    overlay = load_local_graph(fake_git_repo)
+    assert overlay["topics"] == {} and overlay["deleted_topics"] == []
+    # The effective graph is unchanged by promotion.
+    assert load_graph_merged(fake_git_repo) == before
+
+
+def test_promote_all_is_noop_on_empty_overlay(fake_git_repo):
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a")})))
+    save_local_graph(fake_git_repo, {"topics": {}, "deleted_topics": []})
+
+    assert promote_all_topics(fake_git_repo) == {"added": [], "removed": []}
+    assert set(load_graph(fake_git_repo)["topics"]) == {"a"}
     assert "x" not in load_local_graph(fake_git_repo)["topics"]
 
 
