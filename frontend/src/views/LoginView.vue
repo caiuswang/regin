@@ -2,6 +2,8 @@
 import { ref, onMounted, computed, useTemplateRef } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api.js'
+import Button from '../components/ui/Button.vue'
+import Input from '../components/ui/Input.vue'
 
 const router = useRouter()
 const mode = ref('login') // 'login' | 'register' | 'setup'
@@ -93,45 +95,38 @@ const headline = computed(() => {
       <form @submit.prevent="mode === 'login' ? handleLogin() : handleRegister()">
         <div class="mb-3">
           <label class="field-label">Username</label>
-          <input v-model="username" ref="usernameInput" type="text" required aria-label="Username"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="username" ref="usernameInput" type="text" required aria-label="Username" />
         </div>
 
         <div v-if="mode !== 'login'" class="mb-3">
           <label class="field-label">Display name</label>
-          <input v-model="displayName" type="text" :placeholder="username" aria-label="Display name"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="displayName" type="text" :placeholder="username" aria-label="Display name" />
         </div>
 
         <div v-if="mode !== 'login'" class="mb-3">
           <label class="field-label">Email <span class="text-slate-400 font-normal">(optional)</span></label>
-          <input v-model="email" type="email" aria-label="Email (optional)"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="email" type="email" aria-label="Email (optional)" />
         </div>
 
         <div class="mb-4">
           <label class="field-label">Password</label>
-          <input v-model="password" type="password" required aria-label="Password"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="password" type="password" required aria-label="Password" />
         </div>
 
-        <button type="submit" :disabled="loading"
-          class="btn btn-primary login-submit focus-visible:outline-2 focus-visible:outline-blue-500">
+        <Button type="submit" variant="primary" :disabled="loading" class="login-submit">
           {{ submitLabel }}
-        </button>
+        </Button>
       </form>
 
       <div v-if="mode === 'login'" class="login-switch">
-        <button type="button" @click="mode = 'register'"
-          class="text-link focus-visible:outline-2 focus-visible:outline-blue-500">
+        <Button variant="link" @click="mode = 'register'">
           Create an account
-        </button>
+        </Button>
       </div>
       <div v-if="mode === 'register'" class="login-switch">
-        <button type="button" @click="mode = 'login'"
-          class="text-link focus-visible:outline-2 focus-visible:outline-blue-500">
+        <Button variant="link" @click="mode = 'login'">
           Back to login
-        </button>
+        </Button>
       </div>
     </div>
   </div>
@@ -146,9 +141,9 @@ const headline = computed(() => {
 }
 
 .login-card {
-    background: #fff;
+    background: var(--color-white);
     border-radius: 1.125rem;
-    border: 1px solid #F1F5F9;
+    border: 1px solid var(--color-slate-100);
     box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08);
     padding: 2rem 1.75rem;
     width: 100%;
@@ -166,7 +161,7 @@ const headline = computed(() => {
     width: 2.5rem;
     height: 2.5rem;
     border-radius: 0.75rem;
-    background: linear-gradient(135deg, #1E40AF, #3B82F6);
+    background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
     color: #fff;
     display: flex;
     align-items: center;
@@ -179,27 +174,27 @@ const headline = computed(() => {
 .login-brand-name {
     font-size: 1rem;
     font-weight: 700;
-    color: #0F172A;
+    color: var(--color-slate-900);
     line-height: 1.1;
 }
 
 .login-brand-meta {
     font-size: 0.6875rem;
-    color: #94A3B8;
+    color: var(--color-slate-400);
     margin-top: 2px;
 }
 
 .login-title {
     font-size: 1.5rem;
     font-weight: 700;
-    color: #0F172A;
+    color: var(--color-slate-900);
     margin-bottom: 1.5rem;
     line-height: 1.2;
 }
 
 .login-error {
-    background: #FEF2F2;
-    color: #B91C1C;
+    background: var(--color-red-50);
+    color: var(--color-red-700);
     border-radius: 0.5rem;
     padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;

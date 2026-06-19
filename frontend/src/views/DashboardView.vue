@@ -75,7 +75,7 @@ onMounted(async () => {
 <style scoped>
 .stat-value-suffix {
     font-size: 0.875rem;
-    color: #CBD5E1;
+    color: var(--color-slate-300);
     margin-left: 0.25rem;
     font-weight: 500;
 }

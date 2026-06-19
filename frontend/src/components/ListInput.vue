@@ -1,5 +1,6 @@
 <script setup>
 import { defineModel } from 'vue'
+import Button from './ui/Button.vue'
 
 const items = defineModel({ type: Array, default: () => [] })
 
@@ -30,9 +31,9 @@ function update(index, value) {
           class="text-sm border border-gray-300 rounded-md px-2.5 py-1.5 flex-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           placeholder="Enter path..."
         >
-        <button type="button" @click="remove(pos)" class="text-gray-400 hover:text-red-500 text-sm px-1">&times;</button>
+        <Button variant="ghost" size="icon" aria-label="Remove path" @click="remove(pos)">&times;</Button>
       </div>
     </div>
-    <button type="button" @click="add" class="text-xs text-blue-500 hover:text-blue-700">+ Add path</button>
+    <Button variant="link" size="sm" @click="add">+ Add path</Button>
   </div>
 </template>

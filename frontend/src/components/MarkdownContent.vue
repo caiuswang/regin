@@ -37,7 +37,7 @@ function applyConceal() {
     wrapper.innerHTML =
       '<span class="conceal-arrow">\u25B6</span>' +
       '<span style="opacity:0.4">' + h.innerHTML + '</span>' +
-      '<span style="font-size:0.6em;vertical-align:middle;background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-weight:500;margin-left:8px">concealed</span>'
+      '<span style="font-size:0.6em;vertical-align:middle;background:var(--color-amber-400);color:var(--color-amber-900);padding:1px 6px;border-radius:4px;font-weight:500;margin-left:8px">concealed</span>'
     details.addEventListener('toggle', function () {
       const arrow = this.querySelector('.conceal-arrow')
       arrow.textContent = this.open ? '\u25BC' : '\u25B6'
@@ -67,7 +67,7 @@ watch(() => props.concealedTexts, resetAndConceal)
 </template>
 
 <style scoped>
-.conceal-arrow { display:inline-block; width:1em; font-size:0.6em; color:#9ca3af; vertical-align:middle; transition:transform 0.15s; margin-right:4px; }
+.conceal-arrow { display:inline-block; width:1em; font-size:0.6em; color:var(--color-gray-400); vertical-align:middle; transition:transform 0.15s; margin-right:4px; }
 :deep(details.concealed-section > summary) { list-style:none; }
 :deep(details.concealed-section > summary::-webkit-details-marker) { display:none; }
 </style>

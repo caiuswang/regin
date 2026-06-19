@@ -20,6 +20,9 @@ import PlansView from './views/PlansView.vue'
 import PlanDetailView from './views/PlanDetailView.vue'
 import SkillReadsView from './views/SkillReadsView.vue'
 import MCPCallsView from './views/MCPCallsView.vue'
+import InboxView from './views/InboxView.vue'
+import MemoryView from './views/MemoryView.vue'
+import GradesView from './views/GradesView.vue'
 import IngestErrorsView from './views/IngestErrorsView.vue'
 import TraceView from './views/TraceView.vue'
 import SessionsView from './views/SessionsView.vue'
@@ -30,6 +33,7 @@ import AuditView from './views/AuditView.vue'
 import UsersView from './views/UsersView.vue'
 import SchemaDriftView from './views/SchemaDriftView.vue'
 import PayloadLogView from './views/PayloadLogView.vue'
+import DesignSystemView from './views/DesignSystemView.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
@@ -51,6 +55,9 @@ const routes = [
   { path: '/experiments/:id', name: 'experiment-detail', component: ExperimentDetailView },
   { path: '/plans', name: 'plans', component: PlansView },
   { path: '/plans/:filename(.*)', name: 'plan-detail', component: PlanDetailView },
+  { path: '/inbox', name: 'inbox', component: InboxView },
+  { path: '/memory', name: 'memory', component: MemoryView },
+  { path: '/grades', name: 'grades', component: GradesView },
   {
     path: '/trace',
     name: 'trace',
@@ -72,6 +79,7 @@ const routes = [
   { path: '/audit', name: 'audit', component: AuditView },
   { path: '/schema-drift', name: 'schema-drift', component: SchemaDriftView },
   { path: '/payload-log', name: 'payload-log', component: PayloadLogView },
+  { path: '/ds', name: 'design-system', component: DesignSystemView },
   { path: '/account', name: 'account', component: UsersView },
 ]
 

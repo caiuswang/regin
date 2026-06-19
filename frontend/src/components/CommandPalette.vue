@@ -198,7 +198,7 @@ const iconPathByGroup = {
 .palette-card {
   width: 100%;
   max-width: 38rem;
-  background: #fff;
+  background: var(--color-white);
   border-radius: 18px;
   box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
   display: flex;
@@ -212,13 +212,13 @@ const iconPathByGroup = {
   align-items: center;
   gap: 0.75rem;
   padding: 0.875rem 1rem;
-  border-bottom: 1px solid #F1F5F9;
+  border-bottom: 1px solid var(--color-slate-100);
 }
 
 .palette-input-icon {
   width: 20px;
   height: 20px;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   flex-shrink: 0;
 }
 
@@ -228,18 +228,18 @@ const iconPathByGroup = {
   background: transparent;
   border: 0;
   outline: 0;
-  color: #0F172A;
+  color: var(--color-slate-900);
   min-width: 0;
 }
 
-.palette-input::placeholder { color: #94A3B8; }
+.palette-input::placeholder { color: var(--color-slate-400); }
 
 .palette-kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.6875rem;
-  background: #F1F5F9;
-  border: 1px solid #E2E8F0;
-  color: #64748B;
+  background: var(--color-slate-100);
+  border: 1px solid var(--color-slate-200);
+  color: var(--color-slate-500);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
 }
@@ -253,11 +253,11 @@ const iconPathByGroup = {
 .palette-empty {
   padding: 2rem 1.5rem;
   text-align: center;
-  color: #64748B;
+  color: var(--color-slate-500);
   font-size: 0.875rem;
 }
 
-.palette-empty strong { color: #0F172A; font-weight: 600; }
+.palette-empty strong { color: var(--color-slate-900); font-weight: 600; }
 
 .palette-group { margin-bottom: 0.25rem; }
 
@@ -265,7 +265,7 @@ const iconPathByGroup = {
   font-size: 0.625rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   font-weight: 600;
   padding: 0.75rem 0.75rem 0.25rem;
 }
@@ -282,23 +282,23 @@ const iconPathByGroup = {
   cursor: pointer;
   text-align: left;
   font-size: 0.875rem;
-  color: #1E293B;
+  color: var(--color-slate-800);
   transition: background-color 100ms;
 }
 
 .palette-item.is-cursor {
-  background: #EFF6FF;
-  color: #1E40AF;
+  background: var(--color-blue-50);
+  color: var(--color-blue-800);
 }
 
 .palette-item-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-  color: #64748B;
+  color: var(--color-slate-500);
 }
 
-.palette-item.is-cursor .palette-item-icon { color: #1E40AF; }
+.palette-item.is-cursor .palette-item-icon { color: var(--color-blue-800); }
 
 .palette-item-title {
   font-weight: 500;
@@ -311,7 +311,7 @@ const iconPathByGroup = {
 
 .palette-item-subtitle {
   font-size: 0.75rem;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   margin-left: auto;
   padding-left: 0.75rem;
   white-space: nowrap;
@@ -320,12 +320,12 @@ const iconPathByGroup = {
   max-width: 50%;
 }
 
-.palette-item.is-cursor .palette-item-subtitle { color: #3B82F6; }
+.palette-item.is-cursor .palette-item-subtitle { color: var(--color-blue-500); }
 
 .palette-item-enter {
   margin-left: 0.5rem;
   font-size: 0.875rem;
-  color: #3B82F6;
+  color: var(--color-blue-500);
 }
 
 .palette-footer {
@@ -333,9 +333,9 @@ const iconPathByGroup = {
   align-items: center;
   gap: 1rem;
   padding: 0.625rem 1rem;
-  border-top: 1px solid #F1F5F9;
+  border-top: 1px solid var(--color-slate-100);
   font-size: 0.6875rem;
-  color: #64748B;
+  color: var(--color-slate-500);
 }
 
 .palette-footer span { display: inline-flex; align-items: center; gap: 0.375rem; }
@@ -350,5 +350,5 @@ const iconPathByGroup = {
 .palette-leave-to .palette-card { transform: translateY(-4px); }
 
 .palette-results::-webkit-scrollbar { width: 8px; }
-.palette-results::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+.palette-results::-webkit-scrollbar-thumb { background: var(--color-slate-300); border-radius: 4px; }
 </style>

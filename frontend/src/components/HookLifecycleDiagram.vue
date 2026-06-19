@@ -4,12 +4,17 @@ import { computed, ref } from 'vue'
 import { VueFlow } from '@vue-flow/core'
 import Badge from './Badge.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
+import Button from './ui/Button.vue'
 
 const props = defineProps({
   handlers: { type: Array, default: () => [] },
   handlersByEvent: { type: Object, default: () => ({}) },
   handlerLoading: { type: Object, default: () => ({}) },
   selectedProvider: { type: String, default: '' },
+  // Events the selected agent's hook system can fire. Empty = "all" (Claude
+  // full spec): every agent has a different lifecycle, so events this agent
+  // never emits are dimmed instead of pretending they're part of its flow.
+  supportedEvents: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['toggle-handler', 'set-priority', 'reset-priority'])
@@ -76,21 +81,78 @@ const LIFECYCLE_EDGES = [
 
 // --- Reactive enrichment ---
 
-const enrichedNodes = computed(() =>
-  LIFECYCLE_NODES.map(node => {
-    const all = node.data.events.flatMap(ev => props.handlersByEvent[ev] || [])
-    const enabled = all.filter(h => h.enabled)
-    return {
-      ...node,
-      data: {
-        ...node.data,
-        enabledCount: enabled.length,
-        totalCount: all.length,
-        kinds: [...new Set(enabled.map(h => h.kind))],
-      },
-    }
+const MAIN_GAP = 120
+
+// Which main node each side node hangs off (mirrors the dashed `es*` edges).
+// Used to re-anchor side nodes after the main spine is repacked per agent.
+const SIDE_ANCHOR = {
+  setup: 'session-start', expansion: 'prompt-submit', 'perm-denied': 'perm-request',
+  elicitation: 'post-tool', notification: 'stop',
+}
+
+// Empty supportedEvents = "this agent fires everything" (Claude full spec) →
+// show the whole graph as authored. A specific agent fires a subset, so we
+// list ONLY its events and repack them into a gapless lifecycle.
+const supportedSet = computed(() => new Set(props.supportedEvents))
+const filtered = computed(() => supportedSet.value.size > 0)
+
+function nodeSupported(node) {
+  return !filtered.value || node.data.events.some(ev => supportedSet.value.has(ev))
+}
+
+function enrich(node, position) {
+  const all = node.data.events.flatMap(ev => props.handlersByEvent[ev] || [])
+  const enabled = all.filter(h => h.enabled)
+  return {
+    ...node,
+    position,
+    data: {
+      ...node.data,
+      enabledCount: enabled.length,
+      totalCount: all.length,
+      kinds: [...new Set(enabled.map(h => h.kind))],
+    },
+  }
+}
+
+const enrichedNodes = computed(() => {
+  const visible = LIFECYCLE_NODES.filter(nodeSupported)
+  if (!filtered.value) return visible.map(n => enrich(n, n.position))
+
+  // Repack the agent's events: main spine stacked top-to-bottom, each side
+  // node aligned to the new Y of its anchor (or its own slot if orphaned).
+  const mainY = {}
+  let mi = 0
+  let si = 0
+  const mains = visible.filter(n => !n.data.isSide).map(n => {
+    const y = mi++ * MAIN_GAP
+    mainY[n.id] = y
+    return enrich(n, { x: MAIN_X, y })
   })
-)
+  const sides = visible.filter(n => n.data.isSide).map(n => {
+    const anchor = SIDE_ANCHOR[n.id]
+    const y = anchor != null && anchor in mainY ? mainY[anchor] : si++ * MAIN_GAP
+    return enrich(n, { x: SIDE_X, y })
+  })
+  return [...mains, ...sides]
+})
+
+// Edges: reconnect the spine through only the visible main nodes so the flow
+// stays continuous, plus any side link whose endpoints both survive.
+const enrichedEdges = computed(() => {
+  if (!filtered.value) return LIFECYCLE_EDGES
+  const ids = new Set(enrichedNodes.value.map(n => n.id))
+  const mains = enrichedNodes.value.filter(n => !n.data.isSide)
+  const spine = mains.slice(0, -1).map((n, i) => ({
+    id: `e-${n.id}-${mains[i + 1].id}`,
+    source: n.id, target: mains[i + 1].id,
+    type: 'smoothstep', style: { stroke: '#9ca3af' },
+  }))
+  const sideEdges = LIFECYCLE_EDGES.filter(
+    e => e.id.startsWith('es') && ids.has(e.source) && ids.has(e.target),
+  )
+  return [...spine, ...sideEdges]
+})
 
 // --- Node click → detail panel ---
 
@@ -163,7 +225,7 @@ function nodeStyle(data) {
     <div class="relative flex-1" style="height: 560px">
       <VueFlow
         :nodes="enrichedNodes"
-        :edges="LIFECYCLE_EDGES"
+        :edges="enrichedEdges"
         :nodes-connectable="false"
         :nodes-draggable="false"
         :zoom-on-scroll="true"
@@ -207,11 +269,13 @@ function nodeStyle(data) {
       >
         <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50 flex-none">
           <span class="text-xs font-semibold text-gray-700">{{ selectedNode.data.label }}</span>
-          <button
-            type="button"
-            class="text-gray-400 hover:text-gray-600 text-base leading-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:rounded"
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-auto w-auto p-0 text-gray-400 hover:bg-transparent hover:text-gray-600 text-base leading-none"
+            aria-label="Close panel"
             @click="selectedNode = null"
-          >×</button>
+          >×</Button>
         </div>
         <div class="flex-1 overflow-y-auto p-3 space-y-1">
           <div v-if="!selectedHandlers.length" class="text-xs text-gray-400">No handlers registered for this event.</div>
@@ -256,12 +320,13 @@ function nodeStyle(data) {
                   />
                 </label>
                 <span v-if="h.priority_overridden" class="text-gray-400">· default {{ h.default_priority }}</span>
-                <button
+                <Button
                   v-if="h.priority_overridden"
-                  type="button"
-                  class="text-blue-600 hover:text-blue-800 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:rounded"
+                  variant="link"
+                  size="sm"
+                  class="text-blue-600 hover:text-blue-800 underline"
                   @click="emit('reset-priority', h.name)"
-                >reset</button>
+                >reset</Button>
               </div>
             </div>
             <ToggleSwitch
@@ -284,8 +349,8 @@ function nodeStyle(data) {
 .panel-enter-from, .panel-leave-to { opacity: 0; transform: translateX(-8px); }
 
 :deep(.vue-flow__pane) {
-  background-color: #f8fafc;
-  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-color: var(--color-slate-50);
+  background-image: radial-gradient(var(--color-slate-300) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 

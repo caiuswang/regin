@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>regin</title>
+    <script>
+      // Apply the stored theme before the app renders to avoid a flash of
+      // the wrong theme (FOUC). Kept in sync afterwards by useTheme.js.
+      (function () {
+        try {
+          var t = localStorage.getItem('regin_theme')
+          document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light')
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onBeforeUnmount } from 'vue'
+import Button from './ui/Button.vue'
 
 const props = defineProps({
   items: { type: Array, required: true },
@@ -41,15 +42,16 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="rootEl" class="relative inline-block">
-    <button
-      type="button"
-      class="kebab-trigger focus-visible:outline-2 focus-visible:outline-blue-500"
+    <Button
+      variant="ghost"
+      size="icon"
+      class="kebab-trigger"
       :aria-label="ariaLabel"
       :aria-expanded="open"
       :aria-haspopup="true"
       @click="toggle">
       <span aria-hidden="true">⋯</span>
-    </button>
+    </Button>
     <ul
       v-if="open"
       role="menu"
@@ -71,24 +73,16 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .kebab-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 0.5rem;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #64748b;
+  border: 1px solid var(--color-gray-200);
+  background: var(--color-white);
+  color: var(--color-slate-500);
   font-size: 1.125rem;
   line-height: 1;
-  cursor: pointer;
-  transition: background-color 150ms, border-color 150ms;
 }
 .kebab-trigger:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
-  color: #0f172a;
+  background: var(--color-slate-50);
+  border-color: var(--color-slate-300);
+  color: var(--color-slate-900);
 }
 .kebab-menu {
   position: absolute;
@@ -99,8 +93,8 @@ onBeforeUnmount(() => {
   list-style: none;
   margin: 0;
   padding: 0.25rem;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
   border-radius: 0.5rem;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
@@ -110,14 +104,14 @@ onBeforeUnmount(() => {
   text-align: left;
   padding: 0.4375rem 0.625rem;
   font-size: 0.8125rem;
-  color: #0f172a;
+  color: var(--color-slate-900);
   background: transparent;
   border: 0;
   border-radius: 0.375rem;
   cursor: pointer;
 }
-.kebab-item:hover { background: #f1f5f9; }
+.kebab-item:hover { background: var(--color-slate-100); }
 .kebab-item:disabled { opacity: 0.5; cursor: not-allowed; }
-.kebab-item-danger { color: #b91c1c; }
-.kebab-item-danger:hover { background: #fef2f2; }
+.kebab-item-danger { color: var(--color-red-700); }
+.kebab-item-danger:hover { background: var(--color-red-50); }
 </style>

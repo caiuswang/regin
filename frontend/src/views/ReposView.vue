@@ -3,6 +3,7 @@ import { ref, onMounted, nextTick } from 'vue'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -84,13 +85,12 @@ async function removeRepo(repo) {
         </p>
       </div>
       <div class="page-actions">
-        <button
-          type="button"
-          class="btn btn-primary focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+        <Button
+          variant="primary"
           @click="openAdd"
         >
           Add repo
-        </button>
+        </Button>
       </div>
     </header>
 
@@ -124,13 +124,13 @@ async function removeRepo(repo) {
             <td class="font-mono text-xs">{{ r.branch_name || '-' }}</td>
             <td class="text-right font-mono text-xs">{{ r.pattern_count }}</td>
             <td class="text-right">
-              <button
-                type="button"
-                class="btn-link-danger text-xs focus-visible:outline-2 focus-visible:outline-red-500"
+              <Button
+                variant="danger"
+                size="sm"
                 @click="removeRepo(r)"
               >
                 Remove
-              </button>
+              </Button>
             </td>
           </tr>
         </tbody>
@@ -166,22 +166,20 @@ async function removeRepo(repo) {
             />
           </form>
           <div class="flex justify-end gap-2 px-5 pb-4 pt-2">
-            <button
-              type="button"
-              class="btn btn-secondary text-sm focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+            <Button
+              variant="secondary"
               :disabled="adding"
               @click="closeAdd"
             >
               Cancel
-            </button>
-            <button
-              type="button"
-              class="btn btn-primary text-sm focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+            </Button>
+            <Button
+              variant="primary"
               :disabled="adding || !newPath.trim()"
               @click="submitAdd"
             >
               {{ adding ? 'Adding…' : 'Add repo' }}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -190,17 +188,4 @@ async function removeRepo(repo) {
 </template>
 
 <style scoped>
-.btn-link-danger {
-  background: none;
-  border: none;
-  color: #B91C1C;
-  cursor: pointer;
-  padding: 0.25rem 0.5rem;
-  border-radius: 0.375rem;
-  font-weight: 500;
-  transition: background-color 120ms;
-}
-.btn-link-danger:hover {
-  background: #FEE2E2;
-}
 </style>

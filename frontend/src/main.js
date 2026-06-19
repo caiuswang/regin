@@ -11,7 +11,9 @@ app.use(PrimeVue, {
   theme: {
     preset: Aura,
     options: {
-      darkModeSelector: false,
+      // Match the same switch the rest of the app uses (data-theme on <html>),
+      // so PrimeVue components flip in lockstep with useTheme.js.
+      darkModeSelector: '[data-theme="dark"]',
     },
   },
 })

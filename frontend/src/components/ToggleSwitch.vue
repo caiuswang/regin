@@ -23,12 +23,12 @@ function toggle() {
     :aria-busy="loading"
     :disabled="disabled || loading"
     @click="toggle"
-    class="inline-flex items-center gap-2 group focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-full"
+    class="inline-flex items-center gap-2 group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
   >
     <span
       class="relative inline-block h-5 w-9 rounded-full transition-colors"
       :class="[
-        modelValue ? 'bg-blue-600' : 'bg-gray-300',
+        modelValue ? 'bg-primary' : 'bg-surface-3',
         (disabled || loading) ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer group-hover:brightness-95',
       ]"
     >
@@ -39,7 +39,7 @@ function toggle() {
     </span>
     <span
       class="text-xs font-medium w-14 text-left"
-      :class="modelValue ? 'text-blue-700' : 'text-gray-500'"
+      :class="modelValue ? 'text-primary-active' : 'text-fg-subtle'"
     >
       <template v-if="loading">…</template>
       <template v-else>{{ modelValue ? onLabel : offLabel }}</template>

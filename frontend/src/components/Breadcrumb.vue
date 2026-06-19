@@ -26,25 +26,25 @@ defineProps({
     align-items: center;
     gap: 0.375rem;
     font-size: 0.75rem;
-    color: #94A3B8;
+    color: var(--color-slate-400);
     margin-bottom: 0.75rem;
     min-width: 0;
 }
 
-.breadcrumb-sep { color: #CBD5E1; flex-shrink: 0; }
+.breadcrumb-sep { color: var(--color-slate-300); flex-shrink: 0; }
 
 .breadcrumb-link {
-    color: #64748B;
+    color: var(--color-slate-500);
     text-decoration: none;
     transition: color 150ms;
     border-radius: 4px;
     padding: 0.0625rem 0.25rem;
     margin: 0 -0.25rem;
 }
-.breadcrumb-link:hover { color: #0F172A; }
+.breadcrumb-link:hover { color: var(--color-slate-900); }
 
 .breadcrumb-current {
-    color: #0F172A;
+    color: var(--color-slate-900);
     font-weight: 500;
 }
 </style>

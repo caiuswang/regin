@@ -1,5 +1,6 @@
 <script setup>
 import Badge from './Badge.vue'
+import Button from './ui/Button.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -28,8 +29,8 @@ const emit = defineEmits(['toggle'])
         </div>
       </div>
       <div v-if="installed !== null && !loading">
-        <button v-if="installed" type="button" class="btn btn-secondary text-xs" @click="emit('toggle')">Remove</button>
-        <button v-else type="button" class="btn btn-primary text-xs" @click="emit('toggle')">Install</button>
+        <Button v-if="installed" variant="secondary" size="sm" @click="emit('toggle')">Remove</Button>
+        <Button v-else variant="primary" size="sm" @click="emit('toggle')">Install</Button>
       </div>
     </div>
   </div>

@@ -21,7 +21,7 @@ defineProps({
     cursor: pointer;
 }
 .stat-card-link:hover {
-    border-color: #BFDBFE;
+    border-color: var(--color-blue-200);
     box-shadow: 0 4px 12px rgba(30, 64, 175, 0.08);
 }
 </style>

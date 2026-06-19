@@ -1,5 +1,6 @@
 <script setup>
 import { useConfirm } from '../composables/useConfirm'
+import Button from './ui/Button.vue'
 
 const { dialog, ok, cancel } = useConfirm()
 
@@ -26,14 +27,14 @@ function onKeydown(e) {
           <p class="text-sm text-gray-500 whitespace-pre-line">{{ dialog.message }}</p>
         </div>
         <div class="flex justify-end gap-2 px-5 pb-4">
-          <button type="button" class="btn btn-secondary text-sm" @click="cancel">Cancel</button>
-          <button
-            type="button"
-            :class="dialog.danger ? 'btn btn-danger text-sm' : 'btn btn-primary text-sm'"
+          <Button variant="secondary" size="sm" @click="cancel">Cancel</Button>
+          <Button
+            :variant="dialog.danger ? 'danger' : 'primary'"
+            size="sm"
             @click="ok"
           >
             {{ dialog.title }}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

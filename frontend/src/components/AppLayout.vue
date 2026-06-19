@@ -9,10 +9,15 @@ import api from '../api.js'
 import { useFeatures } from '../composables/useFeatures'
 import { useDriftSummary } from '../composables/useDriftSummary'
 import { useDiagnosticsState } from '../composables/useDiagnosticsState'
+import { useInboxUnread } from '../composables/useInboxUnread'
+import { useTheme } from '../composables/useTheme'
+import Button from './ui/Button.vue'
 
+const { theme, toggleTheme } = useTheme()
 const { features } = useFeatures()
 const { pending: driftPending } = useDriftSummary()
 const { enabled: diagEnabled } = useDiagnosticsState()
+const { unread: inboxUnread } = useInboxUnread()
 
 const router = useRouter()
 const route = useRoute()
@@ -67,6 +72,9 @@ const navGroups = computed(() => [
     label: 'Observability',
     links: [
       { to: '/trace', label: 'Trace', icon: 'trace' },
+      { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox', badge: () => inboxUnread.value },
+      { to: '/memory', label: 'Memory', exact: true, icon: 'patterns' },
+      { to: '/grades', label: 'Grades', exact: true, icon: 'rules' },
       { to: '/audit', label: 'Audit', icon: 'audit' },
     ],
   },
@@ -148,6 +156,7 @@ const userInitials = computed(() => {
                 <template v-else-if="link.icon === 'skills'"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></template>
                 <template v-else-if="link.icon === 'prompts'"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></template>
                 <template v-else-if="link.icon === 'trace'"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></template>
+                <template v-else-if="link.icon === 'inbox'"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></template>
                 <template v-else-if="link.icon === 'audit'"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/></template>
                 <template v-else-if="link.icon === 'rules'"><path d="M4 7h16M4 12h10M4 17h7"/></template>
                 <template v-else-if="link.icon === 'experiments'"><path d="M10 2v6.2L4 14v8h16v-8l-6-5.8V2"/></template>
@@ -163,19 +172,31 @@ const userInitials = computed(() => {
 
         <!-- User pill -->
         <div class="sb-user-wrap">
+          <button
+            type="button"
+            class="sb-theme-toggle focus-visible:outline-2 focus-visible:outline-blue-500"
+            :aria-label="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+            :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+            @click="toggleTheme"
+          >
+            <svg v-if="theme === 'dark'" class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            <svg v-else class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <span>{{ theme === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
+          </button>
           <div v-if="user" class="sb-user">
             <div class="sb-user-avatar">{{ userInitials }}</div>
             <router-link to="/account" class="sb-user-name no-underline focus-visible:outline-2 focus-visible:outline-blue-500">
               {{ user.display_name || user.username }}
             </router-link>
-            <button
-              type="button"
-              class="sb-user-logout focus-visible:outline-2 focus-visible:outline-blue-500"
+            <Button
+              variant="ghost"
+              size="icon"
+              class="sb-user-logout"
               aria-label="Sign out"
               @click="handleLogout"
             >
               <svg class="sb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 17l5-5-5-5M21 12H9M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg>
-            </button>
+            </Button>
           </div>
         </div>
       </aside>
@@ -184,14 +205,15 @@ const userInitials = computed(() => {
       <main class="content floating-card">
         <!-- Mobile top bar -->
         <div class="mobile-bar">
-          <button
-            type="button"
-            class="mobile-menu-btn focus-visible:outline-2 focus-visible:outline-blue-500"
+          <Button
+            variant="ghost"
+            size="icon"
+            class="mobile-menu-btn"
             aria-label="Open navigation"
             @click="navOpen = true"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-          </button>
+          </Button>
           <router-link to="/" class="mobile-brand no-underline">regin</router-link>
         </div>
 
@@ -227,6 +249,15 @@ const userInitials = computed(() => {
           </router-link>
         </div>
       </nav>
+      <button
+        type="button"
+        class="mt-3 w-full flex items-center gap-2 px-3 py-2 rounded-md bg-slate-100 hover:bg-slate-200 text-sm text-slate-500 focus-visible:outline-2 focus-visible:outline-blue-500"
+        @click="toggleTheme"
+      >
+        <svg v-if="theme === 'dark'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <span>{{ theme === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
+      </button>
     </Drawer>
 
     <CommandPalette v-model:open="paletteOpen" />
@@ -237,9 +268,9 @@ const userInitials = computed(() => {
 
 <style scoped>
 .app-shell {
-  background: linear-gradient(180deg, #F5F7FB 0%, #EEF2F8 100%);
+  background: linear-gradient(180deg, var(--color-slate-50) 0%, var(--color-slate-100) 100%);
   min-height: 100vh;
-  color: #0F172A;
+  color: var(--color-slate-900);
 }
 
 .app-grid {
@@ -254,7 +285,7 @@ const userInitials = computed(() => {
 }
 
 .floating-card {
-  background: #fff;
+  background: var(--color-white);
   border-radius: 18px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -286,7 +317,7 @@ const userInitials = computed(() => {
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 0.75rem;
-  background: linear-gradient(135deg, #2563EB, #1E3A8A);
+  background: linear-gradient(135deg, var(--color-blue-600), var(--color-blue-900));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -300,14 +331,14 @@ const userInitials = computed(() => {
   display: block;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #0F172A;
+  color: var(--color-slate-900);
   letter-spacing: -0.01em;
   line-height: 1.1;
 }
 
 .sb-brand-meta {
   font-size: 0.65rem;
-  color: #64748B;
+  color: var(--color-slate-500);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -315,7 +346,7 @@ const userInitials = computed(() => {
 }
 
 .sb-brand-name:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -327,18 +358,18 @@ const userInitials = computed(() => {
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  background: #F1F5F9;
+  background: var(--color-slate-100);
   border: 0;
   border-radius: 0.75rem;
   padding: 0.5rem 0.75rem;
   transition: background-color 150ms;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   cursor: pointer;
   font: inherit;
   text-align: left;
 }
 
-.sb-search:hover { background: #E2E8F0; color: #475569; }
+.sb-search:hover { background: var(--color-slate-200); color: var(--color-slate-600); }
 
 .sb-search-label {
   flex: 1;
@@ -352,9 +383,9 @@ const userInitials = computed(() => {
 .sb-search-kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.625rem;
-  color: #94A3B8;
-  background: #fff;
-  border: 1px solid #E2E8F0;
+  color: var(--color-slate-400);
+  background: var(--color-white);
+  border: 1px solid var(--color-slate-200);
   padding: 0.0625rem 0.375rem;
   border-radius: 0.25rem;
   flex-shrink: 0;
@@ -370,7 +401,7 @@ const userInitials = computed(() => {
   font-size: 0.625rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   font-weight: 600;
   padding: 0 0.75rem;
   margin: 1rem 0 0.375rem;
@@ -386,7 +417,7 @@ const userInitials = computed(() => {
   padding: 0.5rem 0.75rem;
   border-radius: 0.75rem;
   font-size: 0.8125rem;
-  color: #475569;
+  color: var(--color-slate-600);
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -394,15 +425,15 @@ const userInitials = computed(() => {
   text-align: left;
 }
 
-.sb-item:hover { background: #F1F5F9; color: #0F172A; }
+.sb-item:hover { background: var(--color-slate-100); color: var(--color-slate-900); }
 
 .sb-item:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
 }
 
 .sb-item.is-active {
-  background: linear-gradient(135deg, #1E40AF, #3B82F6);
+  background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
   color: #fff;
   box-shadow: 0 4px 12px rgba(30, 64, 175, 0.25);
 }
@@ -413,15 +444,15 @@ const userInitials = computed(() => {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-  color: #64748B;
+  color: var(--color-slate-500);
 }
 
-.sb-item:hover .sb-icon { color: #0F172A; }
+.sb-item:hover .sb-icon { color: var(--color-slate-900); }
 
 .sb-badge {
   margin-left: auto;
-  background: #FEE2E2;
-  color: #991B1B;
+  background: var(--color-red-100);
+  color: var(--color-red-800);
   font-size: 0.625rem;
   font-weight: 600;
   padding: 0.0625rem 0.375rem;
@@ -434,11 +465,30 @@ const userInitials = computed(() => {
 
 .sb-user-wrap { padding: 0.5rem 0.75rem 1rem; }
 
+.sb-theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  background: transparent;
+  border: 0;
+  border-radius: 0.5rem;
+  color: var(--color-slate-500);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+
+.sb-theme-toggle:hover { background: var(--color-slate-100); color: var(--color-slate-900); }
+
 .sb-user {
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  background: #F8FAFC;
+  background: var(--color-slate-50);
   border-radius: 0.75rem;
   padding: 0.5rem 0.625rem;
 }
@@ -447,7 +497,7 @@ const userInitials = computed(() => {
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #F472B6, #3B82F6);
+  background: linear-gradient(135deg, var(--color-pink-600), var(--color-blue-500));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -462,16 +512,16 @@ const userInitials = computed(() => {
   min-width: 0;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #0F172A;
+  color: var(--color-slate-900);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sb-user-name:hover { color: #1E40AF; }
+.sb-user-name:hover { color: var(--color-blue-800); }
 
 .sb-user-name:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -480,15 +530,15 @@ const userInitials = computed(() => {
   background: transparent;
   border: 0;
   padding: 0.25rem;
-  color: #94A3B8;
+  color: var(--color-slate-400);
   cursor: pointer;
   border-radius: 0.375rem;
 }
 
-.sb-user-logout:hover { color: #0F172A; background: #E2E8F0; }
+.sb-user-logout:hover { color: var(--color-slate-900); background: var(--color-slate-200); }
 
 .sb-user-logout:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 1px;
 }
 
@@ -511,7 +561,7 @@ const userInitials = computed(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.625rem 1rem;
-  border-bottom: 1px solid #F1F5F9;
+  border-bottom: 1px solid var(--color-slate-100);
 }
 
 @media (max-width: 767px) {
@@ -523,28 +573,28 @@ const userInitials = computed(() => {
   border: 0;
   padding: 0.5rem;
   margin-left: -0.5rem;
-  color: #475569;
+  color: var(--color-slate-600);
   cursor: pointer;
   border-radius: 0.5rem;
 }
 
-.mobile-menu-btn:hover { background: #F1F5F9; }
-.mobile-menu-btn:focus-visible { outline: 2px solid #3B82F6; outline-offset: 1px; }
+.mobile-menu-btn:hover { background: var(--color-slate-100); }
+.mobile-menu-btn:focus-visible { outline: 2px solid var(--color-blue-500); outline-offset: 1px; }
 
 .mobile-brand {
   font-weight: 700;
-  color: #0F172A;
+  color: var(--color-slate-900);
   font-size: 1rem;
 }
 
 .mobile-brand:focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
 :deep(.drawer-link):focus-visible {
-  outline: 2px solid #3B82F6;
+  outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
 }
 
@@ -562,7 +612,7 @@ const userInitials = computed(() => {
 .sb-nav::-webkit-scrollbar,
 .content-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
 .sb-nav::-webkit-scrollbar-thumb,
-.content-scroll::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+.content-scroll::-webkit-scrollbar-thumb { background: var(--color-slate-300); border-radius: 4px; }
 .sb-nav::-webkit-scrollbar-thumb:hover,
-.content-scroll::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+.content-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-slate-400); }
 </style>

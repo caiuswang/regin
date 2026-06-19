@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import api from '../api'
 import Card from '../components/Card.vue'
+import Select from '../components/ui/Select.vue'
 
 const plans = ref([])
 const loading = ref(true)
@@ -61,15 +62,15 @@ function fmtDate(iso) {
 
     <div class="mb-4 flex items-center gap-2">
       <label for="plans-repo-filter" class="text-xs font-medium text-slate-500 uppercase tracking-wide">Repo</label>
-      <select
-        id="plans-repo-filter"
-        v-model="repoFilter"
-        class="input text-sm focus-visible:outline-2 focus-visible:outline-blue-500"
-        aria-label="Filter plans by repo"
-      >
-        <option value="all">All repos</option>
-        <option v-for="name in repoOptions" :key="name" :value="name">{{ name }}</option>
-      </select>
+      <span class="inline-block w-44">
+        <Select
+          id="plans-repo-filter"
+          v-model="repoFilter"
+          block
+          aria-label="Filter plans by repo"
+          :options="[{ value: 'all', label: 'All repos' }, ...repoOptions.map(n => ({ value: n, label: n }))]"
+        />
+      </span>
     </div>
 
     <Card :no-padding="true">
@@ -117,7 +118,7 @@ function fmtDate(iso) {
 
 <style scoped>
 .empty-row {
-    color: #94A3B8;
+    color: var(--color-slate-400);
     text-align: center;
     padding: 1.5rem;
     font-size: 0.875rem;

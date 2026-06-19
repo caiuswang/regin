@@ -108,13 +108,13 @@ function fmtDate(iso) {
     gap: 0.375rem;
     padding: 0.25rem 0.625rem;
     border-radius: 9999px;
-    background: #EFF6FF;
-    color: #1E40AF;
+    background: var(--color-blue-50);
+    color: var(--color-blue-800);
     font-size: 0.75rem;
     text-decoration: none;
     transition: background-color 150ms;
 }
-.skill-pill:hover { background: #DBEAFE; }
+.skill-pill:hover { background: var(--color-blue-100); }
 .skill-pill-name { font-weight: 500; }
 .skill-pill-meta {
     color: rgba(30, 64, 175, 0.7);

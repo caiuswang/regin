@@ -80,8 +80,8 @@ async function put(path, body) {
   return _mutate('PUT', path, body)
 }
 
-async function del(path) {
-  return _mutate('DELETE', path)
+async function del(path, body) {
+  return _mutate('DELETE', path, body)
 }
 
 async function _mutate(method, path, body) {

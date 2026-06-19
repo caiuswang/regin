@@ -1,6 +1,7 @@
 <script setup>
 import Badge from './Badge.vue'
 import KebabMenu from './KebabMenu.vue'
+import Button from './ui/Button.vue'
 
 defineProps({
   name: { type: String, required: true },
@@ -21,20 +22,13 @@ defineProps({
         <h3 class="channel-row-name">{{ name }}</h3>
       </div>
       <div class="channel-row-actions">
-        <button
+        <Button
           v-if="primary"
-          type="button"
-          :class="[
-            'btn',
-            primary.variant === 'danger' ? 'btn-danger' :
-            primary.variant === 'secondary' ? 'btn-secondary' :
-            'btn-primary',
-            'focus-visible:outline-2 focus-visible:outline-blue-500',
-          ]"
+          :variant="primary.variant === 'danger' ? 'danger' : primary.variant === 'secondary' ? 'secondary' : 'primary'"
           :disabled="primary.disabled"
           @click="primary.action">
           {{ primary.label }}
-        </button>
+        </Button>
         <KebabMenu v-if="kebab.length" :items="kebab" :aria-label="`${name} actions`" />
       </div>
     </header>
@@ -46,8 +40,8 @@ defineProps({
 
 <style scoped>
 .channel-row {
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
   border-radius: 0.625rem;
   padding: 0.875rem 1rem;
 }
@@ -67,7 +61,7 @@ defineProps({
 .channel-row-name {
   font-size: 0.9375rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--color-slate-900);
   margin: 0;
   line-height: 1.25;
 }
@@ -80,7 +74,7 @@ defineProps({
 .channel-row-body {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid var(--color-slate-100);
 }
 .channel-row-status {
   display: inline-flex;

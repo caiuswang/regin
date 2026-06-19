@@ -3,6 +3,9 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../api.js'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
+import Select from '../components/ui/Select.vue'
+import Input from '../components/ui/Input.vue'
 import { useFlash } from '../composables/useFlash.js'
 import { useConfirm } from '../composables/useConfirm.js'
 
@@ -102,6 +105,8 @@ async function deleteUser(userId, username) {
   }
 }
 
+const ROLE_OPTIONS = ['admin', 'editor', 'viewer']
+
 const roleBadgeColor = (role) => {
   if (role === 'admin') return 'red'
   if (role === 'editor') return 'blue'
@@ -126,27 +131,24 @@ const roleBadgeColor = (role) => {
       <div class="grid grid-cols-2 gap-4 max-w-lg">
         <div>
           <label class="field-label">Username</label>
-          <input type="text" :value="currentUser?.username" disabled aria-label="Username" class="input is-readonly font-mono">
+          <Input :model-value="currentUser?.username" disabled aria-label="Username" class="is-readonly font-mono" />
         </div>
         <div>
           <label class="field-label">Role</label>
-          <input type="text" :value="currentUser?.role" disabled aria-label="Role" class="input is-readonly">
+          <Input :model-value="currentUser?.role" disabled aria-label="Role" class="is-readonly" />
         </div>
         <div>
           <label class="field-label">Display name</label>
-          <input v-model="displayName" type="text" aria-label="Display name"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="displayName" type="text" aria-label="Display name" />
         </div>
         <div>
           <label class="field-label">Email</label>
-          <input v-model="email" type="email" aria-label="Email"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="email" type="email" aria-label="Email" />
         </div>
       </div>
-      <button type="button" @click="saveProfile"
-        class="btn btn-primary mt-4 focus-visible:outline-2 focus-visible:outline-blue-500">
+      <Button variant="primary" class="mt-4" @click="saveProfile">
         Save profile
-      </button>
+      </Button>
     </Card>
 
     <!-- Change Password -->
@@ -155,24 +157,20 @@ const roleBadgeColor = (role) => {
       <div class="max-w-sm space-y-3">
         <div>
           <label class="field-label">Current password</label>
-          <input v-model="oldPassword" type="password" aria-label="Current password"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="oldPassword" type="password" aria-label="Current password" />
         </div>
         <div>
           <label class="field-label">New password</label>
-          <input v-model="newPassword" type="password" aria-label="New password"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="newPassword" type="password" aria-label="New password" />
         </div>
         <div>
           <label class="field-label">Confirm new password</label>
-          <input v-model="confirmPassword" type="password" aria-label="Confirm new password"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input v-model="confirmPassword" type="password" aria-label="Confirm new password" />
         </div>
       </div>
-      <button type="button" @click="changePassword"
-        class="btn btn-primary mt-4 focus-visible:outline-2 focus-visible:outline-blue-500">
+      <Button variant="primary" class="mt-4" @click="changePassword">
         Change password
-      </button>
+      </Button>
     </Card>
 
     <!-- User Management (admin only) -->
@@ -199,18 +197,14 @@ const roleBadgeColor = (role) => {
               <td class="text-xs text-slate-500 font-mono">{{ u.last_login || 'never' }}</td>
               <td>
                 <div v-if="u.id !== currentUser?.id" class="flex gap-2 items-center">
-                  <select @change="setRole(u.id, $event.target.value); $event.target.value = u.role"
-                    :value="u.role"
-                    :aria-label="`Role for ${u.username}`"
-                    class="input role-select focus-visible:outline-2 focus-visible:outline-blue-500">
-                    <option value="admin">admin</option>
-                    <option value="editor">editor</option>
-                    <option value="viewer">viewer</option>
-                  </select>
-                  <button type="button" @click="deleteUser(u.id, u.username)"
-                    class="btn btn-danger text-xs focus-visible:outline-2 focus-visible:outline-blue-500">
+                  <span class="role-select-wrap">
+                    <Select :model-value="u.role" :options="ROLE_OPTIONS" block
+                      :aria-label="`Role for ${u.username}`"
+                      @change="setRole(u.id, $event.target.value); $event.target.value = u.role" />
+                  </span>
+                  <Button variant="danger" size="sm" @click="deleteUser(u.id, u.username)">
                     Delete
-                  </button>
+                  </Button>
                 </div>
                 <span v-else class="text-xs text-slate-400">you</span>
               </td>
@@ -223,9 +217,9 @@ const roleBadgeColor = (role) => {
 </template>
 
 <style scoped>
-.role-select {
-    width: auto;
-    padding-right: 1.5rem;
+.role-select-wrap {
+    display: inline-block;
+    width: 7rem;
     font-size: 0.75rem;
 }
 </style>
