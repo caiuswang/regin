@@ -1,0 +1,19 @@
+# Agent Memory System — Design Topics
+
+regin's agent memory (`lib/memory/`) is a cross-session experience store: it learns from finished sessions and surfaces that experience into future ones along the lifecycle **capture → consolidate (reflect) → recall → reinforce**. These seven topics carve that subsystem along its real module boundaries — each maps to a distinct concern and its own test file under `tests/memory/`.
+
+> **Grounding note.** The GitNexus interactive MCP tools were unavailable this session, so these proposals are grounded on direct file evidence (every `lib/memory/*.py` and the `ARCHITECTURE.md` “Agent Memory” section) supplemented by static-index symbols the Bash PreToolUse hook surfaced incidentally — e.g. the callers of `memory_db_path` and the `Related` / `Get_topic` execution flows that terminate at `Memory_db_path` (step 6/6), and the `/api/memory` + `/api/memory/<id>/related` routes. No call edges were fabricated; the `notes` field records exactly which gitnexus steps were skipped.
+
+## Topic map
+
+1. **agent-memory-architecture** — the entry point. The ports/adapters seam (`ports.py`: `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`, all gracefully degrading), the self-initializing third-engine DB (`engine.py` reuses `lib/orm/engine._build_engine`; the `Related`/`Get_topic` flows both resolve `memory_db_path` as their final step), and the single mutable `memories` table with its own `MetaData` so `regin init`/`rebuild` and Alembic never touch it (`models.py`). Read this before any other memory topic.
+2. **memory-recall-pipeline** — the read-side ranking stack in `store.py` (FTS5/BM25 + dense cosine over `memory_embeddings` + RRF + cross-encoder rerank), the bounded quality factor, the `intent.py` query-side router, the `expand.py` LLM rewrite front-end, and the `evaluate.py` regression harness.
+3. **memory-auto-injection** — how recall *reaches* an agent: the `UserPromptSubmit` hook borrowing the warm `regin serve` embedder over loopback (`/api/memory/recall`), the long-lived `recall` MCP server for deliberate pulls, speculative-inject-without-reinforcement, and the `memory.recall` trace span.
+4. **memory-consolidation-reflect** — `reflect()`: dedup → contradiction → promote (working→episodic) → synthesize → embed → forget-stale → decay, plus the related-edge graph, emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved topic graph.
+5. **memory-distillation-capture** — the two birth paths: the explicit `send_to_user(type=lesson)` tee (`post_tool_trace._remember_lesson`) and the agentic post-session distiller (`distill.py`) that self-fetches spans and self-scores importance into a drop/auto-approve/queue band.
+6. **memory-engagement-feedback** — `feedback.py` closes the loop: did an injected memory's referents show up in a *later* span? idf-weighted by precomputed session document-frequency (`referent_session_df`), with engaged/matched bits on each `injection_events` row feeding reflect's decay gate (soft vs hard ignore).
+7. **memory-curation-surfaces** — the human controls: `/api/memory/*` (approve/retire/forget/recall-probe/run-reflect/graph), `MemoryView.vue`, and the `regin memory` CLI mirror. Curation is the point of memory being mutable.
+
+## How they connect
+
+Architecture is the hub. Capture (5) feeds rows that consolidation (4) curates and recall (2) ranks; injection (3) delivers them and feedback (6) measures whether the delivery helped, feeding the decay half of (4). Surfaces (7) are where a human gates proposals from (5) and (4). Cross-subsystem links point out to `session-trace-design` (distill reads `session_spans`; injection writes a span), `topic-routing` / `topic-proposal-pipeline` (recall boosts by authoritative topic; `topic_attach` lands proposals in the same review queue), rather than re-describing those approved topics.

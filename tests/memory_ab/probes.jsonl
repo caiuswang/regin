@@ -1,0 +1,16 @@
+{"id": "p01", "query": "how long are auth tokens cached before the gateway ignores a refresh?", "expect_ids": ["c01"], "must_not_ids": ["c02"], "intent": "explain"}
+{"id": "p02", "query": "what is the session token cache sliding window?", "expect_ids": ["c02"], "must_not_ids": ["c01"], "intent": "explain"}
+{"id": "p03", "query": "why am I getting QueuePool limit errors under load?", "expect_ids": ["c03"], "must_not_ids": [], "intent": "debug"}
+{"id": "p04", "query": "sqlite says database is locked with concurrent writers", "expect_ids": ["c04"], "must_not_ids": [], "intent": "debug"}
+{"id": "p05", "query": "dense vectors went stale after a bulk import, how do I fix search?", "expect_ids": ["c05"], "must_not_ids": ["c12"], "intent": "debug"}
+{"id": "p06", "query": "how are BM25 and cosine combined in recall?", "expect_ids": ["c06"], "must_not_ids": [], "intent": "explain"}
+{"id": "p07", "query": "does the rerank model run on the inject hot path?", "expect_ids": ["c07"], "must_not_ids": ["c06"], "intent": "explain"}
+{"id": "p08", "query": "should I use a long-lived branch for a risky change or something else?", "expect_ids": ["c08"], "must_not_ids": [], "intent": "plan"}
+{"id": "p09", "query": "what blocks a promotion to prod in the canary stage?", "expect_ids": ["c09"], "must_not_ids": [], "intent": "explain"}
+{"id": "p10", "query": "does a backdated timestamp change recall recency order?", "expect_ids": ["c10"], "must_not_ids": [], "intent": "explain"}
+{"id": "p11", "query": "migration added a table but fresh installs are missing it", "expect_ids": ["c11"], "must_not_ids": [], "intent": "debug"}
+{"id": "p12", "query": "a memory I just wrote is not showing up in dense recall", "expect_ids": ["c12"], "must_not_ids": ["c05"], "intent": "debug"}
+{"id": "p13", "query": "my test fixtures keep collapsing into one memory during dedup", "expect_ids": ["c13"], "must_not_ids": [], "intent": "debug"}
+{"id": "p14", "query": "should this new field be a boolean or a category column?", "expect_ids": ["c14"], "must_not_ids": [], "intent": "plan"}
+{"id": "p15", "query": "how do I rotate the GPG signing keys used for release artifacts?", "expect_ids": [], "must_not_ids": ["c09", "c11", "c08"], "intent": "explain"}
+{"id": "p16", "query": "what is the retry backoff policy for the outbound webhook sender?", "expect_ids": [], "must_not_ids": ["c03", "c10"], "intent": "explain"}
