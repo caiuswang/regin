@@ -47,6 +47,25 @@ class ClaudeProvider(AgentProvider):
     def project_skills_subpath(self) -> tuple[str, ...]:
         return (".claude", "skills")
 
+    def client_version(self) -> str | None:
+        from lib.trace.claude_version import current_claude_version
+        return current_claude_version()
+
+    def reconcile_subagents(self, session_id: str) -> None:
+        """Attribute Task-tool subagent API spend onto the session bill.
+
+        Claude writes each subagent's conversation to a sibling
+        ``subagents/agent-*.jsonl`` (not as parent-transcript sidechains), so
+        its token spend is otherwise invisible to ``turn_usage``. Stamp each
+        subagent's total onto its ``subagent.stop`` marker so the rollup's
+        ``subagent_*`` line reflects it. Best-effort: never let a reconcile
+        failure break the SubagentStop hook."""
+        try:
+            from lib.trace.claude_subagents import reconcile_claude_subagents
+            reconcile_claude_subagents(session_id)
+        except Exception:
+            pass
+
     def permission_request_events(self) -> tuple[str, ...]:
         return ("PermissionRequest",)
 
@@ -130,15 +149,8 @@ class ClaudeProvider(AgentProvider):
 
 
 def _summarize_tool_input(tool_input: dict) -> dict:
-    summary: dict = {}
-    for key in ("command", "description", "file_path", "path", "pattern", "url"):
-        value = tool_input.get(key)
-        if isinstance(value, str) and value:
-            summary[key] = value[:500]
-    for key in ("replace_all",):
-        if key in tool_input:
-            summary[key] = tool_input[key]
-    return summary
+    from lib.trace.tool_input_summary import summarize_tool_input
+    return summarize_tool_input(tool_input, include_replace_all=True)
 
 
 def _requested_permission(tool_name: str | None, tool_input: dict) -> str:

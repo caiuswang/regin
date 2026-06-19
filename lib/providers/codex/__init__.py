@@ -26,6 +26,9 @@ class CodexProvider(AgentProvider):
         sessions=True,
         transcript_usage=True,
     )
+    # Codex does not emit SessionEnd in real runs, so its per-turn Stop is
+    # mapped to a synthetic session-end marker (see session_lifecycle).
+    synthesizes_session_end_from_stop = True
 
     def __init__(self, overrides: dict | None = None):
         self._overrides = overrides or {}
@@ -147,12 +150,11 @@ def _looks_like_permission_request(raw: dict) -> bool:
 
 
 def _summarize_tool_input(tool_input: dict) -> dict:
-    summary: dict = {}
-    for key in ("command", "description", "file_path", "path", "url"):
-        value = tool_input.get(key)
-        if isinstance(value, str) and value:
-            summary[key] = value[:500]
-    return summary
+    # Codex never carries a `pattern` arg, so drop it from the default key set.
+    from lib.trace.tool_input_summary import summarize_tool_input
+    return summarize_tool_input(
+        tool_input, keys=("command", "description", "file_path", "path", "url"),
+    )
 
 
 def _requested_permission(tool_name: str | None, tool_input: dict, raw: dict) -> str:

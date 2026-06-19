@@ -2,31 +2,57 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 
 from lib.providers.base import AgentProvider
 from lib.providers.claude import ClaudeProvider
 from lib.providers.codex import CodexProvider
 from lib.providers.generic import GenericProvider
+from lib.providers.kimi import KimiProvider
 from lib import settings as settings_mod
+
+
+# Re-export provider config classes so callers can reference them without
+# importing from lib.settings directly.
+from lib.settings import ProviderConfig, ProviderPathOverrides
 
 
 _PROVIDER_BUILDERS = {
     "claude": ClaudeProvider,
     "codex": CodexProvider,
     "generic": GenericProvider,
+    "kimi": KimiProvider,
 }
 
 
-def _provider_overrides(provider_id: str) -> dict:
+def _provider_config(provider_id: str) -> ProviderConfig | None:
+    """Return the persisted ProviderConfig for a provider, if any."""
     entry = settings_mod.settings.providers.get(provider_id)
     if entry is None:
-        return {}
-    if hasattr(entry, "model_dump"):
-        return {k: v for k, v in entry.model_dump().items() if v is not None}
+        return None
+    if isinstance(entry, ProviderConfig):
+        return entry
     if isinstance(entry, dict):
-        return {k: v for k, v in entry.items() if v is not None}
-    return {}
+        return ProviderConfig(**entry)
+    return None
+
+
+def _provider_overrides(provider_id: str) -> dict:
+    """Path overrides only (kept for provider constructor compatibility).
+
+    Selects exactly the path-override fields rather than stripping known
+    behavioral keys, so a new non-path field on ProviderConfig can't leak
+    into a provider constructor.
+    """
+    cfg = _provider_config(provider_id)
+    if cfg is None:
+        return {}
+    return {
+        field: value
+        for field in ProviderPathOverrides.model_fields
+        if (value := getattr(cfg, field)) is not None
+    }
 
 
 def list_provider_ids() -> list[str]:
@@ -71,29 +97,155 @@ def get_active_provider() -> AgentProvider:
     return build_provider(active_provider_id())
 
 
+def provider_handler_config(provider_id: str) -> dict:
+    """Return the handler overrides configured for a provider.
+
+    Shape matches hook_manager/config.py expectations:
+      { "disabled_handlers": [...], "priority_overrides": {...} }
+    """
+    cfg = _provider_config(provider_id)
+    if cfg is None:
+        return {"disabled_handlers": [], "priority_overrides": {}}
+    return {
+        "disabled_handlers": list(cfg.disabled_handlers or []),
+        "priority_overrides": dict(cfg.priority_overrides or {}),
+    }
+
+
+def enabled_provider_ids() -> list[str]:
+    """All provider IDs that should participate in multi-provider ops.
+
+    Always includes the active provider. Other providers are included when
+    their settings entry has ``enabled: true``.
+    """
+    active = active_provider_id()
+    enabled = {active}
+    for pid, cfg in settings_mod.settings.providers.items():
+        if not is_provider_id(pid):
+            continue
+        if isinstance(cfg, dict):
+            if cfg.get("enabled"):
+                enabled.add(pid)
+        elif getattr(cfg, "enabled", False):
+            enabled.add(pid)
+    # Preserve stable registry order.
+    return [pid for pid in list_provider_ids() if pid in enabled]
+
+
+def get_enabled_providers() -> list[AgentProvider]:
+    """Build all enabled providers."""
+    return [build_provider(pid) for pid in enabled_provider_ids()]
+
+
+def _provider_id_from_tag(payload: dict | None) -> str | None:
+    """Provider id from an explicit agent_type/provider_id tag, if registered."""
+    raw = (payload or {}).get("agent_type") or (payload or {}).get("provider_id")
+    if isinstance(raw, str) and raw.strip():
+        pid = raw.strip().lower()
+        if pid in _PROVIDER_BUILDERS:
+            return pid
+    return None
+
+
+def provider_id_from_model(model: object) -> str | None:
+    """Best-effort provider id from a model identifier (fallback only).
+
+    The single source of truth for model→provider inference: the
+    SessionStart agent-type fallback and the payload resolver both route
+    here so the per-vendor prefix table lives in one place instead of being
+    copied (and drifting) across handlers.
+    """
+    if not isinstance(model, str):
+        return None
+    m = model.strip().lower()
+    if m.startswith("claude-"):
+        return "claude"
+    if "kimi" in m:
+        return "kimi"
+    if (
+        m.startswith("gpt-")
+        or m.startswith("o1")
+        or m.startswith("o3")
+        or m.startswith("o4")
+        or m.startswith("o5")
+    ):
+        return "codex"
+    return None
+
+
+def canonical_agent_kind(agent_type: object) -> str | None:
+    """Map a stored `sessions.agent_type` string to a canonical provider id
+    for UI grouping ('claude' | 'codex' | 'kimi' | 'generic' | None).
+
+    `agent_type` is free-form vendor text persisted at SessionStart (it can
+    read 'claude', 'openai', 'kimi', 'workflow-subagent', …). Centralized
+    here so UI surfaces don't re-implement the vendor→kind mapping with their
+    own substring chains. Returns None for an empty/unknown-empty value and
+    'generic' for any non-empty value that matches no known vendor."""
+    raw = str(agent_type or "").strip().lower()
+    if not raw:
+        return None
+    # Reuse the model→provider vendor table (claude-/gpt-/o-series/kimi) so the
+    # prefix knowledge isn't copied here and can't drift from it.
+    by_model = provider_id_from_model(raw)
+    if by_model:
+        return by_model
+    # Bare agent_type aliases the model sniffer doesn't carry: 'claude'/'codex'
+    # have no model-prefix, 'openai' is Codex's vendor word.
+    if "claude" in raw:
+        return "claude"
+    if "codex" in raw or "openai" in raw:
+        return "codex"
+    return "generic"
+
+
 def resolve_provider(payload: dict | None = None) -> AgentProvider:
     """Return the provider implied by the payload, or the global active provider.
 
     Resolution order:
     1. payload['agent_type'] or payload['provider_id'] (validated against registry)
-    2. payload['model'] starting with 'claude-' → claude
+    2. payload['model'] sniff ('claude-*' → claude, contains 'kimi' → kimi)
     3. settings.active_provider
     4. 'generic' on any failure
     """
     try:
-        raw = (payload or {}).get("agent_type") or (payload or {}).get("provider_id")
-        if isinstance(raw, str) and raw.strip():
-            pid = raw.strip().lower()
-            if pid in _PROVIDER_BUILDERS:
-                return build_provider(pid)
-
-        model = (payload or {}).get("model")
-        if isinstance(model, str) and model.startswith("claude-"):
-            return build_provider("claude")
-
-        return build_provider(active_provider_id())
+        pid = _provider_id_from_tag(payload) or provider_id_from_model((payload or {}).get("model"))
+        return build_provider(pid or active_provider_id())
     except Exception:
         return build_provider("generic")
+
+
+def _collapse_home(abs_path: str) -> str:
+    """Collapse a leading $HOME to ``~`` for display paths."""
+    home = os.path.expanduser('~')
+    if abs_path == home or abs_path.startswith(home + os.sep):
+        return '~' + abs_path[len(home):]
+    return abs_path
+
+
+def provider_skill_paths(provider: AgentProvider) -> dict:
+    """Human-friendly skill-path metadata for one provider.
+
+    Used by web blueprints so the Vue UI can render provider-specific
+    deployment labels (e.g. `~/.kimi-code/skills` for Kimi) instead of
+    hard-coding Claude paths.
+    """
+    return {
+        'id': provider.provider_id,
+        'name': provider.display_name,
+        'global_dir': _collapse_home(str(provider.global_skills_dir())),
+        'project_subpath': '/'.join(provider.project_skills_subpath()),
+    }
+
+
+def active_provider_skill_paths() -> dict:
+    """Skill-path metadata for the active provider."""
+    return provider_skill_paths(get_active_provider())
+
+
+def enabled_provider_skill_paths() -> list[dict]:
+    """Skill-path metadata for every enabled provider."""
+    return [provider_skill_paths(p) for p in get_enabled_providers()]
 
 
 def provider_capability_rows(*, include_experimental: bool | None = None) -> list[dict]:
