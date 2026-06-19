@@ -22,7 +22,7 @@ from typing import Optional
 from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
-from lib.agent_messages import webhook
+from lib.agent_messages.push import registry as push
 from lib.orm import SessionLocal
 from lib.orm.models.agent_messages import (
     AgentMessage, DEFAULT_MESSAGE_TYPE, MESSAGE_TYPES,
@@ -155,7 +155,7 @@ def record_message(*, trace_id: str, body: str, msg_type: Optional[str] = None,
     log.write("message_recorded", message_id=data["id"], trace_id=trace_id,
               msg_type=mtype, superseded=data["version"] > 1)
     if dispatch_webhook:
-        status = webhook.maybe_dispatch(data)
+        status = push.maybe_dispatch(data)
         if status is not None:
             _set_webhook_status(data["id"], status)
             data["webhook_status"] = status

@@ -5,8 +5,9 @@ tool. An agent calls the tool mid-task; the PostToolUse hook records a
 typed, supersedable message here; the web UI renders a per-session feed
 plus a cross-session inbox with an unread badge.
 
-  * `store`   — CRUD (record / list / inbox / read / ack / dismiss).
-  * `webhook` — opt-in outbound POST for high-severity messages.
+  * `store` — CRUD (record / list / inbox / read / ack / dismiss).
+  * `push`  — pluggable outbound channels (webhook, Telegram, …) that a
+    high-severity message fans out to; see `push/registry.py`.
 
 Submodules are imported directly (`from lib.agent_messages import store`)
 to keep this package import side-effect free.
@@ -14,4 +15,4 @@ to keep this package import side-effect free.
 
 from __future__ import annotations
 
-__all__ = ["store", "webhook"]
+__all__ = ["store", "push"]

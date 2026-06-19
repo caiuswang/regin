@@ -38,14 +38,37 @@ def handle_request(payload: HookPayload) -> HookResponse | None:
 def handle_denied(payload: HookPayload) -> HookResponse | None:
     try:
         _emit_span(payload, 'permission.denied', status='ERROR')
+        # The prompt is resolved — clear any pending push card for it.
+        _maybe_resolve_push(payload)
     except Exception:
         pass
     return HookResponse(suppress_output=True)
 
 
+def _maybe_notify_push(payload: HookPayload, attrs: dict) -> None:
+    """Opt-in: surface a pending permission prompt to the inbox + push
+    channels. Isolated so a notify failure can't disturb the trace span."""
+    try:
+        from lib.agent_messages import event_notify  # type: ignore
+        event_notify.notify_permission_request(
+            trace_id=payload.session_id, attrs=attrs)
+    except Exception:
+        pass
+
+
+def _maybe_resolve_push(payload: HookPayload) -> None:
+    try:
+        from lib.agent_messages import event_notify  # type: ignore
+        event_notify.resolve_permission(payload.session_id)
+    except Exception:
+        pass
+
+
 def _emit_span(payload: HookPayload, name: str, status: str = 'OK') -> None:
     from lib.hook_plugin import post_span  # type: ignore
     attrs = _build_perm_attrs(payload)
+    if name == 'permission.request':
+        _maybe_notify_push(payload, attrs)
     tu_id = attrs.get('tool_use_id')
     # A pending `permission.request` gets a deterministic id keyed on the
     # gated call's tool_use_id so `ingest_session_spans` can retire it when

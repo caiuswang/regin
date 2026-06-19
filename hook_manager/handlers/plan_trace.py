@@ -115,6 +115,8 @@ def handle(payload: HookPayload) -> HookResponse | None:
                 _emit_plan_op_span(payload, written_name, op='write',
                                    tool_name='ExitPlanMode')
                 _post_plan_session_enter(payload, written_name)
+            # Opt-in: a plan ready for review is a 'waiting on you' moment.
+            _maybe_notify_plan(payload, plan_text)
         except Exception:
             pass
         return HookResponse(suppress_output=True)
@@ -137,6 +139,17 @@ def handle(payload: HookPayload) -> HookResponse | None:
         return None
 
     return None
+
+
+def _maybe_notify_plan(payload: HookPayload, plan_text: str | None) -> None:
+    """Opt-in: surface a plan ready for review to the inbox + push channels.
+    Isolated so a notify failure can't disturb plan tracing."""
+    try:
+        from lib.agent_messages import event_notify  # type: ignore
+        event_notify.notify_plan_ready(
+            trace_id=payload.session_id, plan_text=plan_text)
+    except Exception:
+        pass
 
 
 def _emit_exit_span(payload: HookPayload, plan_name: str | None = None) -> None:

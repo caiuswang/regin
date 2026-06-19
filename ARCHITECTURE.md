@@ -437,15 +437,17 @@ session→plan mapping in `plan_sessions` the same way.
 |-------|------|
 | `lib/orm/models/agent_messages.py` | `AgentMessage` model + `MESSAGE_TYPES` severity ordering (`progress < note < lesson < result < summary < warning < blocker`) |
 | `lib/agent_messages/store.py` | The only writer: insert, **supersede-by-`key`** (a keyed message updates in place — "building… 40%" → "done" stays one card), list, inbox, unread count, read/ack/dismiss |
-| `lib/agent_messages/webhook.py` | Opt-in outbound POST for messages at/above `settings.agent_messages.webhook_min_severity` (off unless `webhook_url` is set) |
+| `lib/agent_messages/push/` | Pluggable outbound **push channels**. A message at/above a channel's `*_min_severity` fans out to every configured channel. `registry.maybe_dispatch` is the single entry point (`store.py` calls it); `webhook.py` (generic JSON POST) and `telegram.py` (Bot API) are the shipped channels; `base.py` is the `PushChannel` contract. Adding a channel = a `PushChannel` subclass + one line in `registry._CHANNEL_CLASSES` + its config fields on `AgentMessagesConfig`. (`lib/agent_messages/webhook.py` is a back-compat shim.) |
 | `web/blueprints/trace/agent_messages.py` | `/api/sessions/<id>/agent-messages` (per-session feed, with legacy span fallback) + `/api/agent-messages/{inbox,unread-count,read,<id>/ack,<id>/dismiss,<id>/pin}` |
 | `frontend/src/views/InboxView.vue` + `components/InboxMessageCard.vue` | Cross-session **Inbox** with a live unread **badge** (`composables/useInboxUnread.js`); the per-session **Messages** tab in `SessionTraceView.vue` renders the same rows |
 
 The store is the **canonical** record — not reconstructed from `session_spans` at read time, so a dropped span can't make a message vanish. Unlike `session_spans` it is *mutable* (read/ack/dismiss timestamps change after insert), so it does not follow the append-only span convention. The `agent_messages` DDL lives in `db/schema.sql`.
 
-**Webhook latency note:** dispatch is synchronous inside the hook, so a configured webhook adds its round-trip (≤ `webhook_timeout_seconds`) to the hook return — but only for messages that clear the severity gate (warning/blocker are rare), and only when a webhook is configured at all.
+**Push latency note:** dispatch is synchronous inside the hook, so each configured channel adds its round-trip (≤ that channel's `*_timeout_seconds`) to the hook return — but only for messages that clear the channel's severity gate (warning/blocker are rare), and only when a channel is configured at all. Channels run sequentially; the aggregate outcome lands in the row's `webhook_status` column (`sent`/`failed`/`skipped`).
 
 A message of type `lesson` is additionally teed into the agent-memory store (next section) — `send_to_user(type=lesson)` is the explicit capture endpoint for cross-session experience.
+
+**Interaction-event pushes (opt-in).** Beyond agent-authored `send_to_user`, regin can surface the moments the agent *halts waiting on you* — a pending **permission** prompt / `AskUserQuestion` (`blocker`), or a **plan** ready for review on `ExitPlanMode` (`warning`). `lib/agent_messages/event_notify.py` routes these through `record_message`, so each lands as an inbox card *and* fans out through the push channels, reusing one path. The hook handlers (`permission_events.py`, `plan_trace.py`) call it best-effort — a notify failure never disturbs the trace span or the prompt itself. Each class is gated by a dedicated toggle (`settings.agent_messages.push_{permission,plan}_events`, off by default) and uses a stable per-session `msg_key`, so the inbox shows one advancing "pending" card while each distinct prompt still pushes once (DB-level de-dup, since hooks run as separate processes). A resolved prompt (deny/answer) dismisses its card via `resolve_permission`.
 
 ## Agent Memory (cross-session experience)
 

@@ -1,0 +1,137 @@
+"""Unit tests for the pluggable push channels (lib.agent_messages.push).
+
+Covers the fan-out registry, per-channel severity gating, status
+aggregation, and each channel's payload shape. The single network seam
+(`base.http_post_json`) is monkeypatched so nothing leaves the process.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from lib.agent_messages.push import base, registry
+from lib.agent_messages.push.telegram import TelegramChannel
+from lib.agent_messages.push.webhook import WebhookChannel
+from lib.settings import settings
+
+
+@pytest.fixture
+def captured(monkeypatch):
+    """Capture every outbound POST instead of sending it; (url, payload)."""
+    calls: list[tuple[str, dict]] = []
+
+    def _fake(url, payload, *, timeout, headers=None):
+        calls.append((url, payload))
+
+    monkeypatch.setattr(base, "http_post_json", _fake)
+    return calls
+
+
+def _cfg(monkeypatch, **kw):
+    for key, val in kw.items():
+        monkeypatch.setattr(settings.agent_messages, key, val)
+
+
+def _msg(msg_type="blocker", **kw):
+    base_msg = {"trace_id": "s1", "msg_type": msg_type, "title": "T",
+                "body": "b", "links": None, "created_at": "now"}
+    base_msg.update(kw)
+    return base_msg
+
+
+def test_no_channels_configured_returns_none(captured):
+    # default settings: no webhook_url, no telegram token
+    assert registry.maybe_dispatch(_msg()) is None
+    assert captured == []
+
+
+def test_webhook_only_sends_json_payload(monkeypatch, captured):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x")
+    assert registry.maybe_dispatch(_msg()) == "sent"
+    assert len(captured) == 1
+    url, payload = captured[0]
+    assert url == "http://hook.test/x"
+    assert payload["event"] == "agent_message"
+    assert payload["type"] == "blocker"
+    assert payload["session_url"].endswith("/trace/sessions/s1")
+
+
+def test_telegram_only_sends_bot_api_text(monkeypatch, captured):
+    _cfg(monkeypatch, telegram_bot_token="BOT:1", telegram_chat_id="42")
+    assert registry.maybe_dispatch(_msg(title="Down", body="db gone")) == "sent"
+    url, payload = captured[0]
+    assert url == "https://api.telegram.org/botBOT:1/sendMessage"
+    assert payload["chat_id"] == "42"
+    assert "[BLOCKER] Down" in payload["text"]
+    assert "db gone" in payload["text"]
+
+
+def test_fans_out_to_every_configured_channel(monkeypatch, captured):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         telegram_bot_token="BOT:1", telegram_chat_id="42")
+    assert registry.maybe_dispatch(_msg()) == "sent"
+    assert len(captured) == 2
+    assert {c.channel_id for c in registry.configured_channels()} == {
+        "webhook", "telegram"}
+
+
+def test_per_channel_severity_gate(monkeypatch, captured):
+    # webhook gates at 'note'; telegram only at 'blocker'.
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         webhook_min_severity="note",
+         telegram_bot_token="BOT:1", telegram_chat_id="42",
+         telegram_min_severity="blocker")
+    assert registry.maybe_dispatch(_msg(msg_type="warning")) == "sent"
+    # only the webhook cleared its gate
+    assert len(captured) == 1
+    assert captured[0][0] == "http://hook.test/x"
+
+
+def test_all_gated_out_returns_skipped(monkeypatch, captured):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         webhook_min_severity="blocker")
+    assert registry.maybe_dispatch(_msg(msg_type="progress")) == "skipped"
+    assert captured == []
+
+
+def test_transport_failure_is_caught_and_aggregated(monkeypatch):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x")
+
+    def _boom(url, payload, *, timeout, headers=None):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(base, "http_post_json", _boom)
+    # never raises; surfaces as a 'failed' status for the row
+    assert registry.maybe_dispatch(_msg()) == "failed"
+
+
+def test_one_failure_one_success_aggregates_sent(monkeypatch):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         telegram_bot_token="BOT:1", telegram_chat_id="42")
+    seen: list[str] = []
+
+    def _half(url, payload, *, timeout, headers=None):
+        if "telegram" in url:
+            raise RuntimeError("tg down")
+        seen.append(url)
+
+    monkeypatch.setattr(base, "http_post_json", _half)
+    # webhook sent, telegram failed → aggregate is 'sent'
+    assert registry.maybe_dispatch(_msg()) == "sent"
+    assert seen == ["http://hook.test/x"]
+
+
+def test_should_dispatch_reflects_gates(monkeypatch):
+    assert registry.should_dispatch("blocker") is False  # nothing configured
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         webhook_min_severity="warning")
+    assert registry.should_dispatch("blocker") is True
+    assert registry.should_dispatch("progress") is False
+
+
+def test_channel_classes_implement_contract():
+    for cls in (WebhookChannel, TelegramChannel):
+        c = cls()
+        assert c.channel_id != "unknown"
+        assert c.display_name
+        assert isinstance(c.is_configured(), bool)

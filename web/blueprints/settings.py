@@ -162,9 +162,34 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
     {"key": "webhook_timeout_seconds", "group": "Webhook", "type": "float",
      "min": 0, "step": 0.5, "label": "Webhook timeout (s)",
      "description": "How long to wait on the webhook POST before giving up."},
-    {"key": "base_url", "group": "Webhook", "type": "string",
+    {"key": "telegram_bot_token", "group": "Telegram", "type": "string",
+     "label": "Bot token",
+     "description": "Token from @BotFather. Empty = Telegram off. Stored "
+                    "machine-local."},
+    {"key": "telegram_chat_id", "group": "Telegram", "type": "string",
+     "label": "Chat id",
+     "description": "Target chat/user id (read it from the bot's getUpdates "
+                    "after messaging it once). Required alongside the token."},
+    {"key": "telegram_min_severity", "group": "Telegram", "type": "choice",
+     "options": ["progress", "note", "lesson", "result", "summary",
+                 "warning", "blocker"],
+     "label": "Minimum severity",
+     "description": "Only messages at or above this severity are sent to "
+                    "Telegram."},
+    {"key": "telegram_timeout_seconds", "group": "Telegram", "type": "float",
+     "min": 0, "step": 0.5, "label": "Telegram timeout (s)",
+     "description": "How long to wait on the Telegram API call before giving up."},
+    {"key": "push_permission_events", "group": "Interaction events", "type": "bool",
+     "label": "Push permission prompts",
+     "description": "Surface a pending permission prompt / AskUserQuestion as a "
+                    "blocker inbox card that also fans out to the channels above."},
+    {"key": "push_plan_events", "group": "Interaction events", "type": "bool",
+     "label": "Push plan-ready",
+     "description": "Surface a plan ready for review (ExitPlanMode) as a warning "
+                    "inbox card that also fans out to the channels above."},
+    {"key": "base_url", "group": "General", "type": "string",
      "label": "Base URL",
-     "description": "Woven into the webhook payload so the notification links "
+     "description": "Woven into every push payload so the notification links "
                     "back to the originating session in the regin UI."},
 ]
 

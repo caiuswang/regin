@@ -603,26 +603,56 @@ class GraderConfig(BaseModel):
     system_prompt_overrides: dict[str, str] = Field(default_factory=dict)
 
 
+_SEVERITY = Literal[
+    "progress", "note", "lesson", "result", "summary", "warning", "blocker"
+]
+
+
 class AgentMessagesConfig(BaseModel):
-    """The `send_to_user` agent → human channel (inbox + webhook push).
+    """The `send_to_user` agent → human channel (inbox + push channels).
 
-    Persistence and the in-app inbox are always on; the webhook is opt-in
-    (`webhook_url` unset → no push). `webhook_min_severity` gates which
-    message types POST out: only messages at or above this severity in
-    `lib.orm.models.agent_messages.MESSAGE_TYPES` fire the webhook, so a
-    background run can reach you (ntfy / Slack / phone) on a `blocker`
-    without spamming you on every `progress` line.
+    Persistence and the in-app inbox are always on; outbound **push
+    channels** are opt-in. Each channel is gated by its own
+    `*_min_severity`: only messages at or above that severity in
+    `lib.orm.models.agent_messages.MESSAGE_TYPES` are delivered, so a
+    background run can reach you on a `blocker` without spamming you on
+    every `progress` line. A message fans out to *every* configured
+    channel whose gate it clears.
 
-    `base_url` is woven into the webhook payload so the notification links
+    Channels live in `lib/agent_messages/push/`; each reads its own flat
+    fields below. Adding one is a new `PushChannel` subclass + a registry
+    entry + its config fields here — no change to the dispatch path.
+
+    `base_url` is woven into each payload so the notification links
     straight back to the originating session in the regin UI.
     """
 
-    webhook_url: str | None = None
-    webhook_min_severity: Literal[
-        "progress", "note", "lesson", "result", "summary", "warning", "blocker"
-    ] = "warning"
-    webhook_timeout_seconds: float = 5.0
     base_url: str = "http://127.0.0.1:8321"
+
+    # ── Generic webhook channel (ntfy / Slack incoming hook / phone) ──
+    webhook_url: str | None = None
+    webhook_min_severity: _SEVERITY = "warning"
+    webhook_timeout_seconds: float = 5.0
+
+    # ── Telegram channel (Bot API sendMessage) ──
+    # Create a bot via @BotFather for the token; `chat_id` is your user or
+    # group id (talk to the bot once, then read it from getUpdates).
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    telegram_min_severity: _SEVERITY = "warning"
+    telegram_timeout_seconds: float = 5.0
+
+    # ── Interaction-event pushes (opt-in) ──
+    # Beyond agent-authored `send_to_user`, surface the moments where the
+    # agent is *blocked waiting on you* as inbox cards that also fan out to
+    # the channels above. Off by default — permission prompts can be frequent.
+    # `push_permission_events`: a pending permission prompt / AskUserQuestion
+    #   (recorded as a `blocker`). `push_plan_events`: a plan ready for review
+    #   on ExitPlanMode (recorded as a `warning`). Each still rides the
+    #   per-channel severity gate, so a channel set to `blocker` gets prompts
+    #   but not plans.
+    push_permission_events: bool = False
+    push_plan_events: bool = False
 
 
 # Project-root-relative paths — fixed by where this file lives.
