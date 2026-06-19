@@ -14,6 +14,7 @@ import SettingsProviders from '../components/SettingsProviders.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
 import { useConfirm } from '../composables/useConfirm'
+import { useTabRoute } from '../composables/useTabRoute'
 
 const { flash } = useFlash()
 const { refresh: refreshFeatures } = useFeatures()
@@ -39,7 +40,8 @@ const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
-const activeSection = ref('config')
+const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'debug']
+const activeSection = useTabRoute({ param: 'section', default: 'config', valid: SECTIONS })
 
 // ── Nested settings blocks (Agent Memory, Agent Messages) ──────
 // Keyed by API name → { fields, form, saving }. One reactive bag + one set
@@ -109,9 +111,8 @@ async function saveTriggerThresholds() {
   }
 }
 
-async function onSelectTriggers() {
+function onSelectTriggers() {
   activeSection.value = 'triggers'
-  if (triggerThresholds.value == null) await loadTriggerSettings()
 }
 
 async function loadBlock(name) {
@@ -122,9 +123,8 @@ async function loadBlock(name) {
   blocks.value = { ...blocks.value, [name]: { fields, form, saving: false } }
 }
 
-async function onSelectBlock(name) {
+function onSelectBlock(name) {
   activeSection.value = name
-  if (!blocks.value[name]) await loadBlock(name)
 }
 
 async function saveBlock(name) {
@@ -333,8 +333,18 @@ async function fetchDebugPayloads() {
   debugPayloadsLoading.value = false
 }
 
+// Lazy-load each section's data the first time it becomes active — driven off
+// the route-backed `activeSection`, so a deep link (e.g. /settings?section=triggers)
+// loads exactly like clicking the sidebar item. selectedProvider is watched too
+// so switching providers re-fetches the debug payloads.
 watch([activeSection, selectedProvider], ([section]) => {
-  if (section === 'debug') fetchDebugPayloads()
+  if (section === 'triggers') {
+    if (triggerThresholds.value == null) loadTriggerSettings()
+  } else if (BLOCK_META[section]) {
+    if (!blocks.value[section]) loadBlock(section)
+  } else if (section === 'debug') {
+    fetchDebugPayloads()
+  }
 }, { immediate: true })
 </script>
 

@@ -4,6 +4,7 @@ import api from '../api'
 import { useConfirm } from '../composables/useConfirm'
 import { useResizablePanel } from '../composables/useResizablePanel'
 import { usePage } from '../composables/usePage'
+import { useTabRoute } from '../composables/useTabRoute'
 import Card from '../components/Card.vue'
 import PageControls from '../components/PageControls.vue'
 import Button from '../components/ui/Button.vue'
@@ -29,7 +30,7 @@ const selectedId = ref(null)
 
 // Three domain-coherent tabs replace the single long scroll: browse/manage,
 // topic clustering + routing, and recall-ranking tuning.
-const activeTab = ref('memories')
+const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'recall'] })
 const TABS = [
   { value: 'memories', label: 'Memories' },
   { value: 'topics', label: 'Topics' },

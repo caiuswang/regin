@@ -17,6 +17,7 @@ import Tabs from '../components/ui/Tabs.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useFeatures } from '../composables/useFeatures'
+import { useTabRoute } from '../composables/useTabRoute'
 
 const { features } = useFeatures()
 
@@ -27,7 +28,7 @@ const { confirm } = useConfirm()
 const data = ref(null)
 const loading = ref(true)
 
-const activeTab = ref('content')
+const activeTab = useTabRoute({ default: 'content', valid: ['overview', 'content', 'rules', 'experiments'] })
 
 // Project deployments
 const deployments = ref([])

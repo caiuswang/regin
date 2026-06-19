@@ -1,14 +1,14 @@
 <script setup>
-import { ref } from 'vue'
 import PromptTemplatesPanel from '../components/PromptTemplatesPanel.vue'
 import GraderPromptsPanel from '../components/GraderPromptsPanel.vue'
 import Tabs from '../components/ui/Tabs.vue'
+import { useTabRoute } from '../composables/useTabRoute'
 
 const TABS = [
   { value: 'templates', label: 'Templates' },
   { value: 'grader', label: 'Grader prompts' },
 ]
-const tab = ref('templates')
+const tab = useTabRoute({ default: 'templates', valid: ['templates', 'grader'] })
 </script>
 
 <template>
