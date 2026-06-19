@@ -55,6 +55,12 @@ defineEmits(['activate'])
       v-else-if="span.attributes?.rejected"
       class="font-sans uppercase tracking-wider text-[10px] bg-red-100 border border-red-200 text-red-800 px-1 rounded shrink-0"
     >Rejected</span>
+    <!-- User interrupted a non-Bash tool mid-run (Bash gets its badge in
+         BashCard). Synth span from turn_trace carries `interrupted`/`is_interrupt`. -->
+    <span
+      v-else-if="span.attributes?.interrupted || span.attributes?.is_interrupt"
+      class="font-sans uppercase tracking-wider text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded shrink-0"
+    >Interrupted</span>
     <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
   </div>
 </template>

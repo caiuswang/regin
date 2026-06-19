@@ -645,6 +645,16 @@ class _TranscriptScan:
     # 99.x% non-denied case never copies large Bash commands or Edit
     # old/new strings onto the call dict.
     tool_use_inputs: dict[str, object] = field(default_factory=dict)
+    # Message ids (== a builder's dedup key) of assistant turns the user
+    # interrupted mid tool-call. Claude Code records that interrupt as a
+    # standalone user *text* entry carrying `interruptedMessageId` — NOT a
+    # `tool_result` — so the interrupted tool_use blocks never get a paired
+    # result (`is_error` stays None) and no PostToolUse fires live. Without
+    # this the cancelled call vanishes from the trace; `finalize` reads this
+    # to flag those calls so the synth path emits a span. The other variant
+    # (interrupt delivered AS a `tool_result` with is_error=True) is left to
+    # its live `tool.failure` span — the is_error gate skips it here.
+    interrupted_message_ids: set[str] = field(default_factory=set)
     # Uuids of every real-prompt user entry (typed prompts + queued
     # commands; NOT tool_results, task-notifications, local-command
     # echoes, image carriers, meta, or sidechain entries). Each turn's
@@ -771,9 +781,20 @@ class _TranscriptScan:
         isMeta-expansion parentage that gates command anchoring (a skill like
         /review emits its expansion as a direct isMeta child of the command
         echo — display commands / workflow-resume nudges do not)."""
+        self._note_tool_interrupt(entry_n)
         self._handle_user_message(entry_n)
         if entry_n.get('is_meta') and eparent:
             self.meta_expansion_parents.add(eparent)
+
+    def _note_tool_interrupt(self, entry_n: dict) -> None:
+        """Record the assistant message id when the user interrupted a tool
+        call. Claude Code writes this as a user entry carrying
+        `interruptedMessageId` (the interrupted assistant `message.id`, which
+        is exactly a builder's dedup key). `finalize` uses it to flag that
+        turn's unresolved tool_calls as interrupted."""
+        imid = _maybe_str(entry_n.get('interrupted_message_id'))
+        if imid:
+            self.interrupted_message_ids.add(imid)
 
     def _handle_user_message(self, entry_n: dict) -> None:
         msg = _normalize_dict_keys(entry_n.get('message'))
@@ -1379,7 +1400,32 @@ class _TranscriptScan:
             )
         return tuple(enriched)
 
+    def _flag_interrupted_tool_calls(self) -> None:
+        """Mark the unresolved tool_calls of each user-interrupted assistant
+        turn so `span_posters._emit_deny_and_error_spans` synthesizes a
+        flagged `tool.<name>` span for them.
+
+        Only calls with no paired tool_result (`is_error` is None) and that
+        aren't server-side are flagged: a call that completed before the
+        interrupt already carries its own resolved span, and the is_error
+        gate also keeps us off the tool_result-delivered interrupt variant
+        (handled live by `tool.failure`). The input is copied onto the call
+        (same path the deny synth uses) so the span can show the command /
+        file that was cancelled."""
+        for mid in self.interrupted_message_ids:
+            builder = self.builders.get(mid)
+            if builder is None:
+                continue
+            for call in builder.tool_calls:
+                if call.get('is_error') is not None or call.get('server_side'):
+                    continue
+                call['interrupted'] = True
+                tu_id = call.get('id')
+                if isinstance(tu_id, str) and tu_id:
+                    self._capture_deny_input(call, tu_id)
+
     def finalize(self, *, max_text_bytes: int | None) -> TranscriptUsage | None:
+        self._flag_interrupted_tool_calls()
         counted = self._counted_builders()
         if not self._has_emit_worthy_rows(counted):
             return None

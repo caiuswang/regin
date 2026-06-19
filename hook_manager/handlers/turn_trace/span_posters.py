@@ -23,6 +23,7 @@ from .deny_detection import (
     _build_tool_use_error_attrs,
     _is_permission_deny,
     _is_tool_use_error,
+    build_interrupt_attrs,
     build_recorded_deny_attrs,
 )
 from .timestamps import _normalise_attachment_ts, _to_naive_datetime
@@ -803,32 +804,62 @@ def _emit_deny_and_error_spans(
     turn,
     server_parent_id: str | None,
 ) -> None:
-    """Synthesize tool.* spans for the two cases where PostToolUse never
-    fires: permission denies and pre-execution tool_use_error envelopes.
-    The transcript IS the ground truth: the tool_use entry holds the
-    input, the paired tool_result entry has is_error=true and a deny
-    sentinel."""
+    """Synthesize tool.* spans for the three cases where PostToolUse never
+    fires: permission denies, pre-execution tool_use_error envelopes, and a
+    user interrupt of an in-flight tool. The transcript IS the ground truth:
+    the tool_use entry holds the input; a deny/error carries a paired
+    tool_result (is_error=true + sentinel); an interrupt is a standalone user
+    *text* entry (`interrupted` flagged onto the call by
+    transcript_usage._flag_interrupted_tool_calls)."""
     from lib.hook_plugin import post_span  # type: ignore
     for tc in turn.tool_calls:
-        if tc.get('server_side') or not tc.get('is_error'):
+        if tc.get('server_side'):
             continue
-        kind = _classify_error_kind(tc.get('result_text'))
-        if kind is None:
+        spec = _synth_span_spec(turn, tc)
+        if spec is None:
             continue
-        tu_id = tc.get('id')
-        tool_name = tc.get('name')
-        if not isinstance(tu_id, str) or not isinstance(tool_name, str):
-            continue
-        attrs, span_id, ts = _build_error_span_args(kind, tool_name, tu_id, turn, tc)
+        span_id, attrs, ts = spec
+        # Normalise to the offset-naive local shape every other poster uses
+        # (_normalise_attachment_ts). A lone tz-aware `…Z` synth span in an
+        # otherwise-naive session crashes the ingest-time re-projection
+        # (`datetime` delta of mixed naive/aware), so the whole batch 500s
+        # and the span is silently lost — exactly why deny/interrupt synths
+        # never persisted. Idempotent on the tool_use_error path, which
+        # already normalised.
+        ts = _normalise_attachment_ts(ts) or ts
         post_span(
             trace_id=trace_id,
             span_id=span_id,
-            name=f'tool.{tool_name}',
+            name=f'tool.{attrs["tool_name"]}',
             parent_id=server_parent_id,
             start_time=ts, end_time=ts, duration_ms=0,
             attributes=attrs,
             status_code='ERROR',
         )
+
+
+def _synth_span_spec(turn, tc: dict) -> tuple[str, dict, str] | None:
+    """Resolve (span_id, attrs, timestamp) for a tool_call that needs a synth
+    span, or None when it doesn't. Covers the user-interrupt case (no
+    tool_result, `interrupted` flagged) and the deny / tool_use_error cases
+    (is_error=true with a recognized sentinel)."""
+    tu_id = tc.get('id')
+    tool_name = tc.get('name')
+    if not isinstance(tu_id, str) or not isinstance(tool_name, str):
+        return None
+    # Interrupt: no paired tool_result, so is_error stays None — handled
+    # before the is_error gate. The is_error-delivered interrupt variant
+    # keeps is_error=True and is left to its live `tool.failure` span.
+    if tc.get('interrupted') and not tc.get('is_error'):
+        attrs = build_interrupt_attrs(tool_name, tu_id, turn.uuid, tc)
+        return f'toolintr-{tu_id[:13]}', attrs, turn.timestamp
+    if not tc.get('is_error'):
+        return None
+    kind = _classify_error_kind(tc.get('result_text'))
+    if kind is None:
+        return None
+    attrs, span_id, ts = _build_error_span_args(kind, tool_name, tu_id, turn, tc)
+    return span_id, attrs, ts
 
 
 def _post_permission_denial_spans(trace_id: str, denials) -> None:
@@ -1108,7 +1139,13 @@ def _process_one_turn(
     max_text_bytes: int,
 ) -> bool:
     """Emit every span/event derived from one turn. Returns True iff
-    this turn's uuid should be cached so subsequent scans skip it."""
+    this turn's uuid should be cached so subsequent scans skip it — only
+    once the turn's text posted AND every tool call reached a terminal
+    state. Caching a turn whose tool is still pending would lock out the
+    later scan that finally sees a deny/error/interrupt status, dropping
+    its synth span (the `seen`-gate skips the whole turn). All posts here
+    are idempotent (deterministic span ids / UPSERTs), so reprocessing an
+    unresolved turn until it resolves is safe."""
     if turn.tool_calls:
         server_parent_id = _resolve_server_parent_id(turn, capture_text)
         _emit_server_tool_spans(
@@ -1116,7 +1153,22 @@ def _process_one_turn(
         )
         _emit_deny_and_error_spans(trace_id, turn, server_parent_id)
         _post_tool_attribution_event(trace_id, turn, server_parent_id)
-    return _maybe_emit_assistant_span(trace_id, turn, idx, fallback_model, capture_text)
+    posted = _maybe_emit_assistant_span(trace_id, turn, idx, fallback_model, capture_text)
+    return posted and _turn_tools_resolved(turn)
+
+
+def _turn_tools_resolved(turn) -> bool:
+    """True when every non-server tool_call has reached a terminal state in
+    the transcript: a paired tool_result (`is_error` set — success, deny, or
+    error) or a user interrupt (`interrupted`). A turn with a still-pending
+    tool stays uncached so a denial / interrupt that lands after the turn's
+    text first posts still drives its synth span on a later scan."""
+    for tc in turn.tool_calls:
+        if tc.get('server_side'):
+            continue
+        if tc.get('is_error') is None and not tc.get('interrupted'):
+            return False
+    return True
 
 
 def _post_live_turn_data(

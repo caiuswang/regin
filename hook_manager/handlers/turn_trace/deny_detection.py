@@ -221,6 +221,46 @@ def build_recorded_deny_attrs(
     return attrs
 
 
+# Bash command-preview cap for the interrupt synth — same as the
+# recorded-deny path; the full command still rides in `tool_input`.
+_INTERRUPT_COMMAND_PREVIEW_MAX = 200
+
+
+def build_interrupt_attrs(
+    tool_name: str,
+    tu_id: str,
+    turn_uuid: str | None,
+    tc: dict,
+) -> dict:
+    """Attrs for a synth span standing in for a tool the user interrupted
+    mid-run (ESC while it was in flight). Claude Code records that interrupt
+    as a standalone user *text* entry, not a `tool_result`, so PostToolUse
+    never fires and the call would otherwise have no span at all.
+
+    Carries both `interrupted` (BashCard's badge key) and `is_interrupt`
+    (the flag `traceFormatters` / InlineToolRow read) so the cancel is
+    visible whatever card renders the tool. For Bash we also set
+    `command_preview` so the row reads `Bash: <cmd>` instead of a bare
+    label."""
+    attrs: dict = {
+        'tool_name': tool_name,
+        'tool_use_id': tu_id,
+        'interrupted': True,
+        'is_interrupt': True,
+    }
+    if turn_uuid:
+        attrs['turn_uuid'] = turn_uuid
+    _apply_tool_input(attrs, tc)
+    if tool_name == 'Bash':
+        cmd = (tc.get('tool_input') or {}).get('command') if isinstance(tc.get('tool_input'), dict) else None
+        if isinstance(cmd, str) and cmd:
+            attrs['command_preview'] = (
+                cmd[:_INTERRUPT_COMMAND_PREVIEW_MAX]
+                + ('…' if len(cmd) > _INTERRUPT_COMMAND_PREVIEW_MAX else '')
+            )
+    return attrs
+
+
 def _build_deny_attrs(
     tool_name: str,
     tu_id: str,
