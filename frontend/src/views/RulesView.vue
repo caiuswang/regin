@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Select from '../components/ui/Select.vue'
+import Tabs from '../components/ui/Tabs.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +32,21 @@ function setTab(tab) {
   if (tab === 'gritql') delete q.tab
   router.push({ query: q })
 }
+
+const TAB_OPTIONS = computed(() => [
+  { value: 'gritql', label: `Rules ${data.value ? data.value.total : '…'}` },
+  { value: 'scripts', label: `Scripts ${scriptsData.value ? scriptsData.value.total_scripts : '…'}` },
+])
+
+const tabModel = computed({
+  get: () => activeTab.value,
+  set: (v) => setTab(v),
+})
+
+const repoOptions = computed(() => [
+  { value: '', label: 'All repos' },
+  ...repos.value.map((r) => ({ value: r.name, label: r.name })),
+])
 
 async function loadGritql() {
   const by = route.query.by || 'guide'
@@ -104,20 +121,7 @@ function fmtSize(bytes) {
       </div>
     </header>
 
-    <div class="segmented mb-5">
-      <button type="button"
-        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'is-active': activeTab === 'gritql' }"
-        @click="setTab('gritql')">
-        Rules <span class="seg-count">{{ data ? data.total : '…' }}</span>
-      </button>
-      <button type="button"
-        class="segmented-item focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'is-active': activeTab === 'scripts' }"
-        @click="setTab('scripts')">
-        Scripts <span class="seg-count">{{ scriptsData ? scriptsData.total_scripts : '…' }}</span>
-      </button>
-    </div>
+    <Tabs v-model="tabModel" :tabs="TAB_OPTIONS" variant="segmented" class="mb-5" />
 
     <!-- GritQL tab -->
     <div v-if="activeTab === 'gritql'">
@@ -148,15 +152,13 @@ function fmtSize(bytes) {
             :class="{ active: data.group_by === 'layer' }"
             @click="setGroup('layer')">Layer</button>
           <span class="filter-row-label ml-4">Repo:</span>
-          <select
-            :value="repoFilter"
-            @change="setRepo($event.target.value)"
-            class="input filter-select focus-visible:outline-2 focus-visible:outline-blue-500"
+          <Select
+            :model-value="repoFilter"
+            :options="repoOptions"
+            class="input filter-select"
             aria-label="Filter rules by repo"
-          >
-            <option value="">All repos</option>
-            <option v-for="r in repos" :key="r.id" :value="r.name">{{ r.name }}</option>
-          </select>
+            @update:model-value="setRepo($event)"
+          />
         </div>
 
         <div v-for="[groupKey, groupRules] in data.grouped" :key="groupKey" class="mb-5">
@@ -274,14 +276,6 @@ function fmtSize(bytes) {
 </template>
 
 <style scoped>
-.seg-count {
-    font-size: 0.6875rem;
-    color: inherit;
-    opacity: 0.7;
-    margin-left: 0.25rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
 .filter-row {
     display: flex;
     align-items: center;
@@ -291,7 +285,7 @@ function fmtSize(bytes) {
 
 .filter-row-label {
     font-size: 0.75rem;
-    color: #64748B;
+    color: var(--color-slate-500);
     margin-right: 0.25rem;
 }
 

@@ -10,7 +10,10 @@
       "focus_visible_styling_coverage",
       "avoid_native_alert_dialogs",
       "avoid_native_confirm_dialogs",
-      "select_input_in_flex_wrap_row"
+      "select_input_in_flex_wrap_row",
+      "prefer_button_primitive",
+      "prefer_select_primitive",
+      "prefer_checkbox_radio_primitive"
     ],
     "runner": "bin/frontend-ux-runner.mjs",
     "checkers_dir": "checkers"

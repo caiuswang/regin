@@ -5,6 +5,10 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
+import Button from '../components/ui/Button.vue'
+import Select from '../components/ui/Select.vue'
+import Input from '../components/ui/Input.vue'
+import Textarea from '../components/ui/Textarea.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -25,6 +29,8 @@ const editGuide = ref('')
 const editingSource = ref(false)
 const editSourceCode = ref('')
 const savingSource = ref(false)
+
+const SEVERITY_OPTIONS = ['error', 'warn', 'warning', 'info']
 
 function engineLabel() {
   return data.value?.engine?.kind || data.value?.rule?.engine_kind || data.value?.rule?.engine || 'rule'
@@ -112,14 +118,11 @@ async function deleteRule() {
       <div class="card-header-row">
         <h2 class="card-header">Metadata</h2>
         <div v-if="!editingMeta && canEditMeta()">
-          <button type="button" @click="startEditingMeta"
-            class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500">Edit</button>
+          <Button variant="secondary" @click="startEditingMeta">Edit</Button>
         </div>
         <div v-else-if="editingMeta" class="flex gap-2">
-          <button type="button" @click="saveMeta"
-            class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500">Save</button>
-          <button type="button" @click="editingMeta = false"
-            class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500">Cancel</button>
+          <Button variant="primary" @click="saveMeta">Save</Button>
+          <Button variant="secondary" @click="editingMeta = false">Cancel</Button>
         </div>
       </div>
 
@@ -158,33 +161,24 @@ async function deleteRule() {
       <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
         <div>
           <label class="field-label">Summary</label>
-          <input type="text" v-model="editSummary" aria-label="Summary"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input type="text" v-model="editSummary" aria-label="Summary" />
         </div>
         <div>
           <label class="field-label">Severity</label>
-          <select v-model="editSeverity" aria-label="Severity"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
-            <option value="error">error</option>
-            <option value="warn">warn</option>
-            <option value="warning">warning</option>
-            <option value="info">info</option>
-          </select>
+          <Select v-model="editSeverity" :options="SEVERITY_OPTIONS" block aria-label="Severity"
+            class="input" />
         </div>
         <div>
           <label class="field-label">Layer</label>
-          <input type="text" v-model="editLayer" aria-label="Layer"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input type="text" v-model="editLayer" aria-label="Layer" />
         </div>
         <div>
           <label class="field-label">Guide (procedure ID)</label>
-          <input type="text" v-model="editGuide" aria-label="Guide procedure ID"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input type="text" v-model="editGuide" aria-label="Guide procedure ID" />
         </div>
         <div class="col-span-2">
           <label class="field-label">Triggers (comma-separated)</label>
-          <input type="text" v-model="editTriggers" aria-label="Triggers (comma-separated)"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Input type="text" v-model="editTriggers" aria-label="Triggers (comma-separated)" />
         </div>
       </div>
     </Card>
@@ -193,22 +187,18 @@ async function deleteRule() {
       <div class="card-header-row">
         <h2 class="card-header">{{ data.ui?.source_label || 'Rule source' }}</h2>
         <div v-if="!editingSource && canEditSource()">
-          <button type="button" @click="startEditingSource"
-            class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500">Edit</button>
+          <Button variant="secondary" @click="startEditingSource">Edit</Button>
         </div>
         <div v-else-if="editingSource" class="flex gap-2">
-          <button type="button" @click="saveSource" :disabled="savingSource"
-            class="btn btn-primary focus-visible:outline-2 focus-visible:outline-blue-500">
+          <Button variant="primary" :disabled="savingSource" @click="saveSource">
             {{ savingSource ? 'Saving…' : 'Save' }}
-          </button>
-          <button type="button" @click="editingSource = false"
-            class="btn btn-secondary focus-visible:outline-2 focus-visible:outline-blue-500">Cancel</button>
+          </Button>
+          <Button variant="secondary" @click="editingSource = false">Cancel</Button>
         </div>
       </div>
       <div v-if="editingSource">
-        <textarea v-model="editSourceCode" rows="20" aria-label="Rule source code"
-          class="input font-mono code-textarea focus-visible:outline-2 focus-visible:outline-blue-500"
-          spellcheck="false"></textarea>
+        <Textarea v-model="editSourceCode" :rows="20" aria-label="Rule source code"
+          class="font-mono code-textarea" spellcheck="false" />
         <p class="text-xs text-slate-400 mt-1">{{ data.ui?.source_help }}</p>
       </div>
       <pre v-else class="code-block"><code>{{ data.source_snippet }}</code></pre>
@@ -229,17 +219,16 @@ async function deleteRule() {
     <Card v-if="canDeleteRule()">
       <h2 class="card-header">Danger zone</h2>
       <p class="text-xs text-slate-500 mb-3">Permanently remove this rule from its source file.</p>
-      <button type="button" @click="deleteRule"
-        class="btn btn-danger focus-visible:outline-2 focus-visible:outline-blue-500">
+      <Button variant="danger" @click="deleteRule">
         Delete rule
-      </button>
+      </Button>
     </Card>
   </div>
 </template>
 
 <style scoped>
 .code-textarea {
-    background: #F8FAFC;
+    background: var(--color-slate-50);
     font-size: 0.8125rem;
     line-height: 1.5;
     min-height: 24rem;

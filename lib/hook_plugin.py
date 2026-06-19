@@ -232,6 +232,7 @@ _ENDPOINT_PATHS = {
     'rule_triggers': '/api/rule-triggers',
     'turn_usage': '/api/turn-usage',
     'tool_attribution': '/api/turn-usage/tool-attribution',
+    'kimi_subagents': '/api/kimi-subagents',
     'prompt_images': '/api/prompt-images',
 }
 

@@ -163,25 +163,55 @@ def _to_snake(name: str) -> str:
     return s2.replace('-', '_').lower()
 
 
+def _snake_alias(container: dict) -> dict:
+    """Return a copy of `container` with snake_case aliases for str keys."""
+    out = dict(container)
+    for key, value in list(container.items()):
+        if isinstance(key, str):
+            out.setdefault(_to_snake(key), value)
+    return out
+
+
+def _apply_tool_field_aliases(out: dict) -> None:
+    """Coalesce known tool-field synonyms onto regin's canonical names, in place.
+
+    Some agents name the post-tool result `tool_output` and the tool-call id
+    `tool_call_id` (Kimi), where the rest of regin reads `tool_response` and
+    `tool_use_id`. Fill the canonical names only when absent so payloads that
+    already use them (Claude/Codex) are untouched. A non-dict `tool_output`
+    (sometimes a bare string) is wrapped so downstream handlers can keep doing
+    `.get(...)`.
+
+    Once the canonical name is populated the provider-native alias is dropped:
+    the normalized payload is meant to be a single canonical shape, and keeping
+    the redundant original around makes it (and the size-capped JSONL mirror)
+    drift against the per-tool schemas as a spurious `unknown_field`. The raw
+    pre-normalization stdin is still recoverable elsewhere if ever needed.
+    """
+    if 'tool_response' not in out and out.get('tool_output') is not None:
+        tool_output = out.get('tool_output')
+        out['tool_response'] = tool_output if isinstance(tool_output, dict) else {'output': tool_output}
+    if 'tool_use_id' not in out and out.get('tool_call_id') is not None:
+        out['tool_use_id'] = out.get('tool_call_id')
+    # The canonical names now carry the value (above or already present); drop
+    # the provider-native aliases so the normalized payload stays canonical.
+    out.pop('tool_output', None)
+    out.pop('tool_call_id', None)
+
+
 def _normalize_payload(data: dict) -> dict:
     """Normalize provider payload keys to the snake_case hook schema.
 
     Codex hooks payloads are commonly camelCase (`sessionId`,
-    `toolInput`, `transcriptPath`, ...). Existing handlers expect the
-    Claude-style snake_case names. We preserve original keys while
-    adding canonical snake_case aliases so both formats work.
+    `toolInput`, `transcriptPath`, ...) and Kimi uses a couple of differently
+    named tool fields. Existing handlers expect the Claude-style snake_case
+    names. We preserve original keys while adding canonical aliases so every
+    provider's format works.
     """
     if not isinstance(data, dict):
         return {}
 
-    out = dict(data)
-
-    # Add snake_case aliases for all top-level keys.
-    for key, value in list(data.items()):
-        if not isinstance(key, str):
-            continue
-        snake = _to_snake(key)
-        out.setdefault(snake, value)
+    out = _snake_alias(data)
 
     # Canonical event key used by runner + tests.
     if 'hook_event_name' not in out:
@@ -191,17 +221,13 @@ def _normalize_payload(data: dict) -> dict:
             or out.get('event')
         )
 
+    _apply_tool_field_aliases(out)
+
     # Deep-normalize tool_input/tool_response keys used by handlers.
     for field_name in ('tool_input', 'tool_response'):
         container = out.get(field_name)
-        if not isinstance(container, dict):
-            continue
-        normalized = dict(container)
-        for key, value in list(container.items()):
-            if not isinstance(key, str):
-                continue
-            normalized.setdefault(_to_snake(key), value)
-        out[field_name] = normalized
+        if isinstance(container, dict):
+            out[field_name] = _snake_alias(container)
 
     return out
 

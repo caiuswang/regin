@@ -29,7 +29,19 @@ def handle(payload: HookPayload) -> HookResponse | None:
     if payload.is_workflow_subagent:
         return HookResponse(suppress_output=True)
     tool = payload.tool_name or 'unknown'
-    err = (payload.raw.get('error') or '').strip()
+    raw_error = payload.raw.get('error')
+    # A user permission rejection (Kimi funnels these through the failure
+    # event) is not a tool error: the denial is already captured as the
+    # provider's transcript deny span (`tooldeny-*`), so emitting a
+    # `tool.failure` here would double-render the one rejected call. Stay
+    # silent — and don't re-inject a "tool-failure" context the agent already
+    # knows about. Provider-decided so the rejection shape stays in the adapter.
+    if payload.resolved_provider.tool_failure_is_user_rejection(raw_error):
+        return HookResponse(suppress_output=True)
+    # The `error` field shape is provider-specific (Claude: a bare string;
+    # Kimi: a `{code, message, retryable}` object). Let the resolved provider
+    # normalize it to display text so this handler stays provider-neutral.
+    err = payload.resolved_provider.tool_failure_error_text(raw_error)
     stored_err = err[:_ERROR_MAX]
     err_dropped = max(0, len(err) - len(stored_err))
     context_err = err[:_CONTEXT_PREVIEW_MAX] + ('…' if len(err) > _CONTEXT_PREVIEW_MAX else '')

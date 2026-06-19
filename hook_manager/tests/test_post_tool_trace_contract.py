@@ -335,6 +335,33 @@ def test_mcp_span_name_uses_full_tool_name(captured):
     assert captured[0][1] == 'tool.mcp__server__do_thing'
 
 
+# ── WebSearch / WebFetch ─────────────────────────────────────────
+
+def test_websearch_captures_query(captured):
+    ptt.handle(_make_payload('WebSearch', {'query': 'opus pricing'}))
+    attrs = captured[0][2]
+    assert attrs['query'] == 'opus pricing'
+    assert captured[0][1] == 'tool.WebSearch'
+
+
+def test_webfetch_captures_url_and_prompt(captured):
+    ptt.handle(_make_payload(
+        'WebFetch',
+        {'url': 'https://example.com/doc', 'prompt': 'extract the pricing table'}))
+    attrs = captured[0][2]
+    assert attrs['url'] == 'https://example.com/doc'
+    assert attrs['fetch_prompt'] == 'extract the pricing table'
+
+
+def test_webfetch_long_prompt_truncated(captured):
+    long_prompt = 'p' * (ptt._PREVIEW_MAX + 40)
+    ptt.handle(_make_payload(
+        'WebFetch', {'url': 'https://x', 'prompt': long_prompt}))
+    attrs = captured[0][2]
+    assert len(attrs['fetch_prompt']) == ptt._PREVIEW_MAX
+    assert attrs['fetch_prompt_truncated_bytes'] == 40
+
+
 # ── No tool_name → no-op ─────────────────────────────────────────
 
 def test_no_tool_name_does_not_emit(captured):

@@ -175,7 +175,7 @@ def _install_stubs(monkeypatch, outcomes, tmp_path):
     """Install urlopen stub + point the error log at tmp_path, and make
     time.sleep a no-op so the test suite doesn't wait real wall-clock."""
     stub = _UrlopenStub(outcomes)
-    monkeypatch.setattr(hook_plugin.urllib.request, 'urlopen', stub)
+    monkeypatch.setattr(hook_plugin._NO_PROXY_OPENER, 'open', stub)
     monkeypatch.setattr(hook_plugin.time, 'sleep', lambda _s: None)
     monkeypatch.setattr(hook_plugin, '_INGEST_ERROR_LOG',
                         str(tmp_path / 'ingest-errors.jsonl'))
@@ -719,7 +719,7 @@ def test_post_once_success(monkeypatch):
     """Happy path: urlopen returns cleanly → (True, None). No retry
     logic exercised at this level, but the wrapper's (ok, exc) contract
     is what post_event's retry loop keys off."""
-    monkeypatch.setattr(hook_plugin.urllib.request, 'urlopen',
+    monkeypatch.setattr(hook_plugin._NO_PROXY_OPENER, 'open',
                         lambda req, timeout: _ok_response())
     ok, exc = hook_plugin._post_once('http://x', b'{}', 1.0)
     assert ok is True and exc is None
@@ -729,7 +729,7 @@ def test_post_once_catches_urlerror(monkeypatch):
     """URLError → (False, exc) — never raised. Retry loop relies on
     this so one dead DNS doesn't crash the whole hook process."""
     boom = urllib.error.URLError('connection refused')
-    monkeypatch.setattr(hook_plugin.urllib.request, 'urlopen',
+    monkeypatch.setattr(hook_plugin._NO_PROXY_OPENER, 'open',
                         lambda req, timeout: (_ for _ in ()).throw(boom))
     ok, exc = hook_plugin._post_once('http://x', b'{}', 1.0)
     assert ok is False and exc is boom
@@ -738,7 +738,7 @@ def test_post_once_catches_urlerror(monkeypatch):
 def test_post_once_catches_httperror(monkeypatch):
     boom = urllib.error.HTTPError('http://x', 500, 'Server Error', {},
                                   io.BytesIO(b''))
-    monkeypatch.setattr(hook_plugin.urllib.request, 'urlopen',
+    monkeypatch.setattr(hook_plugin._NO_PROXY_OPENER, 'open',
                         lambda req, timeout: (_ for _ in ()).throw(boom))
     ok, exc = hook_plugin._post_once('http://x', b'{}', 1.0)
     assert ok is False and exc is boom
@@ -748,7 +748,7 @@ def test_post_once_catches_oserror(monkeypatch):
     """socket.timeout / ConnectionResetError / etc. surface as OSError.
     Caught at the source so retry logic can decide whether to redo."""
     boom = OSError('timeout')
-    monkeypatch.setattr(hook_plugin.urllib.request, 'urlopen',
+    monkeypatch.setattr(hook_plugin._NO_PROXY_OPENER, 'open',
                         lambda req, timeout: (_ for _ in ()).throw(boom))
     ok, exc = hook_plugin._post_once('http://x', b'{}', 1.0)
     assert ok is False and exc is boom
@@ -772,6 +772,6 @@ def test_post_once_passes_timeout_through(monkeypatch):
     def _fake(req, timeout):
         seen['timeout'] = timeout
         return _ok_response()
-    monkeypatch.setattr(hook_plugin.urllib.request, 'urlopen', _fake)
+    monkeypatch.setattr(hook_plugin._NO_PROXY_OPENER, 'open', _fake)
     hook_plugin._post_once('http://x', b'{}', 0.75)
     assert seen['timeout'] == 0.75

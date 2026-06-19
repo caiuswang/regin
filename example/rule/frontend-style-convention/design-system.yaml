@@ -1,0 +1,80 @@
+# Design-system primitive adoption rules.
+# Nudge raw HTML controls toward the unified components/ui/* primitives so the
+# frontend converges on one implementation. severity: warn (incremental — fires
+# on edit, never blocks). The primitives themselves (components/ui/, the
+# ToggleSwitch) are excluded since they legitimately wrap raw elements.
+
+- id: prefer_button_primitive
+  checker: prefer_ds_primitive
+  summary: Use the <Button> primitive instead of a raw <button>
+  severity: warn
+  category: interaction
+  check_kind: template-ast
+  selector_scope: button
+  triggers:
+    - "src/**/*.vue"
+  rationale: |
+    One Button primitive (components/ui/Button.vue) is the single source of
+    truth for variant/size/state styling and the focus ring. Raw <button>
+    elements re-derive styling by hand and drift (the audit found ~356 with
+    11 visual variants and 3 focus-ring styles).
+  fix_hint: |
+    Replace with <Button variant="primary|secondary|danger|ghost|link"
+    size="sm|md|lg|icon">. Import from components/ui/Button.vue.
+  design_token_refs:
+    - focus-ring
+  options:
+    tags: [button]
+    replacement: "the <Button> primitive (components/ui/Button.vue)"
+    skip_path_includes:
+      - "/components/ui/"
+      - "/ToggleSwitch.vue"
+
+- id: prefer_select_primitive
+  checker: prefer_ds_primitive
+  summary: Use the <Select> primitive instead of a raw <select>
+  severity: warn
+  category: interaction
+  check_kind: template-ast
+  selector_scope: select
+  triggers:
+    - "src/**/*.vue"
+  rationale: |
+    The audit found 35 raw <select> across 3 divergent styling patterns
+    (.input / .topics-input / bare inline) with no disabled handling.
+    components/ui/Select.vue gives one consistent, accessible control.
+  fix_hint: |
+    Replace with <Select v-model="x" :options="opts" placeholder="…" />.
+    options accept strings or { value, label, disabled }.
+  design_token_refs:
+    - focus-ring
+  options:
+    tags: [select]
+    replacement: "the <Select> primitive (components/ui/Select.vue)"
+    skip_path_includes:
+      - "/components/ui/"
+
+- id: prefer_checkbox_radio_primitive
+  checker: prefer_ds_primitive
+  summary: Use Checkbox / RadioGroup / ToggleSwitch instead of raw radio/checkbox inputs
+  severity: warn
+  category: interaction
+  check_kind: template-ast
+  selector_scope: input
+  triggers:
+    - "src/**/*.vue"
+  rationale: |
+    Raw <input type="checkbox|radio"> were styled ad-hoc (accent-color set in
+    only one place). The primitives standardize accent color, focus ring, and
+    label association; binary on/off UI state should use ToggleSwitch.
+  fix_hint: |
+    Use <Checkbox v-model label="…" />, <RadioGroup v-model :options="…" />,
+    or <ToggleSwitch v-model> for on/off toggles.
+  design_token_refs:
+    - focus-ring
+  options:
+    tags: [input]
+    input_types: [checkbox, radio]
+    replacement: "<Checkbox> / <RadioGroup> / <ToggleSwitch>"
+    skip_path_includes:
+      - "/components/ui/"

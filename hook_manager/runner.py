@@ -14,7 +14,12 @@ from lib.providers import get_active_provider
 
 from .config import filter_enabled, priority_overrides
 from .core import BLOCKABLE_VIA_EXIT_2, Handler, HookPayload, HookResponse, SPEC_EVENTS
-from .merge import merge_responses, response_to_json
+from .merge import (
+    kimi_block_reason,
+    kimi_response_text,
+    merge_responses,
+    response_to_json,
+)
 
 
 _ERROR_LOG = os.path.join(str(get_active_provider().traces_dir()), 'hook-errors.jsonl')
@@ -150,10 +155,32 @@ def run(
     if exit_code == 2 and payload.event not in BLOCKABLE_VIA_EXIT_2:
         exit_code = 0
 
-    out_json = response_to_json(payload.event, merged)
+    out_format = getattr(payload.resolved_provider, 'hook_output_format', 'claude')
+    _write_response(out_format, payload.event, merged, exit_code, stdout)
+    return exit_code
+
+
+def _write_response(out_format, event, merged, exit_code, stdout) -> None:
+    """Emit the merged response in the active provider's hook-output dialect.
+
+    Claude/Codex get the full JSON object on stdout. Kimi gets only its tiny
+    recognized surface (or nothing), plus the block reason on stderr — printing
+    Claude-only fields there would render as raw JSON in the Kimi UI.
+    """
+    if out_format == 'kimi':
+        text = kimi_response_text(event, merged)
+        if text:
+            stdout.write(text + '\n')
+            stdout.flush()
+        if exit_code == 2:
+            reason = kimi_block_reason(merged)
+            if reason:
+                sys.stderr.write(reason + '\n')
+                sys.stderr.flush()
+        return
+    out_json = response_to_json(event, merged)
     stdout.write(json.dumps(out_json, ensure_ascii=False) + '\n')
     stdout.flush()
-    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:

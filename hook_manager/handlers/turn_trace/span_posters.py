@@ -5,7 +5,7 @@ four lists of rows:
 
   * `turns` — assistant turns with usage + per-call attribution
   * `attachments` — task_reminder / skill_listing / deferred_tools_delta
-  * `system_events` — stop_hook_summary / turn_duration
+  * `system_events` — stop_hook_summary / turn_duration / away_summary
   * `local_commands` — /add-dir, /clear, /usage, `!ls`, etc.
 
 This module turns each list into ingest calls. Idempotency comes from
@@ -23,6 +23,7 @@ from .deny_detection import (
     _build_tool_use_error_attrs,
     _is_permission_deny,
     _is_tool_use_error,
+    build_recorded_deny_attrs,
 )
 from .timestamps import _normalise_attachment_ts, _to_naive_datetime
 
@@ -86,21 +87,59 @@ def _emit_stop_summary_span(trace_id: str, ev) -> bool:
     )
 
 
+# The recap's `content` is free prose (a paragraph or two). Cap it so a
+# verbose recap doesn't bloat the span attributes blob.
+_RECAP_CONTENT_MAX_BYTES = 8 * 1024
+
+
+def _emit_away_summary_span(trace_id: str, ev) -> bool:
+    """Emit a `harness.recap` span for a `system: away_summary` entry —
+    the prose recap Claude Code writes when the session goes idle. The
+    text lives in the entry's top-level `content` string."""
+    from lib.hook_plugin import post_span  # type: ignore
+    payload = ev.payload or {}
+    raw = payload.get('content')
+    content = raw if isinstance(raw, str) else ''
+    content, truncated = _truncate_utf8_with_marker(content, _RECAP_CONTENT_MAX_BYTES)
+    ts = _normalise_attachment_ts(ev.timestamp)
+    attrs = {
+        'subtype': 'away_summary',
+        'turn_uuid': ev.turn_uuid,
+        'content': content,
+        'content_truncated': truncated,
+    }
+    return post_span(
+        trace_id=trace_id,
+        span_id=f'sys-{ev.uuid[:13]}',
+        name='harness.recap',
+        start_time=ts, end_time=ts, duration_ms=0,
+        attributes=attrs,
+    )
+
+
+_SYSTEM_EVENT_EMITTERS = {
+    'stop_hook_summary': _emit_stop_summary_span,
+    'away_summary': _emit_away_summary_span,
+}
+
+
 def _post_system_event_spans(trace_id: str, events, seen: set[str]) -> None:
-    """Emit `hook.stop_summary` spans for `system: stop_hook_summary`
-    entries. The `turn_duration` siblings are folded into the matching
+    """Emit a span per traced `system:` event: `hook.stop_summary` for
+    `stop_hook_summary`, `harness.recap` for `away_summary`. The
+    `turn_duration` siblings are folded into the matching
     `assistant_response` span's `duration_ms` and don't need their own
     span. Idempotent via `sys-<uuid[:13]>` span_id."""
     new_uuids: list[str] = []
     for ev in events:
         if ev.uuid in seen:
             continue
-        if ev.subtype != 'stop_hook_summary':
+        emitter = _SYSTEM_EVENT_EMITTERS.get(ev.subtype)
+        if emitter is None:
             # No span needed for this subtype — record the uuid so we
             # don't keep re-scanning it.
             new_uuids.append(ev.uuid)
             continue
-        if _emit_stop_summary_span(trace_id, ev):
+        if emitter(trace_id, ev):
             new_uuids.append(ev.uuid)
     _mark_seen(trace_id, new_uuids)
 
@@ -209,27 +248,36 @@ def _post_queued_command_span(trace_id: str, att, ts, resp_ts=None) -> bool:
     the response lands. Only prompt-mode queues become prompt spans; a queued
     slash command (different `command_mode`) is not a model prompt — mark it
     seen without a span.
+
+    A queued prompt with pasted images carries `prompt` as a list of
+    content blocks (text + base64 image), not a bare string — same dual
+    shape as `message.content` on a real user entry. Recover both: the
+    text anchors the span, the image parts land in `prompt_images` like
+    the UserPromptSubmit anchor path (_emit_one_prompt_anchor).
     """
     from lib.hook_plugin import post_span  # type: ignore
-    payload = att.payload or {}
-    mode = payload.get('command_mode')
-    if mode is not None and mode != 'prompt':
+    from lib.trace.transcript_usage import queued_prompt_content
+    text, inline_parts = queued_prompt_content(att.payload or {})
+    if not text and not inline_parts:
         return True
-    text = payload.get('prompt')
-    if not isinstance(text, str) or not text:
-        return True
-    attrs = {'text': text, 'chars': len(text), 'queued': True}
+    span_id = f'prompt-{att.uuid[:13]}'
+    images, kept = _resolve_capped_anchor_images(
+        trace_id, text or '', inline_parts)
+    attrs = _anchor_attrs(text or '', images, kept)
+    attrs['queued'] = True
     # `resp_ts` is a raw transcript timestamp (offset-aware UTC); normalise it
     # to local-naive like the response spans (and `ts`) so it sorts correctly
     # against its sibling spans instead of as a `15:..Z` < `19:..` string.
     start = _normalise_turn_ts(resp_ts) if resp_ts else ts
     ok = post_span(
         trace_id=trace_id,
-        span_id=f'prompt-{att.uuid[:13]}',
+        span_id=span_id,
         name='prompt',
         start_time=start, end_time=start, duration_ms=0,
         attributes=attrs,
     )
+    if ok and kept:
+        _post_prompt_images(trace_id, span_id, kept)
     # Cache only once anchored at the real response time; otherwise re-time
     # next scan when the response has landed.
     return bool(ok) and resp_ts is not None
@@ -352,6 +400,64 @@ def _post_local_command_spans(
     _mark_seen(trace_id, new_uuids)
 
 
+# ─────────────────────────────── /rewind ───────────────────────────────
+
+# Cap the rolled-back-file list carried on a `rewind` marker. The list holds
+# only paths + `<pathhash>@vN` refs (never content), so even a large rewind
+# stays small; the cap is a backstop against a pathological branch.
+_REWIND_MAX_FILES = 200
+
+
+def _rewind_marker_attrs(fork) -> dict:
+    """Attributes for one `rewind` boundary span. `orphan_keys` /
+    `abandoned_prompt_keys` are `<uuid[:13]>` tails the serve-time projection
+    (`_mark_rewound_away`) matches against span ids to flag + collapse the
+    discarded branch. `rolled_back_files` carries refs only — content loads
+    lazily via the `/spans/<id>/rewind` route."""
+    return {
+        'kind': 'rewind',
+        'orphan_keys': sorted({u[:13] for u in fork.orphan_uuids}),
+        'abandoned_prompt_keys': [u[:13] for u in fork.abandoned_prompt_uuids],
+        'abandoned_prompt_count': len(fork.abandoned_prompt_uuids),
+        'abandoned_span_count': len(fork.orphan_uuids),
+        'rolled_back_files': list(fork.rolled_back_files[:_REWIND_MAX_FILES]),
+        'rolled_back_count': len(fork.rolled_back_files),
+        'fork_uuid': fork.fork_uuid,
+        'live_child_uuid': fork.live_child_uuid,
+    }
+
+
+def _post_rewind_spans(trace_id: str, rewinds, seen: set[str]) -> None:
+    """Emit one `rewind` boundary span per detected `/rewind` fork. The span
+    is a conversation-level divider at the fork point; the projection adopts
+    the discarded turns under it so the UI collapses the abandoned branch.
+
+    Idempotent via `rewind-<orphan_root[:13]>`. The seen key is namespaced
+    (`rewind:<orphan_root>`) so it does NOT collide with the prompt-anchor
+    poster, which already marks the same orphan-root uuid seen as a `prompt`
+    — without the namespace a re-ingest of an already-scanned session would
+    skip the marker. A growing resumable scan only ever firms up a fork (the
+    abandoned branch never leaves the file), so re-emission is a harmless
+    UPSERT."""
+    from lib.hook_plugin import post_span  # type: ignore
+
+    new_keys: list[str] = []
+    for fork in rewinds:
+        seen_key = f'rewind:{fork.orphan_root}'
+        if seen_key in seen:
+            continue
+        ts = _normalise_attachment_ts(fork.fork_timestamp)
+        if post_span(
+            trace_id=trace_id,
+            span_id=fork.span_id,
+            name='rewind',
+            start_time=ts, end_time=ts, duration_ms=0,
+            attributes=_rewind_marker_attrs(fork),
+        ):
+            new_keys.append(seen_key)
+    _mark_seen(trace_id, new_keys)
+
+
 # Prompt-anchor text can be a full slash-command expansion (a skill body
 # can be several KiB). Cap so the turn-anchor span attrs stay lean — the
 # untruncated prompt still lives on the live UserPromptSubmit span.
@@ -414,7 +520,7 @@ def _emit_one_prompt_anchor(
 ) -> bool:
     """Post one `prompt-<uuid>` anchor span plus its `prompt_images`.
     Returns True iff the span persisted (so the caller caches the uuid)."""
-    from lib.hook_plugin import post_event, post_span  # type: ignore
+    from lib.hook_plugin import post_span  # type: ignore
 
     span_id = f'prompt-{prompt_uuid[:13]}'
     images, kept = _resolve_capped_anchor_images(trace_id, text, inline_parts)
@@ -426,17 +532,24 @@ def _emit_one_prompt_anchor(
     ):
         return False
     if kept:
-        post_event('prompt_images', [
-            {
-                'trace_id': trace_id,
-                'prompt_span_id': span_id,
-                'idx': img['idx'],
-                'media_type': img['media_type'],
-                'data_b64': img['data_b64'],
-            }
-            for img in kept
-        ])
+        _post_prompt_images(trace_id, span_id, kept)
     return True
+
+
+def _post_prompt_images(trace_id: str, span_id: str, kept: list) -> None:
+    """Persist a prompt's capped images against its `prompt-<uuid>` span."""
+    from lib.hook_plugin import post_event  # type: ignore
+
+    post_event('prompt_images', [
+        {
+            'trace_id': trace_id,
+            'prompt_span_id': span_id,
+            'idx': img['idx'],
+            'media_type': img['media_type'],
+            'data_b64': img['data_b64'],
+        }
+        for img in kept
+    ])
 
 
 def _anchor_attrs(text: str, images: list, kept: list) -> dict:
@@ -712,6 +825,34 @@ def _emit_deny_and_error_spans(
             span_id=span_id,
             name=f'tool.{tool_name}',
             parent_id=server_parent_id,
+            start_time=ts, end_time=ts, duration_ms=0,
+            attributes=attrs,
+            status_code='ERROR',
+        )
+
+
+def _post_permission_denial_spans(trace_id: str, denials) -> None:
+    """Materialise a `tool.<name>` deny span for each transcript-recorded
+    permission denial (Kimi). The denied call fires no PostToolUse, so its
+    PENDING tool span is never resolved and the serve-time merge drops it —
+    without this the rejected call vanishes from the trace entirely. Attrs come
+    from `build_recorded_deny_attrs` (the same deny contract as the Claude
+    transcript-deny path) so the UI renders it identically. Idempotent via
+    `tooldeny-<id>`."""
+    from lib.hook_plugin import post_span  # type: ignore
+    for d in denials:
+        tu_id = d.get('tool_use_id')
+        tool_name = d.get('tool_name')
+        if not isinstance(tu_id, str) or not tu_id or not isinstance(tool_name, str):
+            continue
+        attrs = build_recorded_deny_attrs(
+            tool_name, tu_id, d.get('denial_reason'), d.get('tool_input'),
+        )
+        ts = d.get('timestamp')
+        post_span(
+            trace_id=trace_id,
+            span_id=f'tooldeny-{tu_id[:13]}',
+            name=f'tool.{tool_name}',
             start_time=ts, end_time=ts, duration_ms=0,
             attributes=attrs,
             status_code='ERROR',
@@ -1010,6 +1151,13 @@ def _post_live_turn_data(
             capture_text=capture_text, max_text_bytes=max_text_bytes,
         ):
             new_uuids.append(turn.uuid)
-    if usage_rows:
-        post_event('turn_usage', usage_rows)
+    # Gate the seen-cache on the usage post landing. post_event returns
+    # False (never raises) on a transient ingest outage; marking these
+    # turns seen anyway would lock them out of re-processing forever and
+    # permanently lose their turn_usage rows (and, for silent tool-only
+    # turns, their only DB footprint). Leaving them unseen lets the next
+    # scan retry — every span/event re-post is an idempotent UPSERT, so a
+    # redundant re-post of the rows that did land is harmless.
+    if usage_rows and not post_event('turn_usage', usage_rows):
+        return
     _mark_seen(trace_id, new_uuids)

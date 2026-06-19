@@ -128,6 +128,29 @@ def test_list_handlers_returns_config_path(client):
     assert body['config_path'].endswith('hook-manager-config.json')
 
 
+def test_list_handlers_claude_supported_events_is_full_spec(client):
+    """Claude's hook_events() is None ("all"), so the diagram gets the full
+    spec event set."""
+    from hook_manager.core import SPEC_EVENTS
+    c, _ = client
+    body = c.get('/api/hooks/handlers').get_json()
+    assert set(body['supported_events']) == set(SPEC_EVENTS)
+
+
+def test_list_handlers_kimi_supported_events_is_kimi_subset(client):
+    """Kimi has its own (smaller, different) lifecycle — the per-agent diagram
+    must reflect it, not Claude's. Events Kimi never fires are excluded."""
+    c, _ = client
+    body = c.get('/api/hooks/handlers?provider=kimi').get_json()
+    events = set(body['supported_events'])
+    # Kimi fires these...
+    assert {'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'} <= events
+    # ...but not these Claude-only lifecycle events.
+    assert 'PermissionRequest' not in events
+    assert 'TaskCreated' not in events
+    assert 'Elicitation' not in events
+
+
 def test_list_handlers_reports_installed_hook_manager_events(client):
     c, settings_path = client
     settings_path.write_text(json.dumps({

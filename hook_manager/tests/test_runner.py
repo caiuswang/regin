@@ -256,3 +256,43 @@ def test_run_filters_handlers_by_cli_agent_type(monkeypatch):
              agent_type='codex')
     assert rc == 0
     assert calls == ['codex']
+
+
+# ── Kimi output dialect ───────────────────────────────────────────────
+#
+# Kimi renders raw hook stdout in its UI, so the runner must emit Kimi's tiny
+# contract (or nothing) — never Claude's `{"suppressOutput": true}`.
+
+def test_kimi_observation_event_writes_nothing():
+    """A trace handler that only suppresses output must leave Kimi's stdout
+    empty (the bug: it used to print `{"suppressOutput": true}`)."""
+    h = Handler(name='trace', events=['UserPromptSubmit'], kind='trace',
+                fn=lambda p: HookResponse(suppress_output=True))
+    out = io.StringIO()
+    rc = run('UserPromptSubmit', [h],
+             _payload(event='UserPromptSubmit'), out, agent_type='kimi')
+    assert rc == 0
+    assert out.getvalue() == ''
+
+
+def test_kimi_pretooluse_deny_writes_permission_decision():
+    h = Handler(name='gate', events=['PreToolUse'], kind='gate',
+                fn=lambda p: HookResponse(permission_decision='deny',
+                                          permission_reason='nope'))
+    out = io.StringIO()
+    rc = run('PreToolUse', [h], _payload(event='PreToolUse'), out,
+             agent_type='kimi')
+    assert rc == 0
+    resp = _drain(out)
+    assert resp['hookSpecificOutput']['permissionDecision'] == 'deny'
+    assert 'suppressOutput' not in resp
+
+
+def test_claude_observation_event_still_emits_json():
+    """Regression guard: the Claude dialect is unchanged."""
+    h = Handler(name='trace', events=['UserPromptSubmit'], kind='trace',
+                fn=lambda p: HookResponse(suppress_output=True))
+    out = io.StringIO()
+    run('UserPromptSubmit', [h],
+        _payload(event='UserPromptSubmit'), out, agent_type='claude')
+    assert _drain(out) == {'suppressOutput': True}

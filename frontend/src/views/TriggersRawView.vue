@@ -5,6 +5,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import CursorControls from '../components/CursorControls.vue'
+import Button from '../components/ui/Button.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useCursor } from '../composables/useCursor'
@@ -101,10 +102,9 @@ async function resetTriggers() {
         <button type="button" class="badge-x focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label="Clear session filter" @click="filterBy('session', null)">&times;</button>
       </Badge>
-      <button type="button" class="btn btn-danger text-xs ml-auto focus-visible:outline-2 focus-visible:outline-blue-500"
-        @click="resetTriggers">
+      <Button variant="danger" size="sm" class="ml-auto" @click="resetTriggers">
         {{ ruleFilter || sessionFilter ? 'Reset filtered' : 'Reset all' }}
-      </button>
+      </Button>
     </div>
     </div>
     <!-- /sticky page header -->
@@ -245,7 +245,7 @@ async function resetTriggers() {
   position: sticky;
   top: calc(var(--regin-trace-header-h, 0px) - 1rem);
   z-index: 5;
-  background: #f8fafc;
+  background: var(--color-slate-50);
 }
 @media (min-width: 1024px) {
   .sticky-page-root :deep(.tbl > thead > tr > th) {

@@ -31,7 +31,7 @@ import os
 import threading
 from typing import Iterable
 
-from lib.providers import build_provider, get_active_provider, is_provider_id
+from lib.providers import build_provider, get_active_provider, is_provider_id, provider_handler_config
 
 CONFIG_PATH = str(get_active_provider().hook_manager_config_path())
 _lock = threading.Lock()
@@ -44,14 +44,40 @@ def config_path(agent_type: str | None = None) -> str:
 
 
 def _load_raw(agent_type: str | None = None) -> dict:
+    data: dict = {}
     try:
         with open(config_path(agent_type), 'r') as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
+            file_data = json.load(f)
+        if isinstance(file_data, dict):
+            data = file_data
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
-    return {}
+
+    # Merge per-provider handler overrides from regin settings. Settings-based
+    # overrides take precedence over the standalone JSON file so the central
+    # settings UI can tune providers without hunting for provider-specific files.
+    agent_type = agent_type or _active_provider_id()
+    if is_provider_id(agent_type):
+        cfg = provider_handler_config(str(agent_type))
+        if cfg.get('disabled_handlers'):
+            file_disabled = [x for x in data.get('disabled_handlers', []) if isinstance(x, str)]
+            merged_disabled = set(file_disabled) | set(cfg['disabled_handlers'])
+            data['disabled_handlers'] = sorted(merged_disabled)
+        if cfg.get('priority_overrides'):
+            file_overrides = data.get('priority_overrides') or {}
+            if not isinstance(file_overrides, dict):
+                file_overrides = {}
+            merged_overrides = {**file_overrides, **cfg['priority_overrides']}
+            data['priority_overrides'] = {k: merged_overrides[k] for k in sorted(merged_overrides)}
+    return data
+
+
+def _active_provider_id() -> str:
+    """Best-effort active provider id for the module-level CONFIG_PATH default."""
+    try:
+        return get_active_provider().provider_id
+    except Exception:
+        return "claude"
 
 
 def _write_raw(data: dict, agent_type: str | None = None) -> None:

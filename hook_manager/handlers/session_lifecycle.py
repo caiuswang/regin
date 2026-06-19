@@ -29,7 +29,95 @@ def handle_start(payload: HookPayload) -> HookResponse | None:
                    extra_attrs={'agent_type': agent_type} if agent_type else None)
     except Exception:
         pass
+    try:
+        _emit_git_status(payload)
+    except Exception:
+        pass
     return HookResponse(suppress_output=True)
+
+
+# Mirror of claude-code's MAX_STATUS_CHARS (src/context.ts): the harness
+# truncates the injected status at 2k chars, so we reproduce the exact cut.
+_MAX_STATUS_CHARS = 2000
+_STATUS_TRUNCATION_NOTE = (
+    '\n... (truncated because it exceeds 2k characters. If you need more '
+    'information, run "git status" using BashTool)'
+)
+
+
+def _env_truthy(name: str) -> bool:
+    return (os.environ.get(name) or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _emit_git_status(payload: HookPayload) -> None:
+    """Record the git-status block the harness injects into system context.
+
+    Claude Code's `getGitStatus` (claude-code `src/context.ts`) runs git
+    itself and prepends a status block to the cached system context — it
+    never flows through a tool call, a hook, or the transcript, so it is
+    otherwise invisible to the trace (the original "I can't find a span for
+    how the agent knew about that file" gap). We reconstruct the same block
+    at SessionStart, in the same cwd, moments after the harness built it.
+
+    Caveat: this is a best-effort *reconstruction* at hook time, not the
+    literal injected bytes — a file changed in the gap between the harness
+    snapshot and this hook could differ. Tagged `captured_at` accordingly.
+    Gated on the same env flags the harness honours, so we never record a
+    block the agent never saw.
+    """
+    cwd = payload.cwd
+    if not cwd:
+        return
+    # The harness skips the block in remote runs or when git instructions
+    # are disabled; stay faithful to what the agent actually received.
+    if _env_truthy('CLAUDE_CODE_REMOTE') or _env_truthy('CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS'):
+        return
+
+    from lib.sync.git_ops import git, GitError
+
+    def _git(*args: str) -> str:
+        try:
+            return git(cwd, '--no-optional-locks', *args)
+        except (GitError, FileNotFoundError, OSError):
+            return ''
+
+    # No separate is_git_repo() probe: `_git` already swallows the error a
+    # non-repo cwd raises, so a fourth subprocess on every SessionStart only to
+    # detect that case is wasted. If all three reads come back empty (non-repo
+    # or git unavailable) there's nothing to record.
+    branch = _git('rev-parse', '--abbrev-ref', 'HEAD')
+    status = _git('status', '--short')
+    log = _git('log', '--oneline', '-n', '5')
+    if not any((branch, status, log)):
+        return
+
+    truncated = len(status) > _MAX_STATUS_CHARS
+    shown_status = status[:_MAX_STATUS_CHARS] + _STATUS_TRUNCATION_NOTE if truncated else status
+
+    # Reproduce the harness's rendered block so the trace shows verbatim
+    # what was injected (sans the main-branch / git-user lines, which the
+    # agent's knowledge-of-files question doesn't hinge on).
+    block = '\n\n'.join([
+        'This is the git status at the start of the conversation. Note that '
+        'this status is a snapshot in time, and will not update during the '
+        'conversation.',
+        f'Current branch: {branch}',
+        f'Status:\n{shown_status or "(clean)"}',
+        f'Recent commits:\n{log}',
+    ])
+
+    changed_count = len([ln for ln in status.splitlines() if ln.strip()])
+    _emit_span(
+        payload,
+        'environment.git_status',
+        extra_attrs={
+            'block': block,
+            'branch': branch,
+            'changed_count': changed_count,
+            'truncated': truncated,
+            'captured_at': 'session_start_hook',
+        },
+    )
 
 
 def handle_end(payload: HookPayload) -> HookResponse | None:
@@ -43,10 +131,11 @@ def handle_end(payload: HookPayload) -> HookResponse | None:
 
 
 def handle_stop_fallback(payload: HookPayload) -> HookResponse | None:
-    """Codex fallback: synthesize session.end from Stop.
+    """Stop→session.end fallback for providers that never emit SessionEnd.
 
-    Codex currently does not emit SessionEnd in real runs, so we map Stop
-    to a synthetic end marker for dashboard/session lifecycle continuity.
+    Gated on the provider capability `synthesizes_session_end_from_stop`
+    (today only Codex) rather than a hardcoded vendor string, so a new
+    provider opts in from its own adapter without editing this handler.
     Caveat: Stop is per-turn, so this may mark a long-lived interactive
     session as ended before the user truly exits.
     """
@@ -55,11 +144,11 @@ def handle_stop_fallback(payload: HookPayload) -> HookResponse | None:
     if not _codex_stop_end_fallback_enabled():
         return None
 
-    # Use the session's stored agent_type — set at SessionStart — rather
-    # than the globally configured provider. This prevents incorrectly
-    # ending Claude sessions when regin happens to be configured as codex.
-    agent_type = _session_agent_type_from_db(payload.session_id)
-    if agent_type != 'codex':
+    # Resolve the capability off the session's STORED agent_type (set at
+    # SessionStart), not the globally configured provider. This prevents
+    # incorrectly ending a Claude/Kimi session when regin happens to be
+    # configured as codex.
+    if not _provider_synthesizes_end_from_stop(payload.session_id):
         return None
 
     try:
@@ -85,6 +174,22 @@ def _codex_stop_end_fallback_enabled() -> bool:
     """
     raw = (os.environ.get('REGIN_CODEX_STOP_END_FALLBACK') or '').strip().lower()
     return raw not in {'0', 'false', 'off', 'no'}
+
+
+def _provider_synthesizes_end_from_stop(trace_id: str | None) -> bool:
+    """True when the session's stored provider opts into the Stop→session.end
+    fallback. Builds the provider from the persisted agent_type and reads its
+    `synthesizes_session_end_from_stop` capability — no vendor string here."""
+    agent_type = _session_agent_type_from_db(trace_id)
+    if not agent_type:
+        return False
+    try:
+        from lib.providers import build_provider, is_provider_id
+        if not is_provider_id(agent_type):
+            return False
+        return bool(getattr(build_provider(agent_type), 'synthesizes_session_end_from_stop', False))
+    except Exception:
+        return False
 
 
 def _session_agent_type_from_db(trace_id: str | None) -> str | None:
@@ -118,31 +223,16 @@ def _session_agent_type(payload: HookPayload) -> str | None:
         return raw.strip()
 
     # Defensive fallback for legacy hook commands installed before
-    # `--agent-type` was required.
-    model = payload.raw.get('model')
-    inferred = _agent_type_from_model(model)
+    # `--agent-type` was required. Delegate the model→provider inference to
+    # the registry (single source of truth) rather than re-implementing the
+    # per-vendor prefix table here.
+    from lib.providers import provider_id_from_model
+    inferred = provider_id_from_model(payload.raw.get('model'))
     if inferred:
         return inferred
 
     resolved_id = getattr(payload.resolved_provider, 'provider_id', None)
     return resolved_id if isinstance(resolved_id, str) and resolved_id else None
-
-
-def _agent_type_from_model(model: object) -> str | None:
-    if not isinstance(model, str):
-        return None
-    normalized = model.strip().lower()
-    if normalized.startswith('claude-'):
-        return 'claude'
-    if (
-        normalized.startswith('gpt-')
-        or normalized.startswith('o1')
-        or normalized.startswith('o3')
-        or normalized.startswith('o4')
-        or normalized.startswith('o5')
-    ):
-        return 'codex'
-    return None
 
 
 def _emit_span(

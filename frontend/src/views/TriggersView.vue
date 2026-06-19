@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import RuleCard from '../components/triggers/RuleCard.vue'
+import Select from '../components/ui/Select.vue'
 import { useTriggerRules } from '../composables/useTriggerRules'
 import { useStickyHeader } from '../composables/useStickyHeader'
 
@@ -108,17 +109,17 @@ const emptyMode = computed(() => {
         />
         <label class="trigger-toolbar__field">
           <span class="trigger-toolbar__field-label">Range</span>
-          <select class="focus-visible:outline-2 focus-visible:outline-blue-500"
-                  :value="filters.range" @change="setFilter('range', $event.target.value)">
-            <option v-for="r in ranges" :key="r" :value="r">{{ r }}</option>
-          </select>
+          <span class="inline-block w-20">
+            <Select :model-value="filters.range" :options="ranges" block aria-label="Range"
+              @change="setFilter('range', $event.target.value)" />
+          </span>
         </label>
         <label class="trigger-toolbar__field">
           <span class="trigger-toolbar__field-label">Sort</span>
-          <select class="focus-visible:outline-2 focus-visible:outline-blue-500"
-                  :value="filters.sort" @change="setFilter('sort', $event.target.value)">
-            <option v-for="s in sorts" :key="s.value" :value="s.value">{{ s.label }}</option>
-          </select>
+          <span class="inline-block w-32">
+            <Select :model-value="filters.sort" :options="sorts" block aria-label="Sort"
+              @change="setFilter('sort', $event.target.value)" />
+          </span>
         </label>
         <router-link to="/trace/triggers/raw"
                      class="trigger-toolbar__raw-link focus-visible:outline-2 focus-visible:outline-blue-500">
@@ -199,33 +200,33 @@ const emptyMode = computed(() => {
   margin-bottom: 12px;
 }
 .kpi-tile {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: var(--color-slate-50);
+  border: 1px solid var(--color-slate-200);
   border-radius: 8px;
   padding: 14px 16px;
 }
-.kpi-tile--active { background: #ecfdf5; border-color: #a7f3d0; }
-.kpi-tile--noisy  { background: #fffbeb; border-color: #fde68a; }
-.kpi-tile--dead   { background: #f1f5f9; border-color: #cbd5e1; }
+.kpi-tile--active { background: var(--color-emerald-50); border-color: var(--color-emerald-200); }
+.kpi-tile--noisy  { background: var(--color-amber-50); border-color: var(--color-amber-200); }
+.kpi-tile--dead   { background: var(--color-slate-100); border-color: var(--color-slate-300); }
 .kpi-tile__value {
   font-size: 28px;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--color-slate-800);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
-.kpi-tile--active .kpi-tile__value { color: #065f46; }
-.kpi-tile--noisy  .kpi-tile__value { color: #b45309; }
-.kpi-tile--dead   .kpi-tile__value { color: #475569; }
+.kpi-tile--active .kpi-tile__value { color: var(--color-emerald-800); }
+.kpi-tile--noisy  .kpi-tile__value { color: var(--color-amber-700); }
+.kpi-tile--dead   .kpi-tile__value { color: var(--color-slate-600); }
 .kpi-tile__label {
   font-size: 12px;
-  color: #64748b;
+  color: var(--color-slate-500);
   margin-top: 2px;
 }
 .kpi-tile__hint {
   display: block;
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin-top: 1px;
 }
 
@@ -240,30 +241,30 @@ const emptyMode = computed(() => {
   flex: 0 1 260px;
   min-width: 200px;
   padding: 6px 10px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-slate-300);
   border-radius: 4px;
   font-size: 12px;
-  background: #ffffff;
+  background: var(--color-white);
 }
 .trigger-toolbar__field {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: #475569;
+  color: var(--color-slate-600);
 }
-.trigger-toolbar__field-label { font-size: 11px; color: #94a3b8; }
+.trigger-toolbar__field-label { font-size: 11px; color: var(--color-slate-400); }
 .trigger-toolbar__field select {
   padding: 4px 6px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-slate-300);
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--color-white);
   font-size: 12px;
 }
 .trigger-toolbar__raw-link {
   margin-left: auto;
   font-size: 12px;
-  color: #1e40af;
+  color: var(--color-blue-800);
   text-decoration: none;
 }
 .trigger-toolbar__raw-link:hover { text-decoration: underline; }
@@ -274,25 +275,25 @@ const emptyMode = computed(() => {
   flex-wrap: wrap;
   align-items: center;
 }
-.filter-chip--clear { color: #94a3b8; }
-.trigger-chips__divider { color: #cbd5e1; margin: 0 4px; }
+.filter-chip--clear { color: var(--color-slate-400); }
+.trigger-chips__divider { color: var(--color-slate-300); margin: 0 4px; }
 
 .rule-list { display: block; }
 
 .empty-state--card {
-  background: #ffffff;
-  border: 1px dashed #cbd5e1;
+  background: var(--color-white);
+  border: 1px dashed var(--color-slate-300);
   border-radius: 8px;
   padding: 32px 24px;
   text-align: center;
-  color: #64748b;
+  color: var(--color-slate-500);
   font-size: 13px;
   line-height: 1.6;
 }
 .empty-state__link {
   background: transparent;
   border: 0;
-  color: #1e40af;
+  color: var(--color-blue-800);
   cursor: pointer;
   text-decoration: underline;
   padding: 0;

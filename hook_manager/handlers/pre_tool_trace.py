@@ -23,7 +23,11 @@ from ..core import HookPayload, HookResponse
 # Tools that block on the user before resolving.
 _BLOCKING_TOOLS = frozenset({'AskUserQuestion', 'ExitPlanMode'})
 # Non-blocking tools that can run long enough to be worth showing in-flight.
-_SLOW_TOOLS = frozenset({'Bash', 'BashOutput', 'WebFetch', 'WebSearch'})
+# `Agent` is here for its launch metadata as much as visibility: the resolved
+# `tool.Agent` span (subagent_type / description / prompt) lands only after
+# the subagent finishes, so without a pending twin the live subagent row has
+# no goal to show (useAgentLaunchMerge pairs it with `subagent.start`).
+_SLOW_TOOLS = frozenset({'Agent', 'Bash', 'BashOutput', 'WebFetch', 'WebSearch'})
 
 
 def _should_emit_pending(tool: str) -> bool:
@@ -60,10 +64,22 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
         questions = _ask_questions(payload.tool_input or {})
         if questions:
             attrs['questions'] = questions
-    elif isinstance(payload.tool_input, dict) and payload.tool_input:
-        # A small input preview so the pending card shows what's running
-        # (e.g. the Bash command), mirroring the resolved card.
-        attrs['tool_input'] = payload.tool_input
+    elif tool == 'Agent':
+        # Same structured launch attrs the resolved span gets, so the
+        # subagent-row merge works identically against the pending twin.
+        from .post_tool_trace import _build_agent_attrs  # type: ignore
+        _build_agent_attrs(attrs, payload.tool_input or {}, {}, payload)
+    else:
+        # Reuse the resolved card's input-derived attrs (Bash command, WebSearch
+        # query, WebFetch url, …) so the in-flight card shows what's running
+        # instead of a bare tool name — the conversation labellers read those
+        # flat keys, not a raw `tool_input` dump.
+        from .post_tool_trace import apply_pending_input_attrs  # type: ignore
+        ti = payload.tool_input or {}
+        if not apply_pending_input_attrs(attrs, tool, ti) and isinstance(ti, dict) and ti:
+            # No tool-specific flat attrs (BashOutput, MCP, …) — keep a raw
+            # input preview so the detail panel still shows the call.
+            attrs['tool_input'] = ti
     post_span(
         trace_id=payload.session_id,
         name=f'tool.{tool}',

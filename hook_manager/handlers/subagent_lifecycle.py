@@ -45,7 +45,20 @@ def handle_stop(payload: HookPayload) -> HookResponse | None:
             _emit_subagent_responses(payload)
         except Exception:
             pass
+    _reconcile_subagents(payload)
     return HookResponse(suppress_output=True)
+
+
+def _reconcile_subagents(payload: HookPayload) -> None:
+    """Let the session's provider re-nest a subagent's spans if its CLI needs
+    it. No-op for providers that already scope sub-tool hooks to the subagent
+    session (Claude — the `agent_transcript_path` replay above covers it); Kimi
+    fires them under the parent session_id and overrides
+    AgentProvider.reconcile_subagents to trigger the server-side reconciler."""
+    try:
+        payload.resolved_provider.reconcile_subagents(payload.session_id)
+    except Exception:
+        pass
 
 
 _RESULT_PREVIEW_MAX = 200
@@ -80,35 +93,42 @@ def _nonempty_str(raw: dict, *keys: str) -> bool:
     return False
 
 
+def _result_preview(raw: dict) -> str | None:
+    """A flattened, capped preview of the subagent's final message. Claude uses
+    `last_assistant_message`; Kimi Code reports it as `response`."""
+    last = raw.get('last_assistant_message') or raw.get('response')
+    if not last:
+        return None
+    flat = ' '.join(str(last).split())
+    return flat[:_RESULT_PREVIEW_MAX] + '…' if len(flat) > _RESULT_PREVIEW_MAX else flat
+
+
+def _span_attributes(raw: dict) -> dict:
+    """Identity + preview attributes for a subagent marker span. Claude Code has
+    used both `agent_*` and `subagent_*` field names across versions — accept
+    either. `prompt_preview` (SubagentStart) and `result_preview` (SubagentStop)
+    let the Kimi reconciler bind a marker to its wire by content."""
+    attrs: dict = {}
+    fields = {
+        'agent_type': raw.get('subagent_type') or raw.get('agent_type'),
+        'agent_id': raw.get('subagent_id') or raw.get('agent_id'),
+        'agent_name': raw.get('subagent_name') or raw.get('agent_name'),
+        'description': raw.get('description'),
+        'result_preview': _result_preview(raw),
+    }
+    attrs.update({k: v for k, v in fields.items() if v})
+    prompt = raw.get('prompt')
+    if isinstance(prompt, str) and prompt.strip():
+        attrs['prompt_preview'] = prompt[:500]
+    return attrs
+
+
 def _emit_span(payload: HookPayload, name: str) -> None:
     from lib.hook_plugin import post_span  # type: ignore
-    attrs: dict = {}
-    raw = payload.raw
-    # Claude Code has used both `agent_*` and `subagent_*` field names across
-    # versions — accept either.
-    agent_type = raw.get('subagent_type') or raw.get('agent_type')
-    agent_id = raw.get('subagent_id') or raw.get('agent_id')
-    agent_name = raw.get('subagent_name') or raw.get('agent_name')
-    if agent_type:
-        attrs['agent_type'] = agent_type
-    if agent_id:
-        attrs['agent_id'] = agent_id
-    if agent_name:
-        attrs['agent_name'] = agent_name
-    desc = raw.get('description')
-    if desc:
-        attrs['description'] = desc
-    # On stop, capture a preview of the final message (newline-stripped).
-    last = raw.get('last_assistant_message')
-    if last:
-        flat = ' '.join(str(last).split())
-        if len(flat) > _RESULT_PREVIEW_MAX:
-            flat = flat[:_RESULT_PREVIEW_MAX] + '…'
-        attrs['result_preview'] = flat
     post_span(
         trace_id=payload.session_id,
         name=name,
-        attributes=attrs,
+        attributes=_span_attributes(payload.raw),
     )
 
 

@@ -190,24 +190,24 @@ function topSessionLink(sid) {
 .rule-drawer {
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--color-slate-200);
 }
 .rule-drawer__heading {
   font-size: 12px;
   font-weight: 600;
-  color: #1e40af;
+  color: var(--color-blue-800);
   margin: 0 0 8px 0;
   text-transform: none;
 }
 .rule-drawer__heading-hint {
   font-weight: 400;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin-left: 8px;
 }
 .rule-drawer__guide {
-  background: #1e293b;
-  color: #a7f3d0;
+  background: var(--color-slate-800);
+  color: var(--color-emerald-200);
   border-radius: 4px;
   padding: 12px 14px;
   font-size: 12px;
@@ -228,17 +228,17 @@ function topSessionLink(sid) {
 .rule-drawer__table { margin-bottom: 4px; }
 .rule-drawer__empty {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   font-style: italic;
   margin: 4px 0 16px 0;
 }
 .rule-drawer__loading,
 .rule-drawer__error {
   font-size: 12px;
-  color: #64748b;
+  color: var(--color-slate-500);
   padding: 8px 0;
 }
-.rule-drawer__error { color: #b91c1c; }
+.rule-drawer__error { color: var(--color-red-700); }
 .rule-drawer__actions {
   display: flex;
   gap: 8px;
@@ -246,9 +246,9 @@ function topSessionLink(sid) {
 }
 
 .rule-drawer__event--suppressed > td {
-  color: #94a3b8;
+  color: var(--color-slate-400);
   text-decoration: line-through;
-  text-decoration-color: #cbd5e1;
+  text-decoration-color: var(--color-slate-300);
 }
 .rule-drawer__event--suppressed > td:last-child {
   /* Keep the action button readable — only the data columns strike. */
@@ -265,8 +265,8 @@ function topSessionLink(sid) {
   line-height: 1;
 }
 .rule-drawer__suppress-btn:hover:not(:disabled) {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
+  background: var(--color-slate-100);
+  border-color: var(--color-slate-300);
 }
 .rule-drawer__suppress-btn:disabled {
   opacity: 0.4;

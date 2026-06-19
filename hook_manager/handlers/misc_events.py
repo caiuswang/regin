@@ -28,7 +28,7 @@ def teammate_idle(payload: HookPayload) -> HookResponse | None:
 def instructions_loaded(payload: HookPayload) -> HookResponse | None:
     raw = payload.raw
     attrs: dict = {}
-    for key in ('file_path', 'memory_type', 'load_reason'):
+    for key in ('file_path', 'memory_type', 'load_reason', 'parent_file_path'):
         v = raw.get(key)
         if v:
             attrs[key] = v
@@ -42,6 +42,9 @@ def config_change(payload: HookPayload) -> HookResponse | None:
     src = raw.get('config_source') or raw.get('source')
     if src:
         attrs['source'] = src
+    file_path = raw.get('file_path')
+    if file_path:
+        attrs['file_path'] = file_path
     _safe_emit(payload, 'config.change', attrs)
     return HookResponse(suppress_output=True)
 

@@ -173,6 +173,54 @@ def _apply_tool_input(attrs: dict, tc: dict) -> None:
             attrs['tool_input_truncated_bytes'] = dropped
 
 
+def _deny_skeleton(tool_name: str, tu_id: str) -> dict:
+    """The `tool.<name>` deny-span attrs shared by every deny path: a denied
+    flag and the ids that link back to the originating call. Both the Claude
+    transcript-sentinel path (`_build_deny_attrs`) and the provider-recorded
+    path (`build_recorded_deny_attrs`) build on this so the deny contract lives
+    in one place."""
+    return {'tool_name': tool_name, 'tool_use_id': tu_id, 'denied': True}
+
+
+# Recorded-denial command preview cap (Bash). Kept short: the full command
+# still rides along in `tool_input`.
+_DENY_COMMAND_PREVIEW_MAX = 200
+
+
+def build_recorded_deny_attrs(
+    tool_name: str,
+    tu_id: str,
+    denial_reason: object,
+    tool_input: object,
+) -> dict:
+    """Deny-span attrs for a provider that *records* permission denials in its
+    own transcript (Kimi) rather than through Claude's tool_result sentinel.
+
+    Produces the same `denied=True` `tool.<name>` shape `_build_deny_attrs`
+    does, so the UI renders both identically. Lives beside it (rather than in
+    the span poster) so a change to the deny contract touches one module.
+
+    For Bash we additionally set `command_preview` (not a top-level `command`):
+    fullLabel renders `Bash: <preview>` in the InlineToolRow that owns the
+    deny styling — a top-level `command` would divert rendering to BashCard,
+    whose badge keys on `interrupted` not `denied`. The full command stays in
+    `tool_input`.
+    """
+    attrs = _deny_skeleton(tool_name, tu_id)
+    attrs['deny_kind'] = 'deny'
+    if isinstance(denial_reason, str) and denial_reason:
+        attrs['denial_reason'] = denial_reason[:_DENIAL_REASON_MAX_BYTES]
+    if isinstance(tool_input, dict) and tool_input:
+        attrs['tool_input'] = tool_input
+        cmd = tool_input.get('command')
+        if tool_name == 'Bash' and isinstance(cmd, str) and cmd:
+            attrs['command_preview'] = (
+                cmd[:_DENY_COMMAND_PREVIEW_MAX]
+                + ('…' if len(cmd) > _DENY_COMMAND_PREVIEW_MAX else '')
+            )
+    return attrs
+
+
 def _build_deny_attrs(
     tool_name: str,
     tu_id: str,
@@ -194,11 +242,7 @@ def _build_deny_attrs(
         denied tool is AskUserQuestion), so the existing per-question
         renderer keeps working without a fallback path.
     """
-    attrs: dict = {
-        'tool_name': tool_name,
-        'tool_use_id': tu_id,
-        'denied': True,
-    }
+    attrs = _deny_skeleton(tool_name, tu_id)
     if turn_uuid:
         attrs['turn_uuid'] = turn_uuid
     _apply_denial_reason(attrs, result_text)

@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
+import uuid
 from datetime import datetime, timedelta
 
 from ..core import HookPayload, HookResponse
@@ -204,7 +206,12 @@ def _span_timing(raw: dict) -> tuple[int, str | None, str | None]:
 # get duplicated across builders.
 
 
-def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+def _build_bash_input_attrs(attrs: dict, tool_input: dict) -> None:
+    """Input-derived Bash attrs: `command_preview` (always) plus the full
+    `command` when it exceeds the preview cap. Split out of `_build_bash_attrs`
+    so the PreToolUse pending span can carry the *same* flat keys the resolved
+    card reads (`traceFormatters.fullLabel` / BashCard) — otherwise the in-flight
+    card has no `command_preview` and degrades to a bare "Bash" row."""
     attrs['command_preview'] = _bash_preview(tool_input)
     cmd_full = tool_input.get('command') or ''
     if isinstance(cmd_full, str) and len(cmd_full) > _PREVIEW_MAX:
@@ -212,6 +219,10 @@ def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payloa
         attrs['command'] = command
         if dropped_cmd:
             attrs['command_truncated_bytes'] = dropped_cmd
+
+
+def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    _build_bash_input_attrs(attrs, tool_input)
     stdout, dropped_out = _truncate_output(tool_response.get('stdout'), _BASH_STDOUT_MAX)
     if stdout:
         attrs['stdout'] = stdout
@@ -224,6 +235,28 @@ def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payloa
             attrs['stderr_truncated_bytes'] = dropped_err
     if tool_response.get('interrupted'):
         attrs['interrupted'] = True
+    _attach_bash_response_meta(attrs, tool_response)
+
+
+# Tool-independent metadata Claude Code stamps on a Bash `tool_response`:
+# a human-readable exit-status gloss and the background-task bookkeeping it
+# emits when a command is (auto-)backgrounded. Keys are read snake_case —
+# `_normalize_payload` aliases the camelCase originals. Only truthy values
+# are kept, so the common non-backgrounded case adds nothing.
+_BASH_RESPONSE_META: tuple[tuple[str, type], ...] = (
+    ('return_code_interpretation', str),
+    ('background_task_id', str),
+    ('assistant_auto_backgrounded', bool),
+    ('persisted_output_path', str),
+    ('persisted_output_size', int),
+)
+
+
+def _attach_bash_response_meta(attrs: dict, tool_response: dict) -> None:
+    for key, typ in _BASH_RESPONSE_META:
+        val = tool_response.get(key)
+        if isinstance(val, typ) and val:
+            attrs[key] = val
 
 
 def _build_edit_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
@@ -471,6 +504,110 @@ def _build_agent_attrs(attrs: dict, tool_input: dict, tool_response: dict, paylo
             attrs['prompt_truncated_bytes'] = dropped
 
 
+def _build_websearch_input_attrs(attrs: dict, tool_input: dict) -> None:
+    """Input-derived WebSearch attr: the search `query` the card displays.
+    Split out (input only, no tool_response) so the PreToolUse pending span can
+    reuse it — `fullLabel`/`toolLabel`/terminal already read `query`."""
+    query = tool_input.get('query')
+    if isinstance(query, str) and query:
+        attrs['query'] = query
+
+
+def _build_websearch_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    _build_websearch_input_attrs(attrs, tool_input)
+
+
+def _build_webfetch_input_attrs(attrs: dict, tool_input: dict) -> None:
+    """Input-derived WebFetch attrs: the `url` (shown on the card) and the
+    truncated extraction `fetch_prompt` (detail panel). Input only, so the
+    pending span carries the same flat keys the resolved span does."""
+    url = tool_input.get('url')
+    if isinstance(url, str) and url:
+        attrs['url'] = url
+    prompt = tool_input.get('prompt')
+    if isinstance(prompt, str) and prompt:
+        head, dropped = _truncate_output(prompt, _PREVIEW_MAX)
+        attrs['fetch_prompt'] = head
+        if dropped:
+            attrs['fetch_prompt_truncated_bytes'] = dropped
+
+
+def _build_webfetch_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    _build_webfetch_input_attrs(attrs, tool_input)
+
+
+# MCP input/result previews. An MCP call is otherwise opaque in the trace
+# (just the tool name), so we capture the params asked and the response
+# returned — that's the only way a reader can tell whether, say, a memory
+# recall's hits actually relate to the query. Sized to comfortably hold a
+# recall round-trip while staying well under the ingest attributes cap.
+_MCP_INPUT_MAX = 4 * 1024
+_MCP_RESULT_MAX = 16 * 1024
+
+
+def _json_text(value: object) -> str:
+    """Readable JSON for an arbitrary MCP params/response value. Pretty so
+    the detail panel's whitespace-pre-wrap renders it legibly; `default=str`
+    keeps non-serializable leaves from blowing up the whole dump."""
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _mcp_result_text(tool_response: object) -> str:
+    """Best-effort human-readable string for an MCP `tool_response`.
+
+    MCP results arrive in a few shapes: a bare string, the wire content-block
+    envelope (`{'content': [{'type':'text','text':…}]}` or a bare block list),
+    or an arbitrary dict (`{'result': …}` from a StructuredOutput tool). Prefer
+    concatenated text blocks, then a string `result`, then pretty JSON."""
+    if isinstance(tool_response, str):
+        return tool_response
+    blocks = None
+    if isinstance(tool_response, list):
+        blocks = tool_response
+    elif isinstance(tool_response, dict):
+        content = tool_response.get('content')
+        if isinstance(content, list):
+            blocks = content
+        elif isinstance(tool_response.get('result'), str):
+            return tool_response['result']
+    if blocks is not None:
+        texts = [b['text'] for b in blocks
+                 if isinstance(b, dict) and isinstance(b.get('text'), str)]
+        if texts:
+            return '\n'.join(texts)
+    return _json_text(tool_response)
+
+
+def _build_mcp_attrs(attrs: dict, tool: str, tool_input: dict, tool_response: object) -> None:
+    # Prefix-dispatched from _emit_span (the builders table is exact-match).
+    attrs['mcp'] = True
+    if isinstance(tool_input, dict):
+        attrs['tool_input_keys'] = list(tool_input.keys())
+    # send_to_user is a user-facing message channel: persist the body so
+    # the session Messages tab can render it. Truncated to stay well under
+    # the ingest attributes-bytes cap. Its prose is shown via the Messages
+    # tab, so skip the generic input/result dump for it.
+    if tool.endswith('__send_to_user'):
+        attrs['user_message'] = str(tool_input.get('message', ''))[:4000]
+        return
+    # Capture WHAT was asked (params) and WHAT came back (result), truncated,
+    # so the span-detail panel can show the round-trip.
+    if tool_input:
+        head, dropped = _truncate_output(_json_text(tool_input), _MCP_INPUT_MAX)
+        attrs['mcp_input'] = head
+        if dropped:
+            attrs['mcp_input_truncated_bytes'] = dropped
+    result_text = _mcp_result_text(tool_response)
+    if result_text:
+        head, dropped = _truncate_output(result_text, _MCP_RESULT_MAX)
+        attrs['mcp_result'] = head
+        if dropped:
+            attrs['mcp_result_truncated_bytes'] = dropped
+
+
 _TOOL_BUILDERS: dict = {
     'Agent': _build_agent_attrs,
     'Bash': _build_bash_attrs,
@@ -487,7 +624,31 @@ _TOOL_BUILDERS: dict = {
     'Workflow': _build_workflow_attrs,
     'TaskOutput': _build_taskoutput_attrs,
     'Skill': _build_skill_attrs,
+    'WebSearch': _build_websearch_attrs,
+    'WebFetch': _build_webfetch_attrs,
 }
+
+
+# Builders whose attrs derive purely from `tool_input` (no `tool_response`), so
+# a PreToolUse pending span can reuse them to carry the SAME flat keys the
+# resolved card reads — otherwise the in-flight card degrades to a bare tool
+# name (the conversation labellers ignore the raw `tool_input` dump).
+_INPUT_ONLY_BUILDERS: dict = {
+    'Bash': _build_bash_input_attrs,
+    'WebSearch': _build_websearch_input_attrs,
+    'WebFetch': _build_webfetch_input_attrs,
+}
+
+
+def apply_pending_input_attrs(attrs: dict, tool: str, tool_input: dict) -> bool:
+    """Populate a pending span's flat input-derived keys for `tool`, mirroring
+    the resolved card. Returns True if a builder handled it (the caller then
+    skips the raw `tool_input` fallback)."""
+    builder = _INPUT_ONLY_BUILDERS.get(tool)
+    if builder is None:
+        return False
+    builder(attrs, tool_input)
+    return True
 
 
 def handle(payload: HookPayload) -> HookResponse | None:
@@ -513,6 +674,13 @@ def _emit_span(payload: HookPayload) -> None:
     tool_response = payload.tool_response or {}
     raw = payload.raw or {}
 
+    # Reshape provider-specific result envelopes (Kimi wraps every tool result
+    # in `{output, isError}`) onto the Claude-shaped keys the builders read.
+    # Claude/Codex pass through unchanged.
+    tool_response = payload.resolved_provider.normalize_tool_response(
+        tool, tool_input, tool_response
+    )
+
     attrs: dict = {'tool_name': tool}
     # `tool_use_id` is the `toolu_…` Anthropic assigns to this call.
     # Without it the tool-attribution backfill can't match the span to
@@ -528,7 +696,7 @@ def _emit_span(payload: HookPayload) -> None:
     if builder is not None:
         builder(attrs, tool_input, tool_response, payload)
     elif tool.startswith('mcp__'):
-        attrs['mcp'] = True
+        _build_mcp_attrs(attrs, tool, tool_input, tool_response)
 
     # If this tool call originated inside a subagent, Claude Code tags the
     # payload with the subagent's `agent_id` (+ optional `agent_type`).
@@ -542,6 +710,11 @@ def _emit_span(payload: HookPayload) -> None:
         if agent_type:
             attrs['agent_type'] = agent_type
 
+    # send_to_user lands a durable row in `agent_messages`; pin the span_id
+    # up front so that row can deep-link back to this exact tool span.
+    is_send = tool.endswith('__send_to_user')
+    span_id = uuid.uuid4().hex[:16] if is_send else None
+
     duration_ms, start_time, end_time = _span_timing(raw)
     post_span(
         trace_id=payload.session_id,
@@ -550,4 +723,74 @@ def _emit_span(payload: HookPayload) -> None:
         duration_ms=duration_ms,
         start_time=start_time,
         end_time=end_time,
+        span_id=span_id,
     )
+
+    if is_send:
+        _record_agent_message(payload, tool_input, attrs, span_id)
+
+
+def _record_agent_message(payload, tool_input: dict, attrs: dict,
+                          span_id: str | None) -> None:
+    """Persist a send_to_user call into the canonical agent_messages store.
+
+    Best-effort: the hook must never fail because the message store is
+    unavailable, so every error is swallowed (the span — with its
+    `user_message` attr — still landed regardless).
+    """
+    is_test = os.environ.get('REGIN_TRACE_TEST', '').lower() in (
+        '1', 'true', 'yes')
+    try:
+        from lib.agent_messages import store
+        links = tool_input.get('links')
+        store.record_message(
+            trace_id=payload.session_id,
+            body=str(tool_input.get('message', '')),
+            msg_type=tool_input.get('type'),
+            title=tool_input.get('title') or None,
+            msg_key=tool_input.get('key') or None,
+            links=links if isinstance(links, (list, tuple)) else None,
+            span_id=span_id,
+            agent_id=attrs.get('agent_id'),
+            agent_type=attrs.get('agent_type'),
+            is_test=is_test,
+        )
+    except Exception:
+        pass
+    if tool_input.get('type') == 'lesson':
+        _remember_lesson(payload, tool_input, attrs, span_id, is_test)
+
+
+def _remember_lesson(payload, tool_input: dict, attrs: dict,
+                     span_id: str | None, is_test: bool) -> None:
+    """`send_to_user(type=lesson)` is the explicit capture endpoint into
+    the cross-session agent memory: besides landing in the inbox, the
+    lesson body becomes a working-tier memory carrying the span/agent
+    provenance this hook already has. Guarded separately from the message
+    write so neither store's failure can block the other."""
+    try:
+        import lib.memory as memory
+        if not memory.enabled():
+            return
+        from lib.memory.scoping import resolve_write_scope
+        body = str(tool_input.get('message', ''))
+        common = dict(
+            kind='lesson',
+            title=tool_input.get('title') or None,
+            scope=resolve_write_scope(payload.cwd),
+            tags=['send_to_user'],
+            source_trace_id=payload.session_id,
+            source_span_id=span_id,
+            source_agent_id=attrs.get('agent_id'),
+            is_test=is_test,
+        )
+        # `supersedes` (type=lesson only) retires the named memory and chains
+        # this one onto it, vs the default fresh insert — the non-destructive
+        # correction path that preserves provenance.
+        supersedes = str(tool_input.get('supersedes') or '').strip()
+        if supersedes and memory.get(supersedes) is not None:
+            memory.supersede(supersedes, memory.MemoryInput(body=body, **common))
+        else:
+            memory.remember(body, **common)
+    except Exception:
+        pass

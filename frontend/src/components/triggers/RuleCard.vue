@@ -16,11 +16,12 @@ const statusBadge = computed(() => ({
   dead:   { color: 'gray',   label: 'dead' },
 }[props.rule.status] || { color: 'gray', label: props.rule.status }))
 
+// CSS vars so the inline :style color follows the active theme.
 const rateColor = computed(() => ({
-  noisy: '#b45309',
-  active: '#0f766e',
-  dead: '#94a3b8',
-}[props.rule.status] || '#0f766e'))
+  noisy: 'var(--color-amber-700)',
+  active: 'var(--color-teal-700)',
+  dead: 'var(--color-slate-400)',
+}[props.rule.status] || 'var(--color-teal-700)'))
 
 const isDead = computed(() => props.rule.status === 'dead')
 const isNoisy = computed(() => props.rule.status === 'noisy')
@@ -119,15 +120,15 @@ function onToggle() { emit('toggle') }
 <style scoped>
 .rule-card {
   position: relative;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--color-white);
+  border: 1px solid var(--color-slate-200);
   border-radius: 8px;
   padding: 14px 18px;
   margin-bottom: 12px;
   transition: border-color 150ms;
 }
 .rule-card--open {
-  border-color: #93c5fd;
+  border-color: var(--color-blue-300);
   box-shadow: 0 4px 12px rgba(30, 64, 175, 0.06);
 }
 .rule-card--dead { opacity: 0.7; }
@@ -137,7 +138,7 @@ function onToggle() { emit('toggle') }
   position: absolute;
   left: 0; top: 0; bottom: 0;
   width: 4px;
-  background: #fbbf24;
+  background: var(--color-amber-400);
   border-top-left-radius: 8px;
   border-bottom-left-radius: 8px;
 }
@@ -155,7 +156,7 @@ function onToggle() { emit('toggle') }
   text-align: left;
 }
 .rule-card__caret {
-  color: #64748b;
+  color: var(--color-slate-500);
   font-size: 14px;
   width: 14px;
   flex-shrink: 0;
@@ -164,11 +165,11 @@ function onToggle() { emit('toggle') }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 15px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--color-slate-800);
 }
 .rule-card__last-seen {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   font-variant-numeric: tabular-nums;
 }
 
@@ -190,45 +191,45 @@ function onToggle() { emit('toggle') }
 }
 .rule-card__rate-label {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
 }
 .rule-card__counts {
   font-size: 12px;
-  color: #475569;
+  color: var(--color-slate-600);
   font-variant-numeric: tabular-nums;
   margin-left: 6px;
 }
 .rule-card__suppressed-hint {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin-left: 4px;
   cursor: help;
 }
 
 .rule-card__guide {
   font-size: 13px;
-  color: #64748b;
+  color: var(--color-slate-500);
   font-style: italic;
   margin: 0 0 6px 0;
 }
 
 .rule-card__top-files {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
   margin: 0;
 }
 .rule-card__file {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #475569;
+  color: var(--color-slate-600);
 }
 .rule-card__file-count { margin-left: 2px; }
 
 .rule-card__dead-cta {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--color-slate-400);
 }
 .rule-card__cta-link {
-  color: #1e40af;
+  color: var(--color-blue-800);
   text-decoration: none;
 }
 .rule-card__cta-link:hover { text-decoration: underline; }

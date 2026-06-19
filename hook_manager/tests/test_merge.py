@@ -1,7 +1,12 @@
 """Tests for hook_manager.merge.merge_responses and response_to_json."""
 
 from hook_manager.core import HookResponse
-from hook_manager.merge import merge_responses, response_to_json
+from hook_manager.merge import (
+    kimi_block_reason,
+    kimi_response_text,
+    merge_responses,
+    response_to_json,
+)
 
 
 # ── permission_decision precedence ────────────────────────────────────
@@ -356,3 +361,57 @@ def test_merge_skips_none_entries():
         None,
     ])
     assert merged.additional_context == 'real'
+
+
+# ── Kimi output contract ──────────────────────────────────────────────
+#
+# Kimi Code understands only hookSpecificOutput.permissionDecision; any other
+# stdout it renders verbatim. These pin that we never emit Claude-only fields
+# (suppressOutput/systemMessage/decision) — the bug that printed
+# `{"suppressOutput": true}` into the Kimi UI.
+
+def test_kimi_observation_event_is_silent():
+    """A trace handler that only suppresses output produces NO Kimi stdout —
+    the whole point of the fix."""
+    merged = merge_responses([HookResponse(suppress_output=True)])
+    assert kimi_response_text('PostToolUse', merged) == ''
+    assert kimi_response_text('UserPromptSubmit', merged) == ''
+
+
+def test_kimi_pretooluse_deny_emits_permission_decision():
+    import json
+    merged = merge_responses([
+        HookResponse(permission_decision='deny', permission_reason='use rg'),
+    ])
+    out = json.loads(kimi_response_text('PreToolUse', merged))
+    assert out == {'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse',
+        'permissionDecision': 'deny',
+        'permissionDecisionReason': 'use rg',
+    }}
+    # No Claude-only top-level fields leak in.
+    assert 'suppressOutput' not in out
+    assert 'systemMessage' not in out
+
+
+def test_kimi_permission_decision_only_on_pretooluse():
+    """permissionDecision is meaningless on a non-tool event for Kimi, so it
+    is not emitted there."""
+    merged = merge_responses([HookResponse(permission_decision='deny', permission_reason='x')])
+    assert kimi_response_text('PostToolUse', merged) == ''
+
+
+def test_kimi_additional_context_is_plain_text_on_prompt():
+    """Kimi has no additionalContext JSON field — context is injected as plain
+    stdout text on the exit-0 prompt/session events."""
+    merged = merge_responses([HookResponse(additional_context='recalled: foo')])
+    assert kimi_response_text('UserPromptSubmit', merged) == 'recalled: foo'
+    assert kimi_response_text('SessionStart', merged) == 'recalled: foo'
+    # ...but not on an arbitrary tool event.
+    assert kimi_response_text('PostToolUse', merged) == ''
+
+
+def test_kimi_block_reason_prefers_decision_then_stop():
+    assert kimi_block_reason(HookResponse(decision_reason='blocked', stop_reason='stopped')) == 'blocked'
+    assert kimi_block_reason(HookResponse(stop_reason='stopped')) == 'stopped'
+    assert kimi_block_reason(HookResponse()) == ''

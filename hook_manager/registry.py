@@ -76,6 +76,7 @@ compact_lifecycle   = _safe_import('compact_lifecycle')
 cwd_changed         = _safe_import('cwd_changed')
 doc_check           = _safe_import('doc_check')
 file_changed        = _safe_import('file_changed')
+memory_recall       = _safe_import('memory_recall')
 rule_check          = _safe_import('rule_check')
 misc_events         = _safe_import('misc_events')
 permission_events   = _safe_import('permission_events')
@@ -195,6 +196,16 @@ REGISTRY: list[Handler] = [
         fn=doc_check.handle,
     ),
     Handler(
+        name='memory_recall',
+        label='Memory Recall Inject',
+        summary='Injects <recalled_experience> from the agent-memory store into eligible prompts.',
+        match_hint='Real user prompts (no slash commands / task notifications) when agent_memory.auto_inject is on',
+        events=['UserPromptSubmit'],
+        kind='enrich',
+        priority=90,
+        fn=memory_recall.handle,
+    ),
+    Handler(
         name='prompt_trace',
         label='Prompt Trace',
         summary='Captures lightweight prompt spans and plan-mode detection.',
@@ -305,12 +316,15 @@ REGISTRY: list[Handler] = [
     # hook event, so this handler is still the only path that updates
     # sessions.model across switches.
     #
-    # Also fires on PostToolUse via a lean fast path that only ingests
-    # new `assistant_response` spans (no turn/usage/tool_attribution
-    # work). This keeps the live trace UI from lagging by a whole
-    # prompt cycle: the assistant text that precedes a tool_use is
-    # already in the transcript by the time PostToolUse fires, so each
-    # newly-written turn appears within ~1 tool-call. Throttled by the
+    # Also fires on PreToolUse + PostToolUse via a lean fast path that
+    # only ingests new `assistant_response` spans (no turn/usage/
+    # tool_attribution work). This keeps the live trace UI from lagging
+    # by a whole prompt cycle: the assistant text/thinking that precedes
+    # a tool_use is already in the transcript by the time PreToolUse
+    # fires, so it appears the moment the tool is *proposed* — crucially
+    # before a permission prompt resolves (Kimi/Claude can sit minutes at
+    # an approval prompt, during which only PreToolUse has fired). The
+    # PostToolUse tick then catches the tool result. Throttled by the
     # per-session seen-uuid cache (turn_trace.py).
     #
     # Priority 150 so on UserPromptSubmit it runs AFTER prompt_trace
@@ -324,8 +338,8 @@ REGISTRY: list[Handler] = [
         name='turn_trace',
         label='Turn Usage Trace',
         summary='Backfills per-turn usage spans from the transcript file.',
-        match_hint='UserPromptSubmit, SessionEnd, Stop, and PostToolUse events',
-        events=['UserPromptSubmit', 'SessionEnd', 'Stop', 'PostToolUse'],
+        match_hint='UserPromptSubmit, SessionEnd, Stop, PreToolUse, and PostToolUse events',
+        events=['UserPromptSubmit', 'SessionEnd', 'Stop', 'PreToolUse', 'PostToolUse'],
         kind='trace',
         priority=150,
         fn=turn_trace.handle,

@@ -1101,6 +1101,55 @@ def test_queued_command_anchor_retimed_to_first_response(captured_spans, tmp_pat
     assert resp_spans[0].get('parent_id') == queued[0]['span_id']
 
 
+def test_queued_command_with_images_emits_prompt_span_and_images(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """A queued prompt that carries pasted images arrives with `prompt`
+    as a LIST of content blocks (text marker + base64 image parts), not
+    a bare string — same dual shape as `message.content`. It must still
+    recover a `prompt` span (text from the text blocks) and persist the
+    inline images via `prompt_images`, like the UserPromptSubmit anchor
+    path does."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    events: list = []
+    import lib.hook_plugin as hp
+    monkeypatch.setattr(hp, 'post_event',
+                        lambda name, data: events.append((name, data)))
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        {'type': 'attachment', 'uuid': 'qcmd-img1234567xy',
+         'parentUuid': 'u1', 'timestamp': '2026-04-27T12:00:05Z',
+         'attachment': {'type': 'queued_command',
+                        'prompt': [
+                            {'type': 'text', 'text': '[Image #1] [Image #2]'},
+                            {'type': 'image',
+                             'source': {'type': 'base64',
+                                        'media_type': 'image/png',
+                                        'data': 'QUJD'}},
+                            {'type': 'image',
+                             'source': {'type': 'base64',
+                                        'media_type': 'image/png',
+                                        'data': 'REVG'}},
+                        ]}},
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='qc-img1',
+                         transcript_path=str(transcript)))
+    s = _prompt_spans_by_uuid(captured_spans)['prompt-qcmd-img12345']
+    assert s['attributes']['text'] == '[Image #1] [Image #2]'
+    assert s['attributes']['queued'] is True
+    assert s['attributes']['image_indices'] == [1, 2]
+    image_events = [d for name, d in events if name == 'prompt_images']
+    assert image_events, 'prompt_images must persist for a queued image prompt'
+    assert [
+        (r['prompt_span_id'], r['idx'], r['data_b64'])
+        for r in image_events[0]
+    ] == [
+        ('prompt-qcmd-img12345', 1, 'QUJD'),
+        ('prompt-qcmd-img12345', 2, 'REVG'),
+    ]
+
+
 def test_queued_command_non_prompt_mode_skipped(captured_spans, tmp_path, monkeypatch):
     """Only prompt-mode queues become `prompt` spans — a queued slash
     command (different `commandMode`) is not a model prompt and must not

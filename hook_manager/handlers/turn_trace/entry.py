@@ -30,7 +30,9 @@ from .span_posters import (
     _post_attachment_spans,
     _post_live_turn_data,
     _post_local_command_spans,
+    _post_permission_denial_spans,
     _post_prompt_anchor_spans,
+    _post_rewind_spans,
     _post_system_event_spans,
 )
 
@@ -39,7 +41,12 @@ _TAIL_BYTES = 64 * 1024  # cap the read at 64 KiB — only need the last turn
 
 def handle(payload: HookPayload) -> HookResponse | None:
     try:
-        if payload.event == 'PostToolUse':
+        if payload.event in ('PostToolUse', 'PreToolUse'):
+            # Lean fast path on both tool boundaries. PreToolUse fires when a
+            # tool is *proposed* — before any permission prompt resolves — so
+            # the thinking/response the agent just wrote lands immediately
+            # instead of waiting (potentially minutes) for the user to approve
+            # and PostToolUse to fire. Throttled by the seen-uuid cache.
             _emit_assistant_response_only(payload)
         else:
             _emit_span(payload)
@@ -150,28 +157,36 @@ def _post_transcript_usage(
                            _sorted_turn_timestamps(usage.turns))
     _post_system_event_spans(trace_id, usage.system_events, seen)
     _post_local_command_spans(trace_id, usage.local_commands, seen)
+    # Provider-recorded permission denials (Kimi). Empty for Claude, whose
+    # denials arrive live via the PermissionDenied hook.
+    _post_permission_denial_spans(trace_id, usage.permission_denials)
     _post_prompt_anchor_spans(trace_id, usage.turns, usage.prompt_texts,
                               usage.prompt_timestamps, usage.prompt_image_parts,
                               seen)
+    # `/rewind` markers last: their attributes reference the abandoned spans
+    # the posters above just emitted (the projection collapses them at read).
+    _post_rewind_spans(trace_id, usage.rewinds, seen)
 
 
 def _ingest_transcript_usage(
     trace_id: str,
     transcript_path: str,
     fallback_model: str | None,
+    provider,
     effort_level: str | None = None,
-) -> None:
-    """Read the full transcript and emit every derived span/event for
-    rows the seen-uuid cache hasn't already accepted."""
-    from lib.trace.transcript_usage import read_usage  # type: ignore
-
+) -> str | None:
+    """Parse the transcript (via the provider's parser) and emit every derived
+    span/event for rows the seen-uuid cache hasn't already accepted. Returns
+    the model the transcript reported, so callers without a cheaper model read
+    (non-Claude formats) can post the `turn` model span from the same parse."""
     capture_text, max_text_bytes, read_cap = _text_capture_config()
-    usage = read_usage(transcript_path, max_text_bytes=read_cap)
+    usage = provider.parse_transcript(transcript_path, max_text_bytes=read_cap)
     _post_transcript_usage(
         trace_id, usage, fallback_model,
         capture_text=capture_text, max_text_bytes=max_text_bytes,
         effort_level=effort_level,
     )
+    return usage.model if usage else None
 
 
 def ingest_transcript_usage_resumable(
@@ -203,15 +218,28 @@ def ingest_transcript_usage_resumable(
 
 
 def _emit_span(payload: HookPayload) -> None:
-    transcript_path = payload.raw.get('transcript_path')
-    if not isinstance(transcript_path, str) or not transcript_path:
+    provider = payload.resolved_provider
+    transcript_path = provider.resolve_transcript_path(payload)
+    if not transcript_path:
         return
-    model = _latest_turn_model(transcript_path)
-    if model:
-        _post_turn_model_span(payload.session_id, model)
-    _emit_session_title_if_changed(payload.session_id, transcript_path)
-    _ingest_transcript_usage(payload.session_id, transcript_path, model,
-                             effort_level=_payload_effort_level(payload))
+    effort = _payload_effort_level(payload)
+    if getattr(provider, 'transcript_format', 'claude') == 'claude':
+        # Claude-only enrichment: a cheap tail-read of the latest model (so the
+        # `turn` span lands before the full parse) plus the session-title span.
+        model = _latest_turn_model(transcript_path)
+        if model:
+            _post_turn_model_span(payload.session_id, model)
+        _emit_session_title_if_changed(payload.session_id, transcript_path)
+        _ingest_transcript_usage(payload.session_id, transcript_path, model, provider,
+                                 effort_level=effort)
+    else:
+        # Other formats (Kimi) carry the model in the same parse, so derive the
+        # `turn` model span from the ingest rather than scanning the file twice
+        # (Kimi's SessionStart payload carries no model).
+        model = _ingest_transcript_usage(payload.session_id, transcript_path, None,
+                                         provider, effort_level=effort)
+        if model:
+            _post_turn_model_span(payload.session_id, model)
 
 
 def _emit_assistant_response_only(payload: HookPayload) -> None:
@@ -224,10 +252,11 @@ def _emit_assistant_response_only(payload: HookPayload) -> None:
     (no new turn since the last tool call) costs one transcript scan
     plus zero HTTP calls.
     """
-    transcript_path = payload.raw.get('transcript_path')
-    if not isinstance(transcript_path, str) or not transcript_path:
+    provider = payload.resolved_provider
+    transcript_path = provider.resolve_transcript_path(payload)
+    if not transcript_path:
         return
-    _ingest_transcript_usage(payload.session_id, transcript_path, None,
+    _ingest_transcript_usage(payload.session_id, transcript_path, None, provider,
                              effort_level=_payload_effort_level(payload))
 
 

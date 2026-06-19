@@ -14,6 +14,7 @@ Precedence rules follow the Claude Code hooks spec and our registry contract:
 
 from __future__ import annotations
 
+import json
 import sys
 from typing import Iterable
 
@@ -236,3 +237,52 @@ def response_to_json(event: str, merged: HookResponse) -> dict:
     if touched:
         out['hookSpecificOutput'] = specific
     return out
+
+
+# ── Kimi Code output contract ──────────────────────────────────────────
+#
+# Kimi Code understands a far smaller hook-output surface than Claude. Per
+# https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html the
+# ONLY JSON it parses is a permission decision on a blockable tool event:
+#
+#     {"hookSpecificOutput": {"permissionDecision": "deny",
+#                             "permissionDecisionReason": "..."}}
+#
+# Every other stdout byte is treated as plain text — shown to the user and, on
+# exit-0 prompt/session events, appended to the model's context. Claude-only
+# fields (suppressOutput, systemMessage, decision/reason, additionalContext)
+# have no meaning here: emitting them makes Kimi render raw JSON like
+# `{"suppressOutput": true}` in its UI (the bug this contract avoids).
+
+# Events on which Kimi appends an exit-0 hook's stdout to the model context.
+# We use this to inject `additional_context` as PLAIN TEXT, since Kimi has no
+# `additionalContext` JSON field the way Claude does.
+_KIMI_CONTEXT_EVENTS = frozenset({'UserPromptSubmit', 'SessionStart'})
+
+
+def kimi_response_text(event: str, merged: HookResponse) -> str:
+    """Serialize a merged response to Kimi Code's hook-output contract.
+
+    Returns the exact bytes to write to stdout, or '' when there is nothing
+    actionable (so the runner can stay completely silent rather than printing
+    a Claude-shaped object Kimi would display verbatim).
+    """
+    if event == 'PreToolUse' and merged.permission_decision in ('allow', 'deny'):
+        specific = {'hookEventName': event,
+                    'permissionDecision': merged.permission_decision}
+        if merged.permission_reason:
+            specific['permissionDecisionReason'] = merged.permission_reason
+        return json.dumps({'hookSpecificOutput': specific}, ensure_ascii=False)
+    if merged.additional_context and event in _KIMI_CONTEXT_EVENTS:
+        # Plain text — Kimi appends exit-0 stdout to the prompt/session context.
+        return merged.additional_context
+    return ''
+
+
+def kimi_block_reason(merged: HookResponse) -> str:
+    """Plain-text reason Kimi shows when a hook blocks via exit code 2.
+
+    Kimi has no JSON `decision`/`reason` field — a block is communicated by
+    exiting 2 with the reason on stderr. Empty string means no reason to emit.
+    """
+    return merged.decision_reason or merged.stop_reason or ''

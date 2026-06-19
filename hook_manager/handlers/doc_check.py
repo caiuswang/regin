@@ -84,7 +84,7 @@ def handle(payload: HookPayload) -> HookResponse | None:
     return HookResponse(
         additional_context=(
             f'doc-hygiene warnings for `{file_path}`:\n{body}\n'
-            f'Read `~/.claude/skills/doc-hygiene/content.md` for the full ruleset.'
+            f'Invoke the `doc-hygiene` skill for the full ruleset.'
         ),
     )
 
