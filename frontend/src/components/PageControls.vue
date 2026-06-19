@@ -2,6 +2,8 @@
 // Prev/next/goto pager for offset-limit tables. The page number is 0-based
 // in the API but rendered as 1-based here.
 import { computed } from 'vue'
+import Button from './ui/Button.vue'
+import Select from './ui/Select.vue'
 
 const props = defineProps({
   page: { type: Number, required: true },
@@ -26,29 +28,31 @@ function onInput(evt) {
 </script>
 
 <template>
-  <div class="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50 text-xs text-gray-500 gap-3 flex-wrap">
-    <span>{{ rangeStart }}-{{ rangeEnd }} of {{ total }}</span>
-    <div class="flex items-center gap-2 flex-wrap">
-      <button type="button" class="btn btn-secondary text-xs" :disabled="!hasPrev || loading" @click="emit('prev')">&larr; Prev</button>
-      <span>Page
+  <div class="flex items-center justify-between px-4 py-2.5 border-t border-gray-200 bg-gray-50 text-xs text-gray-500 gap-3 flex-wrap">
+    <span class="font-mono tabular-nums">{{ rangeStart }}–{{ rangeEnd }} <span class="text-gray-400">of</span> {{ total }}</span>
+    <div class="flex items-center gap-1.5 flex-wrap">
+      <Button variant="secondary" size="sm" :disabled="!hasPrev || loading" @click="emit('prev')">&larr; Prev</Button>
+      <span class="inline-flex items-center gap-1.5 whitespace-nowrap px-1">
+        Page
         <input
           type="number" min="1" :max="pageCount" :value="displayPage"
           aria-label="Page number"
-          class="w-14 px-1 py-0.5 border border-gray-300 rounded text-center"
+          class="input w-12 px-1 py-0.5 text-center tabular-nums"
           @change="onInput"
         >
-        of {{ pageCount }}
+        <span class="text-gray-400">of {{ pageCount }}</span>
       </span>
-      <button type="button" class="btn btn-secondary text-xs" :disabled="!hasNext || loading" @click="emit('next')">Next &rarr;</button>
-      <span class="ml-2">Rows:
-        <select
-          class="px-1 py-0.5 border border-gray-300 rounded"
-          aria-label="Rows per page"
-          :value="size"
-          @change="evt => emit('set-size', parseInt(evt.target.value, 10))"
-        >
-          <option v-for="s in sizes" :key="s" :value="s">{{ s }}</option>
-        </select>
+      <Button variant="secondary" size="sm" :disabled="!hasNext || loading" @click="emit('next')">Next &rarr;</Button>
+      <span class="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap">Rows
+        <span class="inline-block w-[4.75rem]">
+          <Select
+            block
+            aria-label="Rows per page"
+            :model-value="size"
+            :options="sizes"
+            @update:model-value="v => emit('set-size', parseInt(v, 10))"
+          />
+        </span>
       </span>
     </div>
   </div>
