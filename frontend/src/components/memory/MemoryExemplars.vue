@@ -1,9 +1,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api'
+import { useClientPage } from '../../composables/useClientPage'
 import Button from '../ui/Button.vue'
 import Select from '../ui/Select.vue'
 import Icon from '../ui/Icon.vue'
+import PageControls from '../PageControls.vue'
 import ExemplarCaseList from './ExemplarCaseList.vue'
 
 // Exemplar inspection + curation: which memories carry query exemplars (the
@@ -44,6 +46,16 @@ async function reload() {
     loading.value = false
   }
 }
+
+// Client-side search + paging: the API returns a bounded set (no offset / `q`),
+// so filter and slice the fetched rows rather than round-trip the backend.
+const {
+  query, paged, rawCount, total, page, pageSize, pageCount, hasNext, hasPrev,
+  next, prev, goto, setSize,
+} = useClientPage(summary, {
+  searchText: (s) => `${s.title || ''} ${s.memory_id || ''} ${s.kind || ''}`,
+  size: 25,
+})
 
 async function addCase() {
   formError.value = ''
@@ -111,6 +123,13 @@ defineExpose({ reload })
         class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
         :class="negWeight > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'"
       >{{ negWeight > 0 ? `demote ×${negWeight}` : 'demote off' }}</span>
+      <input
+        v-if="rawCount > 0"
+        v-model="query"
+        type="search"
+        placeholder="Filter memories…"
+        class="ml-auto w-44 text-xs border border-slate-200 rounded-md px-2.5 py-1 focus-visible:outline-2 focus-visible:outline-blue-500"
+      />
     </div>
     <p class="text-xs text-slate-500 mb-3 leading-relaxed">
       Graded injects re-rank a memory for similar queries only — leaving its intrinsic importance untouched.
@@ -151,7 +170,10 @@ defineExpose({ reload })
           </tr>
         </thead>
         <tbody>
-          <template v-for="s in summary" :key="s.memory_id">
+          <tr v-if="!paged.length">
+            <td colspan="5" class="px-3 py-6 text-center text-sm text-slate-400">No memory matches “{{ query }}”.</td>
+          </tr>
+          <template v-for="s in paged" :key="s.memory_id">
             <tr class="border-t border-slate-100">
               <td class="px-3 py-2 text-slate-800 truncate max-w-[20rem]">
                 <Button variant="link" size="sm" class="text-left text-slate-800 hover:text-blue-600 hover:no-underline gap-1 focus-visible:ring-2 focus-visible:ring-blue-400" :title="`${expanded.has(s.memory_id) ? 'Hide' : 'View'} cases`" @click="toggle(s.memory_id)">
@@ -178,6 +200,19 @@ defineExpose({ reload })
           </template>
         </tbody>
       </table>
+      <PageControls
+        v-if="rawCount > pageSize"
+        :page="page"
+        :page-count="pageCount"
+        :total="total"
+        :size="pageSize"
+        :has-next="hasNext"
+        :has-prev="hasPrev"
+        @prev="prev"
+        @next="next"
+        @goto="goto"
+        @set-size="setSize"
+      />
     </div>
   </section>
 </template>

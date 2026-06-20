@@ -1,8 +1,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../../api'
+import { useClientPage } from '../../composables/useClientPage'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import PageControls from '../PageControls.vue'
 
 // The topic-routing feedback loop: per-topic relevance verdicts stamped by
 // the InjectedRelated grade aspect, the threshold-derived PROPOSAL, and the
@@ -24,6 +26,28 @@ async function reload() {
     loading.value = false
   }
 }
+
+// Client-side search + paging for both tables (the API returns bounded sets
+// with no offset / `q`). Two independent pagers — the summary grid and the
+// recent-injections log scroll separately.
+const {
+  query: sumQuery, paged: sumRows, rawCount: sumRaw, total: sumTotal,
+  page: sumP, pageSize: sumSize, pageCount: sumCount,
+  hasNext: sumNext, hasPrev: sumPrev, next: sumOnNext, prev: sumOnPrev,
+  goto: sumGoto, setSize: sumSetSize,
+} = useClientPage(summary, {
+  searchText: (s) => `${s.topic_id || ''} ${s.status || ''}`,
+  size: 15,
+})
+const {
+  query: recQuery, paged: recRows, rawCount: recRaw, total: recTotal,
+  page: recP, pageSize: recSize, pageCount: recCount,
+  hasNext: recNext, hasPrev: recPrev, next: recOnNext, prev: recOnPrev,
+  goto: recGoto, setSize: recSetSize,
+} = useClientPage(recent, {
+  searchText: (r) => `${r.topic_id || ''} ${r.query || ''} ${r.relevance || ''}`,
+  size: 15,
+})
 
 async function decide(topicId, decision) {
   busy.value = topicId
@@ -95,6 +119,13 @@ defineExpose({ reload })
     <div class="flex items-baseline gap-2 mb-1">
       <h2 class="text-sm font-semibold text-slate-800">Topic routing feedback</h2>
       <span class="text-[11px] text-slate-400 font-mono">{{ summary.length }} topics</span>
+      <input
+        v-if="sumRaw > 0"
+        v-model="sumQuery"
+        type="search"
+        placeholder="Filter topics…"
+        class="ml-auto w-44 text-xs border border-slate-200 rounded-md px-2.5 py-1 focus-visible:outline-2 focus-visible:outline-blue-500"
+      />
     </div>
     <p class="text-xs text-slate-500 mb-3 leading-relaxed">
       The fail-rate bar only proposes a route for suppression — you approve what actually gets withheld.
@@ -113,7 +144,10 @@ defineExpose({ reload })
           </tr>
         </thead>
         <tbody>
-          <tr v-for="s in summary" :key="s.topic_id" class="border-t border-slate-100">
+          <tr v-if="!sumRows.length">
+            <td colspan="6" class="px-3 py-6 text-center text-sm text-slate-400">No topic matches “{{ sumQuery }}”.</td>
+          </tr>
+          <tr v-for="s in sumRows" :key="s.topic_id" class="border-t border-slate-100">
             <td class="px-3 py-2 font-medium text-slate-800 truncate max-w-[14rem]">{{ s.topic_id }}</td>
             <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.scored)">{{ s.scored }}</td>
             <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.fails)">{{ s.fails }}</td>
@@ -153,6 +187,20 @@ defineExpose({ reload })
           </tr>
         </tbody>
       </table>
+      <PageControls
+        v-if="sumRaw > sumSize"
+        :page="sumP"
+        :page-count="sumCount"
+        :total="sumTotal"
+        :size="sumSize"
+        :has-next="sumNext"
+        :has-prev="sumPrev"
+        :sizes="[15, 30, 60, 120]"
+        @prev="sumOnPrev"
+        @next="sumOnNext"
+        @goto="sumGoto"
+        @set-size="sumSetSize"
+      />
     </div>
     <p v-else-if="!loading" class="text-sm text-slate-400 mb-3">No topics have been scored yet.</p>
 
@@ -166,11 +214,20 @@ defineExpose({ reload })
         <span class="ml-auto text-[11px] font-mono text-slate-400">{{ recent.length }}</span>
       </summary>
       <div class="border-t border-slate-200">
-        <p class="px-3 py-2.5 text-xs text-slate-500 leading-relaxed border-b border-slate-100">
-          Each row is one <code class="text-[11px]">&lt;topic_context&gt;</code> block regin routed into a session, with the
-          prompt that triggered it. Open the session to see it in context; the Judge buttons protect or suppress this
-          topic for similar future queries.
-        </p>
+        <div class="flex items-start gap-3 px-3 py-2.5 border-b border-slate-100">
+          <p class="text-xs text-slate-500 leading-relaxed">
+            Each row is one <code class="text-[11px]">&lt;topic_context&gt;</code> block regin routed into a session, with the
+            prompt that triggered it. Open the session to see it in context; the Judge buttons protect or suppress this
+            topic for similar future queries.
+          </p>
+          <input
+            v-if="recRaw > 0"
+            v-model="recQuery"
+            type="search"
+            placeholder="Filter injections…"
+            class="shrink-0 w-44 text-xs border border-slate-200 rounded-md px-2.5 py-1 focus-visible:outline-2 focus-visible:outline-blue-500"
+          />
+        </div>
         <table class="w-full text-sm table-fixed">
           <thead class="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
             <tr>
@@ -184,7 +241,10 @@ defineExpose({ reload })
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in recent" :key="r.session_id + r.topic_id" class="border-t border-slate-100 hover:bg-slate-50/60">
+            <tr v-if="!recRows.length">
+              <td colspan="6" class="px-3 py-6 text-center text-sm text-slate-400">No injection matches “{{ recQuery }}”.</td>
+            </tr>
+            <tr v-for="r in recRows" :key="r.session_id + r.topic_id" class="border-t border-slate-100 hover:bg-slate-50/60">
               <!-- Most rows are unscored; render that as muted text, not a badge,
                    so the rows carrying a real verdict are the ones that stand out. -->
               <td class="px-3 py-2">
@@ -221,6 +281,20 @@ defineExpose({ reload })
             </tr>
           </tbody>
         </table>
+        <PageControls
+          v-if="recRaw > recSize"
+          :page="recP"
+          :page-count="recCount"
+          :total="recTotal"
+          :size="recSize"
+          :has-next="recNext"
+          :has-prev="recPrev"
+          :sizes="[15, 30, 60, 120]"
+          @prev="recOnPrev"
+          @next="recOnNext"
+          @goto="recGoto"
+          @set-size="recSetSize"
+        />
       </div>
     </details>
   </section>
