@@ -4,6 +4,7 @@ import { fmtTime, fmtDuration, fmtTokens, fmtModel, truncate } from '../../utils
 import { useStickyMaxHeight } from '../../composables/useStickyMaxHeight.js'
 import { useConversationRail } from '../../composables/useConversationRail.js'
 import Button from '../ui/Button.vue'
+import Icon from '../ui/Icon.vue'
 
 // Left-rail table of contents for the conversation spine. Two modes:
 //   • regular session → a flat list of turns (prompt previews + token meta)
@@ -153,7 +154,7 @@ function jumpToLive() {
               class="mt-px inline-flex items-center justify-center shrink-0 w-4 h-4 rounded text-[10px] font-bold tabular-nums"
               :class="p.complete ? 'bg-emerald-100 text-emerald-700'
                 : p.agentCount ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'"
-            >{{ p.complete ? '✓' : p.index }}</span>
+            ><Icon v-if="p.complete" name="check" :size="11" /><template v-else>{{ p.index }}</template></span>
             <div class="min-w-0 flex-1">
               <div class="text-xs font-semibold text-slate-800 leading-tight flex items-center gap-1.5">
                 <span class="truncate" :title="p.title">{{ p.title }}</span>
@@ -190,9 +191,9 @@ function jumpToLive() {
             >
               <span
                 v-if="a.done"
-                class="shrink-0 w-2 text-center text-emerald-500 text-[10px] leading-none"
+                class="shrink-0 w-2 inline-flex justify-center text-emerald-500"
                 title="done"
-              >✓</span>
+              ><Icon name="check" :size="11" /></span>
               <span
                 v-else-if="a.running"
                 class="inline-block w-2 h-2 rounded-full shrink-0 bg-blue-500 ring-2 ring-blue-200 animate-pulse"
@@ -262,9 +263,9 @@ function jumpToLive() {
     <Button
       variant="link"
       size="sm"
-      class="shrink-0 block mt-2 pt-2 border-t border-slate-100 text-[11px]"
+      class="shrink-0 mt-2 pt-2 border-t border-slate-100 text-[11px]"
       title="Scroll to the most recent turn"
       @click="jumpToLive"
-    >↓ Jump to live</Button>
+    ><Icon name="chevron-down" :size="12" />Jump to live</Button>
   </aside>
 </template>
