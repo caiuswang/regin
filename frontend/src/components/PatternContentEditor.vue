@@ -84,3 +84,24 @@ function cancel() {
   </div>
   <MarkdownContent v-else :markdown="bodyMd" :concealed-texts="concealedTexts" />
 </template>
+
+<style scoped>
+/* Copied from PatternDetailView when the content tab was extracted into
+   this child. The parent's copies are `scoped`, so they did not reach
+   this component's elements — the header row collapsed to block flow,
+   stacking the title and Edit/Save buttons densely instead of laying
+   them out on one row. (Same fix as PatternRulesPanel.) */
+.pdv-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.pdv-section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-slate-900);
+  margin: 0;
+}
+</style>
