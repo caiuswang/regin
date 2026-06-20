@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from lib import topics
 from lib.topics.route import (
+    _discriminating_keywords,
     _fuzzy_best,
     _meaningful_keywords,
     match_topic,
@@ -48,6 +49,36 @@ def test_meaningful_keywords_drops_stopwords_keeps_short_real_tokens():
 
 def test_meaningful_keywords_dedups_in_order():
     assert _meaningful_keywords("apply apply views apply") == ["apply", "views"]
+
+
+def test_discriminating_keywords_drops_corpus_saturated_term():
+    # `ui` is in 2/3 topics (> _TOPIC_DF_CEILING) — a stopword for THIS graph,
+    # however rare it is in general English; `recall` discriminates (1/3).
+    topics_map = {
+        "a": _topic("Alpha", intent="the alpha ui surface"),
+        "b": _topic("Beta", intent="the beta ui surface"),
+        "c": _topic("Gamma", intent="the recall pipeline"),
+    }
+    kept = _discriminating_keywords(["ui", "recall"], topics_map)
+    assert "ui" not in kept
+    assert "recall" in kept
+
+
+def test_corpus_saturated_keyword_alone_does_not_route(fake_git_repo):
+    # Reproduces the inbox-prose false route: `ui` saturates the graph and the
+    # only other overlap (`filter`) hits a single topic — one discriminating
+    # hit is not topical intent, so the prose must route nowhere.
+    _seed(fake_git_repo, {
+        "experiments": _topic(
+            "Pattern conceal experiments",
+            intent="the pure conceal filter and the vue ui surfaces"),
+        "trace": _topic("Session trace timeline", intent="the trace ui spans"),
+        "memory": _topic("Memory recall", intent="rerank and the ui grid"),
+    })
+    prose = "refactor the inbox filter and the missing ui page"
+    assert match_topic(fake_git_repo, prose) is None
+    assert route_explain(fake_git_repo, prose) == {
+        "id": None, "strategy": None, "keywords": []}
 
 
 def test_fuzzy_best_requires_two_meaningful_hits():

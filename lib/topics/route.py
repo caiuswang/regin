@@ -150,6 +150,22 @@ _ZIPF_CEILING = 5.5
 # the fallback declines and the prompt routes nowhere.
 _FUZZY_MIN_HITS = 2
 
+# A keyword appearing in more than this fraction of *all* topics' identity
+# text cannot distinguish between them — it is a stopword for THIS graph, no
+# matter how rare it is in general English. `ui` sits in 7/18 regin topics
+# ("the vue ui surfaces", …), so a prose query naming "ui" gets no routing
+# signal from it. The wordfreq prior can't see per-graph saturation; this can.
+# Saturated keywords are dropped before scoring AND before the
+# `_FUZZY_MIN_HITS` count, so a prose query whose only hits are corpus-common
+# terms routes nowhere instead of landing on a coincidental topic.
+_TOPIC_DF_CEILING = 0.34
+
+# Below this many topics the corpus is too small for a document-frequency
+# fraction to mean anything — in a 2-topic graph a keyword in 1 topic is
+# maximally discriminating, yet 1/2 already trips the ceiling. So the
+# saturation filter only engages once the graph is large enough to judge.
+_TOPIC_DF_MIN_CORPUS = 3
+
 
 @lru_cache(maxsize=4096)
 def _word_weight(word: str) -> float:
@@ -184,15 +200,41 @@ def _meaningful_keywords(needle: str) -> list[str]:
         w for w in needle.split() if len(w) >= 2 and _word_weight(w) > 0.0))
 
 
+def _topic_identity(topic_id: str, topic: dict[str, Any]) -> str:
+    """Normalized identity blob (id + label + intent + aliases) of one topic —
+    the haystack both the per-topic hit test and the corpus-saturation filter
+    read."""
+    return normalize(" ".join([
+        topic_id, topic.get("label", ""), topic.get("intent", ""),
+        *topic.get("aliases", []),
+    ]))
+
+
+def _discriminating_keywords(
+    keywords: list[str], topics: dict[str, Any],
+) -> list[str]:
+    """Drop keywords that saturate THIS topic graph. A term whose identity-text
+    document frequency exceeds `_TOPIC_DF_CEILING` of all topics can't tell them
+    apart (`ui` in 7/18 regin topics), so it must not contribute to the fuzzy
+    score or the `_FUZZY_MIN_HITS` count. Below `_TOPIC_DF_MIN_CORPUS` topics a
+    1-of-2 hit is maximally discriminating yet would trip the fraction, so the
+    filter stays off and nothing is dropped — pure wordfreq."""
+    if len(topics) < _TOPIC_DF_MIN_CORPUS:
+        return keywords
+    ceiling = _TOPIC_DF_CEILING * len(topics)
+    identities = [_topic_identity(tid, t) for tid, t in topics.items()]
+    return [
+        kw for kw in keywords
+        if sum(1 for identity in identities if kw in identity) <= ceiling
+    ]
+
+
 def _keyword_hits_for_topic(
     keywords: list[str], topic_id: str, topic: dict[str, Any],
 ) -> tuple[list[str], list[str]]:
     """Return (identity_hits, ref_hits) — the keywords that appear in this
     topic's identity text and in its ref paths, respectively."""
-    identity = normalize(" ".join([
-        topic_id, topic.get("label", ""), topic.get("intent", ""),
-        *topic.get("aliases", []),
-    ]))
+    identity = _topic_identity(topic_id, topic)
     refs_text = normalize(" ".join(_ref_paths(topic)))
     id_hits = [kw for kw in keywords if kw in identity]
     ref_hits = [kw for kw in keywords if kw in refs_text]
@@ -205,13 +247,18 @@ def _fuzzy_best(
 ) -> tuple[str | None, list[str]]:
     """Fallback for queries like "trace skill reads view loading": pick the
     topic with the highest (identity_weight, ref_weight) score over the needle's
-    *meaningful* keywords, requiring ≥2 keywords overall and ≥`_FUZZY_MIN_HITS`
-    distinct keyword hits on the winner. Each hit contributes its `_word_weight`,
+    *meaningful, graph-discriminating* keywords (corpus-saturated terms like a
+    repo-wide `ui` are dropped first by `_discriminating_keywords`), requiring
+    ≥`_FUZZY_MIN_HITS` such keywords and as many distinct hits on the winner.
+    Each hit contributes its `_word_weight`,
     so a rare domain term beats several common words landing by coincidence.
     Returns `(topic_id, matched_keywords)` or `(None, [])` — so the caller can
     explain the route, not just assert it."""
     keywords = _meaningful_keywords(needle)
     if len(keywords) < 2:
+        return None, []
+    keywords = _discriminating_keywords(keywords, topics)
+    if len(keywords) < _FUZZY_MIN_HITS:
         return None, []
     best_id: str | None = None
     best_score = (0.0, 0.0)
