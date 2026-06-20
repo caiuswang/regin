@@ -369,6 +369,19 @@ def cmd_topics_router_skill(
     print(generate_topic_router_skill(_repo_path(repo)))
 
 
+@topics_app.command(
+    "rebuild-query-df",
+    help="Rebuild the router's query-log term-frequency cache (query_df.json)",
+)
+def cmd_topics_rebuild_query_df(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics import rebuild_query_df
+
+    count = rebuild_query_df(_repo_path(repo))
+    print(f"query_df.json rebuilt from {count} routed prompt(s)")
+
+
 @topics_app.command("wiki", help="Generate derived wiki files from approved topic.json")
 def cmd_topics_wiki(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),

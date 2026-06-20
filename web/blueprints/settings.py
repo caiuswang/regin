@@ -122,6 +122,21 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
      "min": 0, "step": 100, "label": "Topic context budget (chars)",
      "description": "Character budget for the rendered <topic_context> block "
                     "(refs trimmed first, then the intent)."},
+    {"key": "topic_route_querylog_min_queries", "group": "Topic routing",
+     "type": "int", "min": 0, "step": 10,
+     "label": "Query-log weighting min prompts",
+     "description": "The keyword router down-weights words that saturate this "
+                    "repo's own past prompts (on top of the always-on English-"
+                    "frequency prior). It stays inert until the cached prompt "
+                    "log reaches this many routed prompts, so a sparse log "
+                    "can't distort routing. Very high = effectively disabled."},
+    {"key": "topic_route_querylog_floor", "group": "Topic routing",
+     "type": "float", "min": 0, "max": 1, "step": 0.05,
+     "label": "Query-log weighting floor",
+     "description": "Lower bound on the query-log down-weight multiplier. A "
+                    "word in nearly every prompt shrinks to this factor but "
+                    "never to zero, so a repo-ubiquitous term still counts a "
+                    "little when it's the only hit."},
     # ── Consolidation ──
     {"key": "forget_after_days", "group": "Consolidation", "type": "int",
      "min": 0, "step": 1, "label": "Forget never-recalled after (days)",

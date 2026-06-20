@@ -75,6 +75,7 @@ from lib.topics.route import (
     topic_wiki_content,
     wiki_paths_for_topic,
 )
+from lib.topics.term_weights import rebuild_query_df
 
 
 __all__ = [
@@ -114,6 +115,7 @@ __all__ = [
     "promote_topic",
     "read_json",
     "read_wiki_pages",
+    "rebuild_query_df",
     "refs_for_topic",
     "repo_name",
     "route_topic",

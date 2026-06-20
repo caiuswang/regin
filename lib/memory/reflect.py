@@ -370,6 +370,18 @@ def _score_pending(store, *, dry_run: bool) -> None:
     # verdicts read current ubiquity, not last pass's.
     rebuild_session_referent_df(store)
     score_pending_sessions(store)
+    _refresh_query_df()
+
+
+def _refresh_query_df() -> None:
+    """Rebuild the topic router's query-log term-frequency cache off the same
+    routed-prompt corpus the recall hook logs. Best-effort and isolated: a
+    topics-side failure must never break the memory reflect sweep."""
+    try:
+        from lib.topics.term_weights import rebuild_query_df
+        rebuild_query_df(settings.project_root)
+    except Exception:  # noqa: BLE001 - cache refresh is non-critical
+        log.error("query_df_refresh_failed", exc_info=True)
 
 
 def _decay_note(reason: str, injection: tuple[int, int],

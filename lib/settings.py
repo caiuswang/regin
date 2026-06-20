@@ -357,6 +357,18 @@ class AgentMemoryConfig(BaseModel):
     # resolved when a decision is made. Off → proposals are visible only in the
     # Memory panel / `regin memory topic-feedback`.
     topic_relevance_notify: bool = True
+    # Query-log term weighting for the keyword fuzzy router. Beyond the
+    # always-on `wordfreq` English-frequency prior (see `lib/topics/route.py`),
+    # weight each keyword DOWN by how ubiquitous it is across *this repo's own
+    # past routed prompts* (`topic_injections`/`injection_events.query`, cached
+    # to `.regin/topics/query_df.json`, rebuilt on the reflect sweep). A word
+    # like `memory` is rare in English (the prior keeps it high) yet saturates
+    # these prompts, so it carries little routing signal *here* — this is the
+    # layer that sees that. The factor is bounded [`floor`, 1.0] and is a no-op
+    # (1.0) until the corpus reaches `min_queries`, so a sparse log can't
+    # distort routing. `min_queries` very high → effectively disabled.
+    topic_route_querylog_floor: float = 0.2
+    topic_route_querylog_min_queries: int = 150
     # Deliberate-recall mode (orthogonal to the always-on auto-inject hook):
     #   inline   — the main agent infers its own intent and calls the
     #              `recall` tool directly; candidates land in main context.

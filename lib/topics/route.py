@@ -6,8 +6,15 @@ refs + wiki content ready for an agent to consume.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+try:  # Self-maintaining keyword weighting; degrades to _STOPWORDS if absent.
+    from wordfreq import zipf_frequency
+    _HAS_WORDFREQ = True
+except ImportError:  # pragma: no cover - exercised only on minimal installs
+    _HAS_WORDFREQ = False
 
 from lib.topics.core import (
     ROLE_ORDER,
@@ -18,6 +25,7 @@ from lib.topics.core import (
 )
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.scan import validate
+from lib.topics.term_weights import load_query_df, repo_factor
 
 
 def topic_summary(repo_path: str | Path) -> dict[str, Any]:
@@ -115,11 +123,10 @@ _MATCH_STRATEGIES = (
 )
 
 
-# Function words carry no topical signal, yet a prose prompt is full of
-# them — left in, the fuzzy fallback "matches" every topic on `we/that/to/…`
-# and routes on noise (see `_fuzzy_best`). 2-char tokens are folded in here
-# so genuine short keywords (`ui`, `db`, `js`, `go`) still survive the
-# `len >= 2` filter.
+# Fallback only — used when `wordfreq` is unavailable. The live path weights
+# every token by its English frequency (see `_word_weight`), so this hand-kept
+# list no longer has to anticipate filler words. 2-char tokens are folded in
+# here so genuine short keywords (`ui`, `db`, `js`, `go`) survive the fallback.
 _STOPWORDS = frozenset({
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do",
     "for", "from", "has", "have", "he", "her", "him", "his", "how", "if",
@@ -130,6 +137,13 @@ _STOPWORDS = frozenset({
     "who", "will", "with", "would", "you", "your",
 })
 
+# Tokens at or above this Zipf frequency in general English carry no topical
+# signal (`the`≈7.7, `too`≈5.9, `yes`≈5.5) and weigh 0; rarer domain terms
+# (`recall`≈4.4, `exemplar`≈2.7) and coined words (`rerank`=0) score higher
+# the rarer they are. This replaces the binary stopword cut with a continuous,
+# self-maintaining weight — no list to grow as prompt vocabulary drifts.
+_ZIPF_CEILING = 5.5
+
 # A fuzzy route needs at least this many distinct meaningful keyword hits.
 # One coincidental word (a prompt's "apply" landing on the "apply/stop"
 # stage in a topic label) is not evidence of topical intent — below this
@@ -137,11 +151,37 @@ _STOPWORDS = frozenset({
 _FUZZY_MIN_HITS = 2
 
 
+@lru_cache(maxsize=4096)
+def _word_weight(word: str) -> float:
+    """Informativeness of a token = how *rare* it is in general English.
+
+    Common filler sits high on the Zipf scale and maps to 0; domain terms and
+    coined identifiers are rare and score high. Self-maintaining: there is no
+    hand-kept stopword list to grow. Falls back to the `_STOPWORDS` membership
+    test (weight 1.0 / 0.0) when `wordfreq` is not installed."""
+    if not _HAS_WORDFREQ:
+        return 0.0 if word in _STOPWORDS else 1.0
+    return max(0.0, _ZIPF_CEILING - zipf_frequency(word, "en"))
+
+
+def _weighted(keywords: list[str], n: int = 0,
+              df: dict[str, int] | None = None) -> float:
+    """Summed informativeness of `keywords` — a rare domain term outweighs
+    several common ones, so the route is decided by signal, not hit count. The
+    English-frequency prior (`_word_weight`) is scaled by the repo-adaptive
+    `repo_factor`, which shrinks words that saturate this repo's own prompt
+    log. With `n=0` (no query-log cache) the factor is 1.0 and this is pure
+    wordfreq — the same scoring the unit tests pin."""
+    df = df or {}
+    return sum(_word_weight(kw) * repo_factor(kw, n, df) for kw in keywords)
+
+
 def _meaningful_keywords(needle: str) -> list[str]:
-    """The ≥2-char, non-stopword tokens of `needle`, de-duplicated in order —
-    the tokens that actually carry topical signal for the fuzzy fallback."""
+    """The ≥2-char, signal-carrying tokens of `needle`, de-duplicated in order.
+    A token carries signal when its English frequency is below `_ZIPF_CEILING`
+    (weight > 0) — the continuous replacement for the old stopword cut."""
     return list(dict.fromkeys(
-        w for w in needle.split() if len(w) >= 2 and w not in _STOPWORDS))
+        w for w in needle.split() if len(w) >= 2 and _word_weight(w) > 0.0))
 
 
 def _keyword_hits_for_topic(
@@ -159,31 +199,26 @@ def _keyword_hits_for_topic(
     return id_hits, ref_hits
 
 
-def _keyword_score_for_topic(
-    keywords: list[str], topic_id: str, topic: dict[str, Any],
-) -> tuple[int, int]:
-    """Return (identity_hits, refs_hits) counts for one topic against keywords."""
-    id_hits, ref_hits = _keyword_hits_for_topic(keywords, topic_id, topic)
-    return len(id_hits), len(ref_hits)
-
-
 def _fuzzy_best(
     needle: str, topics: dict[str, Any],
+    n: int = 0, df: dict[str, int] | None = None,
 ) -> tuple[str | None, list[str]]:
     """Fallback for queries like "trace skill reads view loading": pick the
-    topic with the highest (identity_hits, ref_hits) score over the needle's
+    topic with the highest (identity_weight, ref_weight) score over the needle's
     *meaningful* keywords, requiring ≥2 keywords overall and ≥`_FUZZY_MIN_HITS`
-    distinct keyword hits on the winner. Returns `(topic_id, matched_keywords)`
-    or `(None, [])` — so the caller can explain the route, not just assert it."""
+    distinct keyword hits on the winner. Each hit contributes its `_word_weight`,
+    so a rare domain term beats several common words landing by coincidence.
+    Returns `(topic_id, matched_keywords)` or `(None, [])` — so the caller can
+    explain the route, not just assert it."""
     keywords = _meaningful_keywords(needle)
     if len(keywords) < 2:
         return None, []
     best_id: str | None = None
-    best_score = (0, 0)
+    best_score = (0.0, 0.0)
     best_hits: list[str] = []
     for topic_id, topic in topics.items():
         id_hits, ref_hits = _keyword_hits_for_topic(keywords, topic_id, topic)
-        score = (len(id_hits), len(ref_hits))
+        score = (_weighted(id_hits, n, df), _weighted(ref_hits, n, df))
         if score > best_score:
             best_score, best_id = score, topic_id
             best_hits = list(dict.fromkeys([*id_hits, *ref_hits]))
@@ -237,7 +272,8 @@ def _route_match(
             if strategy(needle, topic_id, topic):
                 return topic_id, {"strategy": label, "keywords": []}
 
-    best_id, hits = _fuzzy_best(needle, topics)
+    n, df = load_query_df(repo_path)
+    best_id, hits = _fuzzy_best(needle, topics, n, df)
     if best_id is not None:
         return best_id, {"strategy": "fuzzy keyword overlap", "keywords": hits}
     return None, none
