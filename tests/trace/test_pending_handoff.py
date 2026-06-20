@@ -203,6 +203,82 @@ def test_merge_drops_stray_prompt_placeholder_below_newer_prompt():
     assert 'prompt-realnext00000' in sv
 
 
+def test_merge_slash_command_expansion_transferred_to_resolved_anchor():
+    """A slash command (`/goal-verified`) yields TWO prompt rows: a resolved
+    `prompt-<uuid>` anchor carrying only the 14-char `/command` echo, and a
+    PENDING `promptlive-` placeholder carrying the full expansion. A later
+    turn's prompt would otherwise make the placeholder stale and drop the
+    expansion. Instead exactly the resolved anchor survives for turn 1, status
+    OK, now carrying the FULL expansion text."""
+    expansion = '/goal-verified # Roadmap — refactor the current session ' + 'x' * 2000
+    ph = prompt_placeholder_id('t1', expansion)
+    rows = [
+        _row(ph, 'prompt', {'text': expansion, 'live_placeholder': True},
+             status='PENDING', id=1),
+        _row('prompt-35cecf24cf68', 'prompt', {'text': '/goal-verified'},
+             status='OK', id=2),
+        _row('prompt-next00000000', 'prompt', {'text': 'merge it back to master'},
+             status='OK', id=3),
+    ]
+    merged = merge_spans(rows)
+    turn1 = [s for s in merged if s['span_id'] == 'prompt-35cecf24cf68']
+    # the placeholder is gone; the resolved anchor is the sole turn-1 prompt
+    assert ph not in {s['span_id'] for s in merged}
+    assert len(turn1) == 1
+    survivor = turn1[0]
+    assert survivor['status_code'] == 'OK'
+    assert survivor['attributes']['text'] == expansion
+    assert len(survivor['attributes']['text']) > len('/goal-verified')
+
+
+def test_merge_two_distinct_slash_command_turns_do_not_cross_wire():
+    """Two separate `/goal-verified` turns each pair their placeholder with
+    their OWN nearest resolved anchor (by id), not the other turn's."""
+    exp_a = '/goal-verified ' + 'A' * 100
+    exp_b = '/goal-verified ' + 'B' * 200
+    ph_a = prompt_placeholder_id('t1', exp_a)
+    ph_b = prompt_placeholder_id('t1', exp_b)
+    rows = [
+        _row(ph_a, 'prompt', {'text': exp_a}, status='PENDING', id=1),
+        _row('prompt-aaaaaaaaaaaa', 'prompt', {'text': '/goal-verified'},
+             status='OK', id=2),
+        _row(ph_b, 'prompt', {'text': exp_b}, status='PENDING', id=3),
+        _row('prompt-bbbbbbbbbbbb', 'prompt', {'text': '/goal-verified'},
+             status='OK', id=4),
+        _row('prompt-laterzzzzzzz', 'prompt', {'text': 'later'}, status='OK', id=5),
+    ]
+    merged = {s['span_id']: s for s in merge_spans(rows)}
+    assert ph_a not in merged and ph_b not in merged
+    assert merged['prompt-aaaaaaaaaaaa']['attributes']['text'] == exp_a
+    assert merged['prompt-bbbbbbbbbbbb']['attributes']['text'] == exp_b
+
+
+def test_merge_two_placeholders_before_their_anchors_pair_one_to_one():
+    """When BOTH placeholders are ingested before BOTH resolved anchors
+    (id order ph_a, ph_b, anchor_a, anchor_b — a batch of two slash commands),
+    each placeholder must still claim its OWN anchor. Without one-to-one
+    claiming both placeholders would grab the earliest anchor and one expansion
+    would be lost."""
+    exp_a = '/goal-verified ' + 'A' * 100
+    exp_b = '/goal-verified ' + 'B' * 200
+    ph_a = prompt_placeholder_id('t1', exp_a)
+    ph_b = prompt_placeholder_id('t1', exp_b)
+    rows = [
+        _row(ph_a, 'prompt', {'text': exp_a}, status='PENDING', id=1),
+        _row(ph_b, 'prompt', {'text': exp_b}, status='PENDING', id=2),
+        _row('prompt-aaaaaaaaaaaa', 'prompt', {'text': '/goal-verified'},
+             status='OK', id=3),
+        _row('prompt-bbbbbbbbbbbb', 'prompt', {'text': '/goal-verified'},
+             status='OK', id=4),
+        _row('prompt-laterzzzzzzz', 'prompt', {'text': 'later'}, status='OK', id=5),
+    ]
+    merged = {s['span_id']: s for s in merge_spans(rows)}
+    assert ph_a not in merged and ph_b not in merged
+    # earliest placeholder → earliest anchor; no cross-wire, no lost expansion
+    assert merged['prompt-aaaaaaaaaaaa']['attributes']['text'] == exp_a
+    assert merged['prompt-bbbbbbbbbbbb']['attributes']['text'] == exp_b
+
+
 def test_merge_keeps_stray_prompt_placeholder_as_newest():
     """The newest prompt (no later prompt) is kept — it may be a genuine
     in-flight prompt, mirroring reconcile_prompt_spans' 'never delete the
