@@ -133,6 +133,58 @@ class Roadmap:
     references: list[str] = field(default_factory=list)
     tokens: list[str] = field(default_factory=list)
     gates: list[str] = field(default_factory=list)
+    # Recalled lessons (Slice 2). Each: {id, title, snippet}. Populated
+    # only when build_roadmap(with_lessons=True); empty otherwise so the
+    # deterministic core stays pure and offline.
+    lessons: list[dict] = field(default_factory=list)
+
+
+# How many past lessons to surface in a roadmap — a short menu the agent
+# folds the relevant ones into its checklist, not a dump.
+_MAX_LESSONS = 5
+
+
+def recall_lessons(goal: str, areas: list[str], *, limit: int = _MAX_LESSONS,
+                   scope: str | None = None) -> list[dict]:
+    """Best-effort recall of past lessons relevant to a goal (Slice 2 front).
+
+    Reuses the existing memory store's `recall` (FTS-capable, no embedder
+    required) rather than any new index. Area names bias ordering: a hit
+    tagged with a triggered area floats above generic hits. Returns compact
+    dicts carrying the memory **id**, so the consuming skill can later
+    report which lessons made it into the approved roadmap — that
+    inclusion is the clean engagement signal `goal feedback` records.
+
+    Degrades to `[]` on any failure (memory disabled, store missing, import
+    error) so preflight never breaks just because memory is off.
+    """
+    try:
+        import lib.memory as memory
+        if not memory.enabled():
+            return []
+        # FTS mode keeps preflight fast and offline — no dense-model load on
+        # the hot path (mirrors the auto-inject hook's FTS-only contract).
+        hits = memory.recall(goal, top_k=max(limit * 2, limit), mode="fts")
+    except Exception:
+        return []
+
+    area_set = {a.lower() for a in areas}
+
+    def _area_rank(hit) -> int:
+        tags = {str(t).lower() for t in (hit.memory.get("tags") or [])}
+        return 0 if (tags & area_set) else 1
+
+    ordered = sorted(hits, key=_area_rank)
+    out: list[dict] = []
+    for hit in ordered[:limit]:
+        mem = hit.memory
+        body = (mem.get("body") or "").strip().replace("\n", " ")
+        out.append({
+            "id": mem.get("id"),
+            "title": mem.get("title") or "",
+            "snippet": body[:160],
+        })
+    return out
 
 
 def _normalize(text: str) -> str:
@@ -203,12 +255,15 @@ def _dedup(seq: list[str]) -> list[str]:
     return out
 
 
-def build_roadmap(goal: str, repo_root: str | None = None) -> Roadmap:
-    """Assemble the deterministic roadmap for a goal.
+def build_roadmap(goal: str, repo_root: str | None = None,
+                  *, with_lessons: bool = False) -> Roadmap:
+    """Assemble the roadmap for a goal.
 
-    Combines every triggered area's skills, reference components, design
-    tokens and gates into one de-duplicated bar, plus the universal base
-    gates. No network, no model — same input always yields same output.
+    The core (skills, references, tokens, gates) is deterministic: no
+    network, no model — same input always yields same output. The lessons
+    leg is opt-in (`with_lessons=True`, set by the CLI) and best-effort, so
+    the offline core and its tests stay pure while real invocations also
+    surface past lessons to fold into the checklist.
     """
     repo_root = repo_root or os.getcwd()
     rules = detect_areas(goal)
@@ -224,6 +279,8 @@ def build_roadmap(goal: str, repo_root: str | None = None) -> Roadmap:
     roadmap.tokens = _dedup(roadmap.tokens)
     roadmap.references = _dedup(roadmap.references)
     roadmap.gates = _dedup(roadmap.gates + list(BASE_GATES))
+    if with_lessons:
+        roadmap.lessons = recall_lessons(goal, roadmap.areas)
     return roadmap
 
 
@@ -231,6 +288,16 @@ def _bullets(items: list[str], empty: str) -> str:
     if not items:
         return f"  _{empty}_\n"
     return "".join(f"  - {it}\n" for it in items)
+
+
+def _lesson_bullets(lessons: list[dict]) -> str:
+    if not lessons:
+        return "  _none recalled (memory off, or no past lesson matched)_\n"
+    out = []
+    for les in lessons:
+        head = les.get("title") or les.get("snippet") or ""
+        out.append(f"  - [{les.get('id')}] {head}\n")
+    return "".join(out)
 
 
 def render_markdown(roadmap: Roadmap) -> str:
@@ -248,6 +315,8 @@ def render_markdown(roadmap: Roadmap) -> str:
         "\n## Standards it MUST follow (read before building)\n",
         _bullets([f"skill: {s}" for s in roadmap.skills],
                  "no area matched; ask which conventions apply"),
+        "\n## Lessons recalled from past sessions (fold the relevant ones into your checklist)\n",
+        _lesson_bullets(roadmap.lessons),
         "\n## Reference components (mirror these — do not invent new patterns)\n",
         _bullets(roadmap.references,
                  "none found by glob; pick the closest existing view/module by hand"),
@@ -294,4 +363,5 @@ def roadmap_to_dict(roadmap: Roadmap) -> dict:
         "references": roadmap.references,
         "tokens": roadmap.tokens,
         "gates": roadmap.gates,
+        "lessons": roadmap.lessons,
     }

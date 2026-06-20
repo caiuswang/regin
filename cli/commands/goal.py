@@ -29,13 +29,16 @@ def cmd_goal_preflight(
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
     repo_root: str = typer.Option(None, "--repo-root",
                                   help="Repo root for reference globbing (default: cwd)"),
+    with_lessons: bool = typer.Option(
+        True, "--with-lessons/--no-lessons",
+        help="Recall past lessons into the roadmap (best-effort; needs memory)"),
 ) -> None:
     from lib.activity_log import get_activity_logger
     from lib.goal_preflight import (
         build_roadmap, render_markdown, roadmap_to_dict, roadmap_warning,
     )
 
-    roadmap = build_roadmap(goal, repo_root=repo_root)
+    roadmap = build_roadmap(goal, repo_root=repo_root, with_lessons=with_lessons)
     get_activity_logger("goal").write(
         "preflight_emitted", areas=roadmap.areas, skill_count=len(roadmap.skills))
 
@@ -49,6 +52,39 @@ def cmd_goal_preflight(
         print(_json.dumps(roadmap_to_dict(roadmap), indent=2))
     else:
         print(render_markdown(roadmap))
+
+
+@goal_app.command(
+    "feedback",
+    help="Record a /goal-verified outcome back into memory (reinforce + new lessons)",
+)
+def cmd_goal_feedback(
+    goal: str = typer.Argument(..., help="The goal that was just verified"),
+    included: list[str] = typer.Option(
+        None, "--included", help="Lesson id folded into the approved roadmap (repeatable)"),
+    offered: list[str] = typer.Option(
+        None, "--offered", help="Lesson id preflight surfaced (repeatable)"),
+    fail: list[str] = typer.Option(
+        None, "--fail", help="An acceptance item that FAILED, phrased as a rule (repeatable)"),
+    tag: list[str] = typer.Option(
+        None, "--tag", help="Area tag for new failure-lessons, e.g. frontend (repeatable)"),
+    trace_id: str = typer.Option(None, "--trace-id", help="Originating session trace id"),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    from lib.activity_log import get_activity_logger
+    from lib.goal_feedback import outcome_to_dict, record_outcome, render_summary
+
+    result = record_outcome(
+        goal, included_ids=included, offered_ids=offered, failures=fail,
+        tags=tag, trace_id=trace_id)
+    get_activity_logger("goal").write(
+        "feedback_recorded", reinforced=len(result.reinforced),
+        new_lessons=len(result.new_lessons))
+
+    if json:
+        print(_json.dumps(outcome_to_dict(result), indent=2))
+    else:
+        print(render_summary(result))
 
 
 def register(app: typer.Typer) -> None:
