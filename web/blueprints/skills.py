@@ -457,6 +457,12 @@ def api_skills_undeploy(skill_id):
                 provider_id=provider.provider_id,
                 disable_linked_rules=(idx == 0),
             )
+            # Drop the global ledger row too — undeploy removes the files but
+            # not the deployment record, so without this the ledger keeps
+            # reporting the skill as globally deployed after it's gone.
+            pattern_deployments.remove_deployment(
+                skill_id, 'global', None, provider=provider.provider_id,
+            )
             msgs.append(f'{provider.provider_id}: {result}')
         except Exception as exc:
             msgs.append(f'{provider.provider_id}: {exc}')

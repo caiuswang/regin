@@ -21,7 +21,9 @@ from web.blueprints import patterns as _pkg
 from lib.rules import engine_rule_disable, grit_rule_index
 from lib.rules.grit_rule_index import RULES_MD_PATH, rules_for_guide
 from lib.orm import SessionLocal
-from lib.orm.models import DocTag, PatternDeployment, PatternDoc, Repo, Tag
+from lib.orm.models import (
+    DocTag, PatternDeployment, PatternDoc, PatternEmbedding, Repo, Tag,
+)
 
 from lib import audit, experiments
 from lib.activity_log import get_activity_logger
@@ -338,6 +340,15 @@ def api_delete_pattern(slug):
             select(DocTag).where(DocTag.doc_id == doc.id)
         ).all():
             session.delete(link)
+
+        # pattern_embeddings has no FK/cascade to pattern_docs (unlike the FTS
+        # mirror, which a trigger cleans). Without this delete, the vector row
+        # outlives the pattern and a future doc reusing the rowid inherits a
+        # stale embedding — silently corrupting dense routing.
+        for emb in session.exec(
+            select(PatternEmbedding).where(PatternEmbedding.pattern_id == doc.id)
+        ).all():
+            session.delete(emb)
 
         session.delete(doc)
         session.commit()

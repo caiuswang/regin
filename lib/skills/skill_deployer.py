@@ -116,7 +116,10 @@ def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=
     # description is a single-line double-quoted scalar, so any embedded
     # newlines from YAML block scalars must be collapsed first.
     description = re.sub(r"\s+", " ", str(description)).strip()
-    description = description.replace('"', '\\"')
+    # Escape backslash first, then the quote — the value is emitted as a
+    # double-quoted YAML scalar, where a lone `\` (e.g. a regex `\d`) is an
+    # unknown escape that makes the deployed frontmatter unparseable.
+    description = description.replace('\\', '\\\\').replace('"', '\\"')
     skill_content = (
         f"---\n"
         f"name: {procedure_id}\n"

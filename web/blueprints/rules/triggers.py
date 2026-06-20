@@ -25,6 +25,20 @@ from web.blueprints.rules._helpers import (
 )
 
 
+def _active_experiment_ids(events: list) -> dict:
+    """Map each distinct non-empty ``guide`` among `events` to the id of the
+    active concealment experiment on that pattern (or None when none is
+    active). Resolved once per guide so a batch ingest makes one DB lookup
+    per distinct guide rather than one per row."""
+    from lib import experiments
+    out: dict = {}
+    for ev in events:
+        guide = ev.get('guide') if isinstance(ev, dict) else None
+        if guide and guide not in out:
+            out[guide] = experiments.get_active_id(guide)
+    return out
+
+
 # ── Rule-trigger log (read + reset + ingest) ───────────────────
 
 @rules_bp.route('/api/triggers')
@@ -265,6 +279,12 @@ def api_ingest_rule_trigger():
     if errors:
         return jsonify({'ok': False, 'ingested': 0, 'errors': errors}), 400
 
+    # Stamp each event with the active concealment experiment (if any) for the
+    # rule's guide, so the experiment-vs-baseline rollup can attribute fires.
+    # A guide maps 1:1 to a pattern slug; resolve once per distinct guide so a
+    # batch doesn't hit the DB per row. A None value is the baseline bucket.
+    exp_by_guide = _active_experiment_ids(data)
+
     try:
         with _pkg.SessionLocal() as session:
             for ev in data:
@@ -281,6 +301,7 @@ def api_ingest_rule_trigger():
                     source=ev.get('source'),
                     session_id=ev.get('session_id'),
                     span_id=ev.get('span_id'),
+                    experiment_id=exp_by_guide.get(ev.get('guide')),
                 ))
             session.commit()
     except Exception as exc:

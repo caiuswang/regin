@@ -227,3 +227,83 @@ def test_delete_success(flask_client, tmp_db):
     assert body["ok"] is True
     assert "gonna-go" in body["msg"]
     assert experiments.get(eid) is None
+
+
+def test_delete_active_experiment_redeploys_to_restore_body(
+        flask_client, tmp_db, monkeypatch):
+    """Deleting an ACTIVE experiment must force-redeploy so the concealed
+    skill on disk is restored to its full body."""
+    eid = experiments.create("slug-x", "e", ["a"])
+    experiments.activate(eid)
+
+    from lib.skills import skill_registry, skill_sync
+    monkeypatch.setattr(skill_registry, "skill_id_for_procedure",
+                        lambda slug: "slug-x")
+    calls = []
+    monkeypatch.setattr(
+        skill_sync, "push",
+        lambda sid, force=False: calls.append((sid, force)) or "restored",
+    )
+
+    resp = flask_client.post(f"/api/experiments/{eid}/delete")
+    body = resp.get_json()
+    assert body["ok"] is True
+    # Force-redeploy happened with force=True (bypasses the drift guard).
+    assert calls == [("slug-x", True)]
+    assert experiments.get(eid) is None
+
+
+def test_delete_inactive_experiment_does_not_redeploy(
+        flask_client, tmp_db, monkeypatch):
+    eid = experiments.create("slug-y", "e", ["a"])  # never activated
+    from lib.skills import skill_registry, skill_sync
+    monkeypatch.setattr(skill_registry, "skill_id_for_procedure",
+                        lambda slug: "slug-y")
+    calls = []
+    monkeypatch.setattr(skill_sync, "push",
+                        lambda *a, **kw: calls.append(a) or "x")
+    resp = flask_client.post(f"/api/experiments/{eid}/delete")
+    assert resp.get_json()["ok"] is True
+    assert calls == []  # inactive → no redeploy
+
+
+# ── Auth on every mutation endpoint ─────────────────────────
+
+@pytest.mark.parametrize("verb", ["edit", "activate", "deactivate", "delete"])
+def test_mutation_endpoints_require_auth(anon_client, tmp_db, verb):
+    eid = experiments.create("p", "e", ["a"])
+    resp = anon_client.post(f"/api/experiments/{eid}/{verb}",
+                            json={"name": "x", "sections": ["y"]})
+    assert resp.status_code == 401
+
+
+# ── experiment_id stamping on rule-trigger ingest ───────────
+
+def test_ingest_stamps_active_experiment_id(flask_client, tmp_db):
+    """A rule fire whose guide has an active experiment is attributed to it;
+    fires with no active experiment land in the baseline (NULL) bucket."""
+    from lib.orm import SessionLocal
+    from lib.orm.models import RuleTrigger
+    from sqlmodel import select
+
+    eid = experiments.create("guided-slug", "e", ["a"])
+    experiments.activate(eid)
+
+    # Active guide → stamped; unrelated guide → NULL; no guide → NULL.
+    events = [
+        {"rule_id": "r1", "file_path": "a.py", "guide": "guided-slug",
+         "match_count": 1},
+        {"rule_id": "r2", "file_path": "b.py", "guide": "other-slug",
+         "match_count": 1},
+        {"rule_id": "r3", "file_path": "c.py", "match_count": 0},
+    ]
+    resp = flask_client.post("/api/rule-triggers", json=events)
+    assert resp.status_code == 200
+    assert resp.get_json()["ingested"] == 3
+
+    with SessionLocal() as session:
+        by_rule = {t.rule_id: t.experiment_id
+                   for t in session.exec(select(RuleTrigger)).all()}
+    assert by_rule["r1"] == eid
+    assert by_rule["r2"] is None
+    assert by_rule["r3"] is None

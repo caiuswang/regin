@@ -27,8 +27,29 @@ from lib.orm.models import Experiment
 # H2 parsing + conceal filter (pure)
 # ---------------------------------------------------------------------------
 
-_HEADING_RE = re.compile(r'^(#{2,3}) .+$', re.MULTILINE)
+_HEADING_RE = re.compile(r'^(#{2,3}) .+$')
 _ANY_HEADING_RE = re.compile(r'^(#{1,6}) ')
+# A fenced code block opens/closes on a line whose first non-space run is
+# ``` or ~~~. Lines *inside* a fence are literal text — a `## ` there is a
+# code comment / sample, NOT a markdown heading, and must never be treated
+# as a conceal boundary (or offered as a concealable section).
+_FENCE_RE = re.compile(r'^\s*(```|~~~)')
+
+
+def _section_end(lines: list[str], start: int, my_level: int) -> int:
+    """Index of the first line at/after `start` that opens a heading of level
+    <= `my_level` outside any fenced code block. Fenced `#` lines and deeper
+    headings are skipped. Returns len(lines) if none found."""
+    j, n, in_fence = start, len(lines), False
+    while j < n:
+        if _FENCE_RE.match(lines[j]):
+            in_fence = not in_fence
+        elif not in_fence:
+            m = _ANY_HEADING_RE.match(lines[j])
+            if m and len(m.group(1)) <= my_level:
+                return j
+        j += 1
+    return n
 
 
 def list_sections(pattern_slug: str) -> list[str]:
@@ -37,7 +58,7 @@ def list_sections(pattern_slug: str) -> list[str]:
 
     H2 and H3 are both conceal-able — H2 hides the whole top-level section
     (including any nested H3s); H3 hides only the sub-section down to the
-    next H3 or H2.
+    next H3 or H2. Headings inside fenced code blocks are ignored.
     """
     path = os.path.join(str(settings.patterns_dir), pattern_slug, 'SKILL.md')
     if not os.path.isfile(path):
@@ -48,7 +69,15 @@ def list_sections(pattern_slug: str) -> list[str]:
     # leak into the list.
     parts = content.split('---', 2)
     body = parts[2] if len(parts) >= 3 else content
-    return [m.group(0).rstrip() for m in _HEADING_RE.finditer(body)]
+    out: list[str] = []
+    in_fence = False
+    for line in body.splitlines():
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if not in_fence and _HEADING_RE.match(line):
+            out.append(line.rstrip())
+    return out
 
 
 def apply_conceal(body: str, sections: list[str]) -> str:
@@ -74,18 +103,17 @@ def apply_conceal(body: str, sections: list[str]) -> str:
     out: list[str] = []
     i = 0
     n = len(lines)
+    in_fence = False
     while i < n:
         line = lines[i]
-        m = _ANY_HEADING_RE.match(line)
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            i += 1
+            continue
+        m = None if in_fence else _ANY_HEADING_RE.match(line)
         if m and line.rstrip() in target:
-            my_level = len(m.group(1))
-            j = i + 1
-            while j < n:
-                nxt_match = _ANY_HEADING_RE.match(lines[j])
-                if nxt_match and len(nxt_match.group(1)) <= my_level:
-                    break
-                j += 1
-            i = j
+            i = _section_end(lines, i + 1, len(m.group(1)))
             continue
         out.append(line)
         i += 1

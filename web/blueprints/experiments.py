@@ -140,6 +140,7 @@ def api_create_experiment():
 
 
 @experiments_bp.route("/api/experiments/<int:experiment_id>/edit", methods=["POST"])
+@require_editor
 def api_edit_experiment(experiment_id):
     exp = experiments.get(experiment_id)
     if not exp:
@@ -159,6 +160,7 @@ def api_edit_experiment(experiment_id):
 
 
 @experiments_bp.route("/api/experiments/<int:experiment_id>/activate", methods=["POST"])
+@require_editor
 def api_activate_experiment(experiment_id):
     slug = experiments.activate(experiment_id)
     if not slug:
@@ -171,6 +173,7 @@ def api_activate_experiment(experiment_id):
 
 
 @experiments_bp.route("/api/experiments/<int:experiment_id>/deactivate", methods=["POST"])
+@require_editor
 def api_deactivate_experiment(experiment_id):
     slug = experiments.deactivate(experiment_id)
     if not slug:
@@ -183,9 +186,25 @@ def api_deactivate_experiment(experiment_id):
 
 
 @experiments_bp.route("/api/experiments/<int:experiment_id>/delete", methods=["POST"])
+@require_editor
 def api_delete_experiment(experiment_id):
     exp = experiments.get(experiment_id)
     if not exp:
         return jsonify({"error": "not found"}), 404
     experiments.delete(experiment_id)
-    return jsonify({"ok": True, "msg": f'deleted experiment {exp["name"]}'})
+    # If the deleted experiment was active, its concealed body is still on
+    # disk. Force-redeploy to restore the full (unconcealed) skill, mirroring
+    # what deactivate does — otherwise the agent keeps reading a partially
+    # hidden guide with no experiment to explain it.
+    deploy_msg = ""
+    if exp.get("active"):
+        sid = skill_registry.skill_id_for_procedure(exp["pattern_slug"])
+        if sid:
+            try:
+                deploy_msg = skill_sync.push(sid, force=True)
+            except Exception as exc:
+                deploy_msg = f"redeploy failed: {exc}"
+    return jsonify({
+        "ok": True,
+        "msg": f'deleted experiment {exp["name"]} ({deploy_msg or "idle"})',
+    })
