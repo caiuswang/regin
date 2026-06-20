@@ -15,6 +15,15 @@ const recent = ref([])
 const loading = ref(false)
 const busy = ref('')
 const recentOpen = ref(false)
+// Exemplar writes are embedding-keyed; without an embedder a 👍/👎 stores
+// nothing. Default true so the warning only appears once we've confirmed it's
+// absent — not as a flash before the first load resolves.
+const hasEmbedder = ref(true)
+
+// Bubble a row's prompt up so the parent can drive the Topic-route playground
+// (the 🔍 inspect action) — the full route + every candidate topic, where the
+// quick 👍/👎 here can be refined.
+const emit = defineEmits(['inspect'])
 
 async function reload() {
   loading.value = true
@@ -22,6 +31,7 @@ async function reload() {
     const data = await api.get('/memory/topic-feedback')
     summary.value = data.summary || []
     recent.value = data.recent || []
+    hasEmbedder.value = data.embedder !== false
   } finally {
     loading.value = false
   }
@@ -59,19 +69,76 @@ async function decide(topicId, decision) {
   }
 }
 
+// Per-row record of the last judgement: { polarity, written }. Survives the
+// table reloads (keyed on the stable session+topic pair), so a judged thumb
+// stays lit instead of the click reading as a no-op.
+const judged = ref({})
+function rowKey(r) {
+  return `${r.session_id}:${r.topic_id}`
+}
+function judgedState(r) {
+  // A click made this session wins (it carries `written`, so the amber
+  // no-embedder case survives); otherwise fall back to the polarity the
+  // backend persisted on the row, which by definition was stored (written>0)
+  // — this is what re-lights the thumb after a page reload.
+  const local = judged.value[rowKey(r)]
+  if (local) return local
+  if (r.judged) return { polarity: r.judged, written: 1 }
+  return undefined
+}
+
 // Reward / punish a route from the prompt it actually fired on: 👎 records a
 // suppressing negative exemplar for similar future queries, 👍 a protecting
 // positive — the query-local complement to the global suppress/allow decision.
+// The endpoint returns `written` (0 when no embedder / blank query), which we
+// stash so the thumb can show "stored" vs "nothing persisted".
 async function judge(injection, polarity) {
   if (!injection.query) return
-  busy.value = `${injection.session_id}:${injection.topic_id}`
+  const key = rowKey(injection)
+  busy.value = key
   try {
-    await api.post('/memory/exemplars', {
+    const res = await api.post('/memory/exemplars', {
       topic_id: injection.topic_id, query: injection.query, polarity,
     })
-    await reload()
+    judged.value = { ...judged.value, [key]: { polarity, written: res?.written ?? 0 } }
   } finally {
     busy.value = ''
+  }
+}
+
+// Resolve a thumb's visual state from the recorded judgement. A matching
+// polarity with a real write lights solid (emerald/red); a write of 0 lights
+// amber to flag "clicked, but no embedder so nothing was stored"; otherwise the
+// muted default. Returned as data so the template stays declarative.
+// Class strings are full literals (no interpolation) so Tailwind's JIT scanner
+// actually emits them.
+function thumbAttrs(r, polarity) {
+  const pos = polarity === 'positive'
+  if (!r.query) {
+    return { cls: 'text-slate-300', title: 'No recorded query to judge', pressed: false }
+  }
+  const j = judgedState(r)
+  const active = j && j.polarity === polarity
+  if (active && j.written > 0) {
+    return {
+      cls: pos ? 'text-emerald-600' : 'text-red-600',
+      title: pos
+        ? 'Stored — protecting similar future queries'
+        : 'Stored — suppressing similar future queries',
+      pressed: true,
+    }
+  }
+  if (active) {
+    return {
+      cls: 'text-amber-600',
+      title: 'No embedder configured — nothing was stored',
+      pressed: false,
+    }
+  }
+  return {
+    cls: pos ? 'text-slate-400 hover:text-emerald-700' : 'text-slate-400 hover:text-red-700',
+    title: pos ? 'Protect similar queries (positive)' : 'Suppress similar queries (negative)',
+    pressed: false,
   }
 }
 
@@ -130,6 +197,18 @@ defineExpose({ reload })
     <p class="text-xs text-slate-500 mb-3 leading-relaxed">
       The fail-rate bar only proposes a route for suppression — you approve what actually gets withheld.
     </p>
+
+    <!-- Exemplar curation (the 👍/👎 thumbs below) is embedding-keyed, so with no
+         embedder a judgement silently stores nothing. Flag it once up front
+         rather than letting every click read as a no-op. -->
+    <div
+      v-if="!hasEmbedder"
+      role="status"
+      class="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 mb-3 text-xs text-amber-800 leading-relaxed"
+    >
+      <span class="shrink-0 font-semibold" aria-hidden="true">⚠</span>
+      <span>No embedder is configured — the 👍/👎 buttons below record nothing, since exemplars are stored by embedding. Configure an embedder to curate routing cases.</span>
+    </div>
 
     <div v-if="summary.length" class="rounded-lg border border-slate-200 bg-white overflow-hidden mb-3">
       <table class="w-full text-sm">
@@ -237,7 +316,7 @@ defineExpose({ reload })
               <th class="text-left font-medium px-3 py-2 w-20">Session</th>
               <!-- w-40: anything narrower collides the 19-char timestamp with the Judge thumbs. -->
               <th class="text-right font-medium px-3 py-2 w-40">When</th>
-              <th class="text-right font-medium px-3 py-2 w-16">Judge</th>
+              <th class="text-right font-medium px-3 py-2 w-24">Judge</th>
             </tr>
           </thead>
           <tbody>
@@ -271,11 +350,15 @@ defineExpose({ reload })
                 <span v-else class="font-mono text-[11px] text-slate-300">—</span>
               </td>
               <td class="px-3 py-2 text-right font-mono text-[11px] text-slate-400 whitespace-nowrap">{{ when(r.injected_at) }}</td>
-              <!-- Reward / punish this actual route, keyed on its recorded prompt. -->
+              <!-- Reward / punish this actual route, keyed on its recorded prompt.
+                   The clicked thumb stays lit (emerald/red stored, amber = no
+                   embedder so nothing persisted) — see thumbAttrs. -->
               <td class="px-3 py-2">
                 <div class="flex items-center justify-end gap-0.5">
-                  <Button variant="ghost" size="sm" class="px-1 h-auto text-slate-400 hover:text-emerald-700 focus-visible:ring-2" :disabled="!r.query || busy === `${r.session_id}:${r.topic_id}`" :aria-label="r.query ? 'Protect similar queries (positive)' : 'No recorded query to judge'" :title="r.query ? 'Protect similar queries (positive)' : 'No recorded query to judge'" @click="judge(r, 'positive')"><Icon name="thumbs-up" :size="14" /></Button>
-                  <Button variant="ghost" size="sm" class="px-1 h-auto text-slate-400 hover:text-red-700 focus-visible:ring-2" :disabled="!r.query || busy === `${r.session_id}:${r.topic_id}`" :aria-label="r.query ? 'Suppress similar queries (negative)' : 'No recorded query to judge'" :title="r.query ? 'Suppress similar queries (negative)' : 'No recorded query to judge'" @click="judge(r, 'negative')"><Icon name="thumbs-down" :size="14" /></Button>
+                  <Button variant="ghost" size="sm" :class="['px-1 h-auto focus-visible:ring-2', thumbAttrs(r, 'positive').cls]" :disabled="!r.query || busy === rowKey(r)" :aria-pressed="thumbAttrs(r, 'positive').pressed" :aria-label="thumbAttrs(r, 'positive').title" :title="thumbAttrs(r, 'positive').title" @click="judge(r, 'positive')"><Icon name="thumbs-up" :size="14" /></Button>
+                  <Button variant="ghost" size="sm" :class="['px-1 h-auto focus-visible:ring-2', thumbAttrs(r, 'negative').cls]" :disabled="!r.query || busy === rowKey(r)" :aria-pressed="thumbAttrs(r, 'negative').pressed" :aria-label="thumbAttrs(r, 'negative').title" :title="thumbAttrs(r, 'negative').title" @click="judge(r, 'negative')"><Icon name="thumbs-down" :size="14" /></Button>
+                  <!-- Inspect this prompt in the route playground — full route + all candidate topics to judge against. -->
+                  <Button variant="ghost" size="sm" class="px-1 h-auto text-slate-400 hover:text-blue-600 focus-visible:ring-2" :disabled="!r.query" :aria-label="r.query ? 'Inspect this prompt in the route playground' : 'No recorded query to inspect'" :title="r.query ? 'Inspect in route playground' : 'No recorded query to inspect'" @click="emit('inspect', r.query)"><Icon name="search" :size="13" /></Button>
                 </div>
               </td>
             </tr>

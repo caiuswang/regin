@@ -163,7 +163,8 @@ def api_memory_topic_feedback():
     except (TypeError, ValueError):
         limit = 30
     return jsonify({"summary": store.topic_relevance_summary(),
-                    "recent": store.list_topic_injections(limit=limit)})
+                    "recent": store.list_topic_injections(limit=limit),
+                    "embedder": store.has_embedder})
 
 
 @memory_bp.route("/api/memory/exemplars")

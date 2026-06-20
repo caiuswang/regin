@@ -17,6 +17,7 @@ const ICONS = {
   'chevron-down': ['m6 9 6 6 6-6'],
   'chevron-left': ['m15 18-6-6 6-6'],
   'arrow-up-right': ['M7 7h10v10', 'M7 17 17 7'],
+  search: ['M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z', 'm21 21-4.35-4.35'],
   check: ['M20 6 9 17l-5-5'],
   plus: ['M5 12h14', 'M12 5v14'],
   archive: [

@@ -1721,16 +1721,48 @@ class SqliteMemoryStore:
 
     def list_topic_injections(self, limit: int = 200) -> "list[dict]":
         """Recent topic injections (newest first) for inspection surfaces —
-        the CLI `memory topic-feedback` and the Memory view's panel."""
+        the CLI `memory topic-feedback` and the Memory view's panel.
+
+        Each row carries `judged` ('positive'|'negative'|None): the polarity of
+        the human-curated exemplar (if any) for its topic+query, so the panel's
+        👍/👎 thumb re-lights after a reload instead of forgetting the click."""
         with MemorySessionLocal() as session:
             rows = session.exec(
                 select(TopicInjection)
                 .order_by(TopicInjection.injected_at.desc())
                 .limit(limit)).all()
-        return [{"session_id": r.session_id, "topic_id": r.topic_id,
-                 "relevance": r.relevance, "query": r.query,
-                 "injected_at": r.injected_at, "scored_at": r.scored_at}
-                for r in rows]
+        injections = [{"session_id": r.session_id, "topic_id": r.topic_id,
+                       "relevance": r.relevance, "query": r.query,
+                       "injected_at": r.injected_at, "scored_at": r.scored_at}
+                      for r in rows]
+        judged = self._manual_topic_exemplar_polarities(
+            {(i["topic_id"], i["query"]) for i in injections if i["query"]})
+        for i in injections:
+            pol = judged.get((i["topic_id"], i["query"])) if i["query"] else None
+            i["judged"] = ("positive" if pol == 1
+                           else "negative" if pol == -1 else None)
+        return injections
+
+    def _manual_topic_exemplar_polarities(self, pairs: set) -> dict:
+        """`{(topic_id, query): polarity}` for the human-curated ('manual')
+        topic exemplars matching `pairs`. Newest wins when one query was judged
+        both ways (the last click stands). Empty when `pairs` is empty."""
+        if not pairs:
+            return {}
+        topic_ids = {t for t, _ in pairs}
+        with MemorySessionLocal() as session:
+            rows = session.exec(
+                select(TopicExemplar)
+                .where(TopicExemplar.source == "manual")
+                .where(TopicExemplar.topic_id.in_(topic_ids))
+                .where(TopicExemplar.query.is_not(None))
+                .order_by(TopicExemplar.id.asc())).all()
+        out = {}
+        for r in rows:
+            key = (r.topic_id, r.query)
+            if key in pairs:
+                out[key] = r.polarity  # later (newer id) overwrites
+        return out
 
     # ── Human gate over topic suppression (proposal → decision) ──
     def topic_decision(self, topic_id: str) -> "str | None":
@@ -1900,6 +1932,13 @@ class SqliteMemoryStore:
 
     def _current_model_id(self) -> "str | None":
         return self._embedder.model_id if self._embedder is not None else None
+
+    @property
+    def has_embedder(self) -> bool:
+        """True when a real embedder backs the store. Exemplar writes are
+        embedding-keyed, so this gates whether a curated case can be stored at
+        all — the UI surfaces it before the user judges into a no-op."""
+        return self._current_model_id() is not None
 
     @staticmethod
     def _embedded_ids(emb_rows: list, model_id: "str | None") -> set:

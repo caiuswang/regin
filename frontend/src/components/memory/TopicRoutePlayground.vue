@@ -11,6 +11,7 @@ import ExemplarCaseList from './ExemplarCaseList.vue'
 // (pos/neg max-cosine + suppress verdict), then stamp 👍/👎 to build topic
 // exemplar cases by hand. The write path is the shared POST /memory/exemplars
 // (topic_id + query + polarity); preview is GET-shaped POST /topic-route-preview.
+const root = ref(null)
 const query = ref('')
 const result = ref(null)
 const loading = ref(false)
@@ -68,11 +69,19 @@ function rowState(c) {
   return { cls: 'bg-slate-100 text-slate-500', label: 'routes' }
 }
 
-defineExpose({ preview })
+// Drive the playground from elsewhere (the Recent-injections 🔍 button): load a
+// prompt, scroll the panel into view, and run the route preview in one call.
+async function probe(q) {
+  query.value = q || ''
+  root.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  await preview()
+}
+
+defineExpose({ preview, probe })
 </script>
 
 <template>
-  <section>
+  <section ref="root">
     <div class="flex items-baseline gap-2 mb-1">
       <h2 class="text-sm font-semibold text-slate-800">Topic-route playground</h2>
       <span v-if="result?.threshold" class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">suppress ≥ {{ sim(result.threshold) }}</span>

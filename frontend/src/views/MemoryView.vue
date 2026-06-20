@@ -55,6 +55,13 @@ const reflectSummary = ref('')
 const reflecting = ref(false)
 const topicsRef = ref(null)
 const topicFeedbackRef = ref(null)
+const playgroundRef = ref(null)
+
+// Recent-injections 🔍 → load that prompt into the sibling route playground and
+// run the preview (the playground scrolls itself into view).
+function inspectInPlayground(query) {
+  playgroundRef.value?.probe(query)
+}
 const exemplarsRef = ref(null)
 const recallQuery = ref('')
 const recallHits = ref(null)
@@ -321,8 +328,8 @@ onBeforeUnmount(() => headerObserver?.disconnect())
          query → route preview. -->
     <div v-show="activeTab === 'topics'" class="pt-4 space-y-8">
       <MemoryTopics ref="topicsRef" @select="selectMemory" />
-      <MemoryTopicFeedback ref="topicFeedbackRef" />
-      <TopicRoutePlayground />
+      <MemoryTopicFeedback ref="topicFeedbackRef" @inspect="inspectInPlayground" />
+      <TopicRoutePlayground ref="playgroundRef" />
     </div>
 
     <!-- Recall: probe what a query surfaces, plus the per-memory exemplars
