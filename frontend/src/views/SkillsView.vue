@@ -4,6 +4,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Button from '../components/ui/Button.vue'
+import Icon from '../components/ui/Icon.vue'
 import PatternCreateForm from '../components/PatternCreateForm.vue'
 import PatternFolderImportModal from '../components/PatternFolderImportModal.vue'
 import { useSkillImport } from '../composables/useSkillImport'
@@ -83,14 +84,14 @@ const typeDescriptions = {
           aria-label="Batch import skills"
           @click="folderVisible = true"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
+          <Icon name="folder-plus" :size="14" />
           Import
         </Button>
         <Button
           variant="primary"
           @click="showCreate = true"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          <Icon name="plus" :size="14" />
           New skill
         </Button>
         <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
@@ -179,7 +180,7 @@ const typeDescriptions = {
             <td>
               <Badge color="gray" :label="providerBadge(d.provider)" />
             </td>
-            <td class="text-xs text-slate-500">{{ d.deployed_at }}</td>
+            <td class="text-xs text-slate-500 tabular-nums">{{ d.deployed_at }}</td>
             <td class="text-slate-500 truncate" :title="d.deployed_path"><code class="cell-code">{{ d.deployed_path }}</code></td>
           </tr>
         </tbody>

@@ -7,6 +7,7 @@ import Badge from '../components/Badge.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import Button from '../components/ui/Button.vue'
+import Icon from '../components/ui/Icon.vue'
 import PatternContentEditor from '../components/PatternContentEditor.vue'
 import PatternDescriptionEditor from '../components/PatternDescriptionEditor.vue'
 import PatternTagsEditor from '../components/PatternTagsEditor.vue'
@@ -249,7 +250,7 @@ async function removeProjectDeployment(projectId, projectName) {
       <p class="text-gray-500 text-sm">
         <code class="cell-code">{{ route.params.id }}</code> is not managed by regin — it may be a bundled {{ providerName }} skill or installed externally.
       </p>
-      <router-link to="/skills" class="text-link text-sm mt-3 inline-block">← Back to Skills</router-link>
+      <router-link to="/skills" class="text-link text-sm mt-3 inline-flex items-center gap-1"><Icon name="chevron-left" :size="14" />Back to Skills</router-link>
     </div>
   </div>
   <div v-else>
@@ -293,8 +294,8 @@ async function removeProjectDeployment(projectId, projectName) {
       <h2 class="card-header">{{ providerName }}</h2>
       <div class="btn-row">
         <template v-if="data.entry.type !== 'auto'">
-          <Button variant="secondary" @click="pull">Pull (deployed &rarr; source)</Button>
-          <Button variant="secondary" @click="push">Push (source &rarr; deployed)</Button>
+          <Button variant="secondary" @click="pull"><span class="inline-flex items-center gap-1">Pull (deployed <Icon name="arrow-up-right" :size="13" /> source)</span></Button>
+          <Button variant="secondary" @click="push"><span class="inline-flex items-center gap-1">Push (source <Icon name="arrow-up-right" :size="13" /> deployed)</span></Button>
           <Button v-if="data.state === 'drifted'" variant="primary" @click="forcePush">Force push</Button>
         </template>
         <Button v-else variant="primary" @click="regenerate">Regenerate</Button>
@@ -320,7 +321,7 @@ async function removeProjectDeployment(projectId, projectName) {
         <Badge color="blue" label="global" />
         <Badge color="gray" :label="providerBadge(globalDeployment.provider)" />
         <code class="text-xs text-gray-600 flex-1 truncate">{{ globalDeployment.deployed_path }}</code>
-        <span class="text-xs text-gray-400">{{ globalDeployment.deployed_at }}</span>
+        <span class="text-xs text-gray-400 tabular-nums">{{ globalDeployment.deployed_at }}</span>
       </div>
 
       <!-- Project rows -->
@@ -331,7 +332,7 @@ async function removeProjectDeployment(projectId, projectName) {
           <Badge color="gray" :label="providerBadge(d.provider)" />
           <span class="font-medium text-green-800">{{ d.project_name }}</span>
           <code class="text-xs text-gray-500 flex-1 truncate" :title="d.deployed_path">{{ d.deployed_path }}</code>
-          <span class="text-xs text-gray-400">{{ d.deployed_at }}</span>
+          <span class="text-xs text-gray-400 tabular-nums">{{ d.deployed_at }}</span>
           <Button
             variant="ghost"
             size="icon"
@@ -339,9 +340,7 @@ async function removeProjectDeployment(projectId, projectName) {
             :title="`Remove from ${d.project_name}`"
             :aria-label="`Remove ${data.skill_id} from ${d.project_name}`"
             @click="removeProjectDeployment(d.project_id, d.project_name)">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <Icon name="x" :size="16" />
           </Button>
         </li>
       </ul>
@@ -358,9 +357,7 @@ async function removeProjectDeployment(projectId, projectName) {
                   class="text-blue-600 hover:text-blue-900 focus-visible:outline-2 focus-visible:outline-blue-500"
                   :aria-label="`Remove ${r.name}`"
                   :title="`Remove ${r.name}`">
-                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <Icon name="x" :size="12" />
                 </button>
               </span>
               <input

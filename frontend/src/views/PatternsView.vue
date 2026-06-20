@@ -5,6 +5,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Button from '../components/ui/Button.vue'
+import Icon from '../components/ui/Icon.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import PatternFolderImportModal from '../components/PatternFolderImportModal.vue'
 import PatternCreateForm from '../components/PatternCreateForm.vue'
@@ -270,14 +271,14 @@ const skillBadge = {
           aria-label="Batch import"
           @click="folderVisible = true"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>
+          <Icon name="folder-plus" :size="14" />
           Batch import
         </Button>
         <Button
           variant="primary"
           @click="showCreate = true"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          <Icon name="plus" :size="14" />
           New pattern
         </Button>
         <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
@@ -292,7 +293,7 @@ const skillBadge = {
         :class="{ 'is-open': showCategoryFilter }"
         @click="showCategoryFilter = !showCategoryFilter"
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        <Icon name="filter" :size="13" />
         Category
         <span v-if="data.cat_filter" class="filter-toggle-count">1</span>
       </button>
@@ -302,7 +303,7 @@ const skillBadge = {
         :class="{ 'is-open': showTagFilter }"
         @click="toggleTagFilter"
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 12.6 12 21 3.4 12.6a5.5 5.5 0 0 1 7.8-7.8L12 5.8l.8-.8a5.5 5.5 0 0 1 7.8 7.8Z"/></svg>
+        <Icon name="tag" :size="13" />
         Tags
         <span class="filter-toggle-count">{{ data.tags.length }}</span>
       </button>
@@ -372,9 +373,9 @@ const skillBadge = {
         <button
           v-if="!manageMode"
           type="button"
-          class="tag-panel-action focus-visible:outline-2 focus-visible:outline-blue-500"
+          class="tag-panel-action inline-flex items-center gap-1 focus-visible:outline-2 focus-visible:outline-blue-500"
           @click="enterManageMode"
-        >Manage tags →</button>
+        >Manage tags <Icon name="arrow-up-right" :size="13" /></button>
         <button
           v-else
           type="button"
@@ -459,7 +460,7 @@ const skillBadge = {
       @drop.prevent="onImportDrop"
     >
       <div v-if="!showCreate" class="drop-target">
-        <svg class="drop-target-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+        <Icon name="upload" :size="22" class="drop-target-icon" />
         <div class="drop-target-copy">
           <p class="drop-target-title">{{ importUploading ? 'Importing…' : 'Drop a skill folder here to import' }}</p>
           <p class="drop-target-hint">
