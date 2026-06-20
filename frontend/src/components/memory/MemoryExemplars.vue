@@ -69,6 +69,19 @@ async function addCase() {
   }
 }
 
+// Same per-kind palette the memory list / recall hits use, so a memory's kind
+// reads the same everywhere on the page rather than as bare text here.
+const KIND_STYLES = {
+  lesson: 'bg-violet-100 text-violet-700',
+  gotcha: 'bg-amber-100 text-amber-800',
+  preference: 'bg-blue-100 text-blue-700',
+  fact: 'bg-slate-100 text-slate-600',
+  procedure: 'bg-cyan-100 text-cyan-700',
+}
+function kindCls(kind) {
+  return KIND_STYLES[kind] || KIND_STYLES.fact
+}
+
 // Zero counts drop to muted grey so the memories that actually carry exemplars
 // are the ones the eye lands on; non-zero keeps its polarity colour.
 function numCls(n, color) {
@@ -147,7 +160,12 @@ defineExpose({ reload })
                 </Button>
                 <span class="font-mono text-[11px] text-slate-400 ml-1.5">{{ shortId(s.memory_id) }}</span>
               </td>
-              <td class="px-3 py-2 text-slate-500">{{ s.kind }}</td>
+              <td class="px-3 py-2">
+                <span
+                  class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                  :class="kindCls(s.kind)"
+                >{{ s.kind }}</span>
+              </td>
               <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.pos_count, 'text-emerald-600')">{{ s.pos_count || '—' }}</td>
               <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.neg_count, 'text-amber-600')">{{ s.neg_count || '—' }}</td>
               <td class="px-3 py-2 text-right font-mono tabular-nums text-[11px] text-slate-400">{{ when(s.last_created) }}</td>
