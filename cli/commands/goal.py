@@ -32,15 +32,22 @@ def cmd_goal_preflight(
     with_lessons: bool = typer.Option(
         True, "--with-lessons/--no-lessons",
         help="Recall past lessons into the roadmap (best-effort; needs memory)"),
+    session_id: str = typer.Option(
+        None, "--session-id",
+        help="Session id to record the offered lessons under (makes the "
+             "engagement denominator automatic even if `goal feedback` is skipped)"),
 ) -> None:
     from lib.activity_log import get_activity_logger
     from lib.goal_preflight import (
-        build_roadmap, render_markdown, roadmap_to_dict, roadmap_warning,
+        build_roadmap, record_offered, render_markdown, roadmap_to_dict,
+        roadmap_warning,
     )
 
     roadmap = build_roadmap(goal, repo_root=repo_root, with_lessons=with_lessons)
+    offered = record_offered(session_id, roadmap.lessons, goal)
     get_activity_logger("goal").write(
-        "preflight_emitted", areas=roadmap.areas, skill_count=len(roadmap.skills))
+        "preflight_emitted", areas=roadmap.areas,
+        skill_count=len(roadmap.skills), offered_recorded=offered)
 
     # Hollow-roadmap guard: warn on stderr so stdout stays clean (the
     # roadmap markdown / `--json` payload remains the only thing on stdout).

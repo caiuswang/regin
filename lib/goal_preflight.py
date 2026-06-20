@@ -171,7 +171,13 @@ def recall_lessons(goal: str, areas: list[str], *, limit: int = _MAX_LESSONS,
             return []
         # FTS mode keeps preflight fast and offline — no dense-model load on
         # the hot path (mirrors the auto-inject hook's FTS-only contract).
-        hits = memory.recall(goal, top_k=max(limit * 2, limit), mode="fts")
+        # reinforce=False is load-bearing: merely *offering* a lesson in a
+        # roadmap is not the agent *using* it. recall_count is reserved for
+        # deliberate use (a lesson folded into the approved roadmap, credited
+        # by `goal feedback --included`); letting preflight bump it would
+        # inflate the very usefulness signal Slice 2 measures.
+        hits = memory.recall(goal, top_k=max(limit * 2, limit), mode="fts",
+                             reinforce=False)
     except Exception:
         return []
 
@@ -233,6 +239,35 @@ def detect_areas(goal: str) -> list[AreaRule]:
     """
     goal_lc = _normalize(goal)
     return [r for r in AREA_RULES if _fires(goal_lc, r)]
+
+
+def record_offered(session_id: str | None, lessons: list[dict],
+                   goal: str) -> int:
+    """Persist that `lessons` were *offered* to `session_id` (Slice 2).
+
+    Makes the engagement *denominator* automatic: even if a run never calls
+    `goal feedback`, the store still knows which lessons a roadmap surfaced,
+    so reflect's decay half can see "offered many times, never used → fade".
+    Reuses the store's `record_injections` — which logs an injection event
+    WITHOUT bumping recall_count, so this records exposure, not usefulness.
+
+    Best-effort: needs a session id (none in a CLI subprocess's env, so the
+    caller passes `--session-id`); returns 0 and does nothing if absent,
+    memory is disabled, or anything fails — preflight must never break on it.
+    """
+    if not session_id or not lessons:
+        return 0
+    try:
+        import lib.memory as memory
+        if not memory.enabled():
+            return 0
+        ids = [le["id"] for le in lessons if le.get("id")]
+        if not ids:
+            return 0
+        memory.get_store().record_injections(session_id, ids, query=goal)
+        return len(ids)
+    except Exception:
+        return 0
 
 
 def _ident_tokens(name: str) -> set[str]:

@@ -11,7 +11,7 @@ import pytest
 
 import lib.memory as memory
 from lib.goal_feedback import FAIL_TAG, OutcomeResult, record_outcome, render_summary
-from lib.goal_preflight import recall_lessons
+from lib.goal_preflight import recall_lessons, record_offered
 
 pytestmark = pytest.mark.skipif(
     not memory.enabled(), reason="memory store disabled in this environment")
@@ -89,6 +89,33 @@ def test_recall_lessons_surfaces_a_seeded_lesson(seed_lesson):
 def test_recall_lessons_degrades_to_empty_on_no_match():
     hits = recall_lessons("zzqq nonexistent topic wwxx", ["frontend"])
     assert isinstance(hits, list)  # never raises, always a list
+
+
+def test_offering_a_lesson_does_not_reinforce_it(seed_lesson):
+    # recall_lessons is a mechanical probe — surfacing a lesson must NOT bump
+    # its recall_count (that is reserved for deliberate use via --included).
+    mid = seed_lesson("Offer-no-reinforce: verify inbox filter counts vs API.",
+                      ["frontend"])
+    before = _recall_count(mid)
+    recall_lessons("verify the inbox filter counts", ["frontend"])
+    assert _recall_count(mid) == before
+
+
+def test_record_offered_logs_injection_for_session(seed_lesson):
+    mid = seed_lesson("Offered-set lesson for a session.", ["frontend"])
+    sid = "test-goal-preflight-session-001"
+    n = record_offered(sid, [{"id": mid}], "some goal")
+    assert n == 1
+    assert mid in memory.get_store().injected_memory_ids(sid)
+
+
+def test_record_offered_noop_without_session_id():
+    assert record_offered(None, [{"id": "x"}], "g") == 0
+    assert record_offered("", [{"id": "x"}], "g") == 0
+
+
+def test_record_offered_noop_without_lessons():
+    assert record_offered("sid", [], "g") == 0
 
 
 def test_render_summary_mentions_counts():
