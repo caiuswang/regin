@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
 import PromptBody from './PromptBody.vue'
+import Icon from './ui/Icon.vue'
 import ConversationToc from './conversation/ConversationToc.vue'
 import ConversationSpanCard from './conversation/ConversationSpanCard.vue'
 import RewindCard from './conversation/RewindCard.vue'
@@ -432,19 +433,16 @@ function toolChipsForEntry(entry) {
               <span class="text-purple-300">·</span>
               <span>{{ fmtClock(entry.prompt.start_time) }}</span>
               <button
-                v-if="entry.prompt.attributes?.text && (promptPreviewMeta(entry.prompt).truncated || isPromptBodyExpanded(entry.prompt.span_id))"
+                v-if="entry.prompt.attributes?.text && isPromptBodyExpanded(entry.prompt.span_id)"
                 type="button"
-                class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-purple-600 hover:bg-purple-200/60 focus-visible:outline-2 focus-visible:outline-purple-400"
-                :title="isPromptBodyExpanded(entry.prompt.span_id) ? 'Collapse full prompt' : 'Show full prompt'"
+                class="ml-auto inline-flex items-center gap-1 transition-colors px-1.5 py-0.5 rounded text-[10px] text-purple-600 hover:bg-purple-200/60 focus-visible:outline-2 focus-visible:outline-purple-400"
+                title="Collapse full prompt"
                 @click.stop="togglePromptBodyExpanded(entry.prompt.span_id)"
-              >{{ isPromptBodyExpanded(entry.prompt.span_id) ? 'Preview' : 'Full prompt' }}</button>
+              ><Icon name="chevron-down" :size="12" class="rotate-180" />Collapse</button>
               <button
                 v-if="entry.prompt.attributes?.text"
                 type="button"
-                :class="[
-                  'opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-purple-600 hover:bg-purple-200/60 focus-visible:outline-2 focus-visible:outline-purple-400',
-                  !(promptPreviewMeta(entry.prompt).truncated || isPromptBodyExpanded(entry.prompt.span_id)) && 'ml-auto',
-                ]"
+                class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-purple-600 hover:bg-purple-200/60 focus-visible:outline-2 focus-visible:outline-purple-400"
                 title="Copy"
                 @click.stop="copyText(entry.prompt.attributes.text)"
               >Copy</button>
@@ -471,10 +469,13 @@ function toolChipsForEntry(entry) {
               v-if="entry.prompt.attributes?.text && !isPromptBodyExpanded(entry.prompt.span_id) && (promptPreviewMeta(entry.prompt).truncated || promptPreviewMeta(entry.prompt).imageCount)"
               class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-purple-700/70"
             >
-              <span
+              <button
                 v-if="promptPreviewMeta(entry.prompt).truncated"
-                class="inline-flex items-center rounded border border-purple-200 bg-white/70 px-1.5 py-0.5"
-              >collapsed preview</span>
+                type="button"
+                class="inline-flex items-center gap-1 rounded border border-purple-200 bg-white/70 px-1.5 py-0.5 text-purple-600 hover:bg-purple-200/60 hover:border-purple-300 focus-visible:outline-2 focus-visible:outline-purple-400 transition-colors"
+                title="Show full prompt"
+                @click.stop="togglePromptBodyExpanded(entry.prompt.span_id)"
+              ><Icon name="chevron-down" :size="12" />Show full prompt</button>
               <span
                 v-if="promptPreviewMeta(entry.prompt).imageCount"
                 class="inline-flex items-center rounded border border-purple-200 bg-white/70 px-1.5 py-0.5"
