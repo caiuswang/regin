@@ -53,6 +53,24 @@ def test_keyword_is_whole_word_not_substring():
     assert "python" not in _area_names("apize the widget")
 
 
+def test_single_lone_keyword_does_not_fire_area():
+    # One incidental keyword ("session") is too weak to pull in an area.
+    assert _area_names("clean up the session list") == []
+
+
+def test_two_keywords_fire_area():
+    # Two distinct keywords for the same area cross the evidence threshold.
+    areas = _area_names("debug the trace span")
+    assert "trace" in areas
+
+
+def test_single_keyword_plus_path_glob_fires_area():
+    # A lone keyword that would not fire alone still fires when the goal
+    # also names a matching path token (path-glob is sufficient on its own).
+    areas = _area_names("tweak the session view in lib/trace/merge.py")
+    assert "trace" in areas
+
+
 def test_ident_tokens_splits_camelcase():
     assert _ident_tokens("InboxView") == {"inbox", "view"}
     assert _ident_tokens("InboxMessageCard") == {"inbox", "message", "card"}

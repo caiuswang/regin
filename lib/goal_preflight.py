@@ -122,6 +122,13 @@ BASE_GATES: tuple[str, ...] = (
 # roadmap stays a short menu, not a file dump.
 _MAX_REFERENCES = 6
 
+# Minimum distinct keyword hits an area needs to fire on keywords alone.
+# A single lone keyword (e.g. an incidental "session") is too weak a
+# signal and pulls in a whole area's skills/refs/gates as noise; require
+# corroborating evidence. A path-glob signal still fires an area on its
+# own (see detect_areas).
+_MIN_KEYWORD_HITS = 2
+
 
 @dataclass
 class Roadmap:
@@ -191,8 +198,10 @@ def _normalize(text: str) -> str:
     return text.lower()
 
 
-def _mentions_keyword(goal_lc: str, rule: AreaRule) -> bool:
-    return any(re.search(rf"\b{re.escape(kw)}\b", goal_lc) for kw in rule.keywords)
+def _keyword_hits(goal_lc: str, rule: AreaRule) -> int:
+    """Count distinct keywords of `rule` that appear as whole words."""
+    return sum(1 for kw in rule.keywords
+               if re.search(rf"\b{re.escape(kw)}\b", goal_lc))
 
 
 def _mentions_path(goal_lc: str, rule: AreaRule) -> bool:
@@ -202,15 +211,28 @@ def _mentions_path(goal_lc: str, rule: AreaRule) -> bool:
                for tok in tokens for pat in rule.path_globs)
 
 
+def _fires(goal_lc: str, rule: AreaRule) -> bool:
+    """An area fires on a path-glob signal, or on enough keyword evidence.
+
+    Routing requires *strong* evidence: either the goal literally names a
+    path matching the area's `path_globs`, or it hits at least
+    `_MIN_KEYWORD_HITS` distinct keywords. A single lone keyword is too
+    weak to fire an area on its own.
+    """
+    if _mentions_path(goal_lc, rule):
+        return True
+    return _keyword_hits(goal_lc, rule) >= _MIN_KEYWORD_HITS
+
+
 def detect_areas(goal: str) -> list[AreaRule]:
     """Return the area rules a goal triggers, in table order.
 
-    Pure lexical routing: an area fires on a whole-word keyword hit or a
-    path-glob hit. Order is preserved so output is stable/deterministic.
+    Pure lexical routing: an area fires on a path-glob hit or on at least
+    `_MIN_KEYWORD_HITS` distinct keyword hits. Order is preserved so
+    output is stable/deterministic.
     """
     goal_lc = _normalize(goal)
-    return [r for r in AREA_RULES
-            if _mentions_keyword(goal_lc, r) or _mentions_path(goal_lc, r)]
+    return [r for r in AREA_RULES if _fires(goal_lc, r)]
 
 
 def _ident_tokens(name: str) -> set[str]:
