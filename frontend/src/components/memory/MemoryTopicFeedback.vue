@@ -12,6 +12,7 @@ const summary = ref([])
 const recent = ref([])
 const loading = ref(false)
 const busy = ref('')
+const recentOpen = ref(false)
 
 async function reload() {
   loading.value = true
@@ -68,6 +69,16 @@ const VERDICT = {
 function verdictCls(v) {
   return VERDICT[v] || 'bg-slate-100 text-slate-500'
 }
+// Fail-rate bar colour scales with severity; zero metrics drop to a muted grey
+// so a wall of unscored topics doesn't compete with the rows that carry signal.
+function rateBar(rate) {
+  if (rate >= 0.5) return 'bg-red-400'
+  if (rate >= 0.2) return 'bg-amber-400'
+  return 'bg-slate-300'
+}
+function numCls(n) {
+  return n ? 'text-slate-600' : 'text-slate-300'
+}
 function shortId(id) {
   return (id || '').slice(0, 8)
 }
@@ -80,8 +91,8 @@ defineExpose({ reload })
 </script>
 
 <template>
-  <section v-if="summary.length" class="mb-4 mt-4">
-    <div class="flex items-center gap-2 mb-1">
+  <section>
+    <div class="flex items-baseline gap-2 mb-1">
       <h2 class="text-sm font-semibold text-slate-800">Topic routing feedback</h2>
       <span class="text-[11px] text-slate-400 font-mono">{{ summary.length }} topics</span>
     </div>
@@ -89,7 +100,7 @@ defineExpose({ reload })
       The fail-rate bar only proposes a route for suppression — you approve what actually gets withheld.
     </p>
 
-    <div class="rounded-lg border border-slate-200 bg-white overflow-hidden mb-3">
+    <div v-if="summary.length" class="rounded-lg border border-slate-200 bg-white overflow-hidden mb-3">
       <table class="w-full text-sm">
         <thead class="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
           <tr>
@@ -104,9 +115,21 @@ defineExpose({ reload })
         <tbody>
           <tr v-for="s in summary" :key="s.topic_id" class="border-t border-slate-100">
             <td class="px-3 py-2 font-medium text-slate-800 truncate max-w-[14rem]">{{ s.topic_id }}</td>
-            <td class="px-3 py-2 text-right font-mono text-slate-500">{{ s.scored }}</td>
-            <td class="px-3 py-2 text-right font-mono text-slate-500">{{ s.fails }}</td>
-            <td class="px-3 py-2 text-right font-mono text-slate-500">{{ s.fail_rate.toFixed(2) }}</td>
+            <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.scored)">{{ s.scored }}</td>
+            <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.fails)">{{ s.fails }}</td>
+            <!-- fail_rate is undefined until a topic is scored; show — rather than
+                 a misleading 0.00, and only draw the bar for rows with real data. -->
+            <td class="px-3 py-2">
+              <div class="flex items-center justify-end gap-2">
+                <template v-if="s.scored">
+                  <span class="hidden sm:block h-1.5 w-16 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
+                    <span class="block h-full rounded-full" :class="rateBar(s.fail_rate)" :style="{ width: Math.round(s.fail_rate * 100) + '%' }"></span>
+                  </span>
+                  <span class="font-mono tabular-nums text-right w-9 text-slate-600">{{ s.fail_rate.toFixed(2) }}</span>
+                </template>
+                <span v-else class="font-mono tabular-nums text-right w-9 text-slate-300" title="not scored yet">—</span>
+              </div>
+            </td>
             <td class="px-3 py-2">
               <span
                 class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
@@ -131,17 +154,23 @@ defineExpose({ reload })
         </tbody>
       </table>
     </div>
+    <p v-else-if="!loading" class="text-sm text-slate-400 mb-3">No topics have been scored yet.</p>
 
-    <details v-if="recent.length" class="text-sm">
-      <summary class="cursor-pointer text-slate-500 hover:text-slate-700 rounded focus-visible:outline-2 focus-visible:outline-blue-500">
-        Recent injections ({{ recent.length }})
+    <!-- Accordion card: keeps the raw injection log inside the card system rather
+         than floating as bare text. Full-width header = a big click target (Fitts);
+         the focus ring is inset (-outline-offset) so it reads as intentional. -->
+    <details v-if="recent.length" class="rounded-lg border border-slate-200 bg-white overflow-hidden" @toggle="recentOpen = $event.target.open">
+      <summary class="flex items-center gap-2 cursor-pointer select-none px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 list-none [&::-webkit-details-marker]:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500">
+        <Icon :name="recentOpen ? 'chevron-down' : 'chevron-right'" :size="14" class="text-slate-400" />
+        Recent injections
+        <span class="ml-auto text-[11px] font-mono text-slate-400">{{ recent.length }}</span>
       </summary>
-      <p class="mt-2 text-xs text-slate-500 leading-relaxed">
-        Each row is one <code class="text-[11px]">&lt;topic_context&gt;</code> block regin routed into a session, with the
-        prompt that triggered it. Open the session to see it in context; the Judge buttons protect or suppress this
-        topic for similar future queries.
-      </p>
-      <div class="mt-2 rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <div class="border-t border-slate-200">
+        <p class="px-3 py-2.5 text-xs text-slate-500 leading-relaxed border-b border-slate-100">
+          Each row is one <code class="text-[11px]">&lt;topic_context&gt;</code> block regin routed into a session, with the
+          prompt that triggered it. Open the session to see it in context; the Judge buttons protect or suppress this
+          topic for similar future queries.
+        </p>
         <table class="w-full text-sm table-fixed">
           <thead class="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
             <tr>
@@ -149,17 +178,22 @@ defineExpose({ reload })
               <th class="text-left font-medium px-3 py-2 w-48">Topic</th>
               <th class="text-left font-medium px-3 py-2">Query</th>
               <th class="text-left font-medium px-3 py-2 w-20">Session</th>
+              <!-- w-40: anything narrower collides the 19-char timestamp with the Judge thumbs. -->
               <th class="text-right font-medium px-3 py-2 w-40">When</th>
               <th class="text-right font-medium px-3 py-2 w-16">Judge</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in recent" :key="r.session_id + r.topic_id" class="border-t border-slate-100 hover:bg-slate-50/60">
+              <!-- Most rows are unscored; render that as muted text, not a badge,
+                   so the rows carrying a real verdict are the ones that stand out. -->
               <td class="px-3 py-2">
                 <span
+                  v-if="r.relevance"
                   class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
                   :class="verdictCls(r.relevance)"
-                >{{ r.relevance || 'unscored' }}</span>
+                >{{ r.relevance }}</span>
+                <span v-else class="text-[11px] text-slate-300">unscored</span>
               </td>
               <td class="px-3 py-2">
                 <div class="font-medium text-slate-700 truncate" :title="r.topic_id">{{ r.topic_id }}</div>

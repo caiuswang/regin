@@ -72,8 +72,8 @@ defineExpose({ preview })
 </script>
 
 <template>
-  <section class="mb-4 mt-4">
-    <div class="flex items-center gap-2 mb-1">
+  <section>
+    <div class="flex items-baseline gap-2 mb-1">
       <h2 class="text-sm font-semibold text-slate-800">Topic-route playground</h2>
       <span v-if="result?.threshold" class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">suppress ≥ {{ sim(result.threshold) }}</span>
     </div>
@@ -81,14 +81,14 @@ defineExpose({ preview })
       Probe a query to see where the recall hook routes it, then protect or suppress each topic for queries like it.
     </p>
 
-    <div class="flex flex-wrap items-center gap-2 mb-2 text-sm">
+    <div class="flex flex-wrap items-center gap-2 mb-2">
       <input
         v-model="query"
         placeholder="a prompt — e.g. fix the recall ranking bug"
-        class="rounded border border-slate-200 px-2 py-1 flex-1 min-w-[18rem] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        class="flex-1 max-w-2xl min-w-[18rem] text-sm border border-slate-200 rounded-md px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-blue-500"
         @keyup.enter="preview"
       />
-      <Button variant="primary" size="sm" class="focus-visible:ring-2" :disabled="loading" @click="preview">Preview route</Button>
+      <Button variant="primary" size="sm" :disabled="loading" @click="preview">Preview route</Button>
     </div>
 
     <template v-if="result">

@@ -319,7 +319,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
 
     <!-- Topics: reflect-synthesised clusters, their routing feedback, and a
          query → route preview. -->
-    <div v-show="activeTab === 'topics'" class="pt-1">
+    <div v-show="activeTab === 'topics'" class="pt-4 space-y-8">
       <MemoryTopics ref="topicsRef" @select="selectMemory" />
       <MemoryTopicFeedback ref="topicFeedbackRef" />
       <TopicRoutePlayground />
