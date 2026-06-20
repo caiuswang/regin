@@ -357,7 +357,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
             <li v-for="h in recallHits" :key="h.id">
               <button
                 type="button"
-                class="relative w-full text-left rounded-lg border pl-4 pr-3 py-2 overflow-hidden transition-all focus-visible:outline-2 focus-visible:outline-blue-500"
+                class="relative w-full text-left rounded-md border pl-3.5 pr-2.5 py-2 overflow-hidden transition-all focus-visible:outline-2 focus-visible:outline-blue-500"
                 :class="selectedId === h.id ? 'border-blue-300 bg-blue-50/60' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'"
                 @click="selectMemory(h.id)"
               >
@@ -367,7 +367,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
                     class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
                     :class="kindCls(h.kind)"
                   >{{ h.kind }}</span>
-                  <span class="font-mono text-[10px] text-slate-400">{{ h.score.toFixed(2) }}</span>
+                  <span class="font-mono tabular-nums text-[10px] text-slate-400">{{ h.score.toFixed(2) }}</span>
                   <span class="text-sm font-medium text-slate-800 truncate">{{ h.title || h.kind }}</span>
                 </div>
                 <p class="text-xs text-slate-500 leading-snug">{{ snippet(h.body) }}</p>

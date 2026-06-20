@@ -69,6 +69,11 @@ async function addCase() {
   }
 }
 
+// Zero counts drop to muted grey so the memories that actually carry exemplars
+// are the ones the eye lands on; non-zero keeps its polarity colour.
+function numCls(n, color) {
+  return n ? color : 'text-slate-300'
+}
 function shortId(id) {
   return (id || '').slice(0, 8)
 }
@@ -82,7 +87,7 @@ defineExpose({ reload })
 
 <template>
   <section v-if="active || summary.length" class="mb-4 mt-4">
-    <div class="flex items-center gap-2 mb-1">
+    <div class="flex items-baseline gap-2 mb-1">
       <h2 class="text-sm font-semibold text-slate-800">Recall exemplars</h2>
       <span class="text-[11px] text-slate-400 font-mono">{{ summary.length }} memories</span>
       <span
@@ -103,12 +108,12 @@ defineExpose({ reload })
       <input
         v-model="form.memoryId"
         placeholder="memory id"
-        class="rounded border border-slate-200 px-2 py-1 font-mono text-[12px] w-28 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        class="text-sm font-mono border border-slate-200 rounded-md px-3 py-1.5 w-28 focus-visible:outline-2 focus-visible:outline-blue-500"
       />
       <input
         v-model="form.query"
         placeholder="example query this memory should (not) match"
-        class="rounded border border-slate-200 px-2 py-1 flex-1 min-w-[16rem] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+        class="flex-1 min-w-[16rem] text-sm border border-slate-200 rounded-md px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-blue-500"
         @keyup.enter="addCase"
       />
       <Select v-model="form.polarity" :options="polarityOptions" class="text-[12px]" />
@@ -143,9 +148,9 @@ defineExpose({ reload })
                 <span class="font-mono text-[11px] text-slate-400 ml-1.5">{{ shortId(s.memory_id) }}</span>
               </td>
               <td class="px-3 py-2 text-slate-500">{{ s.kind }}</td>
-              <td class="px-3 py-2 text-right font-mono text-emerald-600">{{ s.pos_count || '' }}</td>
-              <td class="px-3 py-2 text-right font-mono text-amber-600">{{ s.neg_count || '' }}</td>
-              <td class="px-3 py-2 text-right font-mono text-[11px] text-slate-400">{{ when(s.last_created) }}</td>
+              <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.pos_count, 'text-emerald-600')">{{ s.pos_count || '—' }}</td>
+              <td class="px-3 py-2 text-right font-mono tabular-nums" :class="numCls(s.neg_count, 'text-amber-600')">{{ s.neg_count || '—' }}</td>
+              <td class="px-3 py-2 text-right font-mono tabular-nums text-[11px] text-slate-400">{{ when(s.last_created) }}</td>
             </tr>
             <tr v-if="expanded.has(s.memory_id)" :key="`${s.memory_id}-cases`">
               <td colspan="5" class="p-0 border-t border-slate-100">

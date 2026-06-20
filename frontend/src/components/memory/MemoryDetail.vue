@@ -142,8 +142,8 @@ function timeLabel(iso) {
 
         <aside class="w-full min-[1600px]:w-72 shrink-0 space-y-5 min-[1600px]:border-l min-[1600px]:border-slate-100 min-[1600px]:pl-6 pt-5 min-[1600px]:pt-0 border-t border-slate-100 min-[1600px]:border-t-0">
           <dl class="text-[11px] text-slate-500 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-            <dt class="text-slate-400">importance</dt><dd class="font-mono">{{ memory.importance.toFixed(2) }}</dd>
-            <dt class="text-slate-400">recalled</dt><dd class="font-mono">{{ memory.recall_count }}×</dd>
+            <dt class="text-slate-400">importance</dt><dd class="font-mono tabular-nums">{{ memory.importance.toFixed(2) }}</dd>
+            <dt class="text-slate-400">recalled</dt><dd class="font-mono tabular-nums">{{ memory.recall_count }}×</dd>
             <dt class="text-slate-400">scope</dt><dd class="font-mono">{{ memory.scope }}</dd>
             <dt class="text-slate-400">created</dt><dd class="font-mono">{{ timeLabel(memory.created_at) }}</dd>
             <dt class="text-slate-400">updated</dt><dd class="font-mono">{{ timeLabel(memory.updated_at) }}</dd>
@@ -188,7 +188,7 @@ function timeLabel(iso) {
             <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Related</p>
             <ul class="space-y-1">
               <li v-for="n in related.neighbors" :key="n.id" class="flex items-baseline gap-2">
-                <span class="text-[10px] font-mono text-slate-400 shrink-0">{{ n.similarity.toFixed(2) }}</span>
+                <span class="text-[10px] font-mono tabular-nums text-slate-400 shrink-0">{{ n.similarity.toFixed(2) }}</span>
                 <Button variant="link" size="sm" class="text-left text-slate-600 hover:text-blue-600 hover:no-underline truncate" @click="emit('navigate', n.id)">
                   {{ n.title || n.kind }}
                 </Button>
