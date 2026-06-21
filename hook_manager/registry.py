@@ -23,7 +23,7 @@ import re
 import traceback
 from datetime import datetime
 
-from .core import Handler, always, match_tool
+from .core import Handler, always, match_bash_command, match_tool
 
 
 def _log_handler_import_failure(handler_name: str, exc: BaseException) -> None:
@@ -85,6 +85,7 @@ post_tool_failure   = _safe_import('post_tool_failure')
 post_tool_trace     = _safe_import('post_tool_trace')
 pre_tool_trace      = _safe_import('pre_tool_trace')
 prompt_trace        = _safe_import('prompt_trace')
+session_id_probe    = _safe_import('session_id_probe')
 session_lifecycle   = _safe_import('session_lifecycle')
 skill_invoke        = _safe_import('skill_invoke')
 skill_launch        = _safe_import('skill_launch')
@@ -106,6 +107,17 @@ REGISTRY: list[Handler] = [
         kind='gate',
         priority=20,
         fn=permission_events.handle_pre_tool_request,
+    ),
+    Handler(
+        name='session_id_probe',
+        label='Session-ID Probe',
+        summary='Answers a `regin session-id` probe command by rewriting it to echo the live session id, so the agent can read its own id off stdout.',
+        match_hint='PreToolUse Bash calls whose whole command is `regin session-id`',
+        events=['PreToolUse'],
+        kind='gate',
+        priority=30,
+        predicate=match_bash_command(r'^\s*regin[ -]session[ -]id\s*$'),
+        fn=session_id_probe.handle,
     ),
     Handler(
         name='pre_tool_trace',
