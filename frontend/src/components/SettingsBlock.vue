@@ -4,6 +4,7 @@ import Card from './Card.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import Button from './ui/Button.vue'
 import Select from './ui/Select.vue'
+import ListInput from './ListInput.vue'
 
 // Generic editor for one nested settings block (agent_memory, agent_messages,
 // …). `fields` carries per-field metadata from /api/settings/<block>; `form`
@@ -80,6 +81,17 @@ const groups = computed(() => {
                   :aria-label="f.key"
                   class="text-sm border border-gray-300 rounded-md px-2.5 py-1.5 w-56 max-w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 />
+                <div
+                  v-else-if="f.type === 'list'"
+                  class="w-64 max-w-full text-left ml-auto"
+                >
+                  <ListInput
+                    v-model="form[f.key]"
+                    placeholder="/command"
+                    :entry-label="`${f.key} entry`"
+                    add-label="+ Add command"
+                  />
+                </div>
                 <input
                   v-else
                   type="number"

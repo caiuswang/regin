@@ -111,6 +111,13 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
      "label": "Trace injections",
      "description": "Record each injection as a memory.recall span on the "
                     "session trace for per-prompt auditability."},
+    {"key": "inject_skip_commands", "group": "Auto-inject", "type": "list",
+     "label": "Skip auto-inject on these commands",
+     "description": "Slash commands whose own machinery already pulls recall, so "
+                    "the auto-inject block is redundant noise on them. Matched on "
+                    "the command token only (first word), case-insensitively, "
+                    "leading slash optional per entry — '/goal' never matches "
+                    "'/goalpost'. Empty list = inject on every eligible prompt."},
     # ── Topic routing ──
     {"key": "topic_route_inject", "group": "Topic routing", "type": "bool",
      "label": "Inject routed topic context",
@@ -246,6 +253,20 @@ def _bounded(field: dict, num) -> "str | None":
     return None
 
 
+def _coerce_list(field: dict, val) -> tuple:
+    """Strip each entry and drop the empties → list[str]."""
+    if not isinstance(val, list):
+        return None, f"{field['key']} must be a list"
+    return [s for v in val if (s := str(v).strip())], None
+
+
+def _coerce_choice(field: dict, val) -> tuple:
+    sval = str(val)
+    if sval in field.get('options', []):
+        return sval, None
+    return None, f"{field['key']} must be one of {field.get('options')}"
+
+
 def _coerce_scalar(field: dict, val) -> tuple:
     """(value, error) for one field — exactly one is non-None."""
     kind = field['type']
@@ -253,11 +274,10 @@ def _coerce_scalar(field: dict, val) -> tuple:
         return _to_bool(val), None
     if kind == 'string':
         return ('' if val is None else str(val).strip()), None
+    if kind == 'list':
+        return _coerce_list(field, val)
     if kind == 'choice':
-        sval = str(val)
-        if sval in field.get('options', []):
-            return sval, None
-        return None, f"{field['key']} must be one of {field.get('options')}"
+        return _coerce_choice(field, val)
     num = _coerce_number(val, kind)
     if num is None:
         return None, f"{field['key']} must be a number"

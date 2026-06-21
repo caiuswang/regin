@@ -181,3 +181,74 @@ def test_put_provider_settings_rejects_bad_priority(
     assert any("priority_overrides" in e for e in errors)
 
 
+# ── /api/settings/agent-memory list field (inject_skip_commands) ──
+
+def _agent_memory_field(flask_client, key):
+    body = flask_client.get("/api/settings/agent-memory").get_json()
+    return next(f for f in body["fields"] if f["key"] == key)
+
+
+def test_agent_memory_get_exposes_skip_commands_list(
+        flask_client, isolated_settings_files):
+    """The skip-list surfaces as a list-typed field with its array default."""
+    field = _agent_memory_field(flask_client, "inject_skip_commands")
+    assert field["type"] == "list"
+    assert field["default"] == ["/goal", "/goal-verified"]
+    assert field["value"] == ["/goal", "/goal-verified"]
+
+
+def test_agent_memory_put_persists_and_coerces_skip_commands(
+        flask_client, isolated_settings_files):
+    """Saving an edited list strips entries, drops empties, persists to the
+    shared scope, and round-trips back through GET."""
+    resp = flask_client.put(
+        "/api/settings/agent-memory",
+        json={"inject_skip_commands": ["  /review  ", "", "   ", "/goal"]},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+
+    # Persistence is the contract this endpoint owns; the live singleton is
+    # reloaded in a real process but not under the monkeypatched paths here
+    # (mirrors test_post_settings_save_writes_to_file, which also only reads
+    # the file back).
+    shared = json.loads(isolated_settings_files["shared"].read_text())
+    assert shared["agent_memory"]["inject_skip_commands"] == ["/review", "/goal"]
+
+
+def test_agent_memory_put_accepts_empty_skip_commands(
+        flask_client, isolated_settings_files):
+    """An empty list is valid (restores inject-on-every-command) and
+    round-trips as []."""
+    resp = flask_client.put(
+        "/api/settings/agent-memory",
+        json={"inject_skip_commands": []},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    shared = json.loads(isolated_settings_files["shared"].read_text())
+    assert shared["agent_memory"]["inject_skip_commands"] == []
+
+
+def test_agent_memory_put_rejects_non_list_skip_commands(
+        flask_client, isolated_settings_files):
+    """A scalar where a list is expected is a 400, not silently coerced."""
+    resp = flask_client.put(
+        "/api/settings/agent-memory",
+        json={"inject_skip_commands": "/goal"},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 400
+    errors = resp.get_json()["errors"]
+    assert any("inject_skip_commands" in e for e in errors)
+
+
+def test_agent_memory_put_requires_auth(anon_client, isolated_settings_files):
+    resp = anon_client.put(
+        "/api/settings/agent-memory",
+        json={"inject_skip_commands": []},
+    )
+    assert resp.status_code == 401
+
+

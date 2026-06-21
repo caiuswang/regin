@@ -2,6 +2,14 @@
 import { defineModel } from 'vue'
 import Button from './ui/Button.vue'
 
+// Defaults preserve the original path-list usage in the Configuration tab;
+// callers (e.g. SettingsBlock) override them for other list[str] fields.
+defineProps({
+  placeholder: { type: String, default: 'Enter path...' },
+  entryLabel: { type: String, default: 'Path entry' },
+  addLabel: { type: String, default: '+ Add path' },
+})
+
 const items = defineModel({ type: Array, default: () => [] })
 
 function add() {
@@ -27,13 +35,13 @@ function update(index, value) {
           type="text"
           :value="item"
           @input="update(pos, $event.target.value)"
-          aria-label="Path entry"
-          class="text-sm border border-gray-300 rounded-md px-2.5 py-1.5 flex-1 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-          placeholder="Enter path..."
+          :aria-label="entryLabel"
+          class="text-sm border border-gray-300 rounded-md px-2.5 py-1.5 flex-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 bg-white"
+          :placeholder="placeholder"
         >
-        <Button variant="ghost" size="icon" aria-label="Remove path" @click="remove(pos)">&times;</Button>
+        <Button variant="ghost" size="icon" :aria-label="`Remove ${entryLabel}`" @click="remove(pos)">&times;</Button>
       </div>
     </div>
-    <Button variant="link" size="sm" @click="add">+ Add path</Button>
+    <Button variant="link" size="sm" @click="add">{{ addLabel }}</Button>
   </div>
 </template>
