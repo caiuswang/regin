@@ -67,6 +67,62 @@ def test_slash_command_recalls_on_arg_text():
     assert "Stale backend" in r.additional_context
 
 
+def test_skip_command_default_suppresses_goal_commands():
+    """/goal and /goal-verified are skipped by default — no injection even
+    when the argument text would otherwise match a seeded memory."""
+    _seed()
+    q = "why does playwright hit a stale backend in e2e?"
+    assert memory_recall.handle(_payload(f"/goal {q}")) is None
+    assert memory_recall.handle(_payload(f"/goal-verified {q}")) is None
+
+
+def test_skip_command_is_exact_not_prefix():
+    """/goal is in the skip list but must not prefix-match /goalpost; an
+    unlisted command with matching arg text still injects."""
+    _seed()
+    q = "why does playwright hit a stale backend in e2e?"
+    r = memory_recall.handle(_payload(f"/goalpost {q}"))
+    assert r is not None and "Stale backend" in r.additional_context
+
+
+def test_skip_command_entries_normalize_slash_and_case(monkeypatch):
+    """A config entry without a leading slash and in mixed case still
+    matches the lowercased, slash-prefixed command token."""
+    _seed()
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "inject_skip_commands", ["Review"])
+    q = "why does playwright hit a stale backend in e2e?"
+    assert memory_recall.handle(_payload(f"/review {q}")) is None
+    # /goal is no longer in the (overridden) list → injects again.
+    r = memory_recall.handle(_payload(f"/goal {q}"))
+    assert r is not None and "Stale backend" in r.additional_context
+
+
+def test_skip_command_empty_list_restores_injection(monkeypatch):
+    """Empty inject_skip_commands → prior behaviour: /goal injects on its
+    argument text like any other slash command."""
+    _seed()
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "inject_skip_commands", [])
+    r = memory_recall.handle(_payload(
+        "/goal why does playwright hit a stale backend in e2e?"))
+    assert r is not None and "Stale backend" in r.additional_context
+
+
+def test_skip_command_emits_no_span(monkeypatch):
+    """A skipped command injects nothing AND records no memory.recall span."""
+    _seed()
+    posted = _capture_spans(monkeypatch)
+    assert memory_recall.handle(_payload(
+        "/goal why does playwright hit a stale backend in e2e?")) is None
+    assert not [s for s in posted if s["name"] == "memory.recall"]
+
+
+def test_inject_skip_commands_default():
+    from lib.settings import AgentMemoryConfig
+    assert AgentMemoryConfig().inject_skip_commands == ["/goal", "/goal-verified"]
+
+
 def test_disabled_settings_return_none(monkeypatch):
     _seed()
     from lib.settings import settings

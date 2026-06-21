@@ -175,6 +175,18 @@ class AgentMemoryConfig(BaseModel):
     inject_min_overlap: int = 3
     overlap_idf_max_df: float = 0.30
     inject_fts_top_k: int = 1
+    # Slash commands whose own machinery already pulls context/recall, so the
+    # UserPromptSubmit auto-inject (`<recalled_experience>` / `<topic_context>`)
+    # is redundant noise on them. When the prompt's command token is in this
+    # list, `_eligible_prompt` returns False and nothing is injected (and no
+    # `memory.recall` span is emitted). Matched on the command token only — the
+    # first whitespace-delimited word — case-insensitively, with the leading
+    # slash optional per entry: "goal" and "/GOAL" both match `/goal`, and
+    # `/goal` never prefix-matches `/goalpost`. Empty list → inject on every
+    # eligible prompt (prior behaviour). Default skips `/goal` and
+    # `/goal-verified`, which run their own preflight recall.
+    inject_skip_commands: list[str] = Field(
+        default_factory=lambda: ["/goal", "/goal-verified"])
     # Same-session dedup: skip injecting a memory already injected earlier
     # this session (tracked in the memory DB's `injection_events` table, so
     # it survives the per-prompt fresh hook process). When a previously

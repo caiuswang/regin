@@ -68,12 +68,40 @@ def _recall_query(prompt: str) -> str:
     return parts[1].strip() if len(parts) > 1 else ""
 
 
+def _command_name(prompt: str) -> str | None:
+    """The slash-command token of `prompt`, lowercased and slash-prefixed
+    (e.g. '/goal'), or None when the prompt is not a slash command. Only the
+    first whitespace-delimited word counts, so '/goal do x' and a bare '/goal'
+    both yield '/goal'."""
+    text = (prompt or "").strip()
+    if not text.startswith("/"):
+        return None
+    return text.split(None, 1)[0].lower()
+
+
+def _skip_command(prompt: str) -> bool:
+    """True when `prompt` is a slash command listed in `inject_skip_commands`
+    — those commands run their own recall, so the auto-inject is suppressed
+    entirely. Config entries are normalised to a single leading slash and
+    lowercased ('goal' and '/GOAL' both match '/goal'); matching is exact on
+    the command token, never a prefix, so '/goal' never silences '/goalpost'."""
+    name = _command_name(prompt)
+    if not name:
+        return False
+    from lib.settings import settings
+    skip = {"/" + c.strip().lstrip("/").lower()
+            for c in settings.agent_memory.inject_skip_commands if c and c.strip()}
+    return name in skip
+
+
 def _eligible_prompt(payload: HookPayload) -> bool:
     text = payload.prompt or ""
     if "<task-notification>" in text:
         return False  # system-injected background-task completion
     if payload.is_workflow_subagent:
         return False
+    if _skip_command(text):
+        return False  # command runs its own recall; auto-inject is noise
     return len(_recall_query(text)) >= _MIN_PROMPT_CHARS
 
 
