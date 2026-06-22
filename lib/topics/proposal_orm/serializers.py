@@ -109,6 +109,8 @@ def _topic_to_dict(topic: ProposalTopic | ProposalRevisionTopic) -> dict[str, An
         "include_globs": json.loads(topic.include_globs_json or "[]"),
         "exclude_globs": json.loads(topic.exclude_globs_json or "[]"),
         "evidence_paths": json.loads(topic.evidence_paths_json or "[]"),
+        "parent_id": topic.parent_id,
+        "blurb": topic.blurb or "",
     }
     _apply_review_markers(out, topic)
     return out
@@ -216,6 +218,8 @@ def _proposed_topic_kwargs(topic: dict[str, Any]) -> dict[str, Any]:
         "downgraded_from": topic.get("downgraded_from"),
         "downgraded_at": topic.get("downgraded_at"),
         "replaced_existing": 1 if topic.get("replaced_existing") else 0,
+        "parent_id": topic.get("parent_id"),
+        "blurb": topic.get("blurb") or "",
     }
     for field in _TOPIC_JSON_LIST_FIELDS:
         kwargs[f"{field}_json"] = json.dumps(topic.get(field) or [])

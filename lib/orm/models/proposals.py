@@ -137,6 +137,12 @@ class ProposalTopic(Base, table=True):
         sa_column=Column("evidence_paths_json", Text, nullable=False,
                          server_default=text("'[]'")),
     )
+    parent_id: Optional[str] = Field(default=None,
+                                     sa_column=Column("parent_id", String))
+    blurb: str = Field(
+        sa_column=Column("blurb", Text, nullable=False,
+                         server_default=text("''")),
+    )
     source: Optional[str] = Field(default=None,
                                   sa_column=Column("source", String))
     review_status: Optional[str] = Field(default=None,
@@ -242,6 +248,12 @@ class ProposalRevisionTopic(Base, table=True):
     evidence_paths_json: str = Field(
         sa_column=Column("evidence_paths_json", Text, nullable=False,
                          server_default=text("'[]'")),
+    )
+    parent_id: Optional[str] = Field(default=None,
+                                     sa_column=Column("parent_id", String))
+    blurb: str = Field(
+        sa_column=Column("blurb", Text, nullable=False,
+                         server_default=text("''")),
     )
     source: Optional[str] = Field(default=None,
                                   sa_column=Column("source", String))

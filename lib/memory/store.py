@@ -819,8 +819,9 @@ class SqliteMemoryStore:
                                    scope: Optional[str] = None) -> list[str]:
         """Active memory ids linked to *any* node in `topic_node_ids` — the
         subtree generalisation of `memories_for_topic_node`, backing the
-        navigation `index_fetch`. Deduped (order-preserving); empty input →
-        empty list."""
+        navigation `index_fetch`. Ranked by importance then recall_count
+        (most-valuable first) so a node with many memories surfaces the
+        signal, not a dump; deduped order-preserving; empty input → []."""
         if not topic_node_ids:
             return []
         with MemorySessionLocal() as session:
@@ -830,7 +831,9 @@ class SqliteMemoryStore:
                     .where(
                         MemoryAuthoritativeTopic.topic_node_id.in_(
                             topic_node_ids),
-                        Memory.status == "active"))
+                        Memory.status == "active")
+                    .order_by(Memory.importance.desc(),
+                              Memory.recall_count.desc()))
             if scope is not None:
                 stmt = stmt.where(Memory.scope == scope)
             rows = session.exec(stmt).all()

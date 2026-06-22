@@ -213,6 +213,10 @@ def _approved_shape(proposed: dict[str, Any]) -> dict[str, Any]:
         "commands": list(proposed.get("commands") or []),
         "include_globs": list(proposed.get("include_globs") or []),
         "exclude_globs": list(proposed.get("exclude_globs") or []),
+        # Navigation-taxonomy placement (reviewed field, not auto-assigned):
+        # null parent_id → `unclassified` bucket backlog; blurb → router card.
+        "parent_id": proposed.get("parent_id"),
+        "blurb": proposed.get("blurb", ""),
     }
 
 

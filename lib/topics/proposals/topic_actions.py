@@ -44,6 +44,7 @@ def update_proposed_topic(
     allowed = {
         "id", "label", "aliases", "intent", "status", "refs", "edges",
         "commands", "include_globs", "exclude_globs", "evidence_paths",
+        "parent_id", "blurb",
     }
     for key, value in patch.items():
         if key in allowed:
@@ -315,6 +316,11 @@ def _approved_topic_from_proposal(
         "commands": topic.get("commands", []),
         "include_globs": topic.get("include_globs", []),
         "exclude_globs": topic.get("exclude_globs", []),
+        # Navigation-taxonomy placement: a null parent_id lands the topic in
+        # the `unclassified` bucket (a reviewed-field backlog), never silently
+        # at the top level. blurb is the router card; falls back to intent.
+        "parent_id": topic.get("parent_id"),
+        "blurb": topic.get("blurb", ""),
     }
 
 

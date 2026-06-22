@@ -312,6 +312,22 @@ def _load_proposal_workspace_state(
     }
 
 
+def _list_buckets(repo_path: str) -> list[dict]:
+    """Top-level taxonomy buckets (id + label) a reviewer can place a draft
+    topic under via `parent_id`. `unclassified` is omitted — leaving
+    `parent_id` null routes there, so it isn't an explicit choice."""
+    from lib.topics.graph_io import load_authoritative_graph
+    try:
+        graph = load_authoritative_graph(repo_path)
+    except Exception:
+        return []
+    return [
+        {"id": tid, "label": topic.get("label") or tid}
+        for tid, topic in sorted((graph.get("topics") or {}).items())
+        if topic.get("kind") == "bucket" and tid != "unclassified"
+    ]
+
+
 def _proposal_workspace_payload(
     repo_path: str,
     *,
@@ -351,6 +367,7 @@ def _proposal_workspace_payload(
         "repo": Path(repo_path).name,
         "providers": list_proposal_providers(),
         "prompt_templates": list_templates(),
+        "buckets": _list_buckets(repo_path),
         "runs": runs,
         "selected_proposal_id": selected_proposal_id,
         "selected_run": selected_run,

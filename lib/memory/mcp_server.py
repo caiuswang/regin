@@ -92,20 +92,54 @@ def _format_card(card: dict, mem_count: Optional[int]) -> str:
     return f"- {card['id']} · {card['label']} ({shape}{mc})\n    {card['blurb']}"
 
 
-def _format_refs(node: dict) -> Optional[str]:
+def _wiki_section(node_id: str) -> str:
+    """Address of the curated per-topic wiki — the agent Reads it if it wants
+    the narrative. We hand over the path, not the contents."""
+    from lib.settings import settings
+    from lib.topics.wiki import wiki_dir
+    if not (wiki_dir(settings.project_root) / f"{node_id}.md").exists():
+        return "## wiki\n(none — bucket or un-accepted topic)"
+    return (f"## wiki\n.regin/topics/wiki/{node_id}.md  "
+            f"(Read this for the full topic narrative)")
+
+
+_REF_CAP = 12  # role-bearing anchors are enough; the wiki has the full file map
+
+
+def _refs_section(node: dict) -> str:
+    """High-signal source-file addresses (path + role). Role-bearing anchors
+    first, capped — the full file list lives in the wiki, so we don't dump
+    every low-signal path here."""
     refs = node.get("refs") or []
     if not refs:
-        return None
-    return "refs:\n" + "\n".join(
-        f"  {r.get('path')} ({r.get('role')})" for r in refs)
+        return "## source refs\n(none)"
+    ranked = sorted(refs, key=lambda r: (r.get("role") in (None, ""),))
+    shown = ranked[:_REF_CAP]
+    lines = [f"  {r.get('path')} ({r.get('role') or '—'})" for r in shown]
+    more = len(refs) - len(shown)
+    tail = f"\n  … +{more} more (full file map in the wiki)" if more > 0 else ""
+    return f"## source refs ({len(refs)})\n" + "\n".join(lines) + tail
 
 
-def _format_subtree_memories(store, ids: list[str], top_k: int) -> str:
-    if not ids:
-        return "(no memories linked under this subtree)"
-    cap = max(1, min(int(top_k), 20))
-    hits = (store.get_dict(mid) for mid in ids[:cap])
-    return "\n\n".join(_format_memory(m) for m in hits if m)
+def _memory_headline(m: dict) -> str:
+    title = m.get("title") or (m.get("body") or "").strip()[:60] or "(untitled)"
+    return f"- [{m['kind']}|imp {m.get('importance', 0):.1f}] {title}  (id: {m['id']})"
+
+
+def _memories_section(store, ids: list[str], top_k: int) -> str:
+    """Memory addresses (kind · title · id), importance-ranked and capped —
+    labels for the agent to choose from, not a body dump. The agent reads a
+    chosen one with `recall`."""
+    total = len(ids)
+    if not total:
+        return "## memories\n(none linked under this subtree)"
+    cap = max(1, min(int(top_k), 50))
+    shown = [m for m in (store.get_dict(mid) for mid in ids[:cap]) if m]
+    lines = "\n".join(_memory_headline(m) for m in shown)
+    more = total - len(shown)
+    tail = f"\n… +{more} more (raise top_k)" if more > 0 else ""
+    return (f"## memories ({total}, importance-ranked; titles only — "
+            f"recall to read one)\n{lines}{tail}")
 
 
 @mcp.tool()
@@ -177,18 +211,27 @@ def index_expand(node_id: str, scope: str = "") -> str:
 
 
 @mcp.tool()
-def index_fetch(node_id: str, top_k: int = 8, scope: str = "") -> str:
-    """Read the memories under a topic node's whole subtree, plus the node's
-    file refs — the leaf step of the navigation walk.
+def index_fetch(node_id: str, top_k: int = 10, scope: str = "") -> str:
+    """Read a topic node — the leaf step of the navigation walk. Returns
+    **addresses, not contents**, so you spend tokens only on what you choose
+    to open:
+
+    - the curated **wiki path** (`.regin/topics/wiki/<id>.md`) — Read it for
+      the topic narrative;
+    - the topic's **source-file refs** (path + role) — Read the relevant ones;
+    - its **memories** as importance-ranked titles + ids — `recall` the one
+      you want.
+
+    Nothing here dumps a wiki body or memory bodies; you decide what's worth
+    reading. This keeps a heavily-used topic from flooding the context.
 
     Args:
-        node_id: The topic node to read (its subtree's memories are pulled).
-        top_k: Max memories to return (default 8, capped at 20).
+        node_id: The topic node to read (its subtree's memories are listed).
+        top_k: Max memory titles to list (default 10, capped at 50).
         scope: Optional repo scope filter like "repo:regin".
 
     Returns:
-        The node's file refs, then matching memories (kind, scope, body,
-        originating session) — or a note that the subtree has none.
+        `## wiki`, `## source refs`, `## memories` sections of pointers.
     """
     import lib.memory as memory
     from lib.topics.tree import subtree_ids
@@ -201,9 +244,10 @@ def index_fetch(node_id: str, top_k: int = 8, scope: str = "") -> str:
     store = memory.get_store()
     ids = store.memories_for_topic_subtree(subtree_ids(graph, node_id),
                                            scope=scope or None)
-    parts = [p for p in (_format_refs(node),
-                         _format_subtree_memories(store, ids, top_k)) if p]
-    return f"{node_id}:\n" + "\n\n".join(parts)
+    label = node.get("label") or node_id
+    sections = [_wiki_section(node_id), _refs_section(node),
+                _memories_section(store, ids, top_k)]
+    return f"{node_id} · {label}\n\n" + "\n\n".join(sections)
 
 
 if __name__ == "__main__":

@@ -352,7 +352,34 @@ def audit_graph(
             topic_id=tid,
             graph_context=ctx,
         ))
+    issues.extend(_audit_taxonomy_placement(topics))
     return issues
+
+
+def _audit_taxonomy_placement(
+    topics: dict[str, Any],
+) -> list[ValidationIssue]:
+    """Advisory placement checks for the navigation taxonomy. A non-bucket
+    topic must hang under an existing `kind:"bucket"` node; one with a null,
+    dangling, or non-bucket `parent_id` is *unclassified* — it still works
+    (recall routes it to the reserved `unclassified` bucket) but it's a
+    curation backlog item, so it warns rather than errors."""
+    buckets = {tid for tid, n in topics.items()
+               if isinstance(n, dict) and n.get("kind") == "bucket"}
+    out: list[ValidationIssue] = []
+    for tid, topic in topics.items():
+        if not isinstance(topic, dict) or tid in buckets:
+            continue
+        if topic.get("parent_id") not in buckets:
+            out.append(ValidationIssue(
+                severity="warning",
+                code="topic.unclassified",
+                message=f"topic {tid} has no bucket parent_id "
+                        f"(parent_id={topic.get('parent_id')!r}); pick a "
+                        f"bucket so it leaves the unclassified backlog",
+                topic_ids=(tid,),
+            ))
+    return out
 
 
 def split_by_severity(issues: list[ValidationIssue]) -> tuple[list[ValidationIssue], list[ValidationIssue]]:

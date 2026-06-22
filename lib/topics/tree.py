@@ -13,9 +13,19 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+# Reserved bucket that collects leaf topics with no (or a non-bucket) parent,
+# so an unplaced topic is visibly pending instead of polluting the top level.
+UNCLASSIFIED = "unclassified"
+
 
 def _topics(graph: dict) -> dict[str, Any]:
     return graph.get("topics") or {}
+
+
+def is_bucket(node: dict) -> bool:
+    """A top-level taxonomy node — the only valid `parent_id` targets and the
+    only nodes shown as roots. Marked `kind: "bucket"` in topic.json."""
+    return node.get("kind") == "bucket"
 
 
 def blurb_of(node: dict) -> str:
@@ -26,21 +36,29 @@ def blurb_of(node: dict) -> str:
 
 
 def build_tree(graph: dict) -> dict[str, Any]:
-    """`{"roots", "children"}` derived from `parent_id`. `roots` = ids with
-    no (or a dangling) parent, sorted; `children[pid]` = sorted child ids. A
-    node whose `parent_id` points nowhere is treated as a root, so even a
-    malformed graph yields a walkable forest."""
+    """`{"roots", "children"}` derived from `kind:"bucket"` + `parent_id`.
+
+    `roots` = bucket ids, sorted (the curated top level). Each non-bucket
+    node hangs under its `parent_id` when that points to a bucket; otherwise
+    it routes to the reserved `UNCLASSIFIED` bucket — so a leaf with a null,
+    dangling, or non-bucket parent is visibly pending, never silently
+    promoted to the top level. `UNCLASSIFIED` is shown as a root only when it
+    actually holds something, and is surfaced even if the graph never declared
+    the bucket node — so quarantined leaves are never dropped from the walk."""
     topics = _topics(graph)
+    buckets = {tid for tid, n in topics.items() if is_bucket(n)}
     children: dict[str, list[str]] = {}
-    roots: list[str] = []
     for tid, node in topics.items():
+        if tid in buckets:
+            continue
         parent = node.get("parent_id")
-        if parent and parent in topics:
-            children.setdefault(parent, []).append(tid)
-        else:
-            roots.append(tid)
+        effective = parent if parent in buckets else UNCLASSIFIED
+        children.setdefault(effective, []).append(tid)
     for kids in children.values():
         kids.sort()
+    roots = [b for b in buckets if b != UNCLASSIFIED]
+    if children.get(UNCLASSIFIED):  # surface it even if the node is undeclared
+        roots.append(UNCLASSIFIED)
     return {"roots": sorted(roots), "children": children}
 
 

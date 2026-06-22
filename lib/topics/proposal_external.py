@@ -139,6 +139,22 @@ def _existing_topics_summary(repo: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _bucket_summary(repo: Path) -> list[dict[str, Any]]:
+    """The top-level taxonomy buckets (id + label + blurb) a proposed topic
+    can be placed under via `parent_id`. The reserved `unclassified` bucket
+    is omitted — leaving `parent_id` null routes there, it's not a target."""
+    try:
+        graph = load_authoritative_graph(repo)
+    except Exception:
+        return []
+    return [
+        {"id": tid, "label": topic.get("label"),
+         "blurb": topic.get("blurb") or topic.get("intent", "")}
+        for tid, topic in sorted((graph.get("topics") or {}).items())
+        if topic.get("kind") == "bucket" and tid != "unclassified"
+    ]
+
+
 def _format_template_section(prompt_templates: list[dict[str, Any]] | None) -> str:
     """Render injected prompt templates as a ## Custom Instructions block.
 
@@ -622,6 +638,7 @@ Rules:
 - Only propose topics justified by real repository files; every ref path must exist in the repo (regin rejects paths it can't find on disk).
 - A ref's `role` is optional; when you set one, use only: overview, architecture, entrypoint, api, schema, test, migration, implementation, config, docs. Omit it if none clearly fits.
 - `aliases` are *alternate* phrases a future agent might search for — not restatements of the `id` or `label`. Do NOT list the topic id or label, and do NOT add variants that differ only in case, spacing, or hyphenation: regin normalizes aliases (lowercased, every run of non-alphanumeric characters → a single space), so `foo-bar`, `Foo Bar`, and `foo bar` all collapse to the same key and a repeat is rejected at apply time. Give 0–6 genuinely distinct phrasings, or leave the list empty.
+- `parent_id` places the topic under one top-level navigation bucket (see "Available buckets" below). Pick the single best-fitting bucket id. If none clearly fits, set it to `null` — the reviewer will place it; do NOT force a weak fit. `blurb` is a one-line router card ("what task should drill in here"), not a description; omit it and `intent` is used instead.
 - If a write/tool permission prompt blocks writing the output file, stop and report the permission failure instead of printing a fallback success payload.
 
 Output JSON shape:
@@ -633,6 +650,8 @@ Output JSON shape:
       "aliases": [],
       "intent": "What this topic helps future agents understand",
       "status": "active",
+      "parent_id": "one-of-the-bucket-ids-below-or-null",
+      "blurb": "One line: what task should drill into this topic",
       "refs": [{{"path": "relative/path.py", "role": "implementation"}}],
       "edges": [],
       "commands": [],
@@ -648,6 +667,11 @@ Output JSON shape:
 Existing approved topics (do not propose duplicates; explore the repo with your Read/Glob/Grep tools for everything else):
 ```json
 {json.dumps(_existing_topics_summary(repo), indent=2, sort_keys=True)}
+```
+
+Available buckets (pick one id for each topic's `parent_id`, or null if none fits):
+```json
+{json.dumps(_bucket_summary(repo), indent=2, sort_keys=True)}
 ```
 """
 

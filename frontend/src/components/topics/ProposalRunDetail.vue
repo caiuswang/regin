@@ -5,6 +5,7 @@ import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
+import Select from '../ui/Select.vue'
 import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import DiffPanel from './DiffPanel.vue'
@@ -265,6 +266,7 @@ function editProposedTopic(topic) {
   proposalDraft.value = {
     label: topic.label || '',
     aliases: (topic.aliases || []).join(', '),
+    parent_id: topic.parent_id || '',
     intent: topic.intent || '',
     include_globs: (topic.include_globs || []).join('\n'),
     exclude_globs: (topic.exclude_globs || []).join('\n'),
@@ -290,6 +292,7 @@ async function saveProposedTopic(topic) {
     const result = await api.post(`/repos/${props.repo}/topics/proposals/${proposalId}/topics/${topic.id}`, {
       label: proposalDraft.value.label,
       aliases: splitList(proposalDraft.value.aliases, ','),
+      parent_id: proposalDraft.value.parent_id || null,
       intent: proposalDraft.value.intent,
       include_globs: splitList(proposalDraft.value.include_globs, '\n'),
       exclude_globs: splitList(proposalDraft.value.exclude_globs, '\n'),
@@ -514,6 +517,11 @@ function reviewStatusColor(status) {
             <label class="text-xs text-gray-500">
               Aliases
               <input v-model="proposalDraft.aliases" aria-label="Draft topic aliases" class="mt-1 w-full topics-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+            </label>
+            <label class="md:col-span-2 text-xs text-gray-500">
+              Bucket (taxonomy placement)
+              <Select v-model="proposalDraft.parent_id" block aria-label="Draft topic bucket" class="mt-1"
+                :options="[{ value: '', label: '— Unclassified (reviewer to place) —' }, ...((data && data.buckets) || []).map(b => ({ value: b.id, label: b.label }))]" />
             </label>
             <label class="md:col-span-2 text-xs text-gray-500">
               Intent
