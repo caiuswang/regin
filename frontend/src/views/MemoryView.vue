@@ -16,6 +16,7 @@ import MemoryTopics from '../components/memory/MemoryTopics.vue'
 import MemoryTopicFeedback from '../components/memory/MemoryTopicFeedback.vue'
 import TopicRoutePlayground from '../components/memory/TopicRoutePlayground.vue'
 import MemoryExemplars from '../components/memory/MemoryExemplars.vue'
+import MemoryTaxonomy from '../components/memory/MemoryTaxonomy.vue'
 
 const { confirm } = useConfirm()
 const { width: listWidth, onResizeStart, onResizeKey } =
@@ -30,10 +31,11 @@ const selectedId = ref(null)
 
 // Three domain-coherent tabs replace the single long scroll: browse/manage,
 // topic clustering + routing, and recall-ranking tuning.
-const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'recall'] })
+const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'tree', 'recall'] })
 const TABS = [
   { value: 'memories', label: 'Memories' },
   { value: 'topics', label: 'Topics' },
+  { value: 'tree', label: 'Tree' },
   { value: 'recall', label: 'Recall' },
 ]
 
@@ -56,6 +58,7 @@ const reflecting = ref(false)
 const topicsRef = ref(null)
 const topicFeedbackRef = ref(null)
 const playgroundRef = ref(null)
+const taxonomyRef = ref(null)
 
 // Recent-injections 🔍 → load that prompt into the sibling route playground and
 // run the preview (the playground scrolls itself into view).
@@ -138,6 +141,7 @@ async function runReflect() {
   topicsRef.value?.reload()
   topicFeedbackRef.value?.reload()
   exemplarsRef.value?.reload()
+  taxonomyRef.value?.reload()
 }
 
 async function runRecall() {
@@ -330,6 +334,12 @@ onBeforeUnmount(() => headerObserver?.disconnect())
       <MemoryTopics ref="topicsRef" @select="selectMemory" />
       <MemoryTopicFeedback ref="topicFeedbackRef" @inspect="inspectInPlayground" />
       <TopicRoutePlayground ref="playgroundRef" />
+    </div>
+
+    <!-- Tree: the authoritative topic taxonomy — drill the parent_id tree to a
+         node's wiki, source refs, and the memories filed under it. -->
+    <div v-show="activeTab === 'tree'" class="pt-4">
+      <MemoryTaxonomy ref="taxonomyRef" @select="selectMemory" />
     </div>
 
     <!-- Recall: probe what a query surfaces, plus the per-memory exemplars

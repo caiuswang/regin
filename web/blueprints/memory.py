@@ -372,6 +372,103 @@ def api_memory_topic(topic_id):
     return jsonify(data)
 
 
+@memory_bp.route("/api/memory/taxonomy")
+def api_memory_taxonomy():
+    """The authoritative topic taxonomy (`.regin/topics/topic.json`) as a
+    navigable tree — the WebUI mirror of the `index_root`/`index_expand` MCP
+    walk. The graph is small (~30 nodes), so the whole tree ships in one
+    payload and the frontend drills client-side: `{roots, nodes}` where each
+    node carries its label, router blurb, child/ref counts, subtree memory
+    count, child ids, and whether a curated wiki page exists. Optional
+    `scope` (e.g. `repo:regin`) filters the memory counts."""
+    from lib.settings import settings
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.tree import build_tree, node_card, subtree_ids
+    from lib.topics.wiki import wiki_dir
+    scope = request.args.get("scope") or None
+    graph = load_authoritative_graph(str(settings.project_root))
+    if not graph or not graph.get("topics"):
+        return jsonify({"roots": [], "nodes": {}})
+    store = memory.get_store()
+    tree = build_tree(graph)
+    children = tree["children"]
+    wdir = wiki_dir(settings.project_root)
+    nodes: dict = {}
+    # Every declared topic, plus any root the tree surfaces without a node
+    # (the reserved `unclassified` bucket can hold quarantined leaves even
+    # when it was never declared).
+    for nid in list(graph["topics"]) + tree["roots"]:
+        if nid in nodes:
+            continue
+        card = node_card(graph, nid) or {
+            "id": nid, "label": nid, "blurb": "",
+            "ref_count": 0, "child_count": len(children.get(nid, []))}
+        card["children"] = children.get(nid, [])
+        card["mem_count"] = len(store.memories_for_topic_subtree(
+            subtree_ids(graph, nid), scope=scope))
+        card["has_wiki"] = (wdir / f"{nid}.md").exists()
+        nodes[nid] = card
+    return jsonify({"roots": tree["roots"], "nodes": nodes})
+
+
+def _taxonomy_top_k() -> int:
+    try:
+        return max(1, min(int(request.args.get("top_k", 30)), 100))
+    except (TypeError, ValueError):
+        return 30
+
+
+def _mem_headline(m: dict) -> dict:
+    """Importance-ranked memory address for the taxonomy detail pane — a
+    headline the user clicks to open the full memory, not a body dump."""
+    return {"id": m["id"], "kind": m["kind"], "title": m.get("title"),
+            "importance": m.get("importance"), "scope": m.get("scope"),
+            "veracity": m.get("veracity")}
+
+
+def _taxonomy_detail(node_id: str, node: dict, ids: list,
+                     mems: list, body) -> dict:
+    """Assemble the taxonomy node detail payload (see
+    `api_memory_taxonomy_node`) — pure shaping, no I/O."""
+    from lib.topics.tree import blurb_of
+    return {
+        "id": node_id,
+        "label": node.get("label") or node_id,
+        "blurb": blurb_of(node),
+        "refs": node.get("refs") or [],
+        "edges": node.get("edges") or [],
+        "wiki": {"path": f".regin/topics/wiki/{node_id}.md",
+                 "exists": body is not None, "body": body},
+        "memory_total": len(ids),
+        "memories": [_mem_headline(m) for m in mems if m],
+    }
+
+
+@memory_bp.route("/api/memory/taxonomy/<node_id>")
+def api_memory_taxonomy_node(node_id):
+    """One taxonomy node, expanded for reading — the WebUI mirror of
+    `index_fetch`, but it returns *contents* (this is a human surface): the
+    node blurb, its source-file refs + related edges, the rendered wiki
+    narrative (`body`, or null when the node has no curated page), and its
+    subtree memories as importance-ranked headlines. `top_k` caps the memory
+    list (default 30); `scope` filters it."""
+    from lib.settings import settings
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.tree import subtree_ids
+    from lib.topics.wiki import wiki_dir
+    graph = load_authoritative_graph(str(settings.project_root)) or {}
+    node = graph.get("topics", {}).get(node_id)
+    if node is None:
+        return jsonify({"error": "not found"}), 404
+    store = memory.get_store()
+    ids = store.memories_for_topic_subtree(
+        subtree_ids(graph, node_id), scope=request.args.get("scope") or None)
+    mems = [store.get_dict(mid) for mid in ids[:_taxonomy_top_k()]]
+    wiki_path = wiki_dir(settings.project_root) / f"{node_id}.md"
+    body = wiki_path.read_text() if wiki_path.exists() else None
+    return jsonify(_taxonomy_detail(node_id, node, ids, mems, body))
+
+
 @memory_bp.route("/api/memory/graph")
 def api_memory_graph():
     """The `related` edge graph for visualization: `{edges: [{src, dst,
