@@ -815,6 +815,27 @@ class SqliteMemoryStore:
             rows = session.exec(stmt).all()
         return list(rows)
 
+    def memories_for_topic_subtree(self, topic_node_ids: list[str], *,
+                                   scope: Optional[str] = None) -> list[str]:
+        """Active memory ids linked to *any* node in `topic_node_ids` — the
+        subtree generalisation of `memories_for_topic_node`, backing the
+        navigation `index_fetch`. Deduped (order-preserving); empty input →
+        empty list."""
+        if not topic_node_ids:
+            return []
+        with MemorySessionLocal() as session:
+            stmt = (select(MemoryAuthoritativeTopic.memory_id)
+                    .join(Memory,
+                          Memory.id == MemoryAuthoritativeTopic.memory_id)
+                    .where(
+                        MemoryAuthoritativeTopic.topic_node_id.in_(
+                            topic_node_ids),
+                        Memory.status == "active"))
+            if scope is not None:
+                stmt = stmt.where(Memory.scope == scope)
+            rows = session.exec(stmt).all()
+        return list(dict.fromkeys(rows))
+
     def recall(self, query: str, *, top_k: int = 5,
                scope: Optional[str] = None, mode: str = "auto",
                include_tests: bool = False, reinforce: bool = True,
