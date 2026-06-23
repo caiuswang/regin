@@ -179,6 +179,54 @@ def test_session_map_shallow_returns_root_only_with_tree(flask_client, tmp_db):
     assert root["data"]["child_count"] == 1
 
 
+# ── structural map keeps the compact memory.recall labels ──────────
+# Regression: an injected <skill_experience> block must stay visible in the
+# trace detail on a FRESH load. It renders from a `memory.recall` span whose
+# source/skill_id/hit_count distinguish it from generic recalled experience;
+# the structural /map strips attributes, so those compact labels must be on
+# the keep-list or the row degrades to plain "recalled experience" on reload.
+
+def test_kept_map_attrs_preserves_skill_experience_labels():
+    from web.blueprints.trace.sessions import _kept_map_attrs
+    kept = _kept_map_attrs({
+        "source": "skill_experience", "skill_id": "playwright-skill",
+        "hit_count": 3, "block": "<skill_experience>x</skill_experience>",
+        "hits": [{"id": "a"}], "unrelated": 1,
+    })
+    assert kept == {"source": "skill_experience",
+                    "skill_id": "playwright-skill", "hit_count": 3}
+    # heavy/unknown attrs are dropped (loaded lazily via /spans/<id>/content)
+    assert "block" not in kept and "hits" not in kept and "unrelated" not in kept
+
+
+def test_structural_map_keeps_skill_experience_attrs(flask_client, tmp_db):
+    with SessionLocal() as session:
+        session.add(SessionModel(
+            trace_id="trace-se", title="S",
+            started_at="2026-04-22 10:00:00", last_seen="2026-04-22 10:00:03"))
+        session.add(SessionSpan(
+            trace_id="trace-se", span_id="prompt-se", parent_id=None,
+            name="prompt", kind="internal", start_time="2026-04-22 10:00:00"))
+        session.add(SessionSpan(
+            trace_id="trace-se", span_id="mr-se", parent_id=None,
+            name="memory.recall", kind="internal",
+            start_time="2026-04-22 10:00:01",
+            attributes=json.dumps({
+                "source": "skill_experience", "skill_id": "playwright-skill",
+                "hit_count": 2,
+                "block": "<skill_experience>x</skill_experience>",
+            })))
+        session.commit()
+
+    body = flask_client.get("/api/sessions/trace-se/map").get_json()
+    mr = next(s for s in body["spans"] if s["span_id"] == "mr-se")
+    attrs = mr.get("attributes") or {}
+    assert attrs.get("source") == "skill_experience"
+    assert attrs.get("skill_id") == "playwright-skill"
+    assert attrs.get("hit_count") == 2
+    assert "block" not in attrs  # heavy attr stripped, fetched lazily
+
+
 # ── POST /api/sessions/batch-delete ─────────────────────────
 
 def test_batch_delete_requires_list(flask_client, tmp_db):

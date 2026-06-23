@@ -690,14 +690,20 @@ def api_session_span_children(trace_id, span_id):
     })
 
 
-# Attribute keys the light structural map preserves after the strip: the
-# `/rewind` signal the frontend needs to collapse the discarded branch and
-# label the marker without a content round-trip. The marker's heavier attrs
-# (orphan_keys, rolled_back_files) are dropped here and loaded lazily via
-# /spans/<id>/rewind.
+# Attribute keys the light structural map preserves after the strip:
+#  * the `/rewind` signal the frontend needs to collapse the discarded branch
+#    and label the marker without a content round-trip;
+#  * the compact `memory.recall` labels (`hit_count`, plus `source`/`skill_id`
+#    that distinguish an injected `<skill_experience>` block from generic
+#    recalled experience) so MemoryRecallRow renders its header durably on a
+#    fresh load — not just transiently off the live-tail append.
+# The heavier attrs (rewind orphan_keys/rolled_back_files, the recall `block`
+# and per-hit `hits` list) are dropped here and loaded lazily via
+# /spans/<id>/rewind and /spans/<id>/content.
 _MAP_KEEP_ATTR_KEYS = (
     'rewound_away', 'rewind_fork_id',
     'abandoned_prompt_count', 'rolled_back_count',
+    'hit_count', 'source', 'skill_id',
 )
 
 
