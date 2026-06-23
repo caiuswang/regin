@@ -145,6 +145,42 @@ def test_supersede_retires_and_links():
     assert new in ids and old not in ids
 
 
+def test_restore_reactivates_superseded_and_makes_recallable():
+    old = _remember("old fact about the staging port")
+    new = memory.supersede(old, MemoryInput(
+        body="new fact about the staging port", kind="fact", is_test=True))
+    # precondition: retired + chained + invisible to recall
+    pre = memory.get_store().get_dict(old)
+    assert pre["status"] == "retired" and pre["superseded_by"] == new
+    assert old not in {h.memory["id"] for h in memory.recall(
+        "staging port fact", mode="fts", include_tests=True)}
+
+    assert memory.restore(old) is True
+    row = memory.get_store().get_dict(old)
+    # reactivated AND unchained — the unchain is what restores recall visibility
+    assert row["status"] == "active"
+    assert row["superseded_by"] is None
+    ids = {h.memory["id"] for h in memory.recall(
+        "staging port fact", mode="fts", include_tests=True)}
+    assert old in ids  # the replacement stays active too; both reachable
+
+
+def test_restore_records_validation_and_handles_plain_retire():
+    from lib.memory.models import MemoryValidation
+    mid = _remember("plainly retired entry echo foxtrot")
+    memory.update(mid, status="retired")  # plain retire, no supersede link
+    assert memory.restore(mid) is True
+    assert memory.get_store().get_dict(mid)["status"] == "active"
+    with MemorySessionLocal() as session:
+        actions = [v.action for v in session.exec(sa_select(MemoryValidation)
+                   .where(MemoryValidation.memory_id == mid)).all()]
+    assert "restored" in actions
+
+
+def test_restore_missing_id_returns_false():
+    assert memory.restore("does-not-exist") is False
+
+
 def test_forget_cascades():
     mid = _remember("disposable entry charlie delta")
     store = memory.get_store()

@@ -436,6 +436,19 @@ def cmd_forget(memory_id: str = typer.Argument(...)) -> None:
     print(f"forgot {memory_id}")
 
 
+@memory_app.command("restore")
+def cmd_restore(memory_id: str = typer.Argument(...)) -> None:
+    """Bring a retired memory back to active — the inverse of `retire` and
+    the non-destructive counterpart to `supersede`. Reactivates the row and
+    clears its supersede link so recall can surface it again. A hard
+    `forget` cannot be undone this way; the row no longer exists."""
+    import lib.memory as memory
+    if not memory.restore(memory_id):
+        print("not found")
+        raise typer.Exit(1)
+    print(f"restored {memory_id}")
+
+
 @memory_app.command("supersede")
 def cmd_supersede(
     old_id: str = typer.Argument(..., help="Memory to retire and chain from"),

@@ -90,6 +90,7 @@ function runBulk(action) {
         <span class="flex items-center gap-4">
           <Button variant="link" size="sm" class="font-medium text-emerald-700 hover:text-emerald-900 hover:no-underline" @click="runBulk('approve')">Approve</Button>
           <Button variant="link" size="sm" class="font-medium text-slate-600 hover:text-slate-900 hover:no-underline" @click="runBulk('retire')">Retire</Button>
+          <Button variant="link" size="sm" class="font-medium text-emerald-700 hover:text-emerald-900 hover:no-underline" @click="runBulk('restore')">Restore</Button>
           <Button variant="link" size="sm" class="font-medium text-red-600 hover:text-red-800 hover:no-underline" @click="runBulk('forget')">Forget</Button>
           <Button variant="link" size="sm" class="text-slate-400 hover:text-slate-700 hover:no-underline" @click="checked = new Set()">Clear</Button>
         </span>

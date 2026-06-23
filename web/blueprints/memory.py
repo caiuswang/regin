@@ -57,13 +57,13 @@ def api_memory_related(memory_id):
     return jsonify(data)
 
 
-_BULK_ACTIONS = {"approve", "retire", "forget"}
+_BULK_ACTIONS = {"approve", "retire", "forget", "restore"}
 
 
 @memory_bp.route("/api/memory/bulk", methods=["POST"])
 def api_memory_bulk():
     """Apply one curate action to many memories. Body: {ids: [...],
-    action: approve|retire|forget}. Returns per-id success counts."""
+    action: approve|retire|restore|forget}. Returns per-id success counts."""
     payload = request.get_json(silent=True) or {}
     action = payload.get("action")
     ids = payload.get("ids") or []
@@ -75,15 +75,19 @@ def api_memory_bulk():
     return jsonify({"ok": True, "applied": len(done), "ids": done})
 
 
+_BULK_VALIDATION_ACTION = {"approve": "approved", "retire": "retired"}
+
+
 def _apply_bulk(action: str, memory_id: str) -> bool:
     if action == "forget":
         return memory.forget(memory_id)
+    if action == "restore":
+        return memory.restore(memory_id)
     status = "active" if action == "approve" else "retired"
     if not memory.update(memory_id, status=status):
         return False
     memory.get_store().record_validation(
-        memory_id, validator="user",
-        action="approved" if action == "approve" else "retired")
+        memory_id, validator="user", action=_BULK_VALIDATION_ACTION[action])
     return True
 
 
@@ -526,6 +530,15 @@ def api_memory_retire(memory_id):
     memory.get_store().record_validation(
         memory_id, validator="user", action="retired",
         note="marked wrong" if payload.get("wrong") else None)
+    return jsonify({"ok": True})
+
+
+@memory_bp.route("/api/memory/<memory_id>/restore", methods=["POST"])
+def api_memory_restore(memory_id):
+    """Bring a retired memory back to active (reactivate + clear the
+    supersede link so recall surfaces it again)."""
+    if not memory.restore(memory_id):
+        return jsonify({"error": "not found"}), 404
     return jsonify({"ok": True})
 
 

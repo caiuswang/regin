@@ -76,6 +76,12 @@ async function retire() {
   emit('changed')
 }
 
+async function restore() {
+  await api.post(`/memory/${memory.value.id}/restore`)
+  await load(memory.value.id)
+  emit('changed')
+}
+
 async function forget() {
   const ok = await confirm(
     'Forget', 'Permanently delete this memory? This cannot be undone.', true)
@@ -135,6 +141,7 @@ function timeLabel(iso) {
               <Button v-if="memory.status === 'proposed'" variant="link" size="sm" class="font-semibold text-emerald-600 hover:text-emerald-800 hover:no-underline" @click="approve">Approve</Button>
               <Button variant="link" size="sm" class="text-slate-500 hover:text-slate-800 hover:no-underline" @click="startEdit">Edit</Button>
               <Button v-if="memory.status === 'active'" variant="link" size="sm" class="text-slate-500 hover:text-slate-800 hover:no-underline" @click="retire">Retire</Button>
+              <Button v-if="memory.status === 'retired'" variant="link" size="sm" class="font-semibold text-emerald-600 hover:text-emerald-800 hover:no-underline" @click="restore">Restore</Button>
               <Button variant="link" size="sm" class="text-slate-400 hover:text-red-600 hover:no-underline" @click="forget">Forget</Button>
             </div>
           </template>

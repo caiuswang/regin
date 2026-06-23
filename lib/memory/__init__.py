@@ -87,6 +87,10 @@ def supersede(old_id: str, new: MemoryInput) -> str:
     return get_store().supersede(old_id, new)
 
 
+def restore(memory_id: str) -> bool:
+    return get_store().restore(memory_id)
+
+
 def reflect(*, dry_run: bool = False) -> ReflectResult:
     from lib.memory.adapters import ExternalAgentLLM, SkillRouterEmbedding
     from lib.memory.reflect import reflect as _reflect
@@ -101,6 +105,6 @@ def stats() -> dict:
 __all__ = [
     "MemoryHit", "MemoryInput", "ReflectResult",
     "get_store", "reset_store", "enabled",
-    "remember", "recall", "get", "update", "forget", "supersede",
+    "remember", "recall", "get", "update", "forget", "supersede", "restore",
     "reflect", "stats",
 ]

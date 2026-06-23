@@ -353,6 +353,22 @@ class SqliteMemoryStore:
                                note=f"superseded by {new_id}")
         return new_id
 
+    def restore(self, memory_id: str) -> bool:
+        """Bring a retired memory back to active. Reverses both retire paths:
+        sets status='active' AND clears `superseded_by` — the latter is
+        essential because recall hides any row with `superseded_by` set
+        regardless of status, so a restore that only flipped status would
+        return the memory active-but-invisible. The supersede chain's other
+        half (the replacement row) is left untouched. Hard `forget`s cannot
+        be restored — the row is gone. Returns False if not found."""
+        with MemorySessionLocal() as session:
+            row = session.get(Memory, memory_id)
+            if row is None:
+                return False
+        self.update(memory_id, status="active", superseded_by=None)
+        self.record_validation(memory_id, validator="user", action="restored")
+        return True
+
     def forget(self, memory_id: str) -> bool:
         with MemorySessionLocal() as session:
             row = session.get(Memory, memory_id)

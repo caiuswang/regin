@@ -46,6 +46,29 @@ def test_approve_and_retire(flask_client):
     assert row["status"] == "retired" and row["veracity"] == "false"
 
 
+def test_restore_endpoint_reactivates(flask_client):
+    mid = _seed()
+    assert flask_client.post(f"/api/memory/{mid}/retire",
+                             json={}).status_code == 200
+    assert memory.get_store().get_dict(mid)["status"] == "retired"
+
+    assert flask_client.post(
+        f"/api/memory/{mid}/restore").status_code == 200
+    assert memory.get_store().get_dict(mid)["status"] == "active"
+    # missing id → 404
+    assert flask_client.post("/api/memory/nope/restore").status_code == 404
+
+
+def test_bulk_restore_reactivates_many(flask_client):
+    ids = [memory.remember(f"bulk retired {i}", status="retired",
+                            is_test=True) for i in range(3)]
+    r = flask_client.post("/api/memory/bulk",
+                          json={"action": "restore", "ids": ids})
+    assert r.status_code == 200 and r.get_json()["applied"] == 3
+    assert all(memory.get_store().get_dict(i)["status"] == "active"
+               for i in ids)
+
+
 def test_recall_probe(flask_client):
     _seed()
     data = flask_client.post("/api/memory/recall", json={
