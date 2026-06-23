@@ -172,6 +172,14 @@ class AgentMemoryConfig(BaseModel):
     auto_inject: bool = True
     inject_top_k: int = 3
     inject_max_chars: int = 2_000
+    # Skill experience: when a prompt invokes a skill via slash command
+    # (`/playwright-screenshots …`), inject a `<skill_experience>` block of the
+    # memories filed under that skill's meta-leaf (`skill-<command>`, see
+    # lib/topics/meta_roots.py) — the skill analog of `<recalled_experience>`,
+    # delivered on invocation even when the generic auto-inject is skipped for
+    # that command. Off → no skill-scoped block. `_max_chars` budgets the block.
+    skill_experience_inject: bool = True
+    skill_experience_max_chars: int = 1_200
     inject_min_overlap: int = 3
     overlap_idf_max_df: float = 0.30
     inject_fts_top_k: int = 1
@@ -260,6 +268,23 @@ class AgentMemoryConfig(BaseModel):
     # immediate, lexical complement to reflect's batch embedding-based check.
     # Needs the distiller's LLM. Off → distill only reinforces near-duplicates.
     distill_supersede_on_conflict: bool = True
+    # distill(): after writing a proposal, deterministically file it under a
+    # global meta-root by kind — `preference` → the `preferences` bucket,
+    # `procedure` → the `skills` bucket (lib/topics/meta_roots.py) — so
+    # skill-/preference-shaped memories get a navigable home without a manual
+    # `link-topics` pass. The cheap complement to the agentic classifier
+    # (`regin memory link-topics`, which routes to the precise leaf). Off →
+    # distilled memories are unfiled until a classifier runs.
+    distill_link_meta_roots: bool = True
+    # consolidate-skills: a proven memory filed under a `skill-<slug>` meta-leaf
+    # can "graduate" into that skill's own SKILL.md (a `## Lessons (from agent
+    # memory)` section in the pattern source) and then be retired — the hard,
+    # write-time complement to the soft `<skill_experience>` recall. Promotion
+    # bar = recall_count >= `consolidate_skill_min_recall`. A `manual: true`
+    # pattern is user-owned: it is NEVER auto-written, only proposed for the
+    # human to apply by hand. Driven by `regin memory consolidate-skills`.
+    consolidate_skills_enabled: bool = True
+    consolidate_skill_min_recall: int = 3
     # reflect(): synthesis (Generative-Agents reflection). Cluster *related
     # but distinct* episodic rows (cosine in [0.55, dedup_threshold)) and ask
     # the LLM to abstract ONE higher-order rule per cluster, written as a new

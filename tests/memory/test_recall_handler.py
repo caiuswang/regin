@@ -572,3 +572,62 @@ def test_topic_only_route_emits_span(monkeypatch):
     assert attrs["hit_count"] == 0
     assert attrs["topic"]["id"] == "topic-routing"
     assert attrs["block"] == r.additional_context
+
+
+# ── slice 3A: <skill_experience> on skill invocation ───────────────────
+
+_SKILL_LEAF = "skill-playwright-screenshots"
+
+
+def _seed_skill_memory():
+    mid = memory.remember(
+        "Playwright reuseExistingServer keeps a stale Python on :8321; "
+        "restart the backend after edits or E2E asserts against old code.",
+        kind="gotcha", title="Restart backend for E2E")
+    memory.get_store().link_authoritative_topic(mid, _SKILL_LEAF,
+                                                source="manual")
+    return mid
+
+
+def test_skill_experience_injected_on_invocation():
+    _seed_skill_memory()
+    r = memory_recall.handle(_payload(
+        "/playwright-screenshots verify the trace view renders"))
+    assert r is not None
+    assert "<skill_experience>" in r.additional_context
+    assert "Restart backend for E2E" in r.additional_context
+    assert "playwright-screenshots" in r.additional_context
+
+
+def test_skill_experience_fires_on_bare_invocation():
+    """A bare `/skill` (no args) is ineligible for generic recall, but the
+    skill leg still fires."""
+    _seed_skill_memory()
+    r = memory_recall.handle(_payload("/playwright-screenshots"))
+    assert r is not None
+    assert "<skill_experience>" in r.additional_context
+
+
+def test_skill_experience_absent_when_nothing_filed():
+    """A skill with no filed memories injects no block (and no generic match
+    on a bare invocation → None)."""
+    assert memory_recall.handle(_payload("/playwright-screenshots")) is None
+
+
+def test_unknown_command_injects_no_skill_block():
+    _seed_skill_memory()  # only playwright leaf is populated
+    assert memory_recall.handle(_payload("/not-a-real-skill")) is None
+
+
+def test_skill_experience_respects_flag(monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "skill_experience_inject", False)
+    _seed_skill_memory()
+    assert memory_recall.handle(_payload("/playwright-screenshots")) is None
+
+
+def test_skill_injection_recorded_for_feedback():
+    """Skill-memory injections are recorded so engagement scoring can run."""
+    mid = _seed_skill_memory()
+    memory_recall.handle(_payload("/playwright-screenshots"))
+    assert mid in memory.get_store().injected_memory_ids("s1")

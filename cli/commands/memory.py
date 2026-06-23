@@ -101,6 +101,65 @@ def cmd_stats() -> None:
     print(json.dumps(memory.stats(), indent=2))
 
 
+def _merged_graph():
+    """Repo graph + global meta-roots — the topic id space `--topic` validates
+    against, so the meta-roots (`skills`, `preferences`, …) are fileable."""
+    from pathlib import Path
+    from lib.settings import settings
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
+    return merge_meta_roots(
+        load_authoritative_graph(str(Path(settings.project_root).resolve())))
+
+
+@memory_app.command("remember")
+def cmd_remember(
+    body: str = typer.Argument(..., help="The memory body (fact / lesson / "
+                               "preference)"),
+    kind: str = typer.Option("lesson", "--kind",
+                             help="lesson | gotcha | preference | fact | "
+                                  "procedure"),
+    title: Optional[str] = typer.Option(None, "--title"),
+    scope: str = typer.Option("global", "--scope",
+                              help="global or repo:<name>"),
+    topic: Optional[str] = typer.Option(
+        None, "--topic", help="Authoritative topic node id to file under — "
+        "incl. the global meta-roots (skills, preferences, …)"),
+    tags: Optional[str] = typer.Option(None, "--tags",
+                                       help="comma-separated"),
+    importance: float = typer.Option(0.5, "--importance"),
+) -> None:
+    """Create a memory directly, optionally filing it under a topic node.
+
+    The explicit create path the CLI otherwise lacks (`supersede` needs an
+    existing id; `distill` derives from a session). `--topic` links the new
+    memory to an authoritative topic node — including the global meta-roots
+    (`skills` / `preferences`), giving skill- and preference-related memories
+    a navigable home in the tree-nav index.
+    """
+    import lib.memory as memory
+    from lib.memory.models import MEMORY_KINDS
+
+    if kind not in MEMORY_KINDS:
+        print(f"error: --kind must be one of {', '.join(MEMORY_KINDS)}")
+        raise typer.Exit(1)
+    if topic is not None and topic not in (_merged_graph().get("topics") or {}):
+        print(f"error: no topic node {topic!r} — list roots with "
+              f"`index_root` (memory MCP) or pick a meta-root "
+              f"(skills, preferences)")
+        raise typer.Exit(1)
+
+    mid = memory.remember(
+        body, kind=kind, title=title, scope=scope, importance=importance,
+        tags=[t.strip() for t in tags.split(",") if t.strip()]
+        if tags else None)
+    print(f"remembered {mid}")
+    if topic is not None:
+        memory.get_store().link_authoritative_topic(mid, topic,
+                                                    source="manual")
+        print(f"  filed under topic {topic}")
+
+
 @memory_app.command("topic-feedback")
 def cmd_topic_feedback(
     limit: int = typer.Option(30, "--limit",
@@ -358,11 +417,16 @@ def _classify_agentic(store, rows, repo_path):
     """Run the agentic classifier over `rows`; exit non-zero (fail-loud) when
     no external agent is reachable instead of degrading to the heuristic."""
     from lib.topics.route import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
     from lib.memory.adapters import resolve_topic_classifier
     from lib.memory.topic_classify import (classify_memories,
                                            ClassifierUnavailable)
 
-    graph = load_authoritative_graph(repo_path)
+    # Include the global meta-roots so the classifier can route skill-/
+    # preference-shaped memories to a precise leaf (e.g. pref-tooling,
+    # skill-playwright) and backfill existing ones — the precision complement
+    # to distill's deterministic kind→bucket link.
+    graph = merge_meta_roots(load_authoritative_graph(repo_path))
     try:
         return classify_memories(rows, graph, resolve_topic_classifier())
     except ClassifierUnavailable as exc:
@@ -414,6 +478,64 @@ def cmd_link_topics(
     verb = "would link" if dry_run else "linked"
     print(f"{verb}={linked} refreshed={refreshed} unmatched={unmatched} "
           f"(of {len(rows)} active)")
+
+
+def _redeploy_skills(slugs) -> None:
+    """Best-effort: push each edited pattern source to the active agent so the
+    folded-in lesson reaches the live skill. A deploy failure is reported, not
+    fatal — the durable change is already in the source SKILL.md."""
+    from pathlib import Path
+    from lib.settings import settings
+    from lib.skills.skill_deployer import deploy_pattern_as_skill
+    for slug in sorted(slugs):
+        src = Path(settings.patterns_dir) / slug
+        try:
+            deploy_pattern_as_skill(str(src), slug, slug)
+            print(f"  redeployed {slug}")
+        except Exception as exc:  # noqa: BLE001 — report, never abort the run
+            print(f"  redeploy of {slug} failed: {exc}")
+
+
+@memory_app.command("consolidate-skills")
+def cmd_consolidate_skills(
+    apply: bool = typer.Option(
+        False, "--apply", help="Write non-manual sources + retire those "
+        "memories. Default: preview only (no writes)"),
+    skill: Optional[str] = typer.Option(
+        None, "--skill", help="Limit to one skill slug"),
+    min_recall: Optional[int] = typer.Option(
+        None, "--min-recall", help="Override the promotion bar (recall_count)"),
+) -> None:
+    """Graduate proven skill-memories into their skill's SKILL.md.
+
+    A memory filed under a `skill-<slug>` meta-leaf whose recall_count clears
+    the bar is folded into a `## Lessons (from agent memory)` section of the
+    pattern source and retired. Preview by default; `--apply` writes. A
+    `manual: true` (user-owned) pattern is never auto-written — it is listed
+    as a proposal for you to apply by hand.
+    """
+    import lib.memory as memory
+    from lib.memory.skill_consolidate import consolidate_skills
+    result = consolidate_skills(memory.get_store(), apply=apply, skill=skill,
+                                min_recall=min_recall)
+    if not result.lessons:
+        print("no skill-memories over the promotion bar")
+        return
+    verb = "folded" if apply else "would fold"
+    for ll in result.lessons:
+        if ll.skipped:
+            print(f"  SKIP  {ll.memory_id[:8]} → {ll.skill}: {ll.skipped}")
+            print(f"        propose: {ll.bullet[:100]}")
+        else:
+            print(f"  {verb.upper():10s} {ll.memory_id[:8]} → {ll.skill}: "
+                  f"{ll.title}")
+    if apply and result.changed_skills:
+        print(f"applied {result.applied}; redeploying "
+              f"{len(result.changed_skills)} skill(s):")
+        _redeploy_skills(result.changed_skills)
+    elif not apply:
+        print(f"\n{len([ll for ll in result.lessons if not ll.skipped])} "
+              f"ready to fold — re-run with --apply to write")
 
 
 @memory_app.command("approve")

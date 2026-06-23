@@ -28,32 +28,6 @@ from ..core import HookPayload, HookResponse
 # Prompts (or slash-command argument text) shorter than this are
 # greetings/approvals ("yes", "go ahead") — FTS matches on them are noise.
 _MIN_PROMPT_CHARS = 12
-_ENTRY_MAX_CHARS = 400
-
-
-def _age_suffix(m: dict) -> str:
-    """Return a compact age string like ', 3d old' based on updated_at or
-    created_at. Returns '' when the stamp is absent or unparseable so the
-    inject block never breaks."""
-    stamp = m.get("updated_at") or m.get("created_at")
-    if not stamp:
-        return ""
-    try:
-        from datetime import datetime
-        then = datetime.fromisoformat(stamp)
-        age_secs = max(0.0, (datetime.now() - then).total_seconds())
-        age_hours = age_secs / 3600.0
-        if age_hours < 1:
-            label = "fresh"
-        elif age_hours < 24:
-            label = f"{int(age_hours)}h old"
-        elif age_hours < 24 * 60:
-            label = f"{int(age_hours / 24)}d old"
-        else:
-            label = f"{int(age_hours / (24 * 30))}mo old"
-        return f", {label}"
-    except Exception:
-        return ""
 
 
 def _recall_query(prompt: str) -> str:
@@ -106,13 +80,8 @@ def _eligible_prompt(payload: HookPayload) -> bool:
 
 
 def _format_entry(hit) -> str:
-    m = hit.memory
-    title = f"{m['title']}: " if m.get("title") else ""
-    body = m["body"]
-    if len(body) > _ENTRY_MAX_CHARS:
-        body = body[:_ENTRY_MAX_CHARS] + "…"
-    age = _age_suffix(m)
-    return f"- [{m['kind']}] {title}{body} (memory {m['id'][:8]}{age})"
+    from lib.memory.skill_experience import format_memory_line
+    return format_memory_line(hit.memory)
 
 
 def _deeper_pull_line() -> str:
@@ -142,32 +111,62 @@ def _build_block(hits, max_chars: int) -> str:
     return "\n".join(lines)
 
 
+def _skill_experience(payload: HookPayload, cfg) -> str:
+    """`<skill_experience>` block for the skill a prompt invokes via slash
+    command, or '' when it's not a slash command / a workflow subagent. The
+    flag and meta-leaf checks live in the shared `skill_experience_block`."""
+    if payload.is_workflow_subagent:
+        return ""
+    name = _command_name(payload.prompt or "")
+    if not name:
+        return ""
+    from lib.memory.skill_experience import skill_experience_block
+    return skill_experience_block(
+        name.lstrip("/"), payload.session_id,
+        query=_recall_query(payload.prompt or ""))
+
+
 def handle(payload: HookPayload) -> HookResponse | None:
-    if not _eligible_prompt(payload):
-        return None
+    from lib.settings import settings
+    cfg = settings.agent_memory
+    parts: list[str] = []
+    # Skill-experience leg: fires on a `/skill` invocation independently of
+    # `_eligible_prompt`, so it survives even when the command is in
+    # `inject_skip_commands` or carries no recall query (a bare `/skill`).
+    skill_block = _skill_experience(payload, cfg)
+    if skill_block:
+        parts.append(skill_block)
+    if _eligible_prompt(payload):
+        parts.extend(_generic_recall_parts(payload, cfg))
+    if not parts:
+        return None  # nothing routed/recalled and no skill experience
+    return HookResponse(suppress_output=True,
+                        additional_context="\n".join(parts))
+
+
+def _generic_recall_parts(payload: HookPayload, cfg) -> list[str]:
+    """The `<topic_context>` + `<recalled_experience>` blocks for an eligible
+    prompt (the original auto-inject path). Returns [] on any recall failure —
+    memory must never block a prompt."""
     try:
         hits, mode, routed = _recall(payload)
     except Exception:
-        return None  # memory must never block a prompt
+        return []
     hits = _cap_uncalibrated(hits)
     block_hits = _apply_session_memory(payload, hits) if hits else []
-    from lib.settings import settings
-    cfg = settings.agent_memory
-    parts = []
+    parts: list[str] = []
     if routed:
         parts.append(_build_topic_context(routed, cfg.topic_context_max_chars))
         _record_topic_injection(payload, routed, cfg)
     if block_hits:
         parts.append(_build_block(block_hits, cfg.inject_max_chars))
-    if not parts:
-        return None  # no topic routed and every memory was a same-session repeat
-    block = "\n".join(parts)
-    if cfg.trace_recall:
+    if parts and cfg.trace_recall:
         try:
-            _emit_recall_span(payload, block, block_hits, mode, routed)
+            _emit_recall_span(payload, "\n".join(parts), block_hits, mode,
+                              routed)
         except Exception:
             pass  # tracing the inject must never block the inject
-    return HookResponse(suppress_output=True, additional_context=block)
+    return parts
 
 
 def _topic_trim_to_word(text: str, limit: int) -> str:
