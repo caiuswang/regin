@@ -88,6 +88,7 @@ prompt_trace        = _safe_import('prompt_trace')
 session_id_probe    = _safe_import('session_id_probe')
 session_lifecycle   = _safe_import('session_lifecycle')
 skill_invoke        = _safe_import('skill_invoke')
+skill_experience    = _safe_import('skill_experience')
 skill_launch        = _safe_import('skill_launch')
 skill_read          = _safe_import('skill_read')
 subagent_lifecycle  = _safe_import('subagent_lifecycle')
@@ -150,6 +151,18 @@ REGISTRY: list[Handler] = [
         priority=100,
         predicate=match_tool('Read'),
         fn=skill_read.handle,
+    ),
+    Handler(
+        name='skill_experience',
+        label='Skill Experience Inject',
+        summary='Injects <skill_experience> (memories filed under the skill) '
+                'when the assistant auto-invokes a skill via the Skill tool.',
+        match_hint='PreToolUse for the Skill tool',
+        events=['PreToolUse'],
+        kind='enrich',
+        priority=110,
+        predicate=match_tool('Skill'),
+        fn=skill_experience.handle,
     ),
     Handler(
         name='skill_launch',

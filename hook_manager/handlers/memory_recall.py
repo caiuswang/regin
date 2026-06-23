@@ -28,32 +28,6 @@ from ..core import HookPayload, HookResponse
 # Prompts (or slash-command argument text) shorter than this are
 # greetings/approvals ("yes", "go ahead") — FTS matches on them are noise.
 _MIN_PROMPT_CHARS = 12
-_ENTRY_MAX_CHARS = 400
-
-
-def _age_suffix(m: dict) -> str:
-    """Return a compact age string like ', 3d old' based on updated_at or
-    created_at. Returns '' when the stamp is absent or unparseable so the
-    inject block never breaks."""
-    stamp = m.get("updated_at") or m.get("created_at")
-    if not stamp:
-        return ""
-    try:
-        from datetime import datetime
-        then = datetime.fromisoformat(stamp)
-        age_secs = max(0.0, (datetime.now() - then).total_seconds())
-        age_hours = age_secs / 3600.0
-        if age_hours < 1:
-            label = "fresh"
-        elif age_hours < 24:
-            label = f"{int(age_hours)}h old"
-        elif age_hours < 24 * 60:
-            label = f"{int(age_hours / 24)}d old"
-        else:
-            label = f"{int(age_hours / (24 * 30))}mo old"
-        return f", {label}"
-    except Exception:
-        return ""
 
 
 def _recall_query(prompt: str) -> str:
@@ -105,18 +79,9 @@ def _eligible_prompt(payload: HookPayload) -> bool:
     return len(_recall_query(text)) >= _MIN_PROMPT_CHARS
 
 
-def _format_memory(m: dict) -> str:
-    """One injected-memory line from a memory dict (the shared renderer for
-    both `<recalled_experience>` and `<skill_experience>`)."""
-    title = f"{m['title']}: " if m.get("title") else ""
-    body = m["body"]
-    if len(body) > _ENTRY_MAX_CHARS:
-        body = body[:_ENTRY_MAX_CHARS] + "…"
-    return f"- [{m['kind']}] {title}{body} (memory {m['id'][:8]}{_age_suffix(m)})"
-
-
 def _format_entry(hit) -> str:
-    return _format_memory(hit.memory)
+    from lib.memory.skill_experience import format_memory_line
+    return format_memory_line(hit.memory)
 
 
 def _deeper_pull_line() -> str:
@@ -146,85 +111,19 @@ def _build_block(hits, max_chars: int) -> str:
     return "\n".join(lines)
 
 
-def _skill_leaf_id(prompt: str) -> str | None:
-    """The meta-leaf id for the skill a prompt invokes, by convention
-    `skill-<command>` (e.g. `/playwright-screenshots` → `skill-playwright-
-    screenshots`), or None when the prompt is not a slash command."""
-    name = _command_name(prompt)
-    return ("skill-" + name.lstrip("/")) if name else None
-
-
-def _skill_memories(leaf_id: str, cfg) -> list[dict]:
-    """Active memories filed under a skill meta-leaf, importance-ranked and
-    top-k capped. [] when the leaf isn't a known skill node (so a `/cmd` that
-    isn't a filed skill injects nothing)."""
-    import lib.memory as memory
-    from lib.topics.meta_roots import load_global_meta_topics
-    if leaf_id not in load_global_meta_topics():
-        return []
-    store = memory.get_store()
-    ids = store.memories_for_topic_subtree([leaf_id], scope=None)
-    out = []
-    for mid in ids[:cfg.inject_top_k]:
-        m = store.get_dict(mid)
-        if m:
-            out.append(m)
-    return out
-
-
-def _build_skill_block(skill_name: str, mems: list[dict], max_chars: int) -> str:
-    lines = [
-        "<skill_experience>",
-        f"Past-session lessons filed under the `{skill_name}` skill. May be",
-        "stale — verify against the current code before relying on it.",
-    ]
-    budget = (max_chars - sum(len(l) + 1 for l in lines)
-              - len("</skill_experience>"))
-    for m in mems:
-        entry = _format_memory(m)
-        if len(entry) + 1 > budget:
-            break
-        lines.append(entry)
-        budget -= len(entry) + 1
-    lines.append("</skill_experience>")
-    return "\n".join(lines)
-
-
-def _record_skill_injection(payload: HookPayload, mems: list[dict]) -> None:
-    """Record skill-memory injections so the engagement-feedback loop can score
-    their usefulness (the signal 3B's promotion bar reads). Best-effort."""
-    session_id = payload.session_id
-    if not session_id:
-        return
-    try:
-        import lib.memory as memory
-        query = (_recall_query(payload.prompt or "")
-                 or (payload.prompt or "").strip())[:2000]
-        memory.get_store().record_injections(
-            session_id, [m["id"] for m in mems], query=query)
-    except Exception:
-        pass
-
-
 def _skill_experience(payload: HookPayload, cfg) -> str:
-    """`<skill_experience>` block for the skill a prompt invokes, or '' when
-    disabled, not a skill invocation, or nothing is filed under it."""
-    if not (cfg.enabled and cfg.auto_inject and cfg.skill_experience_inject):
-        return ""
+    """`<skill_experience>` block for the skill a prompt invokes via slash
+    command, or '' when it's not a slash command / a workflow subagent. The
+    flag and meta-leaf checks live in the shared `skill_experience_block`."""
     if payload.is_workflow_subagent:
         return ""
-    leaf_id = _skill_leaf_id(payload.prompt or "")
-    if not leaf_id:
+    name = _command_name(payload.prompt or "")
+    if not name:
         return ""
-    try:
-        mems = _skill_memories(leaf_id, cfg)
-    except Exception:
-        return ""
-    if not mems:
-        return ""
-    _record_skill_injection(payload, mems)
-    return _build_skill_block(leaf_id[len("skill-"):], mems,
-                              cfg.skill_experience_max_chars)
+    from lib.memory.skill_experience import skill_experience_block
+    return skill_experience_block(
+        name.lstrip("/"), payload.session_id,
+        query=_recall_query(payload.prompt or ""))
 
 
 def handle(payload: HookPayload) -> HookResponse | None:
