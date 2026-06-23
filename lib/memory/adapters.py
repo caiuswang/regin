@@ -116,4 +116,11 @@ def resolve_distiller() -> ExternalAgentLLM:
     return ExternalAgentLLM(extra_args=extra)
 
 
-__all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller"]
+def resolve_topic_classifier() -> ExternalAgentLLM:
+    """The LLM behind agentic `memory link-topics`: plain text in, JSON out —
+    it reasons over the taxonomy and the memory body, granting no tools."""
+    return ExternalAgentLLM()
+
+
+__all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller",
+           "resolve_topic_classifier"]

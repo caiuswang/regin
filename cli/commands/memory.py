@@ -308,6 +308,69 @@ def cmd_distill(
         print(f"  {mid}")
 
 
+def _link_topics_hard(store, rows, repo_path, dry_run) -> tuple[int, int, int]:
+    """Deterministic ref-path heuristic path: one topic per memory whose ref
+    file paths appear in its title+body. Returns (linked, refreshed,
+    unmatched)."""
+    from lib.topics.route import best_topic_for_text
+
+    linked = refreshed = unmatched = 0
+    for m in rows:
+        text = f"{m.get('title') or ''} {m.get('body') or ''}".strip()
+        node_id = best_topic_for_text(repo_path, text)
+        if node_id is None:
+            unmatched += 1
+            continue
+        if dry_run:
+            print(f"  {m['id'][:8]} -> {node_id}")
+            linked += 1
+        elif store.link_authoritative_topic(m["id"], node_id, source="route"):
+            linked += 1
+        else:
+            refreshed += 1
+    return linked, refreshed, unmatched
+
+
+def _apply_assignments(store, assignments, dry_run) -> tuple[int, int, int]:
+    """Write the agentic `{memory_id: [topic_id, ...]}` map (multi-topic,
+    additive). A memory mapped to `[]` counts as unmatched. Returns (linked,
+    refreshed, unmatched)."""
+    from lib.memory.topic_classify import CLASSIFY_SOURCE
+
+    linked = refreshed = unmatched = 0
+    for mid, topics in assignments.items():
+        if not topics:
+            unmatched += 1
+            continue
+        for node_id in topics:
+            if dry_run:
+                print(f"  {mid[:8]} -> {node_id}")
+                linked += 1
+            elif store.link_authoritative_topic(mid, node_id,
+                                                source=CLASSIFY_SOURCE):
+                linked += 1
+            else:
+                refreshed += 1
+    return linked, refreshed, unmatched
+
+
+def _classify_agentic(store, rows, repo_path):
+    """Run the agentic classifier over `rows`; exit non-zero (fail-loud) when
+    no external agent is reachable instead of degrading to the heuristic."""
+    from lib.topics.route import load_authoritative_graph
+    from lib.memory.adapters import resolve_topic_classifier
+    from lib.memory.topic_classify import (classify_memories,
+                                           ClassifierUnavailable)
+
+    graph = load_authoritative_graph(repo_path)
+    try:
+        return classify_memories(rows, graph, resolve_topic_classifier())
+    except ClassifierUnavailable as exc:
+        print(f"error: {exc}\nConfigure settings.topic_proposal_external_agents"
+              ", or pass --hard-match for the deterministic heuristic.")
+        raise typer.Exit(1)
+
+
 @memory_app.command("link-topics")
 def cmd_link_topics(
     repo: Optional[str] = typer.Option(
@@ -319,40 +382,37 @@ def cmd_link_topics(
     limit: int = typer.Option(2000, "--limit"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Report matches without writing links"),
+    hard_match: bool = typer.Option(
+        False, "--hard-match",
+        help="Use the deterministic ref-path heuristic instead of the LLM "
+             "(single topic, no agent required)"),
 ) -> None:
-    """Backfill links from active memories to authoritative topic.json nodes.
+    """Link active memories to authoritative topic.json nodes.
 
-    For each active memory, `best_topic_for_text` looks for a topic whose
-    ref file paths appear in the memory's title+body — a high-precision
-    signal (memories that merely share common words stay unmatched). A hit
-    is linked with source='route'. Idempotent — a re-run only refreshes
-    existing (memory, node) links."""
+    Agentic by default: an LLM reads each memory's *subject* and returns the
+    genuinely related topic node(s) — zero, one, or several (multi-topic),
+    linked with source='agent'. Fail-loud — if no external agent is configured
+    it exits non-zero rather than silently degrading. Pass `--hard-match` for
+    the deterministic ref-path heuristic (single topic, source='route').
+    Additive and idempotent: a re-run refreshes existing links and never drops
+    manual/reflect ones."""
     from pathlib import Path
     import lib.memory as memory
     from lib.settings import settings
-    from lib.topics.route import best_topic_for_text
 
     repo_path = Path(repo).resolve() if repo else Path(
         settings.project_root).resolve()
     store = memory.get_store()
     rows = store.list_memories(status="active", scope=scope, limit=limit)
-    linked = skipped = unmatched = 0
-    for m in rows:
-        text = f"{m.get('title') or ''} {m.get('body') or ''}".strip()
-        node_id = best_topic_for_text(repo_path, text)
-        if node_id is None:
-            unmatched += 1
-            continue
-        if dry_run:
-            print(f"  {m['id'][:8]} -> {node_id}")
-            linked += 1
-            continue
-        if store.link_authoritative_topic(m["id"], node_id, source="route"):
-            linked += 1
-        else:
-            skipped += 1
+    if hard_match:
+        linked, refreshed, unmatched = _link_topics_hard(
+            store, rows, repo_path, dry_run)
+    else:
+        assignments = _classify_agentic(store, rows, repo_path)
+        linked, refreshed, unmatched = _apply_assignments(
+            store, assignments, dry_run)
     verb = "would link" if dry_run else "linked"
-    print(f"{verb}={linked} refreshed={skipped} unmatched={unmatched} "
+    print(f"{verb}={linked} refreshed={refreshed} unmatched={unmatched} "
           f"(of {len(rows)} active)")
 
 
