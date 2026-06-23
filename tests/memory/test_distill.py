@@ -681,3 +681,53 @@ def test_supersede_disabled_keeps_both(monkeypatch):
     assert len([m for m in store.list_memories(include_tests=True)
                 if m["status"] == "active"]) == 2
     assert not any("CONTRADICT if incompatible" in p for p in llm.prompts)
+
+
+# ── slice 2: auto-file distilled memories under the meta-roots ──────────
+
+_PREF_ITEM = {
+    "title": "Prefer concise recommendation over option survey",
+    "body": ("When reporting, give a single recommendation with a short why, "
+             "not an exhaustive survey of every alternative considered."),
+    "kind": "preference",
+    "tags": ["communication"],
+}
+_PROC_ITEM = {
+    "title": "Restart backend before Playwright E2E asserts",
+    "body": ("Playwright reuseExistingServer keeps a stale Python on :8321; "
+             "restart the backend after edits or E2E runs against old code."),
+    "kind": "procedure",
+    "tags": ["playwright"],
+}
+
+
+def test_distill_files_preference_and_procedure_under_meta_roots():
+    """A distilled `preference` lands under `preferences`; a `procedure` under
+    `skills` — the cheap deterministic auto-filing path."""
+    _seed_session()
+    store = memory.get_store()
+    result = distill_session(store, "sess-d", llm=_llm(_PREF_ITEM, _PROC_ITEM))
+    by_kind = {store.get_dict(mid)["kind"]: mid for mid in result.memory_ids}
+    assert "preferences" in store.authoritative_topics_of(by_kind["preference"])
+    assert "skills" in store.authoritative_topics_of(by_kind["procedure"])
+
+
+def test_distill_meta_root_link_respects_flag(monkeypatch):
+    """With `distill_link_meta_roots` off, nothing is filed."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "distill_link_meta_roots", False)
+    _seed_session()
+    store = memory.get_store()
+    result = distill_session(store, "sess-d", llm=_llm(_PREF_ITEM))
+    assert result.memory_ids
+    assert store.authoritative_topics_of(result.memory_ids[0]) == []
+
+
+def test_distill_other_kinds_are_not_auto_filed():
+    """Only preference/procedure map to a bucket; a `gotcha` is left for the
+    agentic classifier (no deterministic home)."""
+    _seed_session()
+    store = memory.get_store()
+    result = distill_session(store, "sess-d", llm=_llm(_PYTEST_ITEM))  # gotcha
+    assert result.memory_ids
+    assert store.authoritative_topics_of(result.memory_ids[0]) == []

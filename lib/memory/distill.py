@@ -590,6 +590,26 @@ def _write_proposal(store, p: MemoryInput, result: DistillResult,
         result.proposed += 1
 
 
+# Deterministic kind → global meta-root bucket. The cheap auto-filing path:
+# a distilled `preference`/`procedure` memory lands under a navigable home
+# without waiting for the agentic `link-topics` classifier (which routes to a
+# precise leaf). Other kinds (lesson/gotcha/fact) are left for the classifier.
+_KIND_META_ROOT = {"preference": "preferences", "procedure": "skills"}
+
+
+def _link_meta_root(store, memory_id: str, kind: str) -> None:
+    """File a freshly written distilled memory under its kind's meta-root,
+    best-effort — a link failure must never break the distill write."""
+    node = _KIND_META_ROOT.get(kind)
+    if node is None:
+        return
+    try:
+        store.link_authoritative_topic(memory_id, node, source="distill")
+    except Exception:
+        log.error("distill_meta_root_link_failed", memory_id=memory_id,
+                  node=node, exc_info=True)
+
+
 def _store_proposal(store, p: MemoryInput, scope: str, cfg,
                     result: DistillResult, importance_bonus: float = 0.0,
                     llm=None) -> None:
@@ -618,6 +638,11 @@ def _store_proposal(store, p: MemoryInput, scope: str, cfg,
         log.error("distill_supersede_check_failed", exc_info=True)
         superseded = None
     _write_proposal(store, p, result, superseded)
+    # Auto-file the just-written row under its kind's meta-root. Only reached
+    # on a genuine write (the dedup/reinforce path returns above), so the last
+    # id appended by `_write_proposal` is this proposal's new memory.
+    if cfg.distill_link_meta_roots and result.memory_ids:
+        _link_meta_root(store, result.memory_ids[-1], p.kind)
 
 
 def distill_session(store, trace_id: str, *, scope: "str | None" = None,

@@ -417,11 +417,16 @@ def _classify_agentic(store, rows, repo_path):
     """Run the agentic classifier over `rows`; exit non-zero (fail-loud) when
     no external agent is reachable instead of degrading to the heuristic."""
     from lib.topics.route import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
     from lib.memory.adapters import resolve_topic_classifier
     from lib.memory.topic_classify import (classify_memories,
                                            ClassifierUnavailable)
 
-    graph = load_authoritative_graph(repo_path)
+    # Include the global meta-roots so the classifier can route skill-/
+    # preference-shaped memories to a precise leaf (e.g. pref-tooling,
+    # skill-playwright) and backfill existing ones — the precision complement
+    # to distill's deterministic kind→bucket link.
+    graph = merge_meta_roots(load_authoritative_graph(repo_path))
     try:
         return classify_memories(rows, graph, resolve_topic_classifier())
     except ClassifierUnavailable as exc:

@@ -260,6 +260,14 @@ class AgentMemoryConfig(BaseModel):
     # immediate, lexical complement to reflect's batch embedding-based check.
     # Needs the distiller's LLM. Off → distill only reinforces near-duplicates.
     distill_supersede_on_conflict: bool = True
+    # distill(): after writing a proposal, deterministically file it under a
+    # global meta-root by kind — `preference` → the `preferences` bucket,
+    # `procedure` → the `skills` bucket (lib/topics/meta_roots.py) — so
+    # skill-/preference-shaped memories get a navigable home without a manual
+    # `link-topics` pass. The cheap complement to the agentic classifier
+    # (`regin memory link-topics`, which routes to the precise leaf). Off →
+    # distilled memories are unfiled until a classifier runs.
+    distill_link_meta_roots: bool = True
     # reflect(): synthesis (Generative-Agents reflection). Cluster *related
     # but distinct* episodic rows (cosine in [0.55, dedup_threshold)) and ask
     # the LLM to abstract ONE higher-order rule per cluster, written as a new
