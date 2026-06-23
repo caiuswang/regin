@@ -112,6 +112,26 @@ async function onOpen(message) {
   }
 }
 
+async function onRead(message) {
+  // Explicit single-message mark-as-read. Stamp read_at *before* the await so
+  // a fast double-click re-enters and trips the guard above instead of
+  // decrementing the count twice (the server's mark_read is idempotent, but
+  // the local count isn't). Update in place — no reload — so the unread
+  // dot/border clear; re-sync from the server if the request fails.
+  if (message.read_at || typeof message.id !== 'number') return
+  message.read_at = new Date().toISOString()
+  unreadCount.value = Math.max(0, unreadCount.value - 1)
+  if (unreadOnly.value) {
+    messages.value = (messages.value || []).filter(m => m.id !== message.id)
+  }
+  try {
+    await api.post('/agent-messages/read', { ids: [message.id] })
+    refreshBadge()
+  } catch {
+    await loadInbox()
+  }
+}
+
 async function onDismiss(message) {
   if (typeof message.id !== 'number') return
   await api.post(`/agent-messages/${message.id}/dismiss`)
@@ -232,7 +252,7 @@ onMounted(loadInbox)
     <template v-else>
       <ul class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-start">
         <li v-for="m in paged" :key="m.id ?? m.span_id">
-          <InboxMessageCard :message="m" @open="onOpen" @dismiss="onDismiss" />
+          <InboxMessageCard :message="m" @open="onOpen" @read="onRead" @dismiss="onDismiss" />
         </li>
       </ul>
       <div v-if="total > pageSize" class="mt-3 rounded-lg border border-slate-200 bg-white overflow-hidden">

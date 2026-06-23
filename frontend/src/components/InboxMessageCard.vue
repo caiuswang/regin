@@ -7,7 +7,7 @@ import { useCopy } from '../composables/useCopy.js'
 const props = defineProps({
   message: { type: Object, required: true },
 })
-const emit = defineEmits(['open', 'dismiss'])
+const emit = defineEmits(['open', 'dismiss', 'read'])
 
 // Some messages (e.g. a progress dump with an embedded code block) are far
 // taller than a triage card should be, which wrecks the inbox grid. Clamp
@@ -52,6 +52,10 @@ const TYPE_STYLES = {
 const typeStyle = computed(
   () => TYPE_STYLES[props.message.msg_type] || TYPE_STYLES.progress)
 const isUnread = computed(() => !props.message.read_at)
+// Only persisted rows (numeric id) can be marked read; legacy span-derived
+// messages carry id == null and expose no action.
+const canMarkRead = computed(
+  () => isUnread.value && typeof props.message.id === 'number')
 const isAttention = computed(
   () => ['warning', 'blocker'].includes(props.message.msg_type))
 const sessionHref = computed(() => {
@@ -145,9 +149,18 @@ const timeLabel = computed(() => {
       </router-link>
       <span v-if="message.agent_type" class="font-mono text-slate-400 shrink-0">{{ message.agent_type }}</span>
       <Button
+        v-if="canMarkRead"
         variant="ghost"
         size="sm"
-        class="ml-auto text-slate-400 hover:text-slate-700 shrink-0"
+        class="ml-auto text-slate-400 hover:text-blue-600 shrink-0"
+        aria-label="Mark message as read"
+        @click="emit('read', message)"
+      >Mark read</Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-slate-400 hover:text-slate-700 shrink-0"
+        :class="{ 'ml-auto': !canMarkRead }"
         aria-label="Dismiss message"
         @click="emit('dismiss', message)"
       >Dismiss</Button>
