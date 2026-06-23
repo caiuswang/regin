@@ -1,10 +1,11 @@
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import MarkdownContent from '../MarkdownContent.vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import Select from '../ui/Select.vue'
 
 const props = defineProps({
   memoryId: { type: String, default: null },
@@ -18,6 +19,53 @@ const editing = ref(false)
 const form = ref({ title: '', body: '', tags: '' })
 const bodyTextarea = ref(null)
 
+// Authoritative-topic ("Filed under") wiring — distinct from the emergent
+// related.topics block. The {id,label} catalogue is fetched once and cached;
+// linked ids come off the memory itself (authoritative_topics).
+const topicNodes = ref([])
+const topicLabel = (id) => topicNodes.value.find(t => t.id === id)?.label || id
+// Linked node ids come from the /related payload (store.related includes
+// `authoritative_topics`); get_dict / the bare memory does not carry them.
+const filedUnder = computed(() => related.value?.authoritative_topics || [])
+const unfiledOptions = computed(() => topicNodes.value
+  .filter(t => !filedUnder.value.includes(t.id))
+  .map(t => ({ value: t.id, label: t.label })))
+const pickNode = ref('')
+const topicBusy = ref(false)
+
+async function loadTopicNodes() {
+  if (topicNodes.value.length) return
+  try {
+    const data = await api.get('/memory/topic-nodes')
+    topicNodes.value = data.topics || []
+  } catch { topicNodes.value = [] }
+}
+
+async function fileUnder() {
+  if (!pickNode.value || topicBusy.value) return
+  topicBusy.value = true
+  try {
+    await api.post(`/memory/${memory.value.id}/topics`, { node_id: pickNode.value })
+    pickNode.value = ''
+    await load(memory.value.id)
+    emit('changed')
+  } finally {
+    topicBusy.value = false
+  }
+}
+
+async function unfile(nodeId) {
+  if (topicBusy.value) return
+  topicBusy.value = true
+  try {
+    await api.del(`/memory/${memory.value.id}/topics/${nodeId}`)
+    await load(memory.value.id)
+    emit('changed')
+  } finally {
+    topicBusy.value = false
+  }
+}
+
 function autosize() {
   const el = bodyTextarea.value
   if (!el) return
@@ -29,7 +77,8 @@ watch(() => props.memoryId, (id) => {
   editing.value = false
   memory.value = null
   related.value = null
-  if (id) load(id)
+  pickNode.value = ''
+  if (id) { load(id); loadTopicNodes() }
 }, { immediate: true })
 
 async function load(id) {
@@ -184,8 +233,44 @@ function timeLabel(iso) {
             </ul>
           </div>
 
+          <div>
+            <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Filed under</p>
+            <div v-if="filedUnder.length" class="flex flex-wrap gap-1 mb-2">
+              <span
+                v-for="id in filedUnder" :key="id"
+                class="inline-flex items-center gap-1 text-[11px] bg-surface-2 text-fg-muted border border-border-subtle pl-1.5 pr-1 py-0.5 rounded"
+              >
+                {{ topicLabel(id) }}
+                <Button
+                  variant="ghost" size="icon"
+                  class="h-4 w-4 p-0 text-fg-faint hover:text-danger focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1"
+                  :disabled="topicBusy"
+                  :aria-label="`Unfile from ${topicLabel(id)}`"
+                  @click="unfile(id)"
+                ><Icon name="x" :size="11" /></Button>
+              </span>
+            </div>
+            <p v-else class="text-[11px] text-slate-400 mb-2">Not filed under any topic node.</p>
+            <div v-if="unfiledOptions.length" class="flex items-center gap-1.5">
+              <Select
+                v-model="pickNode"
+                :options="unfiledOptions"
+                placeholder="File under topic…"
+                :disabled="topicBusy"
+                class="text-xs h-7 py-0!"
+                aria-label="File this memory under a topic"
+              />
+              <Button
+                variant="secondary" size="sm"
+                class="h-7 gap-1 focus-visible:outline-2 focus-visible:outline-blue-500"
+                :disabled="!pickNode || topicBusy"
+                @click="fileUnder"
+              ><Icon name="plus" :size="12" /> File</Button>
+            </div>
+          </div>
+
           <div v-if="related?.topics?.length">
-            <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Topics</p>
+            <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Topics (emergent)</p>
             <div class="flex flex-wrap gap-1">
               <span v-for="t in related.topics" :key="t.id" class="text-[11px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded">{{ t.name }}</span>
             </div>

@@ -855,6 +855,30 @@ class SqliteMemoryStore:
             rows = session.exec(stmt).all()
         return list(dict.fromkeys(rows))
 
+    def orphaned_memory_ids(self, *,
+                            scope: Optional[str] = None) -> list[str]:
+        """Active memory ids with NO authoritative-topic link — the
+        'unfiled' bucket the taxonomy surface exposes so a user can file
+        them. Same ranking as `memories_for_topic_subtree` (importance then
+        recall_count, most-valuable first); deduped order-preserving. The
+        outer-join-IS-NULL keeps the un-linked rows; an optional `scope`
+        filters Memory.scope."""
+        with MemorySessionLocal() as session:
+            stmt = (select(Memory.id)
+                    .outerjoin(
+                        MemoryAuthoritativeTopic,
+                        MemoryAuthoritativeTopic.memory_id == Memory.id)
+                    .where(Memory.status == "active",
+                           MemoryAuthoritativeTopic.memory_id.is_(None))
+                    .order_by(Memory.importance.desc(),
+                              Memory.recall_count.desc()))
+            if scope is not None:
+                stmt = stmt.where(Memory.scope == scope)
+            rows = session.exec(stmt).all()
+        out = list(dict.fromkeys(rows))
+        log.read("memory_orphans_listed", count=len(out))
+        return out
+
     def recall(self, query: str, *, top_k: int = 5,
                scope: Optional[str] = None, mode: str = "auto",
                include_tests: bool = False, reinforce: bool = True,

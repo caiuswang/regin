@@ -5,8 +5,10 @@
 // topics (from edges[]), Source refs, and a collapsible Wiki narrative.
 // Fetch/loading/error state is owned by the parent and passed in.
 import { computed, ref, watch } from 'vue'
+import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import Select from '../ui/Select.vue'
 import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import MemoryHeadline from './MemoryHeadline.vue'
@@ -15,20 +17,56 @@ const props = defineProps({
   detail: { type: Object, default: null },
   ancestors: { type: Array, default: () => [] }, // [{id,label}] root→parent
   nodes: { type: Object, default: () => ({}) },  // for resolving edge labels
+  topics: { type: Array, default: () => [] },    // [{id,label}] file-a-memory picker
   selectedId: { type: String, default: null },
+  orphanId: { type: String, default: '__orphaned__' },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
 })
-const emit = defineEmits(['select-memory', 'select-node'])
+const emit = defineEmits(['select-memory', 'select-node', 'topics-changed'])
 
 const edges = computed(() => props.detail?.edges || [])
 const refs = computed(() => props.detail?.refs || [])
 const memories = computed(() => props.detail?.memories || [])
 const labelOf = (id) => props.nodes[id]?.label || id
 
+// Per-row picker selection ({memoryId: pendingNodeId}) and a busy guard so a
+// double-click can't fire two links. Cleared whenever the node changes.
+const pick = ref({})
+const busy = ref('')
+const canUnlink = computed(() =>
+  props.selectedId && props.selectedId !== props.orphanId)
+
+async function assign(memoryId) {
+  const nodeId = pick.value[memoryId]
+  if (!nodeId || busy.value) return
+  busy.value = memoryId
+  try {
+    await api.post(`/memory/${memoryId}/topics`, { node_id: nodeId })
+    pick.value = { ...pick.value, [memoryId]: '' }
+    emit('topics-changed', { from: props.selectedId, to: nodeId })
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function unlink(memoryId) {
+  if (busy.value || !canUnlink.value) return
+  busy.value = memoryId
+  try {
+    await api.del(`/memory/${memoryId}/topics/${props.selectedId}`)
+    emit('topics-changed', { from: props.selectedId, to: null })
+  } finally {
+    busy.value = ''
+  }
+}
+
 // Collapse the wiki by default when there are memories to read first.
 const wikiOpen = ref(false)
-watch(() => props.detail?.id, () => { wikiOpen.value = !memories.value.length })
+watch(() => props.detail?.id, () => {
+  wikiOpen.value = !memories.value.length
+  pick.value = {}
+})
 </script>
 
 <template>
@@ -83,9 +121,39 @@ watch(() => props.detail?.id, () => { wikiOpen.value = !memories.value.length })
           <h4 class="flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wider text-fg-subtle mb-2">
             Memories <span class="font-mono text-fg-faint normal-case tracking-normal">{{ detail.memory_total }}</span>
           </h4>
-          <ul v-if="memories.length" class="space-y-1">
+          <ul v-if="memories.length" class="space-y-1.5">
             <li v-for="m in memories" :key="m.id">
               <MemoryHeadline :memory="m" @select="id => emit('select-memory', id)" />
+              <!-- file-a-memory controls — wrap, never modify, the headline -->
+              <div class="flex items-center flex-wrap gap-1.5 mt-1 pl-2.5">
+                <Select
+                  :model-value="pick[m.id] || ''"
+                  :options="topics"
+                  placeholder="File under topic…"
+                  :disabled="busy === m.id"
+                  class="text-xs h-7 py-0!"
+                  :aria-label="`File ${m.title || m.kind} under a topic`"
+                  @update:model-value="v => pick = { ...pick, [m.id]: v }"
+                />
+                <Button
+                  variant="secondary" size="sm"
+                  class="h-7 gap-1 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+                  :disabled="!pick[m.id] || busy === m.id"
+                  @click="assign(m.id)"
+                >
+                  <Icon name="plus" :size="12" /> File
+                </Button>
+                <Button
+                  v-if="canUnlink"
+                  variant="ghost" size="sm"
+                  class="h-7 gap-1 text-fg-faint hover:text-danger focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+                  :disabled="busy === m.id"
+                  :title="`Unfile from ${detail.label}`"
+                  @click="unlink(m.id)"
+                >
+                  <Icon name="x" :size="12" /> Unfile here
+                </Button>
+              </div>
             </li>
           </ul>
           <p v-else class="text-sm text-fg-faint">No memories filed under this topic yet.</p>

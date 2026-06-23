@@ -17,6 +17,13 @@ from lib.utils.pagination import clamp_page, clamp_size
 
 memory_bp = Blueprint("memory", __name__)
 
+# Synthetic taxonomy root for active memories with no authoritative-topic
+# link. Double-underscore so it can never collide with a real topic.json id.
+_ORPHAN_NODE_ID = "__orphaned__"
+_ORPHAN_LABEL = "Orphaned (unfiled)"
+_ORPHAN_BLURB = ("Active memories not linked to any topic node — "
+                 "assign them below.")
+
 
 def _bool_arg(name: str, default: bool = False) -> bool:
     raw = request.args.get(name)
@@ -418,7 +425,21 @@ def api_memory_taxonomy():
             subtree_ids(graph, nid), scope=scope))
         card["has_wiki"] = (wdir / f"{nid}.md").exists()
         nodes[nid] = card
-    return jsonify({"roots": tree["roots"], "nodes": nodes})
+    roots = list(tree["roots"])
+    orphans = store.orphaned_memory_ids(scope=scope)
+    if orphans:
+        nodes[_ORPHAN_NODE_ID] = _orphan_card(len(orphans))
+        roots.append(_ORPHAN_NODE_ID)
+    return jsonify({"roots": roots, "nodes": nodes})
+
+
+def _orphan_card(count: int) -> dict:
+    """The synthetic taxonomy node listing un-filed active memories. Carries
+    no children/edges/refs and no wiki — it is a working bucket, not a topic."""
+    return {"id": _ORPHAN_NODE_ID, "label": _ORPHAN_LABEL,
+            "blurb": _ORPHAN_BLURB, "children": [], "parent_id": None,
+            "edges": [], "ref_count": 0, "has_wiki": False,
+            "mem_count": count}
 
 
 def _taxonomy_top_k() -> int:
@@ -466,17 +487,66 @@ def api_memory_taxonomy_node(node_id):
     from lib.topics.graph_io import load_authoritative_graph
     from lib.topics.tree import subtree_ids
     from lib.topics.wiki import wiki_dir
+    store = memory.get_store()
+    scope = request.args.get("scope") or None
+    if node_id == _ORPHAN_NODE_ID:
+        ids = store.orphaned_memory_ids(scope=scope)
+        mems = [store.get_dict(mid) for mid in ids[:_taxonomy_top_k()]]
+        synthetic = {"label": _ORPHAN_LABEL, "blurb": _ORPHAN_BLURB,
+                     "refs": [], "edges": []}
+        return jsonify(
+            _taxonomy_detail(node_id, synthetic, ids, mems, None))
     graph = load_authoritative_graph(str(settings.project_root)) or {}
     node = graph.get("topics", {}).get(node_id)
     if node is None:
         return jsonify({"error": "not found"}), 404
-    store = memory.get_store()
     ids = store.memories_for_topic_subtree(
-        subtree_ids(graph, node_id), scope=request.args.get("scope") or None)
+        subtree_ids(graph, node_id), scope=scope)
     mems = [store.get_dict(mid) for mid in ids[:_taxonomy_top_k()]]
     wiki_path = wiki_dir(settings.project_root) / f"{node_id}.md"
     body = wiki_path.read_text() if wiki_path.exists() else None
     return jsonify(_taxonomy_detail(node_id, node, ids, mems, body))
+
+
+@memory_bp.route("/api/memory/topic-nodes")
+def api_memory_topic_nodes():
+    """Authoritative topic nodes as `{id, label}` — the picker/label source
+    for the manual file-a-memory affordances (taxonomy detail + MemoryDetail).
+    Sorted by label; [] on any graph fault (mirrors `_authoritative_topics`)."""
+    from lib.settings import settings
+    return jsonify({"topics": _authoritative_topics(str(settings.project_root))})
+
+
+@memory_bp.route("/api/memory/<memory_id>/topics", methods=["POST"])
+def api_memory_topic_link(memory_id):
+    """File a memory under an authoritative topic node. Body: {node_id}.
+    Validates the memory and node both exist; idempotent (a repeat link is a
+    no-op that still returns ok). Returns the memory's full link set."""
+    from lib.settings import settings
+    from lib.topics.graph_io import load_authoritative_graph
+    store = memory.get_store()
+    if store.get_dict(memory_id) is None:
+        return jsonify({"error": "not found"}), 404
+    node_id = (request.get_json(silent=True) or {}).get("node_id")
+    graph = load_authoritative_graph(str(settings.project_root)) or {}
+    if not node_id or node_id not in graph.get("topics", {}):
+        return jsonify({"error": "unknown topic node"}), 404
+    store.link_authoritative_topic(memory_id, node_id, source="manual")
+    return jsonify({"ok": True,
+                    "authoritative_topics": store.authoritative_topics_of(
+                        memory_id)})
+
+
+@memory_bp.route("/api/memory/<memory_id>/topics/<node_id>",
+                 methods=["DELETE"])
+def api_memory_topic_unlink(memory_id, node_id):
+    """Unfile a memory from an authoritative topic node. Idempotent —
+    `removed` is False when there was no link. Returns the remaining set."""
+    store = memory.get_store()
+    removed = store.unlink_authoritative_topic(memory_id, node_id)
+    return jsonify({"ok": True, "removed": removed,
+                    "authoritative_topics": store.authoritative_topics_of(
+                        memory_id)})
 
 
 @memory_bp.route("/api/memory/graph")

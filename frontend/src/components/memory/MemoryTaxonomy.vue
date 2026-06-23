@@ -26,10 +26,19 @@ const collapsed = ref(false)
 const { width, onResizeStart, onResizeKey } =
   useResizablePanel('regin_memory_taxonomy_width', { min: 240, max: 600, def: 340 })
 
+const ORPHAN_ID = '__orphaned__'
 const roots = ref([])
 const nodes = ref({})
 const loading = ref(false)
 const loadError = ref('')
+
+// File-a-memory picker options: every real topic node (the synthetic
+// Orphaned bucket is never a valid assign target).
+const topicOptions = computed(() =>
+  Object.values(nodes.value)
+    .filter(n => n.id !== ORPHAN_ID)
+    .map(n => ({ value: n.id, label: n.label }))
+    .sort((a, b) => a.label.localeCompare(b.label)))
 
 const selectedId = ref(null)
 const detail = ref(null)
@@ -83,6 +92,15 @@ async function selectNode(id) {
   } finally {
     detailLoading.value = false
   }
+}
+
+// A manual file/unfile changed the graph: drop the affected nodes' cached
+// detail (source + target both moved a memory), refresh the tree counts, and
+// re-open the current node so it reflects the change immediately.
+async function onTopicsChanged({ from, to }) {
+  for (const id of [from, to]) if (id && detailCache[id]) delete detailCache[id]
+  await reload()
+  if (selectedId.value) await selectNode(selectedId.value)
 }
 
 reload()
@@ -157,11 +175,14 @@ defineExpose({ reload })
           :detail="detail"
           :ancestors="ancestors"
           :nodes="nodes"
+          :topics="topicOptions"
           :selected-id="selectedId"
+          :orphan-id="ORPHAN_ID"
           :loading="detailLoading"
           :error="detailError"
           @select-memory="id => emit('select', id)"
           @select-node="selectNode"
+          @topics-changed="onTopicsChanged"
         />
       </div>
     </div>
