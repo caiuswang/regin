@@ -84,6 +84,19 @@ def test_unparseable_batch_skipped_others_kept():
     assert out == {"mem-1": ["topic-b"]}
 
 
+def test_drops_ancestor_when_child_selected():
+    graph = {"topics": {
+        "parent": {"label": "P", "intent": ""},
+        "child": {"label": "C", "intent": "", "parent_id": "parent"},
+        "other": {"label": "O", "intent": ""},
+    }}
+    mems = [{"id": "mem-0", "title": "a", "body": "x"}]
+    ans = json.dumps([{"id": "mem-0",
+                       "topics": ["parent", "child", "other"]}])
+    out = classify_memories(mems, graph, StubLLM([ans]))
+    assert out == {"mem-0": ["child", "other"]}
+
+
 def test_ignores_ids_outside_batch():
     mems = [{"id": "mem-0", "title": "a", "body": "x"}]
     ans = json.dumps([{"id": "mem-0", "topics": ["topic-a"]},

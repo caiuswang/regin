@@ -36,7 +36,8 @@ subject of the lesson/gotcha/fact it teaches. Rules:
 - Most memories map to exactly ONE topic. Add a SECOND (rarely a third) only
   when the memory genuinely teaches about two subsystems.
 - Prefer the most SPECIFIC topic. A node tagged [category] is a broad
-  container — pick it only when no specific child fits.
+  container — pick it only when no specific child fits. NEVER return both a
+  category and one of its children for the same memory; choose only the child.
 - If no topic is genuinely related, return an empty list for that memory.
   Do not force a match.
 - Use only topic ids from the taxonomy; never invent an id.
@@ -115,22 +116,39 @@ def _clean_topics(raw: Any, valid_ids: set[str], max_topics: int) -> list[str]:
     return out[:max_topics]
 
 
-def _parse_batch(answer: str, batch_ids: set[str], valid_ids: set[str],
+def _drop_ancestors(topics: list[str], nodes: dict) -> list[str]:
+    """Keep only the most specific nodes: drop any topic that is an ancestor
+    (via parent_id) of another selected topic, so a memory is never bound to
+    both a leaf and its parent category (redundant — subtree navigation already
+    surfaces a leaf-bound memory under its parent)."""
+    selected = set(topics)
+    redundant: set[str] = set()
+    for t in topics:
+        cur = nodes.get(t, {}).get("parent_id")
+        while cur:
+            if cur in selected:
+                redundant.add(cur)
+            cur = nodes.get(cur, {}).get("parent_id")
+    return [t for t in topics if t not in redundant]
+
+
+def _parse_batch(answer: str, batch_ids: set[str], nodes: dict,
                  max_topics: int) -> "dict[str, list[str]] | None":
     """Map `{memory_id: [topic_id, ...]}` from one batch's answer, keeping only
-    ids that were in the batch and topics that exist in the graph. None when the
-    answer can't be parsed as an array at all."""
+    ids that were in the batch and topics that exist in the graph (most-specific
+    only). None when the answer can't be parsed as an array at all."""
     items = _extract_json_array(answer)
     if items is None:
         return None
+    valid_ids = set(nodes)
     result: dict[str, list[str]] = {}
     for item in items:
         if not isinstance(item, dict):
             continue
         mid = item.get("id")
         if mid in batch_ids:
-            result[mid] = _clean_topics(item.get("topics"), valid_ids,
-                                        max_topics)
+            cleaned = _clean_topics(item.get("topics"), valid_ids, max_topics)
+            result[mid] = _drop_ancestors(cleaned, nodes)
     return result
 
 
@@ -148,7 +166,7 @@ def classify_memories(memories: list[dict], graph: dict, llm, *,
     node that isn't in the authoritative graph (no dangling links)."""
     if not memories:
         return {}
-    valid_ids = set(graph.get("topics", {}))
+    nodes = graph.get("topics", {})
     assignments: dict[str, list[str]] = {}
     taxonomy = _taxonomy_digest(graph)
     completed = unparsed = 0
@@ -160,7 +178,7 @@ def classify_memories(memories: list[dict], graph: dict, llm, *,
             log.error("topic_classify_no_completion", batch_start=start)
             continue
         completed += 1
-        parsed = _parse_batch(answer, batch_ids, valid_ids, max_topics)
+        parsed = _parse_batch(answer, batch_ids, nodes, max_topics)
         if parsed is None:
             unparsed += 1
             log.error("topic_classify_unparseable", batch_start=start)
