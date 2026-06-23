@@ -67,6 +67,25 @@ def test_append_lesson_is_idempotent():
     assert append_lesson(base, "- only") == base
 
 
+def test_append_lesson_extends_section_followed_by_more_content():
+    """The new bullet lands AFTER the existing bullets and ABOVE a following
+    `##` section, preserving the heading's blank line and one contiguous list
+    (the data-integrity case a section-as-last-thing test misses)."""
+    base = ("Guide.\n\n"
+            "## Lessons (from agent memory)\n\n"
+            "- **Old** — first bullet.\n\n"
+            "## Usage\n\nrun it.\n")
+    out = append_lesson(base, "- **New** — second bullet.")
+    assert out == ("Guide.\n\n"
+                   "## Lessons (from agent memory)\n\n"
+                   "- **Old** — first bullet.\n"
+                   "- **New** — second bullet.\n\n"
+                   "## Usage\n\nrun it.\n")
+    # exactly one list, one heading, following section intact
+    assert out.count("## Lessons (from agent memory)") == 1
+    assert out.index("- **Old**") < out.index("- **New**") < out.index("## Usage")
+
+
 # ── selection + apply ──────────────────────────────────────────────────
 
 def test_preview_lists_promotable_without_writing(monkeypatch, tmp_path):

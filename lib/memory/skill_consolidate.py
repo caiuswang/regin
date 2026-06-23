@@ -87,21 +87,40 @@ def _bullet(mem: dict) -> str:
     return f"- {lead}{body}"
 
 
+def _lessons_insert_index(lines: list[str], heading: int) -> int:
+    """Index at which to insert a new bullet: just after the last non-empty
+    line of the Lessons section (which ends at the next H2 or EOF), so the new
+    bullet joins the existing list rather than splitting it or jumping a
+    following `##` section."""
+    end = len(lines)
+    for i in range(heading + 1, len(lines)):
+        if lines[i].startswith("## "):
+            end = i
+            break
+    insert_at = heading + 1
+    for i in range(heading + 1, end):
+        if lines[i].strip():
+            insert_at = i + 1
+    return insert_at
+
+
 def append_lesson(body: str, bullet: str) -> str:
     """Return `body` with `bullet` added under the lessons heading — creating
-    the section at the end when it's absent, else appending after the existing
-    bullets. Idempotent: a bullet already present is not duplicated."""
+    the section at the end when it's absent, else appending *after the last
+    existing bullet* in the section (above any following `##` section, keeping
+    the heading's blank line and the single list intact). Idempotent: a bullet
+    already present is not duplicated."""
     if bullet in body:
         return body
     if _LESSON_HEADING not in body:
         sep = "" if body.endswith("\n\n") else ("\n" if body.endswith("\n")
                                                 else "\n\n")
         return f"{body}{sep}{_LESSON_HEADING}\n\n{bullet}\n"
-    head, _, tail = body.partition(_LESSON_HEADING)
-    section, nl, rest = tail.partition("\n\n")  # existing bullets block
-    if nl:
-        return f"{head}{_LESSON_HEADING}{section}\n{bullet}{nl}{rest}"
-    return f"{head}{_LESSON_HEADING}{tail.rstrip()}\n{bullet}\n"
+    lines = body.split("\n")
+    heading = next(i for i, l in enumerate(lines)
+                   if l.strip() == _LESSON_HEADING)
+    lines.insert(_lessons_insert_index(lines, heading), bullet)
+    return "\n".join(lines)
 
 
 def _promotable(store, leaf_id: str, min_recall: int) -> list[dict]:
