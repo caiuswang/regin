@@ -480,6 +480,64 @@ def cmd_link_topics(
           f"(of {len(rows)} active)")
 
 
+def _redeploy_skills(slugs) -> None:
+    """Best-effort: push each edited pattern source to the active agent so the
+    folded-in lesson reaches the live skill. A deploy failure is reported, not
+    fatal — the durable change is already in the source SKILL.md."""
+    from pathlib import Path
+    from lib.settings import settings
+    from lib.skills.skill_deployer import deploy_pattern_as_skill
+    for slug in sorted(slugs):
+        src = Path(settings.patterns_dir) / slug
+        try:
+            deploy_pattern_as_skill(str(src), slug, slug)
+            print(f"  redeployed {slug}")
+        except Exception as exc:  # noqa: BLE001 — report, never abort the run
+            print(f"  redeploy of {slug} failed: {exc}")
+
+
+@memory_app.command("consolidate-skills")
+def cmd_consolidate_skills(
+    apply: bool = typer.Option(
+        False, "--apply", help="Write non-manual sources + retire those "
+        "memories. Default: preview only (no writes)"),
+    skill: Optional[str] = typer.Option(
+        None, "--skill", help="Limit to one skill slug"),
+    min_recall: Optional[int] = typer.Option(
+        None, "--min-recall", help="Override the promotion bar (recall_count)"),
+) -> None:
+    """Graduate proven skill-memories into their skill's SKILL.md.
+
+    A memory filed under a `skill-<slug>` meta-leaf whose recall_count clears
+    the bar is folded into a `## Lessons (from agent memory)` section of the
+    pattern source and retired. Preview by default; `--apply` writes. A
+    `manual: true` (user-owned) pattern is never auto-written — it is listed
+    as a proposal for you to apply by hand.
+    """
+    import lib.memory as memory
+    from lib.memory.skill_consolidate import consolidate_skills
+    result = consolidate_skills(memory.get_store(), apply=apply, skill=skill,
+                                min_recall=min_recall)
+    if not result.lessons:
+        print("no skill-memories over the promotion bar")
+        return
+    verb = "folded" if apply else "would fold"
+    for ll in result.lessons:
+        if ll.skipped:
+            print(f"  SKIP  {ll.memory_id[:8]} → {ll.skill}: {ll.skipped}")
+            print(f"        propose: {ll.bullet[:100]}")
+        else:
+            print(f"  {verb.upper():10s} {ll.memory_id[:8]} → {ll.skill}: "
+                  f"{ll.title}")
+    if apply and result.changed_skills:
+        print(f"applied {result.applied}; redeploying "
+              f"{len(result.changed_skills)} skill(s):")
+        _redeploy_skills(result.changed_skills)
+    elif not apply:
+        print(f"\n{len([ll for ll in result.lessons if not ll.skipped])} "
+              f"ready to fold — re-run with --apply to write")
+
+
 @memory_app.command("approve")
 def cmd_approve(memory_id: str = typer.Argument(...)) -> None:
     import lib.memory as memory

@@ -334,3 +334,10 @@ def test_remember_unknown_topic_errors_before_writing(runner, tmp_memory_db):
     assert result.exit_code == 1
     assert "no topic node" in result.stdout
     assert memory.get_store().list_memories(include_tests=True) == []
+
+
+def test_consolidate_skills_empty_is_clean(runner, tmp_memory_db):
+    """The command registers and reports cleanly when nothing is promotable."""
+    result = runner.invoke(memory_app, ["consolidate-skills"])
+    assert result.exit_code == 0
+    assert "no skill-memories over the promotion bar" in result.stdout

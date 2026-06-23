@@ -276,6 +276,15 @@ class AgentMemoryConfig(BaseModel):
     # (`regin memory link-topics`, which routes to the precise leaf). Off →
     # distilled memories are unfiled until a classifier runs.
     distill_link_meta_roots: bool = True
+    # consolidate-skills: a proven memory filed under a `skill-<slug>` meta-leaf
+    # can "graduate" into that skill's own SKILL.md (a `## Lessons (from agent
+    # memory)` section in the pattern source) and then be retired — the hard,
+    # write-time complement to the soft `<skill_experience>` recall. Promotion
+    # bar = recall_count >= `consolidate_skill_min_recall`. A `manual: true`
+    # pattern is user-owned: it is NEVER auto-written, only proposed for the
+    # human to apply by hand. Driven by `regin memory consolidate-skills`.
+    consolidate_skills_enabled: bool = True
+    consolidate_skill_min_recall: int = 3
     # reflect(): synthesis (Generative-Agents reflection). Cluster *related
     # but distinct* episodic rows (cosine in [0.55, dedup_threshold)) and ask
     # the LLM to abstract ONE higher-order rule per cluster, written as a new
