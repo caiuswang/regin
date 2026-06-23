@@ -1,0 +1,90 @@
+{
+  "skills": {
+    "kind": "bucket",
+    "parent_id": null,
+    "meta": true,
+    "status": "approved",
+    "label": "Skill usage",
+    "blurb": "How to apply regin's skills & workflows (goal-verified, ui-ux, topic-router…) — usage lessons, not the code that implements them. Enter for 'which skill fits this task' or 'how do I use skill X'.",
+    "intent": "Cross-cutting lessons on using regin's skills and workflows effectively.",
+    "aliases": ["skill", "skills", "workflow", "how-to"],
+    "refs": []
+  },
+  "skill-goal-verified": {
+    "kind": "topic",
+    "parent_id": "skills",
+    "meta": true,
+    "status": "approved",
+    "label": "goal-verified loop",
+    "blurb": "Pin a falsifiable bar → build → STOP → independent adversarial verify + machine gates → commit. Includes the two recall arms (preflight flat recall vs memory-tree-nav).",
+    "intent": "Lessons on running the goal-verified / goal-verified-treenav build loop.",
+    "aliases": ["goal-verified", "goal-verified-treenav"],
+    "refs": []
+  },
+  "skill-ui-ux": {
+    "kind": "topic",
+    "parent_id": "skills",
+    "meta": true,
+    "status": "approved",
+    "label": "UI/UX skills",
+    "blurb": "Applying the ui-ux-* skill suite (principles, checklists, pro-max generator, regin surfaces) when building or reviewing frontend.",
+    "intent": "Lessons on using the UI/UX skill suite.",
+    "aliases": ["ui-ux", "ui", "ux"],
+    "refs": []
+  },
+  "skill-topic-router": {
+    "kind": "topic",
+    "parent_id": "skills",
+    "meta": true,
+    "status": "approved",
+    "label": "topic-router / recall skills",
+    "blurb": "Routing a task through regin's pattern/topic index before editing, and the memory-tree-nav recall walk.",
+    "intent": "Lessons on using topic-router and memory-tree-nav recall.",
+    "aliases": ["topic-router", "memory-tree-nav", "recall"],
+    "refs": []
+  },
+  "preferences": {
+    "kind": "bucket",
+    "parent_id": null,
+    "meta": true,
+    "status": "approved",
+    "label": "User preferences",
+    "blurb": "Cross-cutting working-style preferences not tied to any code subsystem — communication, tooling, and workflow conventions the user has stated.",
+    "intent": "The user's durable preferences and working-style conventions.",
+    "aliases": ["preference", "preferences", "working-style"],
+    "refs": []
+  },
+  "pref-workflow": {
+    "kind": "topic",
+    "parent_id": "preferences",
+    "meta": true,
+    "status": "approved",
+    "label": "Workflow preferences",
+    "blurb": "How the user wants work driven: decisiveness, verification discipline, library-vs-custom tradeoffs, plan/approve cadence.",
+    "intent": "Preferences about how to drive a task end-to-end.",
+    "aliases": ["workflow", "process"],
+    "refs": []
+  },
+  "pref-communication": {
+    "kind": "topic",
+    "parent_id": "preferences",
+    "meta": true,
+    "status": "approved",
+    "label": "Communication preferences",
+    "blurb": "How the user wants to be addressed in updates: brevity, recommendation-not-survey, progress reporting, what to surface vs omit.",
+    "intent": "Preferences about reporting and communication style.",
+    "aliases": ["communication", "reporting", "style"],
+    "refs": []
+  },
+  "pref-tooling": {
+    "kind": "topic",
+    "parent_id": "preferences",
+    "meta": true,
+    "status": "approved",
+    "label": "Tooling preferences",
+    "blurb": "Preferred tools, interpreters, and environment conventions (e.g. always the .venv interpreter, rtk proxy, curated MCP config).",
+    "intent": "Preferences about tools and environment.",
+    "aliases": ["tooling", "tools", "environment"],
+    "refs": []
+  }
+}

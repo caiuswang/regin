@@ -279,3 +279,58 @@ def test_supersede_unknown_id_errors(runner, tmp_memory_db):
     assert result.exit_code == 1
     assert "not found" in result.stdout
     assert memory.get_store().list_memories(include_tests=True) == []
+
+
+def test_remember_creates_memory(runner, tmp_memory_db):
+    """`remember` is the explicit create path; it writes one active row."""
+    result = runner.invoke(memory_app, [
+        "remember", "prefer concise updates", "--kind", "preference",
+        "--title", "concise"])
+    assert result.exit_code == 0
+    assert "remembered" in result.stdout
+    rows = memory.get_store().list_memories(include_tests=True)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "preference" and rows[0]["title"] == "concise"
+
+
+def test_remember_invalid_kind_errors_and_writes_nothing(runner, tmp_memory_db):
+    result = runner.invoke(memory_app, [
+        "remember", "x", "--kind", "bogus"])
+    assert result.exit_code == 1
+    assert "must be one of" in result.stdout
+    assert memory.get_store().list_memories(include_tests=True) == []
+
+
+def test_remember_files_under_meta_root(runner, tmp_memory_db):
+    """`--topic preferences` links the new memory to the global meta-root, so
+    it is reachable by the tree-nav browse leg."""
+    result = runner.invoke(memory_app, [
+        "remember", "always use the .venv interpreter", "--kind", "preference",
+        "--topic", "preferences"])
+    assert result.exit_code == 0
+    assert "filed under topic preferences" in result.stdout
+    store = memory.get_store()
+    mid = store.list_memories(include_tests=True)[0]["id"]
+    assert "preferences" in store.authoritative_topics_of(mid)
+
+
+def test_remember_applies_tags_and_importance(runner, tmp_memory_db):
+    """`--tags` is split + trimmed (empties dropped) and `--importance` is
+    stored as given — the plumbing the round-trip otherwise leaves uncovered."""
+    result = runner.invoke(memory_app, [
+        "remember", "x", "--kind", "fact", "--importance", "0.9",
+        "--tags", "env, tooling ,"])
+    assert result.exit_code == 0
+    row = memory.get_store().list_memories(include_tests=True)[0]
+    assert row["importance"] == 0.9
+    assert row["tags"] == ["env", "tooling"]
+
+
+def test_remember_unknown_topic_errors_before_writing(runner, tmp_memory_db):
+    """An unknown --topic exits non-zero and creates no memory (validated
+    before the write)."""
+    result = runner.invoke(memory_app, [
+        "remember", "x", "--kind", "fact", "--topic", "no-such-node"])
+    assert result.exit_code == 1
+    assert "no topic node" in result.stdout
+    assert memory.get_store().list_memories(include_tests=True) == []

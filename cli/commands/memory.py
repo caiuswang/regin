@@ -101,6 +101,65 @@ def cmd_stats() -> None:
     print(json.dumps(memory.stats(), indent=2))
 
 
+def _merged_graph():
+    """Repo graph + global meta-roots — the topic id space `--topic` validates
+    against, so the meta-roots (`skills`, `preferences`, …) are fileable."""
+    from pathlib import Path
+    from lib.settings import settings
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
+    return merge_meta_roots(
+        load_authoritative_graph(str(Path(settings.project_root).resolve())))
+
+
+@memory_app.command("remember")
+def cmd_remember(
+    body: str = typer.Argument(..., help="The memory body (fact / lesson / "
+                               "preference)"),
+    kind: str = typer.Option("lesson", "--kind",
+                             help="lesson | gotcha | preference | fact | "
+                                  "procedure"),
+    title: Optional[str] = typer.Option(None, "--title"),
+    scope: str = typer.Option("global", "--scope",
+                              help="global or repo:<name>"),
+    topic: Optional[str] = typer.Option(
+        None, "--topic", help="Authoritative topic node id to file under — "
+        "incl. the global meta-roots (skills, preferences, …)"),
+    tags: Optional[str] = typer.Option(None, "--tags",
+                                       help="comma-separated"),
+    importance: float = typer.Option(0.5, "--importance"),
+) -> None:
+    """Create a memory directly, optionally filing it under a topic node.
+
+    The explicit create path the CLI otherwise lacks (`supersede` needs an
+    existing id; `distill` derives from a session). `--topic` links the new
+    memory to an authoritative topic node — including the global meta-roots
+    (`skills` / `preferences`), giving skill- and preference-related memories
+    a navigable home in the tree-nav index.
+    """
+    import lib.memory as memory
+    from lib.memory.models import MEMORY_KINDS
+
+    if kind not in MEMORY_KINDS:
+        print(f"error: --kind must be one of {', '.join(MEMORY_KINDS)}")
+        raise typer.Exit(1)
+    if topic is not None and topic not in (_merged_graph().get("topics") or {}):
+        print(f"error: no topic node {topic!r} — list roots with "
+              f"`index_root` (memory MCP) or pick a meta-root "
+              f"(skills, preferences)")
+        raise typer.Exit(1)
+
+    mid = memory.remember(
+        body, kind=kind, title=title, scope=scope, importance=importance,
+        tags=[t.strip() for t in tags.split(",") if t.strip()]
+        if tags else None)
+    print(f"remembered {mid}")
+    if topic is not None:
+        memory.get_store().link_authoritative_topic(mid, topic,
+                                                    source="manual")
+        print(f"  filed under topic {topic}")
+
+
 @memory_app.command("topic-feedback")
 def cmd_topic_feedback(
     limit: int = typer.Option(30, "--limit",

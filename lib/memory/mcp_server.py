@@ -74,10 +74,14 @@ def recall(query: str, top_k: int = 5, scope: str = "") -> str:
 
 
 def _load_graph():
-    """The repo's approved topic graph (the taxonomy tree the index walks)."""
+    """The repo's approved topic graph (the taxonomy tree the index walks),
+    plus the global meta-roots overlay (`skills` / `preferences`) so
+    cross-repo skill-usage and preference memories are navigable from here."""
     from lib.settings import settings
     from lib.topics.graph_io import load_authoritative_graph
-    return load_authoritative_graph(str(settings.project_root))
+    from lib.topics.meta_roots import merge_meta_roots
+    return merge_meta_roots(
+        load_authoritative_graph(str(settings.project_root)))
 
 
 def _subtree_mem_count(store, graph, node_id: str, scope: str) -> int:
