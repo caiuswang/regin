@@ -105,14 +105,18 @@ def _eligible_prompt(payload: HookPayload) -> bool:
     return len(_recall_query(text)) >= _MIN_PROMPT_CHARS
 
 
-def _format_entry(hit) -> str:
-    m = hit.memory
+def _format_memory(m: dict) -> str:
+    """One injected-memory line from a memory dict (the shared renderer for
+    both `<recalled_experience>` and `<skill_experience>`)."""
     title = f"{m['title']}: " if m.get("title") else ""
     body = m["body"]
     if len(body) > _ENTRY_MAX_CHARS:
         body = body[:_ENTRY_MAX_CHARS] + "…"
-    age = _age_suffix(m)
-    return f"- [{m['kind']}] {title}{body} (memory {m['id'][:8]}{age})"
+    return f"- [{m['kind']}] {title}{body} (memory {m['id'][:8]}{_age_suffix(m)})"
+
+
+def _format_entry(hit) -> str:
+    return _format_memory(hit.memory)
 
 
 def _deeper_pull_line() -> str:
@@ -142,32 +146,128 @@ def _build_block(hits, max_chars: int) -> str:
     return "\n".join(lines)
 
 
+def _skill_leaf_id(prompt: str) -> str | None:
+    """The meta-leaf id for the skill a prompt invokes, by convention
+    `skill-<command>` (e.g. `/playwright-screenshots` → `skill-playwright-
+    screenshots`), or None when the prompt is not a slash command."""
+    name = _command_name(prompt)
+    return ("skill-" + name.lstrip("/")) if name else None
+
+
+def _skill_memories(leaf_id: str, cfg) -> list[dict]:
+    """Active memories filed under a skill meta-leaf, importance-ranked and
+    top-k capped. [] when the leaf isn't a known skill node (so a `/cmd` that
+    isn't a filed skill injects nothing)."""
+    import lib.memory as memory
+    from lib.topics.meta_roots import load_global_meta_topics
+    if leaf_id not in load_global_meta_topics():
+        return []
+    store = memory.get_store()
+    ids = store.memories_for_topic_subtree([leaf_id], scope=None)
+    out = []
+    for mid in ids[:cfg.inject_top_k]:
+        m = store.get_dict(mid)
+        if m:
+            out.append(m)
+    return out
+
+
+def _build_skill_block(skill_name: str, mems: list[dict], max_chars: int) -> str:
+    lines = [
+        "<skill_experience>",
+        f"Past-session lessons filed under the `{skill_name}` skill. May be",
+        "stale — verify against the current code before relying on it.",
+    ]
+    budget = (max_chars - sum(len(l) + 1 for l in lines)
+              - len("</skill_experience>"))
+    for m in mems:
+        entry = _format_memory(m)
+        if len(entry) + 1 > budget:
+            break
+        lines.append(entry)
+        budget -= len(entry) + 1
+    lines.append("</skill_experience>")
+    return "\n".join(lines)
+
+
+def _record_skill_injection(payload: HookPayload, mems: list[dict]) -> None:
+    """Record skill-memory injections so the engagement-feedback loop can score
+    their usefulness (the signal 3B's promotion bar reads). Best-effort."""
+    session_id = payload.session_id
+    if not session_id:
+        return
+    try:
+        import lib.memory as memory
+        query = (_recall_query(payload.prompt or "")
+                 or (payload.prompt or "").strip())[:2000]
+        memory.get_store().record_injections(
+            session_id, [m["id"] for m in mems], query=query)
+    except Exception:
+        pass
+
+
+def _skill_experience(payload: HookPayload, cfg) -> str:
+    """`<skill_experience>` block for the skill a prompt invokes, or '' when
+    disabled, not a skill invocation, or nothing is filed under it."""
+    if not (cfg.enabled and cfg.auto_inject and cfg.skill_experience_inject):
+        return ""
+    if payload.is_workflow_subagent:
+        return ""
+    leaf_id = _skill_leaf_id(payload.prompt or "")
+    if not leaf_id:
+        return ""
+    try:
+        mems = _skill_memories(leaf_id, cfg)
+    except Exception:
+        return ""
+    if not mems:
+        return ""
+    _record_skill_injection(payload, mems)
+    return _build_skill_block(leaf_id[len("skill-"):], mems,
+                              cfg.skill_experience_max_chars)
+
+
 def handle(payload: HookPayload) -> HookResponse | None:
-    if not _eligible_prompt(payload):
-        return None
+    from lib.settings import settings
+    cfg = settings.agent_memory
+    parts: list[str] = []
+    # Skill-experience leg: fires on a `/skill` invocation independently of
+    # `_eligible_prompt`, so it survives even when the command is in
+    # `inject_skip_commands` or carries no recall query (a bare `/skill`).
+    skill_block = _skill_experience(payload, cfg)
+    if skill_block:
+        parts.append(skill_block)
+    if _eligible_prompt(payload):
+        parts.extend(_generic_recall_parts(payload, cfg))
+    if not parts:
+        return None  # nothing routed/recalled and no skill experience
+    return HookResponse(suppress_output=True,
+                        additional_context="\n".join(parts))
+
+
+def _generic_recall_parts(payload: HookPayload, cfg) -> list[str]:
+    """The `<topic_context>` + `<recalled_experience>` blocks for an eligible
+    prompt (the original auto-inject path). Returns [] on any recall failure —
+    memory must never block a prompt."""
     try:
         hits, mode, routed = _recall(payload)
     except Exception:
-        return None  # memory must never block a prompt
+        return []
     hits = _cap_uncalibrated(hits)
     block_hits = _apply_session_memory(payload, hits) if hits else []
-    from lib.settings import settings
-    cfg = settings.agent_memory
-    parts = []
+    parts: list[str] = []
     if routed:
         parts.append(_build_topic_context(routed, cfg.topic_context_max_chars))
         _record_topic_injection(payload, routed, cfg)
     if block_hits:
         parts.append(_build_block(block_hits, cfg.inject_max_chars))
-    if not parts:
-        return None  # no topic routed and every memory was a same-session repeat
-    block = "\n".join(parts)
-    if cfg.trace_recall:
+    if parts and cfg.trace_recall:
         try:
-            _emit_recall_span(payload, block, block_hits, mode, routed)
+            _emit_recall_span(payload, "\n".join(parts), block_hits, mode,
+                              routed)
         except Exception:
             pass  # tracing the inject must never block the inject
-    return HookResponse(suppress_output=True, additional_context=block)
+    return parts
 
 
 def _topic_trim_to_word(text: str, limit: int) -> str:

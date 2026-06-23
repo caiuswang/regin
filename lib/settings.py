@@ -172,6 +172,14 @@ class AgentMemoryConfig(BaseModel):
     auto_inject: bool = True
     inject_top_k: int = 3
     inject_max_chars: int = 2_000
+    # Skill experience: when a prompt invokes a skill via slash command
+    # (`/playwright-screenshots …`), inject a `<skill_experience>` block of the
+    # memories filed under that skill's meta-leaf (`skill-<command>`, see
+    # lib/topics/meta_roots.py) — the skill analog of `<recalled_experience>`,
+    # delivered on invocation even when the generic auto-inject is skipped for
+    # that command. Off → no skill-scoped block. `_max_chars` budgets the block.
+    skill_experience_inject: bool = True
+    skill_experience_max_chars: int = 1_200
     inject_min_overlap: int = 3
     overlap_idf_max_df: float = 0.30
     inject_fts_top_k: int = 1

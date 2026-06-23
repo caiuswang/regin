@@ -21,6 +21,28 @@
     "aliases": ["goal-verified", "goal-verified-treenav"],
     "refs": []
   },
+  "skill-goal-verified-treenav": {
+    "kind": "topic",
+    "parent_id": "skills",
+    "meta": true,
+    "status": "approved",
+    "label": "goal-verified-treenav arm",
+    "blurb": "The tree-nav recall arm of goal-verified: walk the topic taxonomy to pin the bar, gated by a trace-verified span check that makes skipping the recall leg a wall.",
+    "intent": "Lessons on running the goal-verified-treenav recall arm.",
+    "aliases": ["goal-verified-treenav"],
+    "refs": []
+  },
+  "skill-playwright-screenshots": {
+    "kind": "topic",
+    "parent_id": "skills",
+    "meta": true,
+    "status": "approved",
+    "label": "playwright-screenshots skill",
+    "blurb": "Driving the regin web app headlessly and screenshotting it: stale-backend reuse, localStorage auth bypass, correct trace URLs, verifying DOM geometry over screenshot-guessing.",
+    "intent": "Lessons on using the playwright-screenshots skill to verify WebUI changes.",
+    "aliases": ["playwright-screenshots", "playwright", "screenshots"],
+    "refs": []
+  },
   "skill-ui-ux": {
     "kind": "topic",
     "parent_id": "skills",
