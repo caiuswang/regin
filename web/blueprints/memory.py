@@ -394,10 +394,11 @@ def api_memory_taxonomy():
     `scope` (e.g. `repo:regin`) filters the memory counts."""
     from lib.settings import settings
     from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
     from lib.topics.tree import build_tree, node_card, subtree_ids
     from lib.topics.wiki import wiki_dir
     scope = request.args.get("scope") or None
-    graph = load_authoritative_graph(str(settings.project_root))
+    graph = merge_meta_roots(load_authoritative_graph(str(settings.project_root)))
     if not graph or not graph.get("topics"):
         return jsonify({"roots": [], "nodes": {}})
     store = memory.get_store()
@@ -485,6 +486,7 @@ def api_memory_taxonomy_node(node_id):
     list (default 30); `scope` filters it."""
     from lib.settings import settings
     from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
     from lib.topics.tree import subtree_ids
     from lib.topics.wiki import wiki_dir
     store = memory.get_store()
@@ -496,7 +498,7 @@ def api_memory_taxonomy_node(node_id):
                      "refs": [], "edges": []}
         return jsonify(
             _taxonomy_detail(node_id, synthetic, ids, mems, None))
-    graph = load_authoritative_graph(str(settings.project_root)) or {}
+    graph = merge_meta_roots(load_authoritative_graph(str(settings.project_root)) or {})
     node = graph.get("topics", {}).get(node_id)
     if node is None:
         return jsonify({"error": "not found"}), 404
