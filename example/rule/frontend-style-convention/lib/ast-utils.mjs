@@ -90,7 +90,12 @@ export function isClickableContainer(node) {
 }
 
 export function isInteractiveElement(node) {
-  const tag = (node.tag || '').toLowerCase()
+  // Case-SENSITIVE: native HTML controls are lowercase (`button`, `a`), while
+  // design-system components are PascalCase (`<Button>`). Lowercasing here
+  // would wrongly flag `<Button>` — which owns its focus ring via the global
+  // `.btn:focus-visible` token — as a bare native control missing focus
+  // styling. Mirror the case-sensitive matching in `prefer_ds_primitive`.
+  const tag = node.tag || ''
   if (tag === 'button') return true
   if (tag === 'a') {
     return !!getProp(node, ['href']) || hasDirective(node, 'bind')
