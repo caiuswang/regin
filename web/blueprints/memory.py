@@ -404,6 +404,12 @@ def api_memory_taxonomy():
             "id": nid, "label": nid, "blurb": "",
             "ref_count": 0, "child_count": len(children.get(nid, []))}
         card["children"] = children.get(nid, [])
+        # parent_id + cross-topic edges let the WebUI graph view render the
+        # full relation set (tree links + related-topic edges) from this one
+        # payload, instead of a detail fetch per node.
+        topic = graph["topics"].get(nid) or {}
+        card["parent_id"] = topic.get("parent_id")
+        card["edges"] = topic.get("edges") or []
         card["mem_count"] = len(store.memories_for_topic_subtree(
             subtree_ids(graph, nid), scope=scope))
         card["has_wiki"] = (wdir / f"{nid}.md").exists()
