@@ -110,28 +110,78 @@ def _record_injection(session_id: str, mems: list[dict], query: str) -> None:
         pass
 
 
-def skill_experience_block(skill_id: str, session_id: Optional[str], *,
-                           query: Optional[str] = None) -> str:
-    """The `<skill_experience>` block for `skill_id`, or '' when the feature is
-    disabled, the skill has no meta-leaf, or nothing is filed under it. Records
-    the injection as a side effect when a block is produced."""
+def skill_experience_injection(skill_id: str, session_id: Optional[str], *,
+                               query: Optional[str] = None
+                               ) -> tuple[str, list[dict]]:
+    """`(block, mems)` for `skill_id`: the rendered `<skill_experience>` block
+    and the memories that fed it. `('', [])` when the feature is disabled, the
+    skill has no meta-leaf, or nothing is filed under it. Records the injection
+    as a side effect when a block is produced — the caller emits the trace span
+    (see `emit_skill_experience_span`) so the shared core stays HookPayload-free."""
     from lib.settings import settings
     cfg = settings.agent_memory
     if not (cfg.enabled and cfg.auto_inject and cfg.skill_experience_inject):
-        return ""
+        return "", []
     leaf_id = leaf_id_for_skill(skill_id)
     if not leaf_id:
-        return ""
+        return "", []
     try:
         mems = _skill_memories(leaf_id, cfg)
     except Exception:
-        return ""
+        return "", []
     if not mems:
-        return ""
+        return "", []
     _record_injection(session_id or "", mems, query or skill_id)
-    return _build_block(leaf_id[len("skill-"):], mems,
-                        cfg.skill_experience_max_chars)
+    block = _build_block(leaf_id[len("skill-"):], mems,
+                         cfg.skill_experience_max_chars)
+    return block, mems
 
 
-__all__ = ["skill_experience_block", "format_memory_line", "age_suffix",
+def skill_experience_block(skill_id: str, session_id: Optional[str], *,
+                           query: Optional[str] = None) -> str:
+    """The `<skill_experience>` block string for `skill_id`, or '' (the
+    block-only compatibility wrapper over `skill_experience_injection`)."""
+    return skill_experience_injection(skill_id, session_id, query=query)[0]
+
+
+def emit_skill_experience_span(trace_id: Optional[str], skill_id: str,
+                               block: str, mems: list[dict], *,
+                               agent_id: Optional[str] = None,
+                               agent_type: Optional[str] = None) -> None:
+    """Record an injected `<skill_experience>` block as a `memory.recall` span
+    (marked `source='skill_experience'`) so the trace detail shows exactly what
+    was fed to the prompt — the same machinery that traces `<recalled_experience>`.
+    Reusing the `memory.recall` name means the existing trace UI (MemoryRecallRow)
+    and the projection submit-time lookahead render and place it with no extra
+    wiring. Gated by `trace_recall` like the generic recall span, and fully
+    best-effort: tracing the inject must never block the inject."""
+    from lib.settings import settings
+    if not (trace_id and block) or not settings.agent_memory.trace_recall:
+        return
+    attributes: dict = {
+        'block': block,
+        'hit_count': len(mems),
+        'source': 'skill_experience',
+        'skill_id': (skill_id or "").strip().lstrip("/"),
+        'hits': [{
+            'id': m.get('id'),
+            'kind': m.get('kind'),
+            'title': m.get('title'),
+            'scope': m.get('scope'),
+        } for m in mems],
+    }
+    if agent_id:
+        attributes['agent_id'] = agent_id
+        if agent_type:
+            attributes['agent_type'] = agent_type
+    try:
+        from lib.hook_plugin import post_span  # type: ignore
+        post_span(trace_id=trace_id, name='memory.recall',
+                  attributes=attributes)
+    except Exception:
+        pass  # tracing the inject must never block the inject
+
+
+__all__ = ["skill_experience_block", "skill_experience_injection",
+           "emit_skill_experience_span", "format_memory_line", "age_suffix",
            "leaf_id_for_skill", "ENTRY_MAX_CHARS"]

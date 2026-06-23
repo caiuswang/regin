@@ -684,3 +684,86 @@ def test_trace_payload_rotation_overwrites_existing_backup(monkeypatch, tmp_path
     assert not (tmp_path / 'repeat.jsonl.2').exists()
 
 
+
+
+# ── skill_experience injection → trace span ───────────────────────────
+# Both delivery paths must emit a `memory.recall` span (source=
+# 'skill_experience') so the injected <skill_experience> block shows in the
+# session trace detail. Regression for: injection happened but nothing showed.
+
+import lib.memory.skill_experience as skill_exp_mod
+from hook_manager.handlers import memory_recall
+from hook_manager.handlers import skill_experience as skill_exp_handler
+from lib.settings import settings as _settings
+
+_FAKE_HITS = [{'id': 'abc12345', 'kind': 'lesson', 'title': 't',
+               'scope': 'repo:regin'}]
+_FAKE_BLOCK = '<skill_experience>\n- [lesson] t: body (memory abc)\n</skill_experience>'
+
+
+def test_skill_experience_auto_invoke_emits_recall_span(captured_spans, monkeypatch):
+    monkeypatch.setattr(skill_exp_mod, 'skill_experience_injection',
+                        lambda *_a, **_k: (_FAKE_BLOCK, _FAKE_HITS))
+    r = skill_exp_handler.handle(
+        _p('PreToolUse', tool_name='Skill', session_id='sess-1',
+           tool_input={'skill': 'topic-router'}))
+    assert r and '<skill_experience>' in (r.additional_context or '')
+    span = next(s for s in captured_spans if s['name'] == 'memory.recall')
+    attrs = span['attributes']
+    assert attrs['source'] == 'skill_experience'
+    assert attrs['skill_id'] == 'topic-router'
+    assert attrs['hit_count'] == 1
+    assert attrs['block'] == _FAKE_BLOCK
+    assert attrs['hits'][0]['id'] == 'abc12345'
+
+
+def test_skill_experience_no_block_emits_no_span(captured_spans, monkeypatch):
+    monkeypatch.setattr(skill_exp_mod, 'skill_experience_injection',
+                        lambda *_a, **_k: ('', []))
+    r = skill_exp_handler.handle(
+        _p('PreToolUse', tool_name='Skill', tool_input={'skill': 'unknown'}))
+    assert r is None
+    assert not [s for s in captured_spans if s['name'] == 'memory.recall']
+
+
+def test_skill_experience_skips_non_skill_tool():
+    assert skill_exp_handler.handle(_p('PreToolUse', tool_name='Read')) is None
+
+
+def test_skill_experience_inject_survives_span_failure(monkeypatch):
+    """Tracing is best-effort: if span emission raises, the inject is still
+    delivered (memory must never block a tool call)."""
+    monkeypatch.setattr(skill_exp_mod, 'skill_experience_injection',
+                        lambda *_a, **_k: (_FAKE_BLOCK, _FAKE_HITS))
+
+    def _boom(**_kw):
+        raise RuntimeError('ingest unreachable')
+    import lib.hook_plugin as hp
+    monkeypatch.setattr(hp, 'post_span', _boom)
+
+    r = skill_exp_handler.handle(
+        _p('PreToolUse', tool_name='Skill', tool_input={'skill': 'topic-router'}))
+    assert r and '<skill_experience>' in (r.additional_context or '')
+
+
+def test_skill_experience_slash_command_emits_span(captured_spans, monkeypatch):
+    """Bare `/skill` (no recall query) still traces its skill experience —
+    the leg fires independently of `_eligible_prompt`."""
+    monkeypatch.setattr(skill_exp_mod, 'skill_experience_injection',
+                        lambda *_a, **_k: (_FAKE_BLOCK, _FAKE_HITS))
+    out = memory_recall._skill_experience(
+        _p('UserPromptSubmit', prompt='/playwright-screenshots',
+           session_id='sess-1'),
+        _settings.agent_memory)
+    assert '<skill_experience>' in out
+    span = next(s for s in captured_spans if s['name'] == 'memory.recall')
+    assert span['attributes']['source'] == 'skill_experience'
+    # The leading slash of the command token is stripped on the span.
+    assert span['attributes']['skill_id'] == 'playwright-screenshots'
+
+
+def test_emit_skill_experience_span_gated_by_trace_recall(captured_spans, monkeypatch):
+    monkeypatch.setattr(_settings.agent_memory, 'trace_recall', False)
+    skill_exp_mod.emit_skill_experience_span('sid', 'topic-router',
+                                             _FAKE_BLOCK, _FAKE_HITS)
+    assert not captured_spans

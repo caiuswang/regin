@@ -204,7 +204,13 @@ export function ruleCheckOneLiner(span) {
 export function memoryRecallOneLiner(span) {
   const a = span.attributes || {}
   const n = a.hit_count ?? (a.hits ? a.hits.length : 0)
-  return `recalled ${n} ${n === 1 ? 'memory' : 'memories'}`
+  const noun = n === 1 ? 'memory' : 'memories'
+  // A `memory.recall` span marked source='skill_experience' is the
+  // <skill_experience> block injected for an invoked skill, not generic recall.
+  if (a.source === 'skill_experience') {
+    return `skill experience${a.skill_id ? ` (${a.skill_id})` : ''} · ${n} ${noun}`
+  }
+  return `recalled ${n} ${noun}`
 }
 
 // NOTE: `fullLabel` (conversation view) and `spanLabel` (timeline/tree view,

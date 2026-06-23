@@ -26,6 +26,12 @@ const block = computed(() => props.span.attributes?.block || '')
 // A routed authoritative topic, when the prompt matched one. May be the
 // only thing injected (topic-only route → hit_count 0).
 const topic = computed(() => props.span.attributes?.topic || null)
+// A `memory.recall` span marked source='skill_experience' is the
+// <skill_experience> block injected for an invoked skill — labelled
+// distinctly from generic recalled experience.
+const isSkill = computed(() =>
+  props.span.attributes?.source === 'skill_experience')
+const skillId = computed(() => props.span.attributes?.skill_id || '')
 
 function onRowClick() {
   if (typeof window !== 'undefined') {
@@ -55,7 +61,11 @@ function toggleBlock(e) {
       <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
       <span class="font-mono text-[11px] text-slate-400 shrink-0 cursor-text select-text">{{ fmtClock(span.start_time) }}</span>
       <div class="flex-1 min-w-0 truncate cursor-text select-text whitespace-nowrap">
-        <span class="text-fuchsia-700">recalled experience</span>
+        <span :class="isSkill ? 'text-emerald-700' : 'text-fuchsia-700'">{{ isSkill ? 'skill experience' : 'recalled experience' }}</span>
+        {{ ' ' }}<span
+          v-if="isSkill && skillId"
+          class="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 rounded"
+        >{{ skillId }}</span>
         {{ ' ' }}<span class="text-slate-500">{{ hitCount }} {{ hitCount === 1 ? 'memory' : 'memories' }}</span>
         {{ ' ' }}<span
           v-if="topic"

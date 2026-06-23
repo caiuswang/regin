@@ -120,10 +120,20 @@ def _skill_experience(payload: HookPayload, cfg) -> str:
     name = _command_name(payload.prompt or "")
     if not name:
         return ""
-    from lib.memory.skill_experience import skill_experience_block
-    return skill_experience_block(
+    from lib.memory.skill_experience import (
+        emit_skill_experience_span, skill_experience_injection)
+    block, mems = skill_experience_injection(
         name.lstrip("/"), payload.session_id,
         query=_recall_query(payload.prompt or ""))
+    if block:
+        # Trace the skill-experience inject as its own `memory.recall` span so
+        # it shows in the session detail. Fires on UserPromptSubmit, so the
+        # `memory.recall` submit-time lookahead nests it under this prompt.
+        raw = payload.raw or {}
+        emit_skill_experience_span(
+            payload.session_id, name, block, mems,
+            agent_id=raw.get('agent_id'), agent_type=raw.get('agent_type'))
+    return block
 
 
 def handle(payload: HookPayload) -> HookResponse | None:
