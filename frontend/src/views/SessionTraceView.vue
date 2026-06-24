@@ -5,6 +5,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
+import CopyButton from '../components/conversation/cards/CopyButton.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
 import SessionConversationView from '../components/SessionConversationView.vue'
 import SuppressButton from '../components/triggers/SuppressButton.vue'
@@ -548,7 +549,7 @@ const {
                     v-for="(m, i) in agentMessages"
                     :key="m.id ?? m.span_id"
                     :id="m.span_id ? `msg-${m.span_id}` : undefined"
-                    class="relative pl-7 scroll-mt-28"
+                    class="group relative pl-7 scroll-mt-28"
                   >
                     <span
                       class="absolute -left-[9px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white border-2 transition-colors duration-200"
@@ -570,6 +571,11 @@ const {
                       <span class="text-[11px] font-mono text-slate-500">
                         {{ new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}
                       </span>
+                      <CopyButton
+                        v-if="m.body"
+                        :text="m.body"
+                        tint="text-slate-400 hover:bg-slate-200/60 hover:text-slate-700"
+                      />
                     </div>
                     <div
                       class="rounded-lg border bg-white px-4 py-3 shadow-sm transition-colors duration-200"
