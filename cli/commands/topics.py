@@ -522,3 +522,105 @@ def cmd_topics_audit_fix(
         "fixed_counts": fixed_counts,
         "skipped_codes": skipped,
     }, indent=2))
+
+
+def _split_target(graph: dict, leaf_id: str) -> str:
+    """Resolve + validate the bucket the new siblings hang under, or exit."""
+    from lib.topics.split_leaf import bucket_for_leaf
+
+    if leaf_id not in graph.get("topics", {}):
+        print(f"unknown leaf {leaf_id!r}")
+        raise typer.Exit(1)
+    bucket_id = bucket_for_leaf(graph, leaf_id)
+    if bucket_id is None:
+        print(f"leaf {leaf_id!r} is not directly under a bucket — "
+              "cannot place sibling sub-topics")
+        raise typer.Exit(1)
+    return bucket_id
+
+
+def _print_split_plan(plan, gate) -> None:
+    """Human preview: the move-map grouped by destination, then gate verdict."""
+    by_dest: dict[str, list[str]] = {}
+    for mid, dest in plan.assignment.items():
+        by_dest.setdefault(dest, []).append(mid)
+    print(f"split {plan.leaf_id} → bucket {plan.bucket_id}")
+    for tid in plan.new_topics:
+        node = plan.new_topics[tid]
+        print(f"  + {tid}  ({len(by_dest.get(tid, []))} mem)  {node['label']}")
+    kept = len(by_dest.get(plan.leaf_id, []))
+    if kept:
+        print(f"  · {plan.leaf_id} keeps {kept} (overview/unplaced)")
+    print(f"gate: {'PASS' if gate.ok else 'FAIL'} "
+          f"({len(gate.errors)} errors, {len(gate.warnings)} warnings)")
+    for e in gate.errors:
+        print(f"  ERROR: {e}")
+    for w in gate.warnings:
+        print(f"  warn:  {w}")
+
+
+@topics_app.command(
+    "split-leaf",
+    help="Cluster an over-large topic leaf into sibling sub-topics and relink "
+         "its memories (dry-run + gate by default; --apply to write).")
+def cmd_topics_split_leaf(
+    leaf_id: str = typer.Argument(..., help="The leaf topic id to split"),
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the split. Default: dry-run preview + gate."),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    allow_protected_move: bool = typer.Option(
+        False, "--allow-protected-move",
+        help="Permit moving manual/reflect-sourced links off the leaf"),
+    min_clusters: int = typer.Option(2, "--min-clusters"),
+    max_clusters: int = typer.Option(5, "--max-clusters"),
+) -> None:
+    import lib.memory as memory
+    from lib.memory.adapters import resolve_topic_classifier
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.split_gate import gather_leaf_links
+    from lib.topics.split_leaf import (
+        ClusterProposerUnavailable, apply_split, build_split_plan,
+        gate_only, propose_clusters,
+    )
+
+    repo_path = _repo_path(repo)
+    graph = load_authoritative_graph(repo_path)
+    bucket_id = _split_target(graph, leaf_id)
+
+    store = memory.get_store()
+    leaf_links = gather_leaf_links(store, leaf_id)
+    if not leaf_links:
+        print(f"leaf {leaf_id!r} has no linked memories — nothing to split")
+        raise typer.Exit(1)
+    # Fetch only the leaf's memories by id — `gather_leaf_links` already
+    # filtered to active links, so scanning the whole active table (and
+    # capping it) would be wasted work and could silently drop memories.
+    mems = [m for m in (store.get_dict(mid) for mid in leaf_links) if m]
+
+    try:
+        clusters = propose_clusters(
+            graph["topics"][leaf_id], mems, resolve_topic_classifier(),
+            lo=min_clusters, hi=max_clusters)
+    except ClusterProposerUnavailable as exc:
+        print(f"cluster proposer unavailable: {exc}")
+        raise typer.Exit(2)
+    if not clusters:
+        print("proposer returned no clusters — leaving leaf intact")
+        raise typer.Exit(1)
+
+    plan = build_split_plan(leaf_id, bucket_id, clusters, leaf_links, graph)
+    gate = gate_only(store, repo_path, plan, graph,
+                     allow_protected_move=allow_protected_move)
+    _print_split_plan(plan, gate)
+
+    if not apply:
+        print("\n(dry-run — pass --apply to write)")
+        return
+    if not gate.ok:
+        print("\nGATE FAILED — not applying.")
+        raise typer.Exit(1)
+    result = apply_split(store, repo_path, plan, graph,
+                         allow_protected_move=allow_protected_move)
+    print(f"\napplied: {len(result['new_topics'])} sub-topics created, "
+          f"{result['moved']} memories moved, "
+          f"{result['kept_on_leaf']} kept on the leaf")
