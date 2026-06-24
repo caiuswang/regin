@@ -19,7 +19,7 @@ import typer
 
 from lib.activity_log import configure_activity_log, get_activity_logger
 from lib.logging_setup import configure_logging
-from cli.commands import db, gate, goal, grader, logs, memory, meta, patterns, repo, route, rules, schema, server, skills, topics, trace, users, wiki
+from cli.commands import db, gate, goal, grader, logs, memory, meta, patterns, repo, route, rules, schema, server, session, skills, topics, trace, users, wiki
 
 
 app = typer.Typer(
@@ -80,6 +80,7 @@ repo.register(app)    # discover, sync, status
 route.register(app)   # route (experimental dense pattern routing)
 goal.register(app)    # goal preflight (loop-engineering roadmap)
 gate.register(app)    # gate recall-ran (trace-derived skill-step gates)
+session.register(app) # session-id (current session id from hook cache)
 server.register(app)  # serve
 
 # Grouped subcommands (`regin users ...` etc.).

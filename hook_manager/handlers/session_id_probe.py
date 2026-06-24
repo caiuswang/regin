@@ -1,32 +1,28 @@
-"""Handler: PreToolUse → answer a session-id probe with the live session id.
+"""Handler: PreToolUse → stamp the live session id into the session cache.
 
 An agent often needs its own Claude Code session id — to stamp
-`goal feedback --trace-id`, `goal preflight --session-id`, or anything else
-that should link back to the run — but Claude Code never exposes the id to
-Bash. The hook payload *does* carry `session_id`, so this handler lets the
-agent simply *ask* for it: run the sentinel command and the hook rewrites it
-(via `updated_input`) to echo the id, which the agent then reads off stdout
-and concatenates however it likes.
+`goal feedback --trace-id`, `goal preflight --session-id`, or the `gate`
+anti-skip checks — but Claude Code never exposes the id to Bash. The hook
+payload *does* carry `session_id`, so on every Bash call this handler records
+it into the cache in `lib/session_probe.py`, keyed by cwd (and by any `--nonce`
+token in the command).
 
-    SID=$(regin session-id)
-    .venv/bin/python cli/regin.py goal feedback "$goal" --trace-id "$SID" …
+The real `regin session-id` CLI command reads that cache back. Because the
+stamp lands on the probe command's *own* PreToolUse — which fires immediately
+before the command runs — a single `SID=$(.venv/bin/python cli/regin.py
+session-id)` resolves to the right id with no prior step, and it works through
+`$(…)` substitution and the full interpreter form alike.
 
-Keeping the probe a standalone command (not a command-substitution embedded in
-a larger line) keeps the match strict and the rewrite predictable: the hook
-only ever replaces a bare probe, never mutates a real command. The agent owns
-the composition step.
+No command rewriting: `session-id` is a real, always-present subcommand, so
+there is nothing to intercept — the handler only records and never alters the
+command or its permission decision.
 """
 
 from __future__ import annotations
 
-import re
-import shlex
+from lib import session_probe
 
 from ..core import HookPayload, HookResponse
-
-# The whole Bash command must be just the probe — `regin session-id`,
-# `regin-session-id`, `regin session id`, etc. Nothing else is touched.
-_PROBE_RE = re.compile(r'^\s*regin[ -]session[ -]id\s*$', re.IGNORECASE)
 
 
 def handle(payload: HookPayload) -> HookResponse | None:
@@ -37,12 +33,8 @@ def handle(payload: HookPayload) -> HookResponse | None:
         return None
     ti = payload.tool_input or {}
     cmd = ti.get('command') if isinstance(ti, dict) else None
-    if not isinstance(cmd, str) or not _PROBE_RE.match(cmd):
-        return None
-    # Rewrite to a bare echo of the id, so the agent gets exactly the session
-    # id on stdout (newline-terminated; `$(…)` capture strips it).
-    return HookResponse(
-        permission_decision='allow',
-        permission_reason='session-id probe answered by hook',
-        updated_input={**ti, 'command': f"printf '%s\\n' {shlex.quote(sid)}"},
-    )
+    # Stamp the cache so `regin session-id` (the real CLI command) resolves
+    # THIS session. Never raises — it is on the hot PreToolUse path.
+    session_probe.record(sid, cwd=payload.cwd,
+                         command=cmd if isinstance(cmd, str) else None)
+    return None
