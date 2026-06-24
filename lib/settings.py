@@ -703,6 +703,15 @@ class AgentMessagesConfig(BaseModel):
     push_permission_events: bool = False
     push_plan_events: bool = False
 
+    # ── Retention (opt-in) ──
+    # The inbox is otherwise grow-forever. When `retention_days` is set,
+    # messages older than that are hard-deleted automatically after each
+    # write (see `store._enforce_retention`). None = keep forever (default,
+    # original behavior). `retention_keep_pinned` shields pinned cards from
+    # the auto-prune. Manual `regin messages prune` is always available.
+    retention_days: int | None = None
+    retention_keep_pinned: bool = True
+
 
 # Project-root-relative paths — fixed by where this file lives.
 _PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent

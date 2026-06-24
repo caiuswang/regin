@@ -16,9 +16,10 @@ place regardless of caller.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import delete as sa_delete
 from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
@@ -159,6 +160,7 @@ def record_message(*, trace_id: str, body: str, msg_type: Optional[str] = None,
         if status is not None:
             _set_webhook_status(data["id"], status)
             data["webhook_status"] = status
+    _enforce_retention()
     return data
 
 
@@ -303,8 +305,104 @@ def set_pinned(message_id: int, pinned: bool) -> bool:
     return True
 
 
+# ── Retention / pruning ──────────────────────────────────────
+# The inbox is otherwise grow-forever: keyless sends always insert, and
+# `dismissed_at` is a soft flag (rows linger). Pruning is the only hard
+# delete — kept behind this module like every other write.
+
+def _prune_conditions(*, older_than_days, dismissed_only, keep_pinned,
+                      include_tests) -> list:
+    """Build the candidate-row filters shared by prune + its dry-run."""
+    conds = []
+    if older_than_days is not None:
+        cutoff = (datetime.now() - timedelta(days=older_than_days)).isoformat()
+        conds.append(AgentMessage.created_at < cutoff)
+    if dismissed_only:
+        conds.append(AgentMessage.dismissed_at.is_not(None))
+    if keep_pinned:
+        conds.append(AgentMessage.pinned == 0)
+    if not include_tests:
+        conds.append(AgentMessage.is_test == 0)
+    return conds
+
+
+def prune_messages(*, older_than_days: Optional[int] = None,
+                   dismissed_only: bool = False, keep: Optional[int] = None,
+                   keep_pinned: bool = True, include_tests: bool = True,
+                   dry_run: bool = False) -> int:
+    """Hard-delete inbox messages matching the criteria; return the count
+    deleted (or that *would* be, when `dry_run`).
+
+    At least one of `older_than_days` / `dismissed_only` / `keep` must be
+    given — a criteria-free call raises `ValueError` rather than wiping the
+    whole inbox. Pinned rows are protected unless `keep_pinned=False`; test
+    rows are protected only when `include_tests=False`. `keep=N` retains the
+    N newest matching rows and deletes the older remainder.
+    """
+    if older_than_days is None and not dismissed_only and keep is None:
+        raise ValueError("prune_messages needs at least one criterion: "
+                         "older_than_days, dismissed_only, or keep")
+    conds = _prune_conditions(
+        older_than_days=older_than_days, dismissed_only=dismissed_only,
+        keep_pinned=keep_pinned, include_tests=include_tests)
+    with SessionLocal() as session:
+        stmt = (select(AgentMessage.id).where(*conds)
+                .order_by(AgentMessage.created_at.desc(), AgentMessage.id.desc()))
+        ids = list(session.exec(stmt).all())
+        to_delete = ids[keep:] if keep is not None else ids
+        if not dry_run and to_delete:
+            session.exec(sa_delete(AgentMessage)
+                         .where(AgentMessage.id.in_(to_delete)))
+            session.commit()
+    if not dry_run:
+        log.write("messages_pruned", count=len(to_delete),
+                  older_than_days=older_than_days, dismissed_only=dismissed_only,
+                  keep=keep)
+    return len(to_delete)
+
+
+def _enforce_retention() -> None:
+    """Auto-prune past `settings.agent_messages.retention_days`, if set.
+
+    Called after each write so an opt-in retention window keeps the inbox
+    bounded with no manual step. Off by default (None → keep forever, the
+    original behavior). Never raises into the write path.
+    """
+    from lib.settings import settings
+    cfg = settings.agent_messages
+    days = getattr(cfg, "retention_days", None)
+    if not days or days <= 0:
+        return
+    try:
+        prune_messages(older_than_days=days,
+                       keep_pinned=getattr(cfg, "retention_keep_pinned", True))
+    except Exception:  # best-effort background prune — never break the write path
+        log.error("retention_prune_failed", exc_info=True)
+
+
+def message_stats() -> dict:
+    """Counts that drive `regin messages stats` (total / unread / dismissed /
+    pinned / test) plus the oldest row's timestamp."""
+    with SessionLocal() as session:
+        def _n(*conds) -> int:
+            return len(session.exec(select(AgentMessage.id).where(*conds)).all())
+        oldest = session.exec(
+            select(AgentMessage.created_at)
+            .order_by(AgentMessage.created_at.asc()).limit(1)).first()
+        return {
+            "total": _n(),
+            "unread": _n(AgentMessage.read_at.is_(None),
+                         AgentMessage.dismissed_at.is_(None)),
+            "dismissed": _n(AgentMessage.dismissed_at.is_not(None)),
+            "pinned": _n(AgentMessage.pinned == 1),
+            "tests": _n(AgentMessage.is_test == 1),
+            "oldest": oldest,
+        }
+
+
 __all__ = [
     "record_message", "list_session_messages", "list_inbox",
     "unread_count", "mark_read", "ack", "dismiss", "set_pinned",
     "live_keyed_message", "dismiss_keyed",
+    "prune_messages", "message_stats",
 ]
