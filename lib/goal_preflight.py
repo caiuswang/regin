@@ -317,10 +317,17 @@ def build_roadmap(goal: str, repo_root: str | None = None,
     """Assemble the roadmap for a goal.
 
     The core (skills, references, tokens, gates) is deterministic: no
-    network, no model — same input always yields same output. The lessons
-    leg is opt-in (`with_lessons=True`, set by the CLI) and best-effort, so
-    the offline core and its tests stay pure while real invocations also
-    surface past lessons to fold into the checklist.
+    network, no model — same input always yields same output. This is the
+    durable value of preflight and is always built.
+
+    The lessons leg is opt-in (`with_lessons=True`) and **off by default at
+    the CLI** as of 2026-06: it runs `recall_lessons` in FTS mode (lexical
+    BM25 on the goal text, pre-code), the weakest recall rung, which measured
+    ~22% injection engagement (`injection_events`: 163 engaged / 740 scored).
+    Lesson recall has moved to the structure-first `regin memory
+    recall-for-task` path (pulls a subsystem subtree by importance, not text
+    similarity). `with_lessons=True` is retained for A/B-ing the old flat leg
+    against the new one over the same engagement grading.
     """
     repo_root = repo_root or os.getcwd()
     rules = detect_areas(goal)

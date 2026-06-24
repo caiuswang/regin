@@ -60,6 +60,104 @@ def cmd_recall(
         _print_memory_line(h.memory)
 
 
+def _resolve_subsystem_node(graph: dict, subsystem: Optional[str], task: str,
+                            repo_path) -> Optional[str]:
+    """The subsystem topic node for a task-scoped recall: a valid `--subsystem`
+    override if given, else the node the task text keyword-routes to (or None
+    when it routes nowhere)."""
+    if subsystem and subsystem in (graph.get("topics") or {}):
+        return subsystem
+    from lib.topics.route import match_topic
+    routed = match_topic(repo_path, task)
+    return routed.get("id") if routed else None
+
+
+def _task_subtree_memories(store, graph: dict, node_id: Optional[str],
+                           top_k: int, scope: Optional[str]) -> list[dict]:
+    """Structure-first retrieval: the subsystem subtree's active memories
+    (importance/recall ranked — NOT query similarity), hydrated and capped to
+    `top_k`. [] for an unrouted task. This is the leg that makes the topic tree
+    the retriever, so a stage-language task description can't filter the right
+    memories out of the candidate pool."""
+    if not node_id:
+        return []
+    from lib.topics.tree import subtree_ids
+    ids = store.memories_for_topic_subtree(subtree_ids(graph, node_id),
+                                           scope=scope)
+    return [d for d in (store.get_dict(mid) for mid in ids[:top_k]) if d]
+
+
+def _record_task_offered(store, session: str, mems: list[dict],
+                         task: str) -> None:
+    """Log the surfaced memories as *offered* (an injection event, no
+    recall_count bump) — the same exposure-without-usefulness record
+    `goal_preflight.record_offered` writes. This is what folds structure-first
+    task recall into the engagement-grading loop: without it, these hits are
+    never scored, so we could never compare its engaged-rate against the
+    flat-recall baseline. Best-effort — recall must never break on it."""
+    try:
+        ids = [m["id"] for m in mems if m.get("id")]
+        if ids:
+            store.record_injections(session, ids, query=task)
+    except Exception:
+        pass
+
+
+@memory_app.command("recall-for-task")
+def cmd_recall_for_task(
+    task: str = typer.Argument(
+        ..., help="Sub-task description to recall experience for"),
+    session: str = typer.Option(
+        ..., "--session", "-s",
+        help="Session/trace id to attach the memory.recall.task span to"),
+    subsystem: Optional[str] = typer.Option(
+        None, "--subsystem",
+        help="Topic node id to scope retrieval to; if omitted, routed from "
+             "the task text"),
+    top_k: int = typer.Option(3, "--top-k"),
+    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+) -> None:
+    """Structure-first, task-scoped recall for a spawner to bake into a
+    sub-task prompt.
+
+    Resolves a subsystem topic node, pulls that subtree's memories via
+    `_task_subtree_memories` (structure-first, not query similarity), prints a
+    <recalled_experience> block to stdout, and emits a `memory.recall.task`
+    span so `regin gate task-recall-ran` can prove it fired. The binding
+    constraint is topic-link coverage (`regin memory link-topics`): a subsystem
+    node with no linked memories returns nothing.
+    """
+    import lib.memory as memory
+    from lib.hook_plugin import post_span
+    from lib.memory.skill_experience import format_memory_line
+    from lib.settings import settings
+
+    store = memory.get_store()
+    graph = _merged_graph()
+    node_id = _resolve_subsystem_node(graph, subsystem, task,
+                                      settings.project_root)
+    mems = _task_subtree_memories(store, graph, node_id, top_k, scope)
+
+    body = [format_memory_line(m) for m in mems] or ["(no filed experience)"]
+    block = "\n".join([
+        "<recalled_experience>",
+        "Experience recalled from regin's past sessions. It may be stale —",
+        "verify against the current code before relying on it.",
+        *body,
+        "</recalled_experience>",
+    ])
+    post_span(trace_id=session, name="memory.recall.task", attributes={
+        "task": task[:120],
+        "subsystem": node_id,
+        "hit_count": len(mems),
+        "hits": [{"id": m.get("id"), "kind": m.get("kind"),
+                  "title": m.get("title"), "scope": m.get("scope")}
+                 for m in mems],
+    })
+    _record_task_offered(store, session, mems, task)
+    print(block)  # block (and nothing else) to stdout so it pipes into a prompt
+
+
 @memory_app.command("list")
 def cmd_list(
     tier: Optional[str] = typer.Option(None, "--tier"),

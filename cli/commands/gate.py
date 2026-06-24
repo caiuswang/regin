@@ -40,6 +40,20 @@ def cmd_recall_ran(
     _run_gate("recall-ran", session, json)
 
 
+@gate_app.command(
+    "task-recall-ran",
+    help="PASS iff this session emitted a task-scoped recall span "
+         "(memory.recall.task — spawner-baked recall anti-skip).",
+)
+def cmd_task_recall_ran(
+    session: str = typer.Option(
+        ..., "--session", "-s",
+        help="Session/trace id to check (the spawner's session)."),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    _run_gate("task-recall-ran", session, json)
+
+
 def _run_gate(key: str, session: str, json: bool) -> None:
     """Shared body: count the gate's spans, report, exit non-zero on fail."""
     from lib.activity_log import get_activity_logger

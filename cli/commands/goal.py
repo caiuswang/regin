@@ -30,8 +30,11 @@ def cmd_goal_preflight(
     repo_root: str = typer.Option(None, "--repo-root",
                                   help="Repo root for reference globbing (default: cwd)"),
     with_lessons: bool = typer.Option(
-        True, "--with-lessons/--no-lessons",
-        help="Recall past lessons into the roadmap (best-effort; needs memory)"),
+        False, "--with-lessons/--no-lessons",
+        help="Recall past lessons into the roadmap via the legacy flat FTS leg. "
+             "OFF by default (demoted 2026-06: ~22%% injection engagement). "
+             "Lessons now come from structure-first `regin memory recall-for-task`; "
+             "pass --with-lessons only to A/B the old flat recall."),
     session_id: str = typer.Option(
         None, "--session-id",
         help="Session id to record the offered lessons under (makes the "

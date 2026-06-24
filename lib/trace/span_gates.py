@@ -41,7 +41,17 @@ RECALL_ARM = SpanGate(
     describe="memory-tree-nav / recall arm (goal-verified-treenav step 1b)",
 )
 
-GATES: dict[str, SpanGate] = {g.key: g for g in (RECALL_ARM,)}
+# `regin memory recall-for-task` emits one `memory.recall.task` span per
+# spawner-baked, task-scoped recall — see cli/commands/memory.py. v0 gates at
+# the session level ("did any task-scoped recall fire this session"); per-stage
+# correlation is a later refinement.
+TASK_RECALL = SpanGate(
+    key="task-recall-ran",
+    exact=("memory.recall.task",),
+    describe="task-scoped recall fired this session (spawner-baked recall)",
+)
+
+GATES: dict[str, SpanGate] = {g.key: g for g in (RECALL_ARM, TASK_RECALL)}
 
 
 def span_count(trace_id: str, gate: SpanGate) -> int:
