@@ -565,6 +565,21 @@ def _apply_assignments(store, assignments, dry_run, titles,
     return linked, refreshed, unmatched
 
 
+def _select_link_rows(store, *, scope, kind, tier, limit,
+                      orphans_only) -> list[dict]:
+    """Pick the active memories `link-topics` will (re)classify, applying the
+    optional filters. `kind`/`tier` pass straight through to `list_memories`;
+    `orphans_only` keeps only memories with NO authoritative-topic link yet
+    (the 'unfiled' bucket from `store.orphaned_memory_ids`), so a re-run is
+    incremental — it never re-sends already-filed memories to the classifier."""
+    rows = store.list_memories(status="active", scope=scope, kind=kind,
+                               tier=tier, limit=limit)
+    if orphans_only:
+        orphan_ids = set(store.orphaned_memory_ids(scope=scope))
+        rows = [m for m in rows if m["id"] in orphan_ids]
+    return rows
+
+
 def _classify_agentic(rows, graph, stats=None):
     """Run the agentic classifier over `rows` against the pre-merged `graph`;
     exit non-zero (fail-loud) when no external agent is reachable instead of
@@ -593,6 +608,17 @@ def cmd_link_topics(
              "default: project root"),
     scope: Optional[str] = typer.Option(
         None, "--scope", help="Only link memories in this scope"),
+    kind: Optional[str] = typer.Option(
+        None, "--kind",
+        help="Only link memories of this kind (e.g. lesson, note, decision)"),
+    tier: Optional[str] = typer.Option(
+        None, "--tier",
+        help="Only link memories in this tier (e.g. working, episodic)"),
+    orphans_only: bool = typer.Option(
+        False, "--orphans-only", "-o",
+        help="Only link memories not yet linked to ANY topic (the unfiled "
+             "bucket) — makes a re-run incremental and skips already-filed "
+             "memories, so the costly agentic pass only sees new ones"),
     limit: int = typer.Option(2000, "--limit"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Report matches without writing links"),
@@ -617,7 +643,8 @@ def cmd_link_topics(
     repo_path = Path(repo).resolve() if repo else Path(
         settings.project_root).resolve()
     store = memory.get_store()
-    rows = store.list_memories(status="active", scope=scope, limit=limit)
+    rows = _select_link_rows(store, scope=scope, kind=kind, tier=tier,
+                             limit=limit, orphans_only=orphans_only)
     graph = _merged_graph(repo_path)
     # Resolve ids → human handles once so the dry-run preview reads as
     # "<memory title> → <topic label>" instead of two opaque ids.
@@ -639,8 +666,9 @@ def cmd_link_topics(
         dropped = len(rows) - len(assignments)
         diag = f" dropped={dropped} unparsed={stats.get('unparsed', 0)}"
     verb = "would link" if dry_run else "linked"
+    selected = "orphaned" if orphans_only else "active"
     print(f"{verb}={linked} refreshed={refreshed} unmatched={unmatched}{diag} "
-          f"(of {len(rows)} active)")
+          f"(of {len(rows)} {selected})")
 
 
 def _redeploy_skills(slugs) -> None:
