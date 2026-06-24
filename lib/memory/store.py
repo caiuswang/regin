@@ -1665,11 +1665,32 @@ class SqliteMemoryStore:
                 session.add(row)
             session.commit()
 
-    def reinforce(self, memory_id: str) -> None:
+    def _resolve_id(self, memory_id: str) -> Optional[str]:
+        """Resolve an exact id, or an unambiguous id PREFIX, to a full memory
+        id. The inject/recall block displays 8-char prefixes (`(memory ed630222,
+        …)`), so a hand-passed `--included` id is usually a prefix. Returns None
+        when it matches zero rows or is an ambiguous prefix (>1) — the caller
+        must treat that as 'not found', never as a silent success."""
+        with MemorySessionLocal() as session:
+            if session.get(Memory, memory_id) is not None:
+                return memory_id
+            rows = session.exec(select(Memory.id).where(
+                Memory.id.like(f"{memory_id}%")).limit(2)).all()
+        return rows[0] if len(rows) == 1 else None
+
+    def reinforce(self, memory_id: str) -> bool:
         """Bump one memory's recall counter directly, outside a `recall()`
         call. The deliberate-usefulness signal: the auto-inject hook calls
-        this when a previously injected memory keeps mattering."""
-        self._bump_recall([memory_id])
+        this when a previously injected memory keeps mattering.
+
+        Accepts a full id or an unambiguous prefix. Returns True iff a row was
+        actually bumped — False when the id matched nothing or a prefix was
+        ambiguous, so callers report honestly instead of assuming success."""
+        full = self._resolve_id(memory_id)
+        if full is None:
+            return False
+        self._bump_recall([full])
+        return True
 
     # ── Per-session injection tracking (auto-inject dedup + reinforce) ──
     def injected_memory_ids(self, session_id: str) -> set[str]:

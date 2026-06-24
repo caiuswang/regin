@@ -40,6 +40,7 @@ class OutcomeResult:
     """Summary of what the feedback pass changed in the store."""
 
     reinforced: list[str] = field(default_factory=list)
+    unreinforced: list[str] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)
     new_lessons: list[str] = field(default_factory=list)
     disabled: bool = False
@@ -73,7 +74,8 @@ def record_outcome(goal: str, *,
         result.disabled = True
         return result
 
-    result.reinforced = _reinforce_all(memory.get_store(), included)
+    result.reinforced, result.unreinforced = _reinforce_all(
+        memory.get_store(), included)
     result.ignored = [mid for mid in offered if mid not in set(included)]
     result.new_lessons = _write_failures(
         memory, fails, tags=list(tags or []), importance=importance,
@@ -81,10 +83,16 @@ def record_outcome(goal: str, *,
     return result
 
 
-def _reinforce_all(store, ids: list[str]) -> list[str]:
+def _reinforce_all(store, ids: list[str]) -> tuple[list[str], list[str]]:
+    """Reinforce each id; return (matched, missed). An id misses when it
+    resolves to no memory — a bad id or an ambiguous prefix — so the count is
+    truthful and the caller can warn instead of claiming false success (the
+    inject block shows 8-char prefixes, so a hand-passed id often is one)."""
+    matched: list[str] = []
+    missed: list[str] = []
     for mid in ids:
-        store.reinforce(mid)
-    return list(ids)
+        (matched if store.reinforce(mid) else missed).append(mid)
+    return matched, missed
 
 
 def _write_failures(memory, fails: list[str], *, tags: list[str],
@@ -114,12 +122,18 @@ def render_summary(result: OutcomeResult) -> str:
     ]
     if result.new_lessons:
         lines.append("  new lesson ids: " + ", ".join(result.new_lessons))
+    if result.unreinforced:
+        lines.append(
+            f"  ⚠ {len(result.unreinforced)} --included id(s) matched NOTHING "
+            f"(not reinforced — bad id or ambiguous prefix): "
+            + ", ".join(result.unreinforced))
     return "\n".join(lines)
 
 
 def outcome_to_dict(result: OutcomeResult) -> dict:
     return {
         "reinforced": result.reinforced,
+        "unreinforced": result.unreinforced,
         "ignored": result.ignored,
         "new_lessons": result.new_lessons,
         "disabled": result.disabled,
