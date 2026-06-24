@@ -103,6 +103,28 @@ def _record_task_offered(store, session: str, mems: list[dict],
         pass
 
 
+def _hit_summaries(mems: list[dict]) -> list[dict]:
+    """Compact, machine-readable view of the surfaced memories — the shared
+    source for both the `memory.recall.task` span attributes and the `--json`
+    output, so the two never drift."""
+    return [{"id": m.get("id"), "kind": m.get("kind"),
+             "title": m.get("title"), "scope": m.get("scope")} for m in mems]
+
+
+def _render_block(mems: list[dict]) -> str:
+    """The default `<recalled_experience>` text block a spawner pastes atop a
+    sub-task prompt. `(no filed experience)` when the subtree was empty."""
+    from lib.memory.skill_experience import format_memory_line
+    body = [format_memory_line(m) for m in mems] or ["(no filed experience)"]
+    return "\n".join([
+        "<recalled_experience>",
+        "Experience recalled from regin's past sessions. It may be stale —",
+        "verify against the current code before relying on it.",
+        *body,
+        "</recalled_experience>",
+    ])
+
+
 @memory_app.command("recall-for-task")
 def cmd_recall_for_task(
     task: str = typer.Argument(
@@ -116,20 +138,24 @@ def cmd_recall_for_task(
              "the task text"),
     top_k: int = typer.Option(3, "--top-k"),
     scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    json_out: bool = typer.Option(
+        False, "--json",
+        help="Emit the hits as JSON (subsystem, hit_count, and a hits array of "
+             "id/kind/title/scope) for an orchestrator to consume "
+             "programmatically, instead of the text block"),
 ) -> None:
     """Structure-first, task-scoped recall for a spawner to bake into a
     sub-task prompt.
 
     Resolves a subsystem topic node, pulls that subtree's memories via
     `_task_subtree_memories` (structure-first, not query similarity), prints a
-    <recalled_experience> block to stdout, and emits a `memory.recall.task`
-    span so `regin gate task-recall-ran` can prove it fired. The binding
-    constraint is topic-link coverage (`regin memory link-topics`): a subsystem
-    node with no linked memories returns nothing.
+    <recalled_experience> block to stdout (or JSON with `--json`), and emits a
+    `memory.recall.task` span so `regin gate task-recall-ran` can prove it
+    fired. The binding constraint is topic-link coverage (`regin memory
+    link-topics`): a subsystem node with no linked memories returns nothing.
     """
     import lib.memory as memory
     from lib.hook_plugin import post_span
-    from lib.memory.skill_experience import format_memory_line
     from lib.settings import settings
 
     store = memory.get_store()
@@ -137,25 +163,22 @@ def cmd_recall_for_task(
     node_id = _resolve_subsystem_node(graph, subsystem, task,
                                       settings.project_root)
     mems = _task_subtree_memories(store, graph, node_id, top_k, scope)
+    hits = _hit_summaries(mems)
 
-    body = [format_memory_line(m) for m in mems] or ["(no filed experience)"]
-    block = "\n".join([
-        "<recalled_experience>",
-        "Experience recalled from regin's past sessions. It may be stale —",
-        "verify against the current code before relying on it.",
-        *body,
-        "</recalled_experience>",
-    ])
+    # Side effects fire in BOTH output modes — never gated on format.
     post_span(trace_id=session, name="memory.recall.task", attributes={
-        "task": task[:120],
-        "subsystem": node_id,
-        "hit_count": len(mems),
-        "hits": [{"id": m.get("id"), "kind": m.get("kind"),
-                  "title": m.get("title"), "scope": m.get("scope")}
-                 for m in mems],
+        "task": task[:120], "subsystem": node_id,
+        "hit_count": len(mems), "hits": hits,
     })
     _record_task_offered(store, session, mems, task)
-    print(block)  # block (and nothing else) to stdout so it pipes into a prompt
+
+    if json_out:
+        print(json.dumps(
+            {"subsystem": node_id, "hit_count": len(mems), "hits": hits},
+            indent=2))
+    else:
+        # Block (and nothing else) to stdout so it pipes into a prompt.
+        print(_render_block(mems))
 
 
 @memory_app.command("list")
