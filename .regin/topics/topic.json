@@ -950,6 +950,35 @@
       ],
       "status": "active"
     },
+    "recall-eval-verification": {
+      "aliases": [
+        "verify recall end to end",
+        "recall eval harness",
+        "dense path silent fail",
+        "embed coverage",
+        "inject path probe"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/memory/evaluate.py"
+      ],
+      "intent": "Proving a recall change actually works: verify end-to-end through the real auto-inject path (not units), why silently-degrading fast paths and ungated FTS fallbacks hide breakage, embed-coverage completeness, mechanical probes that must not reinforce, and --json output hygiene. Drill in before trusting a recall eval.",
+      "label": "Recall eval & end-to-end verification (true inject path, silent-degradation gotchas)",
+      "parent_id": "agent-memory",
+      "refs": [
+        {
+          "path": "lib/memory/evaluate.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/store.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
     "rule-engine-design": {
       "aliases": [
         "rule engines",
@@ -1556,6 +1585,110 @@
       ],
       "status": "active"
     },
+    "trace-merge-reconcile": {
+      "aliases": [
+        "serve-time merge",
+        "span reparenting",
+        "rewind fork detection",
+        "discarded span render",
+        "lookahead reattachment"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/trace/merge.py",
+        "lib/trace/repair.py",
+        "lib/trace/projection.py"
+      ],
+      "intent": "The READ-time assembly path in merge.py: serve-time merge_spans, lookahead reattachment of UserPromptSubmit spans, dropped/discarded vs deleted render states, count-vs-items divergence, cancelled-tool span loss, segment-aware ctx%, and prompt-edit forks vs real /rewinds. Drill in when spans exist but render wrong.",
+      "label": "Trace serve-time merge & reconcile (reparent, reattach, forks/rewinds, render states)",
+      "parent_id": "session-trace",
+      "refs": [
+        {
+          "path": "lib/trace/merge.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/repair.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/trace_service/queries.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
+    "trace-span-capture": {
+      "aliases": [
+        "new span builder",
+        "payload schema for a tool",
+        "trace a new system event",
+        "kimi transcript to spans",
+        "injected block span"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/trace/transcript_parsers.py",
+        "hook_manager/handlers/*trace*.py",
+        "lib/trace/payload_schemas/**"
+      ],
+      "intent": "Adding or reshaping a span TYPE: a new _TOOL_BUILDERS entry, its payload schema, the attr-whitelist for an injected block, wiring a new traced system-event subtype across the capture layers, or normalizing a non-Claude provider's transcript (Kimi) into spans. Drill in when the question is 'how do I make X show up as a span'.",
+      "label": "Trace span capture (builders, payload schemas, new system subtypes, provider quirks)",
+      "parent_id": "session-trace",
+      "refs": [
+        {
+          "path": "lib/trace/trace_service/ingest.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/trace/projection.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/orm/models/trace.py",
+          "role": "schema"
+        }
+      ],
+      "status": "active"
+    },
+    "trace-usage-billing": {
+      "aliases": [
+        "session bill wrong",
+        "subagent token spend",
+        "turn usage rows",
+        "workflow bills zero",
+        "token rollup"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/trace/transcript_usage.py",
+        "hook_manager/handlers/turn_trace/**"
+      ],
+      "intent": "Token and dollar accounting for a session: turn_usage rows, why a Task-subagent's API spend goes missing, Workflow billing $0 from a cache-less rate shard, subagent transcript nesting depth, and gating the seen-cache on ingest success. Drill in when the bill or token rollup looks wrong.",
+      "label": "Trace usage & billing (turn_usage, token/cost accounting, subagent bill attribution)",
+      "parent_id": "session-trace",
+      "refs": [
+        {
+          "path": "lib/trace/transcript_usage.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/orm/models/trace.py",
+          "role": "schema"
+        },
+        {
+          "path": "lib/trace/trace_service/queries.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
     "unclassified": {
       "aliases": [],
       "blurb": "Topics awaiting a human bucket assignment. Appearing here is a curation backlog item to place under a real bucket.",
@@ -1584,6 +1717,60 @@
       "parent_id": null,
       "refs": [],
       "source": "manual-taxonomy",
+      "status": "active"
+    },
+    "webui-dev-loop": {
+      "aliases": [
+        "vite proxy restart",
+        "tmux path argv0",
+        "send_to_user link path",
+        "dev server stale"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "frontend/vite.config.js"
+      ],
+      "intent": "Environment/iteration mechanics around working on the UI, not the UI itself: restart the vite dev server after vite.config proxy changes, tmux panes not inheriting the spawner's PATH (absolutise argv[0]), and send_to_user links being file paths not URLs. Drill in when the dev loop misbehaves rather than the rendered surface.",
+      "label": "WebUI dev-loop mechanics (vite proxy restart, tmux PATH, send_to_user link form)",
+      "parent_id": "webui",
+      "refs": [
+        {
+          "path": "frontend/vite.config.js",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
+    "webui-styling": {
+      "aliases": [
+        "vue scoped style not applying",
+        "data-theme inversion",
+        "portalled scoped css",
+        "table cell overlap",
+        "icon primitive no emoji"
+      ],
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "frontend/src/assets/style.css",
+        "frontend/src/components/ui/**"
+      ],
+      "intent": "CSS/render-level fixes in the Vue SPA: scoped styles not crossing into extracted child components (use global classes), data-theme palette inversion, Reka/Radix portalled content escaping scoped styles, the .input base class vs Tailwind utilities, focus-ring-as-containment, the Icon primitive (no emoji/inline svg), and measuring table-fixed cell overflow by text Range not the td box.",
+      "label": "WebUI styling & layout gotchas (scoped CSS reach, theming, portalled content, table overflow)",
+      "parent_id": "webui",
+      "refs": [
+        {
+          "path": "frontend/src/assets/style.css",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/components/ui/Icon.vue",
+          "role": "implementation"
+        }
+      ],
       "status": "active"
     },
     "webui-surface": {
