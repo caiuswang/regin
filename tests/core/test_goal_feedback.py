@@ -122,3 +122,102 @@ def test_render_summary_mentions_counts():
     res = OutcomeResult(reinforced=["a"], ignored=["b"], new_lessons=["c"])
     text = render_summary(res)
     assert "reinforced 1" in text and "wrote 1" in text
+
+
+# --- topic short-path filing (--topic) ------------------------------------
+
+def _an_existing_topic_node() -> str | None:
+    """A real authoritative topic node id from this repo's graph, or None
+    when the graph is empty/absent so the test can skip rather than guess."""
+    from lib.settings import settings
+    from lib.topics.route import load_authoritative_graph
+    nodes = load_authoritative_graph(str(settings.project_root)).get("topics", {})
+    return next(iter(nodes), None)
+
+
+def test_topic_files_new_failure_lesson_under_node():
+    node = _an_existing_topic_node()
+    if node is None:
+        pytest.skip("no authoritative topic graph in this environment")
+    result = record_outcome(
+        "refactor goal feedback",
+        failures=["Always file a failure-lesson under its subsystem topic."],
+        topics=[node], is_test=True)
+    try:
+        assert result.linked_topics == [node]
+        assert result.unresolved_topics == []
+        mid = result.new_lessons[0]
+        assert node in memory.get_store().authoritative_topics_of(mid)
+    finally:
+        for mid in result.new_lessons:
+            memory.forget(mid)
+
+
+def test_topic_slashed_short_path_resolves_to_leaf_node():
+    node = _an_existing_topic_node()
+    if node is None:
+        pytest.skip("no authoritative topic graph in this environment")
+    # A parent/child-style short path — only the leaf segment is the node id.
+    result = record_outcome(
+        "x", failures=["A rule."], topics=[f"some/parent/{node}"], is_test=True)
+    try:
+        assert result.linked_topics == [node]
+        assert result.unresolved_topics == []
+    finally:
+        for mid in result.new_lessons:
+            memory.forget(mid)
+
+
+def test_unknown_topic_does_not_crash_and_is_reported():
+    result = record_outcome(
+        "x", failures=["A rule."], topics=["zzqq-no-such-topic-node-wwxx"],
+        is_test=True)
+    try:
+        assert result.new_lessons  # lesson still written despite the bad topic
+        assert result.linked_topics == []
+        assert result.unresolved_topics == ["zzqq-no-such-topic-node-wwxx"]
+    finally:
+        for mid in result.new_lessons:
+            memory.forget(mid)
+
+
+def test_topic_with_no_new_failures_links_nothing():
+    # --topic but zero failures => nothing to file, no crash. A valid topic is
+    # NOT reported as unresolved just because there was nothing to attach it to.
+    result = record_outcome("x", failures=[], topics=["agent-memory"])
+    assert result.linked_topics == []
+    assert result.unresolved_topics == []
+    assert result.new_lessons == []
+
+
+def _topic_link_count() -> int:
+    from lib.memory.models import MemoryAuthoritativeTopic
+    from sqlmodel import select
+    from lib.memory.store import MemorySessionLocal
+    with MemorySessionLocal() as s:
+        return len(s.exec(select(MemoryAuthoritativeTopic)).all())
+
+
+def test_forgetting_a_topic_filed_lesson_leaves_no_orphan_links():
+    node = _an_existing_topic_node()
+    if node is None:
+        pytest.skip("no authoritative topic graph in this environment")
+    before = _topic_link_count()
+    result = record_outcome(
+        "x", failures=["A rule."], topics=[node], is_test=True)
+    assert result.linked_topics == [node]
+    assert _topic_link_count() == before + 1  # the link landed
+    for mid in result.new_lessons:
+        memory.forget(mid)
+    assert _topic_link_count() == before  # forget cascaded — no orphan
+
+
+def test_render_summary_and_dict_surface_topics():
+    from lib.goal_feedback import outcome_to_dict
+    res = OutcomeResult(new_lessons=["c"], linked_topics=["agent-memory"],
+                        unresolved_topics=["bogus"])
+    text = render_summary(res)
+    assert "agent-memory" in text and "bogus" in text
+    d = outcome_to_dict(res)
+    assert d["linked_topics"] == ["agent-memory"]
+    assert d["unresolved_topics"] == ["bogus"]

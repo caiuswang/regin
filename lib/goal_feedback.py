@@ -34,6 +34,10 @@ from dataclasses import dataclass, field
 # the loop's own output is auditable.
 FAIL_TAG = "goal-verified-fail"
 
+# `source` recorded on the (memory, topic-node) link, so a hand-filed lesson
+# is distinguishable in the audit log from distill/reflect auto-filing.
+TOPIC_LINK_SOURCE = "goal-feedback"
+
 
 @dataclass
 class OutcomeResult:
@@ -43,6 +47,8 @@ class OutcomeResult:
     unreinforced: list[str] = field(default_factory=list)
     ignored: list[str] = field(default_factory=list)
     new_lessons: list[str] = field(default_factory=list)
+    linked_topics: list[str] = field(default_factory=list)
+    unresolved_topics: list[str] = field(default_factory=list)
     disabled: bool = False
 
 
@@ -51,6 +57,7 @@ def record_outcome(goal: str, *,
                    offered_ids: list[str] | None = None,
                    failures: list[str] | None = None,
                    tags: list[str] | None = None,
+                   topics: list[str] | None = None,
                    trace_id: str | None = None,
                    importance: float = 0.6,
                    is_test: bool = False) -> OutcomeResult:
@@ -61,7 +68,11 @@ def record_outcome(goal: str, *,
     surfaced; any offered-but-not-included id is recorded as ignored (no
     penalty here — decay is reflect's job). `failures` — acceptance items
     that failed verification, each phrased as a transferable rule; written
-    as new lessons tagged by area + FAIL_TAG. Returns what changed.
+    as new lessons tagged by area + FAIL_TAG. `topics` — authoritative
+    topic short-paths (node ids the agent already knows from its tree walk)
+    to file every new failure-lesson under, so the next roadmap recalls it
+    by subsystem instead of waiting for the async classifier. Returns what
+    changed.
     """
     included = _dedup(included_ids or [])
     offered = _dedup(offered_ids or [])
@@ -74,12 +85,14 @@ def record_outcome(goal: str, *,
         result.disabled = True
         return result
 
-    result.reinforced, result.unreinforced = _reinforce_all(
-        memory.get_store(), included)
+    store = memory.get_store()
+    result.reinforced, result.unreinforced = _reinforce_all(store, included)
     result.ignored = [mid for mid in offered if mid not in set(included)]
     result.new_lessons = _write_failures(
         memory, fails, tags=list(tags or []), importance=importance,
         trace_id=trace_id, is_test=is_test)
+    result.linked_topics, result.unresolved_topics = _link_topics(
+        store, result.new_lessons, topics)
     return result
 
 
@@ -107,6 +120,67 @@ def _write_failures(memory, fails: list[str], *, tags: list[str],
     ]
 
 
+def _link_topics(store, memory_ids: list[str],
+                 topics: list[str] | None) -> tuple[list[str], list[str]]:
+    """File each new failure-lesson under the agent-supplied topic short-paths.
+
+    `topics` are node ids the agent already knows from its tree walk (or a
+    looser short-path / label the router can resolve). Each resolves to one
+    authoritative node and is linked to every id in `memory_ids` via the
+    store's own `link_authoritative_topic`. Returns (linked_node_ids,
+    unresolved_inputs). Best-effort: a graph/link failure is reported as
+    unresolved, never raised — filing must not break the feedback write."""
+    wanted = _dedup(topics or [])
+    if not wanted or not memory_ids:
+        # No topics asked for, or no new lessons to file them under — either
+        # way nothing is unresolved (a valid topic isn't "unresolved" just
+        # because there was nothing to attach it to).
+        return [], []
+
+    from lib.settings import settings
+    repo_path = str(settings.project_root)
+    try:
+        from lib.topics.route import load_authoritative_graph
+        nodes = load_authoritative_graph(repo_path).get("topics", {})
+    except Exception:
+        return [], wanted
+
+    linked: list[str] = []
+    unresolved: list[str] = []
+    for raw in wanted:
+        node = _resolve_topic(nodes, repo_path, raw)
+        if node is None:
+            unresolved.append(raw)
+            continue
+        for mid in memory_ids:
+            store.link_authoritative_topic(mid, node, source=TOPIC_LINK_SOURCE)
+        linked.append(node)
+    return _dedup(linked), unresolved
+
+
+def _resolve_topic(nodes: dict, repo_path: str, raw: str) -> str | None:
+    """Resolve one short-path to an authoritative node id, or None.
+
+    Exact node id wins; else the last `/`-segment of a slashed path; else the
+    keyword router (`match_topic`) for a freeform label. Never raises."""
+    needle = (raw or "").strip()
+    if not needle:
+        return None
+    if needle in nodes:
+        return needle
+    leaf = needle.rstrip("/").split("/")[-1]
+    if leaf in nodes:
+        return leaf
+    try:
+        from lib.topics.route import match_topic
+        match = match_topic(repo_path, needle)
+    except Exception:
+        return None
+    if match and match.get("id") in nodes:
+        return match["id"]
+    return None
+
+
 def _dedup(seq: list[str]) -> list[str]:
     return list(dict.fromkeys(seq))
 
@@ -122,6 +196,15 @@ def render_summary(result: OutcomeResult) -> str:
     ]
     if result.new_lessons:
         lines.append("  new lesson ids: " + ", ".join(result.new_lessons))
+    if result.linked_topics:
+        lines.append(
+            f"  filed new lesson(s) under {len(result.linked_topics)} topic(s): "
+            + ", ".join(result.linked_topics))
+    if result.unresolved_topics:
+        lines.append(
+            f"  ⚠ {len(result.unresolved_topics)} --topic short-path(s) matched no "
+            f"node (not filed — check the id against the tree): "
+            + ", ".join(result.unresolved_topics))
     if result.unreinforced:
         lines.append(
             f"  ⚠ {len(result.unreinforced)} --included id(s) matched NOTHING "
@@ -136,5 +219,7 @@ def outcome_to_dict(result: OutcomeResult) -> dict:
         "unreinforced": result.unreinforced,
         "ignored": result.ignored,
         "new_lessons": result.new_lessons,
+        "linked_topics": result.linked_topics,
+        "unresolved_topics": result.unresolved_topics,
         "disabled": result.disabled,
     }

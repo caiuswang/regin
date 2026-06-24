@@ -381,6 +381,9 @@ class SqliteMemoryStore:
             for v in session.exec(select(MemoryValidation).where(
                     MemoryValidation.memory_id == memory_id)).all():
                 session.delete(v)
+            for link in session.exec(select(MemoryAuthoritativeTopic).where(
+                    MemoryAuthoritativeTopic.memory_id == memory_id)).all():
+                session.delete(link)
             session.execute(
                 sa_text("DELETE FROM memories_fts WHERE memory_id = :id"),
                 {"id": memory_id})

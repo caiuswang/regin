@@ -78,6 +78,10 @@ def cmd_goal_feedback(
         None, "--fail", help="An acceptance item that FAILED, phrased as a rule (repeatable)"),
     tag: list[str] = typer.Option(
         None, "--tag", help="Area tag for new failure-lessons, e.g. frontend (repeatable)"),
+    topic: list[str] = typer.Option(
+        None, "--topic",
+        help="Authoritative topic short-path (the node id you walked the tree "
+             "to) to file every new failure-lesson under (repeatable)"),
     trace_id: str = typer.Option(None, "--trace-id", help="Originating session trace id"),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
@@ -86,10 +90,11 @@ def cmd_goal_feedback(
 
     result = record_outcome(
         goal, included_ids=included, offered_ids=offered, failures=fail,
-        tags=tag, trace_id=trace_id)
+        tags=tag, topics=topic, trace_id=trace_id)
     get_activity_logger("goal").write(
         "feedback_recorded", reinforced=len(result.reinforced),
-        new_lessons=len(result.new_lessons))
+        new_lessons=len(result.new_lessons),
+        linked_topics=len(result.linked_topics))
 
     if json:
         print(_json.dumps(outcome_to_dict(result), indent=2))
