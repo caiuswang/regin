@@ -500,10 +500,13 @@ def _mem_title(m: dict) -> str:
     return title or "(untitled)"
 
 
-def _fmt_link(mid: str, node_id: str, titles: dict, labels: dict) -> str:
-    """One readable preview line: `<id8>  <memory title>  → <topic-id> (label)`.
+def _fmt_link(mid: str, node_id: str, titles: dict, labels: dict,
+              status: str = "") -> str:
+    """One readable line: `<status>  <id8>  <memory title>  → <topic-id> (label)`.
     Replaces the bare `<id> -> <id>` so a user can see *what* memory is being
-    filed *where* without looking either id up."""
+    filed *where* without looking either id up. `status` (`linked`/`refresh`/
+    `would`) names the action so a real run shows the same per-link detail as a
+    dry-run, with new vs refreshed links distinguishable at a glance."""
     title = titles.get(mid, "")
     if len(title) > 50:
         title = title[:49] + "…"
@@ -514,7 +517,8 @@ def _fmt_link(mid: str, node_id: str, titles: dict, labels: dict) -> str:
     if len(short) > 38:
         short = short[:37] + "…"
     suffix = f"  ({short})" if short and short != node_id else ""
-    return f"  {mid[:8]}  {title:<50}  → {node_id}{suffix}"
+    tag = f"{status:<7} " if status else ""
+    return f"  {tag}{mid[:8]}  {title:<50}  → {node_id}{suffix}"
 
 
 def _link_topics_hard(store, rows, repo_path, dry_run, titles,
@@ -532,12 +536,15 @@ def _link_topics_hard(store, rows, repo_path, dry_run, titles,
             unmatched += 1
             continue
         if dry_run:
-            print(_fmt_link(m["id"], node_id, titles, labels))
+            status = "would"
             linked += 1
         elif store.link_authoritative_topic(m["id"], node_id, source="route"):
+            status = "linked"
             linked += 1
         else:
+            status = "refresh"
             refreshed += 1
+        print(_fmt_link(m["id"], node_id, titles, labels, status))
     return linked, refreshed, unmatched
 
 
@@ -555,13 +562,16 @@ def _apply_assignments(store, assignments, dry_run, titles,
             continue
         for node_id in topics:
             if dry_run:
-                print(_fmt_link(mid, node_id, titles, labels))
+                status = "would"
                 linked += 1
             elif store.link_authoritative_topic(mid, node_id,
                                                 source=CLASSIFY_SOURCE):
+                status = "linked"
                 linked += 1
             else:
+                status = "refresh"
                 refreshed += 1
+            print(_fmt_link(mid, node_id, titles, labels, status))
     return linked, refreshed, unmatched
 
 
