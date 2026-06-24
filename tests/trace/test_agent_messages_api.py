@@ -38,6 +38,15 @@ def test_mark_read_endpoint_clears_unread(flask_client):
         "/api/agent-messages/unread-count").get_json()["count"] == 0
 
 
+def test_read_all_endpoint_clears_unread(flask_client):
+    for i in range(5):
+        _seed(body=f"m{i}")
+    resp = flask_client.post("/api/agent-messages/read-all", json={})
+    assert resp.get_json()["marked"] == 5
+    assert flask_client.get(
+        "/api/agent-messages/unread-count").get_json()["count"] == 0
+
+
 def test_dismiss_endpoint_removes_from_inbox(flask_client):
     m = _seed()
     flask_client.post(f"/api/agent-messages/{m['id']}/dismiss")

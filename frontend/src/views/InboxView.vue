@@ -96,11 +96,12 @@ function clearKinds() {
 }
 
 async function markAllRead() {
-  const ids = (messages.value || [])
-    .filter(m => !m.read_at && typeof m.id === 'number')
-    .map(m => m.id)
-  if (!ids.length) return
-  await api.post('/agent-messages/read', { ids })
+  if (!hasUnread.value) return
+  // Mark the whole inbox read server-side, not just the loaded page: the
+  // feed holds only the newest `limit` rows, so older-dated unread messages
+  // (e.g. recovered with their original timestamps) sit outside the window
+  // and a page-scoped mark would leave the badge stuck above zero.
+  await api.post('/agent-messages/read-all', { include_tests: includeTests.value })
   await Promise.all([loadInbox(), refreshBadge()])
 }
 

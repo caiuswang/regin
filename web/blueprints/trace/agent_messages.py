@@ -118,6 +118,15 @@ def api_agent_messages_read():
     return jsonify({'marked': store.mark_read(ids)})
 
 
+@trace_bp.route('/api/agent-messages/read-all', methods=['POST'])
+def api_agent_messages_read_all():
+    """Mark every unread message read — the whole inbox, not just a loaded
+    page. Body: {include_tests?: bool} (scope matches the unread badge)."""
+    payload = request.get_json(silent=True) or {}
+    include_tests = bool(payload.get('include_tests', False))
+    return jsonify({'marked': store.mark_all_read(include_tests=include_tests)})
+
+
 @trace_bp.route('/api/agent-messages/<int:message_id>/ack', methods=['POST'])
 def api_agent_messages_ack(message_id):
     return jsonify({'acked': store.ack(message_id)})

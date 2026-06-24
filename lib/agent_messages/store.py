@@ -279,6 +279,31 @@ def mark_read(message_ids: list[int]) -> int:
     return n
 
 
+def mark_all_read(include_tests: bool = False) -> int:
+    """Stamp `read_at` on *every* currently-unread, non-dismissed message —
+    not just a page-load window. The inbox "Mark all read" button means the
+    whole inbox, but the UI only holds the newest `limit` rows; marking just
+    those leaves older-dated unread rows (e.g. messages recovered with their
+    original timestamps) uncounted, so the badge never reaches zero. Scope
+    matches `unread_count` so the badge it drives lands at 0.
+    """
+    now = _now()
+    with SessionLocal() as session:
+        stmt = select(AgentMessage).where(
+            AgentMessage.read_at.is_(None),
+            AgentMessage.dismissed_at.is_(None))
+        if not include_tests:
+            stmt = stmt.where(AgentMessage.is_test == 0)
+        rows = session.exec(stmt).all()
+        for r in rows:
+            r.read_at = now
+            session.add(r)
+        session.commit()
+        n = len(rows)
+    log.write("messages_marked_all_read", count=n, include_tests=include_tests)
+    return n
+
+
 def ack(message_id: int) -> int:
     # Acking implies reading; stamp read_at too if still unset.
     _stamp([message_id], "read_at", only_if_unset=True)
@@ -402,7 +427,7 @@ def message_stats() -> dict:
 
 __all__ = [
     "record_message", "list_session_messages", "list_inbox",
-    "unread_count", "mark_read", "ack", "dismiss", "set_pinned",
+    "unread_count", "mark_read", "mark_all_read", "ack", "dismiss", "set_pinned",
     "live_keyed_message", "dismiss_keyed",
     "prune_messages", "message_stats",
 ]

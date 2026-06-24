@@ -92,3 +92,38 @@ def test_unread_only_filter():
     _record(body="two")
     store.mark_read([a["id"]])
     assert len(store.list_inbox(unread_only=True)) == 1
+
+
+def test_mark_all_read_clears_every_unread():
+    # More rows than any page window; mark_all_read must hit them all, not
+    # just a loaded slice — the recovered-old-timestamp regression.
+    for i in range(250):
+        _record(body=f"m{i}")
+    assert store.unread_count() == 250
+    assert store.mark_all_read() == 250
+    assert store.unread_count() == 0
+
+
+def test_mark_all_read_is_idempotent():
+    _record()
+    _record(body="two")
+    assert store.mark_all_read() == 2
+    assert store.mark_all_read() == 0      # nothing left unread
+
+
+def test_mark_all_read_respects_include_tests_scope():
+    _record(trace_id="real", body="prod", is_test=False)
+    _record(trace_id="test", body="synthetic", is_test=True)
+    # Default scope (badge scope) leaves the test row unread.
+    assert store.mark_all_read() == 1
+    assert store.unread_count() == 0
+    assert store.unread_count(include_tests=True) == 1
+    # Opting tests in clears the remainder.
+    assert store.mark_all_read(include_tests=True) == 1
+    assert store.unread_count(include_tests=True) == 0
+
+
+def test_mark_all_read_leaves_dismissed_untouched():
+    a = _record()
+    store.dismiss(a["id"])
+    assert store.mark_all_read() == 0      # dismissed rows are out of scope
