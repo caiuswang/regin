@@ -1634,10 +1634,20 @@ pre code {
 
 /* Alert */
 .alert {
+    /* Sticky so action-feedback (the global FlashMessage) and inline
+       error/validation banners stay pinned to the top of `.content-scroll`
+       instead of scrolling out of view above the fold — e.g. a "Saved"
+       response after clicking a Save button at the bottom of a long page.
+       z-sticky keeps it above page body (and above sticky page headers,
+       which sit at z-20). */
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
     border-radius: 0.375rem;
     padding: 0.75rem 1rem;
     font-size: 0.875rem;
     margin-bottom: 1rem;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 .alert-info {
     background: var(--color-blue-50);

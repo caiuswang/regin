@@ -351,7 +351,13 @@ watch([activeSection, selectedProvider], ([section]) => {
 <template>
   <div v-if="loading" class="empty-state">Loading settings…</div>
   <div v-else>
-    <header class="page-header">
+    <!-- Sticky page header: pins the title to the top of `.content-scroll`
+         so it stays visible while scrolling a long section. Negative margins
+         + matching padding extend the opaque bg over the scroll padding;
+         `-top-6`/`-top-4` covers `.content-scroll`'s padding-top. Mirrors the
+         sticky-header recipe in TriggersRawView. Sits at z-20, below the
+         flash banner (z-sticky/30) so a "Saved" response still reads on top. -->
+    <header class="page-header sticky -top-4 lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-3 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]">
       <div class="page-header-text">
         <div class="page-eyebrow">System</div>
         <h1 class="page-title">Settings</h1>
