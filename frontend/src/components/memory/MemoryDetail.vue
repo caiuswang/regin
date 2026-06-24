@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useFlash } from '../../composables/useFlash'
 import MarkdownContent from '../MarkdownContent.vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -12,6 +13,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['changed', 'navigate', 'close'])
 const { confirm } = useConfirm()
+const { flash } = useFlash()
 
 const memory = ref(null)
 const related = ref(null)
@@ -117,17 +119,22 @@ async function save() {
 
 async function approve() {
   await api.post(`/memory/${memory.value.id}/approve`)
+  await load(memory.value.id)
+  flash('Memory approved')
   emit('changed')
 }
 
 async function retire() {
   await api.post(`/memory/${memory.value.id}/retire`, {})
+  await load(memory.value.id)
+  flash('Memory retired')
   emit('changed')
 }
 
 async function restore() {
   await api.post(`/memory/${memory.value.id}/restore`)
   await load(memory.value.id)
+  flash('Memory restored')
   emit('changed')
 }
 

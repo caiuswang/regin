@@ -221,3 +221,59 @@ def test_render_summary_and_dict_surface_topics():
     d = outcome_to_dict(res)
     assert d["linked_topics"] == ["agent-memory"]
     assert d["unresolved_topics"] == ["bogus"]
+
+
+# --- explicit no-topic + no fuzzy misfile ---------------------------------
+
+def test_no_topic_sentinel_files_lesson_unbound_not_unresolved():
+    # The agent walked the tree, found no related node, and says so explicitly.
+    # The lesson is still written, filed under NO topic, and the sentinel is a
+    # deliberate skip — NOT reported as an unresolved (warned) topic.
+    for sentinel in ("none", "-", "null", "n/a", "None", "NONE", "no-topic"):
+        result = record_outcome(
+            "x", failures=["A transferable rule."], topics=[sentinel],
+            is_test=True)
+        try:
+            assert result.new_lessons               # lesson still written
+            assert result.linked_topics == []       # filed under nothing
+            assert result.unresolved_topics == []   # NOT a warning
+            assert result.skipped_topics == [sentinel]  # honoured as a skip
+        finally:
+            for mid in result.new_lessons:
+                memory.forget(mid)
+
+
+def test_resolve_topic_has_no_fuzzy_keyword_fallback():
+    # The misfile this whole change fixes: `--topic skills` used to fuzzy-route
+    # to `add-new-agent-provider`. Authoritative filing is now exact-only — a
+    # word that merely overlaps a node's keywords resolves to None (unfiled),
+    # while exact ids and slashed leaves still resolve.
+    from lib.goal_feedback import _resolve_topic
+    nodes = {"agent-memory": {}, "add-new-agent-provider": {}}
+    assert _resolve_topic(nodes, "skills") is None
+    assert _resolve_topic(nodes, "memory") is None          # overlaps a node, but inexact
+    assert _resolve_topic(nodes, "agent-memory") == "agent-memory"
+    assert _resolve_topic(nodes, "x/y/agent-memory") == "agent-memory"
+
+
+def test_real_word_topic_is_reported_unresolved_not_silently_misfiled():
+    # End-to-end twin of the unit test: a plausible word that is not a node id
+    # lands in unresolved_topics (visible warning), never silently linked.
+    result = record_outcome(
+        "x", failures=["A rule."], topics=["skills"], is_test=True)
+    try:
+        assert result.new_lessons
+        assert result.linked_topics == []
+        assert result.unresolved_topics == ["skills"]
+        assert result.skipped_topics == []
+    finally:
+        for mid in result.new_lessons:
+            memory.forget(mid)
+
+
+def test_render_summary_and_dict_surface_skipped_topics():
+    from lib.goal_feedback import outcome_to_dict
+    res = OutcomeResult(new_lessons=["c"], skipped_topics=["none"])
+    text = render_summary(res)
+    assert "unfiled" in text and "none" in text
+    assert outcome_to_dict(res)["skipped_topics"] == ["none"]

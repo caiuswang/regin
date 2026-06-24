@@ -38,6 +38,17 @@ FAIL_TAG = "goal-verified-fail"
 # is distinguishable in the audit log from distill/reflect auto-filing.
 TOPIC_LINK_SOURCE = "goal-feedback"
 
+# Explicit "no related topic" inputs for `--topic`. The agent walked the tree,
+# found no matching node, and is deliberately filing the lesson *unbound*
+# rather than letting a fuzzy keyword guess misfile it under a wrong node.
+# Treated as an intentional skip (no warning), distinct from an unresolved id.
+NO_TOPIC_TOKENS = frozenset({"none", "no-topic", "notopic", "null", "n/a", "na", "-"})
+
+
+def _is_no_topic(raw: str) -> bool:
+    """True if `raw` is an explicit no-topic sentinel (case-insensitive)."""
+    return (raw or "").strip().lower() in NO_TOPIC_TOKENS
+
 
 @dataclass
 class OutcomeResult:
@@ -49,6 +60,7 @@ class OutcomeResult:
     new_lessons: list[str] = field(default_factory=list)
     linked_topics: list[str] = field(default_factory=list)
     unresolved_topics: list[str] = field(default_factory=list)
+    skipped_topics: list[str] = field(default_factory=list)
     disabled: bool = False
 
 
@@ -91,8 +103,8 @@ def record_outcome(goal: str, *,
     result.new_lessons = _write_failures(
         memory, fails, tags=list(tags or []), importance=importance,
         trace_id=trace_id, is_test=is_test)
-    result.linked_topics, result.unresolved_topics = _link_topics(
-        store, result.new_lessons, topics)
+    (result.linked_topics, result.unresolved_topics,
+     result.skipped_topics) = _link_topics(store, result.new_lessons, topics)
     return result
 
 
@@ -121,34 +133,54 @@ def _write_failures(memory, fails: list[str], *, tags: list[str],
 
 
 def _link_topics(store, memory_ids: list[str],
-                 topics: list[str] | None) -> tuple[list[str], list[str]]:
+                 topics: list[str] | None,
+                 ) -> tuple[list[str], list[str], list[str]]:
     """File each new failure-lesson under the agent-supplied topic short-paths.
 
-    `topics` are node ids the agent already knows from its tree walk (or a
-    looser short-path / label the router can resolve). Each resolves to one
-    authoritative node and is linked to every id in `memory_ids` via the
-    store's own `link_authoritative_topic`. Returns (linked_node_ids,
-    unresolved_inputs). Best-effort: a graph/link failure is reported as
-    unresolved, never raised — filing must not break the feedback write."""
-    wanted = _dedup(topics or [])
+    `topics` are node ids the agent already knows from its tree walk. An
+    explicit no-topic sentinel (`none`, `-`, … see `NO_TOPIC_TOKENS`) is
+    honoured as a *deliberate skip* — the agent walked the tree and found no
+    related node, so the lesson is filed unbound rather than misrouted. Every
+    other input resolves to one authoritative node (exact id or slashed leaf)
+    and is linked to each id in `memory_ids`. Returns (linked_node_ids,
+    unresolved_inputs, skipped_sentinels). Best-effort: a graph/link failure is
+    reported as unresolved, never raised — filing must not break the write."""
+    asked = _dedup(topics or [])
+    skipped = [raw for raw in asked if _is_no_topic(raw)]
+    wanted = [raw for raw in asked if not _is_no_topic(raw)]
     if not wanted or not memory_ids:
-        # No topics asked for, or no new lessons to file them under — either
-        # way nothing is unresolved (a valid topic isn't "unresolved" just
-        # because there was nothing to attach it to).
-        return [], []
+        # No real topics asked for, or no new lessons to file them under —
+        # either way nothing is unresolved (a valid topic isn't "unresolved"
+        # just because there was nothing to attach it to).
+        return [], [], skipped
 
-    from lib.settings import settings
-    repo_path = str(settings.project_root)
+    nodes = _load_topic_nodes()
+    if nodes is None:
+        return [], wanted, skipped
+
+    linked, unresolved = _file_under_topics(store, memory_ids, wanted, nodes)
+    return linked, unresolved, skipped
+
+
+def _load_topic_nodes() -> dict | None:
+    """The authoritative topic graph's `topics` dict, or None if it can't be
+    loaded — the signal to report every wanted topic as unresolved."""
     try:
         from lib.topics.route import load_authoritative_graph
-        nodes = load_authoritative_graph(repo_path).get("topics", {})
+        from lib.settings import settings
+        return load_authoritative_graph(str(settings.project_root)).get("topics", {})
     except Exception:
-        return [], wanted
+        return None
 
+
+def _file_under_topics(store, memory_ids: list[str], wanted: list[str],
+                       nodes: dict) -> tuple[list[str], list[str]]:
+    """Link each memory to each resolvable topic; collect the unresolvable
+    ones. Returns (linked_node_ids, unresolved_inputs)."""
     linked: list[str] = []
     unresolved: list[str] = []
     for raw in wanted:
-        node = _resolve_topic(nodes, repo_path, raw)
+        node = _resolve_topic(nodes, raw)
         if node is None:
             unresolved.append(raw)
             continue
@@ -158,11 +190,17 @@ def _link_topics(store, memory_ids: list[str],
     return _dedup(linked), unresolved
 
 
-def _resolve_topic(nodes: dict, repo_path: str, raw: str) -> str | None:
+def _resolve_topic(nodes: dict, raw: str) -> str | None:
     """Resolve one short-path to an authoritative node id, or None.
 
-    Exact node id wins; else the last `/`-segment of a slashed path; else the
-    keyword router (`match_topic`) for a freeform label. Never raises."""
+    Exact node id wins; else the last `/`-segment of a slashed path. There is
+    deliberately **no fuzzy keyword fallback** here: this is an *authoritative
+    write*, and `match_topic` is a short-query *read* heuristic that confidently
+    misroutes on a single coincidental token (e.g. `--topic skills` →
+    `add-new-agent-provider`). A wrong authoritative link is worse than none, so
+    anything that is not an exact id or slashed leaf is left unresolved
+    (reported, not filed) — pass a no-topic sentinel to skip on purpose, or fix
+    the id against the tree. Never raises."""
     needle = (raw or "").strip()
     if not needle:
         return None
@@ -171,13 +209,6 @@ def _resolve_topic(nodes: dict, repo_path: str, raw: str) -> str | None:
     leaf = needle.rstrip("/").split("/")[-1]
     if leaf in nodes:
         return leaf
-    try:
-        from lib.topics.route import match_topic
-        match = match_topic(repo_path, needle)
-    except Exception:
-        return None
-    if match and match.get("id") in nodes:
-        return match["id"]
     return None
 
 
@@ -200,6 +231,10 @@ def render_summary(result: OutcomeResult) -> str:
         lines.append(
             f"  filed new lesson(s) under {len(result.linked_topics)} topic(s): "
             + ", ".join(result.linked_topics))
+    if result.skipped_topics and result.new_lessons:
+        lines.append(
+            "  left new lesson(s) unfiled at your request (no related topic): "
+            + ", ".join(result.skipped_topics))
     if result.unresolved_topics:
         lines.append(
             f"  ⚠ {len(result.unresolved_topics)} --topic short-path(s) matched no "
@@ -221,5 +256,6 @@ def outcome_to_dict(result: OutcomeResult) -> dict:
         "new_lessons": result.new_lessons,
         "linked_topics": result.linked_topics,
         "unresolved_topics": result.unresolved_topics,
+        "skipped_topics": result.skipped_topics,
         "disabled": result.disabled,
     }

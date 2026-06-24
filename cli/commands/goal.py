@@ -81,7 +81,9 @@ def cmd_goal_feedback(
     topic: list[str] = typer.Option(
         None, "--topic",
         help="Authoritative topic short-path (the node id you walked the tree "
-             "to) to file every new failure-lesson under (repeatable)"),
+             "to) to file every new failure-lesson under (repeatable). Pass "
+             "'none' (or '-') when the tree dead-ended and no node fits — the "
+             "lesson is filed unbound instead of being misrouted by keyword guess"),
     trace_id: str = typer.Option(None, "--trace-id", help="Originating session trace id"),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
