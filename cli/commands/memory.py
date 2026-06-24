@@ -444,17 +444,20 @@ def _apply_assignments(store, assignments, dry_run, titles,
     return linked, refreshed, unmatched
 
 
-def _classify_agentic(rows, graph):
+def _classify_agentic(rows, graph, stats=None):
     """Run the agentic classifier over `rows` against the pre-merged `graph`;
     exit non-zero (fail-loud) when no external agent is reachable instead of
     degrading to the heuristic. `graph` already carries the global meta-roots
-    so skill-/preference-shaped memories route to a precise leaf."""
+    so skill-/preference-shaped memories route to a precise leaf. A `stats`
+    dict, when passed, is filled with `placed`/`batches`/`unparsed` so the
+    caller can report silently-dropped (unparsed-batch) memories."""
     from lib.memory.adapters import resolve_topic_classifier
     from lib.memory.topic_classify import (classify_memories,
                                            ClassifierUnavailable)
 
     try:
-        return classify_memories(rows, graph, resolve_topic_classifier())
+        return classify_memories(rows, graph, resolve_topic_classifier(),
+                                 stats=stats)
     except ClassifierUnavailable as exc:
         print(f"error: {exc}\nConfigure settings.topic_proposal_external_agents"
               ", or pass --hard-match for the deterministic heuristic.")
@@ -500,15 +503,22 @@ def cmd_link_topics(
     titles = {m["id"]: _mem_title(m) for m in rows}
     labels = {tid: (node.get("label") or tid)
               for tid, node in graph.get("topics", {}).items()}
+    diag = ""
     if hard_match:
         linked, refreshed, unmatched = _link_topics_hard(
             store, rows, repo_path, dry_run, titles, labels)
     else:
-        assignments = _classify_agentic(rows, graph)
+        stats: dict = {}
+        assignments = _classify_agentic(rows, graph, stats)
         linked, refreshed, unmatched = _apply_assignments(
             store, assignments, dry_run, titles, labels)
+        # Memories in a batch the LLM left unparseable / uncompleted never
+        # enter `assignments`, so they're neither linked nor counted unmatched
+        # — surface them so a silent batch failure isn't invisible.
+        dropped = len(rows) - len(assignments)
+        diag = f" dropped={dropped} unparsed={stats.get('unparsed', 0)}"
     verb = "would link" if dry_run else "linked"
-    print(f"{verb}={linked} refreshed={refreshed} unmatched={unmatched} "
+    print(f"{verb}={linked} refreshed={refreshed} unmatched={unmatched}{diag} "
           f"(of {len(rows)} active)")
 
 

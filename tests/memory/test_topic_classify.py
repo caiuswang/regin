@@ -84,6 +84,27 @@ def test_unparseable_batch_skipped_others_kept():
     assert out == {"mem-1": ["topic-b"]}
 
 
+def test_stats_out_param_counts_dropped_batch():
+    """`stats` exposes the silently-dropped memories: an unparseable batch
+    never enters the result, so placed < memories and the caller can report
+    `dropped = memories - placed` instead of the drop being invisible."""
+    mems = [{"id": "mem-0", "title": "a", "body": "x"},
+            {"id": "mem-1", "title": "b", "body": "y"}]
+    good = json.dumps([{"id": "mem-1", "topics": ["topic-b"]}])
+    llm = StubLLM(["not json at all", good])
+    stats: dict = {}
+    out = classify_memories(mems, GRAPH, llm, batch_size=1, stats=stats)
+    assert out == {"mem-1": ["topic-b"]}
+    assert stats == {"memories": 2, "placed": 1, "batches": 2, "unparsed": 1}
+    assert stats["memories"] - stats["placed"] == 1  # the dropped memory
+
+
+def test_stats_out_param_empty_input():
+    stats: dict = {}
+    assert classify_memories([], GRAPH, StubLLM([]), stats=stats) == {}
+    assert stats == {"memories": 0, "placed": 0, "batches": 0, "unparsed": 0}
+
+
 def test_drops_ancestor_when_child_selected():
     graph = {"topics": {
         "parent": {"label": "P", "intent": ""},

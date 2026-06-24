@@ -153,7 +153,8 @@ def _parse_batch(answer: str, batch_ids: set[str], nodes: dict,
 
 
 def classify_memories(memories: list[dict], graph: dict, llm, *,
-                      batch_size: int = 20, max_topics: int = 3
+                      batch_size: int = 20, max_topics: int = 3,
+                      stats: "dict | None" = None
                       ) -> "dict[str, list[str]]":
     """Agentically classify each memory onto authoritative topic nodes.
 
@@ -163,8 +164,16 @@ def classify_memories(memories: list[dict], graph: dict, llm, *,
     fail-loud contract that stops a silent heuristic fallback.
 
     Topic ids are validated against `graph`, so the result can never carry a
-    node that isn't in the authoritative graph (no dangling links)."""
+    node that isn't in the authoritative graph (no dangling links).
+
+    When `stats` (a mutable dict) is passed it is filled with
+    `{memories, placed, batches, unparsed}` so a caller can surface the
+    *silently dropped* memories — those in a batch that returned no completion
+    or unparseable JSON never enter the result, and `len(memories) - placed`
+    counts them. Without it the count is invisible (the old behaviour)."""
     if not memories:
+        if stats is not None:
+            stats.update(memories=0, placed=0, batches=0, unparsed=0)
         return {}
     nodes = graph.get("topics", {})
     assignments: dict[str, list[str]] = {}
@@ -187,6 +196,9 @@ def classify_memories(memories: list[dict], graph: dict, llm, *,
     if completed == 0:
         raise ClassifierUnavailable(
             "no LLM completion for any batch — is an external agent configured?")
+    if stats is not None:
+        stats.update(memories=len(memories), placed=len(assignments),
+                     batches=completed, unparsed=unparsed)
     log.write("topic_classified", memories=len(memories),
               placed=len(assignments), batches=completed, unparsed=unparsed)
     return assignments
