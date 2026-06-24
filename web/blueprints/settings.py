@@ -213,6 +213,16 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
      "label": "Base URL",
      "description": "Woven into every push payload so the notification links "
                     "back to the originating session in the regin UI."},
+    {"key": "retention_days", "group": "Retention", "type": "int", "min": -1,
+     "step": 1, "null_as": -1, "label": "Auto-prune after (days)",
+     "description": "Hard-delete inbox messages older than this many days after "
+                    "each send_to_user write, keeping the otherwise grow-forever "
+                    "inbox bounded with no manual step. -1 = keep forever "
+                    "(default). Manual `regin messages prune` is always available."},
+    {"key": "retention_keep_pinned", "group": "Retention", "type": "bool",
+     "label": "Keep pinned messages",
+     "description": "Shield pinned inbox cards from the automatic age-based prune "
+                    "above (they can still be removed manually)."},
 ]
 
 
@@ -282,7 +292,14 @@ def _coerce_scalar(field: dict, val) -> tuple:
     if num is None:
         return None, f"{field['key']} must be a number"
     err = _bounded(field, num)
-    return (None, err) if err else (num, None)
+    if err:
+        return None, err
+    # A `null_as` sentinel (e.g. -1) is how the UI represents the model's None
+    # in a plain number input; fold it back to None so persisted settings stay
+    # canonical (the inverse of the GET-side substitution in _field_payload).
+    if field.get('null_as') is not None and num == field['null_as']:
+        return None, None
+    return num, None
 
 
 def _coerce_block(fields: list[dict], body: dict) -> "tuple[dict, list[str]]":
@@ -300,6 +317,19 @@ def _coerce_block(fields: list[dict], body: dict) -> "tuple[dict, list[str]]":
     return updates, errors
 
 
+def _field_payload(current, defaults, field: dict) -> dict:
+    """One field's metadata + live value + default, mapping a None model value
+    to the field's `null_as` sentinel so a plain number input can represent it
+    (the inverse of the PUT-side fold in _coerce_scalar)."""
+    value = getattr(current, field["key"])
+    default = getattr(defaults, field["key"])
+    sentinel = field.get("null_as")
+    if sentinel is not None:
+        value = sentinel if value is None else value
+        default = sentinel if default is None else default
+    return {**field, "value": value, "default": default}
+
+
 def _block_get(name: str):
     """Field metadata + current value + default for one registered block."""
     block = _settings_blocks().get(name)
@@ -308,9 +338,7 @@ def _block_get(name: str):
     from lib.settings import settings as _settings
     current = getattr(_settings, block['attr'])
     defaults = block['model']()
-    fields = [{**f, "value": getattr(current, f["key"]),
-               "default": getattr(defaults, f["key"])}
-              for f in block['fields']]
+    fields = [_field_payload(current, defaults, f) for f in block['fields']]
     return jsonify({"fields": fields})
 
 
