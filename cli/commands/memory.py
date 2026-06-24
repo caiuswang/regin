@@ -101,15 +101,17 @@ def cmd_stats() -> None:
     print(json.dumps(memory.stats(), indent=2))
 
 
-def _merged_graph():
-    """Repo graph + global meta-roots — the topic id space `--topic` validates
-    against, so the meta-roots (`skills`, `preferences`, …) are fileable."""
+def _merged_graph(repo_path=None) -> dict:
+    """Repo graph + global meta-roots — the topic id space `--topic` and the
+    classifier validate against, so the meta-roots (`skills`, `preferences`, …)
+    are fileable. Defaults to the project root; pass `repo_path` for `--repo`."""
     from pathlib import Path
     from lib.settings import settings
     from lib.topics.graph_io import load_authoritative_graph
     from lib.topics.meta_roots import merge_meta_roots
+    root = repo_path if repo_path is not None else settings.project_root
     return merge_meta_roots(
-        load_authoritative_graph(str(Path(settings.project_root).resolve())))
+        load_authoritative_graph(str(Path(root).resolve())))
 
 
 @memory_app.command("remember")
@@ -367,7 +369,35 @@ def cmd_distill(
         print(f"  {mid}")
 
 
-def _link_topics_hard(store, rows, repo_path, dry_run) -> tuple[int, int, int]:
+def _mem_title(m: dict) -> str:
+    """A human-readable handle for a memory: its title, else a one-line body
+    snippet, else a placeholder — so the dry-run preview never shows a bare id
+    a user can't interpret."""
+    title = (m.get("title") or "").strip()
+    if not title:
+        title = " ".join((m.get("body") or "").split())
+    return title or "(untitled)"
+
+
+def _fmt_link(mid: str, node_id: str, titles: dict, labels: dict) -> str:
+    """One readable preview line: `<id8>  <memory title>  → <topic-id> (label)`.
+    Replaces the bare `<id> -> <id>` so a user can see *what* memory is being
+    filed *where* without looking either id up."""
+    title = titles.get(mid, "")
+    if len(title) > 50:
+        title = title[:49] + "…"
+    label = labels.get(node_id, node_id)
+    # The label carries the node's full intent and can run long; clip it so a
+    # line stays scannable (the id already names the target precisely).
+    short = label.split(" (", 1)[0]
+    if len(short) > 38:
+        short = short[:37] + "…"
+    suffix = f"  ({short})" if short and short != node_id else ""
+    return f"  {mid[:8]}  {title:<50}  → {node_id}{suffix}"
+
+
+def _link_topics_hard(store, rows, repo_path, dry_run, titles,
+                      labels) -> tuple[int, int, int]:
     """Deterministic ref-path heuristic path: one topic per memory whose ref
     file paths appear in its title+body. Returns (linked, refreshed,
     unmatched)."""
@@ -381,7 +411,7 @@ def _link_topics_hard(store, rows, repo_path, dry_run) -> tuple[int, int, int]:
             unmatched += 1
             continue
         if dry_run:
-            print(f"  {m['id'][:8]} -> {node_id}")
+            print(_fmt_link(m["id"], node_id, titles, labels))
             linked += 1
         elif store.link_authoritative_topic(m["id"], node_id, source="route"):
             linked += 1
@@ -390,7 +420,8 @@ def _link_topics_hard(store, rows, repo_path, dry_run) -> tuple[int, int, int]:
     return linked, refreshed, unmatched
 
 
-def _apply_assignments(store, assignments, dry_run) -> tuple[int, int, int]:
+def _apply_assignments(store, assignments, dry_run, titles,
+                       labels) -> tuple[int, int, int]:
     """Write the agentic `{memory_id: [topic_id, ...]}` map (multi-topic,
     additive). A memory mapped to `[]` counts as unmatched. Returns (linked,
     refreshed, unmatched)."""
@@ -403,7 +434,7 @@ def _apply_assignments(store, assignments, dry_run) -> tuple[int, int, int]:
             continue
         for node_id in topics:
             if dry_run:
-                print(f"  {mid[:8]} -> {node_id}")
+                print(_fmt_link(mid, node_id, titles, labels))
                 linked += 1
             elif store.link_authoritative_topic(mid, node_id,
                                                 source=CLASSIFY_SOURCE):
@@ -413,20 +444,15 @@ def _apply_assignments(store, assignments, dry_run) -> tuple[int, int, int]:
     return linked, refreshed, unmatched
 
 
-def _classify_agentic(store, rows, repo_path):
-    """Run the agentic classifier over `rows`; exit non-zero (fail-loud) when
-    no external agent is reachable instead of degrading to the heuristic."""
-    from lib.topics.route import load_authoritative_graph
-    from lib.topics.meta_roots import merge_meta_roots
+def _classify_agentic(rows, graph):
+    """Run the agentic classifier over `rows` against the pre-merged `graph`;
+    exit non-zero (fail-loud) when no external agent is reachable instead of
+    degrading to the heuristic. `graph` already carries the global meta-roots
+    so skill-/preference-shaped memories route to a precise leaf."""
     from lib.memory.adapters import resolve_topic_classifier
     from lib.memory.topic_classify import (classify_memories,
                                            ClassifierUnavailable)
 
-    # Include the global meta-roots so the classifier can route skill-/
-    # preference-shaped memories to a precise leaf (e.g. pref-tooling,
-    # skill-playwright) and backfill existing ones — the precision complement
-    # to distill's deterministic kind→bucket link.
-    graph = merge_meta_roots(load_authoritative_graph(repo_path))
     try:
         return classify_memories(rows, graph, resolve_topic_classifier())
     except ClassifierUnavailable as exc:
@@ -468,13 +494,19 @@ def cmd_link_topics(
         settings.project_root).resolve()
     store = memory.get_store()
     rows = store.list_memories(status="active", scope=scope, limit=limit)
+    graph = _merged_graph(repo_path)
+    # Resolve ids → human handles once so the dry-run preview reads as
+    # "<memory title> → <topic label>" instead of two opaque ids.
+    titles = {m["id"]: _mem_title(m) for m in rows}
+    labels = {tid: (node.get("label") or tid)
+              for tid, node in graph.get("topics", {}).items()}
     if hard_match:
         linked, refreshed, unmatched = _link_topics_hard(
-            store, rows, repo_path, dry_run)
+            store, rows, repo_path, dry_run, titles, labels)
     else:
-        assignments = _classify_agentic(store, rows, repo_path)
+        assignments = _classify_agentic(rows, graph)
         linked, refreshed, unmatched = _apply_assignments(
-            store, assignments, dry_run)
+            store, assignments, dry_run, titles, labels)
     verb = "would link" if dry_run else "linked"
     print(f"{verb}={linked} refreshed={refreshed} unmatched={unmatched} "
           f"(of {len(rows)} active)")
