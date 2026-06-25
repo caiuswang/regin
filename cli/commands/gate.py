@@ -42,13 +42,13 @@ def cmd_recall_ran(
 
 @gate_app.command(
     "task-recall-ran",
-    help="PASS iff this session emitted a task-scoped recall span "
-         "(memory.recall.task — spawner-baked recall anti-skip).",
+    help="PASS iff this session emitted a `memory.recall.task` span "
+         "(goal-verified recall arm anti-skip; `regin memory recall-for-task`).",
 )
 def cmd_task_recall_ran(
     session: str = typer.Option(
         ..., "--session", "-s",
-        help="Session/trace id to check (the spawner's session)."),
+        help="Session/trace id to check (the goal-verified $SID)."),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     _run_gate("task-recall-ran", session, json)
