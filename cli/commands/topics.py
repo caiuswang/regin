@@ -234,7 +234,23 @@ def cmd_topics_drift(
         return
     print(f"Renames followed: {result['renames']} — "
           f"topics rewritten: {result['topics_rewritten']}, "
-          f"memories rewritten: {result['memories_rewritten']}")
+          f"memories rewritten: {result['memories_rewritten']}, "
+          f"memories staled: {result['memories_staled']}")
+
+
+@topics_app.command(
+    "cascade-stale",
+    help="Cascade a topic's staleness to its linked memories "
+         "(veracity true->unknown)")
+def cmd_topics_cascade_stale(
+    topic_id: str = typer.Argument(..., help="Authoritative topic node id"),
+    reason: str = typer.Option("stale", "--reason", help="Validation note"),
+) -> None:
+    from lib.memory import get_store
+    from lib.memory.topic_cascade import cascade_topic_stale
+
+    n = cascade_topic_stale(get_store(), topic_id, reason=reason)
+    print(f"Cascaded staleness to {n} memory(ies)")
 
 
 @topics_app.command(

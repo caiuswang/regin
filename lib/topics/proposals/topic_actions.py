@@ -45,6 +45,18 @@ def _capture_ref_digests_on_accept(repo_path: str | Path, topic_id: str) -> None
     capture_ref_digests(repo_path, topic_id)
 
 
+def _restore_topic_memories_on_accept(topic_id: str) -> None:
+    """Recovery half of the topic→memory cascade: an accepted/refreshed topic
+    un-stales the memories a prior drift demoted. Gated on `evolution_enabled`
+    and best-effort (`restore_topic_memories` never raises)."""
+    from lib.settings import settings
+    if not settings.topic_evolution.evolution_enabled:
+        return
+    from lib.memory import get_store
+    from lib.memory.topic_cascade import restore_topic_memories
+    restore_topic_memories(get_store(), topic_id)
+
+
 def update_proposed_topic(
     repo_path: str | Path,
     proposal_id: str,
@@ -168,6 +180,7 @@ def accept_proposed_topic(
     proposal_dir = topic_dir(repo_path) / "proposals" / proposal_id
     _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("label") or approved_id)
     _capture_ref_digests_on_accept(repo_path, approved_id)
+    _restore_topic_memories_on_accept(approved_id)
     _topics_log().write(
         "proposal_topic_accepted",
         proposal_id=proposal_id, proposed_topic_id=proposed_topic_id,
@@ -221,6 +234,8 @@ def replace_approved_topic(
     save_proposal(repo_path, proposal_id, proposal)
     proposal_dir = topic_dir(repo_path) / "proposals" / proposal_id
     _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("label") or approved_id)
+    _capture_ref_digests_on_accept(repo_path, approved_id)
+    _restore_topic_memories_on_accept(approved_id)
     _topics_log().write(
         "proposal_topic_replaced",
         proposal_id=proposal_id, proposed_topic_id=proposed_topic_id,
@@ -263,6 +278,7 @@ def merge_proposed_topic(
     proposed["merged_at"] = utc_now()
     _recompute_proposal_status(proposal)
     save_proposal(repo_path, proposal_id, proposal)
+    _restore_topic_memories_on_accept(target_topic_id)
     _topics_log().write(
         "proposal_topic_merged",
         proposal_id=proposal_id, proposed_topic_id=proposed_topic_id,

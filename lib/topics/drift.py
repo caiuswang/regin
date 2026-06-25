@@ -76,6 +76,13 @@ def renames_between(repo_path: str | Path, base: str, head: str) -> dict[str, st
     return parse_rename_status(lines or [])
 
 
+def deletions_between(repo_path: str | Path, base: str, head: str) -> set[str]:
+    """Paths deleted (not renamed) between two commits — the genuine-staleness
+    signal a rename is not. Empty when none or git couldn't run."""
+    lines = _git(repo_path, ["diff", "--diff-filter=D", "--name-only", base, head])
+    return set(lines or [])
+
+
 def _resolve_chain(rename_map: dict[str, str], start: str) -> Optional[str]:
     """Follow a rename chain (A->B, B->C) to its end, guarding cycles. Returns
     the final path, or None when `start` was never renamed."""
@@ -212,34 +219,62 @@ def rewrite_memory_refs(store, renames: dict[str, str], *,
                if rewrite_memory_body(store, mem, renames, dry_run=dry_run))
 
 
+# ── deletion → cascade staleness onto linked memories ─────────
+
+
+def cascade_deletions(repo_path: str | Path, store,
+                      deletions: set[str]) -> int:
+    """For each topic whose refs include a *deleted* (not renamed) file, cascade
+    staleness onto its linked memories (`veracity true→unknown`). A deletion is
+    genuine staleness — unlike a rename, which Phase 1 follows in place. Returns
+    the number of memories demoted."""
+    if not deletions:
+        return 0
+    from lib.memory.topic_cascade import cascade_topic_stale
+    from lib.topics.graph_io import load_authoritative_graph
+    graph = load_authoritative_graph(repo_path)
+    demoted = 0
+    for tid, topic in graph.get("topics", {}).items():
+        refs = [r for r in topic.get("refs", []) if isinstance(r, dict)]
+        if any(r.get("path") in deletions for r in refs):
+            demoted += cascade_topic_stale(store, tid, reason="ref_deleted")
+    return demoted
+
+
 # ── orchestrator ──────────────────────────────────────────────
 
 
 def run_mechanical_drift(repo_path: str | Path, *, base: str = "HEAD~1",
                          head: str = "HEAD") -> dict[str, Any]:
-    """Commit-time mechanical drift: rewrite topic refs + memory paths for the
-    renames between `base` and `head`. Gated on `mechanical_autoapply` (a no-op
+    """Commit-time mechanical drift between `base` and `head`: follow renames
+    into topic refs + memory paths, and cascade genuine ref deletions onto the
+    affected topics' linked memories. Gated on `mechanical_autoapply` (a no-op
     dict when off) and fully best-effort — never raises into the git hook."""
     if not settings.topic_evolution.mechanical_autoapply:
-        return {"enabled": False, "renames": 0,
-                "topics_rewritten": 0, "memories_rewritten": 0}
+        return {"enabled": False, "renames": 0, "topics_rewritten": 0,
+                "memories_rewritten": 0, "memories_staled": 0}
     try:
+        from lib.memory import get_store
+        store = get_store()
         renames = renames_between(repo_path, base, head)
         topics = rewrite_topic_refs(repo_path, renames)
-        from lib.memory import get_store
-        memories = rewrite_memory_refs(get_store(), renames)
+        memories = rewrite_memory_refs(store, renames)
+        deletions = deletions_between(repo_path, base, head) - set(renames)
+        staled = cascade_deletions(repo_path, store, deletions)
         log.write("mechanical_drift_applied", renames=len(renames),
-                  topics_rewritten=len(topics), memories_rewritten=memories)
+                  topics_rewritten=len(topics), memories_rewritten=memories,
+                  memories_staled=staled)
         return {"enabled": True, "renames": len(renames),
-                "topics_rewritten": len(topics), "memories_rewritten": memories}
+                "topics_rewritten": len(topics), "memories_rewritten": memories,
+                "memories_staled": staled}
     except Exception:  # noqa: BLE001 - drift must never break the commit hook
         log.error("mechanical_drift_failed", exc_info=True)
-        return {"enabled": True, "renames": 0,
-                "topics_rewritten": 0, "memories_rewritten": 0, "error": True}
+        return {"enabled": True, "renames": 0, "topics_rewritten": 0,
+                "memories_rewritten": 0, "memories_staled": 0, "error": True}
 
 
 __all__ = [
-    "parse_rename_status", "renames_between", "renames_from_history",
-    "rewrite_topic_refs", "rewrite_memory_refs", "rewrite_memory_body",
-    "run_mechanical_drift",
+    "parse_rename_status", "renames_between", "deletions_between",
+    "renames_from_history", "rewrite_topic_refs", "rewrite_memory_refs",
+    "rewrite_memory_body", "cascade_deletions", "run_mechanical_drift",
 ]
