@@ -474,6 +474,42 @@ def cmd_topics_wiki(
         print(path)
 
 
+@topics_app.command(
+    "wiki-debt",
+    help="Report topics needing a wiki (missing or drifted), optionally "
+         "scoped to a git diff — the goal-verified close-out check")
+def cmd_topics_wiki_debt(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    changed_since: str | None = typer.Option(
+        None, "--changed-since",
+        help="Only audit topics whose refs changed between this git ref and "
+             "HEAD (e.g. HEAD~1). Omit to audit the whole repo."),
+    emit: bool = typer.Option(
+        False, "--emit",
+        help="Emit a fast, agent-free stub refresh proposal (pending_review) "
+             "for each drifted topic. missing topics stay report-only."),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    from lib.topics.wiki_debt import emit_wiki_debt_proposals, wiki_debt
+
+    rp = _repo_path(repo)
+    rows = (emit_wiki_debt_proposals(rp, changed_since=changed_since) if emit
+            else wiki_debt(rp, changed_since=changed_since))
+    if as_json:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        scope = f" changed since {changed_since}" if changed_since else ""
+        print(f"No wiki debt{scope} — every audited topic has a current wiki.")
+        return
+    for row in rows:
+        detail = (f" ({', '.join(row['drifted_paths'])})"
+                  if row["status"] == "drifted" else "")
+        queued = (f" → proposal {row['proposal_id']}"
+                  if row.get("proposal_id") else "")
+        print(f"{row['status']:8} {row['topic_id']}{detail}{queued}")
+
+
 def _render_topic_wiki(result: dict) -> str:
     """The routed topic's wiki pages as plain markdown — the content the
     `<topic_context>` pointer promises, surfaced directly. The JSON envelope
