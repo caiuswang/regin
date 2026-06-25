@@ -158,7 +158,9 @@ def capture_all_digests(repo_path: str | Path, *, embedder=None) -> dict[str, in
 
 def digests_for_topic(repo_id: int, topic_id: str) -> list[dict[str, Any]]:
     """Stored digest rows for one topic, as plain dicts (read helper for
-    drift detection and tests)."""
+    drift detection and tests). `embedding` is the parsed stored vector (or
+    None when the digest was captured hash-only) so the cosine drift filter
+    can read it without a second query."""
     with SessionLocal() as session:
         rows = session.exec(
             select(TopicRefDigest).where(
@@ -167,8 +169,15 @@ def digests_for_topic(repo_id: int, topic_id: str) -> list[dict[str, Any]]:
     return [{
         "path": r.path, "role": r.role, "content_hash": r.content_hash,
         "embedding_model_id": r.embedding_model_id,
+        "embedding": json.loads(r.embedding_json) if r.embedding_json else None,
         "captured_at": r.captured_at,
     } for r in rows]
 
 
-__all__ = ["capture_ref_digests", "capture_all_digests", "digests_for_topic"]
+def repo_id_for_path(repo_path: str | Path) -> Optional[int]:
+    """Public alias of the repo-id resolver, for drift detection callers."""
+    return _repo_id_for_path(repo_path)
+
+
+__all__ = ["capture_ref_digests", "capture_all_digests", "digests_for_topic",
+           "repo_id_for_path"]

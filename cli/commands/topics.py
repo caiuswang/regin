@@ -239,6 +239,24 @@ def cmd_topics_drift(
 
 
 @topics_app.command(
+    "evolve",
+    help="Detect content drift and emit refresh proposals (gated by "
+         "topic_evolution.evolution_enabled)")
+def cmd_topics_evolve(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.content_drift import run_content_evolution
+
+    result = run_content_evolution(_repo_path(repo))
+    if not result.get("enabled"):
+        print("Evolve skipped (topic_evolution.evolution_enabled is off)")
+        return
+    print(f"Drifted topics: {result['drifted']} — "
+          f"refresh proposals: {result['proposals']}, "
+          f"memories staled: {result['memories_staled']}")
+
+
+@topics_app.command(
     "cascade-stale",
     help="Cascade a topic's staleness to its linked memories "
          "(veracity true->unknown)")
