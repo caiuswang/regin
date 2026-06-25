@@ -712,7 +712,9 @@ class TopicEvolutionConfig(BaseModel):
     here defaults **off**: `evolution_enabled` only unlocks the machinery,
     and `mechanical_autoapply` separately gates the one tier that writes
     without review — ref renames into the gitignored `topic.local.json`
-    overlay, never the human-approved `topic.json`.
+    overlay, never the human-approved `topic.json`. `auto_spawn_agents`
+    separately gates launching the external drafting agent for refresh
+    proposals (off by default even when evolution is on — spawning is a cost).
 
     `content_drift_cosine` is the similarity floor below which a topic's
     ref files are judged to have drifted from its wiki narrative.
@@ -724,6 +726,7 @@ class TopicEvolutionConfig(BaseModel):
 
     evolution_enabled: bool = False
     mechanical_autoapply: bool = False
+    auto_spawn_agents: bool = False
     content_drift_cosine: float = 0.6
     drift_proposal_batch_max: int = 3
     auto_proposal_expire_days: int = 14
