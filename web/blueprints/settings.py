@@ -225,12 +225,48 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
                     "above (they can still be removed manually)."},
 ]
 
+_TOPIC_EVOLUTION_FIELDS: list[dict] = [
+    # ── General ──
+    {"key": "evolution_enabled", "group": "General", "type": "bool",
+     "label": "Topic evolution enabled",
+     "description": "Master switch for code-driven topic/memory co-evolution "
+                    "(content-drift detection, refresh proposals, expiry). "
+                    "Everything below is inert until this is on."},
+    {"key": "mechanical_autoapply", "group": "General", "type": "bool",
+     "label": "Auto-apply mechanical drift (rename-follow)",
+     "description": "On commit, follow git renames into topic refs (written to "
+                    "the local overlay, never topic.json) and memory paths, and "
+                    "cascade deleted refs onto linked memories."},
+    {"key": "auto_spawn_agents", "group": "General", "type": "bool",
+     "label": "Auto-spawn the drafting agent for refresh proposals",
+     "description": "Hand content-drift refresh proposals to the external "
+                    "drafting agent (needs a configured proposal agent). A real "
+                    "cost — off by default even when evolution is on."},
+    # ── Detection ──
+    {"key": "content_drift_cosine", "group": "Detection", "type": "float",
+     "min": 0, "max": 1, "step": 0.05, "label": "Content-drift cosine floor",
+     "description": "When a changed ref file's embedding sits at/above this "
+                    "cosine to its stored digest, the change is treated as "
+                    "trivial and spared; below it, the topic is flagged drifted."},
+    # ── Proposals ──
+    {"key": "drift_proposal_batch_max", "group": "Proposals", "type": "int",
+     "min": 0, "step": 1, "label": "Max proposals per evolve pass",
+     "description": "Cap on refresh proposals emitted (and agents spawned) in "
+                    "one evolve pass, so a large change can't flood the queue. "
+                    "0 = unbounded."},
+    {"key": "auto_proposal_expire_days", "group": "Proposals", "type": "int",
+     "min": 0, "step": 1, "label": "Auto-expire unreviewed proposals (days)",
+     "description": "Auto-generated proposals left unreviewed this many days are "
+                    "retired (ignored) so the review queue can't rot. 0 = never."},
+]
+
 
 def _settings_blocks() -> dict:
     """Registry of round-trippable nested settings blocks. `scope` routes the
     write: agent_messages goes local because webhook_url can hold a secret
     token that must not land in git-tracked settings.json."""
-    from lib.settings import AgentMemoryConfig, AgentMessagesConfig
+    from lib.settings import (AgentMemoryConfig, AgentMessagesConfig,
+                              TopicEvolutionConfig)
     return {
         "agent-memory": {"attr": "agent_memory", "model": AgentMemoryConfig,
                          "fields": _AGENT_MEMORY_FIELDS, "scope": "shared",
@@ -238,6 +274,10 @@ def _settings_blocks() -> dict:
         "agent-messages": {"attr": "agent_messages", "model": AgentMessagesConfig,
                            "fields": _AGENT_MESSAGES_FIELDS, "scope": "local",
                            "label": "Agent message settings"},
+        "topic-evolution": {"attr": "topic_evolution",
+                            "model": TopicEvolutionConfig,
+                            "fields": _TOPIC_EVOLUTION_FIELDS, "scope": "shared",
+                            "label": "Topic evolution settings"},
     }
 
 
@@ -384,6 +424,17 @@ def api_agent_messages_settings():
 @require_editor
 def api_update_agent_messages_settings():
     return _block_put('agent-messages')
+
+
+@settings_bp.route('/api/settings/topic-evolution')
+def api_topic_evolution_settings():
+    return _block_get('topic-evolution')
+
+
+@settings_bp.route('/api/settings/topic-evolution', methods=['PUT'])
+@require_editor
+def api_update_topic_evolution_settings():
+    return _block_put('topic-evolution')
 
 
 @settings_bp.route('/api/settings')

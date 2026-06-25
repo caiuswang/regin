@@ -40,7 +40,7 @@ const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
-const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'debug']
+const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'topic-evolution', 'debug']
 const activeSection = useTabRoute({ param: 'section', default: 'config', valid: SECTIONS })
 
 // ── Nested settings blocks (Agent Memory, Agent Messages) ──────
@@ -57,6 +57,10 @@ const BLOCK_META = {
   'agent-messages': {
     title: 'Agent Messages',
     description: 'The send_to_user → human channel. The webhook pushes high-severity messages (ntfy / Slack / phone) and is off until a URL is set. Stored machine-local, since the URL can carry a secret token.',
+  },
+  'topic-evolution': {
+    title: 'Topic Evolution',
+    description: 'Code-driven co-evolution of the topic graph and agent memory: follow git renames, flag content drift, propose wiki refreshes, cascade staleness onto linked memories, and expire stale proposals. Everything is off until enabled; saved to the shared topic_evolution config (no restart).',
   },
 }
 
@@ -432,6 +436,15 @@ watch([activeSection, selectedProvider], ([section]) => {
           @click="onSelectBlock('agent-messages')"
         >
           Agent Messages
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'topic-evolution' }"
+          @click="onSelectBlock('topic-evolution')"
+        >
+          Topic Evolution
         </button>
 
         <button

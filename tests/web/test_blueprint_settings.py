@@ -252,3 +252,63 @@ def test_agent_memory_put_requires_auth(anon_client, isolated_settings_files):
     assert resp.status_code == 401
 
 
+# ── /api/settings/topic-evolution (Phase 4c UI exposure) ──────
+
+def _topic_evo_fields(flask_client):
+    body = flask_client.get("/api/settings/topic-evolution").get_json()
+    return {f["key"]: f for f in body["fields"]}
+
+
+def test_topic_evolution_get_exposes_all_six_fields(
+        flask_client, isolated_settings_files):
+    """The block surfaces all six flags with their types + defaults-off values."""
+    fields = _topic_evo_fields(flask_client)
+    assert set(fields) == {
+        "evolution_enabled", "mechanical_autoapply", "auto_spawn_agents",
+        "content_drift_cosine", "drift_proposal_batch_max",
+        "auto_proposal_expire_days"}
+    assert fields["evolution_enabled"]["type"] == "bool"
+    assert fields["evolution_enabled"]["value"] is False      # off by default
+    cdc = fields["content_drift_cosine"]
+    assert cdc["type"] == "float" and cdc["min"] == 0 and cdc["max"] == 1
+    assert fields["drift_proposal_batch_max"]["type"] == "int"
+
+
+def test_topic_evolution_put_persists_to_shared(
+        flask_client, isolated_settings_files):
+    """Enabling evolution + tuning a number persists to the shared scope and
+    round-trips."""
+    resp = flask_client.put(
+        "/api/settings/topic-evolution",
+        json={"evolution_enabled": True, "auto_proposal_expire_days": 30},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    shared = json.loads(isolated_settings_files["shared"].read_text())
+    assert shared["topic_evolution"]["evolution_enabled"] is True
+    assert shared["topic_evolution"]["auto_proposal_expire_days"] == 30
+
+
+def test_topic_evolution_put_rejects_out_of_range_cosine(
+        flask_client, isolated_settings_files):
+    """A cosine above its max is a 400 (full pydantic re-validation), not saved."""
+    resp = flask_client.put(
+        "/api/settings/topic-evolution",
+        json={"content_drift_cosine": 5},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 400
+    assert not isolated_settings_files["shared"].exists() or \
+        "content_drift_cosine" not in json.loads(
+            isolated_settings_files["shared"].read_text()).get(
+                "topic_evolution", {})
+
+
+def test_topic_evolution_put_requires_auth(
+        anon_client, isolated_settings_files):
+    resp = anon_client.put(
+        "/api/settings/topic-evolution", json={"evolution_enabled": True})
+    assert resp.status_code == 401
+
+
