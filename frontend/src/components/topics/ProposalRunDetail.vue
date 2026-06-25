@@ -650,6 +650,7 @@ function reviewStatusColor(status) {
           :threads="feedbackThreads"
           :readonly="!selectedRevisionIsLatest"
           @updated="emit('refresh')"
+          @regenerate="regenerateProposal"
         />
       </Card>
     </div>
@@ -686,6 +687,7 @@ function reviewStatusColor(status) {
               :threads="feedbackThreads"
               :readonly="!selectedRevisionIsLatest"
               @updated="emit('refresh')"
+              @regenerate="regenerateProposal"
             />
           </div>
         </aside>

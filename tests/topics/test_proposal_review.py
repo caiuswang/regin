@@ -94,6 +94,8 @@ def test_generate_review_note_creates_agent_thread(fake_git_repo):
     assert thread["resolution_state"] == "open"
     body = thread["comments"][0]["body"]
     assert "recommendation: REGENERATE" in body
+    # Structured recommendation for the UI badge (not just prose in the body).
+    assert thread["metadata"]["recommendation"] == "REGENERATE"
     # Persisted: exactly one review_note thread on the run.
     assert len(_review_notes(fake_git_repo, pid)) == 1
 

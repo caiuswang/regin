@@ -146,6 +146,9 @@ def generate_review_note(
         anchor_kind="general",
         body=body,
         created_by="agent",
+        # Structured copy of the recommendation so the UI badge reads a field
+        # instead of regexing the LLM's prose body.
+        metadata={"recommendation": recommendation},
     )
     log.write("proposal_review_note_created", proposal_id=proposal_id,
               recommendation=recommendation, repo_path=str(repo_path))

@@ -6,6 +6,7 @@ import { fmtLocalDateTime } from '../../utils/traceFormatters'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Select from '../ui/Select.vue'
+import ProposalReviewNoteCard from './ProposalReviewNoteCard.vue'
 
 const { confirm } = useConfirm()
 
@@ -17,7 +18,7 @@ const props = defineProps({
   readonly: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['updated'])
+const emit = defineEmits(['updated', 'regenerate'])
 
 const filterMode = ref('selected')
 const composerAnchor = ref('general')
@@ -354,7 +355,16 @@ watch(
       No review threads yet.
     </div>
 
-    <div v-for="thread in visibleThreads" :key="thread.id" class="rounded border border-slate-200 bg-white p-3 space-y-3">
+    <template v-for="thread in visibleThreads" :key="thread.id">
+      <ProposalReviewNoteCard
+        v-if="thread.kind === 'review_note'"
+        :thread="thread"
+        :readonly="readonly"
+        :busy="resolveBusyThreadId === thread.id"
+        @regenerate="emit('regenerate')"
+        @dismiss="setResolution(thread.id, 'dismissed')"
+      />
+      <div v-else class="rounded border border-slate-200 bg-white p-3 space-y-3">
       <div class="flex items-start justify-between gap-3">
         <div class="space-y-1 min-w-0">
           <div class="flex flex-wrap items-center gap-2">
@@ -479,6 +489,7 @@ watch(
           Reply
         </Button>
       </div>
-    </div>
+      </div>
+    </template>
   </section>
 </template>

@@ -47,6 +47,7 @@ def create_proposal_feedback_thread(
     quoted_text: str | None = None,
     body: str,
     created_by: str = "user",
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cleaned_body = _validate_feedback_thread_args(body, anchor)
     resolved_kind = kind or "comment"
@@ -70,6 +71,7 @@ def create_proposal_feedback_thread(
         quoted_text=quoted_text,
         body=cleaned_body,
         created_by=resolved_created_by,
+        metadata=metadata,
     )
     if thread is None:
         raise TopicGraphError(f"proposal run not found: {proposal_id}")
