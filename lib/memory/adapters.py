@@ -122,5 +122,13 @@ def resolve_topic_classifier() -> ExternalAgentLLM:
     return ExternalAgentLLM()
 
 
+def resolve_proposal_reviewer() -> ExternalAgentLLM:
+    """The LLM behind proposal review notes: granted read-only repo tools so
+    it can verify the draft against the current refs itself (agentic review),
+    rather than judging a pre-baked evidence pack. Returns None-yielding
+    `complete` when no external agent is configured, so the caller no-ops."""
+    return ExternalAgentLLM(extra_args=["--allowedTools", "Read,Glob,Grep"])
+
+
 __all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller",
-           "resolve_topic_classifier"]
+           "resolve_topic_classifier", "resolve_proposal_reviewer"]

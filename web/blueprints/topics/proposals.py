@@ -138,6 +138,24 @@ def api_repo_topic_proposal_regenerate(name, proposal_id):
         return _error(exc)
 
 
+@topics_bp.route("/api/repos/<name>/topics/proposals/<proposal_id>/review-note", methods=["POST"])
+def api_repo_topic_proposal_review_note(name, proposal_id):
+    """Generate an LLM review note for a proposal on demand (ungated — this is
+    an explicit user action). Returns the created feedback thread, or ok with
+    thread=None when no external agent is configured / the run has no draft."""
+    repo_path = _repo_path_or_404(name)
+    if repo_path is None:
+        return jsonify({"error": "not found"}), 404
+    from lib.topics.proposal_review import generate_review_note
+    try:
+        thread = generate_review_note(repo_path, proposal_id)
+        return jsonify({"ok": True, "thread": thread})
+    except OSError:
+        return jsonify({"error": "not found"}), 404
+    except (ValueError, TopicGraphError) as exc:
+        return _error(exc)
+
+
 @topics_bp.route("/api/repos/<name>/topics/proposals/<proposal_id>/review-state", methods=["POST"])
 def api_repo_topic_proposal_review_state(name, proposal_id):
     repo_path = _repo_path_or_404(name)

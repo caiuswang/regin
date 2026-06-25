@@ -295,6 +295,27 @@ def cmd_topics_digest_refs(
     print(f"Captured {total} ref digest(s) across {len(result)} topic(s)")
 
 
+@topics_app.command(
+    "review-note",
+    help="Generate an LLM review note for a proposal run (manual, ungated)")
+def cmd_topics_review_note(
+    proposal_id: str = typer.Argument(..., help="Proposal run id"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.proposal_review import generate_review_note
+
+    try:
+        thread = generate_review_note(_repo_path(repo), proposal_id)
+    except TopicGraphError as exc:
+        print(f"Review note failed: {exc}")
+        raise typer.Exit(1)
+    if thread is None:
+        print("No review note written (no external agent configured, or the "
+              "proposal has no draft).")
+        raise typer.Exit(1)
+    print(f"Review note added to proposal {proposal_id} (thread {thread.get('id')})")
+
+
 @topics_app.command("check", help="Validate topic graph schema and approved refs")
 def cmd_topics_check(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),

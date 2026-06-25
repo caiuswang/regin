@@ -65,6 +65,9 @@ def create_proposal_run(
         agent=agent,
         topic_count=len(proposals.get("topics", []) or []),
     )
+    # Gated, best-effort LLM review note (no-op unless auto_review_notes).
+    from lib.topics.proposal_review import maybe_generate_review_note
+    maybe_generate_review_note(repo, proposal_id)
     return artifacts
 
 

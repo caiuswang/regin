@@ -730,6 +730,14 @@ class TopicEvolutionConfig(BaseModel):
     content_drift_cosine: float = 0.6
     drift_proposal_batch_max: int = 3
     auto_proposal_expire_days: int = 14
+    # When set, every completed proposal run (initial draft or regenerate)
+    # gets an LLM-written review note attached as a `review_note` feedback
+    # thread — a regenerate/accept/dismiss recommendation that rides the
+    # existing feedback machinery into the next run. Off by default and
+    # separately gated (a review note is an external-agent call, a cost),
+    # so it stays off even when the rest of evolution is on. The manual
+    # endpoint/CLI is ungated.
+    auto_review_notes: bool = False
 
 
 # Project-root-relative paths — fixed by where this file lives.

@@ -249,10 +249,19 @@ def _external_proposal_job(
             revision_kind="generated",
         )
         _mark_run_completed(out_dir)
+        _maybe_review_note(repo, proposal_id)
     except Exception as exc:
         _record_thread_failure(out_dir, agent, exc)
     finally:
         run_control.release(proposal_id)
+
+
+def _maybe_review_note(repo: Path, proposal_id: str) -> None:
+    """Gated, best-effort LLM review note after a run completes. Imported
+    lazily so the proposal_review → adapters chain isn't pulled in until a
+    run finishes; the callee swallows its own errors."""
+    from lib.topics.proposal_review import maybe_generate_review_note
+    maybe_generate_review_note(repo, proposal_id)
 
 
 # ───────────────────────── regenerate (async) ──────────────────────────
@@ -341,6 +350,7 @@ def _external_regenerate_job(
                 prior_draft["proposal"], wiki,
             )
         _mark_run_completed(proposal_dir)
+        _maybe_review_note(repo, proposal_id)
     except Exception as exc:
         _record_thread_failure(proposal_dir, agent, exc)
     finally:
