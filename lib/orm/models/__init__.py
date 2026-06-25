@@ -21,6 +21,7 @@ from lib.orm.models.proposals import (
     ProposalRun,
     ProposalTopic,
     TopicAudit,
+    TopicRefDigest,
 )
 from lib.orm.models.rules import Experiment, RuleTrigger, RuleTriggerSuppression
 from lib.orm.models.sync import Branch, Repo
@@ -40,7 +41,7 @@ __all__ = [
     "PromptTemplate",
     "ProposalRun", "ProposalTopic", "ProposalRevision", "ProposalRevisionTopic",
     "ProposalFeedbackThread", "ProposalFeedbackComment",
-    "GraphSnapshot", "TopicAudit",
+    "GraphSnapshot", "TopicAudit", "TopicRefDigest",
     "RuleTrigger", "RuleTriggerSuppression", "Experiment",
     "SessionSpan", "Session", "SkillRead", "PlanSession", "TurnUsage",
     "SessionRepo", "PromptImage",

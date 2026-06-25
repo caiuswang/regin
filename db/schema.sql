@@ -674,6 +674,24 @@ CREATE INDEX IF NOT EXISTS ix_topic_audits_repo_id ON topic_audits(repo_id);
 CREATE INDEX IF NOT EXISTS ix_topic_audits_repo_kind_code ON topic_audits(repo_id, kind, code);
 CREATE INDEX IF NOT EXISTS ix_topic_audits_triggering_run ON topic_audits(triggering_run_id);
 
+-- Per-topic-ref content fingerprints captured at wiki-write time, the
+-- substrate for code-driven topic drift detection (lib/topics/ref_digest.py).
+-- One row per (repo_id, topic_id, path); re-capture is an idempotent upsert.
+CREATE TABLE IF NOT EXISTS topic_ref_digests (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id             INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+    topic_id            TEXT NOT NULL,
+    path                TEXT NOT NULL,
+    role                TEXT,
+    content_hash        TEXT NOT NULL,
+    embedding_json      TEXT,
+    embedding_model_id  TEXT,
+    captured_at         TEXT NOT NULL,
+    UNIQUE (repo_id, topic_id, path)
+);
+CREATE INDEX IF NOT EXISTS ix_topic_ref_digests_repo_id ON topic_ref_digests(repo_id);
+CREATE INDEX IF NOT EXISTS ix_topic_ref_digests_topic_id ON topic_ref_digests(topic_id);
+
 CREATE TABLE IF NOT EXISTS payload_schema_drift (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     agent               TEXT NOT NULL DEFAULT 'claude',

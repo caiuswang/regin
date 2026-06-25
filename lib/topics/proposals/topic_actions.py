@@ -32,6 +32,19 @@ from .core_io import load_proposal, save_proposal
 _VALID_EDGE_TYPES = frozenset({"related", "depends_on", "part_of", "supersedes"})
 
 
+def _capture_ref_digests_on_accept(repo_path: str | Path, topic_id: str) -> None:
+    """Fingerprint the accepted topic's ref files for later drift detection.
+
+    Gated on `topic_evolution.evolution_enabled` (off by default → no
+    behaviour change) and best-effort: `capture_ref_digests` never raises, so
+    accept can't fail because the digest table is unavailable."""
+    from lib.settings import settings
+    if not settings.topic_evolution.evolution_enabled:
+        return
+    from lib.topics.ref_digest import capture_ref_digests
+    capture_ref_digests(repo_path, topic_id)
+
+
 def update_proposed_topic(
     repo_path: str | Path,
     proposal_id: str,
@@ -154,6 +167,7 @@ def accept_proposed_topic(
     save_proposal(repo_path, proposal_id, proposal)
     proposal_dir = topic_dir(repo_path) / "proposals" / proposal_id
     _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("label") or approved_id)
+    _capture_ref_digests_on_accept(repo_path, approved_id)
     _topics_log().write(
         "proposal_topic_accepted",
         proposal_id=proposal_id, proposed_topic_id=proposed_topic_id,

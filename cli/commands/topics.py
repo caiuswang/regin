@@ -217,6 +217,23 @@ def cmd_topics_delete(
     print("Commit .regin/topics/ to share the removal.")
 
 
+@topics_app.command(
+    "digest-refs",
+    help="Capture per-topic-ref content fingerprints for drift detection")
+def cmd_topics_digest_refs(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.ref_digest import capture_all_digests
+
+    try:
+        result = capture_all_digests(_repo_path(repo))
+    except TopicGraphError as exc:
+        print(f"Digest capture failed: {exc}")
+        raise typer.Exit(1)
+    total = sum(result.values())
+    print(f"Captured {total} ref digest(s) across {len(result)} topic(s)")
+
+
 @topics_app.command("check", help="Validate topic graph schema and approved refs")
 def cmd_topics_check(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),

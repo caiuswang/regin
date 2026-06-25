@@ -334,6 +334,7 @@ def init_topic_proposal_schema(conn) -> None:
         ProposalRun,
         ProposalTopic,
         TopicAudit,
+        TopicRefDigest,
     )
 
     Base.metadata.create_all(
@@ -347,6 +348,7 @@ def init_topic_proposal_schema(conn) -> None:
             ProposalFeedbackComment.__table__,
             GraphSnapshot.__table__,
             TopicAudit.__table__,
+            TopicRefDigest.__table__,
         ],
     )
 

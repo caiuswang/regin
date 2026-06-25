@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import UniqueConstraint, text
 from sqlmodel import Column, Field, Integer, String, Text
 
 from lib.orm.base import Base
@@ -446,9 +446,51 @@ class ProposalFeedbackComment(Base, table=True):
     )
 
 
+class TopicRefDigest(Base, table=True):
+    """A captured fingerprint of one topic ref file at wiki-write time.
+
+    The substrate Phase 3 reads to decide a topic's wiki narrative has
+    drifted from the code under it: a `sha256` of the ref file's content
+    (always) plus an optional embedding (when an embedder is supplied at
+    capture). One row per `(repo_id, topic_id, path)` — re-capturing an
+    unchanged file is an idempotent upsert (the hash is stable), so the
+    table tracks the live tree without churn.
+
+    Lives in the ORM DB alongside `graph_snapshots`/`proposal_*` (NOT the
+    separate memory DB), so it must stay mirrored across all three schema
+    authorities: this model, `db/schema.sql`, and `web/startup.py`'s
+    `init_topic_proposal_schema` self-heal.
+    """
+
+    __tablename__ = "topic_ref_digests"
+    __table_args__ = (
+        UniqueConstraint("repo_id", "topic_id", "path",
+                         name="uq_topic_ref_digest"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    repo_id: int = Field(
+        sa_column=Column("repo_id", Integer, nullable=False, index=True),
+    )
+    topic_id: str = Field(
+        sa_column=Column("topic_id", String, nullable=False, index=True),
+    )
+    path: str = Field(sa_column=Column("path", String, nullable=False))
+    role: Optional[str] = Field(default=None,
+                                sa_column=Column("role", String))
+    content_hash: str = Field(
+        sa_column=Column("content_hash", String, nullable=False))
+    embedding_json: Optional[str] = Field(
+        default=None, sa_column=Column("embedding_json", Text))
+    embedding_model_id: Optional[str] = Field(
+        default=None, sa_column=Column("embedding_model_id", String))
+    captured_at: str = Field(
+        sa_column=Column("captured_at", Text, nullable=False))
+
+
 __all__ = [
     "ProposalRun", "ProposalTopic",
     "ProposalRevision", "ProposalRevisionTopic",
     "ProposalFeedbackThread", "ProposalFeedbackComment",
-    "GraphSnapshot", "TopicAudit",
+    "GraphSnapshot", "TopicAudit", "TopicRefDigest",
 ]

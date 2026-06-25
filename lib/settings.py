@@ -703,14 +703,30 @@ class AgentMessagesConfig(BaseModel):
     push_permission_events: bool = False
     push_plan_events: bool = False
 
-    # ── Retention (opt-in) ──
-    # The inbox is otherwise grow-forever. When `retention_days` is set,
-    # messages older than that are hard-deleted automatically after each
-    # write (see `store._enforce_retention`). None = keep forever (default,
-    # original behavior). `retention_keep_pinned` shields pinned cards from
-    # the auto-prune. Manual `regin messages prune` is always available.
-    retention_days: int | None = None
-    retention_keep_pinned: bool = True
+
+class TopicEvolutionConfig(BaseModel):
+    """Code-driven topic/memory co-evolution (`lib/topics` drift loop).
+
+    The substrate for letting the approved topic graph and agent memory
+    follow the code without a human authoring every proposal. Everything
+    here defaults **off**: `evolution_enabled` only unlocks the machinery,
+    and `mechanical_autoapply` separately gates the one tier that writes
+    without review — ref renames into the gitignored `topic.local.json`
+    overlay, never the human-approved `topic.json`.
+
+    `content_drift_cosine` is the similarity floor below which a topic's
+    ref files are judged to have drifted from its wiki narrative.
+    `drift_proposal_batch_max` caps proposals emitted per evolve pass so a
+    large commit can't spawn an unbounded number of drafting agents.
+    `auto_proposal_expire_days` retires unreviewed, never-routed
+    auto-proposals so the review queue can't rot.
+    """
+
+    evolution_enabled: bool = False
+    mechanical_autoapply: bool = False
+    content_drift_cosine: float = 0.6
+    drift_proposal_batch_max: int = 3
+    auto_proposal_expire_days: int = 14
 
 
 # Project-root-relative paths — fixed by where this file lives.
@@ -927,6 +943,10 @@ class Settings(BaseSettings):
 
     # ── Post-hoc session rubric grader (lib/grader) ───────────
     grader: GraderConfig = Field(default_factory=GraderConfig)
+
+    # ── Code-driven topic/memory co-evolution (lib/topics drift) ──
+    topic_evolution: TopicEvolutionConfig = Field(
+        default_factory=TopicEvolutionConfig)
 
     # Per-model context-window overrides (model id -> token count). Merged
     # on top of the built-in table in `lib/tokens/model_windows.py`. Use
