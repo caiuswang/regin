@@ -536,8 +536,16 @@ _POST_CHECKOUT_BODY = """
 "$PY" "$ROOT/cli/regin.py" topics import --repo "$ROOT" --reason git_pull --quiet || true
 """
 
+# After a commit lands, follow any file renames it introduced into the topic
+# refs (overlay) + memory paths. `|| true` keeps drift from ever blocking the
+# commit; the command itself is a no-op unless `mechanical_autoapply` is on.
+_POST_COMMIT_BODY = """
+"$PY" "$ROOT/cli/regin.py" topics drift --repo "$ROOT" || true
+"""
+
 _HOOK_BODIES: dict[str, str] = {
     "pre-commit": _PRE_COMMIT_BODY,
+    "post-commit": _POST_COMMIT_BODY,
     "post-merge": _POST_MERGE_BODY,
     "post-checkout": _POST_CHECKOUT_BODY,
 }

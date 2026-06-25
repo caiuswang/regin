@@ -67,6 +67,7 @@ class ReflectResult:
     topics: int = 0
     digests: int = 0
     flagged_stale: int = 0
+    ref_renames: int = 0
     dry_run: bool = False
     actions: list[str] = dc_field(default_factory=list)
 
@@ -462,11 +463,37 @@ def _missing_refs(root: str, paths: set[str]) -> list[str]:
                   if not os.path.exists(os.path.join(root, p)))
 
 
+def _rename_follow(store, root: str, mem: dict, missing: list[str], *,
+                   dry_run: bool, result: ReflectResult) -> list[str]:
+    """High-confidence half of stale-ref handling: for missing paths that git
+    history shows were *renamed* (not deleted), rewrite the memory body to the
+    new path and leave veracity untouched — a rename is relocation, not
+    staleness. Returns the residual genuinely-missing paths for the caller to
+    flag. A no-op (returns `missing` unchanged) unless `mechanical_autoapply`
+    is on; best-effort, so a git failure can't break the reflect pass."""
+    if not settings.topic_evolution.mechanical_autoapply:
+        return missing
+    try:
+        from lib.topics.drift import renames_from_history, rewrite_memory_body
+        renames = renames_from_history(root, set(missing))
+        if not renames:
+            return missing
+        if rewrite_memory_body(store, mem, renames, dry_run=dry_run):
+            result.ref_renames += 1
+            result.actions.append(
+                f"rename-follow {mem['id'][:8]}: {len(renames)} path(s)")
+        return [p for p in missing if p not in renames]
+    except Exception:  # noqa: BLE001 - rename-follow must not break reflect
+        log.error("reflect_rename_follow_failed", exc_info=True)
+        return missing
+
+
 def _check_one_stale(store, mem: dict, *, dry_run: bool,
                      result: ReflectResult) -> None:
     """Flag one memory if a concrete path it names no longer resolves. Skips
     rows already flagged (idempotency), unverifiable scopes, and rows with no
-    path references or no missing paths."""
+    path references or no missing paths. A renamed (not deleted) path is
+    rewritten in place first — only the genuinely-deleted residual is flagged."""
     paths = _referenced_paths(mem)
     if not paths:
         return
@@ -475,6 +502,10 @@ def _check_one_stale(store, mem: dict, *, dry_run: bool,
             store, mem["id"]).get("stale_ref"):
         return
     missing = _missing_refs(root, paths)
+    if not missing:
+        return
+    missing = _rename_follow(store, root, mem, missing,
+                             dry_run=dry_run, result=result)
     if not missing:
         return
     result.flagged_stale += 1
@@ -906,7 +937,8 @@ def reflect(store, embedder=None, llm=None, *,
               embedded=result.embedded, forgotten=result.forgotten,
               decayed=result.decayed, synthesized=result.synthesized,
               edges=result.edges, topics=result.topics, digests=result.digests,
-              flagged_stale=result.flagged_stale, dry_run=dry_run)
+              flagged_stale=result.flagged_stale, ref_renames=result.ref_renames,
+              dry_run=dry_run)
     return result
 
 

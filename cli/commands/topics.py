@@ -218,6 +218,26 @@ def cmd_topics_delete(
 
 
 @topics_app.command(
+    "drift",
+    help="Follow git renames into topic refs + memory paths (gated by "
+         "topic_evolution.mechanical_autoapply)")
+def cmd_topics_drift(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    base: str = typer.Option("HEAD~1", "--base", help="Compare-from commit"),
+    head: str = typer.Option("HEAD", "--head", help="Compare-to commit"),
+) -> None:
+    from lib.topics.drift import run_mechanical_drift
+
+    result = run_mechanical_drift(_repo_path(repo), base=base, head=head)
+    if not result.get("enabled"):
+        print("Drift skipped (topic_evolution.mechanical_autoapply is off)")
+        return
+    print(f"Renames followed: {result['renames']} — "
+          f"topics rewritten: {result['topics_rewritten']}, "
+          f"memories rewritten: {result['memories_rewritten']}")
+
+
+@topics_app.command(
     "digest-refs",
     help="Capture per-topic-ref content fingerprints for drift detection")
 def cmd_topics_digest_refs(

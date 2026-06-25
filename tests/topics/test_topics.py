@@ -278,17 +278,29 @@ def test_install_pre_commit_hook_writes_check_and_staged_scan(fake_git_repo):
     assert "--staged" in content
 
 
-def test_install_topic_hooks_writes_all_three_hooks(fake_git_repo):
-    """The multi-user post-pull sync needs three hooks, not just
-    pre-commit — `install_topic_hooks` returns all of them and each
-    is executable. `install_pre_commit_hook` survives as a back-compat
-    wrapper so existing callers keep working."""
+def test_install_topic_hooks_writes_all_hooks(fake_git_repo):
+    """The multi-user post-pull sync plus the post-commit drift follow need
+    four hooks, not just pre-commit — `install_topic_hooks` returns all of
+    them and each is executable. `install_pre_commit_hook` survives as a
+    back-compat wrapper so existing callers keep working."""
     paths = topics.install_topic_hooks(fake_git_repo)
 
-    assert set(paths) == {"pre-commit", "post-merge", "post-checkout"}
+    assert set(paths) == {"pre-commit", "post-commit", "post-merge",
+                          "post-checkout"}
     for name, path in paths.items():
         assert path.exists(), f"{name} hook not written"
         assert os.stat(path).st_mode & stat.S_IXUSR, f"{name} hook not executable"
+
+
+def test_post_commit_hook_runs_drift_without_blocking(fake_git_repo):
+    """`post-commit` follows file renames into refs/memory but must never
+    break the commit — hence the `|| true` trailer — and is a no-op unless
+    `mechanical_autoapply` is on (enforced in the command itself)."""
+    paths = topics.install_topic_hooks(fake_git_repo)
+    content = paths["post-commit"].read_text()
+
+    assert "topics drift" in content
+    assert "|| true" in content
 
 
 def test_post_merge_hook_runs_topics_import_silently(fake_git_repo):
