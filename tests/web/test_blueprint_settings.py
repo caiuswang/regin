@@ -314,3 +314,54 @@ def test_topic_evolution_put_requires_auth(
     assert resp.status_code == 401
 
 
+# ── Block GET smoke + spec/model lockstep (drift guard) ───────
+#
+# A field-spec key that the pydantic model lacks 500s the block's GET at
+# runtime (`_field_payload` does a bare `getattr`), and a green suite hides
+# it unless every block has a GET test. These two guards make spec/model
+# drift fail in CI instead of in the browser. (Regression: d2d4efa dropped
+# retention_days/retention_keep_pinned from AgentMessagesConfig while the
+# spec still listed them, 500ing the agent-messages tab.)
+
+def _block_names():
+    from web.blueprints.settings import _settings_blocks
+    return sorted(_settings_blocks().keys())
+
+
+@pytest.mark.parametrize("block", _block_names())
+def test_settings_block_get_returns_200(
+        block, flask_client, isolated_settings_files):
+    """Every registered block's GET resolves every field value (no 500)."""
+    resp = flask_client.get(f"/api/settings/{block}")
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert isinstance(body.get("fields"), list) and body["fields"]
+    for f in body["fields"]:
+        assert "value" in f and "default" in f
+
+
+@pytest.mark.parametrize("block", _block_names())
+def test_settings_block_spec_keys_exist_on_model(block):
+    """Each field-spec key must be a real attribute of the block's model, so
+    `getattr(current, key)` in _field_payload can never raise."""
+    from web.blueprints.settings import _settings_blocks
+    spec = _settings_blocks()[block]
+    model_keys = set(spec["model"].model_fields)
+    spec_keys = {f["key"] for f in spec["fields"]}
+    missing = spec_keys - model_keys
+    assert not missing, (
+        f"{block}: field-spec keys absent from "
+        f"{spec['model'].__name__}: {sorted(missing)}")
+
+
+def test_agent_messages_get_exposes_retention_fields(
+        flask_client, isolated_settings_files):
+    """The retention fields round-trip through GET with their defaults-off
+    values (the exact regression from d2d4efa)."""
+    body = flask_client.get("/api/settings/agent-messages").get_json()
+    fields = {f["key"]: f for f in body["fields"]}
+    # retention_days default None surfaces as the -1 null_as sentinel.
+    assert fields["retention_days"]["value"] == -1
+    assert fields["retention_keep_pinned"]["value"] is True
+
+
