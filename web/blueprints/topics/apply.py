@@ -303,6 +303,37 @@ def _append_edge_once(
     edges.append({"type": edge_type, "target": target})
 
 
+def _advance_drift_baseline_after_apply(
+    repo_path: str, resolved, *, strategy: str,
+) -> None:
+    """Re-run the legacy accept/replace/merge shims' post-apply hooks on the
+    modern /apply path.
+
+    The Phase-C UI applies exclusively through this endpoint, which commits via
+    `apply_diff` directly — bypassing the `accept_proposed_topic` /
+    `replace_approved_topic` shims that re-fingerprint a topic's refs
+    (`_capture_ref_digests_on_accept`) and un-stale its drift-demoted memories
+    (`_restore_topic_memories_on_accept`). Without re-running them here,
+    applying a content-drift *refresh* leaves `TopicRefDigest.content_hash`
+    stale, so the very next `regin topics evolve` re-detects the same drift —
+    forever.
+
+    Both helpers are gated on `topic_evolution.evolution_enabled` (off by
+    default → no-op) and best-effort (never raise), so this is invisible on the
+    default config. Strategy mirrors the legacy shims exactly: create/replace
+    capture + restore; merge restores only (it never captured)."""
+    if not resolved.topic_deltas:
+        return
+    from lib.topics.proposals.topic_actions import (
+        _capture_ref_digests_on_accept,
+        _restore_topic_memories_on_accept,
+    )
+    applied_id = resolved.topic_deltas[0].topic_id
+    if strategy in ("create", "replace"):
+        _capture_ref_digests_on_accept(repo_path, applied_id)
+    _restore_topic_memories_on_accept(applied_id)
+
+
 def _already_applied_noop_snapshot(
     repo_id: int,
     proposal_id: str,
@@ -486,6 +517,12 @@ def api_repo_topic_proposal_apply(name, proposal_id, proposed_topic_id):
     _stage_forward_sibling_edges(
         repo_path, proposal, proposed, approved, strategy=strategy,
     )
+
+    # Advance the content-drift baseline (and recover drift-demoted memories)
+    # for the just-applied topic. The legacy accept/replace/merge shims did
+    # this; the modern apply_diff path doesn't, so without it a refreshed
+    # topic stays "drifted" on every subsequent `regin topics evolve`.
+    _advance_drift_baseline_after_apply(repo_path, resolved, strategy=strategy)
 
     from lib.topics.proposals import save_proposal
     _mark_proposal_topic_applied(

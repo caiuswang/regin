@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import types
 
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo
+from lib.settings import settings
 from lib.topics import bootstrap, load_graph_merged
 from lib.topics.proposals import load_proposal
 
@@ -582,3 +584,118 @@ def test_forward_edge_survives_stage_then_restore_round_trip(monkeypatch):
     _restore_pruned_edges(live_topics, pruned)
 
     assert live_topics["doc1"]["edges"] == [{"type": "related", "target": "doc3"}]
+
+
+# ── content-drift baseline advance on apply ─────────────────────────
+#
+# The modern /apply path commits via apply_diff directly, bypassing the
+# legacy accept/replace shims that re-fingerprint a topic's refs. Without
+# `_advance_drift_baseline_after_apply` the stored TopicRefDigest stays at
+# the pre-refresh hash, so `regin topics evolve` re-detects the SAME drift
+# on every subsequent pass — the reported bug. These cover the helper
+# (deterministic) and the live endpoint.
+
+
+def _drift_graph(repo, topic_id="t1", path="svc.py") -> None:
+    """Write an approved graph with one topic referencing `path`."""
+    from lib.topics.core import topic_path
+    p = topic_path(repo)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": {
+        topic_id: {
+            "label": "T", "intent": "t", "status": "active", "aliases": [],
+            "refs": [{"path": path}], "edges": [], "commands": [],
+            "include_globs": [], "exclude_globs": [],
+        },
+    }}))
+
+
+def _resolved_for(topic_id: str):
+    """Minimal stand-in for a resolved GraphDiff — the helper only reads
+    `resolved.topic_deltas[0].topic_id`."""
+    return types.SimpleNamespace(
+        topic_deltas=[types.SimpleNamespace(topic_id=topic_id)]
+    )
+
+
+def test_advance_baseline_resolves_redetected_drift(fake_git_repo, monkeypatch):
+    """The exact reported bug: a topic whose ref drifted, then whose refresh
+    is applied through the modern path, must NOT be re-detected as drifted."""
+    from lib.topics.content_drift import detect_drifted_topics
+    from lib.topics.ref_digest import capture_ref_digests
+    from lib.topics.snapshots import resolve_or_create_repo
+    from web.blueprints.topics import apply as apply_mod
+
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
+    repo = fake_git_repo
+    (repo / "svc.py").write_text("v1\n")
+    _drift_graph(repo)
+    resolve_or_create_repo(str(repo))
+    capture_ref_digests(repo, "t1")                    # baseline at v1
+    (repo / "svc.py").write_text("v2 — code moved out from under the wiki\n")
+    assert detect_drifted_topics(repo) == [
+        {"topic_id": "t1", "drifted_paths": ["svc.py"]}
+    ]
+
+    # Apply the refresh through the same seam the /apply endpoint uses.
+    apply_mod._advance_drift_baseline_after_apply(
+        str(repo), _resolved_for("t1"), strategy="replace",
+    )
+
+    assert detect_drifted_topics(repo) == []           # baseline advanced to v2
+
+
+def test_advance_baseline_is_noop_when_evolution_disabled(fake_git_repo, monkeypatch):
+    """Gated off (default): the apply path must not touch digests, so the
+    drift signal is left exactly as it was — zero behaviour change."""
+    from lib.topics.content_drift import detect_drifted_topics
+    from lib.topics.ref_digest import capture_ref_digests
+    from lib.topics.snapshots import resolve_or_create_repo
+    from web.blueprints.topics import apply as apply_mod
+
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", False)
+    repo = fake_git_repo
+    (repo / "svc.py").write_text("v1\n")
+    _drift_graph(repo)
+    resolve_or_create_repo(str(repo))
+    capture_ref_digests(repo, "t1")
+    (repo / "svc.py").write_text("v2\n")
+    before = detect_drifted_topics(repo)
+    assert before == [{"topic_id": "t1", "drifted_paths": ["svc.py"]}]
+
+    apply_mod._advance_drift_baseline_after_apply(
+        str(repo), _resolved_for("t1"), strategy="replace",
+    )
+
+    assert detect_drifted_topics(repo) == before       # still drifted — untouched
+
+
+def test_apply_endpoint_captures_drift_baseline(
+    stub_proposal_provider, flask_client, fake_git_repo, monkeypatch,
+):
+    """End-to-end through the real /apply endpoint: with evolution on, applying
+    fingerprints the topic's refs so a later code change is detectable as
+    drift. Pre-fix the modern path captured nothing — drift could never be
+    judged, nor a refresh ever resolve it."""
+    from lib.topics.content_drift import detect_drifted_topics
+    from lib.topics.ref_digest import digests_for_topic, repo_id_for_path
+
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
+    name = _seed_repo(fake_git_repo)
+    proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
+
+    resp = flask_client.post(
+        f"/api/repos/{name}/topics/proposals/{proposal_id}/topics/{topic_id}/apply",
+        json={"strategy": "create"},
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+
+    repo_id = repo_id_for_path(str(fake_git_repo))
+    digests = digests_for_topic(repo_id, topic_id)
+    assert digests, "apply did not fingerprint the topic's refs"
+
+    # The captured baseline is real: mutate a ref and it registers as drift.
+    ref_path = digests[0]["path"]
+    (fake_git_repo / ref_path).write_text("MUTATED AFTER APPLY\n")
+    drifted = [d["topic_id"] for d in detect_drifted_topics(fake_git_repo)]
+    assert topic_id in drifted
