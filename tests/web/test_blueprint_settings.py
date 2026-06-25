@@ -259,16 +259,18 @@ def _topic_evo_fields(flask_client):
     return {f["key"]: f for f in body["fields"]}
 
 
-def test_topic_evolution_get_exposes_all_six_fields(
+def test_topic_evolution_get_exposes_all_fields(
         flask_client, isolated_settings_files):
-    """The block surfaces all six flags with their types + defaults-off values."""
+    """The block surfaces every flag with its type + defaults-off value."""
     fields = _topic_evo_fields(flask_client)
     assert set(fields) == {
         "evolution_enabled", "mechanical_autoapply", "auto_spawn_agents",
         "content_drift_cosine", "drift_proposal_batch_max",
-        "auto_proposal_expire_days"}
+        "auto_proposal_expire_days", "auto_review_notes"}
     assert fields["evolution_enabled"]["type"] == "bool"
     assert fields["evolution_enabled"]["value"] is False      # off by default
+    assert fields["auto_review_notes"]["type"] == "bool"
+    assert fields["auto_review_notes"]["value"] is False       # off by default
     cdc = fields["content_drift_cosine"]
     assert cdc["type"] == "float" and cdc["min"] == 0 and cdc["max"] == 1
     assert fields["drift_proposal_batch_max"]["type"] == "int"

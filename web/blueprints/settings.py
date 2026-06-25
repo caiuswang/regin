@@ -258,6 +258,13 @@ _TOPIC_EVOLUTION_FIELDS: list[dict] = [
      "min": 0, "step": 1, "label": "Auto-expire unreviewed proposals (days)",
      "description": "Auto-generated proposals left unreviewed this many days are "
                     "retired (ignored) so the review queue can't rot. 0 = never."},
+    {"key": "auto_review_notes", "group": "Proposals", "type": "bool",
+     "label": "Auto-write LLM review notes on proposal runs",
+     "description": "When a proposal run completes, an LLM reviewer attaches a "
+                    "review note (regenerate/accept/dismiss recommendation) as a "
+                    "feedback thread that carries into the next run. Needs a "
+                    "configured proposal agent — a real cost, off by default even "
+                    "when evolution is on."},
 ]
 
 
