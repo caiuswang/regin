@@ -37,11 +37,29 @@ def spy(monkeypatch):
     return calls
 
 
+class _StubReviewer:
+    """Stub the agentic materiality triage LLM with a fixed answer."""
+
+    def __init__(self, answer):
+        self._answer = answer
+
+    def complete(self, prompt, *, max_tokens=1024):
+        return self._answer
+
+
+def _set_triage(monkeypatch, answer):
+    monkeypatch.setattr("lib.memory.adapters.resolve_proposal_reviewer",
+                        lambda: _StubReviewer(answer))
+
+
 def _configure(monkeypatch, *, spawn: bool, configured: bool):
     monkeypatch.setattr(settings.topic_evolution, "auto_spawn_agents", spawn)
     monkeypatch.setattr(
         "lib.topics.proposal_external.external_agent_configured",
         lambda: configured)
+    # Default: triage judges MATERIAL so spawn-path tests are deterministic and
+    # never shell out to a real agent. Triage tests override with _set_triage.
+    _set_triage(monkeypatch, "VERDICT: MATERIAL")
 
 
 def _topic(refs: list[dict]) -> dict:
@@ -57,6 +75,15 @@ def _seed(repo: Path, topics: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
     resolve_or_create_repo(str(repo))
+
+
+def _write_wiki(repo: Path, topic_id: str) -> None:
+    """A per-topic wiki on disk — triage needs a narrative to judge the drift
+    against; with no wiki it is skipped (fail open to spawn)."""
+    from lib.topics.wiki import wiki_dir
+    wd = wiki_dir(repo)
+    wd.mkdir(parents=True, exist_ok=True)
+    (wd / f"{topic_id}.md").write_text(f"# {topic_id}\n\nnarrative\n")
 
 
 # ── the double gate ───────────────────────────────────────────
@@ -134,6 +161,48 @@ def test_batch_cap_limits_spawns(fake_git_repo, monkeypatch, spy):
     })
     emit_refresh_proposal(fake_git_repo, "t1", ["a.py"])
     emit_refresh_proposal(fake_git_repo, "t2", ["b.py"])
+
+    assert maybe_spawn_refresh_agents(fake_git_repo) == 1
+    assert len(spy) == 1
+
+
+# ── agentic materiality triage ────────────────────────────────
+
+
+def test_triage_trivial_dismisses_without_spawn(fake_git_repo, monkeypatch, spy):
+    _configure(monkeypatch, spawn=True, configured=True)
+    _set_triage(monkeypatch, "Only whitespace moved.\nVERDICT: TRIVIAL")
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _write_wiki(repo, "t1")            # triage needs a wiki to judge against
+    emit_refresh_proposal(repo, "t1", ["a.py"])
+
+    # trivial → no draft spawned, and the stub leaves the review queue
+    assert maybe_spawn_refresh_agents(repo) == 0
+    assert spy == []
+    assert load_proposal(repo, "content-drift-t1")["status"] != "pending_review"
+
+
+def test_triage_material_spawns(fake_git_repo, monkeypatch, spy):
+    _configure(monkeypatch, spawn=True, configured=True)
+    _set_triage(monkeypatch, "The public API changed.\nVERDICT: MATERIAL")
+    _seed(fake_git_repo, {"t1": _topic([{"path": "a.py"}])})
+    _write_wiki(fake_git_repo, "t1")
+    emit_refresh_proposal(fake_git_repo, "t1", ["a.py"])
+
+    assert maybe_spawn_refresh_agents(fake_git_repo) == 1
+    assert len(spy) == 1
+    assert load_proposal(fake_git_repo, "content-drift-t1")["status"] == "pending_review"
+
+
+def test_triage_fails_open_on_empty_answer(fake_git_repo, monkeypatch, spy):
+    # No agent / empty answer must NOT silently dismiss a possibly-real drift.
+    _configure(monkeypatch, spawn=True, configured=True)
+    _set_triage(monkeypatch, "")
+    _seed(fake_git_repo, {"t1": _topic([{"path": "a.py"}])})
+    _write_wiki(fake_git_repo, "t1")
+    emit_refresh_proposal(fake_git_repo, "t1", ["a.py"])
 
     assert maybe_spawn_refresh_agents(fake_git_repo) == 1
     assert len(spy) == 1
