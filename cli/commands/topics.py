@@ -244,16 +244,23 @@ def cmd_topics_drift(
          "topic_evolution.evolution_enabled)")
 def cmd_topics_evolve(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    all_repos: bool = typer.Option(
+        False, "--all", help="Run across every registered repo (for cron)"),
 ) -> None:
+    from lib.settings import settings as _settings
     from lib.topics.content_drift import run_content_evolution
 
-    result = run_content_evolution(_repo_path(repo))
-    if not result.get("enabled"):
-        print("Evolve skipped (topic_evolution.evolution_enabled is off)")
-        return
-    print(f"Drifted topics: {result['drifted']} — "
-          f"refresh proposals: {result['proposals']}, "
-          f"memories staled: {result['memories_staled']}")
+    targets = ([str(p) for p in _settings.repo_paths] if all_repos
+               else [str(_repo_path(repo))])
+    for target in targets:
+        result = run_content_evolution(target)
+        if not result.get("enabled"):
+            print(f"{target}: evolve skipped (evolution_enabled is off)")
+            continue
+        print(f"{target}: drifted {result['drifted']}, "
+              f"proposals {result['proposals']}, "
+              f"memories staled {result['memories_staled']}, "
+              f"expired {result['expired']}")
 
 
 @topics_app.command(

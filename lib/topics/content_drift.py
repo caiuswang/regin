@@ -177,10 +177,11 @@ def run_content_evolution(repo_path: str | Path, *,
     Gated on `evolution_enabled` (no-op dict when off) and best-effort."""
     if not settings.topic_evolution.evolution_enabled:
         return {"enabled": False, "drifted": 0, "proposals": 0,
-                "memories_staled": 0, "capped": 0}
+                "memories_staled": 0, "capped": 0, "expired": 0}
     try:
         from lib.memory import get_store
         from lib.memory.topic_cascade import cascade_topic_stale
+        from lib.topics.proposal_expiry import expire_stale_auto_proposals
 
         drifted = detect_drifted_topics(repo_path, embedder=embedder)
         cap = settings.topic_evolution.drift_proposal_batch_max
@@ -193,15 +194,18 @@ def run_content_evolution(repo_path: str | Path, *,
             staled += cascade_topic_stale(store, tid, reason="content_drift")
             if emit_refresh_proposal(repo_path, tid, item["drifted_paths"]):
                 proposals += 1
+        # Prune the other end of the loop so the review queue can't rot.
+        expired = expire_stale_auto_proposals(repo_path)
         log.write("content_evolution_run", drifted=len(drifted),
                   proposed=proposals, memories_staled=staled,
-                  capped=len(drifted) - len(batch))
+                  capped=len(drifted) - len(batch), expired=expired)
         return {"enabled": True, "drifted": len(drifted), "proposals": proposals,
-                "memories_staled": staled, "capped": len(drifted) - len(batch)}
+                "memories_staled": staled, "capped": len(drifted) - len(batch),
+                "expired": expired}
     except Exception:  # noqa: BLE001 - evolve must never break a cron/CLI caller
         log.error("content_evolution_failed", exc_info=True)
         return {"enabled": True, "drifted": 0, "proposals": 0,
-                "memories_staled": 0, "capped": 0, "error": True}
+                "memories_staled": 0, "capped": 0, "expired": 0, "error": True}
 
 
 __all__ = ["detect_drifted_topics", "emit_refresh_proposal",
