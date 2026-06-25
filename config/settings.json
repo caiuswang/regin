@@ -96,5 +96,8 @@
       }
     ],
     "external_agent": null
+  },
+  "topic_evolution": {
+    "auto_review_notes": true
   }
 }
