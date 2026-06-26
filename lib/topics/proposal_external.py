@@ -586,6 +586,26 @@ def _prior_proposal_for_prompt(proposal: dict[str, Any] | None) -> dict[str, Any
     return clean
 
 
+def _sibling_refresh_section(repo: Path, out_dir: Path) -> str:
+    """The "Sibling topics being refreshed" prompt section, or "" when this
+    isn't a content-drift refresh batch with ≥1 other pending sibling.
+
+    `out_dir` is `<repo>/.regin/topics/proposals/<id>`, so its name is the
+    proposal id (see `_repo_and_id_from_out_dir`). For user/external proposals
+    the id isn't in the content-drift set, so the helper returns "" and no
+    section is emitted."""
+    from lib.topics.agent_spawn import _sibling_refresh_context
+    block = _sibling_refresh_context(repo, out_dir.name)
+    if not block:
+        return ""
+    return (
+        "\nSibling topics being refreshed in this same batch (keep your "
+        "cross-references — edges and wiki mentions — consistent with these; "
+        "do NOT treat their approved summary as final, they are being "
+        f"rewritten too):\n\n{block}\n"
+    )
+
+
 def _instructions(
     repo: Path,
     topic_request: str | None,
@@ -622,6 +642,7 @@ Previous wiki markdown:
 ```
 """
     custom = _format_template_section(prompt_templates)
+    sibling_section = _sibling_refresh_section(repo, out_dir)
     return f"""# Regin Topic Proposal Agent Task
 
 Inspect this repository as needed and draft reviewable topic graph proposals.
@@ -673,7 +694,7 @@ Available buckets (pick one id for each topic's `parent_id`, or null if none fit
 ```json
 {json.dumps(_bucket_summary(repo), indent=2, sort_keys=True)}
 ```
-"""
+{sibling_section}"""
 
 
 def _load_agent_payload(output_path: Path, stdout: str) -> dict[str, Any]:

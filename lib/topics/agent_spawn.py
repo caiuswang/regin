@@ -64,6 +64,73 @@ def _already_spawned(repo_path: str | Path, proposal_id: str) -> bool:
     return (out_dir / STATUS_FILE).exists()
 
 
+SIBLING_WIKI_EXCERPT_CHARS = 800
+
+
+def _sibling_wiki_excerpt(repo_path: str | Path, topic_id: str) -> str:
+    """First ~800 chars of a sibling's current on-disk wiki, or "" when it has
+    no wiki file yet. Never raises — a missing/unreadable file just yields ""."""
+    from lib.topics import slugify
+    from lib.topics.wiki import wiki_dir
+    wiki_path = wiki_dir(repo_path) / f"{slugify(topic_id)}.md"
+    if not wiki_path.is_file():
+        return ""
+    try:
+        text = wiki_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    text = text.strip()
+    if len(text) > SIBLING_WIKI_EXCERPT_CHARS:
+        return text[:SIBLING_WIKI_EXCERPT_CHARS].rstrip() + "\n…(truncated)"
+    return text
+
+
+def _sibling_block(repo_path: str | Path, proposal: dict[str, Any]) -> str:
+    """Format one sibling refresh proposal as a markdown block: its topic id,
+    label, drifted_paths, and a short current-wiki excerpt."""
+    topics = proposal.get("topics") or [{}]
+    topic = topics[0]
+    topic_id = topic.get("id") or "(unknown)"
+    label = topic.get("label") or topic_id
+    paths = (proposal.get("metadata") or {}).get("drifted_paths") or []
+    paths_md = "\n".join(f"  - {p}" for p in paths) or "  - (this topic's refs)"
+    excerpt = _sibling_wiki_excerpt(repo_path, topic_id)
+    excerpt_md = excerpt or "(no wiki on file yet)"
+    return (
+        f"### {label} (`{topic_id}`)\n\n"
+        f"Drifted files:\n{paths_md}\n\n"
+        f"Current wiki excerpt:\n```markdown\n{excerpt_md}\n```"
+    )
+
+
+def _sibling_refresh_context(repo_path: str | Path, self_proposal_id: str) -> str:
+    """A markdown block describing the OTHER content-drift refresh proposals
+    pending in this same batch — each sibling's topic id, label, drifted_paths,
+    and a short current-wiki excerpt — so the drafting agent keeps its
+    cross-references consistent with siblings being rewritten alongside it.
+
+    Returns "" when there are no siblings (and so naturally for user/external
+    proposals, whose ids aren't in the content-drift set). Best-effort: a
+    sibling whose proposal can't be loaded is skipped, never raised."""
+    from lib.topics.proposals import load_proposal
+    blocks: list[str] = []
+    for proposal_id in _content_drift_run_ids(repo_path):
+        if proposal_id == self_proposal_id:
+            continue
+        try:
+            proposal = load_proposal(repo_path, proposal_id)
+        except Exception:  # noqa: BLE001 - a bad sibling must not break drafting
+            continue
+        # Only genuinely in-flight siblings — mirror `_spawn_one`'s gate. A
+        # terminal (applied/ignored) content-drift run is not "being rewritten
+        # alongside you"; including it would be false and would let the block
+        # grow without bound as runs accumulate in the DB.
+        if proposal.get("status") != "pending_review":
+            continue
+        blocks.append(_sibling_block(repo_path, proposal))
+    return "\n\n".join(blocks)
+
+
 def _topic_request(proposal: dict[str, Any]) -> str:
     """The drafting brief handed to the agent for a refresh proposal."""
     topics = proposal.get("topics") or [{}]
