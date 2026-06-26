@@ -420,6 +420,45 @@ def _latest_snapshot_row(repo_id: int):
         ).first()
 
 
+@topics_app.command(
+    "reconcile",
+    help="Reconcile stale proposal 'accepted' markers against the approved graph")
+def cmd_topics_reconcile(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    fix: bool = typer.Option(
+        False, "--fix",
+        help="Clear stale 'accepted' markers via the recovery primitive"),
+) -> None:
+    from lib.topics.reconcile import (
+        find_stale_acceptances,
+        fix_stale_acceptances,
+        record_reconcile_audit,
+    )
+
+    rp = _repo_path(repo)
+    stale = find_stale_acceptances(rp)
+    if not stale:
+        print("No stale acceptances — every accepted proposal topic is "
+              "present in the approved graph.")
+        return
+
+    print(f"Stale acceptances ({len(stale)} topic(s) accepted but absent "
+          f"from the approved graph):")
+    for item in stale:
+        runs = ", ".join(item["runs"])
+        print(f"  • {item['topic_id']}  (last accepted@{item['accepted_at']}; "
+              f"runs: {runs})")
+    record_reconcile_audit(rp, stale, fixed=fix)
+
+    if not fix:
+        print("\nReport-only. Re-run with --fix to clear these stale markers.")
+        return
+
+    reset = fix_stale_acceptances(rp, stale)
+    print(f"\nFixed: cleared {reset} stale 'accepted' marker(s) across "
+          f"proposal rows.")
+
+
 @topics_app.command("import", help="Sync disk topic.json + wikis into a new GraphSnapshot")
 def cmd_topics_import(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
