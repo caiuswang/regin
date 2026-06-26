@@ -148,8 +148,21 @@ useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, reload, loadOld
 // from a placeholder→anchor handoff never gets reconciled away) until they
 // scroll. A lightweight visibility-gated tick keeps the reconcile
 // (`reloadLiveTail`) converging the tail to the DB every few seconds.
+//
+// The poll is self-terminating: it consumes resources (a /map fetch + a
+// backend transcript rescan) every tick, which is pure waste once a session
+// has ended and its tail has stopped growing. So we stop polling once the
+// session is closed (`ended_at` set) AND the tail has converged — see
+// `maybeStopOnConverge`. An already-ended session never starts the recurring
+// poll at all; it runs one bounded catch-up instead (`syncClosedSessionTail`),
+// which is also the crash-recovery path (reopening the view re-runs it).
 let livePollTimer = null
 const LIVE_POLL_MS = 4000
+// Max reconciles the bounded catch-up will run before giving up on an
+// ever-advancing tail (a still-live session mislabelled ended, say).
+const CLOSED_SYNC_MAX_TICKS = 3
+// newest DB id observed at the previous reconcile, for the convergence test.
+let convergeAnchorId = null
 function startLivePoll() {
   if (livePollTimer) return
   livePollTimer = setInterval(() => {
@@ -162,6 +175,35 @@ function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null }
 }
 
+// Called after every reconcile. While the session is live, keep polling. Once
+// it has ended, stop — but only after the tail stops advancing, so the final
+// SessionEnd flush is captured first. A count/items divergence (the marker
+// says ended while spans are still landing) must NOT stop us on the first
+// `ended_at`; we require one unchanged-newest tick.
+function maybeStopOnConverge() {
+  if (!livePollTimer) return
+  if (!session.value?.ended_at) { convergeAnchorId = null; return }
+  if (convergeAnchorId !== null && newestLoadedId.value === convergeAnchorId) {
+    stopLivePoll()
+    return
+  }
+  convergeAnchorId = newestLoadedId.value
+}
+
+// Crash-recovery / one-shot sync for a session that is already closed when the
+// view opens. The hook scan may have missed the last turns before a server
+// crash; reconcile only while the tail keeps advancing, capped — then stop. No
+// recurring poll: opening (or reloading) the view IS the trigger, so there is
+// no button to press.
+async function syncClosedSessionTail() {
+  let anchor = newestLoadedId.value
+  for (let i = 0; i < CLOSED_SYNC_MAX_TICKS; i++) {
+    await reload()
+    if (newestLoadedId.value === anchor) break
+    anchor = newestLoadedId.value
+  }
+}
+
 onMounted(async () => {
   const rollupP = fetchToolRollup()
   const plansP = fetchPlans()
@@ -169,7 +211,13 @@ onMounted(async () => {
   await loadSession()
   loading.value = false
   await Promise.all([rollupP, plansP, wfRunsP])
-  startLivePoll()
+  // A session that is already closed never needs the perpetual poll: run one
+  // bounded catch-up (crash recovery) and stop. Live sessions keep the poll.
+  if (session.value?.ended_at) {
+    await syncClosedSessionTail()
+  } else {
+    startLivePoll()
+  }
   if (viewMode.value === 'terminal') ensureTerminalSpansLoaded()
   if (viewMode.value === 'messages') ensureAgentMessagesLoaded()
   // Scroll/wheel/touch auto-reload listeners are attached by useTraceScroll();
@@ -216,6 +264,7 @@ async function reload() {
     }
     await Promise.all(tasks)
     lastReloadedAt.value = new Date()
+    maybeStopOnConverge()
   } finally {
     reloading.value = false
   }
