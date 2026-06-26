@@ -158,6 +158,11 @@ def start_external_proposal_run(
         "error": None,
         "pid": None,
         "prompt_template_ids": resolved_ids,
+        # Reset the finish signal — a reused run id must not inherit a prior
+        # run's `agent_signaled` (the ORM metadata merge only adds keys), or
+        # this fresh run would be treated as already-ingested.
+        "agent_signaled": False,
+        "signaled_by": None,
     })
     # Clear any stale cancel flag from a prior run with this id (the id is
     # reused across regenerate) so the fresh run isn't insta-cancelled.
@@ -208,6 +213,15 @@ def _record_thread_failure(
         write_status(out_dir, status)
 
 
+def _already_ingested_by_agent(out_dir: Path) -> bool:
+    """True when the agent already persisted via `proposal-finish`
+    (notify-on-finish). The runner returns that persisted result, so the job
+    must not re-write the artifacts and double-persist the proposal."""
+    from lib.topics.proposal_external import load_status
+    status = load_status(out_dir) or {}
+    return bool(status.get("agent_signaled"))
+
+
 def _mark_run_completed(out_dir: Path) -> None:
     """Stamp the run's terminal `completed` status on success.
 
@@ -243,11 +257,12 @@ def _external_proposal_job(
             prompt_templates=templates,
         )
         proposals["status"] = "pending_review"
-        _write_proposal_artifacts(
-            out_dir, proposals=proposals, wiki=wiki,
-            repo_path=repo, proposal_id=proposal_id,
-            revision_kind="generated",
-        )
+        if not _already_ingested_by_agent(out_dir):
+            _write_proposal_artifacts(
+                out_dir, proposals=proposals, wiki=wiki,
+                repo_path=repo, proposal_id=proposal_id,
+                revision_kind="generated",
+            )
         _mark_run_completed(out_dir)
         _maybe_review_note(repo, proposal_id)
     except Exception as exc:
@@ -291,6 +306,11 @@ def start_external_regenerate_run(
         "error": None,
         "pid": None,
         "prompt_template_ids": inputs.prompt_template_ids,
+        # Regenerate reuses the run id, so the prior completed run left
+        # `agent_signaled=True` in metadata. Clear it (the merge can't delete
+        # keys) or this regenerate would short-circuit as already-ingested.
+        "agent_signaled": False,
+        "signaled_by": None,
     })
     run_control.reset(proposal_id)
     threading.Thread(
@@ -338,12 +358,16 @@ def _external_regenerate_job(
         )
         proposals["status"] = "pending_review"
         _reset_review_markers_for_regenerate(proposals)
-        _write_proposal_artifacts(
-            proposal_dir, proposals=proposals, wiki=wiki,
-            repo_path=repo, proposal_id=proposal_id,
-            append_revision=True,
-            revision_kind="regenerated",
-        )
+        # The agent may have already ingested via `proposal-finish`
+        # (notify-on-finish), which appends the `regenerated` revision
+        # itself — don't append a second, duplicate one here.
+        if not _already_ingested_by_agent(proposal_dir):
+            _write_proposal_artifacts(
+                proposal_dir, proposals=proposals, wiki=wiki,
+                repo_path=repo, proposal_id=proposal_id,
+                append_revision=True,
+                revision_kind="regenerated",
+            )
         if prior_draft is not None:
             _mark_addressed_feedback_after_regenerate(
                 repo, proposal_id, previous_revision_id,

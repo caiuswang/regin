@@ -316,6 +316,38 @@ def cmd_topics_review_note(
     print(f"Review note added to proposal {proposal_id} (thread {thread.get('id')})")
 
 
+@topics_app.command(
+    "proposal-finish",
+    help="Ingest a finished proposal run on the agent's completion signal "
+         "(the drafting agent calls this as its final step)")
+def cmd_topics_proposal_finish(
+    proposal_id: str = typer.Argument(..., help="Proposal run id"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.proposals import finish_proposal_run
+
+    try:
+        result = finish_proposal_run(_repo_path(repo), proposal_id, source="agent")
+    except TopicGraphError as exc:
+        print(f"Proposal finish failed: {exc}")
+        raise typer.Exit(1)
+    verb = "ingested" if result["ingested"] else "no-op"
+    print(f"{proposal_id}: {result['state']} ({verb})")
+
+
+@topics_app.command(
+    "proposal-reap",
+    help="Mark stranded proposal runs failed (watcher died / serve restarted "
+         "mid-run with no finish signal)")
+def cmd_topics_proposal_reap(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.proposals import reap_stranded_proposal_runs
+
+    reaped = reap_stranded_proposal_runs(_repo_path(repo))
+    print(f"Reaped {reaped} stranded proposal run(s)")
+
+
 @topics_app.command("check", help="Validate topic graph schema and approved refs")
 def cmd_topics_check(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),

@@ -63,6 +63,16 @@ def is_cancelled(proposal_id: str) -> bool:
         return proposal_id in _cancelled
 
 
+def is_live(proposal_id: str) -> bool:
+    """True iff a subprocess for `proposal_id` is registered in *this*
+    process and still running. False after a `regin serve` restart (the
+    registry is in-memory), which is exactly the stranded-run signal the
+    reaper keys off."""
+    with _lock:
+        proc = _active.get(proposal_id)
+    return proc is not None and proc.poll() is None
+
+
 def request_cancel(proposal_id: str) -> bool:
     """Mark a run for cancellation and SIGTERM its subprocess if still live.
 
@@ -88,5 +98,6 @@ __all__ = [
     "register",
     "release",
     "is_cancelled",
+    "is_live",
     "request_cancel",
 ]
