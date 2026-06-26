@@ -13,8 +13,12 @@ from typing import Optional
 
 import typer
 
+from lib.activity_log import get_activity_logger
+
 memory_app = typer.Typer(name="memory", help="Cross-session agent memory",
                          no_args_is_help=True)
+
+_curate_log = get_activity_logger("memory")
 
 
 def _print_memory_line(m: dict) -> None:
@@ -847,3 +851,202 @@ def cmd_eval(
               f"MRR={report.mrr:.3f}  ({report.passed}/{report.total})")
     if report.hit_at_k < 1.0:
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# curate-apply: apply a verified curation plan from the memory-curate skill.
+# The skill (agentic subagents) produces the judgment; this command is the
+# deterministic, audited, reversible apply step. Plan shape:
+#   {"actions": [
+#     {"op": "retag",   "id": "<id8>", "tier": "core|narrow", "reason": ...},
+#     {"op": "retire",  "id": "<id8>", "winner": "<id8>?", "reason": ...},
+#     {"op": "merge",   "into": "<id8>", "ids": ["<id8>", ...], "reason": ...},
+#     {"op": "rewrite", "sources": ["<id8>", ...], "title": ..., "body": ...,
+#                       "scope": ...?, "reason": ...},
+#     {"op": "forget",  "id": "<id8>", "reason": ...}   # HARD delete
+#   ]}
+# All ids may be 8-char prefixes (recall/inject blocks render prefixes).
+# ---------------------------------------------------------------------------
+
+_VALID_OPS = {"retag", "retire", "forget", "merge", "rewrite"}
+
+
+def _index_by_prefix(store) -> dict:
+    """Map 8-char id prefix -> [full ids] across every memory (all statuses)."""
+    rows = store.list_memories(include_tests=True, limit=100000)
+    idx: dict[str, list[str]] = {}
+    for r in rows:
+        idx.setdefault(r["id"][:8], []).append(r["id"])
+    return idx
+
+
+def _resolve(prefix: Optional[str], idx: dict) -> str:
+    """Resolve an 8-char prefix (or full id) to exactly one full id."""
+    if not prefix:
+        raise KeyError("missing id")
+    full = idx.get(prefix[:8])
+    if not full:
+        raise KeyError(f"no memory matches id '{prefix}'")
+    if len(full) > 1:
+        raise KeyError(f"ambiguous id prefix '{prefix}' ({len(full)} matches)")
+    return full[0]
+
+
+def _action_ids(a: dict) -> list[str]:
+    """Every id an action references (for pre-flight resolution)."""
+    op = a.get("op")
+    if op in ("retag", "retire", "forget"):
+        ids = [a.get("id")]
+        if op == "retire" and a.get("winner"):
+            ids.append(a["winner"])
+        return ids
+    if op == "merge":
+        return [a.get("into"), *(a.get("ids") or [])]
+    if op == "rewrite":
+        return list(a.get("sources") or [])
+    return []
+
+
+def _validate_plan(actions: list, idx: dict) -> list[str]:
+    """Resolve every id and op BEFORE mutating anything — fail fast."""
+    errors = []
+    for i, a in enumerate(actions):
+        if a.get("op") not in _VALID_OPS:
+            errors.append(f"action {i}: bad op {a.get('op')!r}")
+            continue
+        for x in _action_ids(a):
+            try:
+                _resolve(x, idx)
+            except KeyError as exc:
+                errors.append(f"action {i} ({a.get('op')}): {exc}")
+    return errors
+
+
+# CORE/NARROW is the curation *quality grade* — regin has no column for it
+# (the `tier` column is the lifecycle: working/episodic/digest), so a grade
+# maps to an importance band. An explicit `importance` always wins; only a
+# real lifecycle value is written to `tier`.
+_GRADE_IMPORTANCE = {"core": 0.8, "narrow": 0.45, "lowq": 0.2}
+_LIFECYCLE_TIERS = {"working", "episodic", "digest"}
+
+
+def _do_retag(store, a: dict, idx: dict, dry: bool) -> str:
+    mid = _resolve(a["id"], idx)
+    fields = {}
+    grade = (a.get("tier") or "").lower()
+    if grade in _LIFECYCLE_TIERS:
+        fields["tier"] = grade
+    elif grade in _GRADE_IMPORTANCE:
+        fields["importance"] = _GRADE_IMPORTANCE[grade]
+    if a.get("importance") is not None:
+        fields["importance"] = a["importance"]
+    if not dry and fields:
+        store.update(mid, **fields)
+        store.record_validation(mid, validator="curate", action="retag",
+                                note=a.get("reason"))
+    return f"{mid[:8]} -> {fields or '(no-op)'}"
+
+
+def _do_retire(store, a: dict, idx: dict, dry: bool) -> str:
+    mid = _resolve(a["id"], idx)
+    winner = _resolve(a["winner"], idx) if a.get("winner") else None
+    if not dry:
+        store.update(mid, status="retired", superseded_by=winner)
+        store.record_validation(mid, validator="curate", action="curate_retire",
+                                note=a.get("reason"))
+    return f"{mid[:8]}" + (f" -> {winner[:8]}" if winner else " (no successor)")
+
+
+def _do_forget(store, a: dict, idx: dict, dry: bool) -> str:
+    mid = _resolve(a["id"], idx)
+    if not dry:
+        store.forget(mid)
+    return f"{mid[:8]} (HARD delete, not reversible)"
+
+
+def _do_merge(store, a: dict, idx: dict, dry: bool) -> str:
+    keeper = _resolve(a["into"], idx)
+    losers = [_resolve(x, idx) for x in (a.get("ids") or [])]
+    if not dry:
+        for lz in losers:
+            store.update(lz, status="retired", superseded_by=keeper)
+            store.record_validation(lz, validator="curate", action="merged",
+                                    note=f"near-duplicate of {keeper}")
+    return f"{[l[:8] for l in losers]} -> {keeper[:8]}"
+
+
+def _synth_input(a: dict, base: dict):
+    """Build the MemoryInput for a synthesis rewrite, inheriting unset
+    fields (kind/scope/tags/provenance) from the first source."""
+    import lib.memory as memory
+    return memory.MemoryInput(
+        body=a["body"], title=a.get("title"),
+        kind=base["kind"], scope=a.get("scope") or base["scope"],
+        tags=a.get("tags") or list(base.get("tags") or []),
+        importance=a.get("importance", 0.6),
+        source_trace_id=base.get("source_trace_id"))
+
+
+def _do_rewrite(store, a: dict, idx: dict, dry: bool) -> str:
+    import lib.memory as memory
+    sources = [_resolve(x, idx) for x in (a.get("sources") or [])]
+    shown = [s[:8] for s in sources]
+    if dry:
+        return f"{shown} -> NEW {a.get('title') or '(untitled)'!r}"
+    new_id = memory.supersede(sources[0], _synth_input(a, store.get_dict(sources[0])))
+    for s in sources[1:]:
+        store.update(s, status="retired", superseded_by=new_id)
+        store.record_validation(s, validator="curate", action="synthesized",
+                                note=f"folded into {new_id}")
+    return f"{shown} -> {new_id[:8]}"
+
+
+_CURATE_OPS = {"retag": _do_retag, "retire": _do_retire, "forget": _do_forget,
+               "merge": _do_merge, "rewrite": _do_rewrite}
+
+
+@memory_app.command("curate-apply")
+def cmd_curate_apply(
+    plan_path: str = typer.Argument(..., help="plan.json from memory-curate"),
+    apply: bool = typer.Option(False, "--apply",
+                               help="execute (default: dry-run)"),
+) -> None:
+    """Apply a verified curation plan from the `memory-curate` skill.
+
+    The skill's agentic subagents produce the judgment (grade/dedup/
+    synthesize/verify); this command is the deterministic apply step.
+    Ops: retag (tier/importance), retire (soft, reversible, chained),
+    merge (retire dups -> keeper), rewrite (synthesis: one new memory
+    supersedes its sources), forget (HARD delete — genuine junk only).
+
+    Ids may be 8-char prefixes. Dry-run by default; --apply executes.
+    Every id is resolved up front, so a bad plan aborts before any write.
+    All ops except forget are reversible via `regin memory restore`.
+    """
+    import lib.memory as memory
+    with open(plan_path) as fh:
+        plan = json.load(fh)
+    actions = plan.get("actions") or []
+    store = memory.get_store()
+    idx = _index_by_prefix(store)
+
+    errors = _validate_plan(actions, idx)
+    if errors:
+        print(f"plan invalid ({len(errors)} error(s)); nothing applied:")
+        for e in errors:
+            print(f"  ERROR {e}")
+        raise typer.Exit(1)
+
+    dry = not apply
+    print(f"{'DRY-RUN — ' if dry else ''}{len(actions)} action(s) "
+          f"from {plan_path}\n")
+    for a in actions:
+        msg = _CURATE_OPS[a["op"]](store, a, idx, dry)
+        print(f"  [{a['op']:7s}] {msg}")
+    if dry:
+        print("\nDry-run only. Re-run with --apply to execute.")
+        return
+    _curate_log.write("curate_plan_applied", actions=len(actions),
+                      plan=plan_path)
+    print(f"\nApplied {len(actions)} action(s). "
+          f"Soft ops reversible via `regin memory restore`.")
