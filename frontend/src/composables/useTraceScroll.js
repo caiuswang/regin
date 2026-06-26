@@ -16,9 +16,19 @@ import { onMounted, onUnmounted } from 'vue'
 // scroll events don't bubble, so a bubbling document listener would miss them.
 //
 // Deps are passed in so the composable owns no data state: `reloading`,
-// `loading`, `loadingOlder`, `hasMoreOlder` are refs read via `.value`;
-// `reload` and `loadOlder` are the view's loader callbacks.
-export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, reload, loadOlder }) {
+// `loading`, `loadingOlder`, `hasMoreOlder`, `liveSyncActive` are refs read via
+// `.value`; `reload` and `loadOlder` are the view's loader callbacks.
+//
+// `liveSyncActive` gates only the bottom-edge pull-to-refresh (both the
+// scroll-near-bottom auto-reload and the wheel-down-at-bottom gesture). It goes
+// false once the session's live-sync self-terminates — an ended, converged
+// session — so scrolling to the end of a closed session no longer re-fires
+// reloadLiveTail() and its backend transcript rescan. `loadOlder` (the top
+// edge) is paginating immutable history, never live-sync, so it ignores this.
+export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload, loadOlder }) {
+  // Treat an absent ref as always-live, so a caller that doesn't pass it keeps
+  // the original behaviour.
+  const syncActive = () => (liveSyncActive ? liveSyncActive.value : true)
   // Edge-trigger latches: keep parking at an edge with no new spans from
   // re-firing the loader every scroll tick.
   let bottomLatch = false
@@ -34,30 +44,41 @@ export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder,
   // parked at an edge doesn't fire the loader back-to-back.
   const WHEEL_RELOAD_COOLDOWN_MS = 1500
 
+  // Bottom edge: fire the pull-to-refresh reload once per approach, gated on
+  // live-sync still being active (a closed, converged session does not reload).
+  function handleBottomEdge(el) {
+    const distBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (distBottom > BOTTOM_THRESHOLD_PX) {
+      bottomLatch = false
+      return
+    }
+    if (!bottomLatch && !reloading.value && !loading.value && syncActive()) {
+      bottomLatch = true
+      reload()
+    }
+  }
+
+  // Top edge: pull the next page of older (immutable) history. Never gated on
+  // live-sync — paginating history is valid on a closed session.
+  function handleTopEdge(el) {
+    if (el.scrollTop > TOP_THRESHOLD_PX || !hasMoreOlder.value) {
+      topLatch = false
+      return
+    }
+    if (!topLatch && !loadingOlder.value && !loading.value) {
+      topLatch = true
+      loadOlder()
+    }
+  }
+
   function onAnyScroll(e) {
     const t = e.target
     const el = (t === document || t === document.documentElement)
       ? (document.scrollingElement || document.documentElement)
       : t
     if (!el || typeof el.scrollHeight !== 'number') return
-    const distBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    if (distBottom <= BOTTOM_THRESHOLD_PX) {
-      if (!bottomLatch && !reloading.value && !loading.value) {
-        bottomLatch = true
-        reload()
-      }
-    } else {
-      bottomLatch = false
-    }
-    const distTop = el.scrollTop
-    if (distTop <= TOP_THRESHOLD_PX && hasMoreOlder.value) {
-      if (!topLatch && !loadingOlder.value && !loading.value) {
-        topLatch = true
-        loadOlder()
-      }
-    } else {
-      topLatch = false
-    }
+    handleBottomEdge(el)
+    handleTopEdge(el)
   }
 
   // Nearest scrollable ancestor of `el` (the container actually overflowing),
@@ -82,6 +103,9 @@ export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder,
       const dist = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
       if (dist > 4) return
       if (reloading.value || loading.value) return
+      // Live-sync retired (closed, converged session): a deliberate pull-down
+      // would still fire a backend rescan on a dead session — gate it too.
+      if (!syncActive()) return
       if (now - lastWheelReloadAt < WHEEL_RELOAD_COOLDOWN_MS) return
       lastWheelReloadAt = now
       reload()

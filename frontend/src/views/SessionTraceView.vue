@@ -35,6 +35,14 @@ const route = useRoute()
 const session = ref(null)
 const loading = ref(true)
 const reloading = ref(false)
+// True while auto-reload (the live poll AND the scroll/wheel pull-to-refresh)
+// is still wanted. Flips false the moment live-sync self-terminates — an
+// already-closed session after its bounded catch-up, or a live session that
+// ends mid-view once its tail converges. The scroll/wheel affordances in
+// useTraceScroll read this so scrolling to the end of a closed session stops
+// firing reloadLiveTail() (and its backend transcript rescan). The explicit
+// header reload button and scroll-up load-older deliberately ignore it.
+const liveSyncActive = ref(true)
 const lastReloadedAt = ref(null)
 const selectedSpan = ref(null)
 // Trigger map for the currently-selected rule.check span, plus the role gate
@@ -66,6 +74,11 @@ const { spanContentCache, allSpans, fetchSpanContent } =
 const {
   treeNodes,
   hasMoreOlder, loadingOlder,
+  // newestLoadedId is the convergence anchor for the self-terminating poll
+  // (`maybeStopOnConverge` / `syncClosedSessionTail`). Without it those read an
+  // undefined binding and throw, aborting onMounted before the poll/sync (and
+  // liveSyncActive) is ever set up.
+  newestLoadedId,
   loadSession, reloadLiveTail, loadOlder,
   subtreeLoaded,
   ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded,
@@ -140,7 +153,7 @@ const { toolRollupData, fetchToolRollup } = useToolRollup(route)
 // pull-older at the top). The composable owns the DOM mechanics + latches and
 // attaches its own document listeners on mount; we hand it the loader
 // callbacks and the gating refs it reads.
-useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, reload, loadOlder })
+useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload, loadOlder })
 
 // General live poll. The trace view is a live dashboard but `reload()`
 // otherwise only fires on scroll/wheel — so a user parked at the bottom
@@ -185,6 +198,10 @@ function maybeStopOnConverge() {
   if (!session.value?.ended_at) { convergeAnchorId = null; return }
   if (convergeAnchorId !== null && newestLoadedId.value === convergeAnchorId) {
     stopLivePoll()
+    // Tail has converged on a closed session: the scroll/wheel pull-to-refresh
+    // would otherwise keep firing reloadLiveTail() (and a backend rescan) every
+    // time the user scrolls to the end. Retire it alongside the timer poll.
+    liveSyncActive.value = false
     return
   }
   convergeAnchorId = newestLoadedId.value
@@ -215,6 +232,10 @@ onMounted(async () => {
   // bounded catch-up (crash recovery) and stop. Live sessions keep the poll.
   if (session.value?.ended_at) {
     await syncClosedSessionTail()
+    // Bounded catch-up done — no recurring poll, and the scroll/wheel
+    // pull-to-refresh should not resurrect the backend rescan for a session
+    // that has already ended. Reopening the view re-runs the catch-up.
+    liveSyncActive.value = false
   } else {
     startLivePoll()
   }
