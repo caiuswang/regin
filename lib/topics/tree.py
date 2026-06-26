@@ -35,25 +35,53 @@ def blurb_of(node: dict) -> str:
     return (node.get("blurb") or "").strip() or (node.get("intent") or "")[:120]
 
 
+def effective_parent(topics: dict[str, Any], buckets: set[str], tid: str) -> str:
+    """The node `tid` actually hangs under in the navigation tree.
+
+    A non-bucket topic nests under its `parent_id` whenever that parent
+    *exists as a topic* — bucket **or** leaf — so a user-built multi-level
+    grouping (a leaf under a leaf, even one not yet placed under a bucket
+    itself) survives intact instead of being flattened. It falls back to the
+    reserved `UNCLASSIFIED`
+    bucket only when the chain has no real root: a `parent_id` that is null,
+    dangling (points at no topic), or part of a cycle. So an unplaced topic is
+    visibly pending and never silently dropped, while a placed sub-topic stays
+    under its declared parent. This is the single rule both `build_tree` and
+    the `topic.unclassified` audit consult, so the tree and the audit can never
+    disagree about what counts as classified."""
+    parent = (topics.get(tid) or {}).get("parent_id")
+    if parent is None or parent not in topics:
+        return UNCLASSIFIED
+    seen = {tid}
+    cur: Optional[str] = parent
+    while cur is not None and cur in topics:
+        if cur in seen:
+            return UNCLASSIFIED          # cycle in the chain → quarantine
+        if cur in buckets:
+            break                        # chain reaches a real bucket
+        seen.add(cur)
+        cur = (topics.get(cur) or {}).get("parent_id")
+    return parent
+
+
 def build_tree(graph: dict) -> dict[str, Any]:
     """`{"roots", "children"}` derived from `kind:"bucket"` + `parent_id`.
 
-    `roots` = bucket ids, sorted (the curated top level). Each non-bucket
-    node hangs under its `parent_id` when that points to a bucket; otherwise
-    it routes to the reserved `UNCLASSIFIED` bucket — so a leaf with a null,
-    dangling, or non-bucket parent is visibly pending, never silently
-    promoted to the top level. `UNCLASSIFIED` is shown as a root only when it
-    actually holds something, and is surfaced even if the graph never declared
-    the bucket node — so quarantined leaves are never dropped from the walk."""
+    `roots` = bucket ids, sorted (the curated top level). Each non-bucket node
+    hangs under its `parent_id` whenever that parent exists (see
+    `effective_parent`), so multi-level groupings nest; a node whose chain has
+    no real root (null, dangling, or cyclic `parent_id`) routes to the reserved
+    `UNCLASSIFIED` bucket — visibly pending, never silently promoted to the top
+    level. `UNCLASSIFIED` is shown as a root only when it actually holds
+    something, and is surfaced even if the graph never declared the bucket node
+    — so quarantined leaves are never dropped from the walk."""
     topics = _topics(graph)
     buckets = {tid for tid, n in topics.items() if is_bucket(n)}
     children: dict[str, list[str]] = {}
-    for tid, node in topics.items():
+    for tid in topics:
         if tid in buckets:
             continue
-        parent = node.get("parent_id")
-        effective = parent if parent in buckets else UNCLASSIFIED
-        children.setdefault(effective, []).append(tid)
+        children.setdefault(effective_parent(topics, buckets, tid), []).append(tid)
     for kids in children.values():
         kids.sort()
     roots = [b for b in buckets if b != UNCLASSIFIED]

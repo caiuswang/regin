@@ -360,21 +360,26 @@ def _audit_taxonomy_placement(
     topics: dict[str, Any],
 ) -> list[ValidationIssue]:
     """Advisory placement checks for the navigation taxonomy. A non-bucket
-    topic must hang under an existing `kind:"bucket"` node; one with a null,
-    dangling, or non-bucket `parent_id` is *unclassified* — it still works
-    (recall routes it to the reserved `unclassified` bucket) but it's a
-    curation backlog item, so it warns rather than errors."""
+    topic must reach a `kind:"bucket"` node through its `parent_id` chain; one
+    whose chain has no real root — a null, dangling, or cyclic `parent_id` at
+    its head — is *unclassified*. It still works (recall routes it to the
+    reserved `unclassified` bucket) but it's a curation backlog item, so it
+    warns rather than errors. A sub-topic nested under another topic that *is*
+    placed is classified transitively and is NOT re-flagged — only the unplaced
+    root of a subtree warns. This reuses `tree.effective_parent`, so the audit
+    and the navigation tree can never disagree about what is classified."""
+    from lib.topics.tree import UNCLASSIFIED, effective_parent
     buckets = {tid for tid, n in topics.items()
                if isinstance(n, dict) and n.get("kind") == "bucket"}
     out: list[ValidationIssue] = []
     for tid, topic in topics.items():
         if not isinstance(topic, dict) or tid in buckets:
             continue
-        if topic.get("parent_id") not in buckets:
+        if effective_parent(topics, buckets, tid) == UNCLASSIFIED:
             out.append(ValidationIssue(
                 severity="warning",
                 code="topic.unclassified",
-                message=f"topic {tid} has no bucket parent_id "
+                message=f"topic {tid} has no bucket ancestor "
                         f"(parent_id={topic.get('parent_id')!r}); pick a "
                         f"bucket so it leaves the unclassified backlog",
                 topic_ids=(tid,),

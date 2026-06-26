@@ -43,10 +43,12 @@ def test_buckets_are_roots_orphans_quarantined():
     assert tree["roots"] == ["root-a", "root-b", UNCLASSIFIED]
     assert tree["children"]["root-a"] == ["leaf-1", "leaf-2"]
     assert tree["children"]["root-b"] == ["mid"]
-    # dangling parent ("ghost"), missing parent_id, AND a parent that is a
-    # non-bucket ("deep"→"mid") all route to unclassified — never silently
-    # promoted to the top level
-    assert tree["children"][UNCLASSIFIED] == ["deep", "orphan", "rootless"]
+    # a multi-level chain that REACHES a bucket nests: "deep"→"mid"→"root-b",
+    # so "deep" hangs under "mid", not flattened to the top level
+    assert tree["children"]["mid"] == ["deep"]
+    # only a dangling parent ("orphan"→"ghost") and a missing parent_id
+    # ("rootless") route to unclassified — never silently promoted
+    assert tree["children"][UNCLASSIFIED] == ["orphan", "rootless"]
 
 
 def test_unclassified_hidden_when_empty():
@@ -65,7 +67,9 @@ def test_unclassified_surfaced_when_bucket_undeclared():
     g["topics"].pop(UNCLASSIFIED)
     tree = build_tree(g)
     assert UNCLASSIFIED in tree["roots"]
-    assert tree["children"][UNCLASSIFIED] == ["deep", "orphan", "rootless"]
+    # "deep" nests under "mid" (chain reaches root-b), so only the truly
+    # unrooted leaves are quarantined
+    assert tree["children"][UNCLASSIFIED] == ["orphan", "rootless"]
 
 
 def test_is_bucket():
@@ -78,6 +82,39 @@ def test_subtree_ids():
     assert sorted(subtree_ids(_graph(), "root-a")) == ["leaf-1", "leaf-2", "root-a"]
     assert subtree_ids(_graph(), "leaf-1") == ["leaf-1"]  # leaf → just itself
     assert subtree_ids(_graph(), "nope") == []            # unknown → empty
+    # a multi-level subtree carries its nested descendants: root-b → mid → deep
+    assert sorted(subtree_ids(_graph(), "root-b")) == ["deep", "mid", "root-b"]
+    assert sorted(subtree_ids(_graph(), "mid")) == ["deep", "mid"]
+
+
+def test_nested_leaf_under_unrooted_leaf():
+    # the real bug: a sub-topic ("child") whose parent ("parent") is itself
+    # unrooted. The child nests under its parent (not flattened as a sibling),
+    # the parent subtree carries it, and only the unrooted parent is flagged.
+    g = {"topics": {
+        UNCLASSIFIED: _bucket("Unclassified"),
+        "parent": {"label": "Parent"},                       # no parent_id
+        "child": {"label": "Child", "parent_id": "parent"},  # nests under parent
+    }}
+    tree = build_tree(g)
+    assert tree["children"][UNCLASSIFIED] == ["parent"]
+    assert tree["children"]["parent"] == ["child"]
+    assert sorted(subtree_ids(g, "parent")) == ["child", "parent"]
+    flagged = {i.topic_ids[0] for i in audit_graph(g)
+               if i.code == "topic.unclassified"}
+    assert flagged == {"parent"}        # child is classified under parent
+
+
+def test_effective_parent_non_bucket_cycle_quarantined():
+    # a parent_id cycle among non-bucket leaves can't reach a bucket; both
+    # members route to unclassified instead of vanishing from the tree
+    g = {"topics": {
+        UNCLASSIFIED: _bucket("Unclassified"),
+        "a": {"label": "A", "parent_id": "b"},
+        "b": {"label": "B", "parent_id": "a"},
+    }}
+    tree = build_tree(g)
+    assert tree["children"][UNCLASSIFIED] == ["a", "b"]
 
 
 def test_subtree_ids_cycle_safe():
@@ -109,9 +146,11 @@ def test_audit_warns_on_unclassified_leaf():
     codes = audit_graph(_graph())
     unclassified = [i for i in codes if i.code == "topic.unclassified"]
     flagged = {i.topic_ids[0] for i in unclassified}
-    # the three mis-parented leaves warn; properly-bucketed leaves do not
-    assert {"orphan", "rootless", "deep"} <= flagged
+    # only the unrooted leaves warn; properly-bucketed leaves do not, and
+    # "deep" is classified transitively (deep→mid→root-b) so it is NOT flagged
+    assert {"orphan", "rootless"} <= flagged
     assert "leaf-1" not in flagged
+    assert "deep" not in flagged
     assert all(i.severity == "warning" for i in unclassified)
 
 
