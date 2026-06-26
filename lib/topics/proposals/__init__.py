@@ -48,6 +48,8 @@ from .external_jobs import (
     start_external_proposal_run,
     start_external_regenerate_run,
 )
+from .finish import finish_proposal_run
+from .reap import reap_stranded_proposal_runs
 from .feedback import (
     add_proposal_feedback_comment,
     create_proposal_feedback_thread,
@@ -94,6 +96,8 @@ __all__ = [
     "start_external_proposal_run",
     "start_external_regenerate_run",
     "regenerate_proposal_run",
+    "finish_proposal_run",
+    "reap_stranded_proposal_runs",
     # public API — downgrade
     "downgrade_topic_to_proposal",
     # public API — feedback

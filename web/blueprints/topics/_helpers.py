@@ -335,6 +335,7 @@ def _proposal_workspace_payload(
     selected_draft_topic_id: str | None,
     selected_revision_id: str | None,
 ) -> dict:
+    _reap_stranded_runs(repo_path)
     runs = [_proposal_run_row(repo_path, run) for run in list_proposal_runs(repo_path)]
     selected_proposal_id, selected_run = _resolve_selected_proposal(runs, selected_proposal_id)
     proposal = None
@@ -385,7 +386,19 @@ def _proposal_workspace_payload(
     }
 
 
+def _reap_stranded_runs(repo_path: str) -> None:
+    """Self-heal runs whose watcher died (server restarted mid-run): a read
+    on the poll path advances any quiet, unwatched run to `failed` so the
+    poller stops pinging it. Best-effort — never blocks the page."""
+    from lib.topics.proposals import reap_stranded_proposal_runs
+    try:
+        reap_stranded_proposal_runs(repo_path)
+    except Exception:  # noqa: BLE001 — reaping is best-effort; a read must still render
+        pass
+
+
 def _workspace_summary_payload(repo_path: str) -> dict:
+    _reap_stranded_runs(repo_path)
     summary = topic_summary(repo_path)
     runs = [_proposal_run_row(repo_path, run) for run in list_proposal_runs(repo_path)]
     broken_ref_count = sum(len(topic.get("broken_refs", [])) for topic in summary["topics"])

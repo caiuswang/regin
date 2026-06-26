@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -54,6 +56,19 @@ def external_trace_id(proposal_id: str) -> str:
     return f"topic-proposal-{proposal_id}"
 
 
+def _finish_command(repo: Path, proposal_id: str) -> str:
+    """The exact shell command the drafting agent runs as its final step to
+    signal completion. Built with the server's interpreter + regin CLI path
+    and an explicit `--repo`, so it works regardless of the target repo or
+    whether `regin` is on the agent's PATH."""
+    cli = settings.project_root / "cli" / "regin.py"
+    parts = [
+        sys.executable, str(cli), "topics", "proposal-finish",
+        proposal_id, "--repo", str(repo),
+    ]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
 def _repo_and_id_from_out_dir(out_dir: Path) -> tuple[Path, str]:
     """Derive (repo_path, proposal_id) from an out_dir.
 
@@ -67,11 +82,13 @@ def _repo_and_id_from_out_dir(out_dir: Path) -> tuple[Path, str]:
 
 
 def write_status(out_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
-    """Dual-write proposal status: ORM (authoritative) + disk status.json.
+    """Persist proposal run status to the ORM (the authoritative store).
 
-    Phase E2 added the ORM write. The disk file stays for tests that
-    inspect it directly between operations. Drop the disk write in
-    E3/follow-up once the test surface migrates.
+    Phase E2 made the ORM the source of truth; the disk `status.json` is no
+    longer written, so `load_status` reads it disk-first only for legacy
+    dirs and otherwise falls back to the ORM. The finish signal therefore
+    crosses the agent-subprocess → server boundary through the shared
+    SQLite DB (both resolve the same file), not through disk.
     """
     from lib.topics.proposal_orm import (
         orm_create_proposal_run, orm_update_proposal_status,
@@ -268,6 +285,8 @@ def run_external_agent_proposal(
         "REGIN_TOPIC_PROPOSAL_OUTPUT": str(temp_output_path),
         "REGIN_TOPIC_PROPOSAL_CANONICAL_OUTPUT": str(output_path),
         "REGIN_TOPIC_PROPOSAL_TRACE_ID": trace_id,
+        "REGIN_TOPIC_PROPOSAL_ID": proposal_id,
+        "REGIN_TOPIC_PROPOSAL_FINISH_CMD": _finish_command(repo, proposal_id),
     }
     cwd = Path(config.cwd).expanduser() if config.cwd else repo
     command = [config.command, *config.args]
@@ -305,24 +324,56 @@ def run_external_agent_proposal(
     run_control.register(proposal_id, proc)
     status["pid"] = proc.pid
     write_status(out_dir, status)
+    # The agent signals completion by calling `regin topics proposal-finish`
+    # (notify-on-finish), so the server-side wait has no fixed timeout by
+    # default — a long draft is never killed mid-flight. A configured
+    # ceiling (proposal_run_timeout_seconds > 0) is a backstop, not the
+    # completion authority; a signalled-then-lingering process is still a
+    # success at the ceiling.
+    wait_timeout = _proposal_wait_timeout()
     try:
-        stdout, stderr = proc.communicate(instructions, timeout=config.timeout_seconds)
+        stdout, stderr = proc.communicate(instructions, timeout=wait_timeout)
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         stdout, stderr = proc.communicate()
         stdout_path.write_text(stdout or "")
         stderr_path.write_text(stderr or "")
+        signaled = _load_signaled_result(ctx)
+        if signaled is not None:
+            return signaled
         return _fail(
             out_dir,
             trace_id,
             status,
             "timed_out",
-            f"external agent timed out after {config.timeout_seconds}s",
+            f"external agent timed out after {wait_timeout}s",
             exc,
             stdout=stdout,
             stderr=stderr,
         )
     return _handle_agent_output(ctx, proc, stdout, stderr, status)
+
+
+def _proposal_wait_timeout() -> int | None:
+    """Server-side ceiling (seconds) for blocking on the agent subprocess.
+    0 (the default) → no ceiling: completion comes from the finish signal
+    and the trace reaper, not a timer."""
+    ceiling = settings.topic_evolution.proposal_run_timeout_seconds
+    return ceiling if ceiling and ceiling > 0 else None
+
+
+def _load_signaled_result(ctx: _AgentRunContext) -> tuple[dict[str, Any], str] | None:
+    """If the agent already called `proposal-finish` (notify-on-finish), the
+    proposal + wiki are persisted; load and return them so the runner skips
+    a redundant re-ingest. Returns None when no finish signal was recorded."""
+    status = load_status(ctx.out_dir)
+    if not status or not status.get("agent_signaled"):
+        return None
+    from lib.topics.proposals.core_io import load_proposal
+    proposal = load_proposal(ctx.repo, ctx.proposal_id)
+    wiki_path = ctx.out_dir / "wiki.md"
+    wiki = wiki_path.read_text() if wiki_path.exists() else (proposal.get("wiki") or "")
+    return proposal, wiki
 
 
 def _handle_agent_output(
@@ -346,6 +397,15 @@ def _handle_agent_output(
     duration_ms = int((time.monotonic() - ctx.started) * 1000)
     ctx.stdout_path.write_text(stdout or "")
     ctx.stderr_path.write_text(stderr or "")
+    # Notify-on-finish: if the agent already ingested via `proposal-finish`,
+    # that path is authoritative — return its persisted result and skip the
+    # legacy stdout/exit-code reject + re-ingest below (kept as the fallback
+    # for agents that exit without signalling).
+    signaled = _load_signaled_result(ctx)
+    if signaled is not None:
+        _emit(ctx.trace_id, "proposal.agent.complete", {"proposal_id": ctx.proposal_id, "agent": ctx.agent, "duration_ms": duration_ms, "signaled": True}, status_code="OK")
+        _emit_session_end(ctx.trace_id, reason="completed")
+        return signaled
     if stdout:
         _emit(ctx.trace_id, "proposal.agent.stdout", {"proposal_id": ctx.proposal_id, "chunk": stdout[-4000:]})
     if stderr:
@@ -643,6 +703,7 @@ Previous wiki markdown:
 """
     custom = _format_template_section(prompt_templates)
     sibling_section = _sibling_refresh_section(repo, out_dir)
+    finish_cmd = _finish_command(repo, out_dir.name)
     return f"""# Regin Topic Proposal Agent Task
 
 Inspect this repository as needed and draft reviewable topic graph proposals.
@@ -661,6 +722,13 @@ Rules:
 - `aliases` are *alternate* phrases a future agent might search for — not restatements of the `id` or `label`. Do NOT list the topic id or label, and do NOT add variants that differ only in case, spacing, or hyphenation: regin normalizes aliases (lowercased, every run of non-alphanumeric characters → a single space), so `foo-bar`, `Foo Bar`, and `foo bar` all collapse to the same key and a repeat is rejected at apply time. Give 0–6 genuinely distinct phrasings, or leave the list empty.
 - `parent_id` places the topic under one top-level navigation bucket (see "Available buckets" below). Pick the single best-fitting bucket id. If none clearly fits, set it to `null` — the reviewer will place it; do NOT force a weak fit. `blurb` is a one-line router card ("what task should drill in here"), not a description; omit it and `intent` is used instead.
 - If a write/tool permission prompt blocks writing the output file, stop and report the permission failure instead of printing a fallback success payload.
+
+Signal completion (REQUIRED — do this LAST):
+- After you have written the JSON to the temp output file, run this exact command to ingest your proposal and mark this run complete. It is the ONLY thing that finalizes the run — if you skip it, the run is treated as failed:
+
+  {finish_cmd}
+
+- The same command is available in the `REGIN_TOPIC_PROPOSAL_FINISH_CMD` environment variable. Run it once, as your final action, after the output file exists. Do not run it before the file is written.
 
 Output JSON shape:
 {{

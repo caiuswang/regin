@@ -748,6 +748,18 @@ class TopicEvolutionConfig(BaseModel):
     # endpoint/CLI is ungated.
     auto_review_notes: bool = False
 
+    # Proposal runs complete by the drafting agent calling
+    # `regin topics proposal-finish <id>` as its final step (notify-on-finish)
+    # rather than the server blocking on the subprocess up to a fixed timeout.
+    # `proposal_run_timeout_seconds` is the server-side hard ceiling the spawn
+    # may block before it is reaped; 0 means no ceiling — rely entirely on the
+    # finish signal plus the trace-based reaper, so a long draft is never
+    # killed mid-flight. `proposal_stranded_grace_seconds` is how long a
+    # non-terminal run with no live watcher (e.g. after `regin serve` restarts
+    # mid-run) may stay quiet before `reap_stranded_proposal_runs` fails it.
+    proposal_run_timeout_seconds: int = 0
+    proposal_stranded_grace_seconds: int = 1800
+
 
 # Project-root-relative paths — fixed by where this file lives.
 _PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
