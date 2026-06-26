@@ -9,6 +9,7 @@
         "wire up a Kimi-style integration",
         "agent-agnostic capture seam"
       ],
+      "blurb": "Integrating a new coding-agent CLI into regin's capture pipeline",
       "commands": [
         ".venv/bin/python -m pytest tests/core/test_providers.py tests/skills/test_provider_parity.py tests/hooks/test_kimi_hooks_toml.py tests/trace/test_kimi_transcript.py"
       ],
@@ -24,6 +25,10 @@
         {
           "target": "topic-proposal-pipeline",
           "type": "related"
+        },
+        {
+          "target": "trace-span-capture",
+          "type": "related"
         }
       ],
       "exclude_globs": [
@@ -32,7 +37,7 @@
       "include_globs": [
         "lib/providers/**"
       ],
-      "intent": "Show a future agent the exact contract and integration points for teaching regin about a new coding-agent CLI (Kimi/Codex-style): subclass the AgentProvider adapter, register it, and wire transcript parsing, hook install, and skill deployment so regin captures the agent's sessions without hard-coding vendor paths or payload shapes across the shared pipeline.",
+      "intent": "Show a future agent the exact contract and integration points for teaching regin about a new coding-agent CLI (Kimi/Codex-style): subclass the AgentProvider adapter, register it, declare its capabilities/format flags, and wire path resolution, transcript parsing, hook install, permission shaping, and skill deployment so regin captures the agent's sessions without hard-coding vendor paths or payload shapes across the shared pipeline.",
       "label": "Adding a new agent provider (AgentProvider adapter playbook: contract, registry, hook/transcript wiring)",
       "parent_id": "agent-providers",
       "refs": [
@@ -240,6 +245,89 @@
       ],
       "status": "active"
     },
+    "agent-messages-inbox": {
+      "aliases": [
+        "message the human mid-task",
+        "progress updates to the user",
+        "inbox unread badge",
+        "supersede a progress message by key",
+        "telegram and webhook push notifications",
+        "where do send_to_user messages get stored"
+      ],
+      "blurb": "Changing how send_to_user messages are captured, stored, pushed, or shown in the Inbox.",
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/agent_messages/**"
+      ],
+      "intent": "How a `send_to_user` MCP call becomes a durable, typed, supersedable message: the session-blind stdio server only declares the schema; the PostToolUse hook (which alone knows the session) persists it through the single `store.record_message` writer; high-severity types fan out to pluggable push channels; the web API + Vue Inbox render the per-session feed and the cross-session unread badge.",
+      "label": "Agent \u2192 human message channel (send_to_user store, cross-session Inbox, push fan-out)",
+      "parent_id": "webui",
+      "refs": [
+        {
+          "path": "lib/agent_messages/__init__.py",
+          "role": "overview"
+        },
+        {
+          "path": "lib/agent_messages/store.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/agent_messages/mcp_server.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "lib/agent_messages/push/registry.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/agent_messages/push/base.py",
+          "role": "api"
+        },
+        {
+          "path": "lib/agent_messages/push/telegram.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/agent_messages/push/webhook.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/agent_messages/webhook.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/orm/models/agent_messages.py",
+          "role": "schema"
+        },
+        {
+          "path": "hook_manager/handlers/post_tool_trace.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "web/blueprints/trace/agent_messages.py",
+          "role": "api"
+        },
+        {
+          "path": "frontend/src/views/InboxView.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/components/InboxMessageCard.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/composables/useInboxUnread.js",
+          "role": "implementation"
+        },
+        {
+          "path": "db/schema.sql",
+          "role": "schema"
+        }
+      ],
+      "status": "active"
+    },
     "agent-providers": {
       "aliases": [],
       "blurb": "AgentProvider adapters (Claude / Kimi), transcript parsing, hook install \u2014 enter when integrating a new coding-agent CLI. Code: lib/providers/",
@@ -271,18 +359,123 @@
       "status": "active"
     },
     "eval-grading": {
-      "aliases": [],
+      "aliases": [
+        "llm judge session grading",
+        "grade a trace",
+        "is this session any good",
+        "correctness and process axes",
+        "recall quality regression eval",
+        "score agent output quality"
+      ],
       "blurb": "LLM-judge session grading (rubric / correctness / coverage / grounding / agentic), recall-quality eval, pattern-conceal experiments, goal verification \u2014 enter for anything that measures quality or judges good/bad. Code: lib/grader/, lib/memory/evaluate.py, lib/experiments.py, lib/goal_feedback.py",
       "commands": [],
       "edges": [],
       "exclude_globs": [],
-      "include_globs": [],
+      "include_globs": [
+        "lib/grader/**",
+        "lib/memory/evaluate.py",
+        "lib/experiments.py",
+        "lib/goal_feedback.py"
+      ],
       "intent": "LLM-judge session grading (rubric / correctness / coverage / grounding / agentic), recall-quality eval, pattern-conceal experiments, goal verification \u2014 enter for anything that measures quality or judges good/bad. Code: lib/grader/, lib/memory/evaluate.py, lib/experiments.py, lib/goal_feedback.py",
-      "kind": "bucket",
       "label": "Evaluation & grading",
       "parent_id": null,
-      "refs": [],
-      "source": "manual-taxonomy",
+      "refs": [
+        {
+          "path": "lib/grader/__init__.py",
+          "role": "overview"
+        },
+        {
+          "path": "lib/grader/service.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "lib/grader/rubric.py",
+          "role": "schema"
+        },
+        {
+          "path": "lib/grader/evidence.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/grader/combined_agentic.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/grader/adapters.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/grader/store.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/evaluate.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/experiments.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/goal_feedback.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/commands/grader.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "web/blueprints/grades.py",
+          "role": "api"
+        },
+        {
+          "path": "lib/settings.py",
+          "role": "config"
+        }
+      ],
+      "status": "active"
+    },
+    "goal-verified-loop": {
+      "aliases": [
+        "pin the bar before the agent builds",
+        "deterministic skill and gate router for a goal",
+        "acceptance checklist verification gates",
+        "reinforce included lessons, decay dropped ones",
+        "close the build loop back into agent memory"
+      ],
+      "blurb": "Wiring `regin goal preflight`/`feedback`, the AreaRules routing table, or how a goal run pins gates and feeds memory.",
+      "commands": [
+        "regin goal preflight \"<goal>\" --json",
+        "regin goal preflight \"<goal>\" --with-lessons --session-id <sid>"
+      ],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/goal_*.py",
+        "cli/commands/goal.py"
+      ],
+      "intent": "The two halves of the `/goal-verified` loop-engineering workflow that live in regin (the build + verify halves are the skill). Preflight is a pure-deterministic router: a freeform goal fires AreaRules whose skills, reference components, design tokens and hard gates become the roadmap, so the bar is falsifiable before code is written. Feedback closes the loop after verification \u2014 included lessons are reinforced, FAILED acceptance items become new area-tagged `lesson` memories \u2014 reusing memory primitives only, adding no store of its own.",
+      "label": "Loop-engineering: goal preflight roadmap \u2192 verified build \u2192 feedback into memory",
+      "parent_id": "ops-cli",
+      "refs": [
+        {
+          "path": "lib/goal_preflight.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/goal_feedback.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/commands/goal.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": ".claude/skills/goal-verified/SKILL.md",
+          "role": "docs"
+        }
+      ],
       "status": "active"
     },
     "hooks-injection": {
@@ -768,9 +961,11 @@
         "standalone mode topic sharing",
         "promote topic to share"
       ],
+      "blurb": "Drill in when an approved topic shows on one machine but not a teammate's, or when wiring git-based topic sync across clones.",
       "commands": [
         "regin topics install-hook",
         "regin topics promote <id>",
+        "regin topics list",
         "regin topics import --reason git_pull",
         "regin doctor"
       ],
@@ -783,7 +978,7 @@
       "exclude_globs": [],
       "include_globs": [
         "docs/topics/multi-user.md",
-        ".regin/topics/wiki/topic-graph-sync.md",
+        ".regin/topics/wiki/multi-user-topic-sharing.md",
         "lib/topics/scan.py",
         "lib/topics/graph_io.py",
         "lib/topics/core.py",
@@ -808,6 +1003,10 @@
         {
           "path": "lib/topics/scan.py",
           "role": "implementation"
+        },
+        {
+          "path": "web/blueprints/topics/maintenance.py",
+          "role": "api"
         },
         {
           "path": "docs/topics/multi-user.md",
@@ -974,6 +1173,116 @@
         },
         {
           "path": "lib/memory/store.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
+    "regin-activity-log-observability": {
+      "aliases": [
+        "where regin logs its own operations",
+        "regin.log jsonl stream",
+        "tail and grep the activity log",
+        "structlog bootstrap configure_logging",
+        "who changed what dashboard audit",
+        "feature-tagged ops history"
+      ],
+      "blurb": "Inspecting or extending regin's own ops history \u2014 activity log, structured logging, or the dashboard audit trail",
+      "commands": [
+        ".venv/bin/python cli/regin.py logs list",
+        ".venv/bin/python cli/regin.py logs tail --since 1h",
+        ".venv/bin/python cli/regin.py logs grep <pattern>"
+      ],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/activity_log.py",
+        "lib/logging_setup.py",
+        "lib/audit.py",
+        "cli/commands/logs.py"
+      ],
+      "intent": "Map regin's self-observability stack \u2014 distinct from `lib/trace/` session traces. `lib/activity_log.py` writes one rotating `feature`-tagged JSONL stream (read=DEBUG / write=INFO discipline, secret-key auto-redaction), surfaced from the terminal via the `regin logs` group (list / tail / grep / prune / path). `lib/logging_setup.py` bootstraps structlog so Flask/SQLAlchemy/lib all emit into one pipeline with console vs. JSON rendering modes. `lib/audit.py` records who changed what in the web dashboard (best-effort, never blocks, routed through AuthSessionLocal). Use this when diagnosing regin's behaviour, not an agent session.",
+      "label": "Ops observability: activity log, structured logging & audit trail (regin's own operations history vs. session traces)",
+      "parent_id": "ops-cli",
+      "refs": [
+        {
+          "path": "lib/activity_log.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/logging_setup.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/commands/logs.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/audit.py",
+          "role": "implementation"
+        }
+      ],
+      "status": "active"
+    },
+    "regin-cli-architecture": {
+      "aliases": [
+        "how the regin command line is wired",
+        "add a new regin subcommand",
+        "where do CLI command bodies live",
+        "venv re-exec entrypoint",
+        "regin doctor environment check",
+        "init rebuild database commands"
+      ],
+      "blurb": "Adding, grouping, or debugging a `regin` CLI command, or running doctor / init / rebuild",
+      "commands": [
+        ".venv/bin/python cli/regin.py doctor",
+        ".venv/bin/python cli/regin.py init",
+        ".venv/bin/python cli/regin.py rebuild"
+      ],
+      "edges": [],
+      "exclude_globs": [
+        "cli/__pycache__/**",
+        "cli/commands/__pycache__/**"
+      ],
+      "include_globs": [
+        "cli/**",
+        "lib/doctor.py",
+        "lib/db_rebuild.py"
+      ],
+      "intent": "Explain how the `regin` CLI is assembled and how to extend it: the thin `cli/regin.py` entrypoint that re-execs under the project `.venv` and fixes sys.path, the Typer root in `cli/app.py` that wires per-domain modules under `cli/commands/` (each exposing `register(app)` for flat commands or a pre-built sub-Typer for `regin <group> <cmd>`), the root callback that stamps every invocation into the activity log, and the shared `cli/deps.py` (`require_db` guard) + `cli/output.py` (testable echo/error/table sinks) helpers. doctor and db init/rebuild are the canonical ops commands.",
+      "label": "regin CLI architecture & command surface (Typer entrypoint, venv re-exec, per-domain command registry, doctor/db lifecycle, add-a-command playbook)",
+      "parent_id": "ops-cli",
+      "refs": [
+        {
+          "path": "cli/regin.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "cli/app.py",
+          "role": "architecture"
+        },
+        {
+          "path": "cli/deps.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/output.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/commands/db.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/commands/meta.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/doctor.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/db_rebuild.py",
           "role": "implementation"
         }
       ],
@@ -1188,6 +1497,48 @@
       "parent_id": null,
       "refs": [],
       "source": "manual-taxonomy",
+      "status": "active"
+    },
+    "session-id-probe": {
+      "aliases": [
+        "get my session id from a bash command",
+        "regin session-id subcommand",
+        "sid nonce cwd cache",
+        "why bash can't see the session id",
+        "replace the fragile command-rewriting probe"
+      ],
+      "blurb": "Debugging or extending how a Bash command recovers its own Claude Code session id.",
+      "commands": [
+        "regin session-id",
+        "regin session-id --nonce <nonce>"
+      ],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [
+        "lib/session_probe.py",
+        "hook_manager/handlers/session_id_probe.py"
+      ],
+      "intent": "Claude Code never hands the live session id to Bash, but every hook payload carries it. The PreToolUse hook `record()`s a `{sid, ts, nonce}` stamp into a small atomic JSON cache on each Bash call; the always-present `regin session-id` subcommand `resolve()`s the freshest entry by cwd (or an explicit `--nonce`). This durable cache replaces the old command-rewriting probe so `SID=$(\u2026 session-id)` works through `$(...)` and the full interpreter form alike \u2014 relied on by `goal preflight --session-id`, `goal feedback --trace-id`, and the `gate` anti-skip checks.",
+      "label": "Session-id probe (recovering the live Claude Code session id inside a Bash command)",
+      "parent_id": "ops-cli",
+      "refs": [
+        {
+          "path": "lib/session_probe.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/session_id_probe.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "cli/commands/session.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "tests/test_session_probe.py",
+          "role": "test"
+        }
+      ],
       "status": "active"
     },
     "session-trace": {
@@ -1442,6 +1793,7 @@
         "cancel in-flight proposal",
         "/api/repos/<name>/topics/proposals"
       ],
+      "blurb": "",
       "commands": [],
       "edges": [],
       "exclude_globs": [
@@ -1537,41 +1889,49 @@
     },
     "topic-routing": {
       "aliases": [
-        "topic router",
         "regin topics route",
-        "topic graph routing",
-        "topic-router skill",
-        ".regin/topics"
+        "resolve a query into topic context",
+        "match_topic route_topic",
+        "fuzzy keyword overlap router",
+        "wordfreq query weighting",
+        "topic-router skill"
       ],
+      "blurb": "How a query becomes approved topic context: the matcher, keyword scoring, the route envelope, the --wiki output, and the topic-router skill.",
       "commands": [
-        "regin topics route <keywords>",
-        "regin topics scan",
+        "regin topics route <query>",
+        "regin topics route <query> --wiki",
         "regin topics router-skill",
-        "regin topics install-hook"
+        "regin topics rebuild-query-df",
+        "regin topics scan"
       ],
       "edges": [],
       "exclude_globs": [],
       "include_globs": [
         "lib/topics/route.py",
+        "lib/topics/term_weights.py",
         "lib/topics/core.py",
         "lib/topics/scan.py",
         "lib/topics/wiki.py",
         "cli/commands/topics.py"
       ],
-      "intent": "Understand how an agent resolves a freeform query into approved topic context: alias / label / ref-path / multi-keyword scoring against `.regin/topics/topic.json`, with optional fallback to unapproved candidates in `.regin/topics/candidates.json`. Covers the matcher (`match_topic`), the routing envelope (`route_topic`) that returns ordered refs + bounded wiki pages + first-degree related topics, and the deployed `topic-router` skill that tells agents how to use it.",
-      "label": "Topic routing (approved graph + candidate fallback)",
+      "intent": "Understand how a freeform query resolves to approved topic context. Covers the priority-ordered matcher in lib/topics/route.py (alias/label exact -> ref-path exact -> ref-path substring -> label/intent substring, then a fuzzy multi-keyword fallback), the keyword-signal model (a wordfreq English-rarity prior in route.py scaled by the repo-adaptive query-log document-frequency multiplier in lib/topics/term_weights.py, plus a per-graph saturation filter that drops corpus-common terms), the route_topic envelope that returns ordered refs + bounded wiki pages + first-degree related topics with an approved/unmatched status, the best_topic_for_text reverse signal for long text, the generated topic-router skill, and the regin topics route/route --wiki/router-skill/rebuild-query-df CLI commands.",
+      "label": "Topic routing (keyword router over the approved graph + topic-router skill)",
       "parent_id": "topic-graph",
       "refs": [
         {
           "path": "cli/commands/topics.py",
+          "role": "entrypoint"
+        },
+        {
+          "path": "lib/topics/route.py",
+          "role": "api"
+        },
+        {
+          "path": "lib/topics/term_weights.py",
           "role": "implementation"
         },
         {
           "path": "lib/topics/core.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/topics/route.py",
           "role": "implementation"
         },
         {

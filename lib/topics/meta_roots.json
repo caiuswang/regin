@@ -43,6 +43,17 @@
     "aliases": ["playwright-screenshots", "playwright", "screenshots"],
     "refs": []
   },
+  "skill-playwright-skill": {
+    "kind": "topic",
+    "parent_id": "skills",
+    "meta": true,
+    "status": "approved",
+    "label": "playwright-skill (browser automation)",
+    "blurb": "Driving a browser headlessly with the playwright-skill E2E tooling against the regin web app: localStorage JWT auth bypass, correct trace URL shapes, asserting DOM geometry over screenshots, Reka-UI real-click gotchas, mutating live Vue reactive state, and stale-backend reuse after Python edits.",
+    "intent": "Lessons on using the playwright-skill for browser automation and WebUI E2E verification.",
+    "aliases": ["playwright-skill", "playwright", "browser-automation", "e2e"],
+    "refs": []
+  },
   "skill-ui-ux": {
     "kind": "topic",
     "parent_id": "skills",
