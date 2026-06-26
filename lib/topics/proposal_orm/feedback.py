@@ -236,6 +236,58 @@ def _ordered_thread_comments(
     ))
 
 
+def orm_open_content_drift_threads(
+    repo_path: str | Path,
+    *,
+    kind: str,
+    proposal_id: Optional[str] = None,
+    topic_id: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Open feedback threads of the given `kind` (e.g. the content-drift
+    refresh note) across this repo's proposal runs.
+
+    The producer calls it with `proposal_id` + `topic_id` to check whether
+    an unresolved drift note already exists (idempotency); the agent-spawn
+    consumer calls it unfiltered to find every origin run that still carries
+    a pending drift refresh. Returns `[{run_id, topic_id, thread_id,
+    drifted_paths}]` — `drifted_paths` is read back from the thread metadata.
+    """
+    with SessionLocal() as s:
+        repo = _repo_for_path(s, repo_path)
+        if repo is None:
+            return []
+        run_ids = {
+            run.id for run in s.exec(
+                select(ProposalRun).where(ProposalRun.repo_id == repo.id)
+            )
+        }
+        if not run_ids:
+            return []
+        query = (
+            select(ProposalFeedbackThread)
+            .where(ProposalFeedbackThread.kind == kind)
+            .where(ProposalFeedbackThread.resolution_state == "open")
+            .where(ProposalFeedbackThread.run_id.in_(run_ids))
+        )
+        if proposal_id is not None:
+            query = query.where(ProposalFeedbackThread.run_id == proposal_id)
+        if topic_id is not None:
+            query = query.where(ProposalFeedbackThread.proposal_topic_id == topic_id)
+        out: list[dict[str, Any]] = []
+        for thread in s.exec(query):
+            try:
+                meta = json.loads(thread.metadata_json or "{}")
+            except json.JSONDecodeError:
+                meta = {}
+            out.append({
+                "run_id": thread.run_id,
+                "topic_id": thread.proposal_topic_id,
+                "thread_id": thread.id,
+                "drifted_paths": meta.get("drifted_paths") or [],
+            })
+        return out
+
+
 # States a user may set by hand. "addressed" is reserved for the auto-resolve
 # sweep that runs on regenerate, so it is intentionally excluded here.
 MANUAL_RESOLUTION_STATES: frozenset[str] = frozenset({"open", "resolved", "dismissed"})

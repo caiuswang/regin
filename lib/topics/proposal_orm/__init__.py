@@ -38,6 +38,7 @@ from .feedback import (
     orm_delete_feedback_comment,
     orm_list_feedback_threads,
     orm_mark_feedback_threads_addressed,
+    orm_open_content_drift_threads,
     orm_set_feedback_thread_resolution,
     orm_update_feedback_comment,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "orm_delete_feedback_comment",
     "orm_set_feedback_thread_resolution",
     "orm_mark_feedback_threads_addressed",
+    "orm_open_content_drift_threads",
     "MANUAL_RESOLUTION_STATES",
     "orm_append_downgrade_revision",
     "orm_find_origin_proposal_run_for_topic",

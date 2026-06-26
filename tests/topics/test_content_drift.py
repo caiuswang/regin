@@ -20,7 +20,7 @@ from lib.topics.content_drift import (
     run_content_evolution,
 )
 from lib.topics.core import topic_path
-from lib.topics.proposals import load_proposal
+from lib.topics.proposals import list_proposal_runs, load_proposal
 from lib.topics.ref_digest import capture_ref_digests
 from lib.topics.snapshots import resolve_or_create_repo
 
@@ -148,6 +148,74 @@ def test_emit_refresh_proposal_is_single_topic_and_idempotent(fake_git_repo):
 
     # re-emit upserts the same id, does not stack a second proposal
     assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "content-drift-t1"
+
+
+# ── refresh routed to the origin proposal run ─────────────────
+
+
+def _full_topic(topic_id: str) -> dict:
+    return {"id": topic_id, "label": "T", "aliases": [], "intent": "i",
+            "status": "active", "refs": [], "edges": [], "commands": [],
+            "include_globs": [], "exclude_globs": [], "evidence_paths": []}
+
+
+def _seed_origin_run(repo: Path, repo_id: int, run_id: str, topic_id: str) -> None:
+    """A completed proposal run that 'created' `topic_id`, plus the provenance
+    audit row that `orm_find_origin_proposal_run_for_topic` reads."""
+    from lib.orm import SessionLocal
+    from lib.orm.models import TopicAudit
+    from lib.topics.proposal_orm.runs import orm_save_proposal
+
+    orm_save_proposal(str(repo), run_id, {
+        "provider": "external-agent", "scope": "all", "status": "applied",
+        "topics": [_full_topic(topic_id)], "metadata": {},
+    }, wiki="original wiki narrative")
+    with SessionLocal() as s:
+        s.add(TopicAudit(
+            repo_id=repo_id, kind="provenance", recorded_at="2024-01-01T00:00:00Z",
+            severity="info", code="topic_create", message="m",
+            topic_ids_json=json.dumps([topic_id]), paths_json="[]",
+            aliases_json="[]", triggering_run_id=run_id,
+            triggering_proposal_topic_id=None))
+        s.commit()
+
+
+def _drift_threads(repo: Path, run_id: str) -> list[dict]:
+    from lib.topics.proposals.feedback import list_proposal_feedback_threads
+    return [t for t in list_proposal_feedback_threads(repo, run_id)
+            if t.get("kind") == "content_drift"]
+
+
+def test_emit_refresh_routes_to_origin_run_as_open_note(fake_git_repo):
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})
+    repo_id = _register(repo)
+    _seed_origin_run(repo, repo_id, "origin-run-1", "t1")
+
+    pid = emit_refresh_proposal(repo, "t1", ["a.py"])
+    # routed to the origin run, NOT a standalone content-drift proposal
+    assert pid == "origin-run-1"
+    run_ids = {r["id"] for r in list_proposal_runs(repo)}
+    assert "content-drift-t1" not in run_ids
+
+    notes = _drift_threads(repo, "origin-run-1")
+    assert len(notes) == 1
+    assert notes[0]["resolution_state"] == "open"
+    assert notes[0]["created_by"] == "agent"
+
+
+def test_emit_refresh_origin_note_is_idempotent(fake_git_repo):
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})
+    repo_id = _register(repo)
+    _seed_origin_run(repo, repo_id, "origin-run-1", "t1")
+
+    assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "origin-run-1"
+    # a second detection of the same unresolved drift must not stack a note
+    assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "origin-run-1"
+    assert len(_drift_threads(repo, "origin-run-1")) == 1
 
 
 # ── orchestrator ──────────────────────────────────────────────

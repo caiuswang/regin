@@ -211,6 +211,86 @@ def test_triage_fails_open_on_empty_answer(fake_git_repo, monkeypatch, spy):
 # ── folded into evolve ────────────────────────────────────────
 
 
+# ── origin-run refresh via regenerate ─────────────────────────
+
+
+@pytest.fixture
+def regen_spy(monkeypatch):
+    """Capture start_external_regenerate_run calls; never run a real agent."""
+    calls: list[dict] = []
+
+    def _fake(repo_path, proposal_id):
+        calls.append({"repo": str(repo_path), "run_id": proposal_id})
+        return {"dir": Path(repo_path)}
+
+    monkeypatch.setattr(
+        "lib.topics.proposals.external_jobs.start_external_regenerate_run", _fake)
+    return calls
+
+
+def _seed_origin_run(repo: Path, run_id: str, topic_id: str) -> None:
+    from lib.orm import SessionLocal
+    from lib.orm.models import TopicAudit
+    from lib.topics.proposal_orm.runs import orm_save_proposal
+    repo_obj = resolve_or_create_repo(str(repo))
+    orm_save_proposal(str(repo), run_id, {
+        "provider": "external-agent", "scope": "all", "status": "applied",
+        "topics": [{"id": topic_id, "label": "T", "aliases": [], "intent": "i",
+                    "status": "active", "refs": [], "edges": [], "commands": [],
+                    "include_globs": [], "exclude_globs": [], "evidence_paths": []}],
+        "metadata": {},
+    }, wiki="original wiki")
+    with SessionLocal() as s:
+        s.add(TopicAudit(
+            repo_id=repo_obj.id, kind="provenance",
+            recorded_at="2024-01-01T00:00:00Z", severity="info",
+            code="topic_create", message="m",
+            topic_ids_json=json.dumps([topic_id]), paths_json="[]",
+            aliases_json="[]", triggering_run_id=run_id,
+            triggering_proposal_topic_id=None))
+        s.commit()
+
+
+def _open_drift_threads(repo: Path, run_id: str) -> list[dict]:
+    from lib.topics.proposals.feedback import list_proposal_feedback_threads
+    return [t for t in list_proposal_feedback_threads(repo, run_id)
+            if t.get("kind") == "content_drift"
+            and t.get("resolution_state") == "open"]
+
+
+def test_origin_drift_note_regenerates_origin_run(fake_git_repo, monkeypatch,
+                                                  spy, regen_spy):
+    _configure(monkeypatch, spawn=True, configured=True)
+    repo = fake_git_repo
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _seed_origin_run(repo, "origin-run-1", "t1")
+    _write_wiki(repo, "t1")
+    # routes to the origin run as an open drift note (not a standalone proposal)
+    assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "origin-run-1"
+
+    assert maybe_spawn_refresh_agents(repo) == 1
+    assert spy == []                                  # no fresh draft
+    assert len(regen_spy) == 1                        # a regenerate instead
+    assert regen_spy[0]["run_id"] == "origin-run-1"
+
+
+def test_origin_drift_trivial_dismisses_note(fake_git_repo, monkeypatch,
+                                             spy, regen_spy):
+    _configure(monkeypatch, spawn=True, configured=True)
+    _set_triage(monkeypatch, "Whitespace only.\nVERDICT: TRIVIAL")
+    repo = fake_git_repo
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _seed_origin_run(repo, "origin-run-1", "t1")
+    _write_wiki(repo, "t1")
+    emit_refresh_proposal(repo, "t1", ["a.py"])
+    assert len(_open_drift_threads(repo, "origin-run-1")) == 1
+
+    assert maybe_spawn_refresh_agents(repo) == 0
+    assert regen_spy == []
+    # the note is resolved, so it stops riding into the next regenerate
+    assert _open_drift_threads(repo, "origin-run-1") == []
+
+
 def test_evolve_folds_in_spawn(fake_git_repo, monkeypatch, spy):
     from lib.topics.content_drift import run_content_evolution
     from lib.topics.ref_digest import capture_ref_digests

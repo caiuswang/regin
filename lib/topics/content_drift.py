@@ -39,6 +39,13 @@ log = get_activity_logger("topics")
 
 REFRESH_PROVIDER = "content-drift"
 
+# Feedback-thread kind used for the agent-authored drift note appended to a
+# topic's origin proposal run. The regenerate rail carries open threads into
+# the next draft, so this note IS the producer that drives a refresh revision
+# onto the original proposal — keeping the topic's whole wiki history in one
+# run instead of spawning a divorced `content-drift-<topic>` proposal.
+CONTENT_DRIFT_THREAD_KIND = "content_drift"
+
 
 def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -138,18 +145,82 @@ def _refresh_proposal_id(topic_id: str) -> str:
     return f"{REFRESH_PROVIDER}-{topic_id}"
 
 
+def _drift_note_body(topic_id: str, drifted_paths: list[str]) -> str:
+    listed = "\n".join(f"- `{p}`" for p in drifted_paths) or "- (this topic's refs)"
+    return (
+        f"The code under **{topic_id}** changed since its wiki was last "
+        f"written. Re-derive the narrative from the current refs.\n\n"
+        f"Drifted files:\n{listed}"
+    )
+
+
+def _append_drift_note_to_origin(repo_path: str | Path, origin_run_id: str,
+                                 topic_id: str,
+                                 drifted_paths: list[str]) -> str:
+    """Append (idempotently) an agent-authored content-drift note onto the
+    proposal run that originally brought this topic into the graph. The open
+    note rides the regenerate rail into the next draft — so the refresh lands
+    as a new revision on the *original* proposal, giving the topic wiki a
+    coherent revision history. Returns the origin run id.
+
+    Idempotent: while a prior drift note for this topic is still open (not yet
+    addressed by a refresh / resolved by a human), re-detecting the same drift
+    is a no-op rather than a second stacked note. A `wiki_range` anchor means
+    the auto-addressed sweep closes the note once the wiki actually changes, so
+    the next genuine drift opens a fresh note → a fresh revision."""
+    from lib.topics.proposal_orm import (
+        orm_create_feedback_thread,
+        orm_open_content_drift_threads,
+    )
+
+    existing = orm_open_content_drift_threads(
+        repo_path, kind=CONTENT_DRIFT_THREAD_KIND,
+        proposal_id=origin_run_id, topic_id=topic_id)
+    if existing:
+        return origin_run_id
+    orm_create_feedback_thread(
+        repo_path, origin_run_id,
+        proposal_topic_id=topic_id,
+        kind=CONTENT_DRIFT_THREAD_KIND,
+        anchor_kind="wiki_range",
+        anchor={"topic_id": topic_id, "section": "wiki-preview"},
+        quoted_text=None,
+        body=_drift_note_body(topic_id, drifted_paths),
+        created_by="agent",
+        metadata={"drifted_paths": drifted_paths},
+    )
+    log.write("content_drift_note_appended", repo_path=str(repo_path),
+              proposal_id=origin_run_id, topic_id=topic_id,
+              drifted=len(drifted_paths))
+    return origin_run_id
+
+
 def emit_refresh_proposal(repo_path: str | Path, topic_id: str,
                           drifted_paths: list[str]) -> Optional[str]:
-    """Emit (idempotent UPSERT) a single-topic, human-gated refresh proposal
-    for a drifted topic, snapshotting its current approved entry. Returns the
-    proposal id, or None when the topic is unknown. Single-topic by design (a
-    multi-topic proposal loses forward edges on per-doc apply)."""
+    """Record a content-drift refresh for a drifted topic; returns the
+    proposal-run id that now carries it, or None when the topic is unknown.
+
+    Prefers appending an agent-authored drift **note** onto the topic's origin
+    proposal run (found via provenance) — that note drives a refresh *revision*
+    on the original proposal, so the topic wiki keeps a single revision
+    history (mirrors the downgrade-into-origin path). Falls back to the
+    standalone, idempotent `content-drift-<topic>` proposal only when the topic
+    has no origin run (legacy snapshots, or the origin run was deleted).
+    Single-topic by design (a multi-topic proposal loses forward edges on
+    per-doc apply)."""
+    from lib.topics.proposal_orm import orm_find_origin_proposal_run_for_topic
     from lib.topics.proposal_orm.runs import orm_save_proposal
 
     graph = load_authoritative_graph(repo_path)
     topic = graph.get("topics", {}).get(topic_id)
     if not topic:
         return None
+
+    origin_run_id = orm_find_origin_proposal_run_for_topic(repo_path, topic_id)
+    if origin_run_id is not None:
+        return _append_drift_note_to_origin(
+            repo_path, origin_run_id, topic_id, drifted_paths)
+
     proposal_id = _refresh_proposal_id(topic_id)
     snapshot = dict(topic)
     snapshot["id"] = topic_id

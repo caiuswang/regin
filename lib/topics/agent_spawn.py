@@ -41,7 +41,8 @@ _TRIAGE_RE = re.compile(r"VERDICT\s*[:=]\s*(MATERIAL|TRIVIAL)", re.IGNORECASE)
 
 
 def _content_drift_run_ids(repo_path: str | Path) -> list[str]:
-    """Proposal ids for this repo's content-drift runs."""
+    """Proposal ids for this repo's standalone content-drift runs (the
+    fallback path, used for topics with no origin proposal run)."""
     with SessionLocal() as session:
         repo = session.exec(
             select(Repo).where(
@@ -52,6 +53,18 @@ def _content_drift_run_ids(repo_path: str | Path) -> list[str]:
             select(ProposalRun.id).where(
                 ProposalRun.repo_id == repo.id,
                 ProposalRun.provider == REFRESH_PROVIDER)).all())
+
+
+def _origin_drift_items(repo_path: str | Path) -> list[dict[str, Any]]:
+    """Origin proposal runs carrying an open content-drift note. Each item
+    `{run_id, topic_id, thread_id, drifted_paths}` is a refresh that should
+    land as a new revision on the *original* proposal via regenerate (the note
+    rides the carry-forward rail into the agent's instructions)."""
+    from lib.topics.content_drift import CONTENT_DRIFT_THREAD_KIND
+    from lib.topics.proposal_orm import orm_open_content_drift_threads
+
+    return orm_open_content_drift_threads(
+        repo_path, kind=CONTENT_DRIFT_THREAD_KIND)
 
 
 def _already_spawned(repo_path: str | Path, proposal_id: str) -> bool:
@@ -252,11 +265,86 @@ def _spawn_one(repo_path: str | Path, proposal_id: str) -> bool:
     return True
 
 
+_ACTIVE_RUN_STATES = {"queued", "running", "waiting_for_permission"}
+
+
+def _proposal_for_drift_item(item: dict[str, Any]) -> dict[str, Any]:
+    """A minimal proposal-shaped dict so `_drift_is_material`/`_topic_request`
+    can triage and brief an origin-run drift note the same way they do a
+    standalone refresh stub."""
+    return {
+        "id": item["run_id"],
+        "topics": [{"id": item.get("topic_id")}],
+        "metadata": {"drifted_paths": item.get("drifted_paths") or []},
+    }
+
+
+def _dismiss_drift_thread(repo_path: str | Path, item: dict[str, Any]) -> None:
+    """Retire an origin-run drift note the agent judged TRIVIAL: resolve the
+    thread (so it stops riding into regenerate) and re-fingerprint the topic so
+    the same change can't re-fire the drift on the next pass."""
+    from lib.topics.proposal_orm import orm_set_feedback_thread_resolution
+    from lib.topics.ref_digest import capture_ref_digests
+
+    orm_set_feedback_thread_resolution(
+        repo_path, item["run_id"], item["thread_id"],
+        resolution_state="dismissed")
+    if item.get("topic_id"):
+        capture_ref_digests(repo_path, item["topic_id"])
+    log.write("drift_dismissed_trivial", repo_path=str(repo_path),
+              proposal_id=item["run_id"], topic_id=item.get("topic_id"))
+
+
+def _spawn_one_via_regenerate(repo_path: str | Path,
+                              item: dict[str, Any]) -> bool:
+    """Drive one origin-run drift note to a refresh revision by regenerating
+    that run — but only after triage judges the drift MATERIAL. A TRIVIAL
+    verdict dismisses the note instead. Skips a run that is already mid-flight.
+    Returns whether it triggered a regenerate."""
+    from lib.topics.proposals import load_proposal_status
+    from lib.topics.proposals.external_jobs import start_external_regenerate_run
+
+    status = load_proposal_status(repo_path, item["run_id"]) or {}
+    if status.get("state") in _ACTIVE_RUN_STATES:
+        return False
+    if not _drift_is_material(repo_path, _proposal_for_drift_item(item)):
+        _dismiss_drift_thread(repo_path, item)
+        return False
+    start_external_regenerate_run(repo_path, item["run_id"])
+    return True
+
+
+def _spawn_standalone_refreshes(repo_path: str | Path, cap: int,
+                                spawned: int) -> int:
+    """Spawn fresh drafts for the legacy standalone content-drift proposals
+    (topics with no origin run). Returns the updated spawned count."""
+    for proposal_id in _content_drift_run_ids(repo_path):
+        if cap and cap > 0 and spawned >= cap:
+            break
+        if _spawn_one(repo_path, proposal_id):
+            spawned += 1
+    return spawned
+
+
+def _spawn_origin_refreshes(repo_path: str | Path, cap: int,
+                            spawned: int) -> int:
+    """Regenerate origin runs carrying an open drift note (topics whose whole
+    lifecycle stays in their original proposal). Returns the updated count."""
+    for item in _origin_drift_items(repo_path):
+        if cap and cap > 0 and spawned >= cap:
+            break
+        if _spawn_one_via_regenerate(repo_path, item):
+            spawned += 1
+    return spawned
+
+
 def maybe_spawn_refresh_agents(repo_path: str | Path) -> int:
-    """Spawn the external drafting agent for pending content-drift refresh
-    proposals, up to `drift_proposal_batch_max`. A no-op (returns 0) unless
-    BOTH `auto_spawn_agents` and a configured external agent. Idempotent and
-    best-effort — never raises into the caller."""
+    """Spawn the drafting agent for pending content-drift refreshes, up to
+    `drift_proposal_batch_max`. Two sources share the cap: origin-run drift
+    notes (regenerated into a revision on the original proposal) and legacy
+    standalone content-drift proposals (drafted fresh). A no-op (returns 0)
+    unless BOTH `auto_spawn_agents` and a configured external agent. Idempotent
+    and best-effort — never raises into the caller."""
     cfg = settings.topic_evolution
     if not cfg.auto_spawn_agents:
         return 0
@@ -265,12 +353,8 @@ def maybe_spawn_refresh_agents(repo_path: str | Path) -> int:
         if not external_agent_configured():
             return 0
         cap = cfg.drift_proposal_batch_max
-        spawned = 0
-        for proposal_id in _content_drift_run_ids(repo_path):
-            if cap and cap > 0 and spawned >= cap:
-                break
-            if _spawn_one(repo_path, proposal_id):
-                spawned += 1
+        spawned = _spawn_origin_refreshes(repo_path, cap, 0)
+        spawned = _spawn_standalone_refreshes(repo_path, cap, spawned)
         if spawned:
             log.write("refresh_agents_spawned", repo_path=str(repo_path),
                       spawned=spawned)
