@@ -81,13 +81,13 @@ def test_blank_failures_are_dropped():
 def test_recall_lessons_surfaces_a_seeded_lesson(seed_lesson):
     seed_lesson("When refactoring an inbox filter, verify counts against the API.",
                 ["frontend"])
-    hits = recall_lessons("refactor the inbox filter counts", ["frontend"])
+    hits = recall_lessons("refactor the inbox filter counts")
     # Best-effort recall; the seeded lesson should be among the hits.
     assert any("inbox" in (h.get("snippet") or "").lower() for h in hits)
 
 
 def test_recall_lessons_degrades_to_empty_on_no_match():
-    hits = recall_lessons("zzqq nonexistent topic wwxx", ["frontend"])
+    hits = recall_lessons("zzqq nonexistent topic wwxx")
     assert isinstance(hits, list)  # never raises, always a list
 
 
@@ -97,7 +97,7 @@ def test_offering_a_lesson_does_not_reinforce_it(seed_lesson):
     mid = seed_lesson("Offer-no-reinforce: verify inbox filter counts vs API.",
                       ["frontend"])
     before = _recall_count(mid)
-    recall_lessons("verify the inbox filter counts", ["frontend"])
+    recall_lessons("verify the inbox filter counts")
     assert _recall_count(mid) == before
 
 

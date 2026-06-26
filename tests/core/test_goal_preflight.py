@@ -1,4 +1,10 @@
-"""Tests for the deterministic goal-preflight roadmap router."""
+"""Tests for the goal-preflight recall + hard-gates kernel.
+
+Area-routing (`AREA_RULES`/`detect_areas`/`resolve_references`) was removed
+2026-06: it was regin-specific and merely restated the file-keyed convention
+table in CLAUDE.local.md. Preflight now emits only the universal gate floor
+plus (opt-in) recalled lessons.
+"""
 
 from __future__ import annotations
 
@@ -8,148 +14,68 @@ import subprocess
 import sys
 
 from lib.goal_preflight import (
-    AREA_RULES,
     BASE_GATES,
     build_roadmap,
-    detect_areas,
     render_markdown,
     roadmap_to_dict,
     roadmap_warning,
-    _ident_tokens,
 )
 
 
-def _area_names(goal: str) -> list[str]:
-    return [r.name for r in detect_areas(goal)]
-
-
-def test_frontend_goal_routes_to_frontend_area():
-    areas = _area_names("Make the inbox UI good with a kind filter")
-    assert "frontend" in areas
-
-
-def test_python_goal_routes_to_python_area():
-    areas = _area_names("Fix the CLI endpoint in lib so it returns JSON")
-    assert "python" in areas
-
-
-def test_cross_area_goal_routes_to_multiple_areas():
-    areas = _area_names("Fix the trace span ingest in lib/trace")
-    assert "python" in areas and "trace" in areas
-
-
-def test_unmatched_goal_yields_no_areas():
-    assert _area_names("ponder the meaning of the universe") == []
-
-
-def test_path_glob_signal_fires_area():
-    # No frontend keyword, but a *.vue path token should still route.
-    areas = _area_names("touch foo.vue")
-    assert "frontend" in areas
-
-
-def test_keyword_is_whole_word_not_substring():
-    # "apize" must not trip the "api" keyword.
-    assert "python" not in _area_names("apize the widget")
-
-
-def test_single_lone_keyword_does_not_fire_area():
-    # One incidental keyword ("session") is too weak to pull in an area.
-    assert _area_names("clean up the session list") == []
-
-
-def test_two_keywords_fire_area():
-    # Two distinct keywords for the same area cross the evidence threshold.
-    areas = _area_names("debug the trace span")
-    assert "trace" in areas
-
-
-def test_single_keyword_plus_path_glob_fires_area():
-    # A lone keyword that would not fire alone still fires when the goal
-    # also names a matching path token (path-glob is sufficient on its own).
-    areas = _area_names("tweak the session view in lib/trace/merge.py")
-    assert "trace" in areas
-
-
-def test_ident_tokens_splits_camelcase():
-    assert _ident_tokens("InboxView") == {"inbox", "view"}
-    assert _ident_tokens("InboxMessageCard") == {"inbox", "message", "card"}
-
-
-def test_frontend_roadmap_has_skills_tokens_and_gates():
-    rm = build_roadmap("redesign the dashboard view", repo_root=os.getcwd())
-    assert "vue-complexity" in rm.skills
-    assert "frontend/src/assets/style.css" in rm.tokens
-    assert any("vite build" in g for g in rm.gates)
-
-
 def test_base_gates_always_present():
-    rm = build_roadmap("update the readme docs", repo_root=os.getcwd())
+    rm = build_roadmap("anything at all")
     for gate in BASE_GATES:
         assert gate in rm.gates
 
 
+def test_no_lessons_by_default():
+    # The deterministic core stays pure/offline unless lessons are requested.
+    rm = build_roadmap("refactor the inbox filter")
+    assert rm.lessons == []
+
+
 def test_roadmap_is_deterministic():
     goal = "Refactor inbox message filters"
-    a = roadmap_to_dict(build_roadmap(goal, repo_root=os.getcwd()))
-    b = roadmap_to_dict(build_roadmap(goal, repo_root=os.getcwd()))
+    a = roadmap_to_dict(build_roadmap(goal))
+    b = roadmap_to_dict(build_roadmap(goal))
     assert a == b
 
 
-def test_skills_are_deduped_across_areas():
-    # python + trace both contribute python-complexity; must appear once.
-    rm = build_roadmap("fix lib/trace span python bug", repo_root=os.getcwd())
-    assert rm.skills.count("python-complexity") == 1
+def test_roadmap_dict_has_no_area_keys():
+    # The old area-scaffold keys must be gone from the serialized view.
+    d = roadmap_to_dict(build_roadmap("style the button view"))
+    assert set(d) == {"goal", "gates", "lessons"}
 
 
-def test_references_capped_and_ranked(tmp_path):
-    # Build a fake frontend tree; the goal-relevant file must rank first.
-    views = tmp_path / "frontend" / "src" / "views"
-    views.mkdir(parents=True)
-    (tmp_path / "frontend" / "src" / "assets").mkdir(parents=True)
-    (tmp_path / "frontend" / "src" / "assets" / "style.css").write_text("")
-    for name in ["AaaView.vue", "InboxView.vue", "ZzzView.vue"]:
-        (views / name).write_text("<template></template>")
-    rm = build_roadmap("fix the inbox view", repo_root=str(tmp_path))
-    assert rm.references
-    assert "InboxView" in rm.references[0]
-
-
-def test_render_markdown_contains_all_sections():
-    md = render_markdown(build_roadmap("style the button view", repo_root=os.getcwd()))
-    for header in ("## Standards", "## Reference components",
-                   "## Design tokens", "## Hard gates", "## Acceptance checklist"):
+def test_render_markdown_contains_sections():
+    md = render_markdown(build_roadmap("style the button view"))
+    for header in ("## Lessons recalled", "## Hard gates",
+                   "## Acceptance checklist"):
         assert header in md
 
 
+def test_render_markdown_drops_area_sections():
+    md = render_markdown(build_roadmap("style the button view"))
+    for gone in ("## Standards", "## Reference components", "## Design tokens",
+                 "_Areas:"):
+        assert gone not in md
+
+
 def test_warning_on_empty_goal():
-    rm = build_roadmap("", repo_root=os.getcwd())
-    warn = roadmap_warning(rm)
+    warn = roadmap_warning(build_roadmap(""))
     assert warn is not None and "empty" in warn
 
 
 def test_warning_on_whitespace_goal():
-    rm = build_roadmap("   \t ", repo_root=os.getcwd())
-    warn = roadmap_warning(rm)
+    warn = roadmap_warning(build_roadmap("   \t "))
     assert warn is not None and "empty" in warn
 
 
-def test_warning_on_no_area_match():
-    rm = build_roadmap("ponder the meaning of the universe", repo_root=os.getcwd())
-    warn = roadmap_warning(rm)
-    assert warn is not None and "no known area" in warn
-
-
-def test_no_warning_when_area_matches():
-    rm = build_roadmap("fix the inbox view", repo_root=os.getcwd())
-    assert roadmap_warning(rm) is None
-
-
-def test_warning_is_actionable():
-    # No-area warning must tell the user how to recover (name area or file).
-    rm = build_roadmap("frobnicate the doohickey", repo_root=os.getcwd())
-    warn = roadmap_warning(rm)
-    assert "Rephrase" in warn and (".py" in warn or "*.vue" in warn)
+def test_no_warning_for_real_goal():
+    # With area-routing gone, any non-empty goal gets the gate floor — never
+    # "hollow", so no warning regardless of wording.
+    assert roadmap_warning(build_roadmap("ponder the meaning of the universe")) is None
+    assert roadmap_warning(build_roadmap("fix the inbox view")) is None
 
 
 def _run_cli(goal: str, *extra: str) -> subprocess.CompletedProcess:
@@ -167,21 +93,12 @@ def test_cli_warning_goes_to_stderr_not_stdout():
     assert "warning:" not in proc.stdout
 
 
-def test_cli_json_stdout_stays_pure_with_warning():
-    # The hollow-roadmap warning must not corrupt --json stdout.
-    proc = _run_cli("zzz no area here", "--json")
-    assert "warning:" in proc.stderr
+def test_cli_json_stdout_is_pure_and_well_formed():
+    proc = _run_cli("redesign the dashboard view", "--json")
     parsed = json.loads(proc.stdout)  # raises if stdout is polluted
-    assert parsed["areas"] == []
+    assert "gates" in parsed and "areas" not in parsed
 
 
-def test_cli_no_warning_for_matched_goal():
+def test_cli_no_warning_for_real_goal():
     proc = _run_cli("redesign the dashboard view")
     assert "warning:" not in proc.stderr
-
-
-def test_table_keywords_are_lowercase():
-    # Routing lowercases the goal; uppercase table keywords would never match.
-    for rule in AREA_RULES:
-        for kw in rule.keywords:
-            assert kw == kw.lower()

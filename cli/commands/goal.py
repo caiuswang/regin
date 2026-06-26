@@ -1,9 +1,10 @@
 """`regin goal preflight "<goal>"` — emit the pre-build roadmap.
 
-The deterministic front half of the `/goal-verified` loop. Routes a
-freeform goal to the skills, reference components, design tokens and
-hard gates it must conform to, so the bar is pinned before any code is
-written. See `lib/goal_preflight.py` for the why.
+The portable front half of the `/goal-verified` loop: emits the universal
+hard gates that decide "done" plus (opt-in) the past lessons recalled for
+the goal, so the bar is pinned before any code is written. Per-area
+convention skills/references are NOT routed here — they come from the
+file-keyed table in CLAUDE.local.md. See `lib/goal_preflight.py` for the why.
 """
 
 from __future__ import annotations
@@ -22,13 +23,11 @@ goal_app = typer.Typer(
 
 @goal_app.command(
     "preflight",
-    help="Emit the roadmap (standards + references + gates) for a goal",
+    help="Emit the roadmap (hard gates + recalled lessons) for a goal",
 )
 def cmd_goal_preflight(
     goal: str = typer.Argument(..., help="The freeform goal string"),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
-    repo_root: str = typer.Option(None, "--repo-root",
-                                  help="Repo root for reference globbing (default: cwd)"),
     with_lessons: bool = typer.Option(
         False, "--with-lessons/--no-lessons",
         help="Recall past lessons into the roadmap via the legacy flat FTS leg. "
@@ -46,14 +45,14 @@ def cmd_goal_preflight(
         roadmap_warning,
     )
 
-    roadmap = build_roadmap(goal, repo_root=repo_root, with_lessons=with_lessons)
+    roadmap = build_roadmap(goal, with_lessons=with_lessons)
     offered = record_offered(session_id, roadmap.lessons, goal)
     get_activity_logger("goal").write(
-        "preflight_emitted", areas=roadmap.areas,
-        skill_count=len(roadmap.skills), offered_recorded=offered)
+        "preflight_emitted", gate_count=len(roadmap.gates),
+        lesson_count=len(roadmap.lessons), offered_recorded=offered)
 
-    # Hollow-roadmap guard: warn on stderr so stdout stays clean (the
-    # roadmap markdown / `--json` payload remains the only thing on stdout).
+    # Empty-goal guard: warn on stderr so stdout stays clean (the roadmap
+    # markdown / `--json` payload remains the only thing on stdout).
     warning = roadmap_warning(roadmap)
     if warning:
         typer.echo(f"warning: {warning}", err=True)
