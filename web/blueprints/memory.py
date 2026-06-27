@@ -422,8 +422,14 @@ def _taxonomy_top_k() -> int:
 
 def _mem_headline(m: dict) -> dict:
     """Importance-ranked memory address for the taxonomy detail pane — a
-    headline the user clicks to open the full memory, not a body dump."""
+    headline the user clicks to open the full memory, not a body dump.
+
+    `snippet` is a short body-derived fallback so an untitled memory still
+    renders readable text in the tree (the bare `kind` word otherwise);
+    capped, not the full body."""
+    from lib.memory.store import title_from_body
     return {"id": m["id"], "kind": m["kind"], "title": m.get("title"),
+            "snippet": title_from_body(m.get("body") or "", max_len=100),
             "importance": m.get("importance"), "scope": m.get("scope"),
             "veracity": m.get("veracity")}
 
@@ -546,7 +552,11 @@ def api_memory_update(memory_id):
     fields = {k: v for k, v in payload.items() if k in _EDITABLE}
     if not fields:
         return jsonify({"error": "no editable fields supplied"}), 400
-    if not memory.update(memory_id, **fields):
+    try:
+        updated = memory.update(memory_id, **fields)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not updated:
         return jsonify({"error": "not found"}), 404
     return jsonify({"ok": True})
 

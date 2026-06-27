@@ -773,10 +773,14 @@ def _remember_lesson(payload, tool_input: dict, attrs: dict,
         if not memory.enabled():
             return
         from lib.memory.scoping import resolve_write_scope
+        from lib.memory.store import title_from_body
         body = str(tool_input.get('message', ''))
+        # A lesson's title is mandatory; if the agent didn't supply one,
+        # derive it from the body so the lesson is still captured (not
+        # silently dropped by the guard below).
         common = dict(
             kind='lesson',
-            title=tool_input.get('title') or None,
+            title=tool_input.get('title') or title_from_body(body),
             scope=resolve_write_scope(payload.cwd),
             tags=['send_to_user'],
             source_trace_id=payload.session_id,

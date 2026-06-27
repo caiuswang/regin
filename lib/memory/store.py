@@ -143,6 +143,26 @@ def _normalize_choice(value: Optional[str], allowed: tuple[str, ...],
     return value if value in allowed else default
 
 
+def title_from_body(body: str, *, max_len: int = 80) -> str:
+    """A usable lesson title derived from the body's first real line — used
+    to backfill legacy titleless lessons and to title the rule-shaped
+    failures `goal feedback` writes. Strips a leading markdown heading/bold
+    marker, collapses whitespace, and caps the length with an ellipsis."""
+    for line in (body or "").splitlines():
+        line = " ".join(line.strip().lstrip("#").strip().strip("*").split())
+        if line:
+            return line[:max_len - 1] + "…" if len(line) > max_len else line
+    return ""
+
+
+def _require_lesson_title(kind: str, title: Optional[str]) -> None:
+    """A `lesson` memory must carry a non-empty title — it is the one-line
+    rule, the headline the taxonomy tree and lists key off. Other kinds may
+    stay untitled. Raises ValueError so the API/CLI surface a clean 400."""
+    if kind == "lesson" and not (title or "").strip():
+        raise ValueError("a lesson memory requires a non-empty title")
+
+
 def _serialize(m: Memory) -> dict:
     tags = []
     if m.tags:
@@ -266,12 +286,14 @@ class SqliteMemoryStore:
         body = (mem.body or "").strip()[:_BODY_MAX]
         if not body:
             raise ValueError("memory body must be non-empty")
+        kind = _normalize_choice(mem.kind, MEMORY_KINDS, DEFAULT_KIND)
+        _require_lesson_title(kind, mem.title)
         memory_id = _new_id()
         now = _now()
         row = Memory(
             id=memory_id,
             tier=_normalize_choice(mem.tier, MEMORY_TIERS, DEFAULT_TIER),
-            kind=_normalize_choice(mem.kind, MEMORY_KINDS, DEFAULT_KIND),
+            kind=kind,
             title=(mem.title or None),
             body=body,
             scope=mem.scope or "global",
@@ -301,6 +323,13 @@ class SqliteMemoryStore:
             row = session.get(Memory, memory_id)
             if row is None:
                 return False
+            # Enforce the lesson-title invariant against the *resulting* row:
+            # an edit may not blank out (or convert into) a titleless lesson.
+            if "kind" in fields or "title" in fields:
+                _require_lesson_title(
+                    _normalize_choice(fields.get("kind", row.kind),
+                                      MEMORY_KINDS, row.kind),
+                    fields["title"] if "title" in fields else row.title)
             self._apply_updates(row, fields)
             row.updated_at = _now()
             session.add(row)
@@ -326,6 +355,29 @@ class SqliteMemoryStore:
             elif key == "veracity":
                 value = _normalize_choice(value, VERACITY_VALUES, row.veracity)
             setattr(row, key, value)
+
+    def backfill_lesson_titles(self) -> int:
+        """Give every titleless `lesson` a title derived from its body — the
+        one-time repair for rows written before the title became mandatory
+        (chiefly `goal feedback --fail` lessons). Returns the count fixed."""
+        fixed = 0
+        with MemorySessionLocal() as session:
+            rows = session.exec(
+                select(Memory).where(Memory.kind == "lesson")).all()
+            for row in rows:
+                if (row.title or "").strip():
+                    continue
+                derived = title_from_body(row.body)
+                if not derived:
+                    continue
+                row.title = derived
+                row.updated_at = _now()
+                session.add(row)
+                self._upsert_fts(session, row)
+                fixed += 1
+            session.commit()
+        log.write("memory_titles_backfilled", count=fixed)
+        return fixed
 
     def supersede(self, old_id: str, new: MemoryInput) -> str:
         new_id = self.remember(new)

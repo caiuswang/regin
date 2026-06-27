@@ -10,6 +10,7 @@ from cli.commands.memory import _apply_assignments, _fmt_link
 
 def _remember(body, **kw):
     kw.setdefault("is_test", False)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.remember(body, **kw)
 
 

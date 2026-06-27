@@ -25,7 +25,7 @@ def seed_lesson():
     def _make(body: str, tags: list[str], *, is_test: bool = False):
         # is_test=False so recall (which excludes test rows) can surface it;
         # teardown forgets it either way, so the durable store stays clean.
-        mid = memory.remember(body, kind="lesson", tags=tags,
+        mid = memory.remember(body, kind="lesson", title=body[:80], tags=tags,
                               importance=0.5, is_test=is_test)
         created.append(mid)
         return mid

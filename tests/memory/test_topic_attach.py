@@ -15,6 +15,7 @@ from lib.settings import settings
 
 def _remember(body, **kw):
     kw.setdefault("is_test", True)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.remember(body, **kw)
 
 

@@ -539,8 +539,8 @@ def test_send_to_user_lesson_does_not_trip_idempotency_guard():
     store = memory.get_store()
     # Simulate the lesson-capture hook writing a memory for this session.
     memory.remember("A reusable lesson body from send_to_user.",
-                    kind="lesson", tags=["send_to_user"],
-                    source_trace_id="sess-lesson")
+                    kind="lesson", title="A reusable lesson",
+                    tags=["send_to_user"], source_trace_id="sess-lesson")
     assert store.distilled_memories_from_trace("sess-lesson") == 0
 
     # The guard must NOT fire: distill runs and the LLM is invoked.

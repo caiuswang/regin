@@ -43,6 +43,7 @@ class StubLLM:
 
 def _remember(body, **kw):
     kw.setdefault("is_test", True)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.remember(body, **kw)
 
 
@@ -141,6 +142,7 @@ def _episodic(body, **kw):
     one reflect pass."""
     from lib.memory.models import MemoryInput
     kw.setdefault("is_test", True)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.get_store().remember(MemoryInput(
         body=body, tier="episodic", status="active", **kw))
 

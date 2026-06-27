@@ -123,12 +123,16 @@ def _reinforce_all(store, ids: list[str]) -> tuple[list[str], list[str]]:
 def _write_failures(memory, fails: list[str], *, tags: list[str],
                     importance: float, trace_id: str | None,
                     is_test: bool) -> list[str]:
+    from lib.memory.store import title_from_body
     lesson_tags = _dedup(tags + [FAIL_TAG])
+    # The fail is itself a one-line rule, so it makes a fitting title; titles
+    # are mandatory on lesson memories (see store._require_lesson_title).
     return [
-        memory.remember(fail, kind="lesson", tags=lesson_tags,
-                        importance=importance, source_trace_id=trace_id,
-                        is_test=is_test)
+        memory.remember(fail, kind="lesson", title=title_from_body(fail),
+                        tags=lesson_tags, importance=importance,
+                        source_trace_id=trace_id, is_test=is_test)
         for fail in fails
+        if title_from_body(fail)
     ]
 
 

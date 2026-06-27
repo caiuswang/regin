@@ -43,6 +43,7 @@ class _StubEmbedder:
 
 def _remember(body, **kw):
     kw.setdefault("is_test", True)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.remember(body, **kw)
 
 
@@ -64,6 +65,72 @@ def test_remember_normalizes_and_roundtrips():
 def test_remember_rejects_empty_body():
     with pytest.raises(ValueError):
         memory.remember("   ")
+
+
+def test_remember_rejects_lesson_without_title():
+    with pytest.raises(ValueError):
+        memory.remember("A lesson body with no title.", kind="lesson",
+                        is_test=True)
+    with pytest.raises(ValueError):
+        memory.remember("Whitespace title.", kind="lesson", title="   ",
+                        is_test=True)
+
+
+def test_remember_allows_nonlesson_without_title():
+    # facts/gotchas/etc. may stay untitled — only lessons are mandatory.
+    mid = memory.remember("A bare fact.", kind="fact", is_test=True)
+    assert memory.get_store().get_dict(mid)["title"] is None
+
+
+def test_update_rejects_blanking_a_lesson_title():
+    mid = _remember("Some lesson", title="Real title")
+    with pytest.raises(ValueError):
+        memory.update(mid, title="   ")
+    # body-only edits on a titled lesson are still fine.
+    assert memory.update(mid, body="edited body")
+
+
+def test_update_rejects_converting_to_titleless_lesson():
+    mid = memory.remember("A bare fact.", kind="fact", is_test=True)
+    with pytest.raises(ValueError):
+        memory.update(mid, kind="lesson")
+
+
+def test_title_from_body_takes_first_real_line_and_caps():
+    from lib.memory.store import title_from_body
+    assert title_from_body("## A heading rule\nmore detail") == "A heading rule"
+    assert title_from_body("\n\n  spaced line  \n") == "spaced line"
+    assert title_from_body("x" * 100).endswith("…")
+    assert len(title_from_body("x" * 100)) == 80
+    assert title_from_body("   ") == ""
+
+
+def test_backfill_lesson_titles_fills_only_titleless_lessons():
+    store = memory.get_store()
+    # A legacy titleless lesson inserted under the radar (bypassing remember).
+    from lib.memory.engine import MemorySessionLocal as _S
+    from lib.memory.models import Memory
+    from lib.memory.store import _now
+    ts = _now()
+    with _S() as s:
+        s.add(Memory(id="legacy1", kind="lesson", title=None,
+                     body="Restart the backend after editing server code.",
+                     scope="global", veracity="unknown", is_test=1,
+                     created_at=ts, updated_at=ts))
+        s.add(Memory(id="legacy2", kind="lesson", title="",
+                     body="Second untitled lesson body.",
+                     scope="global", veracity="unknown", is_test=1,
+                     created_at=ts, updated_at=ts))
+        s.commit()
+    titled = _remember("Already titled", title="Keep me")
+
+    fixed = store.backfill_lesson_titles()
+
+    assert fixed == 2
+    assert store.get_dict("legacy1")["title"] == \
+        "Restart the backend after editing server code."
+    assert store.get_dict("legacy2")["title"] == "Second untitled lesson body."
+    assert store.get_dict(titled)["title"] == "Keep me"  # untouched
 
 
 def test_recall_fts_orders_by_relevance_and_reinforces():

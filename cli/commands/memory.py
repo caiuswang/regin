@@ -239,6 +239,30 @@ def _merged_graph(repo_path=None) -> dict:
         load_authoritative_graph(str(Path(root).resolve())))
 
 
+def _reject_titleless_lesson(kind: str, title: Optional[str]) -> None:
+    """Exit(1) with a friendly message if a lesson is being created without a
+    title (the store enforces this too, but a raw traceback is poor UX)."""
+    if kind == "lesson" and not (title or "").strip():
+        print("error: a lesson requires a title (the one-line rule)")
+        raise typer.Exit(1)
+
+
+def _validate_remember_args(kind: str, title: Optional[str],
+                            topic: Optional[str]) -> None:
+    """Exit(1) with a friendly message on bad `remember` args — kept out of
+    the command body so it stays under the cyclomatic-complexity gate."""
+    from lib.memory.models import MEMORY_KINDS
+    if kind not in MEMORY_KINDS:
+        print(f"error: --kind must be one of {', '.join(MEMORY_KINDS)}")
+        raise typer.Exit(1)
+    _reject_titleless_lesson(kind, title)
+    if topic is not None and topic not in (_merged_graph().get("topics") or {}):
+        print(f"error: no topic node {topic!r} — list roots with "
+              f"`index_root` (memory MCP) or pick a meta-root "
+              f"(skills, preferences)")
+        raise typer.Exit(1)
+
+
 @memory_app.command("remember")
 def cmd_remember(
     body: str = typer.Argument(..., help="The memory body (fact / lesson / "
@@ -265,17 +289,8 @@ def cmd_remember(
     a navigable home in the tree-nav index.
     """
     import lib.memory as memory
-    from lib.memory.models import MEMORY_KINDS
 
-    if kind not in MEMORY_KINDS:
-        print(f"error: --kind must be one of {', '.join(MEMORY_KINDS)}")
-        raise typer.Exit(1)
-    if topic is not None and topic not in (_merged_graph().get("topics") or {}):
-        print(f"error: no topic node {topic!r} — list roots with "
-              f"`index_root` (memory MCP) or pick a meta-root "
-              f"(skills, preferences)")
-        raise typer.Exit(1)
-
+    _validate_remember_args(kind, title, topic)
     mid = memory.remember(
         body, kind=kind, title=title, scope=scope, importance=importance,
         tags=[t.strip() for t in tags.split(",") if t.strip()]
@@ -285,6 +300,15 @@ def cmd_remember(
         memory.get_store().link_authoritative_topic(mid, topic,
                                                     source="manual")
         print(f"  filed under topic {topic}")
+
+
+@memory_app.command("backfill-titles")
+def cmd_backfill_titles() -> None:
+    """Give every titleless `lesson` a title derived from its body — the
+    one-time repair for rows written before lesson titles became mandatory."""
+    import lib.memory as memory
+    fixed = memory.get_store().backfill_lesson_titles()
+    print(f"backfilled {fixed} lesson title(s)")
 
 
 @memory_app.command("topic-feedback")
@@ -792,6 +816,7 @@ def cmd_supersede(
         source_trace_id=old.get("source_trace_id"),
         source_span_id=old.get("source_span_id"),
     )
+    _reject_titleless_lesson(new.kind, new.title)
     new_id = memory.supersede(old_id, new)
     print(f"superseded {old_id[:8]} -> {new_id[:8]} (old retired, chained)")
 

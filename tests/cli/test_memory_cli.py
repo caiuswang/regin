@@ -27,6 +27,7 @@ def test_list_shows_importance_and_use_count_suffix(runner, tmp_memory_db):
     store = memory.get_store()
     mid = store.remember(memory.MemoryInput(
         body="test memory for suffix display",
+        title="test memory for suffix display"[:80],
         importance=0.75,
     ))
     # Manually update recall_count to simulate a deliberate recall
@@ -60,14 +61,17 @@ def test_list_sort_by_use_orders_by_recall_count(runner, tmp_memory_db):
     # Create three memories with different recall counts
     mid1 = store.remember(memory.MemoryInput(
         body="medium usage",
+        title="medium usage"[:80],
         importance=0.5,
     ))
     mid2 = store.remember(memory.MemoryInput(
         body="high usage",
+        title="high usage"[:80],
         importance=0.3,
     ))
     mid3 = store.remember(memory.MemoryInput(
         body="low usage",
+        title="low usage"[:80],
         importance=0.8,
     ))
 
@@ -110,14 +114,17 @@ def test_list_sort_by_importance_orders_by_importance(runner, tmp_memory_db):
     # Create three memories with different importances
     mid1 = store.remember(memory.MemoryInput(
         body="low importance",
+        title="low importance"[:80],
         importance=0.2,
     ))
     mid2 = store.remember(memory.MemoryInput(
         body="high importance",
+        title="high importance"[:80],
         importance=0.9,
     ))
     mid3 = store.remember(memory.MemoryInput(
         body="medium importance",
+        title="medium importance"[:80],
         importance=0.5,
     ))
 
@@ -137,14 +144,17 @@ def test_list_sort_recent_default_behavior(runner, tmp_memory_db):
     # Create three memories (will be ordered by creation, i.e., updated_at)
     mid1 = store.remember(memory.MemoryInput(
         body="first memory",
+        title="first memory"[:80],
         importance=0.5,
     ))
     mid2 = store.remember(memory.MemoryInput(
         body="second memory",
+        title="second memory"[:80],
         importance=0.5,
     ))
     mid3 = store.remember(memory.MemoryInput(
         body="third memory",
+        title="third memory"[:80],
         importance=0.5,
     ))
 
@@ -169,10 +179,12 @@ def test_list_json_output_with_sort(runner, tmp_memory_db):
     store = memory.get_store()
     mid1 = store.remember(memory.MemoryInput(
         body="mem1",
+        title="mem1"[:80],
         importance=0.3,
     ))
     mid2 = store.remember(memory.MemoryInput(
         body="mem2",
+        title="mem2"[:80],
         importance=0.8,
     ))
 
@@ -189,16 +201,19 @@ def test_list_filter_with_sort(runner, tmp_memory_db):
     store = memory.get_store()
     mid1 = store.remember(memory.MemoryInput(
         body="lesson 1",
+        title="lesson 1"[:80],
         importance=0.4,
         tier="lesson",
     ))
     mid2 = store.remember(memory.MemoryInput(
         body="lesson 2",
+        title="lesson 2"[:80],
         importance=0.9,
         tier="lesson",
     ))
     mid3 = store.remember(memory.MemoryInput(
         body="decision 1",
+        title="decision 1"[:80],
         importance=0.7,
         tier="decision",
     ))
@@ -220,6 +235,7 @@ def test_suffix_with_zero_importance(runner, tmp_memory_db):
     store = memory.get_store()
     mid = store.remember(memory.MemoryInput(
         body="zero importance test",
+        title="zero importance test"[:80],
         importance=0.0,
     ))
 
@@ -234,6 +250,7 @@ def test_suffix_with_zero_recall_count(runner, tmp_memory_db):
     store = memory.get_store()
     mid = store.remember(memory.MemoryInput(
         body="no recalls yet",
+        title="no recalls yet"[:80],
         importance=0.5,
     ))
 
@@ -271,6 +288,19 @@ def test_supersede_retires_old_and_inherits_fields(runner, tmp_memory_db):
     # the retired original drops out of the active set
     active = [m["id"] for m in store.list_memories(status="active")]
     assert active == [old["superseded_by"]]
+
+
+def test_supersede_rejects_titleless_lesson_with_friendly_error(runner,
+                                                                tmp_memory_db):
+    """Superseding a lesson without a title fails cleanly (Exit 1 + message),
+    not with a raw ValueError traceback."""
+    store = memory.get_store()
+    old_id = store.remember(memory.MemoryInput(
+        body="stale", title="stale", kind="lesson"))
+    result = runner.invoke(memory_app, ["supersede", old_id,
+                                        "--body", "no title here"])
+    assert result.exit_code == 1
+    assert "lesson requires a title" in result.stdout
 
 
 def test_supersede_unknown_id_errors(runner, tmp_memory_db):

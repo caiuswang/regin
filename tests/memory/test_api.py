@@ -5,6 +5,19 @@ from __future__ import annotations
 import lib.memory as memory
 
 
+def test_mem_headline_falls_back_to_body_snippet_when_untitled():
+    """The taxonomy headline must carry a body-derived `snippet` so an
+    untitled memory renders readable text in the tree, not the bare kind."""
+    from web.blueprints.memory import _mem_headline
+    h = _mem_headline({"id": "x", "kind": "fact",
+                       "body": "## A bare fact\nwith detail"})
+    assert h["title"] is None
+    assert h["snippet"] == "A bare fact"
+    titled = _mem_headline({"id": "y", "kind": "lesson",
+                            "title": "Real title", "body": "Real title body"})
+    assert titled["title"] == "Real title"
+
+
 def _seed():
     return memory.remember("Restart backend before Playwright runs.",
                            kind="gotcha", title="Stale backend",
@@ -35,7 +48,8 @@ def test_get_patch_and_forget(flask_client):
 
 
 def test_approve_and_retire(flask_client):
-    mid = memory.remember("proposed entry", status="proposed", is_test=True)
+    mid = memory.remember("proposed entry", title="proposed entry",
+                          status="proposed", is_test=True)
     assert flask_client.post(
         f"/api/memory/{mid}/approve").status_code == 200
     assert memory.get_store().get_dict(mid)["status"] == "active"
@@ -60,8 +74,8 @@ def test_restore_endpoint_reactivates(flask_client):
 
 
 def test_bulk_restore_reactivates_many(flask_client):
-    ids = [memory.remember(f"bulk retired {i}", status="retired",
-                            is_test=True) for i in range(3)]
+    ids = [memory.remember(f"bulk retired {i}", title=f"bulk retired {i}",
+                            status="retired", is_test=True) for i in range(3)]
     r = flask_client.post("/api/memory/bulk",
                           json={"action": "restore", "ids": ids})
     assert r.status_code == 200 and r.get_json()["applied"] == 3

@@ -106,7 +106,17 @@ function startEdit() {
   nextTick(autosize)
 }
 
+// A lesson's title is mandatory (it is the one-line rule the tree keys off);
+// the server enforces this too, but block it client-side for a clean message.
+const titleRequired = computed(() => memory.value?.kind === 'lesson')
+const titleMissing = computed(
+  () => titleRequired.value && !form.value.title.trim())
+
 async function save() {
+  if (titleMissing.value) {
+    flash('A lesson requires a title.')
+    return
+  }
   await api.patch(`/memory/${memory.value.id}`, {
     title: form.value.title || null,
     body: form.value.body,
@@ -180,11 +190,12 @@ function timeLabel(iso) {
           </div>
 
           <template v-if="editing">
-            <input v-model="form.title" type="text" placeholder="Title" class="w-full text-sm border border-slate-200 rounded-md px-2 py-1 mb-2 focus-visible:outline-2 focus-visible:outline-blue-500" />
+            <input v-model="form.title" type="text" :placeholder="titleRequired ? 'Title (required)' : 'Title'" :aria-invalid="titleMissing" class="w-full text-sm border rounded-md px-2 py-1 mb-1 focus-visible:outline-2 focus-visible:outline-blue-500" :class="titleMissing ? 'border-red-400' : 'border-slate-200'" />
+            <p v-if="titleMissing" class="text-xs text-red-600 mb-2">A lesson requires a title.</p>
             <textarea ref="bodyTextarea" v-model="form.body" rows="12" class="w-full text-sm font-mono border border-slate-200 rounded-md px-2 py-1 mb-2 min-h-[12rem] max-h-[70vh] resize-y overflow-auto focus-visible:outline-2 focus-visible:outline-blue-500" @input="autosize"></textarea>
             <input v-model="form.tags" type="text" placeholder="Tags (comma-separated)" class="w-full text-sm border border-slate-200 rounded-md px-2 py-1 mb-2 focus-visible:outline-2 focus-visible:outline-blue-500" />
             <div class="flex gap-3 text-sm">
-              <Button variant="link" size="sm" class="font-medium hover:no-underline" @click="save">Save</Button>
+              <Button variant="link" size="sm" class="font-medium hover:no-underline disabled:opacity-40" :disabled="titleMissing" @click="save">Save</Button>
               <Button variant="link" size="sm" class="text-slate-400 hover:text-slate-700 hover:no-underline" @click="editing = false">Cancel</Button>
             </div>
           </template>

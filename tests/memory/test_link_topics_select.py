@@ -12,6 +12,7 @@ def _remember(body, **kw):
     # under test must be non-test memories (the tmp_memory_db fixture isolates
     # them to this test's DB regardless).
     kw.setdefault("is_test", False)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.remember(body, **kw)
 
 

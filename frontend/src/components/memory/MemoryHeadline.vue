@@ -17,6 +17,15 @@ const props = defineProps({
 })
 const emit = defineEmits(['select'])
 
+// A readable handle for a memory: its title, else a body-derived snippet
+// (the taxonomy payload sends `snippet`; full memory objects carry `body`),
+// else the bare kind — so a titleless memory never shows just "lesson".
+function headline(m) {
+  if (m.title) return m.title
+  const text = (m.snippet || m.body || '').replace(/\s+/g, ' ').trim()
+  return text ? text.slice(0, 80) : m.kind
+}
+
 const KIND_CLS = {
   lesson: 'bg-violet-100 text-violet-700',
   gotcha: 'bg-amber-100 text-amber-800',
@@ -70,7 +79,7 @@ async function loadBody() {
         class="shrink-0 text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
         :class="kindCls(memory.kind)"
       >{{ memory.kind }}</span>
-      <span class="flex-1 min-w-0 truncate text-sm text-fg">{{ memory.title || memory.kind }}</span>
+      <span class="flex-1 min-w-0 truncate text-sm" :class="memory.title ? 'text-fg' : 'text-fg-faint'">{{ headline(memory) }}</span>
     </Button>
 
     <!-- veracity glyph -->
@@ -96,7 +105,7 @@ async function loadBody() {
         <Button
           variant="ghost"
           class="shrink-0 grid place-items-center h-6 w-6 p-0 rounded text-fg-faint hover:text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 motion-reduce:transition-none"
-          :aria-label="`Preview memory: ${memory.title || memory.kind}`"
+          :aria-label="`Preview memory: ${headline(memory)}`"
           @mouseenter="loadBody"
           @focus="loadBody"
           @click="open = true"
