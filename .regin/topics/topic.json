@@ -764,11 +764,11 @@
     },
     "memory-exemplar-rescore": {
       "aliases": [
-        "why does this memory sink for some prompts",
-        "negative demotion and positive boost",
+        "why is this topic route suppressed for some prompts",
+        "topic route suppress and protect",
         "query-local reranking signal",
-        "thumbs up down on a recall result",
-        "hand-curate a recall case"
+        "thumbs up down on a routed topic banner",
+        "hand-curate a topic-route case"
       ],
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_store.py tests/memory/test_feedback.py"
@@ -795,29 +795,13 @@
       "include_globs": [
         "docs/agent-memory-exemplars.md"
       ],
-      "intent": "Explain regin's signed query-exemplar mechanism \u2014 the contextual, query-local half of recall re-ranking that complements the global, slow `importance` decay. An exemplar is the embedding of a prompt a memory (or topic banner) was injected on, tagged `polarity` +1 (engaged) or -1 (hard ignore) and `source` `auto` (feedback-captured) or `manual` (human-curated); the unified `memory_exemplars` / `topic_exemplars` tables keep them per (memory|topic, model, polarity), each polarity capped at `negative_max_per_memory`. At recall time `store._apply_exemplar_rescore` multiplies a candidate's score by `clamp(1 \u2212 w_neg\u00b7max_cos(query, negatives) + w_pos\u00b7max_cos(query, positives), 0.05, exemplar_boost_ceil)`, so a memory injected-then-ignored on similar prompts sinks for *those* queries only and one proven useful is rescued when the cross-encoder under-ranks it \u2014 both fading once the exemplars stop resembling the incoming query, with nothing written to the memory row. Covers the auto write path (`feedback._record_exemplars` \u2192 `add_query_negatives`/`add_query_positives`, gated by `negative_demotion_weight`/`positive_boost_weight`), the manual curate path (`/api/memory/exemplars`, `MemoryExemplars.vue`, `regin memory exemplar-*`), and the inspect/per-row revert surfaces. The topic-route side of the same primitive is covered by `memory-topic-route-feedback`; the design note is `docs/agent-memory-exemplars.md`.",
-      "label": "Signed query exemplars (contextual recall rescore + topic-route suppression, auto & hand-curated)",
+      "intent": "The signed query-exemplar primitive, now **topic-route only**. An exemplar is the embedding of a prompt a topic banner was injected on, tagged `polarity` +1 (engaged) / -1 (ignored) and `source` `auto` (feedback-captured) | `manual` (human-curated); `topic_exemplars` rows are kept per (topic, model, polarity), each polarity capped at `negative_max_per_memory`. At route time the max cosine of the incoming query to a topic's negatives/positives gates the `<topic_context>` banner \u2014 suppress when it resembles past hard-ignores (`topic_negative_suppress_sim`), protect when it resembles past engagements \u2014 query-locally, with nothing written to the topic row. Covers the auto write path (topic-route feedback \u2192 `add_topic_negatives` / `add_topic_positives` \u2192 `add_topic_exemplars`), the manual curate path (`POST /api/memory/exemplars` topic-only, `/api/memory/topic-feedback`, the `/api/memory/topic-route-preview` playground, `regin memory exemplar-add` / `exemplar-rm`), and per-row revert. **History:** the parallel memory-recall rescore (`memory_exemplars`, `store._apply_exemplar_rescore`, `negative_demotion_weight` / `positive_boost_weight`, `MemoryExemplars.vue`, the `GET /api/memory/exemplars` summary) was **removed** in 45bbe76 \u2014 its positive half was dead and the negative half showed no measured recall lift; recall now rides the dense + cross-encoder rerank stack plus importance decay, and lessons surface via the topic-tree walk (`memory-tree-nav`). The routing-feedback loop that consumes this primitive is `memory-topic-route-feedback`; design note `docs/agent-memory-exemplars.md`.",
+      "label": "Signed query exemplars \u2014 topic-route suppression/protection (memory-recall rescore removed)",
       "parent_id": "agent-memory",
       "refs": [
         {
           "path": "docs/agent-memory-exemplars.md",
           "role": "docs"
-        },
-        {
-          "path": "lib/memory/store.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/memory/feedback.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/memory/models.py",
-          "role": "schema"
-        },
-        {
-          "path": "frontend/src/components/memory/MemoryExemplars.vue",
-          "role": "implementation"
         }
       ],
       "status": "active"
