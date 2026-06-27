@@ -8,6 +8,7 @@
 import { ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
+import CopyId from '../ui/CopyId.vue'
 import Icon from '../ui/Icon.vue'
 import Popover from '../ui/Popover.vue'
 import MarkdownContent from '../MarkdownContent.vue'
@@ -121,6 +122,10 @@ async function loadBody() {
           <div class="flex items-center gap-2 mb-1.5">
             <span class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded" :class="kindCls(body.kind)">{{ body.kind }}</span>
             <span v-if="body.scope" class="text-[10px] font-mono text-fg-subtle truncate">{{ body.scope }}</span>
+          </div>
+          <div class="flex items-center gap-1 mb-1.5">
+            <span class="text-[9px] font-semibold uppercase tracking-wider text-fg-faint">id</span>
+            <CopyId :value="memory.id" label="memory ID" class="-ml-0.5 min-w-0" />
           </div>
           <h5 v-if="body.title" class="text-sm font-semibold text-fg mb-1">{{ body.title }}</h5>
           <MarkdownContent v-if="body.body" :markdown="body.body" class="text-xs max-h-72 overflow-y-auto" />

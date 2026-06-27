@@ -5,6 +5,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { useFlash } from '../../composables/useFlash'
 import MarkdownContent from '../MarkdownContent.vue'
 import Button from '../ui/Button.vue'
+import CopyId from '../ui/CopyId.vue'
 import Icon from '../ui/Icon.vue'
 import Select from '../ui/Select.vue'
 
@@ -215,7 +216,8 @@ function timeLabel(iso) {
         </div>
 
         <aside class="w-full min-[1600px]:w-72 shrink-0 space-y-5 min-[1600px]:border-l min-[1600px]:border-slate-100 min-[1600px]:pl-6 pt-5 min-[1600px]:pt-0 border-t border-slate-100 min-[1600px]:border-t-0">
-          <dl class="text-[11px] text-slate-500 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+          <dl class="text-[11px] text-slate-500 grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
+            <dt class="text-slate-400">id</dt><dd class="min-w-0"><CopyId :value="memory.id" label="memory ID" class="-ml-1" /></dd>
             <dt class="text-slate-400">importance</dt><dd class="font-mono tabular-nums">{{ memory.importance.toFixed(2) }}</dd>
             <dt class="text-slate-400">recalled</dt><dd class="font-mono tabular-nums">{{ memory.recall_count }}×</dd>
             <dt class="text-slate-400">scope</dt><dd class="font-mono">{{ memory.scope }}</dd>
@@ -299,8 +301,8 @@ function timeLabel(iso) {
             <ul class="space-y-1">
               <li v-for="n in related.neighbors" :key="n.id" class="flex items-baseline gap-2">
                 <span class="text-[10px] font-mono tabular-nums text-slate-400 shrink-0">{{ n.similarity.toFixed(2) }}</span>
-                <Button variant="link" size="sm" class="text-left text-slate-600 hover:text-blue-600 hover:no-underline truncate" @click="emit('navigate', n.id)">
-                  {{ n.title || n.kind }}
+                <Button variant="link" size="sm" class="flex-1 min-w-0 justify-start text-left text-slate-600 hover:text-blue-600 hover:no-underline" @click="emit('navigate', n.id)">
+                  <span class="truncate">{{ n.title || n.kind }}</span>
                 </Button>
               </li>
             </ul>

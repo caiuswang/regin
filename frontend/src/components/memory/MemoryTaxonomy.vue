@@ -118,7 +118,7 @@ defineExpose({ reload })
       <Tabs v-model="viewMode" :tabs="VIEW_TABS" variant="segmented" />
       <div class="relative flex-1 min-w-[11rem] max-w-xs">
         <Icon name="search" :size="14" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint pointer-events-none" />
-        <Input v-model="filter" placeholder="Filter topics…" class="pl-8" />
+        <Input v-model="filter" placeholder="Filter topics…" class="pl-8!" />
       </div>
       <Button
         variant="ghost" size="sm"
