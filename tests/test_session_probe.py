@@ -11,6 +11,10 @@ from lib import session_probe
 def _isolate_cache(tmp_path, monkeypatch):
     from lib.settings import settings
     monkeypatch.setattr(settings, 'data_dir', tmp_path, raising=False)
+    # The suite itself runs inside Claude Code, which exports this; clear it so
+    # the cache-behavior tests are deterministic. Env-preference tests set it
+    # back explicitly.
+    monkeypatch.delenv(session_probe._ENV_SESSION_ID, raising=False)
     yield
 
 
@@ -57,6 +61,31 @@ def test_cwd_miss_returns_none_when_multiple_sessions_live():
     # Exact cwd matches still resolve correctly.
     assert session_probe.resolve(cwd='/x') == 'sid-x'
     assert session_probe.resolve(cwd='/y') == 'sid-y'
+
+
+def test_env_var_is_preferred_over_cwd_cache(monkeypatch):
+    # The cwd cache says 'sibling', but the authoritative env var wins — this
+    # is the fix for `regin session-id` returning a clobbered sibling id.
+    session_probe.record('sibling', cwd='/a')
+    monkeypatch.setenv(session_probe._ENV_SESSION_ID, 'env-sid')
+    assert session_probe.resolve(cwd='/a') == 'env-sid'
+
+
+def test_env_var_resolves_on_a_cache_miss(monkeypatch):
+    monkeypatch.setenv(session_probe._ENV_SESSION_ID, 'env-sid')
+    assert session_probe.resolve(cwd='/unknown') == 'env-sid'
+
+
+def test_explicit_nonce_wins_over_env(monkeypatch):
+    session_probe.record('sid-n', cwd='/a', command='x --nonce ABC')
+    monkeypatch.setenv(session_probe._ENV_SESSION_ID, 'env-sid')
+    assert session_probe.resolve(cwd='/a', nonce='ABC') == 'sid-n'
+
+
+def test_falls_back_to_cache_when_env_absent(monkeypatch):
+    monkeypatch.delenv(session_probe._ENV_SESSION_ID, raising=False)
+    session_probe.record('cached', cwd='/a')
+    assert session_probe.resolve(cwd='/a') == 'cached'
 
 
 def test_record_without_session_is_noop():

@@ -1,11 +1,16 @@
-"""Memory-cache that lets a Bash command recover its own Claude Code session id.
+"""Resolve a Bash command's own Claude Code session id.
 
-Claude Code never exposes the live session id to Bash, but every hook payload
-carries it. So the PreToolUse hook (`hook_manager/handlers/session_id_probe.py`)
-`record()`s a `{sid, ts, nonce}` entry here on each Bash call — a timestamped
-stamp of the current session — and the real `regin session-id` CLI command
-`resolve()`s the freshest entry (by cwd, or by an explicit `--nonce`) and prints
-it.
+Newer Claude Code (>= ~2.1) exports the live id as `CLAUDE_CODE_SESSION_ID`,
+so `resolve()` reads it directly — the authoritative path. The legacy
+machinery below remains as a fallback for older Claude Code that did NOT expose
+it: the PreToolUse hook (`hook_manager/handlers/session_id_probe.py`)
+`record()`s a `{sid, ts, nonce}` entry on each Bash call — a timestamped stamp
+of the current session — and `resolve()` reads the freshest entry (by cwd, or
+by an explicit `--nonce`).
+
+The cwd cache is heuristic: any session running a Bash call in the same
+directory overwrites that cwd's stamp, so on its own it can return a sibling or
+parent session's id. Preferring the env var removes that failure mode.
 
 This replaces the fragile command-rewriting probe with a durable cache:
 `session-id` is a real, always-present CLI subcommand, so it never errors with
@@ -38,6 +43,16 @@ from lib.settings import settings
 _MAX_AGE_S = 24 * 3600
 _MAX_CWD = 64
 _MAX_NONCE = 128
+
+# Claude Code (>= ~2.1) exports the live session id to every child process's
+# environment. This is the authoritative source — `resolve()` prefers it over
+# the cwd cache, which any session sharing the working directory clobbers on
+# its next Bash call. For a *child* session (`CLAUDE_CODE_CHILD_SESSION=1`)
+# this is the child's own id, which is where that context's trace spans land —
+# unlike the background-task output directory, which is named with the parent
+# session id. So skills must read the id from here (`regin session-id`), never
+# reconstruct it from a Task tool's output path.
+_ENV_SESSION_ID = "CLAUDE_CODE_SESSION_ID"
 
 # Pulls an explicit correlation token out of the probe command, e.g.
 # `regin session-id --nonce 1a2b…`. Lets the agent disambiguate concurrent
@@ -118,11 +133,15 @@ def _bucket(data: dict, key: str) -> dict:
 
 
 def resolve(cwd: Optional[str] = None, nonce: Optional[str] = None) -> Optional[str]:
-    """Return the live session id for `nonce`, else `cwd`, else the sole session.
+    """Return the live session id: explicit `nonce`, else the env var, else
+    `cwd`, else the sole cached session.
 
-    Exact `nonce`/`cwd` matches win. On a miss, only fall back when the cache
-    holds exactly one distinct live session (never guess among concurrent
-    sessions). Stale entries (> `_MAX_AGE_S`) are never returned; None on a miss.
+    The env var (`CLAUDE_CODE_SESSION_ID`) is authoritative and takes priority
+    over the cwd cache — the cache is clobbered whenever another session runs a
+    Bash call in the same directory, which is why `regin session-id` could
+    return a sibling/parent session's id. An explicit `nonce` still wins over
+    the env, so a caller can pin a specific concurrent run. Stale entries
+    (> `_MAX_AGE_S`) are never returned; None on a total miss.
     """
     now = time.time()
     data = _load()
@@ -134,11 +153,23 @@ def resolve(cwd: Optional[str] = None, nonce: Optional[str] = None) -> Optional[
             return entry.get("sid")
         return None
 
-    # Exact matches first: explicit nonce, then this cwd.
-    for entry in (by_nonce.get(nonce), by_cwd.get(cwd)):
-        sid = _fresh(entry)
+    # An explicit nonce is a deliberate correlation token — honor it first,
+    # even over the ambient env (lets a caller pin one of several runs).
+    if nonce:
+        sid = _fresh(by_nonce.get(nonce))
         if sid:
             return sid
+
+    # Authoritative for the current process; survives the cwd-clobber failure
+    # mode entirely. Only the cache below is consulted on older Claude Code
+    # that doesn't export the id.
+    env_sid = os.environ.get(_ENV_SESSION_ID)
+    if env_sid:
+        return env_sid
+
+    sid = _fresh(by_cwd.get(cwd))
+    if sid:
+        return sid
     # Fallback ONLY when unambiguous: if every fresh stamp belongs to the same
     # session, return it (covers a cwd that drifted via symlink/trailing slash
     # in a single-session repo). With >1 distinct session live (concurrent
