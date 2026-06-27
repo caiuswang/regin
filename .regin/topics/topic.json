@@ -2025,7 +2025,7 @@
         "web/blueprints/topics/apply.py",
         "web/blueprints/topics/maintenance.py"
       ],
-      "intent": "Explain the end-to-end funnel that turns a user's topic request into one row in `.regin/topics/topic.json`: an external tool-using agent drafts the JSON+wiki, regin validates and persists it via the ORM, reviewers iterate through revise/regenerate/restore/stop, and a single server-side /diff+/apply path (or the matching library accept/replace/merge helpers) promotes a topic into the approved graph. Also describes the cross-thread cancel machinery that lets a Stop request terminate the agent subprocess without racing the worker's terminal-state writes.",
+      "intent": "Explain the end-to-end funnel that turns a user's topic request into one row in `.regin/topics/topic.json`: an external tool-using agent drafts the JSON+wiki, regin validates and persists it through the proposal ORM, reviewers iterate via regenerate/restore/feedback/review-state, and a single server-side /diff+/apply path (or the legacy accept/replace/merge/ignore helpers) promotes a topic into the approved graph. Also covers notify-on-finish ingest, the two orthogonal status axes (run lifecycle vs review state), the cross-thread cancel machinery that lets Stop terminate the agent subprocess, and the reaper that fails runs orphaned by a serve restart.",
       "label": "Topic proposal pipeline (request \u2192 draft \u2192 review \u2192 apply/stop)",
       "parent_id": "topic-graph",
       "refs": [
@@ -2050,6 +2050,10 @@
           "role": "implementation"
         },
         {
+          "path": "lib/topics/proposal_providers.py",
+          "role": "implementation"
+        },
+        {
           "path": "lib/topics/proposal_orm/__init__.py",
           "role": "implementation"
         },
@@ -2067,10 +2071,6 @@
         },
         {
           "path": "lib/topics/proposal_orm/serializers.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/topics/proposal_providers.py",
           "role": "implementation"
         },
         {
@@ -2094,7 +2094,15 @@
           "role": "implementation"
         },
         {
+          "path": "lib/topics/proposals/finish.py",
+          "role": "implementation"
+        },
+        {
           "path": "lib/topics/proposals/run_control.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposals/reap.py",
           "role": "implementation"
         },
         {
@@ -2108,10 +2116,8 @@
           "path": "lib/topics/proposal_review.py"
         },
         {
-          "path": "lib/topics/proposals/finish.py"
-        },
-        {
-          "path": "lib/topics/proposals/reap.py"
+          "path": "cli/commands/topics.py",
+          "role": "entrypoint"
         }
       ],
       "status": "active"
