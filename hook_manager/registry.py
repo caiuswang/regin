@@ -85,7 +85,6 @@ post_tool_failure   = _safe_import('post_tool_failure')
 post_tool_trace     = _safe_import('post_tool_trace')
 pre_tool_trace      = _safe_import('pre_tool_trace')
 prompt_trace        = _safe_import('prompt_trace')
-session_id_probe    = _safe_import('session_id_probe')
 session_lifecycle   = _safe_import('session_lifecycle')
 skill_invoke        = _safe_import('skill_invoke')
 skill_experience    = _safe_import('skill_experience')
@@ -108,17 +107,6 @@ REGISTRY: list[Handler] = [
         kind='gate',
         priority=20,
         fn=permission_events.handle_pre_tool_request,
-    ),
-    Handler(
-        name='session_id_probe',
-        label='Session-ID Cache Stamp',
-        summary='Stamps the live session id into the session cache on every Bash call, read back by the real `regin session-id` CLI command. No command rewriting.',
-        match_hint='PreToolUse Bash calls (records cwd→session id for `regin session-id`)',
-        events=['PreToolUse'],
-        kind='trace',
-        priority=90,
-        predicate=match_tool('Bash'),
-        fn=session_id_probe.handle,
     ),
     Handler(
         name='pre_tool_trace',
