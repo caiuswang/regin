@@ -405,7 +405,7 @@
     "goal-verified-loop": {
       "aliases": [
         "pin the bar before the agent builds",
-        "deterministic skill and gate router for a goal",
+        "hard-gate floor + opt-in lessons roadmap for a goal",
         "acceptance checklist verification gates",
         "reinforce included lessons, decay dropped ones",
         "close the build loop back into agent memory"
@@ -421,7 +421,7 @@
         "lib/goal_*.py",
         "cli/commands/goal.py"
       ],
-      "intent": "The two halves of the `/goal-verified` loop-engineering workflow that live in regin (the build + verify halves are the skill). Preflight is a pure-deterministic router: a freeform goal fires AreaRules whose skills, reference components, design tokens and hard gates become the roadmap, so the bar is falsifiable before code is written. Feedback closes the loop after verification \u2014 included lessons are reinforced, FAILED acceptance items become new area-tagged `lesson` memories \u2014 reusing memory primitives only, adding no store of its own.",
+      "intent": "The two halves of the `/goal-verified` loop-engineering workflow that live in regin (the build + verify halves are the skill). Preflight (`lib/goal_preflight.py`) is a small portable kernel: `build_roadmap` returns a `{goal, gates, lessons}` roadmap from a universal hard-gate floor (the test suite stays green + an independent fresh-context reviewer ran `/code-review high`) plus an opt-in, off-by-default flat-FTS lessons recall. The area-router (`AREA_RULES`/`detect_areas`/`resolve_references`) was retired 2026-06 because it matched goal prose by keyword and merely restated CLAUDE.local.md's file-keyed convention table; per-area machine gates and reference components now come from that table and from reading the real target files, and turning gates into falsifiable acceptance items is left to the consuming agent. Feedback (`lib/goal_feedback.py`) closes the loop after verification \u2014 included lessons are reinforced, FAILED acceptance items become new area-tagged `goal-verified-fail` lesson memories filed under agent-supplied authoritative topic nodes (exact id only, no fuzzy fallback) \u2014 reusing memory primitives only, adding no store of its own.",
       "label": "Loop-engineering: goal preflight roadmap \u2192 verified build \u2192 feedback into memory",
       "parent_id": "ops-cli",
       "refs": [

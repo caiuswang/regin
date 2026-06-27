@@ -1,43 +1,35 @@
-# Uncovered subsystems — proposal batch
+# Loop-engineering: goal preflight → verified build → feedback (`goal-verified-loop`)
 
-Three well-bounded subsystems with no existing topic. Grounding note: the GitNexus index for `regin` was **107 commits behind HEAD** this session and `query` returned no execution-flow processes (only file/symbol matches), so call-edge claims below rest on direct file evidence rather than the graph; no edges were invented. Where GitNexus *did* help, it is cited.
+The two regin-side halves of the `/goal-verified` workflow. The idea: pin a *falsifiable* bar **before** the agent builds, so verification checks against something concrete instead of the agent grading its own homework. The build + verify halves themselves live in `.claude/skills/goal-verified/SKILL.md` (cited as docs); only preflight and feedback are code in this repo.
 
----
+> **Refreshed 2026-06-27.** The preflight area-router (`AREA_RULES` / `AreaRule` / `detect_areas` / `resolve_references`) was **retired** in `7ee1ebd`. It routed off goal *prose* by literal token/keyword matching, so it went hollow for any goal phrased as intent, and the table merely restated the file-keyed convention table in `CLAUDE.local.md`. Preflight is now a small portable kernel: **hard gates + opt-in recalled lessons**, nothing area-specific. Any earlier wiki text describing skills/reference-components/design-tokens routing is obsolete.
 
-## Agent → human message channel (`agent-messages-inbox`)
+## Preflight — the front half (`lib/goal_preflight.py`)
 
-The durable channel behind the `send_to_user` MCP tool — the one CLAUDE.md tells every agent to call as each step completes.
+A freeform goal becomes a small `Roadmap` dataclass with three fields only: `{goal, gates, lessons}`.
 
-**The capture path is split on purpose.** A stdio MCP server (`lib/agent_messages/mcp_server.py`) is *session-blind* — it never learns which Claude Code session invoked it — so it does only two things: declare the typed parameter schema (`type`, `title`, `key`, `links`, `supersedes`) and acknowledge the call. The component that *does* know the session is regin's PostToolUse hook: `hook_manager/handlers/post_tool_trace.py` reads the tool input off the landed `mcp__*__send_to_user` span and calls into the store. This keeps the server import-free and instant, and means persistence never breaks on a DB hiccup.
+**Hard gates are a fixed universal floor — not routed.** `BASE_GATES` is two items every run must pass regardless of area: *the existing test suite stays green*, and *an independent fresh-context reviewer checked the diff (`/code-review high`)*. The kernel never invents an area standard. Per-area machine gates (pytest / radon / vite / playwright) come from the file-keyed convention table in `CLAUDE.local.md`, read by the consuming skill before editing — not from this module. `build_roadmap(goal)` is deterministic and offline.
 
-**One writer.** Every write — hook, web API, or test seed — goes through `lib/agent_messages/store.py::record_message`, so supersede-by-`key`, the 16k body cap, link normalization, and push dispatch all happen in exactly one place. The row model and its `MESSAGE_TYPES` severity ladder (`progress · note · lesson · result · summary · warning · blocker`) live in `lib/orm/models/agent_messages.py`; the table + its `trace_id`/`created_at`/`read_at`/`key` indexes are folded into `db/schema.sql` (remember the schema-drift gotcha — `regin init` builds from `schema.sql`, not Alembic).
+**Lessons are opt-in and demoted.** `build_roadmap(goal, with_lessons=True)` calls `recall_lessons`, which runs the shared `lib.memory` store in **FTS mode** (lexical BM25 on the goal text, pre-code, no dense-model load) with `reinforce=False` — merely *offering* a lesson is not *using* it, so it must not bump `recall_count` (the very usefulness signal feedback measures). This flat leg is **off by default at the CLI** as of 2026-06 (it measured ~22% injection engagement); structure-first recall via `regin memory recall-for-task` (importance-ranked subsystem subtree, not text similarity) is now preferred, and `--with-lessons` is kept only to A/B the old leg.
 
-**Push fan-out is pluggable.** `lib/agent_messages/push/registry.py` exposes `should_dispatch`/`maybe_dispatch` over a `PushChannel` base (`push/base.py`); concrete channels are `push/webhook.py` and `push/telegram.py`, each with its own severity gate, all off by default. Registering a new channel is a one-line append to `_CHANNEL_CLASSES`.
+**The engagement denominator is automatic.** `record_offered(session_id, lessons, goal)` logs the offered lessons through the store's `record_injections` (exposure, *not* usefulness — no `recall_count` bump), so reflect's decay half can later see "offered many times, never used → fade" even when a run never calls `goal feedback`. It needs `--session-id` (a CLI subprocess has none in its env) and degrades to a no-op otherwise.
 
-**Surface.** The Flask blueprint `web/blueprints/trace/agent_messages.py` serves the per-session feed (`/api/sessions/<id>/agent-messages`) and the cross-session inbox routes (`/api/agent-messages/inbox`, `unread-count`, `read`, `read-all`, `<id>/ack|dismiss|pin`). The Vue side is `InboxView.vue`, `InboxMessageCard.vue`, and the `useInboxUnread.js` composable driving the live badge. GitNexus corroborated this exact file cluster as one coherent unit.
+**The one generative step is deliberately left to the consumer.** `render_markdown` emits the lessons menu + hard gates, then leaves the **acceptance checklist** as a prompt: turning a fuzzy goal into 3–8 concrete, falsifiable items (states, counts, 0/1/N edge cases) is the irreducibly generative step and belongs to the agent that consumes the roadmap. `roadmap_warning` now flags exactly one degenerate case — an empty goal — because with routing gone there is nothing else for a roadmap to be "hollow" about.
 
-**Cross-refs.** `type=lesson` messages also tee into agent memory — see [memory-distillation-capture](./memory-distillation-capture.md). The ingest hook is one handler in the broader [trace-span-capture](./trace-span-capture.md) / hooks-injection pipeline.
+**CLI** (`cli/commands/goal.py`): `regin goal preflight "<goal>"` with `--json`, `--with-lessons/--no-lessons` (off by default), and `--session-id`. The legacy `--repo-root` was dropped with the router. The command logs `gate_count` / `lesson_count` / `offered_recorded` to the `goal` activity log.
 
----
+## Feedback — the back half (`lib/goal_feedback.py`)
 
-## Loop-engineering: goal preflight → verified build → feedback (`goal-verified-loop`)
+After a verified run, `record_outcome` folds the outcome back into the **existing** memory store — reusing `remember` / `reinforce` only, adding no table or index of its own:
 
-The regin-side halves of the `/goal-verified` workflow. The idea: pin a *falsifiable* bar **before** the agent builds, so verification checks against something concrete instead of the agent grading its own homework.
+1. **Engagement, high-precision.** A lesson the agent folded into the *approved* acceptance checklist (`--included`) is reinforced; an offered-but-not-included id (`--offered`) is recorded as ignored and left for reflect's `_decay_chronically_ignored`. Human approval is a far cleaner "did this help" verdict than the trace-referent heuristic in `lib.memory.feedback`. `_reinforce_all` returns matched vs missed so a bad/ambiguous 8-char prefix id is reported, not silently counted as success.
+2. **New lessons from failures.** Each failed acceptance item (`--fail`, phrased as a transferable *rule* by the skill, not an episode) is written as a `lesson` memory tagged by area plus `FAIL_TAG` (`goal-verified-fail`), so the next roadmap recalls it.
+3. **Authoritative topic filing.** `--topic <node-id>` links each new failure-lesson under topic nodes the agent already knows from its tree walk. Resolution is exact-id-or-slashed-leaf with **no fuzzy keyword fallback** — this is an authoritative write, and a wrong link is worse than none (`match_topic` confidently misroutes on a single coincidental token). A `none` / `-` sentinel files the lesson unbound on purpose.
 
-**Preflight (front half, `lib/goal_preflight.py`).** Deliberately **pure-deterministic — no embeddings, no LLM**. A freeform goal string is matched against a fixed `AREA_RULES` table; an `AreaRule` fires on a keyword hit or a path-glob mention (`_fires`/`detect_areas`), and each fired area contributes its `skills`, design `tokens`, and hard `gates` to a `Roadmap`, while `resolve_references` globs the repo for concrete sibling components to mirror. The rules table mirrors the conventions regin's hooks already enforce (RadonEngine, GritEngine, the two bundle engines), so the roadmap never invents a standard the repo doesn't already hold. The CLI is `regin goal preflight "<goal>"` (`cli/commands/goal.py`), with `--json` and an opt-in `--with-lessons` flat-FTS recall leg (demoted 2026-06 to ~22% engagement; structure-first recall is now preferred).
+**CLI**: `regin goal feedback "<goal>" --included … --offered … --fail … --tag … --topic … --trace-id …`, `--json` for the machine view.
 
-**Feedback (back half, `lib/goal_feedback.py`).** After a verified run it writes two things back to the existing memory store, reusing `remember`/`reinforce` only (no new table): (1) **engagement** — a lesson that made it into the approved acceptance checklist is reinforced, dropped ones are left for reflect's `_decay_chronically_ignored`; this human-approval signal is higher-precision than the trace-referent heuristic in `lib.memory.feedback`; (2) **new lessons** — each FAILED acceptance item is written as an area-tagged `lesson` memory (tag `goal-verified-fail`), phrased as a transferable rule by the skill.
+## Cross-refs
 
-The build + verify halves themselves live in `.claude/skills/goal-verified/SKILL.md` (cited as docs).
-
-**Cross-refs.** The feedback half couples to [memory-engagement-feedback](./memory-engagement-feedback.md) and [memory-recall-pipeline](./memory-recall-pipeline.md); the gates mirror [rule-engine-design](./rule-engine-design.md).
-
----
-
-## Session-id probe (`session-id-probe`)
-
-A small, self-contained mechanism for a problem with no obvious home: **Claude Code never exposes the live session id to a Bash command**, yet several regin commands (`goal preflight --session-id`, `goal feedback --trace-id`, the `gate` anti-skip checks) need it.
-
-The fix is a durable cache, not command rewriting. Every hook payload *does* carry the session id, so the PreToolUse handler `hook_manager/handlers/session_id_probe.py` calls `lib/session_probe.py::record()` on each Bash call, stamping `{sid, ts, nonce}` into one small JSON file under `settings.data_dir` (atomic temp + `os.replace`; a rare lost update across concurrent hook processes is benign because each write merely re-stamps the *current* session). The always-present `regin session-id` subcommand (`cli/commands/session.py`) then `resolve()`s the freshest entry by cwd, or by an explicit `--nonce`. Because the probe records on the probe command's *own* PreToolUse — which fires immediately before the command runs — a single `SID=$(… session-id)` resolves correctly with no prior step, and works through `$(...)` substitution and the full `.venv/bin/python cli/regin.py session-id` interpreter form alike. Behaviour is pinned by `tests/test_session_probe.py`.
-
-**Cross-refs.** Consumed by the [goal-verified-loop](./goal-verified-loop.md) preflight/feedback CLI; the recording hook is part of the hooks-injection layer.
+- The engagement/decay coupling is [memory-engagement-feedback](./memory-engagement-feedback.md); the recall leg rides [memory-recall-pipeline](./memory-recall-pipeline.md), and the structure-first replacement is the memory topic-tree walk.
+- The universal gate floor mirrors the conventions enforced by [rule-engine-design](./rule-engine-design.md).
+- The `--session-id` / `--trace-id` that preflight and feedback consume come from [session-id-probe](./session-id-probe.md).
