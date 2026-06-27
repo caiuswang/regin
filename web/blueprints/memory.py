@@ -178,30 +178,12 @@ def api_memory_topic_feedback():
                     "embedder": store.has_embedder})
 
 
-@memory_bp.route("/api/memory/exemplars")
-def api_memory_exemplars():
-    """Exemplar inspection: the configured demotion/boost weights plus a
-    per-memory count of positive and negative query exemplars (the contextual
-    recall re-ranking loop). Empty `summary` with both weights 0 means the
-    feature is off."""
-    from lib.settings import settings
-    store = memory.get_store()
-    try:
-        limit = max(1, min(200, int(request.args.get("limit", 50))))
-    except (TypeError, ValueError):
-        limit = 50
-    return jsonify({
-        "neg_weight": settings.agent_memory.negative_demotion_weight,
-        "pos_weight": settings.agent_memory.positive_boost_weight,
-        "summary": store.exemplar_summary(limit=limit)})
-
-
 @memory_bp.route("/api/memory/exemplars", methods=["POST"])
 def api_memory_exemplar_add():
-    """Hand-curate a query exemplar (a 'case'): record `query` as a positive
-    (+1, boost) or negative (-1, demote) exemplar for `memory_id` *or*
-    `topic_id`. `polarity` is 'positive'|'negative'. Source is stamped
-    'manual'. Returns rows written (0 when no embedder / blank query)."""
+    """Hand-curate a topic-route query exemplar (a 'case'): record `query` as a
+    positive (+1, protect) or negative (-1, suppress) exemplar for `topic_id`.
+    `polarity` is 'positive'|'negative'. Source is stamped 'manual'. Returns
+    rows written (0 when no embedder / blank query)."""
     payload = request.get_json(silent=True) or {}
     query = (payload.get("query") or "").strip()
     polarity = _parse_polarity(payload.get("polarity"))
@@ -210,17 +192,12 @@ def api_memory_exemplar_add():
     if polarity is None:
         return jsonify({"error": "polarity must be positive | negative"}), 400
     store = memory.get_store()
-    memory_id = payload.get("memory_id")
     topic_id = payload.get("topic_id")
     sess = payload.get("session_id") or "manual"
-    if memory_id:
-        written = store.add_query_exemplars(
-            sess, [(memory_id, query)], polarity, source="manual")
-    elif topic_id:
-        written = store.add_topic_exemplars(
-            sess, [(topic_id, query)], polarity, source="manual")
-    else:
-        return jsonify({"error": "memory_id or topic_id required"}), 400
+    if not topic_id:
+        return jsonify({"error": "topic_id required"}), 400
+    written = store.add_topic_exemplars(
+        sess, [(topic_id, query)], polarity, source="manual")
     return jsonify({"written": written})
 
 
@@ -298,22 +275,18 @@ def _keyword_route(repo: str, query: str) -> dict:
 
 @memory_bp.route("/api/memory/exemplars", methods=["DELETE"])
 def api_memory_exemplar_remove():
-    """Drop a memory's or topic's exemplars — one polarity
-    ('positive'|'negative') or all when omitted. The undo for a curated case."""
+    """Drop a topic's exemplars — one polarity ('positive'|'negative') or all
+    when omitted. The undo for a curated case."""
     payload = request.get_json(silent=True) or {}
     raw = payload.get("polarity")
     polarity = _parse_polarity(raw) if raw else None
     if raw and polarity is None:
         return jsonify({"error": "polarity must be positive | negative"}), 400
     store = memory.get_store()
-    memory_id = payload.get("memory_id")
     topic_id = payload.get("topic_id")
-    if memory_id:
-        removed = store.remove_exemplars(memory_id, polarity)
-    elif topic_id:
-        removed = store.remove_topic_exemplars(topic_id, polarity)
-    else:
-        return jsonify({"error": "memory_id or topic_id required"}), 400
+    if not topic_id:
+        return jsonify({"error": "topic_id required"}), 400
+    removed = store.remove_topic_exemplars(topic_id, polarity)
     return jsonify({"removed": removed})
 
 
@@ -329,17 +302,16 @@ def _parse_polarity(raw) -> "int | None":
 @memory_bp.route("/api/memory/exemplars/<kind>/<key>",
                  methods=["GET", "DELETE"])
 def api_memory_exemplar_cases(kind, key):
-    """Per-exemplar inspection + single-operation revert. `kind` is
-    'topic' | 'memory'.
+    """Per-exemplar inspection + single-operation revert. `kind` is 'topic'.
 
-    GET  — `key` is the topic_id / memory_id; returns `{exemplars: [...]}`,
-           each row carrying its id, query text, polarity, source, origin
-           session, and timestamp (the case list behind the drill-down).
+    GET  — `key` is the topic_id; returns `{exemplars: [...]}`, each row
+           carrying its id, query text, polarity, source, origin session, and
+           timestamp (the case list behind the drill-down).
     DELETE — `key` is the exemplar *id*; removes that one row (`{removed}`) —
              the undo for a single mislabel, finer-grained than the
              polarity-wide DELETE /api/memory/exemplars."""
-    if kind not in ("topic", "memory"):
-        return jsonify({"error": "kind must be topic | memory"}), 400
+    if kind != "topic":
+        return jsonify({"error": "kind must be topic"}), 400
     store = memory.get_store()
     if request.method == "DELETE":
         try:
@@ -347,9 +319,7 @@ def api_memory_exemplar_cases(kind, key):
         except (TypeError, ValueError):
             return jsonify({"error": "exemplar id must be an integer"}), 400
         return jsonify({"removed": 1 if removed else 0})
-    lister = (store.list_topic_exemplars if kind == "topic"
-              else store.list_memory_exemplars)
-    return jsonify({"exemplars": lister(key)})
+    return jsonify({"exemplars": store.list_topic_exemplars(key)})
 
 
 @memory_bp.route("/api/memory/topic-feedback/<topic_id>/decision",

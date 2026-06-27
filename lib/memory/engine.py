@@ -46,23 +46,19 @@ _INDEX_DDL = (
     # Reverse lookup for the recall-time topic boost: memories on a node.
     "CREATE INDEX IF NOT EXISTS idx_memory_auth_topics_node "
     "ON memory_authoritative_topics(topic_node_id)",
-    # Per-memory exemplar lookup for the recall-time rescore (both polarities).
-    "CREATE INDEX IF NOT EXISTS idx_memory_exemplars_memory "
-    "ON memory_exemplars(memory_id)",
     # Per-topic exemplar lookup for route-time suppression / protection.
     "CREATE INDEX IF NOT EXISTS idx_topic_exemplars_topic "
     "ON topic_exemplars(topic_id)",
 )
 
 # Table renames for DBs that predate the negative→exemplar unification. A
-# pre-existing `memory_negatives`/`topic_negatives` table (negatives only) is
-# renamed in place so its rows survive as `polarity = -1` exemplars once the
-# column migration below backfills the default. Idempotent: skipped when the
-# new table already exists. Must run *before* `create_all`, or it would create
-# an empty new table and orphan the old rows.
+# pre-existing `topic_negatives` table (negatives only) is renamed in place so
+# its rows survive as `polarity = -1` exemplars once the column migration below
+# backfills the default. Idempotent: skipped when the new table already exists.
+# Must run *before* `create_all`, or it would create an empty new table and
+# orphan the old rows.
 # (old_table, new_table)
 _RENAME_MIGRATIONS = (
-    ("memory_negatives", "memory_exemplars"),
     ("topic_negatives", "topic_exemplars"),
 )
 
@@ -93,17 +89,15 @@ _COLUMN_MIGRATIONS = (
     ("injection_events", "matched", "INTEGER"),
     ("injection_events", "query", "TEXT"),
     ("topic_injections", "query", "TEXT"),
-    # Negative→exemplar unification: renamed tables (and any old-shaped row)
-    # gain the polarity/source axes. The DEFAULT clause backfills pre-existing
-    # negatives to `polarity = -1`, `source = 'auto'`; fresh tables already
-    # carry the columns from the model, so the ALTER is skipped there.
-    ("memory_exemplars", "polarity", "INTEGER NOT NULL DEFAULT -1"),
-    ("memory_exemplars", "source", "TEXT NOT NULL DEFAULT 'auto'"),
+    # Negative→exemplar unification: the renamed `topic_exemplars` table (and
+    # any old-shaped row) gains the polarity/source axes. The DEFAULT clause
+    # backfills pre-existing negatives to `polarity = -1`, `source = 'auto'`;
+    # a fresh table already carries the columns from the model, so the ALTER is
+    # skipped there.
     ("topic_exemplars", "polarity", "INTEGER NOT NULL DEFAULT -1"),
     ("topic_exemplars", "source", "TEXT NOT NULL DEFAULT 'auto'"),
     # The raw prompt behind each exemplar (inspect + per-row revert). Older
     # rows predate it and stay NULL — shown as "(query not recorded)".
-    ("memory_exemplars", "query", "TEXT"),
     ("topic_exemplars", "query", "TEXT"),
 )
 

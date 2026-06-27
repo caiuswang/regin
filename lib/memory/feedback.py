@@ -309,8 +309,8 @@ def _injection_events(store, trace_id: str) -> list[tuple[str, str, "str | None"
     """(memory_id, injected_at, query) for every *unscored* memory auto-injected
     into the session, oldest first. Read straight off the model so feedback
     carries the injection timestamp the ordering gate needs (the store's
-    `injected_memory_ids` returns ids only) plus the recall query a hard-ignore
-    verdict turns into a negative exemplar. The `scored_at IS NULL` filter
+    `injected_memory_ids` returns ids only) plus the recall query, kept for
+    provenance. The `scored_at IS NULL` filter
     makes scoring idempotent at the event level: a re-grade (or the pending
     sweep overlapping grade-time) never re-judges or double-rewards an event
     already stamped."""
@@ -418,43 +418,17 @@ def score_injection_usefulness(trace_id: str, store=None, *,
         idf = _engagement_idf(store)
     result = FeedbackResult(trace_id=trace_id)
     events = _injection_events(store, trace_id)
-    negatives: list[tuple[str, str]] = []
-    positives: list[tuple[str, str]] = []
-    for memory_id, injected_at, query in events:
+    for memory_id, injected_at, _query in events:
         mem = store.get_dict(memory_id)
         if mem is None:  # forgotten between injection and scoring — skip
             continue
         verdict, matched = _classify(trace_id, mem, injected_at, idf)
         _record_verdict(store, trace_id, mem, verdict, matched, result,
                         reward_importance)
-        # A *hard* ignore (no referent matched) is the negative signal; an
-        # engaged inject is the positive one. Both record the firing query as a
-        # query-local exemplar so future similar prompts re-rank this memory,
-        # without touching its stored importance.
-        if verdict == "ignored" and matched is False and query:
-            negatives.append((memory_id, query))
-        elif verdict == "engaged" and query:
-            positives.append((memory_id, query))
-    _record_exemplars(store, trace_id, negatives, positives)
     log.write("injection_usefulness_scored", trace_id=trace_id,
               engaged=result.engaged, ignored=result.ignored,
               no_referents=result.no_referents)
     return result
-
-
-def _record_exemplars(store, trace_id: str,
-                      negatives: "list[tuple[str, str]]",
-                      positives: "list[tuple[str, str]]") -> None:
-    """Persist captured query exemplars, each direction gated on its own weight.
-    Best-effort: an exemplar we can't embed/store must never fail the grade."""
-    cfg = settings.agent_memory
-    try:
-        if negatives and cfg.negative_demotion_weight > 0:
-            store.add_query_negatives(trace_id, negatives)
-        if positives and cfg.positive_boost_weight > 0:
-            store.add_query_positives(trace_id, positives)
-    except Exception:  # noqa: BLE001 — feedback is best-effort
-        log.error("exemplar_write_failed", exc_info=True)
 
 
 def _pending_sessions(lag_minutes: int) -> list[str]:

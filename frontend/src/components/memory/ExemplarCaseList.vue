@@ -4,10 +4,9 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 
-// The individual exemplar 'cases' behind one memory or topic: each row's query
+// The individual exemplar 'cases' behind one topic route: each row's query
 // text, polarity, source, and an ✕ icon to revert that single case (delete-by-id).
-// The view + undo surface — shared by the topic-route playground and the
-// memory exemplar panel. `kind` is 'topic' | 'memory'.
+// The view + undo surface for the topic-route playground. `kind` is 'topic'.
 const props = defineProps({
   kind: { type: String, required: true },
   targetId: { type: String, required: true },

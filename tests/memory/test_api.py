@@ -90,41 +90,41 @@ def test_memory_routes_require_auth(anon_client):
     assert anon_client.get("/api/memory").status_code == 401
 
 
-# ── exemplar curation (build-a-case) endpoints ─────────────────────────
+# ── topic-route exemplar curation (build-a-case) endpoints ─────────────
 
 def test_exemplar_add_validates(flask_client):
-    mid = _seed()
     # blank query / bad polarity are rejected.
     assert flask_client.post("/api/memory/exemplars", json={
-        "memory_id": mid, "polarity": "positive"}).status_code == 400
+        "topic_id": "t1", "polarity": "positive"}).status_code == 400
     assert flask_client.post("/api/memory/exemplars", json={
-        "memory_id": mid, "query": "x", "polarity": "sideways"}
+        "topic_id": "t1", "query": "x", "polarity": "sideways"}
     ).status_code == 400
-    # neither memory_id nor topic_id → 400.
+    # no topic_id → 400.
     assert flask_client.post("/api/memory/exemplars", json={
         "query": "x", "polarity": "positive"}).status_code == 400
 
 
 def test_exemplar_add_remove_roundtrip(flask_client, monkeypatch):
-    """A manual positive case is written via POST and dropped via DELETE.
-    Uses a stub embedder so the write doesn't need the real model."""
+    """A manual positive topic case is written via POST, listed via the cases
+    endpoint, and dropped via DELETE. Uses a stub embedder so the write doesn't
+    need the real model."""
     from tests.memory.test_store import _StubEmbedder
     monkeypatch.setattr(memory.get_store(), "_embedder", _StubEmbedder({}))
-    mid = _seed()
 
     r = flask_client.post("/api/memory/exemplars", json={
-        "memory_id": mid, "query": "how to restart the backend",
+        "topic_id": "topic-x", "query": "how to restart the backend",
         "polarity": "positive"})
     assert r.status_code == 200 and r.get_json()["written"] == 1
 
-    summary = flask_client.get("/api/memory/exemplars").get_json()["summary"]
-    row = next(s for s in summary if s["memory_id"] == mid)
-    assert row["pos_count"] == 1 and row["neg_count"] == 0
+    cases = flask_client.get(
+        "/api/memory/exemplars/topic/topic-x").get_json()["exemplars"]
+    assert len(cases) == 1 and cases[0]["polarity"] == 1
 
     r = flask_client.delete("/api/memory/exemplars", json={
-        "memory_id": mid, "polarity": "positive"})
+        "topic_id": "topic-x", "polarity": "positive"})
     assert r.status_code == 200 and r.get_json()["removed"] == 1
-    assert flask_client.get("/api/memory/exemplars").get_json()["summary"] == []
+    assert flask_client.get(
+        "/api/memory/exemplars/topic/topic-x").get_json()["exemplars"] == []
 
 
 # ── Loopback exemption for the auto-inject hook's dense recall ──────────

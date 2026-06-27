@@ -15,7 +15,6 @@ import MemoryDetail from '../components/memory/MemoryDetail.vue'
 import MemoryTopics from '../components/memory/MemoryTopics.vue'
 import MemoryTopicFeedback from '../components/memory/MemoryTopicFeedback.vue'
 import TopicRoutePlayground from '../components/memory/TopicRoutePlayground.vue'
-import MemoryExemplars from '../components/memory/MemoryExemplars.vue'
 import MemoryTaxonomy from '../components/memory/MemoryTaxonomy.vue'
 
 const { confirm } = useConfirm()
@@ -65,7 +64,6 @@ const taxonomyRef = ref(null)
 function inspectInPlayground(query) {
   playgroundRef.value?.probe(query)
 }
-const exemplarsRef = ref(null)
 const recallQuery = ref('')
 const recallHits = ref(null)
 
@@ -140,7 +138,6 @@ async function runReflect() {
   await load()
   topicsRef.value?.reload()
   topicFeedbackRef.value?.reload()
-  exemplarsRef.value?.reload()
   taxonomyRef.value?.reload()
 }
 
@@ -342,8 +339,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
       <MemoryTaxonomy ref="taxonomyRef" @select="selectMemory" />
     </div>
 
-    <!-- Recall: probe what a query surfaces, plus the per-memory exemplars
-         that re-rank recall. -->
+    <!-- Recall: probe what a query surfaces. -->
     <div v-show="activeTab === 'recall'" class="pt-4">
       <div class="flex flex-wrap items-center gap-2 mb-3">
         <input
@@ -393,8 +389,6 @@ onBeforeUnmount(() => headerObserver?.disconnect())
           </ul>
         </div>
       </Card>
-
-      <MemoryExemplars ref="exemplarsRef" />
     </div>
   </div>
 </template>

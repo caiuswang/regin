@@ -34,7 +34,7 @@ from lib.memory.models import (
     DEFAULT_KIND, DEFAULT_STATUS, DEFAULT_TIER, DISTILL_TAG,
     MEMORY_KINDS, MEMORY_STATUSES, MEMORY_TIERS, VERACITY_VALUES,
     InjectionEvent, Memory, MemoryAuthoritativeTopic, MemoryEdge,
-    MemoryEmbedding, MemoryExemplar, MemoryHit, MemoryInput, MemoryTopic,
+    MemoryEmbedding, MemoryHit, MemoryInput, MemoryTopic,
     MemoryTopicMember, MemoryValidation, TopicExemplar, TopicInjection,
     TopicRouteDecision,
 )
@@ -85,23 +85,9 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
-def _rank_exemplar_aggregate(rows, limit: int) -> list[dict]:
-    """Fold per-(memory, polarity) count rows into one dict per memory with
-    `pos_count`/`neg_count`/`last_created`, ranked by total exemplars."""
-    agg: dict[str, dict] = {}
-    for mid, polarity, count, latest in rows:
-        e = agg.setdefault(mid, {"memory_id": mid, "pos_count": 0,
-                                 "neg_count": 0, "last_created": ""})
-        e["pos_count" if polarity > 0 else "neg_count"] = int(count)
-        if (latest or "") > e["last_created"]:
-            e["last_created"] = latest
-    return sorted(agg.values(),
-                  key=lambda e: -(e["pos_count"] + e["neg_count"]))[:limit]
-
-
 def _group_exemplars(items: list[tuple[str, str]]) -> dict[str, list[str]]:
-    """`{query: [memory_id, …]}` from `(memory_id, query)` pairs, dropping
-    blanks — so each distinct query is embedded once for `add_query_exemplars`."""
+    """`{query: [topic_id, …]}` from `(topic_id, query)` pairs, dropping
+    blanks — so each distinct query is embedded once for `add_topic_exemplars`."""
     uniq: dict[str, list[str]] = {}
     for mid, q in items:
         q = (q or "").strip()
@@ -111,7 +97,7 @@ def _group_exemplars(items: list[tuple[str, str]]) -> dict[str, list[str]]:
 
 
 def _exemplar_dict(r) -> dict:
-    """Serialize one `MemoryExemplar`/`TopicExemplar` row for an inspection
+    """Serialize one `TopicExemplar` row for an inspection
     surface — the fields a human needs to read and revert a case (the vector
     blob is deliberately omitted)."""
     return {"id": r.id, "query": r.query, "polarity": r.polarity,
@@ -130,11 +116,6 @@ def _overlap_tokens(text: str) -> set[str]:
 # noisy to call any token "corpus-common" (a young store would mark nearly
 # every token common and suppress all injects), so idf filtering stays off.
 _IDF_MIN_CORPUS = 20
-
-# A negative-exemplar demotion can shrink a score but never zero it — a fully
-# suppressed candidate would defeat the "always recallable" guarantee, so the
-# multiplier is floored here regardless of `negative_demotion_weight`.
-_NEG_DEMOTION_FLOOR = 0.05
 
 
 def _document_frequency(rows) -> "Counter":
@@ -895,9 +876,8 @@ class SqliteMemoryStore:
         (auto-inject), where BM25's always-rank-something behavior would
         otherwise attach tangential memories to every prompt."""
         retrieval_k = max(top_k * 4, 20)
-        # Embed the query once (dense path only) and reuse it for both the
-        # dense leg and the exemplar rescore (negative demotion + positive
-        # boost), so recall pays at most one query-embedding cost.
+        # Embed the query once (dense path only) and reuse it across the
+        # dense leg, so recall pays at most one query-embedding cost.
         q_vec = None if mode == "fts" else self._embed_query(query)
         lex_ids = self._lexical_ids(query, retrieval_k)
         dense_ids = ([] if mode == "fts"
@@ -913,7 +893,6 @@ class SqliteMemoryStore:
             rerank_cap=max(top_k * 2, 8))
         ordered = self._apply_quality(ordered, rows)
         ordered = self._apply_topic_boost(ordered, boost_topic_node_id, scope)
-        ordered = self._apply_exemplar_rescore(ordered, q_vec)
         selected = self._mmr_select(ordered, top_k)
         selected = self._expand_via_edges(selected, rows, scope, include_tests)
         hits = [MemoryHit(memory=_serialize(rows[mid]), score=float(s),
@@ -1037,10 +1016,10 @@ class SqliteMemoryStore:
 
     def _embed_query(self, query: str):
         """The query embedding as a float32 numpy array, or None when no
-        embedder is available / the query is empty / embedding failed. Shared
-        by the dense leg and the negative-exemplar demotion. Best-effort: a
-        raising embedder degrades to None (no dense leg, no demotion) rather
-        than failing the recall."""
+        embedder is available / the query is empty / embedding failed. Used by
+        the dense recall leg and topic-route exemplar similarity. Best-effort: a
+        raising embedder degrades to None (no dense leg) rather than failing the
+        recall."""
         embedder = self._embedder
         if embedder is None or embedder.model_id is None or not query:
             return None
@@ -1212,211 +1191,13 @@ class SqliteMemoryStore:
         rescored.sort(key=lambda x: -x[1])
         return rescored
 
-    def _apply_exemplar_rescore(self, ordered: list[tuple[str, float]],
-                                q_vec) -> list[tuple[str, float]]:
-        """Re-rank candidates by their stored *query exemplars*
-        (`MemoryExemplar`). Each score is multiplied by
-        `clamp(1 − w_neg·max_cos(query, negatives) + w_pos·max_cos(query,
-        positives), _NEG_DEMOTION_FLOOR, exemplar_boost_ceil)`: a memory
-        injected-then-ignored on similar prompts sinks for *this* query
-        (negatives), one proven useful is lifted (positives) — both only for
-        queries they resemble, leaving stored importance untouched. A no-op
-        when both weights are 0, no query embedding is available (FTS path), or
-        no candidate has an exemplar. Reorders, never filters; the floor keeps
-        a demoted memory recallable, the ceil keeps a boosted one in check."""
-        sims = self._exemplar_sim_maps(ordered, q_vec)
-        if sims is None:
-            return ordered
-        neg, pos = sims
-        w_neg = settings.agent_memory.negative_demotion_weight
-        w_pos = settings.agent_memory.positive_boost_weight
-        ceil = settings.agent_memory.exemplar_boost_ceil
-        rescored = [
-            (mid, score * _clamp(
-                1.0 - w_neg * neg.get(mid, 0.0) + w_pos * pos.get(mid, 0.0),
-                _NEG_DEMOTION_FLOOR, ceil))
-            for mid, score in ordered]
-        rescored.sort(key=lambda x: -x[1])
-        return rescored
-
-    def _exemplar_sim_maps(self, ordered: list[tuple[str, float]], q_vec):
-        """`(neg_sims, pos_sims)` for the candidates, or None when the rescore
-        is a no-op (both weights off, no embedding/model, or no exemplars)."""
-        w_neg = settings.agent_memory.negative_demotion_weight
-        w_pos = settings.agent_memory.positive_boost_weight
-        model_id = getattr(self._embedder, "model_id", None)
-        if not ordered or q_vec is None or not model_id:
-            return None
-        if w_neg <= 0 and w_pos <= 0:
-            return None
-        ids = [mid for mid, _ in ordered]
-        neg = self._sims_for(ids, q_vec, model_id, -1, w_neg)
-        pos = self._sims_for(ids, q_vec, model_id, 1, w_pos)
-        return (neg, pos) if (neg or pos) else None
-
-    def _sims_for(self, ids: list[str], q_vec, model_id: str, polarity: int,
-                  weight: float) -> dict[str, float]:
-        """Exemplar similarities for one polarity, or `{}` when its weight is
-        off — keeps the disabled-direction query out of the hot path."""
-        if weight <= 0:
-            return {}
-        return self._exemplar_similarities(ids, q_vec, model_id, polarity)
-
-    def _exemplar_similarities(self, memory_ids: list[str], q_vec,
-                               model_id: str, polarity: int) -> dict[str, float]:
-        """`{memory_id: max cosine(query, its exemplars of `polarity`)}` clamped
-        to [0, 1], over exemplars recorded under `model_id`. Memories with none
-        are absent (no effect). Cosine is computed explicitly so a non-normalised
-        embedder still yields a bounded multiplier."""
-        import numpy as np
-        if not memory_ids:
-            return {}
-        with MemorySessionLocal() as session:
-            rows = session.exec(
-                select(MemoryExemplar).where(
-                    MemoryExemplar.memory_id.in_(memory_ids),
-                    MemoryExemplar.polarity == polarity,
-                    MemoryExemplar.model_id == model_id)).all()
-        if not rows:
-            return {}
-        qn = q_vec / (float(np.linalg.norm(q_vec)) or 1.0)
-        out: dict[str, float] = {}
-        for r in rows:
-            v = np.frombuffer(r.vector, dtype="float32")
-            if v.shape[0] != qn.shape[0]:
-                continue
-            sim = float(qn @ (v / (float(np.linalg.norm(v)) or 1.0)))
-            sim = max(0.0, min(1.0, sim))
-            if sim > out.get(r.memory_id, 0.0):
-                out[r.memory_id] = sim
-        return out
-
-    def add_query_exemplars(self, session_id: str,
-                            items: list[tuple[str, str]], polarity: int,
-                            source: str = "auto") -> int:
-        """Record query exemplars: `items` is `(memory_id, query)` pairs for
-        memories graded in `session_id` (or hand-curated). `polarity` is -1
-        (hard ignore → demote) or +1 (engaged → boost); `source` is 'auto' or
-        'manual'. Embeds the distinct queries once and writes one
-        `MemoryExemplar` per (memory, query), then trims each memory to its most
-        recent `negative_max_per_memory` *of that polarity*. Returns rows
-        written. Best-effort, a no-op without an embedder."""
-        embedder = self._embedder
-        model_id = getattr(embedder, "model_id", None)
-        if not items or model_id is None:
-            return 0
-        uniq = _group_exemplars(items)
-        if not uniq:
-            return 0
-        embed_q = getattr(embedder, "embed_queries", embedder.embed)
-        queries = list(uniq.keys())
-        vecs = embed_q(queries)
-        if not vecs:
-            return 0
-        written = self._write_exemplars(session_id, model_id, queries, vecs,
-                                        uniq, polarity, source)
-        self._trim_exemplars({mid for mids in uniq.values() for mid in mids},
-                             polarity)
-        return written
-
-    def add_query_negatives(self, session_id: str,
-                            items: list[tuple[str, str]],
-                            source: str = "auto") -> int:
-        """Back-compat: record hard-ignore (negative) exemplars."""
-        return self.add_query_exemplars(session_id, items, -1, source)
-
-    def add_query_positives(self, session_id: str,
-                            items: list[tuple[str, str]],
-                            source: str = "auto") -> int:
-        """Record engaged/useful (positive) exemplars."""
-        return self.add_query_exemplars(session_id, items, 1, source)
-
-    def remove_exemplars(self, memory_id: str,
-                         polarity: "int | None" = None) -> int:
-        """Drop a memory's exemplars (one polarity, or both when None). The
-        undo for a hand-curated case. Returns rows removed."""
-        if not memory_id:
-            return 0
-        with MemorySessionLocal() as session:
-            stmt = select(MemoryExemplar).where(
-                MemoryExemplar.memory_id == memory_id)
-            if polarity is not None:
-                stmt = stmt.where(MemoryExemplar.polarity == polarity)
-            rows = session.exec(stmt).all()
-            for r in rows:
-                session.delete(r)
-            session.commit()
-        return len(rows)
-
-    def _write_exemplars(self, session_id: str, model_id: str,
-                         queries: list[str], vecs, uniq, polarity: int,
-                         source: str) -> int:
-        import numpy as np
-        now = _now()
-        written = 0
-        with MemorySessionLocal() as session:
-            for q, vec in zip(queries, vecs):
-                blob = np.asarray(vec, dtype="float32").tobytes()
-                for mid in uniq[q]:
-                    session.add(MemoryExemplar(
-                        memory_id=mid, polarity=polarity, source=source,
-                        query=q, model_id=model_id, dim=len(vec), vector=blob,
-                        source_session=session_id, created_at=now))
-                    written += 1
-            session.commit()
-        return written
-
-    def _trim_exemplars(self, memory_ids: set[str], polarity: int) -> None:
-        """Keep only the most recent `negative_max_per_memory` exemplars per
-        (memory, polarity) — so positives and negatives are capped independently
-        and one never evicts the other. Bounds storage and the per-recall kNN."""
-        cap = settings.agent_memory.negative_max_per_memory
-        if cap <= 0 or not memory_ids:
-            return
-        with MemorySessionLocal() as session:
-            for mid in memory_ids:
-                rows = session.exec(
-                    select(MemoryExemplar)
-                    .where(MemoryExemplar.memory_id == mid,
-                           MemoryExemplar.polarity == polarity)
-                    .order_by(MemoryExemplar.id.desc())).all()
-                for stale in rows[cap:]:
-                    session.delete(stale)
-            session.commit()
-
-    def exemplar_summary(self, limit: int = 50) -> list[dict]:
-        """Per-memory exemplar counts for the inspection panel: how many
-        positive and negative query exemplars each memory carries, when the
-        latest landed, and the memory's title/kind/status. Most exemplars
-        first. Empty when nothing has been recorded yet."""
-        from sqlalchemy import func
-        cnt = func.count(MemoryExemplar.id)
-        with MemorySessionLocal() as session:
-            rows = session.exec(
-                select(MemoryExemplar.memory_id, MemoryExemplar.polarity, cnt,
-                       func.max(MemoryExemplar.created_at))
-                .group_by(MemoryExemplar.memory_id, MemoryExemplar.polarity)
-            ).all()
-            if not rows:
-                return []
-            ranked = _rank_exemplar_aggregate(rows, limit)
-            mems = {m.id: m for m in session.exec(
-                select(Memory).where(
-                    Memory.id.in_([e["memory_id"] for e in ranked]))).all()}
-        for e in ranked:
-            m = mems.get(e["memory_id"])
-            e["title"] = m.title if m else None
-            e["kind"] = m.kind if m else None
-            e["status"] = m.status if m else None
-        return ranked
-
     # ── Topic-route exemplars (query-local suppression + protection) ──
     def add_topic_exemplars(self, session_id: str,
                             items: list[tuple[str, str]], polarity: int,
                             source: str = "auto") -> int:
         """Record `(topic_id, query)` exemplars for topic banners: `polarity`
         -1 for `fail`-graded routes (suppress), +1 for `pass`/curated ones
-        (protect). Mirrors `add_query_exemplars`: embeds distinct queries once,
+        (protect). Embeds distinct queries once,
         writes one `TopicExemplar` per (topic, query), trims per polarity to
         cap. No-op without an embedder (best-effort, never raises)."""
         embedder = self._embedder
@@ -1481,24 +1262,12 @@ class SqliteMemoryStore:
                 .order_by(TopicExemplar.id.desc())).all()
         return [_exemplar_dict(r) for r in rows]
 
-    def list_memory_exemplars(self, memory_id: str) -> list[dict]:
-        """Every individual exemplar for one memory (newest first), mirroring
-        `list_topic_exemplars` — the memory-side case list."""
-        if not memory_id:
-            return []
-        with MemorySessionLocal() as session:
-            rows = session.exec(
-                select(MemoryExemplar)
-                .where(MemoryExemplar.memory_id == memory_id)
-                .order_by(MemoryExemplar.id.desc())).all()
-        return [_exemplar_dict(r) for r in rows]
-
     def delete_exemplar(self, exemplar_id: int, kind: str) -> bool:
         """Delete one exemplar row by id — the undo for a single mislabel
         (👍 where you meant 👎), the fine-grained complement to the
-        polarity-wide `remove_*_exemplars`. `kind` is 'topic' | 'memory'.
+        polarity-wide `remove_topic_exemplars`. `kind` is 'topic'.
         Returns True when a row was removed."""
-        model = {"topic": TopicExemplar, "memory": MemoryExemplar}.get(kind)
+        model = {"topic": TopicExemplar}.get(kind)
         if model is None or not exemplar_id:
             return False
         with MemorySessionLocal() as session:
@@ -1709,8 +1478,8 @@ class SqliteMemoryStore:
                           query: "str | None" = None) -> None:
         """Persist that `memory_ids` were injected into `session_id`.
         Idempotent — ids already recorded for the session are skipped. `query`
-        is the recall prompt this inject fired on, kept so a later hard-ignore
-        verdict can become a negative exemplar (`add_query_negatives`)."""
+        is the recall prompt this inject fired on, kept for provenance and
+        engagement-feedback scoring of the inject."""
         if not session_id or not memory_ids:
             return
         now = _now()

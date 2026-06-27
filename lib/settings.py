@@ -490,37 +490,11 @@ class AgentMemoryConfig(BaseModel):
     # `engage_spare_rate` to 0 to fall back to the old binary behavior.
     engage_spare_rate: float = 0.4
     engage_min_volume: int = 4
-    # Contextual recall down-ranking by *negative query exemplars*
-    # (`memory_exemplars`, `polarity = -1`). When `feedback` grades an injected
-    # memory a hard ignore (its referents never showed up after injection), it
-    # stores the embedding of the prompt it was injected on as a negative. At
-    # recall time `store._apply_exemplar_rescore` multiplies a candidate's score
-    # by `max(1 − negative_demotion_weight·max_cosine(query, its negatives), floor)`
-    # — a bounded, query-local penalty that demotes a memory only for prompts
-    # near a context where it already failed, while leaving its stored
-    # importance untouched and surfacing it at full strength for every other
-    # query (the cross-encoder + relevance floor still guarantee it can't be
-    # silently dropped). The contextual complement to global importance decay;
-    # 0 disables (no demotion, and `feedback` records no negatives). Only the
-    # dense/server recall path carries a query embedding to compare against, so
-    # the FTS-only fallback is unaffected.
-    negative_demotion_weight: float = 0.0
+    # Cap on stored query exemplars per (topic, model, polarity) — bounds the
+    # per-route kNN behind topic-route suppression/protection (`TopicExemplar`).
     negative_max_per_memory: int = 10
-    # The positive complement of the demotion: a memory injected then *engaged*
-    # (or hand-curated as a useful case) stores the prompt embedding as a
-    # positive exemplar, and `store._apply_exemplar_rescore` boosts its score by
-    # `+ positive_boost_weight·max_cosine(query, its positives)` for prompts near
-    # that context — rescuing a proven-useful memory the cross-encoder
-    # under-ranks. The combined multiplier is clamped to `exemplar_boost_ceil`
-    # so a positive can reorder but never run away (and the negative floor still
-    # applies); 0 disables (no boost, and `feedback` captures no positives).
-    # Same dense/server-only constraint as the demotion.
-    positive_boost_weight: float = 0.0
-    # Upper bound on the per-candidate exemplar multiplier — caps positive
-    # boosting so an entrenched memory can't dominate recall (rich-get-richer).
-    exemplar_boost_ceil: float = 1.5
-    # Topic-route analog of the memory demotion: when a `<topic_context>` banner
-    # is graded `fail` (`InjectedRelated`), the prompt embedding is stored as a
+    # Topic-route query-local suppression/protection: when a `<topic_context>`
+    # banner is graded `fail` (`InjectedRelated`), the prompt embedding is stored as a
     # topic negative (`TopicNegative`). At route time the banner is *withheld*
     # when the incoming query's max cosine to that topic's negatives clears this
     # threshold — query-local suppression replacing the binary global fail-rate

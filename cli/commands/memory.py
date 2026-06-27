@@ -353,97 +353,76 @@ def _polarity_flag(positive: bool, negative: bool) -> "int | None":
 
 @memory_app.command("exemplar-add")
 def cmd_exemplar_add(
-    target_id: str = typer.Argument(..., help="Memory id (default) or, with "
-                                    "--topic, a topic id"),
+    topic_id: str = typer.Argument(..., help="Topic route id"),
     query: str = typer.Argument(..., help="The prompt text the case is keyed "
-                                "on — recall re-ranks similar future queries"),
+                                "on — routing re-ranks similar future queries"),
     positive: bool = typer.Option(False, "--positive", "-p",
-                                  help="A useful case (boost)"),
+                                  help="A useful case (protect the route)"),
     negative: bool = typer.Option(False, "--negative", "-n",
-                                  help="An unhelpful case (demote)"),
-    topic: bool = typer.Option(False, "--topic",
-                               help="Treat target_id as a topic route id"),
+                                  help="An unhelpful case (suppress the route)"),
 ) -> None:
-    """Hand-curate a query exemplar (a 'case'). One of --positive/--negative
-    is required. The query is embedded and stored as a manual exemplar; at
-    recall time it boosts (or demotes) the target for prompts it resembles."""
+    """Hand-curate a topic-route query exemplar (a 'case'). One of
+    --positive/--negative is required. The query is embedded and stored as a
+    manual exemplar; at route time it protects (or suppresses) the topic banner
+    for prompts it resembles."""
     import lib.memory as memory
     polarity = _polarity_flag(positive, negative)
     if polarity is None:
         print("error: pass exactly one of --positive / --negative")
         raise typer.Exit(1)
-    store = memory.get_store()
-    if topic:
-        written = store.add_topic_exemplars(
-            "manual", [(target_id, query)], polarity, source="manual")
-    else:
-        written = store.add_query_exemplars(
-            "manual", [(target_id, query)], polarity, source="manual")
+    written = memory.get_store().add_topic_exemplars(
+        "manual", [(topic_id, query)], polarity, source="manual")
     kind = "positive" if polarity > 0 else "negative"
     if written:
-        print(f"recorded {kind} exemplar for {target_id}")
+        print(f"recorded {kind} exemplar for {topic_id}")
     else:
         print("nothing written (no embedder available, or blank query)")
 
 
 @memory_app.command("exemplar-rm")
 def cmd_exemplar_rm(
-    target_id: str = typer.Argument(..., help="Memory id or, with --topic, a "
-                                    "topic id"),
+    topic_id: str = typer.Argument(..., help="Topic route id"),
     positive: bool = typer.Option(False, "--positive", "-p"),
     negative: bool = typer.Option(False, "--negative", "-n"),
-    topic: bool = typer.Option(False, "--topic"),
 ) -> None:
-    """Drop curated/captured exemplars for a memory or topic. With neither
+    """Drop curated/captured exemplars for a topic route. With neither
     --positive nor --negative, removes both polarities."""
     import lib.memory as memory
     polarity = _polarity_flag(positive, negative)  # None → both
-    store = memory.get_store()
-    if topic:
-        removed = store.remove_topic_exemplars(target_id, polarity)
-    else:
-        removed = store.remove_exemplars(target_id, polarity)
-    print(f"removed {removed} exemplar(s) from {target_id}")
+    removed = memory.get_store().remove_topic_exemplars(topic_id, polarity)
+    print(f"removed {removed} exemplar(s) from {topic_id}")
 
 
 @memory_app.command("exemplar-list")
 def cmd_exemplar_list(
-    target_id: str = typer.Argument(..., help="Memory id or, with --topic, a "
-                                    "topic id"),
-    topic: bool = typer.Option(False, "--topic"),
+    topic_id: str = typer.Argument(..., help="Topic route id"),
 ) -> None:
-    """List the individual exemplars ('cases') for a memory or topic — their
+    """List the individual exemplars ('cases') for a topic route — their
     id (to revert one), polarity, source, and the query each was built from."""
     import lib.memory as memory
-    store = memory.get_store()
-    rows = (store.list_topic_exemplars(target_id) if topic
-            else store.list_memory_exemplars(target_id))
+    rows = memory.get_store().list_topic_exemplars(topic_id)
     if not rows:
-        print(f"no exemplars for {target_id}")
+        print(f"no exemplars for {topic_id}")
         return
-    print(f"{len(rows)} exemplar(s) for {target_id}:")
+    print(f"{len(rows)} exemplar(s) for {topic_id}:")
     for r in rows:
         sign = "+" if r["polarity"] > 0 else "-"
         print(f"  #{r['id']:<5d} {sign} {r['source']:6s} "
               f"{(r['query'] or '(query not recorded)')[:72]}")
-    print(f"  revert one with: regin memory exemplar-forget <id> "
-          f"{'--topic' if topic else ''}".rstrip())
+    print("  revert one with: regin memory exemplar-forget <id>")
 
 
 @memory_app.command("exemplar-forget")
 def cmd_exemplar_forget(
     exemplar_id: int = typer.Argument(..., help="Exemplar id (from "
                                       "exemplar-list) to delete"),
-    topic: bool = typer.Option(False, "--topic",
-                               help="The id is a topic exemplar"),
 ) -> None:
-    """Delete one exemplar by id — undo a single mislabel, the fine-grained
-    complement to exemplar-rm (which drops a whole polarity)."""
+    """Delete one topic exemplar by id — undo a single mislabel, the
+    fine-grained complement to exemplar-rm (which drops a whole polarity)."""
     import lib.memory as memory
-    kind = "topic" if topic else "memory"
-    ok = memory.get_store().delete_exemplar(exemplar_id, kind)
+    ok = memory.get_store().delete_exemplar(exemplar_id, "topic")
     print(f"removed exemplar #{exemplar_id}" if ok
-          else f"no {kind} exemplar #{exemplar_id}")
+          else f"no topic exemplar #{exemplar_id}")
 
 
 @memory_app.command("reflect")

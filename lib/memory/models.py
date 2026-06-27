@@ -191,11 +191,9 @@ class InjectionEvent(MemoryBase, table=True):
         sa_column=Column("memory_id", String, primary_key=True))
     injected_at: str = Field(
         sa_column=Column("injected_at", Text, nullable=False))
-    # The recall query (user prompt text) this memory was injected on, kept so
-    # the feedback pass can turn a *hard-ignored* inject into a negative
-    # exemplar (`MemoryNegative`) without re-deriving the prompt from the trace.
-    # NULL for rows written before the column existed / when the hook had no
-    # query to record.
+    # The recall query (user prompt text) this memory was injected on, kept for
+    # provenance and engagement-feedback scoring of the inject. NULL for rows
+    # written before the column existed / when the hook had no query to record.
     query: Optional[str] = Field(
         default=None, sa_column=Column("query", Text))
     reinforced_at: Optional[str] = Field(
@@ -408,63 +406,13 @@ class ReferentSessionDF(MemoryBase, table=True):
         sa_column=Column("computed_at", Text, nullable=False))
 
 
-class MemoryExemplar(MemoryBase, table=True):
-    """A signed *query exemplar* for one memory: the embedding of a prompt on
-    which this memory was injected, tagged with whether it helped.
-
-    The contextual half of recall re-ranking, in both directions. Where
-    `importance` decay is a global, slow property edit ("this memory is getting
-    worse"), an exemplar is local and non-destructive: at recall time
-    `store._apply_exemplar_rescore` multiplies a candidate's score by
-    `clamp(1 − w_neg·max_cos(query, negatives) + w_pos·max_cos(query, positives),
-    floor, ceil)`. So a memory injected-then-ignored on similar prompts sinks
-    for *those* queries only (`polarity = -1`), and one proven useful is rescued
-    for queries it resembles even when the cross-encoder under-ranks it
-    (`polarity = +1`) — both vanishing on their own once the exemplars no longer
-    resemble the incoming query. Nothing is written to the memory itself.
-
-    `polarity` is -1 (hard ignore) or +1 (engaged). `source` is 'auto'
-    (feedback-captured) or 'manual' (a human-curated case). Kept per
-    (memory, model, polarity), each polarity capped independently at
-    `agent_memory.negative_max_per_memory` most-recent rows so the per-recall
-    kNN stays cheap. Written by `lib.memory.feedback` and the curate API."""
-
-    __tablename__ = "memory_exemplars"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    memory_id: str = Field(
-        sa_column=Column("memory_id", String, nullable=False, index=True))
-    # +1 = engaged (boost), -1 = hard ignore (demote).
-    polarity: int = Field(sa_column=Column("polarity", Integer, nullable=False))
-    # 'auto' = feedback-captured, 'manual' = human-curated case.
-    source: str = Field(
-        sa_column=Column("source", String, nullable=False, server_default="auto"))
-    # The raw prompt this exemplar was built from, kept so the case is
-    # *inspectable* (the panel shows what you labeled) and *individually
-    # revertable* (delete one row by id). The vector is derived from it; NULL
-    # for rows written before the column existed.
-    query: Optional[str] = Field(default=None, sa_column=Column("query", Text))
-    # Embedding model the vector was produced by — a rescore only compares
-    # exemplars recorded under the same model as the live query embedding.
-    model_id: str = Field(
-        sa_column=Column("model_id", String, nullable=False))
-    dim: int = Field(sa_column=Column("dim", Integer, nullable=False))
-    vector: bytes = Field(
-        sa_column=Column("vector", LargeBinary, nullable=False))
-    # Session whose graded inject produced this exemplar (provenance).
-    source_session: Optional[str] = Field(
-        default=None, sa_column=Column("source_session", String))
-    created_at: str = Field(
-        sa_column=Column("created_at", Text, nullable=False))
-
-
 class TopicExemplar(MemoryBase, table=True):
     """A signed *query exemplar* for one authoritative topic route: the
     embedding of a prompt on which the topic banner was injected, tagged with
     whether the route was relevant (`InjectedRelated`).
 
-    The topic-routing analog of `MemoryExemplar`. A `fail`-graded prompt
-    becomes a negative (`polarity = -1`): at route time
+    The contextual, query-local half of topic-route ranking. A `fail`-graded
+    prompt becomes a negative (`polarity = -1`): at route time
     `store.topic_route_suppressed` withholds the banner when the incoming
     query's max cosine to this topic's negatives clears
     `agent_memory.topic_negative_suppress_sim`. A `pass`-graded or human-curated
@@ -483,8 +431,10 @@ class TopicExemplar(MemoryBase, table=True):
     polarity: int = Field(sa_column=Column("polarity", Integer, nullable=False))
     source: str = Field(
         sa_column=Column("source", String, nullable=False, server_default="auto"))
-    # The routed prompt this exemplar was built from — inspectable + revertable
-    # (see `MemoryExemplar.query`). NULL for pre-column rows.
+    # The routed prompt this exemplar was built from, kept so the case is
+    # inspectable (the panel shows what you labeled) and individually revertable
+    # (delete one row by id). The vector is derived from it; NULL for
+    # pre-column rows.
     query: Optional[str] = Field(default=None, sa_column=Column("query", Text))
     model_id: str = Field(
         sa_column=Column("model_id", String, nullable=False))
@@ -497,10 +447,9 @@ class TopicExemplar(MemoryBase, table=True):
         sa_column=Column("created_at", Text, nullable=False))
 
 
-# Back-compat aliases for the pre-unification class names (negatives-only).
-# Both resolve to the polarity-tagged tables above; callers that only ever
-# wrote negatives keep working unchanged.
-MemoryNegative = MemoryExemplar
+# Back-compat alias for the pre-unification class name (negatives-only).
+# Resolves to the polarity-tagged table above; callers that only ever wrote
+# negatives keep working unchanged.
 TopicNegative = TopicExemplar
 
 
@@ -538,7 +487,7 @@ __all__ = [
     "MemoryBase", "memory_metadata",
     "Memory", "MemoryEmbedding", "MemoryValidation", "InjectionEvent",
     "MemoryEdge", "MemoryTopic", "MemoryTopicMember",
-    "MemoryAuthoritativeTopic", "ReferentSessionDF", "MemoryNegative",
+    "MemoryAuthoritativeTopic", "ReferentSessionDF",
     "TopicNegative",
     "MemoryInput", "MemoryHit",
     "MEMORY_TIERS", "MEMORY_KINDS", "MEMORY_STATUSES", "VERACITY_VALUES",
