@@ -42,27 +42,15 @@
       "parent_id": "agent-providers",
       "refs": [
         {
-          "path": "lib/providers/base.py",
-          "role": "architecture"
-        },
-        {
-          "path": "lib/providers/registry.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/providers/__init__.py",
           "role": "overview"
         },
         {
+          "path": "lib/providers/base.py",
+          "role": "architecture"
+        },
+        {
           "path": "lib/providers/claude/__init__.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/providers/kimi/__init__.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/providers/kimi_hooks.py",
           "role": "implementation"
         },
         {
@@ -74,84 +62,16 @@
           "role": "implementation"
         },
         {
-          "path": "lib/trace/kimi_transcript.py",
+          "path": "lib/providers/kimi/__init__.py",
           "role": "implementation"
         },
         {
-          "path": "lib/trace/transcript_models.py",
-          "role": "schema"
-        },
-        {
-          "path": "hook_manager/core.py",
+          "path": "lib/providers/kimi_hooks.py",
           "role": "implementation"
         },
         {
-          "path": "hook_manager/runner.py",
+          "path": "lib/providers/registry.py",
           "role": "implementation"
-        },
-        {
-          "path": "hook_manager/handlers/turn_trace/entry.py",
-          "role": "implementation"
-        },
-        {
-          "path": "hook_manager/handlers/post_tool_trace.py",
-          "role": "implementation"
-        },
-        {
-          "path": "hook_manager/handlers/session_lifecycle.py",
-          "role": "implementation"
-        },
-        {
-          "path": "hook_manager/handlers/post_tool_failure.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/settings.py",
-          "role": "config"
-        },
-        {
-          "path": "web/blueprints/hooks.py",
-          "role": "api"
-        },
-        {
-          "path": "web/blueprints/meta.py",
-          "role": "api"
-        },
-        {
-          "path": "web/blueprints/skills.py",
-          "role": "api"
-        },
-        {
-          "path": "frontend/src/components/SettingsProviders.vue",
-          "role": "implementation"
-        },
-        {
-          "path": "frontend/src/composables/useProviderPaths.js",
-          "role": "implementation"
-        },
-        {
-          "path": "alembic/versions/0004_pattern_deployment_provider.py",
-          "role": "migration"
-        },
-        {
-          "path": "db/schema.sql",
-          "role": "schema"
-        },
-        {
-          "path": "tests/core/test_providers.py",
-          "role": "test"
-        },
-        {
-          "path": "tests/skills/test_provider_parity.py",
-          "role": "test"
-        },
-        {
-          "path": "tests/hooks/test_kimi_hooks_toml.py",
-          "role": "test"
-        },
-        {
-          "path": "tests/trace/test_kimi_transcript.py",
-          "role": "test"
         }
       ],
       "status": "active"
@@ -223,10 +143,6 @@
           "role": "architecture"
         },
         {
-          "path": "lib/memory/engine.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/memory/models.py",
           "role": "schema"
         },
@@ -235,12 +151,48 @@
           "role": "implementation"
         },
         {
+          "path": "lib/memory/engine.py",
+          "role": "implementation"
+        },
+        {
           "path": "lib/memory/scoping.py",
           "role": "config"
         },
         {
-          "path": "ARCHITECTURE.md",
-          "role": "architecture"
+          "path": "lib/memory/distill.py"
+        },
+        {
+          "path": "lib/memory/evaluate.py"
+        },
+        {
+          "path": "lib/memory/expand.py"
+        },
+        {
+          "path": "lib/memory/feedback.py"
+        },
+        {
+          "path": "lib/memory/mcp_server.py"
+        },
+        {
+          "path": "lib/memory/reflect.py"
+        },
+        {
+          "path": "lib/memory/skill_consolidate.py"
+        },
+        {
+          "path": "lib/memory/skill_experience.py"
+        },
+        {
+          "path": "lib/memory/store.py"
+        },
+        {
+          "path": "lib/memory/topic_attach.py"
+        },
+        {
+          "path": "lib/memory/topic_cascade.py"
+        },
+        {
+          "path": "lib/memory/topic_classify.py"
         }
       ],
       "status": "active"
@@ -270,20 +222,16 @@
           "role": "overview"
         },
         {
-          "path": "lib/agent_messages/store.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/agent_messages/mcp_server.py",
           "role": "entrypoint"
         },
         {
-          "path": "lib/agent_messages/push/registry.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/agent_messages/push/base.py",
           "role": "api"
+        },
+        {
+          "path": "lib/agent_messages/push/registry.py",
+          "role": "implementation"
         },
         {
           "path": "lib/agent_messages/push/telegram.py",
@@ -294,36 +242,18 @@
           "role": "implementation"
         },
         {
+          "path": "lib/agent_messages/store.py",
+          "role": "implementation"
+        },
+        {
           "path": "lib/agent_messages/webhook.py",
           "role": "implementation"
         },
         {
-          "path": "lib/orm/models/agent_messages.py",
-          "role": "schema"
+          "path": "lib/agent_messages/event_notify.py"
         },
         {
-          "path": "hook_manager/handlers/post_tool_trace.py",
-          "role": "entrypoint"
-        },
-        {
-          "path": "web/blueprints/trace/agent_messages.py",
-          "role": "api"
-        },
-        {
-          "path": "frontend/src/views/InboxView.vue",
-          "role": "implementation"
-        },
-        {
-          "path": "frontend/src/components/InboxMessageCard.vue",
-          "role": "implementation"
-        },
-        {
-          "path": "frontend/src/composables/useInboxUnread.js",
-          "role": "implementation"
-        },
-        {
-          "path": "db/schema.sql",
-          "role": "schema"
+          "path": "lib/agent_messages/push/__init__.py"
         }
       ],
       "status": "active"
@@ -394,7 +324,15 @@
           "role": "schema"
         },
         {
-          "path": "lib/grader/evidence.py",
+          "path": "lib/experiments.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/goal_feedback.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/grader/adapters.py",
           "role": "implementation"
         },
         {
@@ -402,7 +340,7 @@
           "role": "implementation"
         },
         {
-          "path": "lib/grader/adapters.py",
+          "path": "lib/grader/evidence.py",
           "role": "implementation"
         },
         {
@@ -414,24 +352,52 @@
           "role": "implementation"
         },
         {
-          "path": "lib/experiments.py",
-          "role": "implementation"
+          "path": "lib/grader/agentic.py"
         },
         {
-          "path": "lib/goal_feedback.py",
-          "role": "implementation"
+          "path": "lib/grader/aggregate.py"
         },
         {
-          "path": "cli/commands/grader.py",
-          "role": "entrypoint"
+          "path": "lib/grader/correctness.py"
         },
         {
-          "path": "web/blueprints/grades.py",
-          "role": "api"
+          "path": "lib/grader/coverage.py"
         },
         {
-          "path": "lib/settings.py",
-          "role": "config"
+          "path": "lib/grader/dump.py"
+        },
+        {
+          "path": "lib/grader/extraction.py"
+        },
+        {
+          "path": "lib/grader/failure_modes.py"
+        },
+        {
+          "path": "lib/grader/grounding.py"
+        },
+        {
+          "path": "lib/grader/judge_io.py"
+        },
+        {
+          "path": "lib/grader/models.py"
+        },
+        {
+          "path": "lib/grader/pareto.py"
+        },
+        {
+          "path": "lib/grader/process.py"
+        },
+        {
+          "path": "lib/grader/process_agentic.py"
+        },
+        {
+          "path": "lib/grader/prompts.py"
+        },
+        {
+          "path": "lib/grader/source_quality.py"
+        },
+        {
+          "path": "lib/grader/topic_notify.py"
         }
       ],
       "status": "active"
@@ -460,20 +426,16 @@
       "parent_id": "ops-cli",
       "refs": [
         {
-          "path": "lib/goal_preflight.py",
-          "role": "implementation"
+          "path": "cli/commands/goal.py",
+          "role": "entrypoint"
         },
         {
           "path": "lib/goal_feedback.py",
           "role": "implementation"
         },
         {
-          "path": "cli/commands/goal.py",
-          "role": "entrypoint"
-        },
-        {
-          "path": ".claude/skills/goal-verified/SKILL.md",
-          "role": "docs"
+          "path": "lib/goal_preflight.py",
+          "role": "implementation"
         }
       ],
       "status": "active"
@@ -540,16 +502,12 @@
       "parent_id": "agent-memory",
       "refs": [
         {
-          "path": "hook_manager/handlers/memory_recall.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/memory/mcp_server.py",
           "role": "entrypoint"
         },
         {
-          "path": "web/blueprints/memory.py",
-          "role": "api"
+          "path": "hook_manager/handlers/memory_recall.py",
+          "role": "implementation"
         }
       ],
       "status": "active"
@@ -609,10 +567,13 @@
         "retire or forget a memory",
         "recall probe in the dashboard",
         "run reflect from the UI",
-        "browse the memory graph"
+        "browse the memory taxonomy tree"
       ],
+      "blurb": "Curate the memory store by hand: approve/retire/forget memories, run reflect/distill, browse the taxonomy tree, tune exemplars & topic-route relevance, probe recall.",
       "commands": [
-        ".venv/bin/python -m pytest tests/memory/test_api.py"
+        ".venv/bin/python -m pytest tests/memory/test_api.py",
+        ".venv/bin/python cli/regin.py memory list",
+        ".venv/bin/python cli/regin.py memory stats"
       ],
       "edges": [
         {
@@ -632,6 +593,10 @@
           "type": "related"
         },
         {
+          "target": "memory-topic-route-feedback",
+          "type": "related"
+        },
+        {
           "target": "webui",
           "type": "related"
         }
@@ -643,7 +608,7 @@
         "frontend/src/components/memory/**",
         "cli/commands/memory.py"
       ],
-      "intent": "Point an agent at the human-facing controls for curating the store \u2014 the curation that is the entire point of memory being mutable. Covers the `/api/memory/*` blueprint (`web/blueprints/memory.py`: list, get, related, bulk, recall probe, run-reflect, topics, graph, approve, retire, PATCH update, DELETE forget, plus the exemplar add/remove/list/forget and topic-feedback decision + route-preview routes), the `MemoryView.vue` dashboard and its `frontend/src/components/memory/*` panels (list, detail, category bar, topics, topic feedback, route playground, exemplars, exemplar cases), and the `regin memory {recall,list,stats,reflect,distill,approve,forget,supersede,link-topics,topic-feedback,topic-decide,exemplar-*,eval}` CLI mirror \u2014 the three entry points for reviewing distill proposals, fixing veracity, hand-curating exemplars, and probing what a query would surface.",
+      "intent": "Point an agent at the human-facing controls for curating the cross-session memory store \u2014 the curation that is the entire point of memory being mutable. Covers the `/api/memory/*` Flask blueprint (`web/blueprints/memory.py`), the four-tab `MemoryView.vue` dashboard with its `frontend/src/components/memory/*` panels, and the `regin memory` Typer CLI mirror (`cli/commands/memory.py`). These are the three coordinated entry points for reviewing distill proposals, fixing a memory's veracity, walking the topic taxonomy, hand-curating signed exemplars, tuning topic-route relevance, and probing what a query would surface.",
       "label": "Memory curation surfaces (Memory view, /api/memory/* blueprint, regin memory CLI)",
       "parent_id": "agent-memory",
       "refs": [
@@ -658,6 +623,18 @@
         {
           "path": "cli/commands/memory.py",
           "role": "entrypoint"
+        },
+        {
+          "path": "frontend/src/components/memory/MemoryTaxonomy.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/components/memory/MemoryExemplars.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
+          "role": "implementation"
         }
       ],
       "status": "active"
@@ -701,10 +678,6 @@
       "refs": [
         {
           "path": "lib/memory/distill.py",
-          "role": "implementation"
-        },
-        {
-          "path": "hook_manager/handlers/post_tool_trace.py",
           "role": "implementation"
         }
       ],
@@ -754,10 +727,6 @@
         {
           "path": "lib/memory/feedback.py",
           "role": "implementation"
-        },
-        {
-          "path": "lib/memory/models.py",
-          "role": "schema"
         }
       ],
       "status": "active"
@@ -846,11 +815,11 @@
       "parent_id": "agent-memory",
       "refs": [
         {
-          "path": "lib/memory/store.py",
+          "path": "lib/memory/expand.py",
           "role": "implementation"
         },
         {
-          "path": "lib/memory/expand.py",
+          "path": "lib/memory/store.py",
           "role": "implementation"
         },
         {
@@ -907,31 +876,11 @@
       "parent_id": "topic-graph",
       "refs": [
         {
-          "path": "lib/memory/store.py",
+          "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
           "role": "implementation"
-        },
-        {
-          "path": "hook_manager/handlers/memory_recall.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/grader/service.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/memory/models.py",
-          "role": "schema"
-        },
-        {
-          "path": "web/blueprints/memory.py",
-          "role": "api"
         },
         {
           "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
-          "role": "implementation"
-        },
-        {
-          "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
           "role": "implementation"
         }
       ],
@@ -989,12 +938,11 @@
           "role": "implementation"
         },
         {
-          "path": "web/blueprints/topics/maintenance.py",
-          "role": "api"
-        },
-        {
           "path": "docs/topics/multi-user.md",
           "role": "docs"
+        },
+        {
+          "path": ".regin/topics/wiki/multi-user-topic-sharing.md"
         }
       ],
       "status": "active"
@@ -1154,10 +1102,6 @@
         {
           "path": "lib/memory/evaluate.py",
           "role": "implementation"
-        },
-        {
-          "path": "lib/memory/store.py",
-          "role": "implementation"
         }
       ],
       "status": "active"
@@ -1190,19 +1134,19 @@
       "parent_id": "ops-cli",
       "refs": [
         {
-          "path": "lib/activity_log.py",
-          "role": "implementation"
-        },
-        {
-          "path": "lib/logging_setup.py",
-          "role": "implementation"
-        },
-        {
           "path": "cli/commands/logs.py",
           "role": "implementation"
         },
         {
+          "path": "lib/activity_log.py",
+          "role": "implementation"
+        },
+        {
           "path": "lib/audit.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/logging_setup.py",
           "role": "implementation"
         }
       ],
@@ -1238,20 +1182,12 @@
       "parent_id": "ops-cli",
       "refs": [
         {
-          "path": "cli/regin.py",
-          "role": "entrypoint"
-        },
-        {
           "path": "cli/app.py",
           "role": "architecture"
         },
         {
-          "path": "cli/deps.py",
-          "role": "implementation"
-        },
-        {
-          "path": "cli/output.py",
-          "role": "implementation"
+          "path": "cli/regin.py",
+          "role": "entrypoint"
         },
         {
           "path": "cli/commands/db.py",
@@ -1262,12 +1198,80 @@
           "role": "implementation"
         },
         {
-          "path": "lib/doctor.py",
+          "path": "cli/deps.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/output.py",
           "role": "implementation"
         },
         {
           "path": "lib/db_rebuild.py",
           "role": "implementation"
+        },
+        {
+          "path": "lib/doctor.py",
+          "role": "implementation"
+        },
+        {
+          "path": "cli/__init__.py"
+        },
+        {
+          "path": "cli/commands/__init__.py"
+        },
+        {
+          "path": "cli/commands/gate.py"
+        },
+        {
+          "path": "cli/commands/goal.py"
+        },
+        {
+          "path": "cli/commands/grader.py"
+        },
+        {
+          "path": "cli/commands/logs.py"
+        },
+        {
+          "path": "cli/commands/memory.py"
+        },
+        {
+          "path": "cli/commands/messages.py"
+        },
+        {
+          "path": "cli/commands/patterns.py"
+        },
+        {
+          "path": "cli/commands/repo.py"
+        },
+        {
+          "path": "cli/commands/route.py"
+        },
+        {
+          "path": "cli/commands/rules.py"
+        },
+        {
+          "path": "cli/commands/schema.py"
+        },
+        {
+          "path": "cli/commands/server.py"
+        },
+        {
+          "path": "cli/commands/session.py"
+        },
+        {
+          "path": "cli/commands/skills.py"
+        },
+        {
+          "path": "cli/commands/topics.py"
+        },
+        {
+          "path": "cli/commands/trace.py"
+        },
+        {
+          "path": "cli/commands/users.py"
+        },
+        {
+          "path": "cli/commands/wiki.py"
         }
       ],
       "status": "active"
@@ -1409,10 +1413,16 @@
           "path": "example/rule/frontend-style-convention/checkers/interactive_requires_focus_visible.mjs"
         },
         {
+          "path": "example/rule/frontend-style-convention/checkers/prefer_ds_primitive.mjs"
+        },
+        {
           "path": "example/rule/frontend-style-convention/checkers/select_input_in_flex_wrap.mjs"
         },
         {
           "path": "example/rule/frontend-style-convention/content.md"
+        },
+        {
+          "path": "example/rule/frontend-style-convention/design-system.yaml"
         },
         {
           "path": "example/rule/frontend-style-convention/lib/ast-utils.mjs"
@@ -1449,6 +1459,60 @@
         },
         {
           "path": "example/rule/regin-python-conventions/scripts/find_applicable_files.py"
+        },
+        {
+          "path": "example/rule/vue-complexity/SKILL.md"
+        },
+        {
+          "path": "example/rule/vue-complexity/bin/vue-complexity-runner.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/script_cyclomatic_function.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/script_cyclomatic_module.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/script_function_length.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/script_surface_area.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/template_binding_count.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/template_conditional_loop.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/template_directive_density.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/template_max_depth.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/checkers/template_node_count.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/lib/complexity-utils.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/package.json"
+        },
+        {
+          "path": "example/rule/vue-complexity/references/calibrate.mjs"
+        },
+        {
+          "path": "example/rule/vue-complexity/regin-bundle.yaml"
+        },
+        {
+          "path": "example/rule/vue-complexity/script-js.yaml"
+        },
+        {
+          "path": "example/rule/vue-complexity/script.yaml"
+        },
+        {
+          "path": "example/rule/vue-complexity/template.yaml"
         },
         {
           "path": "lib/languages/java.py"
@@ -1507,20 +1571,12 @@
       "parent_id": "ops-cli",
       "refs": [
         {
-          "path": "lib/session_probe.py",
-          "role": "implementation"
-        },
-        {
           "path": "hook_manager/handlers/session_id_probe.py",
           "role": "entrypoint"
         },
         {
-          "path": "cli/commands/session.py",
-          "role": "entrypoint"
-        },
-        {
-          "path": "tests/test_session_probe.py",
-          "role": "test"
+          "path": "lib/session_probe.py",
+          "role": "implementation"
         }
       ],
       "status": "active"
@@ -1664,6 +1720,9 @@
           "path": "hook_manager/handlers/plan_trace.py"
         },
         {
+          "path": "hook_manager/handlers/pre_tool_trace.py"
+        },
+        {
           "path": "hook_manager/handlers/turn_trace/__init__.py"
         },
         {
@@ -1685,10 +1744,28 @@
           "path": "lib/trace/__init__.py"
         },
         {
+          "path": "lib/trace/claude_subagents.py"
+        },
+        {
           "path": "lib/trace/claude_version.py"
         },
         {
+          "path": "lib/trace/file_history.py"
+        },
+        {
           "path": "lib/trace/is_test.py"
+        },
+        {
+          "path": "lib/trace/kimi_subagents.py"
+        },
+        {
+          "path": "lib/trace/kimi_transcript.py"
+        },
+        {
+          "path": "lib/trace/live_rescan.py"
+        },
+        {
+          "path": "lib/trace/merge.py"
         },
         {
           "path": "lib/trace/payload_drift_store.py"
@@ -1697,13 +1774,28 @@
           "path": "lib/trace/payload_schemas/README.md"
         },
         {
+          "path": "lib/trace/payload_schemas/claude/Agent.schema.json"
+        },
+        {
           "path": "lib/trace/payload_schemas/claude/AskUserQuestion.schema.json"
         },
         {
           "path": "lib/trace/payload_schemas/claude/Bash.schema.json"
         },
         {
+          "path": "lib/trace/payload_schemas/claude/CronCreate.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/CronDelete.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/CronList.schema.json"
+        },
+        {
           "path": "lib/trace/payload_schemas/claude/Edit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/ExitPlanMode.schema.json"
         },
         {
           "path": "lib/trace/payload_schemas/claude/Glob.schema.json"
@@ -1724,7 +1816,13 @@
           "path": "lib/trace/payload_schemas/claude/TaskCreate.schema.json"
         },
         {
+          "path": "lib/trace/payload_schemas/claude/TaskList.schema.json"
+        },
+        {
           "path": "lib/trace/payload_schemas/claude/TaskOutput.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskStop.schema.json"
         },
         {
           "path": "lib/trace/payload_schemas/claude/TaskUpdate.schema.json"
@@ -1733,10 +1831,115 @@
           "path": "lib/trace/payload_schemas/claude/ToolSearch.schema.json"
         },
         {
+          "path": "lib/trace/payload_schemas/claude/WebFetch.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/WebSearch.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Workflow.schema.json"
+        },
+        {
           "path": "lib/trace/payload_schemas/claude/Write.schema.json"
         },
         {
+          "path": "lib/trace/payload_schemas/claude/_hooks/ConfigChange.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/CwdChanged.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/InstructionsLoaded.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/Notification.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionDenied.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionRequest.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PostToolUseFailure.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PreToolUse.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SessionEnd.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SessionStart.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/Stop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/StopFailure.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStart.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCompleted.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCreated.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptExpansion.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptSubmit.schema.json"
+        },
+        {
           "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Agent.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Bash.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Edit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/FetchURL.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Read.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/TodoList.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Write.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PostCompact.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PostToolUseFailure.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PreCompact.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStart.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/UserPromptSubmit.schema.json"
+        },
+        {
+          "path": "lib/trace/pending_spans.py"
         },
         {
           "path": "lib/trace/plan_context.py"
@@ -1745,7 +1948,28 @@
           "path": "lib/trace/plans.py"
         },
         {
+          "path": "lib/trace/prompt_images_resolve.py"
+        },
+        {
+          "path": "lib/trace/queued_prompts.py"
+        },
+        {
+          "path": "lib/trace/rewind_detect.py"
+        },
+        {
+          "path": "lib/trace/span_gates.py"
+        },
+        {
+          "path": "lib/trace/tool_input_summary.py"
+        },
+        {
           "path": "lib/trace/transcript_models.py"
+        },
+        {
+          "path": "lib/trace/workflow_ingest.py"
+        },
+        {
+          "path": "web/blueprints/trace/agent_messages.py"
         },
         {
           "path": "web/blueprints/trace/ingest_errors.py"
@@ -1867,6 +2091,18 @@
         {
           "path": "lib/topics/proposals/topic_actions.py",
           "role": "implementation"
+        },
+        {
+          "path": "lib/topics/proposal_expiry.py"
+        },
+        {
+          "path": "lib/topics/proposal_review.py"
+        },
+        {
+          "path": "lib/topics/proposals/finish.py"
+        },
+        {
+          "path": "lib/topics/proposals/reap.py"
         }
       ],
       "status": "active"
@@ -1911,15 +2147,15 @@
           "role": "api"
         },
         {
-          "path": "lib/topics/term_weights.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/topics/core.py",
           "role": "implementation"
         },
         {
           "path": "lib/topics/scan.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/topics/term_weights.py",
           "role": "implementation"
         },
         {
@@ -1958,8 +2194,7 @@
           "role": "implementation"
         },
         {
-          "path": "lib/trace/trace_service/queries.py",
-          "role": "implementation"
+          "path": "lib/trace/projection.py"
         }
       ],
       "status": "active"
@@ -1985,16 +2220,208 @@
       "parent_id": "session-trace",
       "refs": [
         {
-          "path": "lib/trace/trace_service/ingest.py",
-          "role": "implementation"
+          "path": "hook_manager/handlers/plan_trace.py"
         },
         {
-          "path": "lib/trace/projection.py",
-          "role": "implementation"
+          "path": "hook_manager/handlers/post_tool_trace.py"
         },
         {
-          "path": "lib/orm/models/trace.py",
-          "role": "schema"
+          "path": "hook_manager/handlers/pre_tool_trace.py"
+        },
+        {
+          "path": "hook_manager/handlers/prompt_trace.py"
+        },
+        {
+          "path": "hook_manager/handlers/trace_payload.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/__init__.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/cache.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/entry.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/span_posters.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/timestamps.py"
+        },
+        {
+          "path": "lib/trace/payload_schemas/README.md"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Agent.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/AskUserQuestion.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Bash.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/CronCreate.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/CronDelete.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/CronList.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Edit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/ExitPlanMode.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Glob.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Grep.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/MultiEdit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Read.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Skill.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskCreate.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskList.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskOutput.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskStop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/TaskUpdate.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/ToolSearch.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/WebFetch.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/WebSearch.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Workflow.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/Write.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/ConfigChange.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/CwdChanged.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/InstructionsLoaded.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/Notification.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionDenied.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionRequest.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PostToolUseFailure.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/PreToolUse.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SessionEnd.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SessionStart.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/Stop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/StopFailure.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStart.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCompleted.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCreated.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptExpansion.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptSubmit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Agent.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Bash.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Edit.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/FetchURL.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Read.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/TodoList.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/Write.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PostCompact.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PostToolUseFailure.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PreCompact.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStart.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStop.schema.json"
+        },
+        {
+          "path": "lib/trace/payload_schemas/kimi/_hooks/UserPromptSubmit.schema.json"
+        },
+        {
+          "path": "lib/trace/transcript_parsers.py"
         }
       ],
       "status": "active"
@@ -2023,12 +2450,22 @@
           "role": "implementation"
         },
         {
-          "path": "lib/orm/models/trace.py",
-          "role": "schema"
+          "path": "hook_manager/handlers/turn_trace/__init__.py"
         },
         {
-          "path": "lib/trace/trace_service/queries.py",
-          "role": "implementation"
+          "path": "hook_manager/handlers/turn_trace/cache.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/entry.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/span_posters.py"
+        },
+        {
+          "path": "hook_manager/handlers/turn_trace/timestamps.py"
         }
       ],
       "status": "active"
@@ -2113,6 +2550,39 @@
         {
           "path": "frontend/src/components/ui/Icon.vue",
           "role": "implementation"
+        },
+        {
+          "path": "frontend/src/components/ui/Button.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Checkbox.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Dialog.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/DropdownMenu.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Input.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Popover.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/RadioGroup.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Select.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Tabs.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Textarea.vue"
+        },
+        {
+          "path": "frontend/src/components/ui/Tooltip.vue"
         }
       ],
       "status": "active"
@@ -2139,19 +2609,15 @@
       "parent_id": "webui",
       "refs": [
         {
-          "path": "frontend/src/router.js",
-          "role": "entrypoint"
-        },
-        {
           "path": "frontend/src/components/AppLayout.vue",
           "role": "architecture"
         },
         {
-          "path": "web/app.py",
-          "role": "api"
+          "path": "frontend/src/App.vue",
+          "role": "entrypoint"
         },
         {
-          "path": "frontend/src/App.vue",
+          "path": "frontend/src/router.js",
           "role": "entrypoint"
         },
         {
@@ -2159,7 +2625,7 @@
           "role": "implementation"
         },
         {
-          "path": "frontend/src/views/SessionsView.vue",
+          "path": "frontend/src/views/LoginView.vue",
           "role": "implementation"
         },
         {
@@ -2167,16 +2633,97 @@
           "role": "implementation"
         },
         {
-          "path": "frontend/src/views/SettingsView.vue",
+          "path": "frontend/src/views/SessionsView.vue",
           "role": "implementation"
         },
         {
-          "path": "frontend/src/views/LoginView.vue",
+          "path": "frontend/src/views/SettingsView.vue",
           "role": "implementation"
         },
         {
           "path": "frontend/src/views/DesignSystemView.vue",
           "role": "docs"
+        },
+        {
+          "path": "frontend/src/views/AuditView.vue"
+        },
+        {
+          "path": "frontend/src/views/ExperimentDetailView.vue"
+        },
+        {
+          "path": "frontend/src/views/ExperimentsView.vue"
+        },
+        {
+          "path": "frontend/src/views/GradesView.vue"
+        },
+        {
+          "path": "frontend/src/views/InboxView.vue"
+        },
+        {
+          "path": "frontend/src/views/IngestErrorsView.vue"
+        },
+        {
+          "path": "frontend/src/views/MCPCallsView.vue"
+        },
+        {
+          "path": "frontend/src/views/MemoryView.vue"
+        },
+        {
+          "path": "frontend/src/views/PatternDetailView.vue"
+        },
+        {
+          "path": "frontend/src/views/PatternsView.vue"
+        },
+        {
+          "path": "frontend/src/views/PayloadLogView.vue"
+        },
+        {
+          "path": "frontend/src/views/PlanDetailView.vue"
+        },
+        {
+          "path": "frontend/src/views/PlansView.vue"
+        },
+        {
+          "path": "frontend/src/views/PromptTemplatesView.vue"
+        },
+        {
+          "path": "frontend/src/views/RepoDetailView.vue"
+        },
+        {
+          "path": "frontend/src/views/RepoTopicsView.vue"
+        },
+        {
+          "path": "frontend/src/views/ReposView.vue"
+        },
+        {
+          "path": "frontend/src/views/RuleDetailView.vue"
+        },
+        {
+          "path": "frontend/src/views/RulesView.vue"
+        },
+        {
+          "path": "frontend/src/views/SchemaDriftView.vue"
+        },
+        {
+          "path": "frontend/src/views/SkillDetailView.vue"
+        },
+        {
+          "path": "frontend/src/views/SkillReadsView.vue"
+        },
+        {
+          "path": "frontend/src/views/SkillsView.vue"
+        },
+        {
+          "path": "frontend/src/views/TraceView.vue"
+        },
+        {
+          "path": "frontend/src/views/TriggersRawView.vue"
+        },
+        {
+          "path": "frontend/src/views/TriggersView.vue"
+        },
+        {
+          "path": "frontend/src/views/UsersView.vue"
         }
       ],
       "status": "active"
