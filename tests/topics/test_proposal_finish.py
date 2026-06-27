@@ -164,6 +164,58 @@ def test_real_regenerate_kickoff_clears_signal_and_appends_revision(
     assert first["kind"] == "generated"
 
 
+def _set_run_proposal_status(run_id, status):
+    """Force the run-level review state, simulating a prior apply."""
+    from lib.orm import SessionLocal
+    from lib.orm.models import ProposalRun
+
+    with SessionLocal() as s:
+        run = s.get(ProposalRun, run_id)
+        meta = json.loads(run.metadata_json or "{}")
+        meta["proposal_status"] = status
+        run.metadata_json = json.dumps(meta)
+        s.commit()
+
+
+def test_regenerate_after_applied_resets_run_status_to_pending(
+    fake_git_repo, tmp_db, monkeypatch,
+):
+    """Regression: regenerating an already-applied proposal must leave the
+    run-level proposal_status at pending_review so the fresh draft is
+    appliable. write_status used to round-trip the stale 'applied' — spread
+    into the status dict by _run_to_status_dict — back over the pending_review
+    that the finish ingest had just written, stranding the new draft as
+    un-appliable while the header badge still read 'applied'."""
+    from lib.topics.proposals import start_external_regenerate_run
+
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+    finish_proposal_run(fake_git_repo, "run1")  # revision 1 (generated)
+
+    # Simulate a prior apply: run-level review state advanced to "applied".
+    _set_run_proposal_status("run1", "applied")
+    assert load_proposal(fake_git_repo, "run1")["status"] == "applied"
+
+    def agent_then_finish(*, repo, out_dir, proposal_id, topic_request=None,
+                          agent=None, prior_draft=None, prompt_templates=None):
+        _write_temp_output(Path(out_dir))
+        finish_proposal_run(repo, proposal_id)
+        proposal = load_proposal(repo, proposal_id)
+        wiki = (Path(out_dir) / "wiki.md").read_text()
+        return proposal, wiki
+
+    monkeypatch.setattr(
+        "lib.topics.proposals.external_jobs._draft_proposal", agent_then_finish)
+    monkeypatch.setattr(
+        "lib.topics.proposals.external_jobs.threading.Thread", _InlineThread)
+
+    start_external_regenerate_run(fake_git_repo, "run1")
+
+    # The freshly regenerated draft must be appliable again.
+    assert load_proposal(fake_git_repo, "run1")["status"] == "pending_review"
+
+
 def test_finish_with_invalid_output_fails_run(fake_git_repo, tmp_db):
     _commit_service(fake_git_repo)
     out_dir = _seed_run(fake_git_repo)

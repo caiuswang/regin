@@ -100,9 +100,21 @@ def write_status(out_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
         "state", "trace_id", "started_at", "completed_at",
         "error", "error_detail",
     }
+    # `proposal_status` is the *review-state* axis (pending_review →
+    # ready_to_apply → applied), owned solely by the proposal-save / apply
+    # paths. It is orthogonal to the run *lifecycle* status this function
+    # writes. `load_status` (→ _run_to_status_dict) spreads the whole
+    # metadata bag — including proposal_status — into the status dict, so
+    # without this exclusion any write_status round-trips a stale value
+    # back over a fresh one: a regenerate's finish ingest sets the new
+    # revision to pending_review, then write_status re-stamps the prior
+    # `applied`, stranding the draft as un-appliable. Never carry it here.
+    review_state_fields = {"proposal_status"}
     metadata_patch = {
         k: v for k, v in status.items()
-        if k not in column_fields and k not in {"agent", "updated_at"}
+        if k not in column_fields
+        and k not in review_state_fields
+        and k not in {"agent", "updated_at"}
     }
 
     orm_create_proposal_run(
