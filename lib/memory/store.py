@@ -380,8 +380,16 @@ class SqliteMemoryStore:
         return fixed
 
     def supersede(self, old_id: str, new: MemoryInput) -> str:
+        # A supersede is a refresh, not a re-file: the replacement keeps the
+        # old memory's authoritative topic placement so it stays filed under
+        # the same subsystem node and keeps boosting that topic's recall.
+        # Without this, a refreshed lesson falls off the taxonomy until the
+        # async classifier re-routes it (or forever, if it never runs).
+        inherited = self.authoritative_topics_of(old_id)
         new_id = self.remember(new)
         self.update(old_id, status="retired", superseded_by=new_id)
+        for node_id in inherited:
+            self.link_authoritative_topic(new_id, node_id, source="inherited")
         self.record_validation(old_id, validator="store", action="superseded",
                                note=f"superseded by {new_id}")
         return new_id

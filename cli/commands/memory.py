@@ -818,7 +818,10 @@ def cmd_supersede(
     )
     _reject_titleless_lesson(new.kind, new.title)
     new_id = memory.supersede(old_id, new)
-    print(f"superseded {old_id[:8]} -> {new_id[:8]} (old retired, chained)")
+    inherited = memory.get_store().authoritative_topics_of(new_id)
+    suffix = (f"; inherited topic(s): {', '.join(inherited)}"
+              if inherited else "")
+    print(f"superseded {old_id[:8]} -> {new_id[:8]} (old retired, chained){suffix}")
 
 
 def _print_eval_verdict(v) -> None:

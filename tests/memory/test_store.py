@@ -212,6 +212,27 @@ def test_supersede_retires_and_links():
     assert new in ids and old not in ids
 
 
+def test_supersede_inherits_authoritative_topics():
+    store = memory.get_store()
+    old = _remember("old lesson about the probe cache")
+    store.link_authoritative_topic(old, "session-id-probe", source="manual")
+    new = memory.supersede(old, MemoryInput(
+        body="refreshed lesson about the probe cache", kind="lesson",
+        title="probe cache refreshed", is_test=True))
+    # the replacement is filed under the same node, tagged as inherited
+    assert store.authoritative_topics_of(new) == ["session-id-probe"]
+    # the retired original keeps its link too (audit), it is just hidden
+    assert store.authoritative_topics_of(old) == ["session-id-probe"]
+
+
+def test_supersede_without_topic_links_is_noop_on_topics():
+    store = memory.get_store()
+    old = _remember("old untagged fact zulu")
+    new = memory.supersede(old, MemoryInput(
+        body="new untagged fact zulu", kind="fact", is_test=True))
+    assert store.authoritative_topics_of(new) == []
+
+
 def test_restore_reactivates_superseded_and_makes_recallable():
     old = _remember("old fact about the staging port")
     new = memory.supersede(old, MemoryInput(
