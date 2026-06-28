@@ -631,6 +631,25 @@ _SEVERITY = Literal[
 ]
 
 
+class TraceRetentionConfig(BaseModel):
+    """Opt-in background prune of superseded PENDING placeholder spans.
+
+    `session_spans` is append-only; the live placeholder rows
+    (`lib/trace/pending_spans.py`) are only HIDDEN at read time by
+    `merge_spans`, never deleted, so they grow forever (~9% of the store).
+    When `auto_reap` is on, `regin serve` runs `reap_pending_spans` in a
+    daemon thread every `interval_hours`, deleting only rows merge already
+    hides (the rendered trace is unchanged). Off by default — manual
+    `regin trace reap-pending` is always available.
+
+    `idle_minutes` restricts the sweep to sessions idle at least that long,
+    a belt-and-suspenders guard on top of merge's in-flight protection."""
+
+    auto_reap: bool = False
+    interval_hours: float = 24.0
+    idle_minutes: int = 60
+
+
 class AgentMessagesConfig(BaseModel):
     """The `send_to_user` agent → human channel (inbox + push channels).
 
@@ -943,6 +962,9 @@ class Settings(BaseSettings):
 
     # ── Agent → human messages (send_to_user inbox + webhook) ─
     agent_messages: AgentMessagesConfig = Field(default_factory=AgentMessagesConfig)
+
+    # ── Trace retention (opt-in prune of superseded pending spans) ──
+    trace_retention: TraceRetentionConfig = Field(default_factory=TraceRetentionConfig)
 
     # ── Cross-session agent memory (lib/memory, separate DB) ──
     agent_memory: AgentMemoryConfig = Field(default_factory=AgentMemoryConfig)

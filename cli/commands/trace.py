@@ -727,6 +727,51 @@ def cmd_backfill_costs(
     _print_cost_summary(*span_totals, dry_run)
 
 
+@trace_app.command(
+    "reap-pending",
+    help="Physically delete superseded PENDING placeholder spans that "
+         "merge_spans already hides (the prune path for the append-only store)")
+def cmd_reap_pending(
+    session: str = typer.Option(
+        None, "--session", "-s", help="Limit to one trace_id (default: every "
+        "session with pending placeholders)"),
+    idle_minutes: int = typer.Option(
+        0, "--idle-minutes", help="Only sweep sessions idle at least this long "
+        "(0 = no filter; merge already protects in-flight rows)"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would be deleted without writing"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Confirm a real (non-dry-run) deletion; required to actually write"),
+    limit: int = typer.Option(
+        0, "--limit", help="Stop after this many traces (0 = no limit)"),
+) -> None:
+    """Delete the transient `promptlive-`/`pending-`/`permreq-` rows whose
+    resolved counterpart is already present, so `session_spans` stops growing
+    unbounded. Deletes ONLY rows the serve-time merge already hides, so the
+    rendered trace is unchanged; in-flight placeholders and slash-command
+    expansion sources are preserved. Idempotent — safe to re-run.
+
+    A real deletion requires `--yes`; without it the run is forced to
+    `--dry-run` (report-only). This guard exists because the delete is
+    irreversible and hits the live DB by default — preview first, then
+    confirm."""
+    from lib.trace.reap import reap_pending_spans
+
+    if not dry_run and not yes:
+        print("Refusing to delete without confirmation. Re-run with --dry-run "
+              "to preview, or add --yes to commit the deletion.")
+        dry_run = True
+
+    result = reap_pending_spans(
+        session=session, idle_minutes=idle_minutes or None,
+        dry_run=dry_run, limit=limit)
+    verb = "Would reap" if dry_run else "Reaped"
+    print(f"{verb} {result['rows_reaped']} placeholder span(s) across "
+          f"{result['traces_touched']} of {result['traces_scanned']} "
+          f"scanned trace(s).")
+
+
 def register_trace(app: typer.Typer) -> None:
     """Hook point called from cli/app.py to attach the `trace` subapp."""
     app.add_typer(trace_app)

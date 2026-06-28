@@ -29,6 +29,34 @@ def _start_workflow_watcher(debug: bool) -> None:
     print("  (capturing dynamic-workflow runs into the trace dashboard)")
 
 
+def _start_pending_reaper(debug: bool) -> None:
+    """Start the opt-in superseded-pending-span reaper in a daemon thread.
+
+    Gated on ``settings.trace_retention.auto_reap`` (off by default), so the
+    append-only span store can self-prune the placeholder rows merge already
+    hides. Mirrors the workflow watcher: under the Werkzeug reloader
+    (``--debug``) only the reloaded child runs it, so it isn't started twice.
+    """
+    import os
+    import threading
+
+    cfg = settings.trace_retention
+    if not cfg.auto_reap:
+        return
+    if debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
+    from lib.trace.reap import reap_loop
+
+    threading.Thread(
+        target=reap_loop,
+        kwargs={"interval_hours": cfg.interval_hours,
+                "idle_minutes": cfg.idle_minutes},
+        name="pending-reaper", daemon=True,
+    ).start()
+    print("  (auto-reaping superseded pending spans every "
+          f"{cfg.interval_hours}h)")
+
+
 def cmd_serve(
     host: str = typer.Option(
         "127.0.0.1", "--host",
@@ -45,6 +73,7 @@ def cmd_serve(
     if host == '0.0.0.0':
         print("  (bound to 0.0.0.0 — dashboard is reachable from the network)")
     _start_workflow_watcher(debug)
+    _start_pending_reaper(debug)
     server.run(host=host, port=port, debug=debug)
 
 
