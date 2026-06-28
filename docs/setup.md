@@ -186,7 +186,7 @@ regin skills   <list|check|pull|push|undeploy>
 regin pattern  <promote|import|import-dir|embed|route|enable-rules|rules-doctor>
 regin rules    <check|index|deploy|list-disabled|disable|enable|run|list>
 regin topics   <bootstrap|scan|check|import|install-hook|router-skill|wiki|route|audit|audit-fix>
-regin trace    <backfill-tokens|backfill-active-work|resolve-repos>
+regin trace    <backfill-tokens|resolve-repos|backfill-costs>
 ```
 
 ## Troubleshooting
