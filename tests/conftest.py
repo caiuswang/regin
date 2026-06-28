@@ -179,10 +179,18 @@ def tmp_memory_db(tmp_path, monkeypatch) -> Path:
     is pinned off too so no test makes a live HTTP call to a dev server
     that happens to be on :8321 — its own tests stub `urlopen`."""
     db_path = tmp_path / "memory_test.db"
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "db_path", db_path)
-    monkeypatch.setattr(settings.agent_memory, "dense_enabled", False)
-    monkeypatch.setattr(settings.agent_memory, "inject_dense_via_server", False)
+    from lib.settings import AgentMemoryConfig, settings
+    # Reset the whole block to pristine model defaults rather than mutating the
+    # live instance, so a developer's customized `config/settings.json` (e.g.
+    # `auto_inject: false`, a tuned `recall_min_score`, extra
+    # `inject_skip_commands`) can't leak into tests that read the singleton and
+    # silently turn the recall path off. Then layer the test-only DB + the
+    # dense/server-off pins on top.
+    fresh = AgentMemoryConfig()
+    fresh.db_path = db_path
+    fresh.dense_enabled = False
+    fresh.inject_dense_via_server = False
+    monkeypatch.setattr(settings, "agent_memory", fresh)
 
     import lib.memory as memory
     from lib.memory.engine import dispose_memory_engine
@@ -193,6 +201,26 @@ def tmp_memory_db(tmp_path, monkeypatch) -> Path:
 
     dispose_memory_engine()
     memory.reset_store()
+
+
+@pytest.fixture(autouse=True)
+def _default_feature_config(monkeypatch):
+    """Pin developer-overridable feature blocks to their model defaults so a
+    customized `config/settings.json` can't leak into tests that read the live
+    `settings` singleton. Without this, the suite is only hermetic on a
+    pristine checkout: e.g. `topic_evolution.auto_spawn_agents: true` makes
+    proposal/regenerate tests spawn a real external agent and hang, and
+    `agent_messages` retention overrides skew the settings-API contract tests.
+
+    Resetting to model defaults only ever reproduces pristine-checkout
+    behaviour, so it cannot break a test that passes in CI; a test that needs a
+    non-default value still sets it explicitly (its own monkeypatch wins and
+    reverts first, LIFO)."""
+    from lib.settings import (AgentMessagesConfig, TopicEvolutionConfig,
+                              settings)
+    monkeypatch.setattr(settings, "topic_evolution", TopicEvolutionConfig())
+    monkeypatch.setattr(settings, "agent_messages", AgentMessagesConfig())
+    yield
 
 
 # ── Config isolation ──────────────────────────────────────────
