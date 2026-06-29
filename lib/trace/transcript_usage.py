@@ -702,6 +702,9 @@ class _TranscriptScan:
     # it has a direct isMeta child (its skill expansion), so this gates
     # `command_prompt_uuids` down to genuine prompt-expanding commands.
     meta_expansion_parents: set[str] = field(default_factory=set)
+    # parent uuid → full expansion text captured from isMeta child entries.
+    # Keyed by parent so each slash command's expansion is kept separate.
+    meta_expansion_texts: dict[str, str] = field(default_factory=dict)
     # uuid → ISO timestamp for every entry that has both (positions the
     # `rewind` marker and corroborates fork gaps). Distinct from
     # `prev_entry_timestamp`, which tracks only the latency baseline.
@@ -780,11 +783,19 @@ class _TranscriptScan:
         """Route a user entry to prompt/tool_result handling, and record the
         isMeta-expansion parentage that gates command anchoring (a skill like
         /review emits its expansion as a direct isMeta child of the command
-        echo — display commands / workflow-resume nudges do not)."""
+        echo — display commands / workflow-resume nudges do not). Also capture
+        the full expansion text so it reaches the conversation view."""
         self._note_tool_interrupt(entry_n)
         self._handle_user_message(entry_n)
         if entry_n.get('is_meta') and eparent:
             self.meta_expansion_parents.add(eparent)
+            # Capture the isMeta child's text keyed by parent so expansions
+            # don't cross-wire when multiple slash commands are in one session.
+            msg = _normalize_dict_keys(entry_n.get('message'))
+            content = msg.get('content')
+            text = _user_prompt_text(content)
+            if text:
+                self.meta_expansion_texts[eparent] = text
 
     def _note_tool_interrupt(self, entry_n: dict) -> None:
         """Record the assistant message id when the user interrupted a tool
@@ -1243,7 +1254,7 @@ class _TranscriptScan:
             counted or self.attachments or self.system_events or self.lc_commands
         )
 
-    def _resolve_prompt_anchors(self) -> tuple[set[str], dict[str, str]]:
+    def _resolve_prompt_anchors(self) -> tuple[set[str], dict[str, str], dict[str, str]]:
         """Set each builder's `prompt_uuid` by walking the parentUuid
         chain from its (first) assistant entry back to the nearest
         real-prompt ancestor. Replaces the chronological "last user
@@ -1257,10 +1268,10 @@ class _TranscriptScan:
         resumable rescan calls `finalize` on every poll, so destructively
         narrowing `command_prompt_uuids` or growing `real_prompt_uuids`
         here would corrupt resolution on the next poll. Instead this
-        returns `(command_anchor_uuids, promoted_texts)` for finalize to
-        thread through. `builder.prompt_uuid` is recomputed from scratch
-        each call, so overwriting it is safe — it is derived, not
-        accumulated."""
+        returns `(command_anchor_uuids, promoted_texts, command_expansions)`
+        for finalize to thread through. `builder.prompt_uuid` is recomputed
+        from scratch each call, so overwriting it is safe — it is derived,
+        not accumulated."""
         # Gate command candidates to those with an isMeta expansion child —
         # the skill-command signature. Display/mode commands and
         # workflow-resume nudges lack it, so they stay local-command-only.
@@ -1289,7 +1300,11 @@ class _TranscriptScan:
             builder.prompt_uuid = self._resolve_anchor(
                 builder.uuid, command_anchor_uuids
             )
-        return command_anchor_uuids, self._promoted_anchor_texts(command_anchor_uuids)
+        return (
+            command_anchor_uuids,
+            self._promoted_anchor_texts(command_anchor_uuids),
+            self._command_expansions(command_anchor_uuids, stdout_to_command),
+        )
 
     def _resolve_anchor(
         self, start: str | None, command_anchor_uuids: set[str],
@@ -1344,6 +1359,25 @@ class _TranscriptScan:
             pu = builder.prompt_uuid
             if pu and pu in command_anchor_uuids and pu not in self.prompt_texts:
                 out[pu] = self.command_prompt_texts[pu]
+        return out
+
+    def _command_expansions(
+        self, command_anchor_uuids: set[str], stdout_to_command: dict[str, str],
+    ) -> dict[str, str]:
+        """uuid → expanded prompt text for anchored slash commands.
+
+        Maps the expansion texts (captured from isMeta child entries) to their
+        command uuids, handling the /goal edge case where the expansion's parent
+        is a stdout entry (not directly the command). Returns only expansions
+        for anchors that actually resolved to a turn (same uuid filtering as
+        `_promoted_anchor_texts`), so they stay synchronized."""
+        out: dict[str, str] = {}
+        for expansion_parent_uuid, expansion_text in self.meta_expansion_texts.items():
+            # The expansion's parent is either the command directly, or a
+            # stdout entry whose parent is the command (the /goal bridge case).
+            command_uuid = stdout_to_command.get(expansion_parent_uuid, expansion_parent_uuid)
+            if command_uuid in command_anchor_uuids:
+                out[command_uuid] = expansion_text
         return out
 
     def _tool_use_to_turn_uuid(self) -> dict[str, str]:
@@ -1429,7 +1463,7 @@ class _TranscriptScan:
         counted = self._counted_builders()
         if not self._has_emit_worthy_rows(counted):
             return None
-        command_anchor_uuids, promoted_texts = self._resolve_prompt_anchors()
+        command_anchor_uuids, promoted_texts, command_expansions = self._resolve_prompt_anchors()
         finalized = [_builder_to_turn_usage(b, max_text_bytes) for b in counted]
         anchor_texts = self._anchor_prompt_texts(finalized, promoted_texts)
         anchor_ts, anchor_images = self._anchor_side_tables(anchor_texts)
@@ -1447,6 +1481,7 @@ class _TranscriptScan:
             prompt_texts=anchor_texts,
             prompt_timestamps=anchor_ts,
             prompt_image_parts=anchor_images,
+            prompt_expansions=command_expansions,
             tool_use_to_turn_uuid=self._tool_use_to_turn_uuid(),
             rewinds=self._compute_rewinds(),
         )

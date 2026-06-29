@@ -249,6 +249,7 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
+        _attach_prompt_expansions(trace_id, widened)
         tree = _build_span_tree(widened)
         return widened, tree
     finally:
@@ -972,6 +973,50 @@ def _attach_subagent_impact(spans: list[dict]) -> None:
         impact = agents[0].get('input_tokens')
         if impact:
             starts[0].setdefault('attributes', {})['main_session_impact_tokens'] = int(impact)
+
+
+def _attach_prompt_expansions(trace_id: str, spans: list[dict]) -> None:
+    """Attach expanded_text to prompt spans from the transcript scan.
+
+    Slash-command prompts (e.g. /review) have a bare command in the text
+    attribute but carry a full expansion in the isMeta child entry of the
+    transcript. This function reads the transcript, extracts the expansions,
+    and attaches them as `expanded_text` attributes on the matching prompts
+    so the frontend can show both the concise label and the full expansion.
+
+    Pure serve-time derivation; mutates the shared `attributes` dicts in
+    place. No DB schema change needed."""
+    from lib.orm.engine import get_connection as _get_connection
+    from lib.settings import settings
+    from pathlib import Path
+
+    # Get the transcript path for this session
+    if not hasattr(settings, 'transcript_dir'):
+        return
+    transcript_path = Path(settings.transcript_dir) / f'{trace_id}.jsonl'
+    if not transcript_path.exists():
+        return
+
+    # Read the transcript and extract prompt_expansions
+    try:
+        from lib.trace.transcript_usage import read_usage
+        usage = read_usage(str(transcript_path), max_text_bytes=None)
+        if not usage or not usage.prompt_expansions:
+            return
+    except Exception:
+        # If transcript parsing fails, just skip attachment
+        return
+
+    # Attach expanded_text to matching prompt spans
+    by_id = {s['span_id']: s for s in spans}
+    for prompt_uuid, expansion_text in usage.prompt_expansions.items():
+        # The span_id format for transcript-derived prompts is `prompt-<uuid[:13]>`
+        span_id_key = f'prompt-{prompt_uuid[:13]}'
+        span = by_id.get(span_id_key)
+        if span and span.get('name') == 'prompt':
+            attrs = span.setdefault('attributes', {})
+            if isinstance(attrs, dict):
+                attrs['expanded_text'] = expansion_text
 
 
 # Span names that are structural scaffolding (prompt boundaries,

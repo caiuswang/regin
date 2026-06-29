@@ -750,6 +750,7 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
             d['attributes'] = {}
         spans.append(d)
     grafted = merge_spans(spans)
+    _attach_prompt_expansions(trace_id, grafted)
     for s in grafted:
         kept = _kept_map_attrs(s.get('attributes'))
         s.pop('attributes', None)

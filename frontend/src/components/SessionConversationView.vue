@@ -452,7 +452,7 @@ function toolChipsForEntry(entry) {
               class="max-h-[60vh] overflow-y-auto rounded border border-purple-200/70 bg-white/40 px-2 py-1"
             >
               <PromptBody
-                :text="entry.prompt.attributes.text"
+                :text="entry.prompt.attributes.expanded_text || entry.prompt.attributes.text"
                 :trace-id="traceId"
                 :span-id="entry.prompt.span_id"
                 :image-indices="entry.prompt.attributes?.image_indices || []"

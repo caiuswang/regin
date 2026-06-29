@@ -710,7 +710,7 @@ const PROMPT_PREVIEW_MAX_CHARS = 1800
 const PROMPT_PREVIEW_MAX_LINES = 16
 
 export function promptPreviewText(prompt) {
-  const text = prompt?.attributes?.text || ''
+  const text = prompt?.attributes?.expanded_text || prompt?.attributes?.text || ''
   if (!text) return ''
   let preview = text
   if (preview.length > PROMPT_PREVIEW_MAX_CHARS) {

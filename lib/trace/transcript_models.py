@@ -257,6 +257,11 @@ class TranscriptUsage:
     # anchor when Claude Code's per-session image cache is already gone
     # (e.g. post-session repair). Same anchor-only keying as prompt_texts.
     prompt_image_parts: dict[str, list] = field(default_factory=dict)
+    # uuid → expanded prompt text for slash-command anchors (e.g. /review
+    # expands to a full system prompt). The full expansion is captured from
+    # the isMeta child entry; keyed by command uuid so multiple slash commands
+    # in one session don't cross-wire. Same anchor-only keying as prompt_texts.
+    prompt_expansions: dict[str, str] = field(default_factory=dict)
     # tool_use id → the uuid of the assistant turn that issued it, derived
     # from the transcript's parentUuid graph. Lets the live tool-span
     # parent backfill (turn_trace) set `parent_id = resp-<turn_uuid>`
