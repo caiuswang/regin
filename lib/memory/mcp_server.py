@@ -254,5 +254,53 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "") -> str:
     return f"{node_id} · {label}\n\n" + "\n\n".join(sections)
 
 
+@mcp.tool()
+def gate(name: str, session_id: str) -> str:
+    """PASS/FAIL a trace-derived span gate for a session (the MCP-native form
+    of `regin gate <name> --session <id>`).
+
+    A gate turns an *unenforced* skill step into a checkable invariant: the
+    step's tool leaves spans, and the gate asserts they exist for the session.
+    `recall-ran` is goal-verified-treenav's anti-skip (did the memory-tree-nav
+    recall arm fire?); `task-recall-ran` is goal-verified's.
+
+    `session_id` is REQUIRED and must be the *caller's* session id (read it from
+    `$CLAUDE_CODE_SESSION_ID`). This server is shared and long-lived, so its own
+    environment holds the session id of whichever session first spawned it — not
+    the caller's — which is why the gate cannot infer the session itself.
+
+    Args:
+        name: Gate key, e.g. "recall-ran" or "task-recall-ran".
+        session_id: The caller's Claude Code session/trace id.
+
+    Returns:
+        "<gate description> spans this session: N" plus a PASS/FAIL verdict
+        line, mirroring the `regin gate` CLI.
+    """
+    from lib.trace.span_gates import GATES, span_count
+
+    spec = GATES.get(name)
+    if spec is None:
+        return f"unknown gate {name!r} — valid gates: {', '.join(sorted(GATES))}"
+    if not session_id:
+        return (
+            "session_id is required — pass your $CLAUDE_CODE_SESSION_ID. This "
+            "shared memory server cannot infer the caller's session (its own "
+            "environment holds the spawner session's id, not yours)."
+        )
+
+    n = span_count(session_id, spec)
+    passed = n > 0
+
+    from lib.activity_log import get_activity_logger
+    get_activity_logger("gate").read(
+        "gate_checked", gate=name, session=session_id, spans=n, passed=passed)
+
+    verdict = ("GATE PASS — arm ran" if passed else
+               "GATE FAIL — no spans for this gate; you skipped the step. "
+               "Go back and run it.")
+    return f"{spec.describe} spans this session: {n}\n{verdict}"
+
+
 if __name__ == "__main__":
     mcp.run()
