@@ -16,6 +16,7 @@ minimal symmetric embedder still satisfies the port.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
@@ -86,7 +87,13 @@ class ExternalAgentLLM:
             return None
         return next(iter(agents.values()))
 
-    def complete(self, prompt: str, *, max_tokens: int = 1024) -> "str | None":
+    def complete(
+        self, prompt: str, *, max_tokens: int = 1024,
+        cwd: "str | Path | None" = None,
+    ) -> "str | None":
+        """`cwd` is the caller's target repo (e.g. a proposal reviewer's
+        `repo_path`) — used only when the agent config has no explicit `cwd`
+        override, which otherwise always wins."""
         agent = self._agent()
         if agent is None:
             return None
@@ -96,7 +103,10 @@ class ExternalAgentLLM:
                 input=prompt.encode("utf-8"),
                 capture_output=True,
                 timeout=agent.timeout_seconds,
-                cwd=str(agent.cwd) if agent.cwd else None,
+                cwd=(
+                    str(agent.cwd.expanduser()) if agent.cwd
+                    else (str(cwd) if cwd else None)
+                ),
             )
         except (OSError, subprocess.SubprocessError):
             log.error("llm_adapter_failed", exc_info=True)

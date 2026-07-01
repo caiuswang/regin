@@ -33,14 +33,14 @@ class _StubLLM:
     def __init__(self, answer):
         self._answer = answer
 
-    def complete(self, prompt, *, max_tokens=1024):
-        del prompt, max_tokens
+    def complete(self, prompt, *, max_tokens=1024, cwd=None):
+        del prompt, max_tokens, cwd
         return self._answer
 
 
 class _RaisingLLM:
-    def complete(self, prompt, *, max_tokens=1024):
-        del prompt, max_tokens
+    def complete(self, prompt, *, max_tokens=1024, cwd=None):
+        del prompt, max_tokens, cwd
         raise RuntimeError("boom")
 
 
@@ -98,6 +98,24 @@ def test_generate_review_note_creates_agent_thread(fake_git_repo):
     assert thread["metadata"]["recommendation"] == "REGENERATE"
     # Persisted: exactly one review_note thread on the run.
     assert len(_review_notes(fake_git_repo, pid)) == 1
+
+
+def test_generate_review_note_passes_repo_path_as_cwd(fake_git_repo):
+    """The reviewer must inspect the proposal's own repo, not wherever the
+    host process happens to be running from (regression: it used to default
+    to `cwd=None`, so a proposal for another repo got reviewed against the
+    wrong tree)."""
+    pid = _make_proposal(fake_git_repo)
+    seen = {}
+
+    class _SpyLLM:
+        def complete(self, prompt, *, max_tokens=1024, cwd=None):
+            del prompt, max_tokens
+            seen["cwd"] = cwd
+            return "RECOMMENDATION: ACCEPT"
+
+    generate_review_note(fake_git_repo, pid, llm=_SpyLLM())
+    assert seen["cwd"] == fake_git_repo
 
 
 def test_generate_review_note_none_when_llm_silent(fake_git_repo):

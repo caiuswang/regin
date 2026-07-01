@@ -38,18 +38,27 @@ def spy(monkeypatch):
 
 
 class _StubReviewer:
-    """Stub the agentic materiality triage LLM with a fixed answer."""
+    """Stub the agentic materiality triage LLM with a fixed answer. Records
+    every `cwd` it was called with, so tests can assert the triage call was
+    scoped to the target repo, not left to inherit the host process's cwd."""
 
     def __init__(self, answer):
         self._answer = answer
+        self.seen_cwds: list = []
 
-    def complete(self, prompt, *, max_tokens=1024):
+    def complete(self, prompt, *, max_tokens=1024, cwd=None):
+        del prompt, max_tokens
+        self.seen_cwds.append(cwd)
         return self._answer
 
 
-def _set_triage(monkeypatch, answer):
+def _set_triage(monkeypatch, answer) -> _StubReviewer:
+    """Install (and return) a single shared stub instance, so callers can
+    inspect `.seen_cwds` after the code under test runs."""
+    reviewer = _StubReviewer(answer)
     monkeypatch.setattr("lib.memory.adapters.resolve_proposal_reviewer",
-                        lambda: _StubReviewer(answer))
+                        lambda: reviewer)
+    return reviewer
 
 
 def _configure(monkeypatch, *, spawn: bool, configured: bool):
@@ -182,6 +191,24 @@ def test_triage_trivial_dismisses_without_spawn(fake_git_repo, monkeypatch, spy)
     assert maybe_spawn_refresh_agents(repo) == 0
     assert spy == []
     assert load_proposal(repo, "content-drift-t1")["status"] != "pending_review"
+
+
+def test_triage_passes_repo_path_as_cwd(fake_git_repo, monkeypatch, spy):
+    """The materiality triage must inspect the proposal's own repo, not
+    wherever the host process happens to be running from (regression: it
+    used to default to `cwd=None`, so a drift triage for another repo got
+    judged against the wrong tree)."""
+    _configure(monkeypatch, spawn=True, configured=True)
+    reviewer = _set_triage(monkeypatch, "Only whitespace moved.\nVERDICT: TRIVIAL")
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _write_wiki(repo, "t1")
+    emit_refresh_proposal(repo, "t1", ["a.py"])
+
+    maybe_spawn_refresh_agents(repo)
+
+    assert reviewer.seen_cwds == [repo]
 
 
 def test_triage_material_spawns(fake_git_repo, monkeypatch, spy):

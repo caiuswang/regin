@@ -212,7 +212,7 @@ def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:
         if inputs is None:
             return True
         answer = resolve_proposal_reviewer().complete(
-            _triage_prompt(*inputs), max_tokens=512)
+            _triage_prompt(*inputs), max_tokens=512, cwd=repo_path)
         if not answer or not str(answer).strip():
             return True  # no agent / empty → fail open (spawn)
         match = _TRIAGE_RE.search(str(answer))

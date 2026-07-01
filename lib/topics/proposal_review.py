@@ -128,7 +128,9 @@ def generate_review_note(
     if llm is None:
         from lib.memory.adapters import resolve_proposal_reviewer
         llm = resolve_proposal_reviewer()
-    answer = llm.complete(_build_prompt(proposal, open_feedback), max_tokens=1024)
+    answer = llm.complete(
+        _build_prompt(proposal, open_feedback), max_tokens=1024, cwd=repo_path,
+    )
     if not answer or not str(answer).strip():
         log.write("proposal_review_note_skipped", proposal_id=proposal_id,
                   reason="no_llm_output", repo_path=str(repo_path))
