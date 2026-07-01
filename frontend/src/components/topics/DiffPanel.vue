@@ -16,6 +16,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import api from '../../api'
+import { defaultApplyOptions, initialApplyStrategy, proposalTopicPath } from '../../utils/proposalApply'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Select from '../ui/Select.vue'
@@ -33,11 +34,7 @@ const emit = defineEmits(['applied', 'cancelled'])
 
 const strategy = ref('create')
 const targetTopicId = ref('')
-const options = ref({
-  prune_orphan_edges: true,
-  drop_dead_refs: false,
-  dedupe_aliases: false,
-})
+const options = ref(defaultApplyOptions())
 
 const diff = ref(null)
 const droppedItems = ref(null)
@@ -79,7 +76,7 @@ async function fetchDiff() {
   loadingDiff.value = true
   error.value = ''
   try {
-    const url = `/repos/${props.repoName}/topics/proposals/${props.proposalId}/topics/${props.topic.id}/diff`
+    const url = proposalTopicPath(props.repoName, props.proposalId, props.topic.id, 'diff')
     const body = {
       strategy: strategy.value,
       target_topic_id: strategy.value === 'merge' ? targetTopicId.value || null : null,
@@ -121,15 +118,13 @@ watch(
 onMounted(() => {
   // Pick the most natural starting strategy: if the topic id collides
   // with an approved one, default to replace; otherwise create.
-  if (props.approvedTopicIds.includes(props.topic.id)) {
-    strategy.value = 'replace'
-  }
+  strategy.value = initialApplyStrategy(props.topic.id, props.approvedTopicIds)
   fetchDiff()
 })
 
 watch(mergeDisabled, (disabled) => {
   if (disabled && strategy.value === 'merge') {
-    strategy.value = props.approvedTopicIds.includes(props.topic.id) ? 'replace' : 'create'
+    strategy.value = initialApplyStrategy(props.topic.id, props.approvedTopicIds)
   }
 })
 
@@ -139,7 +134,7 @@ async function apply() {
   applying.value = true
   error.value = ''
   try {
-    const url = `/repos/${props.repoName}/topics/proposals/${props.proposalId}/topics/${props.topic.id}/apply`
+    const url = proposalTopicPath(props.repoName, props.proposalId, props.topic.id, 'apply')
     const body = {
       strategy: strategy.value,
       target_topic_id: strategy.value === 'merge' ? targetTopicId.value || null : null,

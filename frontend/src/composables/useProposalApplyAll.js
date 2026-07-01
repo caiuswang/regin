@@ -1,4 +1,10 @@
 import api from '../api'
+import {
+  defaultApplyOptions,
+  initialApplyStrategy,
+  isPendingTopic,
+  proposalTopicPath,
+} from '../utils/proposalApply'
 
 // Bulk-apply every pending draft topic in a proposal.
 //
@@ -21,24 +27,19 @@ export function useProposalApplyAll(props, {
   onDone,
   resetApplying,
 }) {
-  // A draft topic still needs applying unless accepted / merged / ignored —
-  // same rule the per-topic Apply button uses.
-  const isPending = (t) => !t.review_status || t.review_status === 'pending'
-
-  // Strategy auto-picks replace-vs-create the way DiffPanel does on mount;
-  // merge needs a human-chosen target so it's never auto-selected (such a
-  // topic stays pending for a manual Apply).
+  // Strategy auto-picks replace-vs-create (shared with DiffPanel); merge needs
+  // a human-chosen target so it's never auto-selected — such a topic stays
+  // pending for a manual Apply.
   async function applyOneTopic(topic) {
-    const strategy = (props.approvedTopicIds || []).includes(topic.id) ? 'replace' : 'create'
-    const url = `/repos/${props.repo}/topics/proposals/${selectedProposalId.value}/topics/${topic.id}/apply`
+    const url = proposalTopicPath(props.repo, selectedProposalId.value, topic.id, 'apply')
     // Swallow both a soft failure ({ok:false}) and a hard network reject so a
     // single bad apply can't abort the rest of the batch — every topic is
     // attempted and every failure is counted.
     try {
       const res = await api.post(url, {
-        strategy,
+        strategy: initialApplyStrategy(topic.id, props.approvedTopicIds),
         target_topic_id: null,
-        options: { prune_orphan_edges: true, drop_dead_refs: false, dedupe_aliases: false },
+        options: defaultApplyOptions(),
       })
       return { ok: Boolean(res?.ok) }
     } catch {
@@ -53,7 +54,7 @@ export function useProposalApplyAll(props, {
   async function applyAll() {
     const proposalId = selectedProposalId.value
     if (!proposalId || !proposalReadyToApply.value || !selectedRevisionIsLatest.value) return
-    const pending = (props.data?.draft_topics || []).filter(isPending)
+    const pending = (props.data?.draft_topics || []).filter(isPendingTopic)
     if (!pending.length) return
     const ok = await askConfirm(
       'Apply all draft topics',

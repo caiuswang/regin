@@ -1,5 +1,7 @@
 <script setup>
 import { computed } from 'vue'
+import { topicReviewStatusColor } from '../../composables/useBadgeColor'
+import { isPendingTopic } from '../../utils/proposalApply'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
@@ -15,17 +17,7 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'apply-all'])
 
-// A topic still needs applying when it hasn't been accepted / merged /
-// ignored — mirrors the per-topic Apply button's visibility rule.
-const pendingCount = computed(() =>
-  props.draftTopics.filter((t) => !t.review_status || t.review_status === 'pending').length,
-)
-
-function reviewStatusColor(status) {
-  if (status === 'accepted' || status === 'merged') return 'green'
-  if (status === 'ignored') return 'gray'
-  return 'blue'
-}
+const pendingCount = computed(() => props.draftTopics.filter(isPendingTopic).length)
 </script>
 
 <template>
@@ -71,7 +63,7 @@ function reviewStatusColor(status) {
               <div class="topics-row-meta line-clamp-2">{{ topic.intent_preview }}</div>
             </button>
           </td>
-          <td><Badge :color="reviewStatusColor(topic.review_status)" :label="topic.review_status" /></td>
+          <td><Badge :color="topicReviewStatusColor(topic.review_status)" :label="topic.review_status" /></td>
           <td class="text-right">{{ topic.evidence_count }}</td>
           <td class="text-right">{{ topic.proposed_ref_count }}</td>
           <td class="text-right">{{ topic.feedback_thread_count || 0 }}</td>
