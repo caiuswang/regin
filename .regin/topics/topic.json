@@ -99,6 +99,7 @@
         "regin_memory.db design",
         "remember recall reflect facade"
       ],
+      "blurb": "Start here before touching memory: the facade, ports/adapters seam, scoping, the self-initializing DB, and the tables.",
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_store.py tests/memory/test_capture.py"
       ],
@@ -116,6 +117,10 @@
           "type": "related"
         },
         {
+          "target": "memory-curation-surfaces",
+          "type": "related"
+        },
+        {
           "target": "session-trace-design",
           "type": "related"
         },
@@ -130,7 +135,7 @@
       "include_globs": [
         "lib/memory/**"
       ],
-      "intent": "Orient a future agent in regin's cross-session memory subsystem before touching any of it: the thin module-verb facade in `__init__.py` (`remember`/`recall`/`reflect`/`get`/`update`/`forget`/`supersede`/`stats`), the four ports in `ports.py` (`EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`) that every concrete provider is injected behind so no module under `lib/memory/` imports a concrete service, the edge adapters in `adapters.py` (`SkillRouterEmbedding` bi-encoder+cross-encoder, `ExternalAgentLLM`/`resolve_distiller`), and the `scoping.py` policy layer that stamps `global` / `repo:<name>` onto writes and recall. The single mutable `memories` table carries both tiers (`working`/`episodic`) via a `tier` column with its side tables (`memory_embeddings`, `memory_validations`, `injection_events`, `memory_edges`, `memory_topics`, `memory_authoritative_topics`, `memory_exemplars`/`topic_exemplars`, `topic_injections`/`topic_route_decisions`, `referent_session_df`); `models.py` declares its own `MetaData` so `regin init`/`rebuild` and Alembic never see memory tables, and `engine.py` is a self-initializing third engine (`db/regin_memory.db`) that runs `create_all` plus FTS5 DDL and idempotent rename/column migrations on first checkout.",
+      "intent": "Orient a future agent in regin's cross-session memory subsystem before touching any of it. `__init__.py` is a thin module-verb facade (`remember`/`recall`/`reflect`/`get`/`update`/`forget`/`supersede`/`restore`/`stats` plus `export_memory_tree`/`import_memory_tree`), delegating to a process-wide `SqliteMemoryStore` built with a `SkillRouterEmbedding`. `ports.py` declares the four decoupling interfaces the engine depends on and nothing else \u2014 `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink` \u2014 each documented to degrade gracefully (no embedder \u2192 FTS-only recall; no LLM \u2192 deterministic reflect/distill heuristics; no sink \u2192 no export); concrete providers live in `adapters.py` at the edge. `scoping.py` stamps `global` / `repo:<name>` onto writes and recall, values the engine only equality-filters. The single mutable `memories` table carries both tiers via a `tier` column (`working`/`episodic`, default `working`) alongside importance, veracity, recall_count, provenance (`source_trace_id`/`source_span_id`/`source_agent_id`) and lifecycle stamps; its side tables are `memory_embeddings`, `memory_validations`, `injection_events`, `topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`, `memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`, and `topic_exemplars`. `models.py` declares its own `memory_metadata`, so `regin init`/`rebuild` and Alembic never see memory tables; `engine.py` is a self-initializing third engine (reusing `lib/orm/engine._build_engine`) on `db/regin_memory.db` that runs `create_all` plus FTS5 + index DDL and idempotent rename/column migrations on first checkout. `mcp_server.py` is the long-lived MCP entrypoint (recall + tree navigation + span gate).",
       "label": "Agent memory architecture (ports/adapters engine, self-initializing DB, tiers & lifecycle model)",
       "parent_id": "agent-memory",
       "refs": [
@@ -143,6 +148,10 @@
           "role": "architecture"
         },
         {
+          "path": "lib/memory/engine.py",
+          "role": "implementation"
+        },
+        {
           "path": "lib/memory/models.py",
           "role": "schema"
         },
@@ -151,48 +160,16 @@
           "role": "implementation"
         },
         {
-          "path": "lib/memory/engine.py",
-          "role": "implementation"
-        },
-        {
           "path": "lib/memory/scoping.py",
           "role": "config"
         },
         {
-          "path": "lib/memory/distill.py"
+          "path": "lib/memory/mcp_server.py",
+          "role": "entrypoint"
         },
         {
-          "path": "lib/memory/evaluate.py"
-        },
-        {
-          "path": "lib/memory/expand.py"
-        },
-        {
-          "path": "lib/memory/feedback.py"
-        },
-        {
-          "path": "lib/memory/mcp_server.py"
-        },
-        {
-          "path": "lib/memory/reflect.py"
-        },
-        {
-          "path": "lib/memory/skill_consolidate.py"
-        },
-        {
-          "path": "lib/memory/skill_experience.py"
-        },
-        {
-          "path": "lib/memory/store.py"
-        },
-        {
-          "path": "lib/memory/topic_attach.py"
-        },
-        {
-          "path": "lib/memory/topic_cascade.py"
-        },
-        {
-          "path": "lib/memory/topic_classify.py"
+          "path": "ARCHITECTURE.md",
+          "role": "architecture"
         }
       ],
       "status": "active"
@@ -463,8 +440,9 @@
         "speculative inject without reinforcement",
         "same-session injection dedup"
       ],
+      "blurb": "How lessons reach the prompt: the UserPromptSubmit hook, the loopback recall borrow, and the long-lived recall/tree-nav MCP server.",
       "commands": [
-        ".venv/bin/python -m pytest tests/memory/test_recall_handler.py tests/memory/test_api.py"
+        ".venv/bin/python -m pytest tests/memory/test_recall_handler.py tests/memory/test_api.py tests/memory/test_mcp_gate.py"
       ],
       "edges": [
         {
@@ -476,19 +454,15 @@
           "type": "related"
         },
         {
+          "target": "memory-topic-route-feedback",
+          "type": "related"
+        },
+        {
           "target": "session-trace-design",
           "type": "related"
         },
         {
           "target": "topic-routing",
-          "type": "related"
-        },
-        {
-          "target": "memory-topic-route-feedback",
-          "type": "related"
-        },
-        {
-          "target": "hooks-injection",
           "type": "related"
         }
       ],
@@ -497,17 +471,21 @@
         "hook_manager/handlers/memory_recall.py",
         "lib/memory/mcp_server.py"
       ],
-      "intent": "Show how recalled memories actually reach an agent and why the delivery path is shaped the way it is: the `UserPromptSubmit` handler (`hook_manager/handlers/memory_recall.py`) is a fresh short-lived process per prompt, so it borrows the warm `regin serve` embedder via a loopback-auth-exempt POST to `/api/memory/recall` (`_recall_via_server`) and cleanly falls back to in-process FTS-only (`_recall_fts`); speculative inject never reinforces (overlap-gated and same-session deduped via `injection_events`, recorded by `record_injections`) except for the earned `reinforce_resurfaced`; each inject (and the routed `<topic_context>` banner) is recorded so the feedback loops can later judge it; and the long-lived `recall` MCP server (`mcp_server.py`) is the deliberate deeper-pull path. Also covers the `memory.recall` span (`_emit_recall_span`) emitted into the trace so a reviewer can see exactly what was fed to each prompt.",
+      "intent": "Show how recalled memories actually reach an agent and why the delivery path is shaped the way it is. The `UserPromptSubmit` handler (`hook_manager/handlers/memory_recall.py`) is a fresh short-lived process per prompt, so it borrows the warm `regin serve` embedder via a loopback-auth-exempt POST to `/api/memory/recall` (`_recall_via_server`) and cleanly falls back to in-process FTS-only (`_recall_fts`); it also routes the prompt to an authoritative topic (`_route_topic`) and can withhold a `<topic_context>` banner it deems suppressed. Speculative injection never reinforces \u2014 it is overlap-gated, uncalibrated-capped, and same-session deduped via `injection_events` (`record_injections`) \u2014 except for the earned `reinforce_resurfaced`; each inject and each routed banner (`record_topic_injection`) is recorded so the feedback loops can later judge it, and `_emit_recall_span` writes a `memory.recall` span into the trace so a reviewer sees exactly what was fed to each prompt. The long-lived `recall` MCP server (`lib/memory/mcp_server.py`) is the deliberate deeper-pull path: it exposes `recall` for mid-task pulls, the coarse-to-fine topic-tree navigation tools `index_root` / `index_expand` / `index_fetch` (which return addresses \u2014 wiki path, source refs, importance-ranked memory titles \u2014 not bodies, so navigation stays cheap), and a `gate` tool that PASS/FAILs trace-derived span gates (e.g. `recall-ran`) for a caller-supplied session id. Regin imports stay lazy inside each tool call so server startup and tool listing survive a DB hiccup.",
       "label": "Memory auto-injection & on-demand recall (UserPromptSubmit hook, recall MCP server, /api/memory/recall)",
       "parent_id": "agent-memory",
       "refs": [
+        {
+          "path": "hook_manager/handlers/memory_recall.py",
+          "role": "implementation"
+        },
         {
           "path": "lib/memory/mcp_server.py",
           "role": "entrypoint"
         },
         {
-          "path": "hook_manager/handlers/memory_recall.py",
-          "role": "implementation"
+          "path": "web/blueprints/memory.py",
+          "role": "api"
         }
       ],
       "status": "active"
@@ -520,6 +498,7 @@
         "associative memory edge graph",
         "attach synthesis cluster to topic graph"
       ],
+      "blurb": "The offline sleep cycle: how working rows are deduped, promoted, decayed, synthesized, and retired.",
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_reflect.py tests/memory/test_graph.py"
       ],
@@ -546,7 +525,7 @@
         "lib/memory/reflect.py",
         "lib/memory/topic_attach.py"
       ],
-      "intent": "Explain `reflect()` \u2014 the batch consolidation cycle that turns raw `working` rows into curated `episodic` knowledge \u2014 step by ordered step: near-duplicate dedup (`_dedup_and_judge`, embedding cosine or text-ratio fallback), LLM-judged contradiction in the similarity gray zone, working\u2192episodic promotion with `recall_count`-driven importance, a pre-decay engagement densifying sweep (`_score_pending` calling `feedback.rebuild_session_referent_df` + `score_pending_sessions`), importance decay for chronically-ignored rows whose gate reads the soft-vs-hard engagement bits (`_decay_chronically_ignored`/`_engagement_spare`), LLM synthesis of higher-order rules from cosine clusters (`_synthesize`), content-hash-skipped embedding (`_embed_episodic`), forget-stale retirement of never-recalled aged rows, and optional filesystem stale-ref flagging. Also covers the by-products: the undirected `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved `.regin/topics` graph.",
+      "intent": "Explain `reflect()` \u2014 the batch consolidation cycle that turns raw `working` rows into curated `episodic` knowledge \u2014 step by ordered step: near-duplicate dedup (`_dedup_and_judge`, embedding cosine or text-ratio fallback), LLM-judged contradiction in the similarity gray zone, working\u2192episodic promotion with `recall_count`-driven importance (`_promote`), a pre-decay engagement densifying sweep (`_score_pending` calling `feedback.rebuild_session_referent_df` + `score_pending_sessions`), importance decay for chronically-ignored rows whose gate reads the soft-vs-hard engagement bits (`_decay_chronically_ignored`/`_decay_spared`), LLM synthesis of higher-order rules from cosine clusters (`_synthesize`/`_synthesis_clusters`/`_write_synthesis`), content-hash-skipped embedding (`_embed_episodic`), and forget-stale retirement of never-recalled aged rows (`_forget_stale`). Also covers the by-products: the undirected `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, an optional synthesized digest (`_synthesize_digest`), and `topic_attach.py` proposing merge/create onto the human-approved `.regin/topics` graph.",
       "label": "Memory consolidation (reflect: dedup, contradiction, promote, synthesize, forget-stale, decay, edges & topics)",
       "parent_id": "agent-memory",
       "refs": [
@@ -570,7 +549,7 @@
         "browse the memory taxonomy tree",
         "file a memory under a topic node"
       ],
-      "blurb": "Curate the memory store by hand: approve/retire/restore/forget memories, run reflect, file memories under topics, walk the taxonomy tree, stamp topic-route exemplars, decide topic suppression, and probe recall.",
+      "blurb": "Curate the memory store by hand: approve/retire/restore/forget memories, run reflect, file memories under topics, walk the taxonomy tree, stamp topic-route exemplars, decide topic suppression, share a memory tree over git, and probe recall.",
       "commands": [
         ".venv/bin/python cli/regin.py memory list",
         ".venv/bin/python cli/regin.py memory stats",
@@ -613,7 +592,7 @@
         "frontend/src/components/memory/**",
         "cli/commands/memory.py"
       ],
-      "intent": "Point an agent at the human-facing controls for curating the cross-session memory store \u2014 the curation that is the whole point of memory being mutable. Covers the `/api/memory/*` Flask blueprint (`web/blueprints/memory.py`), the four-tab `MemoryView.vue` dashboard with its `frontend/src/components/memory/*` panels, and the `regin memory` Typer CLI (`cli/commands/memory.py`). These are the three coordinated entry points that wrap the `lib.memory` facade for reviewing distill proposals, fixing a memory's veracity, filing memories under topic nodes, walking the topic taxonomy, hand-curating signed topic-route exemplars, deciding which topic banners get withheld, and probing what a query would surface.",
+      "intent": "Point an agent at the human-facing controls for curating the cross-session memory store \u2014 the curation that is the whole point of memory being mutable. Covers the `/api/memory/*` Flask blueprint (`web/blueprints/memory.py`), the four-tab `MemoryView.vue` dashboard with its `frontend/src/components/memory/*` panels, and the `regin memory` Typer CLI (`cli/commands/memory.py`). These are the three coordinated entry points that wrap the `lib.memory` facade for reviewing distill proposals, fixing a memory's veracity, filing memories under topic nodes, walking the topic taxonomy, hand-curating signed topic-route exemplars, deciding which topic banners get withheld, sharing a memory tree over git, and probing what a query would surface.",
       "label": "Memory curation surfaces (Memory view, /api/memory/* blueprint, regin memory CLI)",
       "parent_id": "agent-memory",
       "refs": [
@@ -638,6 +617,10 @@
           "role": "implementation"
         },
         {
+          "path": "frontend/src/components/memory/TaxonomyDetail.vue",
+          "role": "implementation"
+        },
+        {
           "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
           "role": "implementation"
         },
@@ -656,6 +639,7 @@
         "proposed vs auto-approved memory gate",
         "distill self-scored importance band"
       ],
+      "blurb": "Where memories come from: the explicit lesson tee and the agentic post-session distiller with its importance gate.",
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_distill.py tests/memory/test_capture.py"
       ],
@@ -681,12 +665,16 @@
       "include_globs": [
         "lib/memory/distill.py"
       ],
-      "intent": "Explain the two ways a memory is born and why distillation is LLM-only by contract: the explicit path (`send_to_user(type=lesson)` teed into the store by `post_tool_trace._remember_lesson` with span/agent/scope provenance, honoring a `supersedes` id), and the implicit agentic distiller (`distill.py::distill_session`) that reads a finished session's trace, is handed only the high-signal hints (`_grade_digest` grader findings + `_signal_digest` failure\u2192fix / pushback chains) plus the read-only trace dump/span commands and self-fetches just the spans it needs so prompt size stays constant. Covers the self-scored importance band (`_finalize_status`: drop below `distill_min_importance`, auto-approve at/above `auto_approve_importance`, else queue as `proposed`), dedup-at-write reinforcement (`_dedup_candidate`/`_reinforce_existing`), and at-write contradiction supersede (`_supersede_candidate`, gated by `distill_supersede_on_conflict`) \u2014 the curation gate that keeps the store from filling with session-narrating noise.",
+      "intent": "Explain the two ways a memory is born and why distillation is LLM-only by contract: the explicit path (`send_to_user(type=lesson)` teed into the store by `post_tool_trace._remember_lesson` with span/agent/scope provenance, honoring a `supersedes` id), and the implicit agentic distiller (`distill.py::distill_session`) that reads a finished session's trace, is handed only the high-signal hints (`_grade_digest` grader findings + `_signal_digest` failure\u2192fix / pushback chains) plus read-only trace dump/span commands and self-fetches just the spans it needs so prompt size stays constant. Covers the self-scored importance band (`_finalize_status`: drop below `distill_min_importance`, auto-approve at/above `auto_approve_importance`, else queue as `proposed`), dedup-at-write reinforcement (`_dedup_candidate`), and at-write contradiction supersede (`_supersede_candidate`, gated by `distill_supersede_on_conflict`) \u2014 the curation gate that keeps the store from filling with session-narrating noise.",
       "label": "Memory capture & distillation (send_to_user lesson tee + agentic post-session distiller)",
       "parent_id": "agent-memory",
       "refs": [
         {
           "path": "lib/memory/distill.py",
+          "role": "implementation"
+        },
+        {
+          "path": "hook_manager/handlers/post_tool_trace.py",
           "role": "implementation"
         }
       ],
@@ -700,6 +688,7 @@
         "soft vs hard ignore decay signal",
         "session document-frequency weighting"
       ],
+      "blurb": "The did-it-help verdict: referents in later spans, idf-weighted, stamped onto injection events for the decay gate.",
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_feedback.py"
       ],
@@ -719,23 +708,23 @@
         {
           "target": "memory-exemplar-rescore",
           "type": "related"
-        },
-        {
-          "target": "eval-grading",
-          "type": "related"
         }
       ],
       "exclude_globs": [],
       "include_globs": [
         "lib/memory/feedback.py"
       ],
-      "intent": "Explain the half of the recall loop that learns whether a speculatively-injected memory helped: `score_injection_usefulness` pulls concrete referents (file paths, backtick identifiers) out of each injected memory (`_referents`) and checks whether any appear in a tool span that fired *after* injection (`_post_injection_spans` \u2014 the ordering gate is load-bearing), abstaining when there are no referents. Covers the idf weighting that discounts corpus-ubiquitous referents (precomputed session document-frequency in `referent_session_df` via `rebuild_session_referent_df`, gated by `engagement_idf_min_weight`), the `engaged`/`matched` bits stamped once per `injection_events` row (`_stamp_event`) so the decay gate can tell a soft ignore from a hard one, the importance reward for engaged hits (`_reward_engaged`), the reflect-time `score_pending_sessions` densifying sweep, and how this positive signal both records query exemplars and pairs with reflect's negative decay half.",
+      "intent": "Explain the half of the recall loop that learns whether a speculatively-injected memory helped: `score_injection_usefulness` pulls concrete referents (file paths, backtick identifiers) out of each injected memory and checks whether any appear in a tool span that fired *after* injection (the ordering gate is load-bearing), abstaining when there are no referents. Covers the idf weighting that discounts corpus-ubiquitous referents (precomputed session document-frequency in `referent_session_df` via `rebuild_session_referent_df`, gated by `engagement_idf_min_weight`), the `engaged`/`matched` bits stamped once per `injection_events` row so the decay gate can tell a soft ignore from a hard one, the importance reward for engaged hits, the reflect-time `score_pending_sessions` densifying sweep, and how this positive signal pairs with reflect's negative decay half.",
       "label": "Memory engagement feedback (inject\u2192usefulness verdict, idf-weighted referents, decay gate coupling)",
       "parent_id": "agent-memory",
       "refs": [
         {
           "path": "lib/memory/feedback.py",
           "role": "implementation"
+        },
+        {
+          "path": "lib/memory/models.py",
+          "role": "schema"
         }
       ],
       "status": "active"
@@ -748,24 +737,21 @@
         "thumbs up down on a routed topic banner",
         "hand-curate a topic-route case"
       ],
+      "blurb": "Query-local signed exemplars that suppress or protect a routed topic banner for prompts like the ones it failed/passed on.",
       "commands": [
-        ".venv/bin/python -m pytest tests/memory/test_store.py tests/memory/test_feedback.py"
+        ".venv/bin/python -m pytest tests/memory/test_topic_feedback.py tests/memory/test_store.py"
       ],
       "edges": [
         {
-          "target": "memory-recall-pipeline",
+          "target": "memory-topic-route-feedback",
           "type": "related"
         },
         {
-          "target": "memory-engagement-feedback",
+          "target": "memory-auto-injection",
           "type": "related"
         },
         {
           "target": "memory-curation-surfaces",
-          "type": "related"
-        },
-        {
-          "target": "memory-topic-route-feedback",
           "type": "related"
         }
       ],
@@ -773,13 +759,29 @@
       "include_globs": [
         "docs/agent-memory-exemplars.md"
       ],
-      "intent": "The signed query-exemplar primitive, now **topic-route only**. An exemplar is the embedding of a prompt a topic banner was injected on, tagged `polarity` +1 (engaged) / -1 (ignored) and `source` `auto` (feedback-captured) | `manual` (human-curated); `topic_exemplars` rows are kept per (topic, model, polarity), each polarity capped at `negative_max_per_memory`. At route time the max cosine of the incoming query to a topic's negatives/positives gates the `<topic_context>` banner \u2014 suppress when it resembles past hard-ignores (`topic_negative_suppress_sim`), protect when it resembles past engagements \u2014 query-locally, with nothing written to the topic row. Covers the auto write path (topic-route feedback \u2192 `add_topic_negatives` / `add_topic_positives` \u2192 `add_topic_exemplars`), the manual curate path (`POST /api/memory/exemplars` topic-only, `/api/memory/topic-feedback`, the `/api/memory/topic-route-preview` playground, `regin memory exemplar-add` / `exemplar-rm`), and per-row revert. **History:** the parallel memory-recall rescore (`memory_exemplars`, `store._apply_exemplar_rescore`, `negative_demotion_weight` / `positive_boost_weight`, `MemoryExemplars.vue`, the `GET /api/memory/exemplars` summary) was **removed** in 45bbe76 \u2014 its positive half was dead and the negative half showed no measured recall lift; recall now rides the dense + cross-encoder rerank stack plus importance decay, and lessons surface via the topic-tree walk (`memory-tree-nav`). The routing-feedback loop that consumes this primitive is `memory-topic-route-feedback`; design note `docs/agent-memory-exemplars.md`.",
-      "label": "Signed query exemplars \u2014 topic-route suppression/protection (memory-recall rescore removed)",
+      "intent": "Explain regin's signed query-exemplar mechanism as it operates over authoritative-topic routing \u2014 the contextual, query-local complement to the global, slow `importance` decay. An exemplar is the embedding of a prompt a topic banner was injected on, tagged `polarity` +1 (a `pass` verdict) or -1 (a `fail`) and `source` `auto` (feedback-captured) or `manual` (human-curated); the `topic_exemplars` table keeps them per (topic, model, polarity), each polarity capped at a configured max. At route time `store.topic_route_suppressed` withholds a topic banner query-locally when the incoming prompt's cosine to that topic's negatives clears `topic_negative_suppress_sim` unless a positive protects it (`topic_exemplar_max_sim`, `topic_negative_max_sim`), so a banner routed-then-judged-irrelevant on similar prompts sinks for *those* queries only and one proven relevant is protected \u2014 both fading once the exemplars stop resembling the incoming query, with nothing written to any topic row. Covers the auto write path (`feedback` / `store._record_topic_exemplars` \u2192 `add_topic_negatives`/`add_topic_positives`), the manual curate path (`/api/memory/exemplars`, `ExemplarCaseList.vue`, `regin memory exemplar-*`), the route-signal probe (`topic_query_signals`), and the inspect/per-row revert surfaces. The route-decision half of the same loop is covered by `memory-topic-route-feedback`; the design note is `docs/agent-memory-exemplars.md`.",
+      "label": "Signed query exemplars \u2014 topic-route suppression/protection (auto & hand-curated)",
       "parent_id": "agent-memory",
       "refs": [
         {
           "path": "docs/agent-memory-exemplars.md",
           "role": "docs"
+        },
+        {
+          "path": "lib/memory/store.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/feedback.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/models.py",
+          "role": "schema"
+        },
+        {
+          "path": "frontend/src/components/memory/ExemplarCaseList.vue",
+          "role": "implementation"
         }
       ],
       "status": "active"
@@ -792,6 +794,7 @@
         "mmr diversity selection for injection",
         "terse prompt query rewrite"
       ],
+      "blurb": "Tuning or debugging why a memory ranks where it does: the FTS+dense+rerank+quality+MMR read stack.",
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_store.py tests/memory/test_evaluate.py tests/memory/test_expand.py"
       ],
@@ -802,6 +805,10 @@
         },
         {
           "target": "memory-auto-injection",
+          "type": "related"
+        },
+        {
+          "target": "memory-consolidation-reflect",
           "type": "related"
         },
         {
@@ -819,16 +826,16 @@
         "lib/memory/expand.py",
         "lib/memory/evaluate.py"
       ],
-      "intent": "Explain the read-side ranking stack a `recall()` request flows through in `store.py`, so an agent debugging or tuning recall knows which knob moves which result: a `pattern_router`-shaped hybrid retrieve (`_lexical_ids` FTS5/BM25 leg + `_dense_ids` brute-force-cosine over `memory_embeddings` with `_lazy_backfill` + `_rrf` fusion + `_order_candidates` cross-encoder rerank), each stage degrading to the next without an embedder so an FTS-only path always works; the bounded `_quality_factor` ([0.9,1.3], gated by `recall_quality_weighting`) that re-ranks proven/recent memories by importance, veracity, `recall_count`, and recency without overriding relevance; `_apply_topic_boost` for memories linked to an authoritative topic node; optional `_mmr_select` diversity (`inject_mmr_lambda`) and opt-in 1-hop `_expand_via_edges` (`recall_expand_*`); the `expand.py` LLM query rewrite front-end for terse prompts; and `_bump_recall` reinforcement on deliberate recall. Measured by the FTS-only `evaluate.py` regression harness. The contextual exemplar rescore stage that also runs here has its own topic.",
-      "label": "Memory recall pipeline (FTS + dense + RRF + rerank, quality weighting, MMR, edge expansion, query expansion)",
+      "intent": "Explain the read-side ranking stack a `recall()` request flows through in `store.py`, so an agent debugging or tuning recall knows which knob moves which result. `recall` embeds the query once, then fuses two legs \u2014 `_lexical_ids` (FTS5/BM25 over `memories_fts`) and `_dense_ids` (brute-force cosine over `memory_embeddings`, preceded by `_lazy_backfill` of stale rows) \u2014 with `_rrf`; `mode='fts'` skips the dense leg entirely so an FTS-only path always works. Candidates are narrowed to `_eligible_rows` (active, non-digest, scope- and validity-filtered) and passed through `_gate_lexical_overlap`, the `min_overlap` precision gate that drops lexical-only candidates sharing too few *informative* tokens (idf-common tokens filtered via `_common_overlap_tokens`) while letting dense hits through untouched. `_order_candidates` runs the cross-encoder rerank on the RRF head (`rerank_cap`) and sigmoid-maps logits to a calibrated confidence, returning a `score_kind` of `rerank`/`rrf`/`fts`. `_apply_quality` multiplies by the bounded `_quality_factor` ([0.9,1.3], gated by `recall_quality_weighting`) that rewards proven/recent/important rows without overriding relevance; `_apply_topic_boost` softly lifts memories linked to a routed authoritative topic node; `_mmr_select` adds optional MMR diversity (`inject_mmr_lambda`); `_expand_via_edges` optionally appends 1-hop `related` neighbours (`recall_expand_*`, off by default); and `_bump_recall` reinforces on deliberate recall. `expand.py` is the LLM query-rewrite front-end for terse prompts; `evaluate.py` is the FTS-only regression harness.",
+      "label": "Memory recall pipeline (FTS + dense + RRF + rerank, quality weighting, topic boost, MMR, edge expansion, query expansion)",
       "parent_id": "agent-memory",
       "refs": [
         {
-          "path": "lib/memory/expand.py",
+          "path": "lib/memory/store.py",
           "role": "implementation"
         },
         {
-          "path": "lib/memory/store.py",
+          "path": "lib/memory/expand.py",
           "role": "implementation"
         },
         {
@@ -846,6 +853,7 @@
         "topic relevance fail rate",
         "topic route playground probe"
       ],
+      "blurb": "Should a routed topic banner keep firing: the InjectedRelated verdict, per-topic fail rate, and the human suppression gate.",
       "commands": [
         ".venv/bin/python -m pytest tests/memory/test_topic_feedback.py tests/memory/test_topic_playground.py"
       ],
@@ -865,14 +873,6 @@
         {
           "target": "memory-curation-surfaces",
           "type": "related"
-        },
-        {
-          "target": "agent-memory",
-          "type": "related"
-        },
-        {
-          "target": "eval-grading",
-          "type": "related"
         }
       ],
       "exclude_globs": [],
@@ -880,16 +880,36 @@
         "frontend/src/components/memory/TopicRoutePlayground.vue",
         "frontend/src/components/memory/MemoryTopicFeedback.vue"
       ],
-      "intent": "Explain the relevance feedback loop wrapped around authoritative-topic routing \u2014 the topic analog of memory engagement feedback. The `UserPromptSubmit` hook records each injected `<topic_context>` banner as a `TopicInjection` row; the grader's `InjectedRelated` aspect (`config/settings.json` + `lib/grader/service._maybe_apply_injection_relevance`) judges whether the banner fit the user's goal and `store.apply_topic_relevance` stamps a `satisfied`|`needs_revision`|`fail` verdict once per session. Aggregated per topic (`topic_relevance_summary`), a recurring fail rate over `topic_relevance_min_scored` / `topic_relevance_fail_rate` only *proposes* suppression \u2014 withholding is human-in-the-loop: a `TopicRouteDecision` of `suppressed` makes the hook's `_route_topic` withhold the banner, `allowed` pins it on, and no row means `auto`. A `fail` also becomes a -1 topic exemplar and a `pass` a +1, so `store.topic_route_suppressed` can withhold query-locally when the incoming prompt's cosine to a topic's negatives clears `topic_negative_suppress_sim` unless a positive protects it. The route playground (`store.topic_query_signals` \u2192 `/api/memory/topic-route-preview`, `TopicRoutePlayground.vue` / `MemoryTopicFeedback.vue`) probes what a query would route to and why.",
+      "intent": "Explain the relevance feedback loop wrapped around authoritative-topic routing \u2014 the topic analog of memory engagement feedback. The `UserPromptSubmit` hook records each injected `<topic_context>` banner as a `TopicInjection` row; the grader's `InjectedRelated` aspect (`config/settings.json` + `lib/grader/service._maybe_apply_injection_relevance`) judges whether the banner fit the user's goal and `store.apply_topic_relevance` stamps a `satisfied`|`needs_revision`|`fail` verdict once per session. Aggregated per topic (`topic_relevance_summary`, `topic_relevance_stats`), a recurring fail rate over `topic_relevance_min_scored` / `topic_relevance_fail_rate` only *proposes* suppression \u2014 withholding is human-in-the-loop: a `TopicRouteDecision` of `suppressed` makes the hook's `_route_topic` withhold the banner, `allowed` pins it on, and no row means `auto`. A `fail` also becomes a -1 topic exemplar and a `pass` a +1 (`_record_topic_exemplars`), so `store.topic_route_suppressed` can withhold query-locally. The route playground (`store.topic_query_signals` \u2192 `/api/memory/topic-route-preview`, `TopicRoutePlayground.vue` / `MemoryTopicFeedback.vue`) probes what a query would route to and why.",
       "label": "Topic-route relevance feedback (InjectedRelated verdict, fail-rate proposal, human suppression gate, route playground)",
-      "parent_id": "topic-graph",
+      "parent_id": "agent-memory",
       "refs": [
         {
-          "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
+          "path": "lib/memory/store.py",
           "role": "implementation"
         },
         {
+          "path": "hook_manager/handlers/memory_recall.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/grader/service.py",
+          "role": "implementation"
+        },
+        {
+          "path": "lib/memory/models.py",
+          "role": "schema"
+        },
+        {
+          "path": "web/blueprints/memory.py",
+          "role": "api"
+        },
+        {
           "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
+          "role": "implementation"
+        },
+        {
+          "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
           "role": "implementation"
         }
       ],
