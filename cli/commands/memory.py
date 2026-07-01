@@ -311,6 +311,55 @@ def cmd_backfill_titles() -> None:
     print(f"backfilled {fixed} lesson title(s)")
 
 
+@memory_app.command("export-tree")
+def cmd_export_tree(
+    repo: Optional[str] = typer.Option(
+        None, "--repo", help="Repo whose topic.json graph to file memories "
+             "under; default: project root"),
+    out_dir: Optional[str] = typer.Option(
+        None, "--out-dir",
+        help="Target dir; default: .regin/memory/tree/ under the repo"),
+    scope: Optional[str] = typer.Option(
+        None, "--scope", help="Only export memories in this scope"),
+) -> None:
+    """Export active memories as a git-shareable markdown tree, mirrored
+    onto the authoritative topic graph: one canonical file per memory under
+    its (lexicographically-smallest) linked topic node, a frontmatter-only
+    stub at every other linked node, and `_unfiled/` for memories with no
+    authoritative link."""
+    from pathlib import Path
+    import lib.memory as memory
+    from lib.settings import settings
+
+    repo_path = Path(repo).resolve() if repo else Path(settings.project_root)
+    summary = memory.export_memory_tree(str(repo_path), out_dir=out_dir,
+                                        scope=scope)
+    print(f"exported canonical={summary['canonical']} "
+          f"stub={summary['stub']} unfiled={summary['unfiled']}")
+
+
+@memory_app.command("import-tree")
+def cmd_import_tree(
+    repo: Optional[str] = typer.Option(
+        None, "--repo", help="Repo whose topic-tree markdown dir to import; "
+             "default: project root"),
+    in_dir: Optional[str] = typer.Option(
+        None, "--in-dir",
+        help="Source dir; default: .regin/memory/tree/ under the repo"),
+) -> None:
+    """Import a git-shared markdown memory tree back into the local memory
+    store. Idempotent: canonical files upsert by id and links are
+    re-linked, never duplicated, so re-running after a `git pull` is safe."""
+    from pathlib import Path
+    import lib.memory as memory
+    from lib.settings import settings
+
+    repo_path = Path(repo).resolve() if repo else Path(settings.project_root)
+    summary = memory.import_memory_tree(str(repo_path), in_dir=in_dir)
+    print(f"imported={summary['imported']} linked={summary['linked']} "
+          f"skipped_unfiled={summary['skipped_unfiled']}")
+
+
 @memory_app.command("topic-feedback")
 def cmd_topic_feedback(
     limit: int = typer.Option(30, "--limit",

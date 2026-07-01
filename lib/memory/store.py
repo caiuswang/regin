@@ -315,6 +315,47 @@ class SqliteMemoryStore:
                   tier=row.tier, scope=row.scope, status=row.status)
         return memory_id
 
+    def import_memory(self, memory_id: str, mem: MemoryInput) -> str:
+        """Like `remember`, but with a caller-supplied id: inserts a new row
+        under that id, or updates one in place if it already exists. The
+        write-side primitive `lib.memory.tree_io.import_memory_tree` uses so
+        re-importing a git-shared markdown tree is idempotent rather than
+        piling up duplicate rows on every run. `created_at` is preserved on
+        an update; `updated_at` always refreshes."""
+        body = (mem.body or "").strip()[:_BODY_MAX]
+        if not body:
+            raise ValueError("memory body must be non-empty")
+        kind = _normalize_choice(mem.kind, MEMORY_KINDS, DEFAULT_KIND)
+        _require_lesson_title(kind, mem.title)
+        now = _now()
+        with MemorySessionLocal() as session:
+            row = session.get(Memory, memory_id)
+            is_new = row is None
+            row = row or Memory(id=memory_id, created_at=now)
+            row.tier = _normalize_choice(mem.tier, MEMORY_TIERS, DEFAULT_TIER)
+            row.kind = kind
+            row.title = mem.title or None
+            row.body = body
+            row.scope = mem.scope or "global"
+            row.tags = json.dumps(mem.tags) if mem.tags else None
+            row.importance = min(max(float(mem.importance), 0.0), 1.0)
+            row.veracity = _normalize_choice(mem.veracity, VERACITY_VALUES,
+                                             "unknown")
+            row.status = _normalize_choice(mem.status, MEMORY_STATUSES,
+                                           DEFAULT_STATUS)
+            row.source_trace_id = mem.source_trace_id
+            row.source_span_id = mem.source_span_id
+            row.source_agent_id = mem.source_agent_id
+            row.is_test = 1 if mem.is_test else 0
+            row.updated_at = now
+            session.add(row)
+            self._upsert_fts(session, row)
+            session.commit()
+        log.write("memory_imported", memory_id=memory_id, kind=row.kind,
+                  tier=row.tier, scope=row.scope, status=row.status,
+                  new=is_new)
+        return memory_id
+
     def update(self, memory_id: str, **fields) -> bool:
         unknown = set(fields) - _UPDATABLE_FIELDS
         if unknown:

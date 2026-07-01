@@ -102,9 +102,20 @@ def stats() -> dict:
     return get_store().stats()
 
 
+def export_memory_tree(repo_path: str, *, out_dir: Optional[str] = None,
+                       scope: Optional[str] = None) -> dict:
+    from lib.memory.tree_io import export_memory_tree as _export_tree
+    return _export_tree(repo_path, out_dir=out_dir, scope=scope)
+
+
+def import_memory_tree(repo_path: str, *, in_dir: Optional[str] = None) -> dict:
+    from lib.memory.tree_io import import_memory_tree as _import_tree
+    return _import_tree(repo_path, in_dir=in_dir)
+
+
 __all__ = [
     "MemoryHit", "MemoryInput", "ReflectResult",
     "get_store", "reset_store", "enabled",
     "remember", "recall", "get", "update", "forget", "supersede", "restore",
-    "reflect", "stats",
+    "reflect", "stats", "export_memory_tree", "import_memory_tree",
 ]
