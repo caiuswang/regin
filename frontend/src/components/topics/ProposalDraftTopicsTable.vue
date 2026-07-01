@@ -1,13 +1,25 @@
 <script setup>
+import { computed } from 'vue'
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 
-defineProps({
+const props = defineProps({
   draftTopics: { type: Array, default: () => [] },
   selectedDraftTopicId: { type: [String, Number], default: null },
+  // True when the proposal is ready + on the latest revision, so a bulk
+  // apply is allowed. Gated by the parent (ProposalRunDetail).
+  canApplyAll: { type: Boolean, default: false },
+  applyingAll: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'apply-all'])
+
+// A topic still needs applying when it hasn't been accepted / merged /
+// ignored — mirrors the per-topic Apply button's visibility rule.
+const pendingCount = computed(() =>
+  props.draftTopics.filter((t) => !t.review_status || t.review_status === 'pending').length,
+)
 
 function reviewStatusColor(status) {
   if (status === 'accepted' || status === 'merged') return 'green'
@@ -23,7 +35,17 @@ function reviewStatusColor(status) {
         <h2>Draft Topics</h2>
         <p class="topics-panel-caption">Review each proposed topic before accepting, merging, or ignoring it.</p>
       </div>
-      <Badge color="purple" :label="String(draftTopics.length)" />
+      <div class="flex items-center gap-3">
+        <Button
+          v-if="canApplyAll && pendingCount > 0"
+          variant="primary"
+          size="sm"
+          :disabled="applyingAll"
+          data-testid="apply-all-topics"
+          @click="emit('apply-all')"
+        >{{ applyingAll ? 'Applying…' : `Apply All (${pendingCount})` }}</Button>
+        <Badge color="purple" :label="String(draftTopics.length)" />
+      </div>
     </div>
     <table class="tbl tbl-workbench">
       <thead>

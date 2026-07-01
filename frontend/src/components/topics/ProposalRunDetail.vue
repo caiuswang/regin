@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useProposalApplyAll } from '../../composables/useProposalApplyAll'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Select from '../ui/Select.vue'
@@ -351,6 +352,20 @@ function onDiffCancelled() {
   applyingTopicId.value = null
 }
 
+// Bulk "Apply All" for the Draft Topics table — extracted to a composable to
+// keep this SFC's surface area down. Reuses the per-topic /apply endpoint.
+const { applyAll } = useProposalApplyAll(props, {
+  selectedProposalId,
+  proposalReadyToApply,
+  selectedRevisionIsLatest,
+  askConfirm: confirm,
+  startBusy,
+  stopBusy,
+  onError: (msg) => emit('error', msg),
+  onDone: () => emit('refresh-all'),
+  resetApplying: () => { applyingTopicId.value = null },
+})
+
 watch(selectedProposalId, () => {
   applyingTopicId.value = null
   editingProposalTopicId.value = null
@@ -395,7 +410,10 @@ function reviewStatusColor(status) {
     <ProposalDraftTopicsTable
       :draft-topics="data?.draft_topics || []"
       :selected-draft-topic-id="selectedDraftTopicId"
+      :can-apply-all="proposalReadyToApply && selectedRevisionIsLatest && !applyingTopicId"
+      :applying-all="isBusy('apply-all')"
       @select="chooseDraftTopic"
+      @apply-all="applyAll"
     />
 
     <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
