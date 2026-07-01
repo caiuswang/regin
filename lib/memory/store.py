@@ -1975,8 +1975,22 @@ class SqliteMemoryStore:
             "embed_coverage": self._embed_coverage(rows, emb_rows),
             "by_tier": by_tier, "by_status": by_status, "by_kind": by_kind,
             "by_scope": by_scope,
+            # Consolidation debt: rows the reflect cycle still owes work on.
+            # `working_active` is the "grows forever" figure — active working
+            # rows whose only drain is a reflect() promote (by_tier can't
+            # isolate it: it counts working rows of every status). `proposed`
+            # is the capture backlog awaiting human approval. Both derive from
+            # the rows already fetched — no extra query.
+            "consolidation_debt": self._consolidation_debt(rows),
             "db_path": memory_db_path(),
         }
+
+    @staticmethod
+    def _consolidation_debt(rows: list) -> dict:
+        working_active = sum(
+            1 for r in rows if r.tier == "working" and r.status == "active")
+        proposed = sum(1 for r in rows if r.status == "proposed")
+        return {"working_active": working_active, "proposed": proposed}
 
 
 __all__ = ["SqliteMemoryStore"]

@@ -16,6 +16,7 @@ import MemoryTopics from '../components/memory/MemoryTopics.vue'
 import MemoryTopicFeedback from '../components/memory/MemoryTopicFeedback.vue'
 import TopicRoutePlayground from '../components/memory/TopicRoutePlayground.vue'
 import MemoryTaxonomy from '../components/memory/MemoryTaxonomy.vue'
+import MemoryDoctor from '../components/memory/MemoryDoctor.vue'
 
 const { confirm } = useConfirm()
 const { width: listWidth, onResizeStart, onResizeKey } =
@@ -54,6 +55,7 @@ let headerObserver = null
 
 const reflectSummary = ref('')
 const reflecting = ref(false)
+const showDoctor = ref(false)
 const topicsRef = ref(null)
 const topicFeedbackRef = ref(null)
 const playgroundRef = ref(null)
@@ -227,6 +229,12 @@ onBeforeUnmount(() => headerObserver?.disconnect())
           size="sm"
           @click="toggleTests"
         >Include test data</Button>
+        <Button
+          :variant="showDoctor ? 'primary' : 'secondary'"
+          size="sm"
+          :aria-pressed="showDoctor"
+          @click="showDoctor = !showDoctor"
+        >Doctor</Button>
         <Button variant="secondary" size="sm" :disabled="busy || reflecting" @click="runReflect">Run reflect</Button>
       </div>
     </div>
@@ -235,6 +243,8 @@ onBeforeUnmount(() => headerObserver?.disconnect())
       and session distills. Consolidated by reflect, recalled into future prompts.
     </p>
     <p v-if="reflectSummary" class="text-xs text-slate-500 font-mono mb-3">{{ reflectSummary }}</p>
+
+    <MemoryDoctor v-if="showDoctor" :stats="stats" class="mb-3" />
 
     <Tabs v-model="activeTab" :tabs="TABS" variant="underline" class="-mb-px" />
     </div>

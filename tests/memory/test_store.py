@@ -290,6 +290,29 @@ def test_stats_counts():
     assert s["by_tier"] == {"working": 2}
 
 
+def test_stats_consolidation_debt_counts_active_working_and_proposed():
+    """`consolidation_debt.working_active` isolates active working rows (the
+    reflect-promote backlog) from by_tier, which counts every status; a
+    `proposed` row moves to the proposal backlog, not the working count; and
+    reflect drains working_active to 0 by promoting the survivors."""
+    from lib.memory.reflect import reflect
+
+    store = memory.get_store()
+    a = _remember("first debt row body")
+    _remember("second debt row body")
+    s = memory.stats()
+    assert s["consolidation_debt"] == {"working_active": 2, "proposed": 0}
+
+    store.update(a, status="proposed")
+    s = memory.stats()
+    assert s["consolidation_debt"] == {"working_active": 1, "proposed": 1}
+
+    reflect(store)
+    # `a` is still proposed (not promoted); the other active working row is
+    # promoted to episodic, so the working backlog empties.
+    assert memory.stats()["consolidation_debt"]["working_active"] == 0
+
+
 def test_stats_includes_embed_coverage_for_working_rows():
     """Working-tier rows are embeddable (dense recall must see fresh
     lessons before promotion), so an unembedded working row counts
