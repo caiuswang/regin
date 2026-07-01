@@ -1,0 +1,14 @@
+{
+  "name": "regin-local",
+  "owner": { "name": "regin" },
+  "metadata": {
+    "description": "Local marketplace for testing the regin-agents plugin prototype. Add with: /plugin marketplace add ./regin-plugin"
+  },
+  "plugins": [
+    {
+      "name": "regin-agents",
+      "source": "./plugins/regin-agents",
+      "description": "regin goal-verified skills + their subagents + the memory MCP server"
+    }
+  ]
+}

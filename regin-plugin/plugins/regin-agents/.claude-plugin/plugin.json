@@ -1,0 +1,7 @@
+{
+  "name": "regin-agents",
+  "version": "0.1.0",
+  "description": "regin's goal-verified build loop as a portable Claude Code plugin: the procedure skills (goal-verified, goal-verified-treenav, topic-router, memory-tree-nav), their subagents (goal-refiner/builder/verifier), and the memory/recall MCP server. Prototype — see README.md for the external-CLI boundary.",
+  "author": { "name": "regin" },
+  "keywords": ["regin", "goal-verified", "memory", "recall", "skills", "agents"]
+}
