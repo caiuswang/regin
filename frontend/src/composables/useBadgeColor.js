@@ -40,11 +40,21 @@ export function proposalStateColor(state) {
   return PROPOSAL_STATE[String(state || '').toLowerCase()] || 'gray'
 }
 
+const TOPIC_REVIEW_STATUS = {
+  accepted: 'green',
+  merged: 'green',
+  ignored: 'gray',
+}
+/** A proposal draft topic's review_status → Badge color (pending/unset → blue). */
+export function topicReviewStatusColor(status) {
+  return TOPIC_REVIEW_STATUS[status] || 'blue'
+}
+
 /** Generic boolean → ok/neutral (e.g. active vs inactive, healthy vs idle). */
 export function boolColor(on, { onColor = 'green', offColor = 'gray' } = {}) {
   return on ? onColor : offColor
 }
 
 export function useBadgeColor() {
-  return { severityColor, driftKindColor, proposalStateColor, boolColor }
+  return { severityColor, driftKindColor, proposalStateColor, topicReviewStatusColor, boolColor }
 }

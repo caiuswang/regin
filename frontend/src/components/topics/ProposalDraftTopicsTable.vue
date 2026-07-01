@@ -1,19 +1,23 @@
 <script setup>
+import { computed } from 'vue'
+import { topicReviewStatusColor } from '../../composables/useBadgeColor'
+import { isPendingTopic } from '../../utils/proposalApply'
 import Badge from '../Badge.vue'
+import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 
-defineProps({
+const props = defineProps({
   draftTopics: { type: Array, default: () => [] },
   selectedDraftTopicId: { type: [String, Number], default: null },
+  // True when the proposal is ready + on the latest revision, so a bulk
+  // apply is allowed. Gated by the parent (ProposalRunDetail).
+  canApplyAll: { type: Boolean, default: false },
+  applyingAll: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'apply-all'])
 
-function reviewStatusColor(status) {
-  if (status === 'accepted' || status === 'merged') return 'green'
-  if (status === 'ignored') return 'gray'
-  return 'blue'
-}
+const pendingCount = computed(() => props.draftTopics.filter(isPendingTopic).length)
 </script>
 
 <template>
@@ -23,7 +27,17 @@ function reviewStatusColor(status) {
         <h2>Draft Topics</h2>
         <p class="topics-panel-caption">Review each proposed topic before accepting, merging, or ignoring it.</p>
       </div>
-      <Badge color="purple" :label="String(draftTopics.length)" />
+      <div class="flex items-center gap-3">
+        <Button
+          v-if="canApplyAll && pendingCount > 0"
+          variant="primary"
+          size="sm"
+          :disabled="applyingAll"
+          data-testid="apply-all-topics"
+          @click="emit('apply-all')"
+        >{{ applyingAll ? 'Applying…' : `Apply All (${pendingCount})` }}</Button>
+        <Badge color="purple" :label="String(draftTopics.length)" />
+      </div>
     </div>
     <table class="tbl tbl-workbench">
       <thead>
@@ -49,7 +63,7 @@ function reviewStatusColor(status) {
               <div class="topics-row-meta line-clamp-2">{{ topic.intent_preview }}</div>
             </button>
           </td>
-          <td><Badge :color="reviewStatusColor(topic.review_status)" :label="topic.review_status" /></td>
+          <td><Badge :color="topicReviewStatusColor(topic.review_status)" :label="topic.review_status" /></td>
           <td class="text-right">{{ topic.evidence_count }}</td>
           <td class="text-right">{{ topic.proposed_ref_count }}</td>
           <td class="text-right">{{ topic.feedback_thread_count || 0 }}</td>

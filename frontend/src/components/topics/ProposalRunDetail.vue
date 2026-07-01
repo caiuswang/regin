@@ -3,6 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useProposalApplyAll } from '../../composables/useProposalApplyAll'
+import { topicReviewStatusColor } from '../../composables/useBadgeColor'
+import { isPendingTopic } from '../../utils/proposalApply'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Select from '../ui/Select.vue'
@@ -351,17 +354,26 @@ function onDiffCancelled() {
   applyingTopicId.value = null
 }
 
+// Bulk "Apply All" for the Draft Topics table — extracted to a composable to
+// keep this SFC's surface area down. Reuses the per-topic /apply endpoint.
+const { applyAll } = useProposalApplyAll(props, {
+  selectedProposalId,
+  proposalReadyToApply,
+  selectedRevisionIsLatest,
+  askConfirm: confirm,
+  startBusy,
+  stopBusy,
+  onError: (msg) => emit('error', msg),
+  onDone: () => emit('refresh-all'),
+  resetApplying: () => { applyingTopicId.value = null },
+})
+
 watch(selectedProposalId, () => {
   applyingTopicId.value = null
   editingProposalTopicId.value = null
   commentsDrawerOpen.value = false
 })
 
-function reviewStatusColor(status) {
-  if (status === 'accepted' || status === 'merged') return 'green'
-  if (status === 'ignored') return 'gray'
-  return 'blue'
-}
 </script>
 
 <template>
@@ -395,7 +407,10 @@ function reviewStatusColor(status) {
     <ProposalDraftTopicsTable
       :draft-topics="data?.draft_topics || []"
       :selected-draft-topic-id="selectedDraftTopicId"
+      :can-apply-all="proposalReadyToApply && selectedRevisionIsLatest && !applyingTopicId"
+      :applying-all="isBusy('apply-all')"
       @select="chooseDraftTopic"
+      @apply-all="applyAll"
     />
 
     <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -418,9 +433,7 @@ function reviewStatusColor(status) {
               </div>
               <p class="text-sm text-gray-600">{{ selectedDraftTopic.intent }}</p>
               <p
-                v-if="!proposalReadyToApply
-                      && (!selectedDraftTopic.review_status
-                          || selectedDraftTopic.review_status === 'pending')"
+                v-if="!proposalReadyToApply && isPendingTopic(selectedDraftTopic)"
                 class="text-xs text-amber-700 mt-2"
               >
                 Review is still in progress. Mark the proposal ready before applying draft topics.
@@ -443,7 +456,7 @@ function reviewStatusColor(status) {
             </div>
             <div class="topics-detail-actions">
               <div class="topics-detail-status-row">
-                <Badge :color="reviewStatusColor(selectedDraftTopic.review_status || 'pending')" :label="selectedDraftTopic.review_status || 'pending'" />
+                <Badge :color="topicReviewStatusColor(selectedDraftTopic.review_status)" :label="selectedDraftTopic.review_status || 'pending'" />
               </div>
               <div class="topics-detail-button-row btn-row">
                 <Button
@@ -453,8 +466,7 @@ function reviewStatusColor(status) {
                   @click="editProposedTopic(selectedDraftTopic)"
                 >Edit</Button>
                 <Button
-                  v-if="(!selectedDraftTopic.review_status
-                        || selectedDraftTopic.review_status === 'pending')
+                  v-if="isPendingTopic(selectedDraftTopic)
                         && applyingTopicId !== selectedDraftTopic.id"
                   variant="primary"
                   :disabled="isBusy() || !proposalReadyToApply || !selectedRevisionIsLatest"
