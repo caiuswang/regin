@@ -244,7 +244,13 @@ onBeforeUnmount(() => headerObserver?.disconnect())
     </p>
     <p v-if="reflectSummary" class="text-xs text-slate-500 font-mono mb-3">{{ reflectSummary }}</p>
 
-    <MemoryDoctor v-if="showDoctor" :stats="stats" class="mb-3" />
+    <MemoryDoctor
+      v-if="showDoctor"
+      :stats="stats"
+      :reflecting="reflecting"
+      class="mb-3"
+      @reflect="runReflect"
+    />
 
     <Tabs v-model="activeTab" :tabs="TABS" variant="underline" class="-mb-px" />
     </div>

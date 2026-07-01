@@ -1,13 +1,19 @@
 <script setup>
 // A health + statistics panel for the memory store — regin's `doctor` idiom
-// applied to memory. Pure display: it reads the `stats` envelope the list
-// endpoint already returns (see MemoryView), computes a few health checks
-// from it, and renders the raw breakdowns. No fetch, no emit.
+// applied to memory. Reads the `stats` envelope the list endpoint already
+// returns (see MemoryView), computes health checks, renders the breakdowns.
+// Its one action is an inline `reflect` emit on the consolidation-debt row —
+// the same trigger as the header "Run reflect", surfaced where it's advised.
 import { computed } from 'vue'
+import Button from '../ui/Button.vue'
 
 const props = defineProps({
   stats: { type: Object, required: true },
+  // Drives the inline Run-reflect button's loading/disabled state; the parent
+  // owns the actual reflect call and toggles this.
+  reflecting: { type: Boolean, default: false },
 })
+const emit = defineEmits(['reflect'])
 
 // `embed_coverage` is null when nothing is embeddable (no active rows), which
 // is distinct from 0% (embeddable but unembedded) — keep it null so neither
@@ -26,7 +32,8 @@ const checks = computed(() => {
   if ((debt.working_active || 0) > 0) {
     out.push({
       level: 'warn',
-      text: `${debt.working_active} working row(s) awaiting consolidation — Run reflect to promote them`,
+      action: 'reflect',
+      text: `${debt.working_active} working row(s) awaiting consolidation`,
     })
   }
   if (embedPct.value != null && embedPct.value < 100) {
@@ -83,6 +90,14 @@ const entries = (data) => Object.entries(data).sort((a, b) => b[1] - a[1])
       >
         <span aria-hidden="true" class="shrink-0 leading-4">{{ LEVEL_ICON[c.level] }}</span>
         <span>{{ c.text }}</span>
+        <Button
+          v-if="c.action === 'reflect'"
+          variant="secondary"
+          size="sm"
+          class="ml-1 -my-0.5"
+          :disabled="reflecting"
+          @click="emit('reflect')"
+        >{{ reflecting ? 'Running…' : 'Run reflect' }}</Button>
       </li>
     </ul>
 
