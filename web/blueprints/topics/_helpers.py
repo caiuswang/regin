@@ -139,10 +139,33 @@ def _proposal_derived_fields(proposal: dict | None, row: dict) -> dict:
     }
 
 
-def _proposal_run_row(repo_path: str, run: dict) -> dict:
+def _open_drift_note_map(repo_path: str) -> dict[str, list[str]]:
+    """`{run_id: [drifted topic_id, …]}` for every run that still carries an
+    open content-drift (wiki-drift) note. One query for the whole repo so the
+    per-row annotation stays O(1); an empty map on any failure keeps the
+    proposal surface rendering."""
+    from lib.topics.content_drift import CONTENT_DRIFT_THREAD_KIND
+    from lib.topics.proposal_orm import orm_open_content_drift_threads
+    try:
+        threads = orm_open_content_drift_threads(
+            repo_path, kind=CONTENT_DRIFT_THREAD_KIND)
+    except Exception:  # noqa: BLE001 — annotation is best-effort; must still render
+        return {}
+    out: dict[str, list[str]] = {}
+    for thread in threads:
+        out.setdefault(thread["run_id"], []).append(thread["topic_id"])
+    return out
+
+
+def _proposal_run_row(
+    repo_path: str, run: dict, *, drift_map: dict[str, list[str]] | None = None
+) -> dict:
     row = dict(run)
     proposal = _load_run_proposal(repo_path, row)
     row.update(_proposal_derived_fields(proposal, row))
+    drift_topics = (drift_map or {}).get(row["id"], [])
+    row["open_drift_topics"] = drift_topics
+    row["open_drift_note_count"] = len(drift_topics)
     return row
 
 
@@ -336,7 +359,9 @@ def _proposal_workspace_payload(
     selected_revision_id: str | None,
 ) -> dict:
     _reap_stranded_runs(repo_path)
-    runs = [_proposal_run_row(repo_path, run) for run in list_proposal_runs(repo_path)]
+    drift_map = _open_drift_note_map(repo_path)
+    runs = [_proposal_run_row(repo_path, run, drift_map=drift_map)
+            for run in list_proposal_runs(repo_path)]
     selected_proposal_id, selected_run = _resolve_selected_proposal(runs, selected_proposal_id)
     proposal = None
     status = selected_run or None
@@ -400,6 +425,8 @@ def _reap_stranded_runs(repo_path: str) -> None:
 def _workspace_summary_payload(repo_path: str) -> dict:
     _reap_stranded_runs(repo_path)
     summary = topic_summary(repo_path)
+    # No drift_map here: this route surfaces only counts, never the per-run
+    # drift fields, so annotating rows would be a wasted query.
     runs = [_proposal_run_row(repo_path, run) for run in list_proposal_runs(repo_path)]
     broken_ref_count = sum(len(topic.get("broken_refs", [])) for topic in summary["topics"])
     return {

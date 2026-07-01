@@ -24,6 +24,7 @@ const { confirm } = useConfirm()
 const SEARCH_KEY = 'regin_proposal_runs_search'
 const STATE_KEY = 'regin_proposal_runs_state'
 const REVIEW_KEY = 'regin_proposal_runs_review'
+const DRIFT_KEY = 'regin_proposal_runs_drift'
 const SORT_KEY = 'regin_proposal_runs_sort'
 
 const STATE_OPTIONS = [
@@ -44,6 +45,11 @@ const REVIEW_OPTIONS = [
   { value: 'partially_applied', label: 'Partially applied' },
   { value: 'applied', label: 'Applied' },
 ]
+const DRIFT_OPTIONS = [
+  { value: 'all', label: 'All wiki drift' },
+  { value: 'drifted', label: 'Has open drift note' },
+  { value: 'clean', label: 'No drift note' },
+]
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Recently updated' },
   { value: 'oldest', label: 'Least recently updated' },
@@ -56,15 +62,24 @@ const PAGE_SIZE = 25
 const search = ref(localStorage.getItem(SEARCH_KEY) || '')
 const stateFilter = ref(localStorage.getItem(STATE_KEY) || 'all')
 const reviewFilter = ref(localStorage.getItem(REVIEW_KEY) || 'all')
+const driftFilter = ref(localStorage.getItem(DRIFT_KEY) || 'all')
 const sort = ref(localStorage.getItem(SORT_KEY) || 'newest')
 const page = ref(1)
 
 watch(search, (v) => { localStorage.setItem(SEARCH_KEY, v); page.value = 1 })
 watch(stateFilter, (v) => { localStorage.setItem(STATE_KEY, v); page.value = 1 })
 watch(reviewFilter, (v) => { localStorage.setItem(REVIEW_KEY, v); page.value = 1 })
+watch(driftFilter, (v) => { localStorage.setItem(DRIFT_KEY, v); page.value = 1 })
 watch(sort, (v) => { localStorage.setItem(SORT_KEY, v) })
 
 const allRuns = computed(() => props.data?.runs || [])
+
+function matchesDrift(run) {
+  const hasDrift = (run.open_drift_note_count || 0) > 0
+  if (driftFilter.value === 'drifted') return hasDrift
+  if (driftFilter.value === 'clean') return !hasDrift
+  return true
+}
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -75,6 +90,7 @@ const filtered = computed(() => {
       const rs = run.review_state || 'pending_review'
       if (rs !== reviewFilter.value) return false
     }
+    if (!matchesDrift(run)) return false
     if (q) {
       const blob = `${run.id} ${run.title || ''} ${run.topic_request || ''} ${run.provider || ''} ${run.review_state || ''} ${state} ${run.agent || ''}`.toLowerCase()
       if (!blob.includes(q)) return false
@@ -101,13 +117,15 @@ watch(totalPages, (n) => {
 })
 
 const hasActiveFilter = computed(() =>
-  search.value || stateFilter.value !== 'all' || reviewFilter.value !== 'all' || sort.value !== 'newest'
+  search.value || stateFilter.value !== 'all' || reviewFilter.value !== 'all'
+    || driftFilter.value !== 'all' || sort.value !== 'newest'
 )
 
 function clearFilters() {
   search.value = ''
   stateFilter.value = 'all'
   reviewFilter.value = 'all'
+  driftFilter.value = 'all'
   sort.value = 'newest'
 }
 
@@ -186,6 +204,9 @@ function activityTs(run) {
         <Select v-model="reviewFilter" :options="REVIEW_OPTIONS" block aria-label="Filter by review state" />
       </span>
       <span class="inline-block w-40">
+        <Select v-model="driftFilter" :options="DRIFT_OPTIONS" block aria-label="Filter by wiki drift note" />
+      </span>
+      <span class="inline-block w-40">
         <Select v-model="sort" :options="SORT_OPTIONS" block aria-label="Sort runs" />
       </span>
       <Button
@@ -225,6 +246,13 @@ function activityTs(run) {
               <div class="topics-row-meta text-slate-500">
                 <code class="text-[11px]">{{ run.id }}</code>
                 <span v-if="fmtAgo(run.last_activity_at)" class="ml-1 text-[11px]">· updated {{ fmtAgo(run.last_activity_at) }}</span>
+              </div>
+              <div v-if="run.open_drift_note_count" class="topics-row-meta mt-0.5">
+                <Badge
+                  color="yellow"
+                  :label="`wiki drift · ${run.open_drift_note_count}`"
+                  :title="`Open content-drift note(s) awaiting redraft: ${(run.open_drift_topics || []).join(', ')}`"
+                />
               </div>
               <div v-if="run.error" class="topics-row-meta text-red-600 line-clamp-2">{{ run.error }}</div>
             </button>

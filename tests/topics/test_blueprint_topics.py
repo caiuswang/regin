@@ -207,6 +207,48 @@ def _seed_feedback_thread(flask_client, fake_git_repo):
     return name, thread["id"], thread["comments"][0]["id"]
 
 
+def test_workspace_runs_annotate_open_drift_notes(stub_proposal_provider, flask_client, tmp_db, fake_git_repo):
+    """A run carrying an open content_drift note is annotated with a non-zero
+    `open_drift_note_count`; plain comments and resolved drift notes don't count."""
+    name = _seed_repo_record(fake_git_repo)
+    bootstrap(fake_git_repo)
+    create_proposal_run(fake_git_repo, run_id="run1")
+    proposal = flask_client.get(f"/api/repos/{name}/topics/proposals/run1").get_json()["proposal"]
+    topic_id = proposal["topics"][0]["id"]
+
+    def _thread(kind, body):
+        return _post_ok(
+            flask_client,
+            f"/api/repos/{name}/topics/proposals/run1/feedback-threads",
+            {"proposal_topic_id": topic_id, "kind": kind, "author_kind": "agent", "body": body},
+        )["feedback_thread"]
+
+    # A plain comment must NOT count as drift.
+    _thread("comment", "Just a review comment.")
+    drift = _thread("content_drift", "The refs under this topic drifted.")
+
+    def _run_row():
+        runs = flask_client.get(
+            f"/api/repos/{name}/topics/workspace/proposals",
+            query_string={"proposal_id": "run1"},
+        ).get_json()["runs"]
+        return next(run for run in runs if run["id"] == "run1")
+
+    row = _run_row()
+    assert row["open_drift_note_count"] == 1
+    assert topic_id in row["open_drift_topics"]
+
+    # Resolving the drift note drops it from the count.
+    _post_ok(
+        flask_client,
+        f"/api/repos/{name}/topics/proposals/run1/feedback-threads/{drift['id']}/resolution",
+        {"resolution_state": "resolved"},
+    )
+    resolved_row = _run_row()
+    assert resolved_row["open_drift_note_count"] == 0
+    assert resolved_row["open_drift_topics"] == []
+
+
 def test_topics_feedback_thread_resolution(stub_proposal_provider, flask_client, tmp_db, fake_git_repo):
     name, thread_id, _ = _seed_feedback_thread(flask_client, fake_git_repo)
     base = f"/api/repos/{name}/topics/proposals/run1/feedback-threads/{thread_id}/resolution"
