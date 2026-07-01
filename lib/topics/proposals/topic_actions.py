@@ -178,7 +178,7 @@ def accept_proposed_topic(
     _recompute_proposal_status(proposal)
     save_proposal(repo_path, proposal_id, proposal)
     proposal_dir = topic_dir(repo_path) / "proposals" / proposal_id
-    _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("label") or approved_id)
+    _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("wiki"))
     _capture_ref_digests_on_accept(repo_path, approved_id)
     _restore_topic_memories_on_accept(approved_id)
     _topics_log().write(
@@ -233,7 +233,7 @@ def replace_approved_topic(
     _recompute_proposal_status(proposal)
     save_proposal(repo_path, proposal_id, proposal)
     proposal_dir = topic_dir(repo_path) / "proposals" / proposal_id
-    _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("label") or approved_id)
+    _persist_per_topic_wiki(repo_path, proposal_dir, approved_id, proposed.get("wiki"))
     _capture_ref_digests_on_accept(repo_path, approved_id)
     _restore_topic_memories_on_accept(approved_id)
     _topics_log().write(

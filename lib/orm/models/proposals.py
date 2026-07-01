@@ -143,6 +143,13 @@ class ProposalTopic(Base, table=True):
         sa_column=Column("blurb", Text, nullable=False,
                          server_default=text("''")),
     )
+    # The topic's own wiki page body (its `.regin/topics/wiki/<id>.md`).
+    # Authored per-topic by the drafting agent so each topic carries its
+    # own narrative instead of the whole run sharing one combined doc.
+    wiki_md: str = Field(
+        sa_column=Column("wiki_md", Text, nullable=False,
+                         server_default=text("''")),
+    )
     source: Optional[str] = Field(default=None,
                                   sa_column=Column("source", String))
     review_status: Optional[str] = Field(default=None,
@@ -253,6 +260,11 @@ class ProposalRevisionTopic(Base, table=True):
                                      sa_column=Column("parent_id", String))
     blurb: str = Field(
         sa_column=Column("blurb", Text, nullable=False,
+                         server_default=text("''")),
+    )
+    # Per-topic wiki page body — see ProposalTopic.wiki_md.
+    wiki_md: str = Field(
+        sa_column=Column("wiki_md", Text, nullable=False,
                          server_default=text("''")),
     )
     source: Optional[str] = Field(default=None,

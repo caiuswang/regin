@@ -241,6 +241,17 @@ def _parse_revision_int(selected_revision_id: str | None) -> int | None:
         return None
 
 
+def _wiki_intro(wiki: str) -> str:
+    """The shared overview of the combined wiki — the text before the first
+    `## ` heading. Reliable (unlike per-topic slicing): each topic now carries
+    its own `wiki` from the drafting agent, so this only extracts the intro to
+    surface once above a topic's own section."""
+    from lib.topics.wiki_sections import split_wiki_sections
+
+    intro, _sections = split_wiki_sections(wiki)
+    return intro
+
+
 def _build_draft_topic_rows(
     topics: list[dict],
     feedback_threads: list[dict],
@@ -366,6 +377,7 @@ def _proposal_workspace_payload(
     proposal = None
     status = selected_run or None
     wiki = ""
+    wiki_intro = ""
     draft_topic_rows: list[dict] = []
     selected_draft_topic = None
     feedback_threads: list[dict] = []
@@ -381,6 +393,9 @@ def _proposal_workspace_payload(
         feedback_threads = state["feedback_threads"]
         selected_revision = state["selected_revision"]
         topics = proposal.get("topics", []) if proposal else []
+        # Each topic carries its own `wiki` (per-topic drafting); the shared
+        # overview is surfaced once above a topic's section.
+        wiki_intro = _wiki_intro(wiki)
         # The `conflicts_with_approved` flag is gone — the DiffPanel
         # consults `/diff`'s `valid_strategies_by_topic` for that signal.
         draft_topic_rows, selected_draft_topic_id, selected_draft_topic = _build_draft_topic_rows(
@@ -403,6 +418,7 @@ def _proposal_workspace_payload(
         "selected_draft_topic": selected_draft_topic,
         "proposal": proposal,
         "wiki_preview": wiki,
+        "wiki_intro": wiki_intro,
         "revisions": revisions,
         "selected_revision_id": selected_revision.get("id") if selected_revision else None,
         "selected_revision": selected_revision,

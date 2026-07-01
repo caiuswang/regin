@@ -602,6 +602,19 @@ def cmd_topics_wiki_debt(
         print(f"{row['status']:8} {row['topic_id']}{detail}{queued}")
 
 
+@topics_app.command(
+    "backfill-topic-wiki",
+    help="One-time: split legacy runs' combined wiki into per-topic wiki "
+         "bodies (and add the wiki_md columns on databases that predate them). "
+         "New runs need no backfill — they draft per-topic wiki directly.")
+def cmd_topics_backfill_topic_wiki() -> None:
+    from lib.topics.wiki_backfill import backfill_topic_wiki
+
+    result = backfill_topic_wiki()
+    print(f"Topic-wiki backfill: filled {result['filled']} topic pages "
+          f"across {result['revisions']} revision(s).")
+
+
 def _render_topic_wiki(result: dict) -> str:
     """The routed topic's wiki pages as plain markdown — the content the
     `<topic_context>` pointer promises, surfaced directly. The JSON envelope

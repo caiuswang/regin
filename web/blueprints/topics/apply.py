@@ -376,19 +376,23 @@ def _review_state_not_ready(proposal: dict) -> bool:
 
 
 def _wiki_pages_for_apply(
-    repo_path: str, proposal_id: str, strategy: str, resolved,
+    repo_path: str, proposal_id: str, strategy: str, resolved, proposed: dict,
 ) -> dict[str, str] | None:
-    """create/replace promote the proposal's wiki.md to the per-topic wiki
-    file under .regin/topics/wiki/<id>.md (the legacy lib path did this via
-    `_persist_per_topic_wiki`); merge keeps the target topic's existing
-    wiki, so it gets no wiki_pages entry."""
+    """create/replace write the applied topic's OWN wiki page to
+    .regin/topics/wiki/<id>.md. The proposed topic carries its own `wiki`
+    (per-topic drafting); we fall back to the run's combined wiki.md only for
+    legacy proposals with no per-topic body. merge keeps the target topic's
+    existing wiki, so it gets no wiki_pages entry."""
     if strategy not in ("create", "replace") or not resolved.topic_deltas:
         return None
-    from lib.topics.core import topic_dir as _topic_dir
-    proposal_wiki = _topic_dir(repo_path) / "proposals" / proposal_id / "wiki.md"
-    if not proposal_wiki.exists():
-        return None
-    return {resolved.topic_deltas[0].topic_id: proposal_wiki.read_text()}
+    body = str((proposed or {}).get("wiki") or "").strip()
+    if not body:
+        from lib.topics.core import topic_dir as _topic_dir
+        proposal_wiki = _topic_dir(repo_path) / "proposals" / proposal_id / "wiki.md"
+        if not proposal_wiki.exists():
+            return None
+        body = proposal_wiki.read_text()
+    return {resolved.topic_deltas[0].topic_id: body}
 
 
 def _mark_proposal_topic_applied(
@@ -496,7 +500,7 @@ def api_repo_topic_proposal_apply(name, proposal_id, proposed_topic_id):
             options=options,
             reason=strategy,
             triggering_run_id=proposal_id,
-            wiki_pages=_wiki_pages_for_apply(repo_path, proposal_id, strategy, resolved),
+            wiki_pages=_wiki_pages_for_apply(repo_path, proposal_id, strategy, resolved, proposed),
         )
     except (ValueError, TopicGraphError) as exc:
         return _error(exc)

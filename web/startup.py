@@ -352,6 +352,14 @@ def init_topic_proposal_schema(conn) -> None:
         ],
     )
 
+    # Per-topic wiki column (added after these tables shipped): create_all
+    # never alters an existing table, so ADD it explicitly on older DBs.
+    for _topic_table in ("proposal_topics", "proposal_revision_topics"):
+        if _table_exists(conn, _topic_table) and "wiki_md" not in _column_names(conn, _topic_table):
+            conn.execute(
+                f"ALTER TABLE {_topic_table} ADD COLUMN wiki_md TEXT NOT NULL DEFAULT ''"
+            )
+
     if _table_exists(conn, "proposal_feedback_threads"):
         columns = _column_names(conn, "proposal_feedback_threads")
         if "revision_id" not in columns:

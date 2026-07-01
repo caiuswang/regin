@@ -701,7 +701,7 @@ def _instructions(
 Prior draft reference:
 {feedback_reference}Use the previous proposal and wiki only as reference — to keep good coverage and to address any review feedback above — not as a baseline to diff against. Re-check every topic against the current repository.
 
-Write the wiki and notes as a standalone description of the repository as it is NOW. Do NOT write changelog or diff prose comparing this revision to the previous one: avoid phrasing like "was removed", "is now", "no longer", "the old …", "previously", "changed from", or "renamed to". The reader has never seen the prior draft — describe the current structure and behavior directly, citing files that exist today.
+Write each topic's wiki and the notes as a standalone description of the repository as it is NOW. Do NOT write changelog or diff prose comparing this revision to the previous one: avoid phrasing like "was removed", "is now", "no longer", "the old …", "previously", "changed from", or "renamed to". The reader has never seen the prior draft — describe the current structure and behavior directly, citing files that exist today.
 
 Previous proposal JSON:
 ```json
@@ -733,6 +733,7 @@ Rules:
 - A ref's `role` is optional; when you set one, use only: overview, architecture, entrypoint, api, schema, test, migration, implementation, config, docs. Omit it if none clearly fits.
 - `aliases` are *alternate* phrases a future agent might search for — not restatements of the `id` or `label`. Do NOT list the topic id or label, and do NOT add variants that differ only in case, spacing, or hyphenation: regin normalizes aliases (lowercased, every run of non-alphanumeric characters → a single space), so `foo-bar`, `Foo Bar`, and `foo bar` all collapse to the same key and a repeat is rejected at apply time. Give 0–6 genuinely distinct phrasings, or leave the list empty.
 - `parent_id` places the topic under one top-level navigation bucket (see "Available buckets" below). Pick the single best-fitting bucket id. If none clearly fits, set it to `null` — the reviewer will place it; do NOT force a weak fit. `blurb` is a one-line router card ("what task should drill in here"), not a description; omit it and `intent` is used instead.
+- Every topic MUST include its own `wiki`: a self-contained Markdown page describing THAT topic — its files, behavior, and how it fits — because each topic becomes a separate `.regin/topics/wiki/<id>.md` page. Do NOT write one combined document covering every topic; give each topic its own distinct page. Put any shared framing that spans topics in the top-level `overview` instead, not repeated into each topic's wiki.
 - If a write/tool permission prompt blocks writing the output file, stop and report the permission failure instead of printing a fallback success payload.
 
 Signal completion (REQUIRED — do this LAST):
@@ -758,11 +759,12 @@ Output JSON shape:
       "commands": [],
       "include_globs": ["path/**"],
       "exclude_globs": [],
-      "evidence_paths": ["relative/path.py"]
+      "evidence_paths": ["relative/path.py"],
+      "wiki": "Markdown wiki page for THIS topic only — its own standalone narrative"
     }}
   ],
   "notes": [],
-  "wiki": "Markdown wiki draft"
+  "overview": "Optional short markdown intro tying the proposed topics together"
 }}
 
 Existing approved topics (do not propose duplicates; explore the repo with your Read/Glob/Grep tools for everything else):
@@ -822,6 +824,38 @@ def _find_agent_session_trace_id(proposal_id: str, started_monotonic: float) -> 
     return None
 
 
+def _topic_wiki_section(topic: dict[str, Any]) -> str | None:
+    """One topic's contribution to the combined wiki, or None if it has no
+    page. Normalizes to a level-2 (`## `) section so the combined doc always
+    has section boundaries (a leading `# ` h1 is demoted to `## `, an h2 is
+    kept, anything else is headed with the topic label)."""
+    body = str(topic.get("wiki") or "").strip()
+    if not body:
+        return None
+    if body.startswith("## "):
+        return body
+    if body.startswith("# "):
+        return "#" + body  # demote h1 -> h2 so the combined doc keeps `##` boundaries
+    label = topic.get("label") or topic.get("id") or "Topic"
+    return f"## {label}\n\n{body}"
+
+
+def _combined_proposal_wiki(payload: dict[str, Any], topics: list[dict[str, Any]]) -> str:
+    """Derive the revision-level combined wiki from the per-topic pages.
+
+    Per-topic `wiki` is the source of truth; this stitches an ``overview``
+    intro plus one ``## label`` section per topic into a single document for
+    revision-level storage, legacy display, and the shared intro. Falls back
+    to a legacy top-level ``wiki`` string when no topic carries its own page.
+    """
+    sections = [s for s in (_topic_wiki_section(t) for t in topics) if s]
+    if not sections:
+        return str(payload.get("wiki") or "").strip()
+    overview = str(payload.get("overview") or "").strip()
+    parts = ([overview] if overview else []) + sections
+    return "\n\n".join(parts).strip()
+
+
 def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
     from lib.topics.proposal_drafting import PROPOSAL_VERSION, validate_proposal
 
@@ -837,7 +871,7 @@ def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[
             "topics": payload.get("topics") or [],
             "notes": payload.get("notes") or [],
         }
-    wiki = str(payload.get("wiki") or "")
+    wiki = _combined_proposal_wiki(payload, proposal.get("topics") or [])
     errors = validate_proposal(proposal)
     if errors:
         raise ValueError("; ".join(errors))

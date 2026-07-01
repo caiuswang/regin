@@ -111,6 +111,7 @@ def _topic_to_dict(topic: ProposalTopic | ProposalRevisionTopic) -> dict[str, An
         "evidence_paths": json.loads(topic.evidence_paths_json or "[]"),
         "parent_id": topic.parent_id,
         "blurb": topic.blurb or "",
+        "wiki": topic.wiki_md or "",
     }
     _apply_review_markers(out, topic)
     return out
@@ -220,6 +221,7 @@ def _proposed_topic_kwargs(topic: dict[str, Any]) -> dict[str, Any]:
         "replaced_existing": 1 if topic.get("replaced_existing") else 0,
         "parent_id": topic.get("parent_id"),
         "blurb": topic.get("blurb") or "",
+        "wiki_md": topic.get("wiki") or "",
     }
     for field in _TOPIC_JSON_LIST_FIELDS:
         kwargs[f"{field}_json"] = json.dumps(topic.get(field) or [])

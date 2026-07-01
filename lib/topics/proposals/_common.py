@@ -104,28 +104,26 @@ def _persist_per_topic_wiki(
     repo_path: str | Path,
     proposal_dir: Path,
     topic_id: str,
-    label: str,
+    wiki_body: str | None,
 ) -> Path | None:
-    """Copy the proposal's full wiki.md to `.regin/topics/wiki/<id>.md`.
+    """Write the accepted topic's OWN wiki page to `.regin/topics/wiki/<id>.md`.
 
-    Previously this function ran a heading-overlap heuristic to slice
-    a per-topic section out of the agent's combined wiki.md. The
-    heuristic was brittle (failed silently when no heading matched the
-    label tokens) and lossy on re-accepts.
-
-    Post-fix: the full proposal wiki becomes the per-topic file. For
-    multi-topic proposals every accepted topic ends up with the same
-    body — redundant but never lossy. The user can hand-edit later.
-
-    `label` is kept in the signature so call sites don't need to change.
+    `wiki_body` is the proposed topic's per-topic wiki (each topic is drafted
+    with its own page). Falls back to the run's combined `wiki.md` only when
+    the topic carries no per-topic body — i.e. legacy proposals drafted before
+    per-topic wiki existed. An earlier heading-overlap heuristic that sliced a
+    section out of the combined doc was removed as brittle; per-topic wiki
+    replaces it at the source.
     """
-    del label  # unused after the slicing drop
-    wiki_path = proposal_dir / "wiki.md"
-    if not wiki_path.exists():
-        return None
+    body = (wiki_body or "").strip()
+    if not body:
+        wiki_path = proposal_dir / "wiki.md"
+        if not wiki_path.exists():
+            return None
+        body = wiki_path.read_text()
     page_path = topic_dir(repo_path) / "wiki" / f"{slugify(topic_id)}.md"
     page_path.parent.mkdir(parents=True, exist_ok=True)
-    page_path.write_text(wiki_path.read_text())
+    page_path.write_text(body)
     return page_path
 
 

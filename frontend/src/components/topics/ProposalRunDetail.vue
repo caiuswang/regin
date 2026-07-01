@@ -96,6 +96,11 @@ const selectedTopicAliasesThreads = computed(() => selectedProposalThreads.value
 const selectedTopicWikiThreads = computed(() => selectedProposalThreads.value.filter((t) =>
   t.proposal_topic_id && t.anchor_kind === 'wiki_range'
 ))
+// The wiki is one combined doc with a `## Section` per topic. The template
+// shows the selected topic's own section (`selectedDraftTopic.wiki`) and
+// falls back to the full wiki (`data.wiki_preview`) when no section matched,
+// so a topic pane is never blank. Kept inline (not a computed) to avoid
+// growing this already-large SFC's script surface area.
 const selectedGeneralReviewThreads = computed(() => selectedProposalThreads.value.filter((t) =>
   !t.proposal_topic_id && t.anchor_kind === 'general'
 ))
@@ -631,7 +636,7 @@ watch(selectedProposalId, () => {
             </details>
           </div>
 
-          <div v-if="data?.wiki_preview" class="topics-markdown">
+          <div v-if="selectedDraftTopic?.wiki || data?.wiki_preview" class="topics-markdown">
             <div class="flex flex-wrap items-center gap-2">
               <h3 class="topics-subsection-title !mb-0">Wiki Preview</h3>
               <Badge
@@ -648,7 +653,11 @@ watch(selectedProposalId, () => {
               key-prefix="wiki"
               class="mb-4"
             />
-            <MarkdownContent :markdown="data.wiki_preview" />
+            <details v-if="selectedDraftTopic?.wiki && data?.wiki_intro" class="topics-wiki-intro mb-3">
+              <summary class="text-xs font-medium text-slate-500">Shared proposal overview</summary>
+              <MarkdownContent :markdown="data.wiki_intro" class="mt-2" />
+            </details>
+            <MarkdownContent :markdown="selectedDraftTopic?.wiki || data.wiki_preview" />
           </div>
         </div>
         <p v-else class="text-sm text-gray-500">Select a proposal draft topic to review its evidence and actions.</p>
