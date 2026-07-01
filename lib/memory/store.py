@@ -1970,11 +1970,19 @@ class SqliteMemoryStore:
             rows = session.exec(select(Memory)).all()
             emb_rows = session.exec(select(MemoryEmbedding)).all()
         by_tier, by_status, by_kind, by_scope = self._bucket_rows(rows)
+        # Active-only tier/kind buckets for the category bar: its tier and kind
+        # chips filter the list to `status='active'`, so their badge counts
+        # must exclude retired/proposed rows or the count and the click-through
+        # disagree (a "60 working" badge over an empty active-working list).
+        # The full-status buckets above stay the Doctor's corpus census.
+        tier_active, _, kind_active, _ = self._bucket_rows(
+            [r for r in rows if r.status == "active"])
         return {
             "total": len(rows), "embedded": len(emb_rows),
             "embed_coverage": self._embed_coverage(rows, emb_rows),
             "by_tier": by_tier, "by_status": by_status, "by_kind": by_kind,
             "by_scope": by_scope,
+            "by_tier_active": tier_active, "by_kind_active": kind_active,
             # Consolidation debt: rows the reflect cycle still owes work on.
             # `working_active` is the "grows forever" figure — active working
             # rows whose only drain is a reflect() promote (by_tier can't

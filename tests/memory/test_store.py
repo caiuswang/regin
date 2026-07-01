@@ -290,6 +290,27 @@ def test_stats_counts():
     assert s["by_tier"] == {"working": 2}
 
 
+def test_stats_active_buckets_exclude_non_active_rows():
+    """`by_tier_active`/`by_kind_active` back the category-bar tier/kind chips,
+    which filter the list to `status='active'`. A retired or proposed row must
+    drop out of them (else the chip shows a count but clicks to an empty list —
+    the "60 working, search shows nothing" bug), while the full-status
+    `by_tier`/`by_kind` census keeps counting it."""
+    store = memory.get_store()
+    keep = _remember("stays active", kind="lesson")
+    gone = _remember("about to retire", kind="gotcha")
+    store.update(gone, status="retired")
+
+    s = memory.stats()
+    # Census still counts both rows under their tier/kind.
+    assert s["by_tier"] == {"working": 2}
+    assert s["by_kind"] == {"lesson": 1, "gotcha": 1}
+    # Active buckets exclude the retired row, matching the active-only filter.
+    assert s["by_tier_active"] == {"working": 1}
+    assert s["by_kind_active"] == {"lesson": 1}
+    assert keep  # the active row is the one that survives
+
+
 def test_stats_consolidation_debt_counts_active_working_and_proposed():
     """`consolidation_debt.working_active` isolates active working rows (the
     reflect-promote backlog) from by_tier, which counts every status; a

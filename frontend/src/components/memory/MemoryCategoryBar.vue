@@ -10,8 +10,12 @@ const props = defineProps({
 const emit = defineEmits(['select', 'update:scope'])
 
 const byStatus = computed(() => props.stats?.by_status || {})
-const byKind = computed(() => props.stats?.by_kind || {})
-const byTier = computed(() => props.stats?.by_tier || {})
+// Tier/kind chips filter the list to status='active', so their badges read the
+// active-only buckets — otherwise a tier whose rows are all retired/proposed
+// shows a count but clicks through to an empty list. (Doctor uses the
+// full-status by_tier/by_kind for its corpus census.)
+const byKind = computed(() => props.stats?.by_kind_active || {})
+const byTier = computed(() => props.stats?.by_tier_active || {})
 const byScope = computed(() => props.stats?.by_scope || {})
 
 const KIND_ITEMS = [
