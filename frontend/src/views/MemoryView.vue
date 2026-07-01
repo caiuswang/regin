@@ -352,7 +352,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
     <!-- Tree: the authoritative topic taxonomy — drill the parent_id tree to a
          node's wiki, source refs, and the memories filed under it. -->
     <div v-show="activeTab === 'tree'" class="pt-4">
-      <MemoryTaxonomy ref="taxonomyRef" @select="selectMemory" />
+      <MemoryTaxonomy ref="taxonomyRef" :scopes="stats.by_scope || {}" @select="selectMemory" />
     </div>
 
     <!-- Recall: probe what a query surfaces. -->

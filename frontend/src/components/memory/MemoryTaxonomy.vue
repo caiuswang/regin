@@ -11,18 +11,38 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
+import Select from '../ui/Select.vue'
 import Tabs from '../ui/Tabs.vue'
 import { useResizablePanel } from '../../composables/useResizablePanel'
 import TaxonomyTree from './TaxonomyTree.vue'
 import TaxonomyGraph from './TaxonomyGraph.vue'
 import TaxonomyDetail from './TaxonomyDetail.vue'
 
+const props = defineProps({
+  // The store's `by_scope` map (scope → memory count), from the parent's
+  // memories stats. Powers the repository filter that narrows every node's
+  // count to one repo. Independent of the Memories-tab scope filter.
+  scopes: { type: Object, default: () => ({}) },
+})
 const emit = defineEmits(['select'])
 
 const VIEW_TABS = [{ label: 'Tree', value: 'tree' }, { label: 'Graph', value: 'graph' }]
 const viewMode = ref('tree')
 const filter = ref('')
 const collapsed = ref(false)
+
+// Repository filter. Empty = all repos (counts aggregated across every scope,
+// the default). A concrete scope (e.g. `repo:regin`) is threaded to the
+// taxonomy API so node counts + the detail pane narrow to that repo.
+const scope = ref('')
+const scopeKeys = computed(() => Object.keys(props.scopes || {}).sort())
+const scopeSelectOptions = computed(() => [
+  { value: '', label: 'All repositories' },
+  ...scopeKeys.value.map(s => ({ value: s, label: `${s} (${props.scopes[s]})` })),
+])
+function withScope(path) {
+  return scope.value ? `${path}?scope=${encodeURIComponent(scope.value)}` : path
+}
 const { width, onResizeStart, onResizeKey } =
   useResizablePanel('regin_memory_taxonomy_width', { min: 240, max: 600, def: 340 })
 
@@ -50,7 +70,7 @@ async function reload() {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await api.get('/memory/taxonomy')
+    const data = await api.get(withScope('/memory/taxonomy'))
     roots.value = data.roots || []
     nodes.value = data.nodes || {}
     for (const k in detailCache) delete detailCache[k]
@@ -84,7 +104,7 @@ async function selectNode(id) {
   detail.value = null
   detailLoading.value = true
   try {
-    const d = await api.get(`/memory/taxonomy/${id}`)
+    const d = await api.get(withScope(`/memory/taxonomy/${id}`))
     detailCache[id] = d
     detail.value = d
   } catch (e) {
@@ -99,6 +119,14 @@ async function selectNode(id) {
 // re-open the current node so it reflects the change immediately.
 async function onTopicsChanged({ from, to }) {
   for (const id of [from, to]) if (id && detailCache[id]) delete detailCache[id]
+  await reload()
+  if (selectedId.value) await selectNode(selectedId.value)
+}
+
+// Switching repository re-scopes every count: reload() drops the detail cache
+// and rebuilds the tree; the open node is then re-fetched under the new scope.
+async function onScopeChange(value) {
+  scope.value = value
   await reload()
   if (selectedId.value) await selectNode(selectedId.value)
 }
@@ -119,6 +147,16 @@ defineExpose({ reload })
       <div class="relative flex-1 min-w-[11rem] max-w-xs">
         <Icon name="search" :size="14" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint pointer-events-none" />
         <Input v-model="filter" placeholder="Filter topics…" class="pl-8!" />
+      </div>
+      <div v-if="scopeKeys.length > 1" class="w-44">
+        <Select
+          :model-value="scope"
+          :options="scopeSelectOptions"
+          block
+          class="text-xs"
+          aria-label="Repository filter"
+          @update:model-value="onScopeChange"
+        />
       </div>
       <Button
         variant="ghost" size="sm"
