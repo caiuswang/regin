@@ -9,7 +9,9 @@ test.describe('Topics Workspace', () => {
     await expect(page.locator('h1')).toHaveText('Topics Workspace')
     await expect(page.getByRole('button', { name: /Approved/ })).toBeVisible()
     await expect(page.getByRole('button', { name: /Proposals/ })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Approved Topics', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Approved Topic Graph', exact: true })).toBeVisible()
+    // The flat table is replaced by a persistent bucket tree + filter (WikiWorkspace).
+    await expect(page.getByPlaceholder('Filter pages…')).toBeVisible()
 
     await page.getByRole('button', { name: /Proposals/ }).click()
     await expect(page).toHaveURL(/tab=proposals/)

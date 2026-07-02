@@ -8,8 +8,7 @@ import Button from '../components/ui/Button.vue'
 import Select from '../components/ui/Select.vue'
 import AuditPanel from '../components/topics/AuditPanel.vue'
 import HistoryPanel from '../components/topics/HistoryPanel.vue'
-import ApprovedTopicsList from '../components/topics/ApprovedTopicsList.vue'
-import ApprovedTopicDetail from '../components/topics/ApprovedTopicDetail.vue'
+import WikiWorkspace from '../components/topics/WikiWorkspace.vue'
 import ProposalRunsList from '../components/topics/ProposalRunsList.vue'
 import ProposalRunDetail from '../components/topics/ProposalRunDetail.vue'
 
@@ -511,12 +510,7 @@ onUnmounted(() => {
         {{ wikiData.validation.errors.join('; ') }}
       </div>
 
-      <ApprovedTopicsList
-        v-if="!route.query.topic"
-        :data="wikiData"
-      />
-      <ApprovedTopicDetail
-        v-else
+      <WikiWorkspace
         :repo="repo"
         :data="wikiData"
         @refresh-all="refreshSummaryWikiProposals"

@@ -182,6 +182,60 @@ def _proposal_topic_row(topic: dict, *, feedback_thread_count: int = 0) -> dict:
     }
 
 
+def _wiki_tree(graph: dict, repo_path: str, topic_rows: list[dict]) -> dict:
+    """The navigation tree for the wiki left rail.
+
+    Mirrors `web/blueprints/memory.py::api_memory_taxonomy`'s `{roots, nodes}`
+    shape (built from `build_tree`), but carries the fields the wiki tree needs:
+    each node is `{id, label, children, parent_id, is_bucket, has_wiki,
+    ref_count, broken_ref_count, status}`. The tree is NOT strictly 2-level:
+    `effective_parent` keeps user-built multi-level groupings (a content topic
+    can hang under another content topic), so a node with children is still a
+    real, selectable wiki page unless it is a declared taxonomy bucket. Only
+    declared buckets and the synthetic `unclassified` root are non-selectable
+    group headers with no wiki/refs of their own. The reserved `unclassified`
+    bucket is surfaced even when the graph never declared it, so an unplaced
+    topic is never dropped."""
+    from lib.topics.tree import build_tree
+    from lib.topics.wiki import wiki_dir
+    tree = build_tree(graph)
+    children = tree["children"]
+    topics = graph.get("topics") or {}
+    wdir = wiki_dir(repo_path)
+    rows_by_id = {row["id"]: row for row in topic_rows}
+    nodes: dict = {}
+    for nid in list(topics) + tree["roots"]:
+        if nid not in nodes:
+            nodes[nid] = _wiki_tree_node(
+                nid, topics.get(nid) or {}, rows_by_id.get(nid) or {},
+                children.get(nid, []), wdir)
+    return {"roots": list(tree["roots"]), "nodes": nodes}
+
+
+def _wiki_tree_node(nid: str, topic: dict, row: dict, kids: list[str], wdir: Path) -> dict:
+    """One `_wiki_tree` node card. A group header is ONLY a declared taxonomy
+    bucket or the synthetic `unclassified` root — those own no wiki page and no
+    refs of their own. A content topic is always a real, selectable page even
+    when it has children (a user-built multi-level grouping): it keeps its
+    `has_wiki` + ref/broken-ref counts AND its `children`."""
+    from lib.topics.tree import UNCLASSIFIED, is_bucket
+    is_group = is_bucket(topic) or nid == UNCLASSIFIED
+    return {
+        "id": nid,
+        "label": topic.get("label") or row.get("label") or nid,
+        "children": kids,
+        "parent_id": topic.get("parent_id"),
+        # A group header (bucket) is never selectable — it only expands/
+        # collapses. Carried explicitly because "has children" no longer
+        # implies "is a bucket": a content topic can nest sub-topics.
+        "is_bucket": is_group,
+        "has_wiki": (not is_group) and (wdir / f"{nid}.md").exists(),
+        "ref_count": 0 if is_group else row.get("ref_count", 0),
+        "broken_ref_count": 0 if is_group else row.get("broken_ref_count", 0),
+        "status": row.get("status") or topic.get("status", "active"),
+    }
+
+
 def _wiki_workspace_payload(repo_path: str, selected_topic_id: str | None) -> dict:
     summary = topic_summary(repo_path)
     topic_rows = []
@@ -208,6 +262,7 @@ def _wiki_workspace_payload(repo_path: str, selected_topic_id: str | None) -> di
     return {
         "repo": Path(repo_path).name,
         "table": topic_rows,
+        "tree": _wiki_tree(summary["graph"], repo_path, topic_rows),
         "selected_topic_id": selected_topic_id,
         "selected_topic": selected_topic,
         "validation": summary["validation"],
