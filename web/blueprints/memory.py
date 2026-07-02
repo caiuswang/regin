@@ -368,13 +368,16 @@ def api_memory_taxonomy():
     from lib.topics.tree import build_tree, node_card, subtree_ids
     from lib.topics.wiki import wiki_dir
     scope = request.args.get("scope") or None
-    graph = merge_meta_roots(load_authoritative_graph(str(settings.project_root)))
+    # The repo dropdown selects which repo's OWN taxonomy to load, not just a
+    # count filter over the serving repo's tree.
+    root = _scope_repo_root(scope)
+    graph = merge_meta_roots(load_authoritative_graph(root))
     if not graph or not graph.get("topics"):
         return jsonify({"roots": [], "nodes": {}})
     store = memory.get_store()
     tree = build_tree(graph)
     children = tree["children"]
-    wdir = wiki_dir(settings.project_root)
+    wdir = wiki_dir(root)
     nodes: dict = {}
     # Every declared topic, plus any root the tree surfaces without a node
     # (the reserved `unclassified` bucket can hold quarantined leaves even
@@ -407,6 +410,23 @@ def api_memory_taxonomy():
         nodes[_ORPHAN_NODE_ID] = _orphan_card(len(orphans))
         roots.append(_ORPHAN_NODE_ID)
     return jsonify({"roots": roots, "nodes": nodes})
+
+
+def _scope_repo_root(scope):
+    """Filesystem root of the repo whose OWN taxonomy the Tree view loads for
+    `scope`. A `repo:<name>` scope matching a registered repo (basename of a
+    `settings.repo_paths` entry) switches the tree to that repo's graph; All
+    repositories / global / an unregistered scope fall back to the serving
+    project root."""
+    import os
+    from lib.settings import settings
+    if scope and scope.startswith("repo:"):
+        name = scope.split(":", 1)[1]
+        for rp in settings.repo_paths:
+            root = os.path.realpath(str(rp))
+            if os.path.basename(root) == name:
+                return root
+    return str(settings.project_root)
 
 
 def _taxonomy_mem_count(store, graph, nid, *, is_meta, scope):
@@ -488,7 +508,8 @@ def api_memory_taxonomy_node(node_id):
                      "refs": [], "edges": []}
         return jsonify(
             _taxonomy_detail(node_id, synthetic, ids, mems, None))
-    graph = merge_meta_roots(load_authoritative_graph(str(settings.project_root)) or {})
+    root = _scope_repo_root(scope)
+    graph = merge_meta_roots(load_authoritative_graph(root) or {})
     node = graph.get("topics", {}).get(node_id)
     if node is None:
         return jsonify({"error": "not found"}), 404
@@ -497,7 +518,7 @@ def api_memory_taxonomy_node(node_id):
     ids = store.memories_for_topic_subtree(
         subtree_ids(graph, node_id), scope=node_scope)
     mems = [store.get_dict(mid) for mid in ids[:_taxonomy_top_k()]]
-    wiki_path = wiki_dir(settings.project_root) / f"{node_id}.md"
+    wiki_path = wiki_dir(root) / f"{node_id}.md"
     body = wiki_path.read_text() if wiki_path.exists() else None
     return jsonify(_taxonomy_detail(node_id, node, ids, mems, body))
 

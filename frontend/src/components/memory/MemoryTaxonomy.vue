@@ -52,13 +52,10 @@ const nodes = ref({})
 const loading = ref(false)
 const loadError = ref('')
 
-// File-a-memory picker options: every real topic node currently shown for the
-// active repo filter (the synthetic Orphaned bucket is never a valid assign
-// target). Uses the scoped `displayNodes` so filing a lesson under a repo only
-// offers that repo's topics (plus the always-visible global meta buckets);
-// falls back to the full set when no repo is selected.
+// File-a-memory picker options: every real topic node in the loaded repo's
+// taxonomy (the synthetic Orphaned bucket is never a valid assign target).
 const topicOptions = computed(() =>
-  Object.values(displayNodes.value)
+  Object.values(nodes.value)
     .filter(n => n.id !== ORPHAN_ID)
     .map(n => ({ value: n.id, label: n.label }))
     .sort((a, b) => a.label.localeCompare(b.label)))
@@ -83,24 +80,6 @@ async function reload() {
     loading.value = false
   }
 }
-
-// When a repo scope is active, the tree/graph render only nodes with memories
-// in that repo (subtree count > 0), plus the global meta-root buckets, which
-// are cross-repo and always shown. The full `nodes`/`roots` maps are kept
-// intact for the file-a-memory picker and breadcrumb ancestors.
-const displayNodes = computed(() => {
-  if (!scope.value) return nodes.value
-  const keep = new Set(Object.keys(nodes.value)
-    .filter(id => nodes.value[id].meta || nodes.value[id].mem_count > 0))
-  const out = {}
-  for (const id of keep) {
-    const n = nodes.value[id]
-    out[id] = { ...n, children: (n.children || []).filter(c => keep.has(c)) }
-  }
-  return out
-})
-const displayRoots = computed(() =>
-  scope.value ? roots.value.filter(id => displayNodes.value[id]) : roots.value)
 
 // child → parent, for the detail-pane breadcrumb.
 const parentOf = computed(() => {
@@ -162,7 +141,7 @@ defineExpose({ reload })
     <div class="flex items-center flex-wrap gap-3">
       <div class="flex items-baseline gap-2">
         <h2 class="text-sm font-semibold text-fg">Taxonomy</h2>
-        <span class="text-[11px] text-fg-faint font-mono">{{ displayRoots.length }} buckets</span>
+        <span class="text-[11px] text-fg-faint font-mono">{{ roots.length }} buckets</span>
       </div>
       <Tabs v-model="viewMode" :tabs="VIEW_TABS" variant="segmented" />
       <div class="relative flex-1 min-w-[11rem] max-w-xs">
@@ -206,12 +185,12 @@ defineExpose({ reload })
         <div class="flex-1 min-h-0" :class="viewMode === 'tree' ? 'overflow-y-auto pr-1' : 'overflow-hidden'">
           <TaxonomyTree
             v-if="viewMode === 'tree'"
-            :roots="displayRoots" :nodes="displayNodes" :selected-id="selectedId" :filter="filter"
+            :roots="roots" :nodes="nodes" :selected-id="selectedId" :filter="filter"
             @select="selectNode"
           />
           <TaxonomyGraph
             v-else
-            :roots="displayRoots" :nodes="displayNodes" :selected-id="selectedId" :filter="filter"
+            :roots="roots" :nodes="nodes" :selected-id="selectedId" :filter="filter"
             @select="selectNode"
           />
         </div>
