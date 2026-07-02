@@ -56,38 +56,43 @@ def _open_feedback_lines(threads: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _build_prompt(proposal: dict[str, Any], open_feedback: str) -> str:
-    """Tag-structured reviewer prompt. Names the topic ids + ref paths so the
-    agent can pull the current files itself; asks for a single recommendation
-    token plus terse reasons (precision over recall — flag real problems)."""
-    topics = proposal.get("topics") or []
-    topic_lines = []
-    for topic in topics:
+def _topic_lines(proposal: dict[str, Any]) -> str:
+    """One bullet per drafted topic (`- <id>: <intent>` + its ref paths) for the
+    ``<draft_topics>`` block. Kept as a discrete builder so it can be passed as
+    the ``topic_lines`` variable into the editable review skeleton."""
+    lines: list[str] = []
+    for topic in proposal.get("topics") or []:
         tid = topic.get("id", "?")
         refs = ", ".join(
             r.get("path", "") for r in topic.get("refs", []) if isinstance(r, dict)
         )
-        topic_lines.append(f"- {tid}: {topic.get('intent', '')}\n  refs: {refs}")
-    feedback_block = (
-        f"<prior_open_feedback>\n{open_feedback}\n</prior_open_feedback>\n\n"
-        if open_feedback else ""
-    )
-    return (
-        "You are reviewing a proposed topic-graph draft for this repository. "
-        "Use your Read/Glob/Grep tools to check the listed ref files as they "
-        "exist NOW and judge whether the draft is accurate and worth applying.\n\n"
-        "<draft_topics>\n" + "\n".join(topic_lines) + "\n</draft_topics>\n\n"
-        + feedback_block +
-        "<task>\n"
-        "Assess coverage, accuracy against the current code, and whether any "
-        "prior open feedback is addressed. Be precise — only raise real "
-        "problems, not stylistic nitpicks. End with exactly one line:\n"
-        "RECOMMENDATION: ACCEPT|REGENERATE|DISMISS\n"
-        "  ACCEPT   — the draft is sound; apply it as is.\n"
-        "  REGENERATE — there are fixable gaps; re-draft addressing them.\n"
-        "  DISMISS  — the proposal isn't worth pursuing.\n"
-        "</task>"
-    )
+        lines.append(f"- {tid}: {topic.get('intent', '')}\n  refs: {refs}")
+    return "\n".join(lines)
+
+
+def _feedback_block(open_feedback: str) -> str:
+    """The `<prior_open_feedback>` block, or "" when there is no open feedback."""
+    if not open_feedback:
+        return ""
+    return f"<prior_open_feedback>\n{open_feedback}\n</prior_open_feedback>\n\n"
+
+
+def _build_prompt(proposal: dict[str, Any], open_feedback: str) -> str:
+    """Build the reviewer's task prompt.
+
+    The body is the editable ``topic-proposal-review`` surface
+    (``lib/prompts/surfaces/review.py``); this function only assembles the
+    runtime context it interpolates. A broken user edit degrades to the built-in
+    default inside ``render_surface`` — the prompt is never left unbuildable.
+    """
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.review import SURFACE_ID
+
+    context = {
+        "topic_lines": _topic_lines(proposal),
+        "feedback_block": _feedback_block(open_feedback),
+    }
+    return render_surface(SURFACE_ID, context)
 
 
 def _parse_recommendation(answer: str) -> str:

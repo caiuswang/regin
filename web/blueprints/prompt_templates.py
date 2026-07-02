@@ -11,6 +11,7 @@ from lib.prompt_templates import (
     delete_template,
     get_template_by_slug,
     list_templates,
+    reset_skeleton_to_default,
     update_template,
 )
 
@@ -24,7 +25,9 @@ def _err(exc: Exception, status: int = 400):
 
 @prompt_templates_bp.route("/api/prompt-templates")
 def api_prompt_templates_list():
-    return jsonify({"ok": True, "templates": list_templates()})
+    # Optional ?kind=fragment|skeleton filter for the tabbed management UI.
+    kind = (request.args.get("kind") or "").strip() or None
+    return jsonify({"ok": True, "templates": list_templates(kind)})
 
 
 @prompt_templates_bp.route("/api/prompt-templates/<slug>")
@@ -65,6 +68,18 @@ def api_prompt_templates_delete(slug: str):
         template = delete_template(slug)
     except PromptTemplateError as exc:
         status = 404 if "not found" in str(exc) else 400
+        return _err(exc, status)
+    return jsonify({"ok": True, "template": template})
+
+
+@prompt_templates_bp.route("/api/prompt-templates/<slug>/reset", methods=["POST"])
+@require_editor
+def api_prompt_templates_reset(slug: str):
+    """Restore a builtin skeleton's body + variables to its registered default."""
+    try:
+        template = reset_skeleton_to_default(slug)
+    except PromptTemplateError as exc:
+        status = 404 if "not found" in str(exc) or "no built-in" in str(exc) else 400
         return _err(exc, status)
     return jsonify({"ok": True, "template": template})
 

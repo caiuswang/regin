@@ -1,14 +1,18 @@
 <script setup>
+import PromptSkeletonsPanel from '../components/PromptSkeletonsPanel.vue'
 import PromptTemplatesPanel from '../components/PromptTemplatesPanel.vue'
-import GraderPromptsPanel from '../components/GraderPromptsPanel.vue'
 import Tabs from '../components/ui/Tabs.vue'
 import { useTabRoute } from '../composables/useTabRoute'
 
+// The deep-grader judge prompts (grader-correctness / grader-process) are now
+// registered skeletons under "Agent prompts", so there is no separate grader
+// tab. Grader aspects + judge provider still live in the Grades → Grader
+// settings panel (GradeAspectsConfig).
 const TABS = [
-  { value: 'templates', label: 'Templates' },
-  { value: 'grader', label: 'Grader prompts' },
+  { value: 'skeletons', label: 'Agent prompts' },
+  { value: 'fragments', label: 'Fragments' },
 ]
-const tab = useTabRoute({ default: 'templates', valid: ['templates', 'grader'] })
+const tab = useTabRoute({ default: 'skeletons', valid: ['skeletons', 'fragments'] })
 </script>
 
 <template>
@@ -18,15 +22,16 @@ const tab = useTabRoute({ default: 'templates', valid: ['templates', 'grader'] }
         <div class="page-eyebrow">Library</div>
         <h1 class="page-title">Prompts</h1>
         <p class="page-subtitle">
-          Reusable topic-proposal fragments and the system prompts the
-          session grader's deep (LLM-judge) tier runs.
+          The editable system/goal prompts regin pipes to external agents
+          (topic proposals, reviewers, memory, and the deep grader judges) and
+          the reusable fragments injected into them.
         </p>
       </div>
     </header>
 
     <Tabs v-model="tab" :tabs="TABS" variant="underline" class="mb-5" />
 
-    <PromptTemplatesPanel v-if="tab === 'templates'" />
-    <GraderPromptsPanel v-else />
+    <PromptSkeletonsPanel v-if="tab === 'skeletons'" />
+    <PromptTemplatesPanel v-else />
   </div>
 </template>

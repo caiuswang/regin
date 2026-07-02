@@ -416,6 +416,8 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     label                   TEXT NOT NULL,
     description             TEXT,
     body                    TEXT NOT NULL,
+    kind                    TEXT NOT NULL DEFAULT 'fragment',
+    variables               TEXT NOT NULL DEFAULT '[]',
     applies_to              TEXT NOT NULL DEFAULT '[]',
     default_for_providers   TEXT NOT NULL DEFAULT '[]',
     builtin                 INTEGER NOT NULL DEFAULT 0,
@@ -423,6 +425,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     updated_at              TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS ix_prompt_templates_slug ON prompt_templates(slug);
+CREATE INDEX IF NOT EXISTS ix_prompt_templates_kind ON prompt_templates(kind);
 
 -- Built-in prompt template, formerly seeded by alembic 0003. INSERT OR
 -- IGNORE keyed on the UNIQUE slug keeps it idempotent across `regin init`

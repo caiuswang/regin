@@ -37,6 +37,7 @@ def rebuild_from_files(preserve_local: bool = True) -> dict:
         "backed_up": {},
         "restored": {},
         "tags_seeded": None,
+        "prompt_skeletons_seeded": 0,
         "patterns_rebuilt": 0,
         "patterns_skipped": [],
         "repos": None,
@@ -54,6 +55,7 @@ def rebuild_from_files(preserve_local: bool = True) -> dict:
             _restore_local_tables(conn, local_backup, stats)
 
         _seed_tags(conn, stats)
+        _seed_prompt_skeletons(stats)
         _rebuild_patterns(conn, stats)
         _rediscover_repos(stats)
 
@@ -104,6 +106,16 @@ def _restore_local_tables(conn, backup, stats):
                 pass  # skip rows that violate new schema constraints
         stats["restored"][table] = len(rows)
         _log.write("table_restored", table=table, rows=len(rows))
+
+
+def _seed_prompt_skeletons(stats):
+    """Seed builtin skeleton rows for the registered prompt surfaces. Bodies
+    live in the Python registry, so this runs after schema.sql (which only
+    seeds the fragment). Idempotent by slug."""
+    from lib.prompt_templates import seed_builtin_skeletons
+    inserted = seed_builtin_skeletons()
+    stats["prompt_skeletons_seeded"] = inserted
+    _log.write("prompt_skeletons_seeded", count=inserted)
 
 
 def _recreate_schema(conn):

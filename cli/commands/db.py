@@ -226,6 +226,11 @@ def cmd_init(
 
     _init_db()
 
+    # Seed a builtin skeleton row for every registered external-agent prompt
+    # surface (bodies live in the Python registry, not schema.sql). Idempotent.
+    from lib.prompt_templates import seed_builtin_skeletons
+    seed_builtin_skeletons()
+
     # `_index/` holds auto-generated tag/repo indexes. Per-procedure
     # directories are created lazily by `sync` when a guide is written.
     os.makedirs(os.path.join(str(settings.patterns_dir), '_index'), exist_ok=True)

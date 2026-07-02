@@ -25,33 +25,10 @@ log = get_activity_logger("memory")
 
 CLASSIFY_SOURCE = "agent"
 
-_PROMPT_HEAD = """You are classifying agent-memory entries onto a repo's topic taxonomy.
-
-For each memory below, choose the topic node(s) it is genuinely ABOUT — the
-subject of the lesson/gotcha/fact it teaches. Rules:
-- Classify on the memory's SUBJECT, never on an incidental file path it mentions.
-  A shared cross-cutting infra file (db/schema.sql, hook_manager/core.py,
-  lib/skills/skill_router.py) appears across many memories and is NOT evidence
-  that a memory is about that file's topic.
-- Most memories map to exactly ONE topic. Add a SECOND (rarely a third) only
-  when the memory genuinely teaches about two subsystems.
-- Prefer the most SPECIFIC topic. A node tagged [category] is a broad
-  container — pick it only when no specific child fits. NEVER return both a
-  category and one of its children for the same memory; choose only the child.
-- If no topic is genuinely related, return an empty list for that memory.
-  Do not force a match.
-- Use only topic ids from the taxonomy; never invent an id.
-
-<taxonomy>
-{taxonomy}
-</taxonomy>"""
-
-_OUTPUT_FORMAT = """<output_format>
-Respond with ONLY a JSON array, one object per memory you were given:
-  [{"id": "<the memory id>", "topics": ["<topic-id>", ...]}, ...]
-Use an empty list for a memory with no genuinely related topic. Include every
-memory id exactly once.
-</output_format>"""
+# The classification prompt (rules + taxonomy slot + output contract) now lives
+# as the editable `memory-topic-classify` surface
+# (lib/prompts/surfaces/memory.py::_DEFAULT_BODY_TOPIC_CLASSIFY). `_compose_prompt`
+# below only wires the runtime context (the taxonomy digest + the batch block).
 
 
 class ClassifierUnavailable(RuntimeError):
@@ -86,9 +63,13 @@ def _memories_block(batch: list[dict]) -> str:
 
 
 def _compose_prompt(batch: list[dict], taxonomy: str) -> str:
-    """Assemble the classification prompt for one batch of memories."""
-    head = _PROMPT_HEAD.replace("{taxonomy}", taxonomy)
-    return "\n\n".join([head, _memories_block(batch), _OUTPUT_FORMAT]) + "\n"
+    """Assemble the classification prompt for one batch of memories via the
+    editable `memory-topic-classify` surface. Only wires the runtime context;
+    a broken user edit degrades to the built-in default inside `render_surface`."""
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import TOPIC_CLASSIFY_SURFACE_ID
+    context = {"taxonomy": taxonomy, "memories_block": _memories_block(batch)}
+    return render_surface(TOPIC_CLASSIFY_SURFACE_ID, context)
 
 
 def _extract_json_array(answer: str):

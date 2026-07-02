@@ -156,24 +156,23 @@ def _topic_request(proposal: dict[str, Any]) -> str:
 
 
 def _triage_prompt(topic_id: str, wiki_md: str, drifted_paths: list[str]) -> str:
-    """Tag-structured brief asking whether a drift warrants a re-draft. The
-    agent has read-only repo tools, so it pulls the changed files itself and
-    compares them against the current wiki rather than judging a baked blob."""
-    paths = "\n".join(f"- {p}" for p in drifted_paths) or "- (this topic's refs)"
-    wiki_block = wiki_md.strip() or "(no wiki on file)"
-    return (
-        "A topic's ref files changed since its wiki was written. Decide whether "
-        "the change is MATERIAL (the wiki narrative below is now inaccurate or "
-        "incomplete and should be re-drafted) or TRIVIAL (formatting, comments, "
-        "renames, or edits that don't change what the wiki says).\n\n"
-        "Use your Read/Glob/Grep tools to read the changed files as they exist "
-        "NOW, then compare against the wiki.\n\n"
-        f"<topic_id>{topic_id}</topic_id>\n\n"
-        f"<changed_refs>\n{paths}\n</changed_refs>\n\n"
-        f"<current_wiki>\n{wiki_block}\n</current_wiki>\n\n"
-        "<task>\nRead the changed refs, then answer with exactly one line:\n"
-        "VERDICT: MATERIAL|TRIVIAL\n</task>"
-    )
+    """Build the drift-triage agent's task prompt.
+
+    The body is the editable ``topic-proposal-drift-triage`` surface
+    (``lib/prompts/surfaces/triage.py``); this function only assembles the
+    runtime context it interpolates. A broken user edit degrades to the built-in
+    default inside ``render_surface`` — the prompt is never left unbuildable.
+    """
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.triage import SURFACE_ID
+
+    context = {
+        "topic_id": topic_id,
+        "changed_refs": "\n".join(f"- {p}" for p in drifted_paths)
+        or "- (this topic's refs)",
+        "current_wiki": wiki_md.strip() or "(no wiki on file)",
+    }
+    return render_surface(SURFACE_ID, context)
 
 
 def _triage_inputs(repo_path: str | Path,

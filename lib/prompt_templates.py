@@ -52,6 +52,8 @@ def _row_to_dict(row: PromptTemplate) -> dict[str, Any]:
         "label": row.label,
         "description": row.description or "",
         "body": row.body,
+        "kind": row.kind or "fragment",
+        "variables": _decode_variables(row.variables),
         "applies_to": _decode_list(row.applies_to),
         "default_for_providers": _decode_list(row.default_for_providers),
         "builtin": bool(row.builtin),
@@ -76,6 +78,42 @@ def _encode_list(values: Iterable[str] | None) -> str:
     return json.dumps([str(v) for v in values])
 
 
+def _decode_variables(blob: str | None) -> list[dict[str, Any]]:
+    if not blob:
+        return []
+    try:
+        value = json.loads(blob)
+    except json.JSONDecodeError:
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _encode_variables(values: Iterable[dict[str, Any]] | None) -> str:
+    if not values:
+        return "[]"
+    return json.dumps([item for item in values if isinstance(item, dict)])
+
+
+def _clean_str(payload: dict[str, Any], key: str) -> str:
+    return (payload.get(key) or "").strip()
+
+
+def _apply_text_field(
+    row: PromptTemplate, payload: dict[str, Any], key: str, *, required: bool
+) -> None:
+    """Apply an optional text field from ``payload`` to ``row`` in place.
+
+    Absent key → unchanged. Present-but-empty → ``PromptTemplateError`` when
+    ``required``, else stored as NULL.
+    """
+    if key not in payload:
+        return
+    value = (payload[key] or "").strip()
+    if required and not value:
+        raise PromptTemplateError(f"{key} cannot be empty")
+    setattr(row, key, value if (value or required) else None)
+
+
 def _unique_slug(slug: str, existing: set[str]) -> str:
     if slug not in existing:
         return slug
@@ -85,9 +123,12 @@ def _unique_slug(slug: str, existing: set[str]) -> str:
     return f"{slug}-{suffix}"
 
 
-def list_templates() -> list[dict[str, Any]]:
+def list_templates(kind: str | None = None) -> list[dict[str, Any]]:
     with SessionLocal() as session:
-        rows = session.exec(select(PromptTemplate).order_by(PromptTemplate.label)).all()
+        stmt = select(PromptTemplate)
+        if kind:
+            stmt = stmt.where(PromptTemplate.kind == kind)
+        rows = session.exec(stmt.order_by(PromptTemplate.label)).all()
         return [_row_to_dict(row) for row in rows]
 
 
@@ -126,29 +167,26 @@ def default_template_slugs_for(provider: str) -> list[str]:
 
 
 def create_template(payload: dict[str, Any]) -> dict[str, Any]:
-    label = (payload.get("label") or "").strip()
-    body = (payload.get("body") or "").strip()
+    label = _clean_str(payload, "label")
+    body = _clean_str(payload, "body")
     if not label:
         raise PromptTemplateError("label is required")
     if not body:
         raise PromptTemplateError("body is required")
-    slug_input = (payload.get("slug") or "").strip() or label
-    base_slug = slugify(slug_input)
-    applies_to = payload.get("applies_to") or []
-    default_for = payload.get("default_for_providers") or []
-    description = (payload.get("description") or "").strip() or None
+    base_slug = slugify(_clean_str(payload, "slug") or label)
     now = _now()
 
     with SessionLocal() as session:
         existing = {row.slug for row in session.exec(select(PromptTemplate)).all()}
-        slug = _unique_slug(base_slug, existing)
         row = PromptTemplate(
-            slug=slug,
+            slug=_unique_slug(base_slug, existing),
             label=label,
-            description=description,
+            description=_clean_str(payload, "description") or None,
             body=body,
-            applies_to=_encode_list(applies_to),
-            default_for_providers=_encode_list(default_for),
+            kind=_clean_str(payload, "kind") or "fragment",
+            variables=_encode_variables(payload.get("variables")),
+            applies_to=_encode_list(payload.get("applies_to")),
+            default_for_providers=_encode_list(payload.get("default_for_providers")),
             builtin=0,
             created_at=now,
             updated_at=now,
@@ -165,18 +203,11 @@ def update_template(slug: str, payload: dict[str, Any]) -> dict[str, Any]:
         row = session.exec(select(PromptTemplate).where(PromptTemplate.slug == slug)).first()
         if row is None:
             raise PromptTemplateError(f"prompt template not found: {slug}")
-        if "label" in payload:
-            label = (payload["label"] or "").strip()
-            if not label:
-                raise PromptTemplateError("label cannot be empty")
-            row.label = label
-        if "description" in payload:
-            row.description = (payload["description"] or "").strip() or None
-        if "body" in payload:
-            body = (payload["body"] or "").strip()
-            if not body:
-                raise PromptTemplateError("body cannot be empty")
-            row.body = body
+        _apply_text_field(row, payload, "label", required=True)
+        _apply_text_field(row, payload, "description", required=False)
+        _apply_text_field(row, payload, "body", required=True)
+        if "variables" in payload:
+            row.variables = _encode_variables(payload["variables"])
         if "applies_to" in payload:
             row.applies_to = _encode_list(payload["applies_to"])
         if "default_for_providers" in payload:
@@ -201,6 +232,65 @@ def delete_template(slug: str) -> dict[str, Any]:
         return snapshot
 
 
+def _surface_variables(surface: Any) -> list[dict[str, Any]]:
+    """The variable palette for a registered surface, as JSON-ready dicts."""
+    return [
+        {
+            "name": v.name,
+            "description": v.description,
+            "example": v.example,
+            "required": v.required,
+        }
+        for v in surface.variables
+    ]
+
+
+def seed_builtin_skeletons() -> int:
+    """Insert a ``builtin`` ``skeleton`` row for every registered prompt surface
+    that has no row yet. Idempotent by slug — a user-edited row is left
+    untouched — mirroring the ``schema.sql`` fragment seed. Returns rows added."""
+    from lib.prompts.registry import list_surfaces
+
+    now = _now()
+    inserted = 0
+    with SessionLocal() as session:
+        existing = {row.slug for row in session.exec(select(PromptTemplate)).all()}
+        for surface in list_surfaces():
+            if surface.id in existing:
+                continue
+            session.add(
+                PromptTemplate(
+                    slug=surface.id,
+                    label=surface.label,
+                    description=surface.description or None,
+                    body=surface.default_body(),
+                    kind=surface.kind,
+                    variables=_encode_variables(_surface_variables(surface)),
+                    applies_to=_encode_list(surface.applies_to),
+                    default_for_providers="[]",
+                    builtin=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            inserted += 1
+        session.commit()
+    return inserted
+
+
+def reset_skeleton_to_default(slug: str) -> dict[str, Any]:
+    """Restore a skeleton row's body + variables to its registered built-in
+    default (the UI's 'reset to default' affordance)."""
+    from lib.prompts.registry import get_surface
+
+    surface = get_surface(slug)
+    if surface is None:
+        raise PromptTemplateError(f"no built-in default for prompt: {slug}")
+    return update_template(
+        slug, {"body": surface.default_body(), "variables": _surface_variables(surface)}
+    )
+
+
 __all__ = [
     "PromptTemplateError",
     "create_template",
@@ -209,6 +299,8 @@ __all__ = [
     "get_template_by_slug",
     "get_templates_by_slugs",
     "list_templates",
+    "reset_skeleton_to_default",
+    "seed_builtin_skeletons",
     "slugify",
     "update_template",
 ]

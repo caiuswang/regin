@@ -18,6 +18,17 @@ class PromptTemplate(Base, table=True):
     label: str = Field(sa_column=Column("label", String, nullable=False))
     description: Optional[str] = Field(default=None, sa_column=Column("description", Text))
     body: str = Field(sa_column=Column("body", Text, nullable=False))
+    # Row kind: "fragment" (an injectable snippet) or "skeleton" (a full
+    # external-agent goal prompt with {{variable}} slots). Seeded skeleton rows
+    # mirror a registered surface id in their slug.
+    kind: str = Field(
+        sa_column=Column("kind", String, nullable=False, server_default=text("'fragment'")),
+    )
+    # JSON array of {name, description, example, required} the body interpolates
+    # — drives the editor's variable palette. "[]" for plain fragments.
+    variables: str = Field(
+        sa_column=Column("variables", Text, nullable=False, server_default=text("'[]'")),
+    )
     # JSON array of provider ids the template is compatible with; "[]" = all providers.
     applies_to: str = Field(
         sa_column=Column("applies_to", Text, nullable=False, server_default=text("'[]'")),

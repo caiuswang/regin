@@ -678,25 +678,21 @@ def _sibling_refresh_section(repo: Path, out_dir: Path) -> str:
     )
 
 
-def _instructions(
-    repo: Path,
-    topic_request: str | None,
-    out_dir: Path,
-    temp_output_path: Path,
-    *,
-    prior_draft: dict[str, Any] | None = None,
-    prompt_templates: list[dict[str, Any]] | None = None,
-) -> str:
-    prior_reference = ""
-    if prior_draft:
-        feedback_reference = ""
-        feedback_block = format_review_feedback_for_prompt(prior_draft.get("feedback_threads") or [])
-        if feedback_block:
-            feedback_reference = f"""
+def _prior_reference_block(prior_draft: dict[str, Any] | None) -> str:
+    """The regenerate-only 'Prior draft reference' block, or '' on a fresh run.
+
+    Kept as a discrete builder so it can be passed as the ``prior_reference``
+    variable into the editable drafting skeleton (see lib/prompts/surfaces)."""
+    if not prior_draft:
+        return ""
+    feedback_reference = ""
+    feedback_block = format_review_feedback_for_prompt(prior_draft.get("feedback_threads") or [])
+    if feedback_block:
+        feedback_reference = f"""
 {feedback_block}
 
 """
-        prior_reference = f"""
+    return f"""
 
 Prior draft reference:
 {feedback_reference}Use the previous proposal and wiki only as reference — to keep good coverage and to address any review feedback above — not as a baseline to diff against. Re-check every topic against the current repository.
@@ -713,70 +709,43 @@ Previous wiki markdown:
 {str(prior_draft.get('wiki') or '')}
 ```
 """
-    custom = _format_template_section(prompt_templates)
-    sibling_section = _sibling_refresh_section(repo, out_dir)
-    finish_cmd = _finish_command(repo, out_dir.name)
-    return f"""# Regin Topic Proposal Agent Task
 
-Inspect this repository as needed and draft reviewable topic graph proposals.
 
-User topic request:
-{topic_request or "No specific topic request was provided. Propose the most useful uncovered topics from the repository."}{prior_reference}{custom}
+def _instructions(
+    repo: Path,
+    topic_request: str | None,
+    out_dir: Path,
+    temp_output_path: Path,
+    *,
+    prior_draft: dict[str, Any] | None = None,
+    prompt_templates: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build the drafting agent's task prompt.
 
-Rules:
-- Do not modify `.regin/topics/topic.json` or approved topic data.
-- Write final JSON to the temp output file `{temp_output_path}`.
-- Do not write `{out_dir / OUTPUT_FILE}` directly; regin will validate and copy the temp output into that canonical artifact.
-- You may also print the same JSON as a fenced `json` block.
-- Keep all file paths relative to the repository root.
-- Only propose topics justified by real repository files; every ref path must exist in the repo (regin rejects paths it can't find on disk).
-- A ref's `role` is optional; when you set one, use only: overview, architecture, entrypoint, api, schema, test, migration, implementation, config, docs. Omit it if none clearly fits.
-- `aliases` are *alternate* phrases a future agent might search for — not restatements of the `id` or `label`. Do NOT list the topic id or label, and do NOT add variants that differ only in case, spacing, or hyphenation: regin normalizes aliases (lowercased, every run of non-alphanumeric characters → a single space), so `foo-bar`, `Foo Bar`, and `foo bar` all collapse to the same key and a repeat is rejected at apply time. Give 0–6 genuinely distinct phrasings, or leave the list empty.
-- `parent_id` places the topic under one top-level navigation bucket (see "Available buckets" below). Pick the single best-fitting bucket id. If none clearly fits, set it to `null` — the reviewer will place it; do NOT force a weak fit. `blurb` is a one-line router card ("what task should drill in here"), not a description; omit it and `intent` is used instead.
-- Every topic MUST include its own `wiki`: a self-contained Markdown page describing THAT topic — its files, behavior, and how it fits — because each topic becomes a separate `.regin/topics/wiki/<id>.md` page. Do NOT write one combined document covering every topic; give each topic its own distinct page. Put any shared framing that spans topics in the top-level `overview` instead, not repeated into each topic's wiki.
-- If a write/tool permission prompt blocks writing the output file, stop and report the permission failure instead of printing a fallback success payload.
+    The body is the editable ``topic-proposal-drafting`` surface
+    (``lib/prompts/surfaces/drafting.py``); this function only assembles the
+    runtime context it interpolates. A broken user edit degrades to the built-in
+    default inside ``render_surface`` — the prompt is never left unbuildable.
+    """
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.drafting import SURFACE_ID
 
-Signal completion (REQUIRED — do this LAST):
-- After you have written the JSON to the temp output file, run this exact command to ingest your proposal and mark this run complete. It is the ONLY thing that finalizes the run — if you skip it, the run is treated as failed:
-
-  {finish_cmd}
-
-- The same command is available in the `REGIN_TOPIC_PROPOSAL_FINISH_CMD` environment variable. Run it once, as your final action, after the output file exists. Do not run it before the file is written.
-
-Output JSON shape:
-{{
-  "topics": [
-    {{
-      "id": "short-stable-id",
-      "label": "Human label",
-      "aliases": [],
-      "intent": "What this topic helps future agents understand",
-      "status": "active",
-      "parent_id": "one-of-the-bucket-ids-below-or-null",
-      "blurb": "One line: what task should drill into this topic",
-      "refs": [{{"path": "relative/path.py", "role": "implementation"}}],
-      "edges": [],
-      "commands": [],
-      "include_globs": ["path/**"],
-      "exclude_globs": [],
-      "evidence_paths": ["relative/path.py"],
-      "wiki": "Markdown wiki page for THIS topic only — its own standalone narrative"
-    }}
-  ],
-  "notes": [],
-  "overview": "Optional short markdown intro tying the proposed topics together"
-}}
-
-Existing approved topics (do not propose duplicates; explore the repo with your Read/Glob/Grep tools for everything else):
-```json
-{json.dumps(_existing_topics_summary(repo), indent=2, sort_keys=True)}
-```
-
-Available buckets (pick one id for each topic's `parent_id`, or null if none fits):
-```json
-{json.dumps(_bucket_summary(repo), indent=2, sort_keys=True)}
-```
-{sibling_section}"""
+    default_request = (
+        "No specific topic request was provided. "
+        "Propose the most useful uncovered topics from the repository."
+    )
+    context = {
+        "topic_request": topic_request or default_request,
+        "prior_reference": _prior_reference_block(prior_draft),
+        "custom_instructions": _format_template_section(prompt_templates),
+        "temp_output_path": str(temp_output_path),
+        "output_file": str(out_dir / OUTPUT_FILE),
+        "finish_cmd": _finish_command(repo, out_dir.name),
+        "existing_topics_json": json.dumps(_existing_topics_summary(repo), indent=2, sort_keys=True),
+        "buckets_json": json.dumps(_bucket_summary(repo), indent=2, sort_keys=True),
+        "sibling_section": _sibling_refresh_section(repo, out_dir),
+    }
+    return render_surface(SURFACE_ID, context)
 
 
 def _load_agent_payload(output_path: Path, stdout: str) -> dict[str, Any]:

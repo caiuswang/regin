@@ -34,18 +34,15 @@ _MIN_GROWTH_CHARS = 8
 # vector instead of sharpening it.
 _MAX_EXPANSION_CHARS = 600
 
-_INSTRUCTION = (
-    "You rewrite a terse coding-session request into a short, keyword-rich "
-    "search query for retrieving relevant past engineering lessons. Expand "
-    "abbreviations, name the likely technical subsystems, concepts, and "
-    "failure modes the request implies. Preserve the original intent; do "
-    "not answer the request or invent specifics not implied by it. Output "
-    "ONLY the expanded query as 1-2 sentences, no preamble or quoting."
-)
+# The expansion instruction now lives as the editable `memory-expand` surface
+# (lib/prompts/surfaces/memory.py::_DEFAULT_BODY_EXPAND); `_build_prompt` only
+# wires the raw query into it.
 
 
 def _build_prompt(query: str) -> str:
-    return f"{_INSTRUCTION}\n\nRequest: {query}"
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import EXPAND_SURFACE_ID
+    return render_surface(EXPAND_SURFACE_ID, {"query": query})
 
 
 def _clean(raw: Optional[str]) -> str:

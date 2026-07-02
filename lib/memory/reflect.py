@@ -540,19 +540,9 @@ _SYNTHESIS_FLOOR = 0.55
 _SYNTHESIS_MIN_CLUSTER = 3
 _SYNTHESIS_MAX_CLUSTERS = 3   # bound LLM calls per reflect run
 
-_SYNTHESIS_PROMPT = (
-    "Several memories from past coding sessions are clustered below because "
-    "an embedding model judged them topically related. Write ONE higher-level, "
-    "reusable rule that captures the general principle they share — more "
-    "abstract than any single entry, yet still concrete and actionable for a "
-    "future session. If they share no genuine common principle (merely "
-    "surface-similar), reply with exactly NONE.\n\n"
-    "Respond with a JSON object and nothing else:\n"
-    '  {"title": "the principle in one line, <= 80 chars", '
-    '"body": "the reusable rule, <= 600 chars"}\n'
-    "or the bare word NONE.\n\n"
-    "{entries}"
-)
+# The synthesis prompt now lives as the editable `memory-reflect-synthesis`
+# surface (lib/prompts/surfaces/memory.py::_DEFAULT_BODY_SYNTHESIS);
+# `_llm_synthesis` wires the clustered entries into its `{{entries}}` slot.
 
 
 def _extract_json_object(answer: str):
@@ -612,9 +602,11 @@ def _synthesis_clusters(rows: list[dict], embedder) -> list[list[dict]]:
 def _llm_synthesis(llm, members: list[dict]) -> "dict | None":
     """Ask the LLM to abstract one rule from a cluster. None when it declines
     (NONE), the output is unparseable, or the draft is too thin to keep."""
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import SYNTHESIS_SURFACE_ID
     entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:600]}"
                           for i, m in enumerate(members))
-    answer = llm.complete(_SYNTHESIS_PROMPT.replace("{entries}", entries),
+    answer = llm.complete(render_surface(SYNTHESIS_SURFACE_ID, {"entries": entries}),
                           max_tokens=400)
     if not answer or answer.strip().upper().startswith("NONE"):
         return None
@@ -704,19 +696,9 @@ def _synthesize(store, episodic: list[dict], embedder, llm, *,
 # never a per-query recall hit. Needs only an LLM. Gated on `digest_enabled`.
 _DIGEST_MIN_SOURCES = 3
 
-_DIGEST_PROMPT = (
-    "Below are the most important things learned across past coding sessions "
-    "for one project scope, highest-priority first. Write a SINGLE compact "
-    "briefing a future session should read first: the durable conventions, "
-    "gotchas, and decisions — grouped and deduplicated, concrete and "
-    "actionable. Omit anything narrow or one-off. Aim for under 800 "
-    "characters.\n\n"
-    "Respond with a JSON object and nothing else:\n"
-    '  {"title": "<= 80 char heading for this briefing", '
-    '"body": "the briefing, <= 1500 chars"}\n'
-    "or the bare word NONE if there is no durable, reusable signal.\n\n"
-    "{entries}"
-)
+# The digest prompt now lives as the editable `memory-reflect-digest` surface
+# (lib/prompts/surfaces/memory.py::_DEFAULT_BODY_DIGEST); `_llm_digest` wires the
+# scope's top memories into its `{{entries}}` slot.
 
 
 def _age_days(stamp: "str | None") -> float:
@@ -757,9 +739,11 @@ def _digest_is_current(existing: "dict | None", sources: list[dict]) -> bool:
 def _llm_digest(llm, sources: list[dict]) -> "dict | None":
     """Ask the LLM for one scope-level briefing. None when it declines
     (NONE), the output is unparseable, or the draft is too thin to keep."""
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import DIGEST_SURFACE_ID
     entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:400]}"
                           for i, m in enumerate(sources))
-    answer = llm.complete(_DIGEST_PROMPT.replace("{entries}", entries),
+    answer = llm.complete(render_surface(DIGEST_SURFACE_ID, {"entries": entries}),
                           max_tokens=600)
     if not answer or answer.strip().upper().startswith("NONE"):
         return None

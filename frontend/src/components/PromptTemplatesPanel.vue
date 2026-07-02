@@ -44,7 +44,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const result = await api.get('/prompt-templates')
+    const result = await api.get('/prompt-templates?kind=fragment')
     templates.value = result.templates || []
   } catch (err) {
     error.value = err.message || String(err)
