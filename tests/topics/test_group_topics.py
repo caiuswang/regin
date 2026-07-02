@@ -93,6 +93,44 @@ def test_build_group_plan_ignores_unoffered_member_ids():
     assert plan.assignment == {"t0": "data"}   # 'ghost' was never offered
 
 
+def test_build_group_plan_reuses_existing_same_label_bucket():
+    # A second grouping pass re-proposes a bucket that already exists: fold into
+    # it, don't mint an `agent-runtime-core-2` twin (the reported bug).
+    g = {"version": 1, "repo": "test", "topics": {
+        "agent-runtime-core": _bucket_body("Agent Runtime Core"),
+        "t0": _leaf("Topic 0"),
+    }}
+    clusters = [BucketCluster("Agent Runtime Core", "x", ["t0"])]
+    plan = build_group_plan(clusters, {"t0"}, g)
+    assert plan.new_buckets == {}                       # nothing minted
+    assert plan.assignment == {"t0": "agent-runtime-core"}
+
+
+def test_build_group_plan_folds_within_pass_same_label():
+    # Two clusters the LLM labelled identically in ONE pass → one bucket.
+    g = _flat_graph(2)
+    clusters = [BucketCluster("Agent Runtime Core", "x", ["t0"]),
+                BucketCluster("Agent Runtime Core", "y", ["t1"])]
+    plan = build_group_plan(clusters, set(g["topics"]), g)
+    assert set(plan.new_buckets) == {"agent-runtime-core"}
+    assert plan.assignment == {"t0": "agent-runtime-core",
+                               "t1": "agent-runtime-core"}
+
+
+def test_check_group_rejects_duplicate_label_of_existing_bucket():
+    # Safety net: a plan from any source that mints a same-label twin is rejected.
+    g = {"version": 1, "repo": "test", "topics": {
+        "agent-runtime-core": _bucket_body("Agent Runtime Core"),
+        "t0": _leaf("Topic 0"),
+    }}
+    plan = GroupPlan(
+        new_buckets={"agent-runtime-core-2": _bucket_body("Agent Runtime Core")},
+        assignment={"t0": "agent-runtime-core-2"})
+    res = check_group(plan, g)
+    assert not res.ok
+    assert any("duplicates the label" in e for e in res.errors)
+
+
 # ── gate: check_group (pure / DB-free) ──────────────────────────
 
 def test_check_group_passes_valid_plan():

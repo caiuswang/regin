@@ -147,6 +147,17 @@ def propose_buckets(flat_topics: list[dict], llm, *,
 
 # ── 2. build plan (pure) ────────────────────────────────────────
 
+def _norm_label(label: str) -> str:
+    """Canonical form for comparing bucket LABELS (not ids): case- and
+    whitespace-folded. Two buckets whose labels collapse to the same value are
+    twins that would render as confusing duplicates in the nav/wiki tree.
+    Deliberately coarser than `_slug` on punctuation would be — we only fold
+    genuinely identical human labels ("Agent Runtime Core" == "Agent Runtime
+    Core"), not merely slug-adjacent ones ("Rules!" stays distinct from
+    "rules")."""
+    return " ".join((label or "").split()).casefold()
+
+
 def _bucket_body(cluster: BucketCluster) -> dict:
     """A new top-level bucket node. `kind:"bucket"` + `parent_id: None` is the
     hard requirement `build_tree` needs to nest anything under it."""
@@ -173,22 +184,52 @@ def build_group_plan(clusters: list[BucketCluster], flat_topic_ids, graph: dict,
     against existing topic ids AND newly-minted ones); builds the
     `{topic_id: bucket_id}` reparent map from the offered flat topics only. Any
     flat topic the proposer omitted is left out of the assignment, so it keeps
-    its current parent (conservation)."""
-    taken = set(graph.get("topics") or {})
+    its current parent (conservation).
+
+    A cluster whose LABEL matches an existing bucket (or one already minted in
+    this same pass) is **folded into that bucket** rather than minting a
+    same-label twin: a second grouping pass — or an LLM re-proposing a bucket
+    that already exists — would otherwise create a duplicate root like
+    `agent-runtime-core` + `agent-runtime-core-2` that render as confusing
+    twins in the nav/wiki tree. Only real `kind:"bucket"` nodes are reuse
+    targets (a same-slug leaf can't host children)."""
+    topics = graph.get("topics") or {}
+    taken = set(topics)
     offered = set(flat_topic_ids)
     new_buckets: dict[str, dict] = {}
     assignment: dict[str, str] = {}
+    # normalized label → bucket id, seeded with existing buckets and grown as we
+    # mint, so both cross-pass and within-pass label collisions fold into one.
+    bucket_by_label = {
+        _norm_label(n.get("label") or tid): tid
+        for tid, n in topics.items()
+        if isinstance(n, dict) and is_bucket(n)
+    }
 
     for cluster in clusters:
-        bid = _unique_id(_slug(cluster.label), taken)
-        taken.add(bid)
-        new_buckets[bid] = _bucket_body(cluster)
+        bid = _mint_or_reuse_bucket(cluster, bucket_by_label, taken, new_buckets)
         for tid in cluster.topic_ids:
             # first bucket to claim an offered topic wins (dict-enforced 1:1)
             if tid in offered and tid not in assignment:
                 assignment[tid] = bid
 
     return GroupPlan(new_buckets=new_buckets, assignment=assignment)
+
+
+def _mint_or_reuse_bucket(cluster: BucketCluster, bucket_by_label: dict,
+                          taken: set, new_buckets: dict) -> str:
+    """Resolve the bucket id for `cluster`: reuse an existing/just-minted bucket
+    with the same normalized label, else mint a fresh unique id. Mutates
+    `taken`, `new_buckets`, and `bucket_by_label` in place."""
+    key = _norm_label(cluster.label)
+    existing = bucket_by_label.get(key)
+    if existing is not None:
+        return existing                         # fold into the same-label bucket
+    bid = _unique_id(_slug(cluster.label), taken)
+    taken.add(bid)
+    new_buckets[bid] = _bucket_body(cluster)
+    bucket_by_label[key] = bid
+    return bid
 
 
 # ── gate: check_group (pure, DB-free) ───────────────────────────
@@ -225,6 +266,7 @@ def _check_structural(plan: GroupPlan, graph: dict, repo_path) -> list[str]:
             + _check_assignment_targets(plan, existing_buckets)
             + _check_only_flat(plan, topics, existing_buckets)
             + _check_empty_buckets(plan)
+            + _check_duplicate_labels(plan, topics)
             + _audit_prospective(plan, graph, repo_path))
 
 
@@ -284,6 +326,33 @@ def _check_empty_buckets(plan: GroupPlan) -> list[str]:
     counts = _bucket_counts(plan)
     return [f"new bucket {bid!r} would be created with no member topics"
             for bid in plan.new_buckets if counts.get(bid, 0) == 0]
+
+
+def _check_duplicate_labels(plan: GroupPlan, topics: dict) -> list[str]:
+    """No minted bucket may reuse the LABEL of an existing bucket or another
+    minted bucket. Same-label roots render as confusing twins in the nav/wiki
+    tree (the `agent-runtime-core` / `agent-runtime-core-2` bug). `build_group_plan`
+    folds re-proposals into the existing bucket, so this gate normally never
+    fires — it guarantees the invariant for any other plan source."""
+    errors: list[str] = []
+    existing = {}
+    for tid, n in topics.items():
+        if isinstance(n, dict) and is_bucket(n):
+            existing.setdefault(_norm_label(n.get("label") or tid), tid)
+    seen: dict[str, str] = {}
+    for bid, body in plan.new_buckets.items():
+        key = _norm_label(body.get("label") or bid)
+        if key in existing:
+            errors.append(
+                f"new bucket {bid!r} duplicates the label of existing bucket "
+                f"{existing[key]!r} ({body.get('label')!r}); assign topics to it "
+                f"instead of minting a twin")
+        if key in seen:
+            errors.append(
+                f"new buckets {seen[key]!r} and {bid!r} share the label "
+                f"{body.get('label')!r}")
+        seen[key] = bid
+    return errors
 
 
 def _prospective(plan: GroupPlan, graph: dict) -> dict:
