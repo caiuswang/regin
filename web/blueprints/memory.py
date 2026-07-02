@@ -392,8 +392,13 @@ def api_memory_taxonomy():
         topic = graph["topics"].get(nid) or {}
         card["parent_id"] = topic.get("parent_id")
         card["edges"] = topic.get("edges") or []
-        card["mem_count"] = len(store.memories_for_topic_subtree(
-            subtree_ids(graph, nid), scope=scope))
+        # Global meta-root nodes (the skills/preferences overlay) hold
+        # cross-repo memories, so a repo `scope` must NOT filter their counts —
+        # they stay visible (with their global count) under a repo filter,
+        # while repo nodes narrow to the scope.
+        card["meta"] = bool(topic.get("meta"))
+        card["mem_count"] = _taxonomy_mem_count(
+            store, graph, nid, is_meta=card["meta"], scope=scope)
         card["has_wiki"] = (wdir / f"{nid}.md").exists()
         nodes[nid] = card
     roots = list(tree["roots"])
@@ -402,6 +407,15 @@ def api_memory_taxonomy():
         nodes[_ORPHAN_NODE_ID] = _orphan_card(len(orphans))
         roots.append(_ORPHAN_NODE_ID)
     return jsonify({"roots": roots, "nodes": nodes})
+
+
+def _taxonomy_mem_count(store, graph, nid, *, is_meta, scope):
+    """Subtree memory count for a taxonomy node. Meta-root (global) nodes
+    ignore a repo `scope` so they stay visible under a repo filter; repo nodes
+    narrow to the scope."""
+    from lib.topics.tree import subtree_ids
+    return len(store.memories_for_topic_subtree(
+        subtree_ids(graph, nid), scope=None if is_meta else scope))
 
 
 def _orphan_card(count: int) -> dict:
@@ -478,8 +492,10 @@ def api_memory_taxonomy_node(node_id):
     node = graph.get("topics", {}).get(node_id)
     if node is None:
         return jsonify({"error": "not found"}), 404
+    # Meta-root nodes are global; a repo scope must not filter their memories.
+    node_scope = None if node.get("meta") else scope
     ids = store.memories_for_topic_subtree(
-        subtree_ids(graph, node_id), scope=scope)
+        subtree_ids(graph, node_id), scope=node_scope)
     mems = [store.get_dict(mid) for mid in ids[:_taxonomy_top_k()]]
     wiki_path = wiki_dir(settings.project_root) / f"{node_id}.md"
     body = wiki_path.read_text() if wiki_path.exists() else None
