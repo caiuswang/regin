@@ -843,3 +843,91 @@ def cmd_topics_split_leaf(
     print(f"\napplied: {len(result['new_topics'])} sub-topics created, "
           f"{result['moved']} memories moved, "
           f"{result['kept_on_leaf']} kept on the leaf")
+
+
+def _flat_topics(graph: dict) -> list[dict]:
+    """The topics eligible for grouping: non-bucket nodes whose
+    `effective_parent` is the reserved `unclassified` bucket (no real bucket
+    ancestor). Buckets themselves are never grouped."""
+    from lib.topics.tree import UNCLASSIFIED, effective_parent, is_bucket
+
+    topics = graph.get("topics") or {}
+    buckets = {tid for tid, n in topics.items()
+               if isinstance(n, dict) and is_bucket(n)}
+    flat: list[dict] = []
+    for tid, node in topics.items():
+        if tid in buckets:
+            continue
+        if effective_parent(topics, buckets, tid) == UNCLASSIFIED:
+            flat.append({"id": tid, "label": node.get("label") or tid,
+                         "intent": node.get("intent") or ""})
+    return flat
+
+
+def _print_group_plan(plan, gate) -> None:
+    """Human preview: each new bucket + its member count/label, then verdict."""
+    counts: dict[str, int] = {}
+    for bid in plan.assignment.values():
+        counts[bid] = counts.get(bid, 0) + 1
+    print(f"group {len(plan.assignment)} flat topics → {len(plan.new_buckets)} buckets")
+    for bid, body in plan.new_buckets.items():
+        print(f"  + {bid}  ({counts.get(bid, 0)} topics)  {body['label']}")
+    print(f"gate: {'PASS' if gate.ok else 'FAIL'} "
+          f"({len(gate.errors)} errors, {len(gate.warnings)} warnings)")
+    for e in gate.errors:
+        print(f"  ERROR: {e}")
+    for w in gate.warnings:
+        print(f"  warn:  {w}")
+
+
+@topics_app.command(
+    "group",
+    help="Cluster the flat/unclassified topics into top-level buckets and "
+         "reparent them (dry-run + gate by default; --apply to write).")
+def cmd_topics_group(
+    apply: bool = typer.Option(
+        False, "--apply", help="Write the grouping. Default: dry-run + gate."),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    min_buckets: int = typer.Option(3, "--min-buckets"),
+    max_buckets: int = typer.Option(8, "--max-buckets"),
+) -> None:
+    from lib.memory.adapters import resolve_topic_classifier
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.group_topics import (
+        ClusterProposerUnavailable, apply_group, build_group_plan,
+        gate_only, propose_buckets,
+    )
+
+    repo_path = _repo_path(repo)
+    graph = load_authoritative_graph(repo_path)
+
+    flat_topics = _flat_topics(graph)
+    if not flat_topics:
+        print("no flat topics to group — the taxonomy is already bucketed")
+        raise typer.Exit(0)
+
+    try:
+        clusters = propose_buckets(
+            flat_topics, resolve_topic_classifier(),
+            lo=min_buckets, hi=max_buckets)
+    except ClusterProposerUnavailable as exc:
+        print(f"cluster proposer unavailable: {exc}")
+        raise typer.Exit(2)
+    if not clusters:
+        print("proposer returned no buckets — leaving the taxonomy flat")
+        raise typer.Exit(1)
+
+    flat_ids = {t["id"] for t in flat_topics}
+    plan = build_group_plan(clusters, flat_ids, graph)
+    gate = gate_only(repo_path, plan, graph)
+    _print_group_plan(plan, gate)
+
+    if not apply:
+        print("\n(dry-run — pass --apply to write)")
+        return
+    if not gate.ok:
+        print("\nGATE FAILED — not applying.")
+        raise typer.Exit(1)
+    result = apply_group(repo_path, plan, graph)
+    print(f"\napplied: {len(result['new_buckets'])} buckets created, "
+          f"{result['grouped']} topics grouped")
