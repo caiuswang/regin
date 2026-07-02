@@ -32,6 +32,7 @@ import re
 import shutil
 import tempfile
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from lib.settings import settings
@@ -760,6 +761,7 @@ def batch_import_skill_directory(
         root_dir: str, *,
         on_conflict: str = 'skip',
         dry_run: bool = False,
+        only: Iterable[str] | None = None,
         progress=None,
 ) -> list[BatchImportEntry]:
     """Walk `<root>/<name>/SKILL.md` and import each as a pattern.
@@ -768,6 +770,11 @@ def batch_import_skill_directory(
         root_dir: Parent directory whose children are skill folders.
         on_conflict: 'skip' | 'overwrite' | 'rename'.
         dry_run: If True, just report what would happen (status='planned').
+        only: Optional subset of candidate names (``BatchScanEntry.name``,
+              i.e. the child-folder names) to import. ``None`` imports every
+              scanned candidate (the historical behaviour); an *empty*
+              collection imports nothing. Names not present in the scan are
+              silently ignored.
         progress: Optional callback `progress(BatchImportEntry)` after each
                   candidate so callers can stream output (e.g. the CLI).
     """
@@ -776,6 +783,9 @@ def batch_import_skill_directory(
             f'invalid on_conflict={on_conflict!r}; use skip|overwrite|rename',
         )
     scanned = scan_skill_directory(root_dir)
+    if only is not None:
+        wanted = set(only)
+        scanned = [s for s in scanned if s.name in wanted]
     out: list[BatchImportEntry] = []
 
     for s in scanned:

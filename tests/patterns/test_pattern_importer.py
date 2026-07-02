@@ -721,3 +721,68 @@ def test_import_skill_directory_rejects_missing_skill_md(
     d.mkdir()
     with pytest.raises(pi.ImportError_, match="missing SKILL.md"):
         pi.import_skill_directory(str(d))
+
+
+# ── batch_import_skill_directory: selective import ───────────
+
+def _make_scan_root(tmp_path, *names):
+    """A parent dir with one `<name>/SKILL.md` skill folder per name."""
+    root = tmp_path / "scan-root"
+    root.mkdir()
+    for n in names:
+        _make_skill_dir(root, n)
+    return root
+
+
+def test_batch_import_no_selection_imports_all(
+        tmp_db, tmp_patterns_dir, tmp_path):
+    """only=None (the default) preserves the historical import-everything."""
+    root = _make_scan_root(tmp_path, "b-alpha", "b-beta", "b-gamma")
+    results = pi.batch_import_skill_directory(str(root))
+    imported = {r.name for r in results if r.status == "imported"}
+    assert imported == {"b-alpha", "b-beta", "b-gamma"}
+
+
+def test_batch_import_selective_subset(
+        tmp_db, tmp_patterns_dir, tmp_path):
+    """only={a,c} imports exactly those; the unselected one never appears."""
+    root = _make_scan_root(tmp_path, "s-alpha", "s-beta", "s-gamma")
+    results = pi.batch_import_skill_directory(
+        str(root), only={"s-alpha", "s-gamma"},
+    )
+    names = {r.name for r in results}
+    assert names == {"s-alpha", "s-gamma"}       # s-beta excluded entirely
+    assert all(r.status == "imported" for r in results)
+    assert (tmp_patterns_dir / "s-alpha").exists()
+    assert not (tmp_patterns_dir / "s-beta").exists()
+
+
+def test_batch_import_empty_selection_imports_nothing(
+        tmp_db, tmp_patterns_dir, tmp_path):
+    """An empty collection is distinct from None: it imports nothing."""
+    root = _make_scan_root(tmp_path, "e-alpha", "e-beta")
+    results = pi.batch_import_skill_directory(str(root), only=set())
+    assert results == []
+    assert not (tmp_patterns_dir / "e-alpha").exists()
+
+
+def test_batch_import_unknown_selection_name_ignored(
+        tmp_db, tmp_patterns_dir, tmp_path):
+    """Names not present in the scan are silently skipped, no crash."""
+    root = _make_scan_root(tmp_path, "u-alpha")
+    results = pi.batch_import_skill_directory(
+        str(root), only={"u-alpha", "does-not-exist"},
+    )
+    assert {r.name for r in results} == {"u-alpha"}
+
+
+def test_batch_import_selective_dry_run_plans_only_selected(
+        tmp_db, tmp_patterns_dir, tmp_path):
+    """Selection composes with dry_run — only chosen candidates are planned."""
+    root = _make_scan_root(tmp_path, "d-alpha", "d-beta")
+    results = pi.batch_import_skill_directory(
+        str(root), only={"d-beta"}, dry_run=True,
+    )
+    assert {r.name for r in results} == {"d-beta"}
+    assert all(r.status == "planned" for r in results)
+    assert not (tmp_patterns_dir / "d-beta").exists()  # dry-run wrote nothing

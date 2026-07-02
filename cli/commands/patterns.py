@@ -96,6 +96,10 @@ def cmd_pattern_import_dir(
         "skip", "--on-conflict",
         help="When the pattern slug already exists: skip | overwrite | rename",
     ),
+    only: str = typer.Option(
+        None, "--only",
+        help="Comma-separated candidate folder names to import (default: all)",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="List what would be imported, change nothing",
     ),
@@ -105,6 +109,10 @@ def cmd_pattern_import_dir(
 
     expanded = os.path.expanduser(root_dir)
     on_conflict = (on_conflict or "skip").strip().lower()
+    selected = (
+        [n.strip() for n in only.split(",") if n.strip()]
+        if only is not None else None
+    )
 
     status_glyph = {
         "imported": "  + ",
@@ -129,7 +137,7 @@ def cmd_pattern_import_dir(
 
     try:
         results = pattern_importer.batch_import_skill_directory(
-            expanded, on_conflict=on_conflict,
+            expanded, on_conflict=on_conflict, only=selected,
             dry_run=dry_run, progress=_print,
         )
     except pattern_importer.ImportError_ as exc:

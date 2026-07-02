@@ -1051,3 +1051,62 @@ def test_save_description_roundtrip_through_yaml(
     # Detail GET returns the same single-line value.
     resp2 = flask_client.get("/api/patterns/rt")
     assert resp2.get_json()["description"] == 'Quote: "tricky" and a second line.'
+
+
+# ── POST /api/patterns/import-dir: selective `selected` field ─
+
+def test_import_dir_selected_non_list_returns_400(
+        flask_client, tmp_db, isolated_patterns):
+    resp = flask_client.post(
+        "/api/patterns/import-dir",
+        json={"path": str(isolated_patterns["root"]), "selected": "not-a-list"},
+        headers=_editor_auth(),
+    )
+    assert resp.status_code == 400
+    assert "list of names" in resp.get_json()["msg"]
+
+
+def test_import_dir_threads_selected_subset_to_importer(
+        flask_client, tmp_db, isolated_patterns, monkeypatch):
+    from lib.patterns import pattern_importer
+    captured = {}
+
+    def fake_batch(root_dir, *, on_conflict="skip", dry_run=False,
+                   only=None, progress=None):
+        captured["only"] = only
+        return []
+
+    monkeypatch.setattr(
+        pattern_importer, "batch_import_skill_directory", fake_batch,
+    )
+    resp = flask_client.post(
+        "/api/patterns/import-dir",
+        json={"path": str(isolated_patterns["root"]),
+              "selected": ["keep-me", "and-me"]},
+        headers=_editor_auth(),
+    )
+    assert resp.status_code == 200
+    assert captured["only"] == ["keep-me", "and-me"]
+
+
+def test_import_dir_omitted_selected_imports_all(
+        flask_client, tmp_db, isolated_patterns, monkeypatch):
+    """No `selected` key ⇒ only=None ⇒ historical import-everything."""
+    from lib.patterns import pattern_importer
+    captured = {"only": "sentinel"}
+
+    def fake_batch(root_dir, *, on_conflict="skip", dry_run=False,
+                   only=None, progress=None):
+        captured["only"] = only
+        return []
+
+    monkeypatch.setattr(
+        pattern_importer, "batch_import_skill_directory", fake_batch,
+    )
+    resp = flask_client.post(
+        "/api/patterns/import-dir",
+        json={"path": str(isolated_patterns["root"])},
+        headers=_editor_auth(),
+    )
+    assert resp.status_code == 200
+    assert captured["only"] is None

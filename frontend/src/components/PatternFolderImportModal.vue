@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import api from '../api'
 import Badge from './Badge.vue'
 import Button from './ui/Button.vue'
+import Checkbox from './ui/Checkbox.vue'
 import RadioGroup from './ui/RadioGroup.vue'
 import { useFlash } from '../composables/useFlash'
 
@@ -26,6 +27,7 @@ const folderOnConflict = ref('skip')
 const folderScanning = ref(false)
 const folderImporting = ref(false)
 const folderCandidates = ref([])     // [{name, derived_slug, conflict, error}]
+const selectedNames = ref(new Set()) // candidate names the user chose to import
 const folderResolvedPath = ref('')   // absolute path the server resolved
 const folderResults = ref([])        // [{name, status, slug, ...}] after import
 const folderResultPath = ref('')
@@ -49,6 +51,7 @@ onMounted(async () => {
 watch(() => props.visible, (on) => {
   if (!on) return
   folderCandidates.value = []
+  selectedNames.value = new Set()
   folderResults.value = []
   folderCounts.value = {}
   folderResolvedPath.value = ''
@@ -78,6 +81,8 @@ async function scanFolder() {
       return
     }
     folderCandidates.value = payload.candidates || []
+    // Default: pre-select every importable (non-error) candidate — opt-out.
+    selectedNames.value = new Set(importableNames.value)
     folderResolvedPath.value = payload.path || ''
     if (!folderCandidates.value.length) {
       flash(`No <name>/SKILL.md found under ${payload.path}`, 'warn')
@@ -94,6 +99,7 @@ async function runFolderImport() {
     const payload = await api.post('/patterns/import-dir', {
       path: folderResolvedPath.value || folderPath.value.trim(),
       on_conflict: folderOnConflict.value,
+      selected: [...selectedNames.value],
     })
     if (!payload.ok) { flash(payload.msg || 'Import failed', 'error'); return }
     folderResults.value = payload.results || []
@@ -110,14 +116,35 @@ async function runFolderImport() {
   }
 }
 
-const folderImportableCount = computed(() => {
-  if (!folderCandidates.value.length) return 0
-  const importable = folderCandidates.value.filter((c) => !c.error)
-  if (folderOnConflict.value === 'skip') {
-    return importable.filter((c) => !c.conflict).length
+// Names that can ever be imported (parsed a slug, no scan error).
+const importableNames = computed(() =>
+  folderCandidates.value.filter((c) => !c.error).map((c) => c.name))
+
+// Selected candidates that would actually import under the current policy
+// ('skip' won't touch conflicts, so they don't count toward the button label).
+const folderImportableCount = computed(() =>
+  folderCandidates.value.filter((c) =>
+    selectedNames.value.has(c.name) && !c.error
+    && (folderOnConflict.value !== 'skip' || !c.conflict),
+  ).length)
+
+const allImportableSelected = computed(() =>
+  importableNames.value.length > 0
+  && importableNames.value.every((n) => selectedNames.value.has(n)))
+
+function toggleCandidate(name, checked) {
+  const next = new Set(selectedNames.value)
+  if (checked) next.add(name); else next.delete(name)
+  selectedNames.value = next
+}
+
+function toggleAll(checked) {
+  const next = new Set(selectedNames.value)
+  for (const n of importableNames.value) {
+    if (checked) next.add(n); else next.delete(n)
   }
-  return importable.length
-})
+  selectedNames.value = next
+}
 
 const folderResultGlyph = {
   imported: '+',
@@ -170,10 +197,25 @@ const folderResultGlyph = {
           <div v-if="folderCandidates.length" class="mt-4 max-h-72 overflow-y-auto border border-slate-200 rounded">
             <table class="tbl tbl-compact">
               <thead>
-                <tr><th>Folder</th><th>Derived slug</th><th>Status</th></tr>
+                <tr>
+                  <th class="w-8 text-center">
+                    <Checkbox
+                      :model-value="allImportableSelected"
+                      aria-label="Select all importable skills"
+                      @update:model-value="toggleAll" />
+                  </th>
+                  <th>Folder</th><th>Derived slug</th><th>Status</th>
+                </tr>
               </thead>
               <tbody>
                 <tr v-for="c in folderCandidates" :key="c.name">
+                  <td class="text-center">
+                    <Checkbox
+                      :model-value="selectedNames.has(c.name)"
+                      :disabled="!!c.error"
+                      :aria-label="`Import ${c.name}`"
+                      @update:model-value="(v) => toggleCandidate(c.name, v)" />
+                  </td>
                   <td class="font-mono text-[12px]">{{ c.name }}</td>
                   <td class="font-mono text-[12px]">{{ c.derived_slug || '—' }}</td>
                   <td>

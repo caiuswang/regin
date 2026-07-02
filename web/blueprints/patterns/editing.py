@@ -501,6 +501,26 @@ def api_import_dir_scan():
     })
 
 
+def _parse_selected(body):
+    """Extract the optional `selected` subset from an import-dir request body.
+
+    Returns ``(only, error_response)``: ``only`` is ``None`` (import all) when
+    the key is absent/null, else the list of candidate names; ``error_response``
+    is a 400 tuple when `selected` is present but not a list of strings.
+    """
+    if "selected" not in body or body.get("selected") is None:
+        return None, None
+    selected = body.get("selected")
+    if not isinstance(selected, list) or not all(
+        isinstance(n, str) for n in selected
+    ):
+        return None, (
+            jsonify({"ok": False, "msg": "'selected' must be a list of names"}),
+            400,
+        )
+    return selected, None
+
+
 @patterns_bp.route("/api/patterns/import-dir", methods=["POST"])
 @require_editor
 def api_import_dir():
@@ -509,8 +529,13 @@ def api_import_dir():
     Body: {
       "path": "<server-side dir>",
       "on_conflict": "skip" | "overwrite" | "rename",  # default: skip
-      "dry_run": bool                                   # default: false
+      "dry_run": bool,                                  # default: false
+      "selected": ["<candidate name>", ...]             # optional; omit ⇒ all
     }
+
+    `selected`, when present, restricts the import to those candidate names
+    (the child-folder names from the scan); an empty list imports nothing.
+    Omitting the key preserves the historical import-everything behaviour.
     """
     import os
     from lib.patterns import pattern_importer
@@ -522,13 +547,17 @@ def api_import_dir():
     on_conflict = (body.get("on_conflict") or "skip").strip().lower()
     dry_run = bool(body.get("dry_run", False))
 
+    only, sel_err = _parse_selected(body)
+    if sel_err is not None:
+        return sel_err
+
     expanded = os.path.abspath(os.path.expanduser(raw))
     if not os.path.isdir(expanded):
         return jsonify({"ok": False, "msg": f"not a directory: {expanded}"}), 400
 
     try:
         results = pattern_importer.batch_import_skill_directory(
-            expanded, on_conflict=on_conflict, dry_run=dry_run,
+            expanded, on_conflict=on_conflict, dry_run=dry_run, only=only,
         )
     except pattern_importer.ImportError_ as e:
         return jsonify({"ok": False, "msg": str(e)}), 400
@@ -544,7 +573,11 @@ def api_import_dir():
             user["id"] if user else None,
             user["username"] if user else "anonymous",
             "import_dir", f"path:{expanded}",
-            {"on_conflict": on_conflict, "counts": counts},
+            {
+                "on_conflict": on_conflict,
+                "counts": counts,
+                "selected": len(only) if only is not None else "all",
+            },
         )
 
     return jsonify({

@@ -62,3 +62,41 @@ def test_cmd_pattern_import_conflict_exits(monkeypatch, capsys):
 
     assert exc.value.exit_code == 2
     assert "import failed: exists" in capsys.readouterr().err
+
+
+def test_cmd_pattern_import_dir_only_parses_selection(monkeypatch, capsys):
+    """--only 'a, b ,,c' → the ['a','b','c'] subset (trimmed, blanks dropped)."""
+    from lib.patterns import pattern_importer
+    captured = {}
+
+    def fake_batch(root_dir, *, on_conflict="skip", dry_run=False,
+                   only=None, progress=None):
+        captured["only"] = only
+        return []
+
+    monkeypatch.setattr(
+        pattern_importer, "batch_import_skill_directory", fake_batch)
+
+    patterns_cmd.cmd_pattern_import_dir(
+        "/tmp/skills", on_conflict="skip", only="foo, bar ,,baz",
+        dry_run=False,
+    )
+    assert captured["only"] == ["foo", "bar", "baz"]
+
+
+def test_cmd_pattern_import_dir_no_only_imports_all(monkeypatch, capsys):
+    """No --only ⇒ only=None ⇒ historical import-everything."""
+    from lib.patterns import pattern_importer
+    captured = {"only": "sentinel"}
+
+    def fake_batch(root_dir, *, on_conflict="skip", dry_run=False,
+                   only=None, progress=None):
+        captured["only"] = only
+        return []
+
+    monkeypatch.setattr(
+        pattern_importer, "batch_import_skill_directory", fake_batch)
+
+    patterns_cmd.cmd_pattern_import_dir(
+        "/tmp/skills", on_conflict="skip", only=None, dry_run=False)
+    assert captured["only"] is None
