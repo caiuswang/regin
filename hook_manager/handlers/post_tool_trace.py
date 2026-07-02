@@ -257,6 +257,28 @@ def _attach_bash_response_meta(attrs: dict, tool_response: dict) -> None:
         val = tool_response.get(key)
         if isinstance(val, typ) and val:
             attrs[key] = val
+    _attach_bash_git_commit(attrs, tool_response)
+
+
+def _attach_bash_git_commit(attrs: dict, tool_response: dict) -> None:
+    """Capture the structured git-commit result Claude Code (2.1.195+) stamps
+    on a Bash `tool_response` when the command committed:
+    `git_operation.commit.{sha, kind}`. Flattened to `git_commit_sha` /
+    `git_op_kind` so the trace can badge commits made in a session. Read
+    snake_case — `_normalize_payload` deep-aliases the camelCase `gitOperation`
+    original inside `tool_response`. Nothing is added for non-git Bash calls."""
+    git_op = tool_response.get('git_operation')
+    if not isinstance(git_op, dict):
+        return
+    commit = git_op.get('commit')
+    if not isinstance(commit, dict):
+        return
+    sha = commit.get('sha')
+    if isinstance(sha, str) and sha:
+        attrs['git_commit_sha'] = sha
+    kind = commit.get('kind')
+    if isinstance(kind, str) and kind:
+        attrs['git_op_kind'] = kind
 
 
 def _build_edit_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
@@ -709,6 +731,16 @@ def _emit_span(payload: HookPayload) -> None:
         agent_type = raw.get('agent_type')
         if agent_type:
             attrs['agent_type'] = agent_type
+
+    # `prompt_id` (Claude Code 2.1.195+) is the per-submission UUID stamped on
+    # every payload, correlating this tool call to the user prompt/turn that
+    # spawned it. Stored as `source_prompt_id` — NOT `prompt_id` — because
+    # `lib/trace/merge.py` already uses `prompt_id` for an unrelated internal
+    # integer ordinal. Only truthy values are kept, so pre-2.1.195 payloads add
+    # nothing.
+    prompt_id = raw.get('prompt_id')
+    if prompt_id:
+        attrs['source_prompt_id'] = prompt_id
 
     # send_to_user lands a durable row in `agent_messages`; pin the span_id
     # up front so that row can deep-link back to this exact tool span.

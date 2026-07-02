@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SendMessage PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "x-claude-versions": ["2.1.198"],
+  "properties": {
+    "tool_name": {"const": "SendMessage"},
+    "tool_input": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "to": {"type": "string"},
+        "summary": {"type": "string"},
+        "message": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "success": {"type": "boolean"},
+        "message": {"type": "string"},
+        "resumed_agent_id": {"type": "string"}
+      }
+    }
+  }
+}

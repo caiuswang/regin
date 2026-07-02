@@ -22,7 +22,7 @@ from hook_manager.core import _normalize_payload
 from hook_manager.handlers.post_tool_trace import _TOOL_BUILDERS
 from lib.orm.engine import DB_PATH
 from lib.trace.payload_validation import (
-    DriftFinding, _load_schema, validate,
+    DriftFinding, _load_schema, validate, validate_event,
 )
 
 
@@ -302,3 +302,80 @@ def test_overlay_only_schema_validates(isolated_overlay):
         'tool_input': {'q': 'hi'},
     })
     assert findings == []
+
+
+# ── prompt_id is universal envelope metadata (Claude Code 2.1.195+) ──
+
+
+def test_bash_git_operation_not_flagged_as_drift():
+    """The git-commit metadata captured onto Bash spans must also be
+    whitelisted in the Bash schema — otherwise every commit floods drift
+    with both the camelCase original and the snake alias. Drives the real
+    camelCase wire shape through normalization."""
+    payload = _normalize_payload({
+        'hook_event_name': 'PostToolUse',
+        'tool_name': 'Bash',
+        'tool_input': {'command': 'git commit -m x'},
+        'tool_response': {'gitOperation': {'commit': {'sha': '8e48620', 'kind': 'create'}}},
+        'prompt_id': 'pr-1',
+    })
+    findings = validate('Bash', payload)
+    assert findings == [], findings
+
+
+def test_prompt_id_not_flagged_on_tool_payload():
+    """prompt_id rides every PostToolUse payload; it must be treated as
+    envelope metadata, not a per-call unknown_field drift."""
+    payload = _bash_fixture()
+    payload['prompt_id'] = '34a84388-0e06-4cea-b135-2df8c237df3f'
+    findings = validate('Bash', payload)
+    assert not [f for f in findings if f.field_path == 'prompt_id'], findings
+
+
+def test_prompt_id_not_flagged_on_hook_event_payload():
+    payload = {
+        'hook_event_name': 'Stop',
+        'session_id': 's', 'transcript_path': 't', 'cwd': 'c',
+        'prompt_id': '34a84388-0e06-4cea-b135-2df8c237df3f',
+    }
+    findings = validate_event('Stop', payload)
+    assert not [f for f in findings if f.field_path == 'prompt_id'], findings
+
+
+# ── New-tool baseline schemas (2.1.198): no unknown_tool, validate clean ──
+
+
+@pytest.mark.parametrize('tool,sample_input,sample_response', [
+    ('Monitor', {'command': 'sleep 1', 'description': 'wait', 'persistent': False,
+                 'timeout_ms': 1000}, {'task_id': 't1', 'persistent': False}),
+    ('ReportFindings', {'findings': []}, {'count': 0, 'findings': []}),
+    ('SendMessage', {'to': 'agt', 'summary': 's', 'message': 'm'},
+     {'success': True, 'message': 'ok'}),
+    ('ScheduleWakeup', {'delay_seconds': 60, 'reason': 'poll', 'prompt': 'x'}, {}),
+    ('StructuredOutput', {'anything': {'nested': 1}}, {}),
+])
+def test_new_tool_schema_validates_clean(tool, sample_input, sample_response):
+    payload = _normalize_payload({
+        'hook_event_name': 'PostToolUse',
+        'tool_name': tool,
+        'tool_input': sample_input,
+        'tool_response': sample_response,
+        'prompt_id': 'pr-1',
+    })
+    findings = validate(tool, payload)
+    assert findings == [], f'{tool}: {findings}'
+
+
+# ── New hook-event schemas (compaction lifecycle): no unknown_event ──
+
+
+@pytest.mark.parametrize('event', ['PreCompact', 'PostCompact'])
+def test_compact_event_schema_no_unknown_event(event):
+    payload = {
+        'hook_event_name': event,
+        'session_id': 's', 'transcript_path': 't', 'cwd': 'c',
+        'prompt_id': 'pr-1', 'trigger': 'auto',
+    }
+    findings = validate_event(event, payload)
+    assert not [f for f in findings if f.drift_kind == 'unknown_event'], findings
+    assert findings == [], findings

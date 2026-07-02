@@ -54,6 +54,11 @@ _ENVELOPE_KEYS: frozenset[str] = frozenset({
     # payload: `duration_ms` (tool execution time, captured onto tool
     # spans) and `effort` ({level: …}, captured per-turn on turn_usage).
     'duration_ms', 'effort',
+    # `prompt_id` (Claude Code 2.1.195+) is a per-submission UUID stamped on
+    # EVERY hook/tool payload, correlating it to the originating user prompt.
+    # It is universal envelope metadata — captured onto tool spans as
+    # `source_prompt_id` (post_tool_trace) — so it must never flag as drift.
+    'prompt_id',
 })
 
 # Always-present top-level keys on every hook-event payload, regardless of
@@ -66,6 +71,9 @@ _ENVELOPE_KEYS: frozenset[str] = frozenset({
 # schema, not the envelope.
 _HOOK_COMMON_KEYS: frozenset[str] = frozenset({
     'session_id', 'transcript_path', 'cwd', 'hook_event_name',
+    # See `_ENVELOPE_KEYS`: `prompt_id` (2.1.195+) rides every hook-event
+    # payload too, so it is common envelope metadata on this axis as well.
+    'prompt_id',
 })
 
 

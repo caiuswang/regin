@@ -65,6 +65,11 @@
         },
         "persisted_output_size": {
           "type": "integer"
+        },
+        "git_operation": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Structured git result Claude Code (2.1.195+) stamps when a Bash command mutates git; commit.{sha,kind} is captured onto the span as git_commit_sha/git_op_kind (post_tool_trace._attach_bash_git_commit). Opaque object so its varying internals don't register as drift."
         }
       }
     },
@@ -77,6 +82,7 @@
   },
   "x-claude-versions": [
     "2.1.150",
-    "2.1.177"
+    "2.1.177",
+    "2.1.195"
   ]
 }

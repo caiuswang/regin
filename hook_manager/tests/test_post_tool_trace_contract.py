@@ -362,6 +362,38 @@ def test_webfetch_long_prompt_truncated(captured):
     assert attrs['fetch_prompt_truncated_bytes'] == 40
 
 
+# ── prompt_id → source_prompt_id (Claude Code 2.1.195+) ──────────
+
+def test_source_prompt_id_captured_from_raw(captured):
+    ptt.handle(_make_payload('Glob', {'pattern': '*.py'},
+                             raw_extras={'prompt_id': 'pr-uuid-123'}))
+    assert captured[0][2]['source_prompt_id'] == 'pr-uuid-123'
+
+
+def test_source_prompt_id_absent_when_no_prompt_id(captured):
+    ptt.handle(_make_payload('Glob', {'pattern': '*.py'}))
+    assert 'source_prompt_id' not in captured[0][2]
+
+
+# ── Bash git commit (Claude Code 2.1.195+ tool_response.git_operation) ──
+
+def test_bash_git_commit_captured(captured):
+    ptt.handle(_make_payload(
+        'Bash', {'command': 'git commit -m x'},
+        tool_response={'git_operation': {'commit': {'sha': '8e48620', 'kind': 'create'}}}))
+    attrs = captured[0][2]
+    assert attrs['git_commit_sha'] == '8e48620'
+    assert attrs['git_op_kind'] == 'create'
+
+
+def test_bash_git_commit_absent_for_non_git_call(captured):
+    ptt.handle(_make_payload('Bash', {'command': 'ls'},
+                             tool_response={'stdout': 'file.txt'}))
+    attrs = captured[0][2]
+    assert 'git_commit_sha' not in attrs
+    assert 'git_op_kind' not in attrs
+
+
 # ── No tool_name → no-op ─────────────────────────────────────────
 
 def test_no_tool_name_does_not_emit(captured):

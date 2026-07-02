@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PostCompact hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": ["2.1.195"],
+  "required": [],
+  "properties": {
+    "trigger": {"type": "string"},
+    "custom_instructions": {"type": "string"}
+  }
+}

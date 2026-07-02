@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScheduleWakeup PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "x-claude-versions": ["2.1.198"],
+  "properties": {
+    "tool_name": {"const": "ScheduleWakeup"},
+    "tool_input": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "delay_seconds": {"type": "number"},
+        "reason": {"type": "string"},
+        "prompt": {"type": "string"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

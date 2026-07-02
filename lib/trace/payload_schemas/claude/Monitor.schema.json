@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Monitor PostToolUse payload",
+  "type": "object",
+  "required": ["tool_name", "tool_input"],
+  "additionalProperties": true,
+  "x-claude-versions": ["2.1.198"],
+  "properties": {
+    "tool_name": {"const": "Monitor"},
+    "tool_input": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "command": {"type": "string"},
+        "description": {"type": "string"},
+        "timeout_ms": {"type": "integer"},
+        "persistent": {"type": "boolean"}
+      }
+    },
+    "tool_response": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "task_id": {"type": "string"},
+        "timeout_ms": {"type": "integer"},
+        "persistent": {"type": "boolean"}
+      }
+    }
+  }
+}
