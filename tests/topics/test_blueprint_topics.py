@@ -116,6 +116,79 @@ def test_topics_proposal_endpoints(stub_proposal_provider, flask_client, tmp_db,
     assert workspace["wiki_preview"].startswith("# Stub Wiki")
 
 
+def test_regenerate_ok_when_started_run_has_no_wiki(
+    stub_proposal_provider, flask_client, tmp_db, fake_git_repo, monkeypatch,
+):
+    """Regenerating a run that started but whose prior (failed) revision left
+    no wiki.md on disk must return 200 ok — the earlier code read
+    ``paths["wiki"].read_text()`` after the run was already launched and, on
+    the missing file, 404'd a run that was actually live, stranding the UI on
+    the stale 'failed' badge until a manual refresh."""
+    name = _seed_repo_record(fake_git_repo)
+    bootstrap(fake_git_repo)
+    create_resp = flask_client.post(
+        f"/api/repos/{name}/topics/proposals",
+        json={"topic_request": "service boundaries"},
+    )
+    proposal_id = create_resp.get_json()["proposal"]["id"]
+
+    # Simulate the started-but-no-wiki state: the run launches (state flips in
+    # the ORM) but the wiki path does not exist on disk.
+    missing_wiki = (
+        fake_git_repo / ".regin" / "topics" / "proposals" / proposal_id / "gone.md"
+    )
+    started = {"called": False}
+
+    def _fake_regenerate(repo_path, pid):
+        started["called"] = True
+        return {"wiki": missing_wiki}
+
+    monkeypatch.setattr(
+        "web.blueprints.topics.regenerate_proposal_run", _fake_regenerate,
+    )
+
+    resp = flask_client.post(
+        f"/api/repos/{name}/topics/proposals/{proposal_id}/regenerate", json={},
+    )
+
+    assert started["called"] is True
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["wiki"] == ""              # missing file → best-effort empty
+    assert body["proposal"] is not None    # best-effort proposal still returned
+    assert body["proposal"]["version"] == 1
+
+
+def test_regenerate_reports_error_when_start_fails(
+    stub_proposal_provider, flask_client, tmp_db, fake_git_repo, monkeypatch,
+):
+    """A genuine start failure (e.g. a regenerate already in flight) must still
+    surface as an error, not a false ok — only the post-start artifact reads
+    are best-effort."""
+    from lib.topics import TopicGraphError
+
+    name = _seed_repo_record(fake_git_repo)
+    bootstrap(fake_git_repo)
+    create_resp = flask_client.post(
+        f"/api/repos/{name}/topics/proposals",
+        json={"topic_request": "service boundaries"},
+    )
+    proposal_id = create_resp.get_json()["proposal"]["id"]
+
+    def _raise(repo_path, pid):
+        raise TopicGraphError("regenerate already in flight")
+
+    monkeypatch.setattr("web.blueprints.topics.regenerate_proposal_run", _raise)
+
+    resp = flask_client.post(
+        f"/api/repos/{name}/topics/proposals/{proposal_id}/regenerate", json={},
+    )
+
+    assert resp.status_code != 200
+    assert resp.get_json().get("ok") is not True
+
+
 def test_topics_workspace_can_select_historical_revision(stub_proposal_provider, flask_client, tmp_db, fake_git_repo, monkeypatch):
     name = _seed_repo_record(fake_git_repo)
     bootstrap(fake_git_repo)

@@ -126,16 +126,26 @@ def api_repo_topic_proposal_regenerate(name, proposal_id):
         return jsonify({"error": "not found"}), 404
     try:
         paths = _pkg.regenerate_proposal_run(repo_path, proposal_id)
-        proposal = load_proposal(repo_path, proposal_id)
-        return jsonify({
-            "ok": True,
-            "proposal": proposal,
-            "wiki": paths["wiki"].read_text(),
-        })
-    except OSError:
-        return jsonify({"error": "not found"}), 404
     except (ValueError, TopicGraphError) as exc:
         return _error(exc)
+    # The run has started (state=queued) once regenerate_proposal_run returns.
+    # The proposal/wiki payload is best-effort: a run that failed before it
+    # drafted has no wiki.md on disk, and reading it must NOT turn a
+    # successfully-started regenerate into a 404 — that leaves the UI stuck on
+    # the stale 'failed' badge while the run is actually live, forcing a manual
+    # refresh to see it running.
+    proposal = None
+    try:
+        proposal = load_proposal(repo_path, proposal_id)
+    except (OSError, ValueError, TopicGraphError):
+        # ValueError covers a corrupt topics.json on the disk-fallback path
+        # (json.JSONDecodeError); none of these may 500 a *started* run.
+        proposal = None
+    try:
+        wiki = paths["wiki"].read_text()
+    except OSError:
+        wiki = ""
+    return jsonify({"ok": True, "proposal": proposal, "wiki": wiki})
 
 
 @topics_bp.route("/api/repos/<name>/topics/proposals/<proposal_id>/review-note", methods=["POST"])
