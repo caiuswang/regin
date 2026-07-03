@@ -37,6 +37,11 @@ class PromptTemplate(Base, table=True):
     default_for_providers: str = Field(
         sa_column=Column("default_for_providers", Text, nullable=False, server_default=text("'[]'")),
     )
+    # For skeleton rows: the external agent this goal-prompt is *bound* to — a
+    # key in `settings.topic_proposal_external_agents`. NULL = no binding, so the
+    # dispatch falls back to the surface's default agent (never dropped — see the
+    # NULL-provider gotcha). Ignored for fragments.
+    agent: Optional[str] = Field(default=None, sa_column=Column("agent", String))
     builtin: int = Field(
         sa_column=Column("builtin", Integer, nullable=False, server_default=text("0")),
     )

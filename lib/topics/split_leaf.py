@@ -103,7 +103,7 @@ def propose_clusters(leaf_node: dict, memories: list[dict], llm, *,
         "label": leaf_node.get("label") or "topic",
         "intent": " ".join((leaf_node.get("intent") or "").split())[:400],
         "memories": _memories_block(memories), "lo": lo, "hi": hi})
-    answer = llm.complete(prompt, max_tokens=4096)
+    answer = llm.complete(prompt, max_tokens=4096, surface_id=SPLIT_LEAF_SURFACE_ID)
     if not answer:
         raise ClusterProposerUnavailable(
             "no LLM completion — is an external agent configured?")

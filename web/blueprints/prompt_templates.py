@@ -30,6 +30,19 @@ def api_prompt_templates_list():
     return jsonify({"ok": True, "templates": list_templates(kind)})
 
 
+@prompt_templates_bp.route("/api/agents")
+def api_agents_list():
+    """The configured external agents a skeleton can be *bound* to, plus the
+    topic-proposal default — the option set for the per-surface agent picker."""
+    from lib.prompts.agents import configured_agents, default_agent_id
+
+    return jsonify({
+        "ok": True,
+        "agents": configured_agents(),
+        "default": default_agent_id(),
+    })
+
+
 @prompt_templates_bp.route("/api/prompt-templates/<slug>")
 def api_prompt_templates_get(slug: str):
     template = get_template_by_slug(slug)

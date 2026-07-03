@@ -15,7 +15,7 @@ class _StubLLM:
         self._reply = reply
         self.calls = 0
 
-    def complete(self, prompt, *, max_tokens=1024):
+    def complete(self, prompt, *, max_tokens=1024, surface_id=None):
         self.calls += 1
         return self._reply
 
@@ -44,7 +44,7 @@ def test_degenerate_expansion_falls_back_to_raw():
 
 def test_llm_failure_returns_raw():
     class _Boom:
-        def complete(self, prompt, *, max_tokens=1024):
+        def complete(self, prompt, *, max_tokens=1024, surface_id=None):
             raise RuntimeError("agent died")
 
     raw = "investigate the missing memory.recall span"

@@ -31,6 +31,12 @@ from lib.prompts.registry import (
     list_surfaces,
     register_surface,
 )
+from lib.prompts.agents import (
+    configured_agents,
+    default_agent_id,
+    grader_bound_agent,
+    surface_agent,
+)
 from lib.prompts.resolve import render_surface
 
 __all__ = [
@@ -40,11 +46,15 @@ __all__ = [
     "PromptSurface",
     "PromptVariable",
     "UnknownVariable",
+    "configured_agents",
+    "default_agent_id",
     "get_surface",
+    "grader_bound_agent",
     "includes_in",
     "list_surfaces",
     "register_surface",
     "render",
     "render_surface",
+    "surface_agent",
     "variables_in",
 ]

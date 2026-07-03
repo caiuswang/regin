@@ -5,11 +5,14 @@ import Badge from './Badge.vue'
 import Card from './Card.vue'
 import Button from './ui/Button.vue'
 import PromptSkeletonEditor from './PromptSkeletonEditor.vue'
+import SurfaceAgentPicker from './SurfaceAgentPicker.vue'
 import { useConfirm } from '../composables/useConfirm'
 
 const { confirm } = useConfirm()
 
 const skeletons = ref([])
+const agents = ref([])
+const defaultAgent = ref(null)
 const loading = ref(true)
 const error = ref('')
 const busy = ref('')
@@ -56,12 +59,34 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const result = await api.get('/prompt-templates?kind=skeleton')
-    skeletons.value = result.templates || []
+    const [templates, agentList] = await Promise.all([
+      api.get('/prompt-templates?kind=skeleton'),
+      api.get('/agents'),
+    ])
+    skeletons.value = templates.templates || []
+    agents.value = agentList.agents || []
+    defaultAgent.value = agentList.default || null
   } catch (err) {
     error.value = err.message || String(err)
   } finally {
     loading.value = false
+  }
+}
+
+async function onBindAgent(skeleton, agentId) {
+  error.value = ''
+  busy.value = 'bind'
+  try {
+    const result = await api.patch(`/prompt-templates/${skeleton.slug}`, { agent: agentId })
+    if (!result.ok) {
+      error.value = result.error || 'Could not bind agent'
+      return
+    }
+    skeleton.agent = result.template?.agent ?? agentId
+  } catch (err) {
+    error.value = err.message || String(err)
+  } finally {
+    busy.value = ''
   }
 }
 
@@ -133,6 +158,22 @@ onMounted(load)
 
     <div v-if="error" class="alert alert-info">{{ error }}</div>
 
+    <div class="agents-ref">
+      <h3 class="area-title">Agents</h3>
+      <p v-if="!agents.length" class="agents-empty">
+        No external agents configured. Add one under
+        <code>topic_proposal_external_agents</code> in <code>settings.local.json</code>,
+        then bind a goal to it here.
+      </p>
+      <ul v-else class="agents-list">
+        <li v-for="a in agents" :key="a.id">
+          <span class="font-medium">{{ a.id }}</span>
+          <Badge v-if="a.id === defaultAgent" color="gray" label="default" />
+          <code class="agent-cmd">{{ a.command }}</code>
+        </li>
+      </ul>
+    </div>
+
     <div v-for="group in grouped" :key="group.area" class="area-group">
       <h3 class="area-title">{{ group.label }}</h3>
       <Card :no-padding="true">
@@ -149,6 +190,16 @@ onMounted(load)
                   <div v-if="s.description" class="text-xs text-slate-600 mt-1">{{ s.description }}</div>
                   <div class="text-xs text-slate-400 mt-1">{{ (s.variables || []).length }} variable(s)</div>
                 </td>
+                <td class="agent-cell">
+                  <div class="agent-cell-label">Agent</div>
+                  <SurfaceAgentPicker
+                    :model-value="s.agent"
+                    :agents="agents"
+                    :default-agent="defaultAgent"
+                    :disabled="busy === 'bind'"
+                    @update:model-value="(v) => onBindAgent(s, v)"
+                  />
+                </td>
                 <td class="text-right">
                   <Button variant="secondary" size="sm" class="mr-1" @click="startEdit(s)">
                     {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
@@ -159,7 +210,7 @@ onMounted(load)
                 </td>
               </tr>
               <tr v-if="editingSlug === s.slug" class="editor-row">
-                <td colspan="2">
+                <td colspan="3">
                   <PromptSkeletonEditor
                     :skeleton="s"
                     :busy="busy"
@@ -197,6 +248,37 @@ onMounted(load)
     letter-spacing: 0.04em;
     color: var(--color-slate-500);
     margin: 0 0 0.4rem;
+}
+.agents-ref { margin-bottom: 1.25rem; }
+.agents-empty {
+    font-size: 0.8rem;
+    color: var(--color-slate-500);
+    margin: 0;
+}
+.agents-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.82rem;
+}
+.agents-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+}
+.agent-cmd {
+    color: var(--color-slate-500);
+    font-size: 0.75rem;
+}
+.agent-cell { white-space: nowrap; vertical-align: top; }
+.agent-cell :deep(.ds-select-wrap) { min-width: 9.5rem; }
+.agent-cell-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-slate-400);
+    margin-bottom: 0.2rem;
 }
 .row-editing > td {
     border-bottom: none;

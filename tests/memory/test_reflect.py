@@ -36,7 +36,7 @@ class StubLLM:
         self.answer = answer
         self.prompts = []
 
-    def complete(self, prompt, *, max_tokens=1024):
+    def complete(self, prompt, *, max_tokens=1024, surface_id=None):
         self.prompts.append(prompt)
         return self.answer
 

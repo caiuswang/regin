@@ -23,6 +23,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
 from lib.orm import SessionLocal
@@ -56,6 +57,7 @@ def _row_to_dict(row: PromptTemplate) -> dict[str, Any]:
         "variables": _decode_variables(row.variables),
         "applies_to": _decode_list(row.applies_to),
         "default_for_providers": _decode_list(row.default_for_providers),
+        "agent": row.agent or None,
         "builtin": bool(row.builtin),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -114,6 +116,21 @@ def _apply_text_field(
     setattr(row, key, value if (value or required) else None)
 
 
+def _validate_agent_binding(value: Any) -> str | None:
+    """Normalize an ``agent`` binding from a PATCH payload. Empty / null clears
+    the binding (→ default agent). A non-empty value must name a currently
+    configured external agent, else the edit is rejected — a typo'd binding
+    would otherwise silently fall back to the default and look bound in the UI."""
+    agent_id = (value or "").strip() if isinstance(value, str) else ""
+    if not agent_id:
+        return None
+    from lib.prompts.agents import is_configured_agent
+
+    if not is_configured_agent(agent_id):
+        raise PromptTemplateError(f"unknown external agent: {agent_id}")
+    return agent_id
+
+
 def _unique_slug(slug: str, existing: set[str]) -> str:
     if slug not in existing:
         return slug
@@ -136,6 +153,21 @@ def get_template_by_slug(slug: str) -> dict[str, Any] | None:
     with SessionLocal() as session:
         row = session.exec(select(PromptTemplate).where(PromptTemplate.slug == slug)).first()
         return _row_to_dict(row) if row else None
+
+
+def surface_agent_binding(surface_id: str) -> str | None:
+    """The external agent a skeleton row is *bound* to, or ``None`` (unset row,
+    missing row, or an abnormally initialized DB with no ``prompt_templates``
+    table). Never raises — a missing binding must degrade to the default agent,
+    the same never-break guarantee ``render_surface`` gives a broken edit."""
+    try:
+        with SessionLocal() as session:
+            row = session.exec(
+                select(PromptTemplate.agent).where(PromptTemplate.slug == surface_id)
+            ).first()
+    except OperationalError:
+        return None
+    return (row or None) if isinstance(row, str) else None
 
 
 def get_templates_by_slugs(slugs: Iterable[str]) -> list[dict[str, Any]]:
@@ -212,6 +244,8 @@ def update_template(slug: str, payload: dict[str, Any]) -> dict[str, Any]:
             row.applies_to = _encode_list(payload["applies_to"])
         if "default_for_providers" in payload:
             row.default_for_providers = _encode_list(payload["default_for_providers"])
+        if "agent" in payload:
+            row.agent = _validate_agent_binding(payload["agent"])
         row.updated_at = now
         session.add(row)
         session.commit()

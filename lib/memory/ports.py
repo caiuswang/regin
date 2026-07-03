@@ -36,8 +36,13 @@ class EmbeddingProvider(Protocol):
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    def complete(self, prompt: str, *, max_tokens: int = 1024) -> "str | None":
-        """One-shot completion, or None when unconfigured / failed."""
+    def complete(self, prompt: str, *, max_tokens: int = 1024,
+                 surface_id: "str | None" = None) -> "str | None":
+        """One-shot completion, or None when unconfigured / failed.
+
+        ``surface_id`` optionally names the goal-prompt surface this call serves
+        so the provider can route to that surface's *bound* agent; ``None`` uses
+        the provider's default agent (backward-compatible)."""
         ...
 
 

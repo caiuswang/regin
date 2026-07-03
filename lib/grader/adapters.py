@@ -93,7 +93,15 @@ def resolve_judge(agent_id: str | None = None) -> ExternalAgentJudge | None:
     per-grade provider picker). The `--allowedTools` grant is suppressed for an
     agent that declares `supports_allowed_tools=False` (Kimi has no such flag);
     such agents must auto-approve the read-only trace commands themselves.
+
+    Precedence: explicit `agent_id` → a grader goal-prompt's *bound* agent →
+    `settings.grader.external_agent` → first configured. The binding is threaded
+    through the same `agent_id` slot so it wins over the settings default exactly
+    as a per-run pick would.
     """
+    from lib.prompts.agents import grader_bound_agent
+
+    agent_id = agent_id or grader_bound_agent()
     selected = ExternalAgentJudge(agent_id=agent_id).selected_agent
     if selected is None:
         return None

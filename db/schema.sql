@@ -420,6 +420,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     variables               TEXT NOT NULL DEFAULT '[]',
     applies_to              TEXT NOT NULL DEFAULT '[]',
     default_for_providers   TEXT NOT NULL DEFAULT '[]',
+    agent                   TEXT,
     builtin                 INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at              TEXT NOT NULL DEFAULT (datetime('now'))

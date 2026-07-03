@@ -209,8 +209,16 @@ def _template_slugs(prompt_templates: list[dict[str, Any]] | None) -> list[str]:
 
 
 def _resolve_agent_config(agent_id: str | None) -> tuple[str, Any]:
-    """Resolve the agent id + its configured launch spec, or raise ValueError."""
-    agent = agent_id or default_external_agent_id()
+    """Resolve the agent id + its configured launch spec, or raise ValueError.
+
+    Precedence: an explicit ``agent_id`` (the run request's picker) → the
+    drafting surface's bound agent → the global default. So binding the
+    ``topic-proposal-drafting`` goal to an agent routes every unspecified run to
+    it, while an explicit per-run pick still wins."""
+    from lib.prompts import surface_agent
+    from lib.prompts.surfaces.drafting import SURFACE_ID as DRAFTING_SURFACE_ID
+
+    agent = agent_id or surface_agent(DRAFTING_SURFACE_ID) or default_external_agent_id()
     if not agent:
         raise ValueError(
             "external-agent proposal provider requires topic_proposal_external_agents "

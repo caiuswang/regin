@@ -78,23 +78,34 @@ class ExternalAgentLLM:
     the distiller its read-only trace tools (`--allowedTools …`) so it can
     self-fetch evidence, the same mechanism the grader's judge uses."""
 
-    def __init__(self, *, extra_args: "list[str] | None" = None):
+    def __init__(self, *, extra_args: "list[str] | None" = None,
+                 surface_id: "str | None" = None):
         self._extra_args = list(extra_args or [])
+        self._surface_id = surface_id
 
-    def _agent(self):
+    def _agent(self, surface_id: "str | None" = None):
         agents = settings.topic_proposal_external_agents
         if not agents:
             return None
+        from lib.prompts import surface_agent
+        bound = surface_agent(surface_id or self._surface_id)
+        if bound and bound in agents:
+            return agents[bound]
         return next(iter(agents.values()))
 
     def complete(
         self, prompt: str, *, max_tokens: int = 1024,
         cwd: "str | Path | None" = None,
+        surface_id: "str | None" = None,
     ) -> "str | None":
         """`cwd` is the caller's target repo (e.g. a proposal reviewer's
         `repo_path`) — used only when the agent config has no explicit `cwd`
-        override, which otherwise always wins."""
-        agent = self._agent()
+        override, which otherwise always wins.
+
+        `surface_id` overrides the instance binding for this one call, so a
+        shared LLM (reflect's synthesis/digest/contradiction) still honors each
+        goal-prompt's own agent binding."""
+        agent = self._agent(surface_id)
         if agent is None:
             return None
         try:
@@ -121,15 +132,17 @@ def resolve_distiller() -> ExternalAgentLLM:
     """The distiller LLM, granted the read-only trace commands so it can
     investigate the session itself (agentic distill). Falls back to a
     plain `ExternalAgentLLM` when no tools are configured."""
+    from lib.prompts.surfaces.memory import DISTILL_SURFACE_ID
     tools = settings.agent_memory.distill_allowed_tools
     extra = ["--allowedTools", ",".join(tools)] if tools else []
-    return ExternalAgentLLM(extra_args=extra)
+    return ExternalAgentLLM(extra_args=extra, surface_id=DISTILL_SURFACE_ID)
 
 
 def resolve_topic_classifier() -> ExternalAgentLLM:
     """The LLM behind agentic `memory link-topics`: plain text in, JSON out —
     it reasons over the taxonomy and the memory body, granting no tools."""
-    return ExternalAgentLLM()
+    from lib.prompts.surfaces.memory import TOPIC_CLASSIFY_SURFACE_ID
+    return ExternalAgentLLM(surface_id=TOPIC_CLASSIFY_SURFACE_ID)
 
 
 def resolve_proposal_reviewer() -> ExternalAgentLLM:
@@ -137,7 +150,10 @@ def resolve_proposal_reviewer() -> ExternalAgentLLM:
     it can verify the draft against the current refs itself (agentic review),
     rather than judging a pre-baked evidence pack. Returns None-yielding
     `complete` when no external agent is configured, so the caller no-ops."""
-    return ExternalAgentLLM(extra_args=["--allowedTools", "Read,Glob,Grep"])
+    from lib.prompts.surfaces.review import SURFACE_ID as REVIEW_SURFACE_ID
+    return ExternalAgentLLM(
+        extra_args=["--allowedTools", "Read,Glob,Grep"], surface_id=REVIEW_SURFACE_ID,
+    )
 
 
 __all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller",

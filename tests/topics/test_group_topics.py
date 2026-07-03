@@ -23,7 +23,7 @@ class FakeLLM:
     def __init__(self, answer):
         self.answer = answer
 
-    def complete(self, prompt, *, max_tokens=1024):
+    def complete(self, prompt, *, max_tokens=1024, surface_id=None):
         return self.answer
 
 

@@ -69,7 +69,9 @@ def expand_query(query: str, llm: Optional[LLMProvider]) -> str:
     if not base or llm is None:
         return base
     try:
-        completion = llm.complete(_build_prompt(base), max_tokens=200)
+        from lib.prompts.surfaces.memory import EXPAND_SURFACE_ID
+        completion = llm.complete(_build_prompt(base), max_tokens=200,
+                                  surface_id=EXPAND_SURFACE_ID)
     except Exception:
         log.error("query_expansion_failed", exc_info=True)
         return base

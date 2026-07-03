@@ -124,7 +124,7 @@ def propose_buckets(flat_topics: list[dict], llm, *,
     from lib.prompts.surfaces.topics import GROUP_BUCKETS_SURFACE_ID
     prompt = render_surface(GROUP_BUCKETS_SURFACE_ID, {
         "topics": _topics_block(flat_topics), "lo": lo, "hi": hi})
-    answer = llm.complete(prompt, max_tokens=4096)
+    answer = llm.complete(prompt, max_tokens=4096, surface_id=GROUP_BUCKETS_SURFACE_ID)
     if not answer:
         raise ClusterProposerUnavailable(
             "no LLM completion — is an external agent configured?")

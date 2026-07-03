@@ -151,7 +151,7 @@ def _llm_says_contradiction(llm, a: dict, b: dict) -> bool:
     from lib.prompts.surfaces.memory import CONTRADICTION_SURFACE_ID
     prompt = render_surface(CONTRADICTION_SURFACE_ID, {
         "memory_a": _doc_text(a)[:1500], "memory_b": _doc_text(b)[:1500]})
-    answer = llm.complete(prompt, max_tokens=8)
+    answer = llm.complete(prompt, max_tokens=8, surface_id=CONTRADICTION_SURFACE_ID)
     return bool(answer) and "CONTRADICT" in answer.upper()
 
 
@@ -605,7 +605,7 @@ def _llm_synthesis(llm, members: list[dict]) -> "dict | None":
     entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:600]}"
                           for i, m in enumerate(members))
     answer = llm.complete(render_surface(SYNTHESIS_SURFACE_ID, {"entries": entries}),
-                          max_tokens=400)
+                          max_tokens=400, surface_id=SYNTHESIS_SURFACE_ID)
     if not answer or answer.strip().upper().startswith("NONE"):
         return None
     draft = _extract_json_object(answer)
@@ -742,7 +742,7 @@ def _llm_digest(llm, sources: list[dict]) -> "dict | None":
     entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:400]}"
                           for i, m in enumerate(sources))
     answer = llm.complete(render_surface(DIGEST_SURFACE_ID, {"entries": entries}),
-                          max_tokens=600)
+                          max_tokens=600, surface_id=DIGEST_SURFACE_ID)
     if not answer or answer.strip().upper().startswith("NONE"):
         return None
     draft = _extract_json_object(answer)
