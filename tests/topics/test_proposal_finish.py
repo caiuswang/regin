@@ -96,6 +96,70 @@ def test_finish_ingests_and_marks_completed(fake_git_repo, tmp_db):
     assert (out_dir / "agent-output.json").exists()  # temp copied to canonical
 
 
+def _spy_events(monkeypatch):
+    """Capture `events.emit` calls so the notify-on-finish inbox event can be
+    asserted without touching the message store."""
+    from lib.agent_messages import events
+
+    calls = []
+    monkeypatch.setattr(events, "emit", lambda kind, **kw: calls.append((kind, kw)))
+    return calls
+
+
+def test_finish_emits_proposal_ready_event(fake_git_repo, tmp_db, monkeypatch):
+    """The agent-signaled ingest is the authoritative completion, so it — not
+    only the server-runner exit — must surface the `proposal.ready` inbox
+    event. Regression for agent-signaled proposals that finished silently."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+    calls = _spy_events(monkeypatch)
+
+    finish_proposal_run(fake_git_repo, "run1")
+
+    assert len(calls) == 1
+    kind, kw = calls[0]
+    assert kind == "proposal.ready"
+    assert kw["trace_id"] == "topic-proposal-run1"
+    assert kw["key"] == "proposal-ready:run1"
+    assert kw["links"][0]["href"].endswith("/topics")
+
+
+def test_finish_noop_does_not_re_emit(fake_git_repo, tmp_db, monkeypatch):
+    """A second (idempotent) finish is a no-op — it must not re-emit, so the
+    inbox card is not needlessly superseded/re-surfaced."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+    finish_proposal_run(fake_git_repo, "run1")  # first ingest emits
+
+    calls = _spy_events(monkeypatch)
+    second = finish_proposal_run(fake_git_repo, "run1")
+
+    assert second["ingested"] is False
+    assert calls == []
+
+
+def test_finish_survives_notify_failure(fake_git_repo, tmp_db, monkeypatch):
+    """A notify must never break the ingest it announces: if the event emit
+    blows up, the run is still ingested and stamped completed."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("inbox down")
+
+    monkeypatch.setattr(
+        "lib.topics.proposal_external.notify_proposal_ready", boom,
+    )
+
+    result = finish_proposal_run(fake_git_repo, "run1")
+
+    assert result == {"proposal_id": "run1", "state": "completed", "ingested": True}
+    assert load_proposal_status(fake_git_repo, "run1")["state"] == "completed"
+
+
 def test_finish_is_idempotent(fake_git_repo, tmp_db):
     _commit_service(fake_git_repo)
     out_dir = _seed_run(fake_git_repo)
