@@ -84,6 +84,22 @@ def _resolve_regenerate_inputs_from_status(
     )
 
 
+def _regenerate_agent_or_fallback(agent: str | None) -> str | None:
+    """Reuse the prior run's agent only when it still names a configured agent.
+
+    A regenerate reuses the original run's persisted `agent`, but that agent may
+    have been renamed or removed from `topic_proposal_external_agents` since —
+    and an explicit stale id short-circuits `_resolve_agent_config`'s fallback
+    chain and blows up with `unknown external topic proposal agent`. Dropping it
+    to `None` hands resolution back to that chain (drafting-surface binding →
+    global default), so the regenerate uses the current related agent's command
+    instead of the dead one. Mirrors the "binding is only ever an override"
+    rule in `lib/prompts/agents.py`."""
+    from lib.prompts import is_configured_agent
+
+    return agent if is_configured_agent(agent) else None
+
+
 def _resolve_regenerate_inputs(repo: Path, proposal_id: str) -> _RegenerateInputs:
     """ORM-backed lookup post-Phase-E: prefer the proposal dict if its
     topics list is present; otherwise fall back to the run's status row
@@ -94,10 +110,13 @@ def _resolve_regenerate_inputs(repo: Path, proposal_id: str) -> _RegenerateInput
     except TopicGraphError:
         prior_proposal = None
     if prior_proposal and prior_proposal.get("topics"):
-        return _resolve_regenerate_inputs_from_proposal(
+        inputs = _resolve_regenerate_inputs_from_proposal(
             repo, proposal_id, prior_proposal, wiki_path,
         )
-    return _resolve_regenerate_inputs_from_status(repo, proposal_id)
+    else:
+        inputs = _resolve_regenerate_inputs_from_status(repo, proposal_id)
+    inputs.agent = _regenerate_agent_or_fallback(inputs.agent)
+    return inputs
 
 
 def _mark_addressed_feedback_after_regenerate(

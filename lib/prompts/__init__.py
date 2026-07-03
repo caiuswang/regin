@@ -35,6 +35,7 @@ from lib.prompts.agents import (
     configured_agents,
     default_agent_id,
     grader_bound_agent,
+    is_configured_agent,
     surface_agent,
 )
 from lib.prompts.resolve import render_surface
@@ -51,6 +52,7 @@ __all__ = [
     "get_surface",
     "grader_bound_agent",
     "includes_in",
+    "is_configured_agent",
     "list_surfaces",
     "register_surface",
     "render",

@@ -333,6 +333,14 @@ def test_regenerate_proposal_run_reuses_same_run_and_passes_prior_draft(stub_pro
     proposal = load_proposal(fake_git_repo, "run1")
     proposal["provider"] = "stub"
     proposal["metadata"] = {"complexity": "standard", "agent": "kept-agent"}
+    # `kept-agent` is still a configured agent, so regenerate reuses it verbatim
+    # (the fallback only kicks in when the prior agent is gone).
+    from lib.settings import TopicProposalExternalAgent, settings
+    monkeypatch.setattr(
+        settings,
+        "topic_proposal_external_agents",
+        {"kept-agent": TopicProposalExternalAgent(command="kept-agent")},
+    )
     proposal["topics"] = [{
         "id": "service",
         "label": "Service Layer",
@@ -412,6 +420,118 @@ def test_regenerate_proposal_run_reuses_same_run_and_passes_prior_draft(stub_pro
     assert [revision["revision_number"] for revision in revisions] == [2, 1]
     assert revisions[0]["kind"] == "regenerated"
     assert paths["wiki"].read_text() == "# Refreshed wiki"
+
+
+def _plant_regenerable_proposal(repo, agent):
+    """A minimal completed run whose persisted metadata carries `agent`, ready
+    to regenerate."""
+    create_proposal_run(repo, run_id="run1")
+    proposal = load_proposal(repo, "run1")
+    proposal["metadata"] = {"agent": agent}
+    proposal["topics"] = [{
+        "id": "svc", "label": "Svc", "aliases": [], "intent": "S.",
+        "status": "active", "refs": [], "edges": [], "commands": [],
+        "include_globs": [], "exclude_globs": [], "evidence_paths": [],
+    }]
+    save_proposal(repo, "run1", proposal)
+
+
+def _capture_regenerate_agent(monkeypatch):
+    """Monkeypatch the drafter to capture the `agent` regenerate hands it."""
+    captured: dict[str, object] = {}
+
+    def fake_draft(*, repo, out_dir, proposal_id, topic_request=None, scope="all", agent=None, prior_draft=None, prompt_templates=None):
+        del repo, out_dir, proposal_id, topic_request, scope, prompt_templates
+        captured["agent"] = agent
+        refreshed = dict(prior_draft["proposal"])
+        return refreshed, "# Refreshed wiki\n"
+
+    monkeypatch.setattr("lib.topics.proposals.external_jobs._draft_proposal", fake_draft)
+    return captured
+
+
+def test_regenerate_drops_prior_agent_when_no_longer_configured(stub_proposal_provider, monkeypatch, fake_git_repo):
+    """The prior run's agent may have been renamed/removed since. Regenerate must
+    drop the dead id (→ None) so `_resolve_agent_config`'s fallback chain picks
+    the current related agent instead of raising `unknown external topic proposal
+    agent`."""
+    from lib.settings import TopicProposalExternalAgent, settings
+
+    bootstrap(fake_git_repo)
+    monkeypatch.setattr(
+        settings, "topic_proposal_external_agents",
+        {"claude": TopicProposalExternalAgent(command="claude")},
+    )
+    _plant_regenerable_proposal(fake_git_repo, "removed-agent")
+    captured = _capture_regenerate_agent(monkeypatch)
+
+    regenerate_proposal_run(fake_git_repo, "run1")
+
+    # `removed-agent` is gone → dropped to None so the drafter resolves the
+    # live fallback (surface binding → default), not the dead id.
+    assert captured["agent"] is None
+
+
+def test_regenerate_keeps_prior_agent_when_still_configured(stub_proposal_provider, monkeypatch, fake_git_repo):
+    """Contrast to the drop case: a still-configured prior agent is reused
+    verbatim — the fallback is only for stale ids."""
+    from lib.settings import TopicProposalExternalAgent, settings
+
+    bootstrap(fake_git_repo)
+    monkeypatch.setattr(
+        settings, "topic_proposal_external_agents",
+        {"codex": TopicProposalExternalAgent(command="codex")},
+    )
+    _plant_regenerable_proposal(fake_git_repo, "codex")
+    captured = _capture_regenerate_agent(monkeypatch)
+
+    regenerate_proposal_run(fake_git_repo, "run1")
+
+    assert captured["agent"] == "codex"
+
+
+def test_regenerate_agent_or_fallback_unit(monkeypatch):
+    """Unit: the gate keeps configured ids, drops stale/None ones."""
+    from lib.settings import TopicProposalExternalAgent, settings
+    from lib.topics.proposals.external_jobs import _regenerate_agent_or_fallback
+
+    monkeypatch.setattr(
+        settings, "topic_proposal_external_agents",
+        {"claude": TopicProposalExternalAgent(command="claude")},
+    )
+    assert _regenerate_agent_or_fallback("claude") == "claude"
+    assert _regenerate_agent_or_fallback("removed-agent") is None
+    assert _regenerate_agent_or_fallback(None) is None
+
+
+def test_resolve_agent_config_none_falls_back_to_default(monkeypatch):
+    """The dropped-to-None agent resolves to the configured default without
+    raising — the mechanism the regenerate fallback relies on."""
+    from lib.settings import TopicProposalExternalAgent, settings
+    from lib.topics.proposal_external import _resolve_agent_config
+
+    monkeypatch.setattr(
+        settings, "topic_proposal_external_agents",
+        {"claude": TopicProposalExternalAgent(command="claude")},
+    )
+    agent, config = _resolve_agent_config(None)
+    assert agent == "claude"
+    assert config.command == "claude"
+
+
+def test_resolve_agent_config_still_rejects_explicit_unknown_agent(monkeypatch):
+    """The regenerate fallback is scoped to inherited ids; an explicit per-run
+    pick of an unknown agent (a fresh-run picker) must still raise, not silently
+    swap."""
+    from lib.settings import TopicProposalExternalAgent, settings
+    from lib.topics.proposal_external import _resolve_agent_config
+
+    monkeypatch.setattr(
+        settings, "topic_proposal_external_agents",
+        {"claude": TopicProposalExternalAgent(command="claude")},
+    )
+    with pytest.raises(ValueError, match="unknown external topic proposal agent"):
+        _resolve_agent_config("bogus")
 
 
 def test_regenerate_clears_stale_accept_markers_on_new_revision(stub_proposal_provider, monkeypatch, fake_git_repo):
