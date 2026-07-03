@@ -121,4 +121,13 @@ def finish_proposal_run(
     )
     write_status(out_dir, status)
     log.write("proposal_finish_ingested", proposal_id=proposal_id, source=source)
+    # This self-ingest is the authoritative completion in the notify-on-finish
+    # design — the server-runner exit may never observe it — so the inbox
+    # `proposal.ready` event must fire here, not only on the runner path.
+    # Best-effort: a notify must never break the ingest it announces.
+    try:
+        from lib.topics.proposal_external import notify_proposal_ready
+        notify_proposal_ready(repo, proposal_id, status.get("agent"))
+    except Exception:  # noqa: BLE001 — notify is cosmetic; ingest already stuck
+        log.error("proposal_finish_notify_failed", proposal_id=proposal_id, exc_info=True)
     return {"proposal_id": proposal_id, "state": "completed", "ingested": True}

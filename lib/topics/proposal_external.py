@@ -81,25 +81,40 @@ def _repo_and_id_from_out_dir(out_dir: Path) -> tuple[Path, str]:
     return repo_path, proposal_id
 
 
-def _notify_proposal_ready(ctx: "_AgentRunContext") -> None:
+def notify_proposal_ready(
+    repo: Path, proposal_id: str, agent: str | None,
+) -> None:
     """Surface a finished external-agent proposal as an inbox event, deep-
-    linked to the repo's Topics view where a human applies or regenerates
-    it. `events.emit` is itself best-effort and gated by `proposal.ready`'s
-    enablement; the try only shields the repo-path derivation."""
+    linked to the repo's Topics view where a human applies or regenerates it.
+
+    Called from BOTH completion paths — the server-runner exit (via the
+    `_notify_proposal_ready` ctx wrapper) AND the agent's own `proposal-finish`
+    self-ingest (`lib.topics.proposals.finish`), which is the authoritative
+    completion in the notify-on-finish design. Emitting from both is safe:
+    `events.emit` supersedes on `(trace_id, key)`, so a proposal that finishes
+    via the signal and is later observed by the runner shows one card, not two.
+    `events.emit` is itself best-effort and gated by `proposal.ready`'s
+    enablement."""
     from lib.agent_messages import events
+    events.emit(
+        "proposal.ready", trace_id=external_trace_id(proposal_id),
+        title=f"Proposal ready: {proposal_id}",
+        body=(f"External agent **{agent or 'external agent'}** finished "
+              f"drafting proposal **{proposal_id}**. Review, apply, or "
+              f"regenerate it in the Topics view."),
+        key=f"proposal-ready:{proposal_id}",
+        links=[{"label": "Open Topics view",
+                "href": events.topics_url(repo)}])
+
+
+def _notify_proposal_ready(ctx: "_AgentRunContext") -> None:
+    """Runner-exit wrapper: derive the repo from the out_dir, then delegate to
+    `notify_proposal_ready`. The try only shields the repo-path derivation."""
     try:
         repo_path, _ = _repo_and_id_from_out_dir(ctx.out_dir)
     except (IndexError, OSError, AttributeError):
         return
-    events.emit(
-        "proposal.ready", trace_id=ctx.trace_id,
-        title=f"Proposal ready: {ctx.proposal_id}",
-        body=(f"External agent **{ctx.agent}** finished drafting proposal "
-              f"**{ctx.proposal_id}**. Review, apply, or regenerate it in the "
-              f"Topics view."),
-        key=f"proposal-ready:{ctx.proposal_id}",
-        links=[{"label": "Open Topics view",
-                "href": events.topics_url(repo_path)}])
+    notify_proposal_ready(repo_path, ctx.proposal_id, ctx.agent)
 
 
 def write_status(out_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
