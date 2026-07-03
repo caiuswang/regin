@@ -109,10 +109,15 @@ def _spy_events(monkeypatch):
 def test_finish_emits_proposal_ready_event(fake_git_repo, tmp_db, monkeypatch):
     """The agent-signaled ingest is the authoritative completion, so it — not
     only the server-runner exit — must surface the `proposal.ready` inbox
-    event. Regression for agent-signaled proposals that finished silently."""
+    event. Regression for agent-signaled proposals that finished silently.
+
+    The action link deep-links to the *specific* proposal run, and the card's
+    trace_id is the real drafting-agent session (from $CLAUDE_CODE_SESSION_ID)
+    so the footer resolves to the actual drafting session, not the wrapper."""
     _commit_service(fake_git_repo)
     out_dir = _seed_run(fake_git_repo)
     _write_temp_output(out_dir)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "draft-sess-abc")
     calls = _spy_events(monkeypatch)
 
     finish_proposal_run(fake_git_repo, "run1")
@@ -120,9 +125,28 @@ def test_finish_emits_proposal_ready_event(fake_git_repo, tmp_db, monkeypatch):
     assert len(calls) == 1
     kind, kw = calls[0]
     assert kind == "proposal.ready"
-    assert kw["trace_id"] == "topic-proposal-run1"
+    assert kw["trace_id"] == "draft-sess-abc"          # real drafting session
     assert kw["key"] == "proposal-ready:run1"
-    assert kw["links"][0]["href"].endswith("/topics")
+    assert kw["links"][0]["href"].endswith("?tab=proposals&proposal=run1")
+    # the captured session id is persisted for the runner path to reuse
+    assert load_proposal_status(fake_git_repo, "run1")["agent_trace_id"] == "draft-sess-abc"
+
+
+def test_finish_falls_back_to_wrapper_trace_without_session_env(
+    fake_git_repo, tmp_db, monkeypatch,
+):
+    """When $CLAUDE_CODE_SESSION_ID is absent, the card falls back to the
+    synthetic `topic-proposal-<id>` wrapper trace — never an empty trace_id
+    (which `events.emit` would drop)."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    calls = _spy_events(monkeypatch)
+
+    finish_proposal_run(fake_git_repo, "run1")
+
+    assert calls[0][1]["trace_id"] == "topic-proposal-run1"
 
 
 def test_finish_noop_does_not_re_emit(fake_git_repo, tmp_db, monkeypatch):

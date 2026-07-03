@@ -147,10 +147,18 @@ def topics_url(repo_path) -> str:
     return f"/repos/{os.path.basename(os.path.realpath(str(repo_path)))}/topics"
 
 
+def proposal_url(repo_path, proposal_id: str) -> str:
+    """Deep-link to a *specific* proposal run in the Topics review workspace
+    (`…/topics?tab=proposals&proposal=<id>`). RepoTopicsView reads
+    `route.query.proposal`/`tab` to open that run directly, so the inbox card
+    lands on the run to review — not the generic Topics landing."""
+    return f"{topics_url(repo_path)}?tab=proposals&proposal={proposal_id}"
+
+
 def session_url(trace_id: str) -> str:
     """Deep-link to a session's trace view (`/trace/sessions/<id>`)."""
     return f"/trace/sessions/{trace_id}"
 
 
 __all__ = ["EventKind", "REGISTRY", "emit", "resolve", "is_enabled",
-           "catalog", "topics_url", "session_url"]
+           "catalog", "topics_url", "proposal_url", "session_url"]
