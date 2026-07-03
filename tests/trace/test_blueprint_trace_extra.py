@@ -307,6 +307,58 @@ def test_session_delete_removes_full_session(flask_client, tmp_db):
     _assert_no_session_residue("to-delete")
 
 
+# ── POST /api/sessions/<id>/close ────────────────────────────
+
+def test_session_close_marks_ended_manual(flask_client, tmp_db):
+    _seed_session("to-close")  # seeded with status=NULL, ended_at=NULL
+    resp = flask_client.post("/api/sessions/to-close/close")
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["status"] == "ended"
+    assert body["ended_reason"] == "manual"
+    assert body["ended_at"]  # a now() timestamp was stamped
+    with SessionLocal() as session:
+        row = session.get(SessionModel, "to-close")
+        assert row.status == "ended"
+        assert row.ended_reason == "manual"
+        assert row.ended_at is not None
+    # Trace data is kept — close is not a delete.
+    with SessionLocal() as session:
+        spans = session.exec(
+            select(SessionSpan).where(SessionSpan.trace_id == "to-close")
+        ).all()
+        assert len(spans) == 1
+
+
+def test_session_close_unknown_returns_404(flask_client, tmp_db):
+    resp = flask_client.post("/api/sessions/never-seen/close")
+    assert resp.status_code == 404
+    body = resp.get_json()
+    assert body["ok"] is False
+
+
+def test_session_close_preserves_natural_ended_at(flask_client, tmp_db):
+    """A session that already ended naturally keeps its ended_at; only the
+    reason flips to 'manual' (the CASE stays 'ended' either way)."""
+    with SessionLocal() as session:
+        session.add(SessionModel(
+            trace_id="already-ended", title="S",
+            started_at="2026-04-22 10:00:00",
+            last_seen="2026-04-22 10:05:00",
+            status="ended", ended_at="2026-04-22 10:05:00",
+            ended_reason="clear",
+        ))
+        session.commit()
+    resp = flask_client.post("/api/sessions/already-ended/close")
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["ended_at"] == "2026-04-22 10:05:00"
+    with SessionLocal() as session:
+        row = session.get(SessionModel, "already-ended")
+        assert row.ended_at == "2026-04-22 10:05:00"
+        assert row.ended_reason == "manual"
+
+
 # ── GET /api/ingest-errors ──────────────────────────────────
 
 def test_ingest_errors_missing_file_returns_empty(

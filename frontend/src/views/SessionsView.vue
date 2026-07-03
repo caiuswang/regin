@@ -219,6 +219,7 @@ function titlePreview(title) {
 }
 
 const deleting = ref(null)  // trace_id currently being deleted
+const closing = ref(null)  // trace_id currently being manually closed
 const selectedIds = ref(new Set())  // trace_ids checked for batch delete
 const batchDeleting = ref(false)
 
@@ -277,6 +278,25 @@ async function deleteSession(s) {
     await reload()
   } finally {
     deleting.value = null
+  }
+}
+
+async function closeSession(s) {
+  const label = titlePreview(s.title) || s.trace_id.slice(0, 12) + '...'
+  const msg = `Mark "${label}" as closed? This settles a corrupt or interrupted session that never emitted a SessionEnd. Its trace data is kept; only the status changes to ended.`
+  const ok = await confirm('Close session', msg)
+  if (!ok) return
+  closing.value = s.trace_id
+  try {
+    const res = await api.post(`/sessions/${s.trace_id}/close`)
+    if (res.ok === false) {
+      flash(`Close failed: ${res.msg || 'unknown error'}`, 'error')
+      return
+    }
+    flash(`Closed session ${s.trace_id.slice(0, 12)}...`)
+    await reload()
+  } finally {
+    closing.value = null
   }
 }
 
@@ -642,8 +662,10 @@ function timeTitle(s) {
               :s="s"
               :selected="isSelected(s.trace_id)"
               :is-deleting="deleting === s.trace_id"
+              :is-closing="closing === s.trace_id"
               @toggle="(checked) => toggleOne(s.trace_id, checked)"
               @delete="deleteSession"
+              @close="closeSession"
             />
           </tbody>
         </table>
@@ -711,7 +733,8 @@ function timeTitle(s) {
                 <span
                   v-else-if="s.status === 'ended'"
                   class="inline-block rounded bg-gray-100 text-gray-600 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                >ended</span>
+                  :title="s.ended_reason === 'manual' ? 'Manually closed' : undefined"
+                >{{ s.ended_reason === 'manual' ? 'closed' : 'ended' }}</span>
                 <span
                   v-if="s.is_test"
                   class="inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
@@ -756,7 +779,14 @@ function timeTitle(s) {
                   <dd v-else class="text-gray-300">-</dd>
                 </div>
               </dl>
-              <div class="mt-2 flex justify-end">
+              <div class="mt-2 flex justify-end gap-4">
+                <Button
+                  v-if="s.status !== 'ended'"
+                  variant="link"
+                  class="text-xs text-slate-500 hover:text-slate-800 disabled:cursor-wait"
+                  :disabled="closing === s.trace_id"
+                  @click="closeSession(s)"
+                >{{ closing === s.trace_id ? 'Closing…' : 'Close' }}</Button>
                 <Button
                   variant="link"
                   class="text-xs text-red-600 hover:text-red-800 disabled:cursor-wait"
