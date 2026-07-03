@@ -43,6 +43,20 @@ function areaLabelOf(s) {
   return AREA_LABELS[areaOf(s.slug)] || 'Other'
 }
 
+// Categorical color per area so same-category cards cohere at a glance in the
+// flat grid (a color legend stands in for the section separators the uniform
+// tiling can't have). Soft badge palette — grouping cue, not a loud accent.
+const AREA_COLORS = {
+  grader: 'purple',
+  memory: 'blue',
+  'topic-graph': 'yellow',
+  'topic-proposal': 'green',
+}
+
+function areaColorOf(s) {
+  return AREA_COLORS[areaOf(s.slug)] || 'gray'
+}
+
 // One flat, uniformly-tiled grid — NOT a separate grid per area. Grouping by
 // area fragmented the grid so small groups (Grader: 2) left whole empty
 // columns while large ones (Memory: 6) wrapped raggedly. Sorting by (area,
@@ -186,11 +200,11 @@ onMounted(load)
         :class="{ 'prompt-card-editing': editingSlug === s.slug }"
       >
         <div class="prompt-card-main">
-          <div class="card-eyebrow">{{ areaLabelOf(s) }}</div>
-          <div class="flex items-center gap-2">
-            <span class="font-medium">{{ s.label }}</span>
-            <Badge v-if="!s.builtin" color="blue" label="custom" />
+          <div class="card-eyebrow">
+            <Badge :color="areaColorOf(s)" :label="areaLabelOf(s)" />
+            <Badge v-if="!s.builtin" color="gray" label="custom" />
           </div>
+          <div class="font-medium mt-1">{{ s.label }}</div>
           <div v-if="s.description" class="row-desc">{{ s.description }}</div>
           <div class="row-meta">
             <code class="row-slug">{{ s.slug }}</code>
@@ -316,12 +330,11 @@ onMounted(load)
 .prompt-card-editing:hover { border-color: var(--color-blue-500); }
 .prompt-card-main { flex: 1 1 auto; min-width: 0; }
 .card-eyebrow {
-    font-size: 0.65rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-slate-400);
-    margin-bottom: 0.3rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.1rem;
 }
 .prompt-card-controls {
     display: flex;
