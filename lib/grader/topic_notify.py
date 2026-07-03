@@ -35,23 +35,21 @@ def notify_proposals(proposed: "list[dict]") -> int:
         return 0
     pushed = 0
     try:
-        from lib.agent_messages import store as messages
+        from lib.agent_messages import events
         for row in proposed:
             topic_id = row["topic_id"]
-            key = _key(topic_id)
-            if messages.live_keyed_message(_TRACE, key) is not None:
-                continue
             body = (
                 f"Topic **{topic_id}** has been graded irrelevant "
                 f"{row['fails']}/{row['scored']} times "
                 f"(fail rate {row['fail_rate']:.0%}) and is now proposed for "
                 f"suppression. It is **still routing** — approve suppression "
                 f"or keep it routing in the Memory panel.")
-            messages.record_message(
-                trace_id=_TRACE, body=body, msg_type="warning",
-                title=f"Suppress topic “{topic_id}”?", msg_key=key,
-                links=["/memory"])
-            pushed += 1
+            data = events.emit(
+                "topic.suppress", trace_id=_TRACE, body=body,
+                title=f"Suppress topic “{topic_id}”?", key=_key(topic_id),
+                links=["/memory"], once=True)
+            if data is not None:
+                pushed += 1
     except Exception:  # noqa: BLE001 — notifying must never affect the grade
         log.error("topic_proposal_notify_failed", exc_info=True)
     if pushed:
@@ -62,11 +60,8 @@ def notify_proposals(proposed: "list[dict]") -> int:
 def resolve_proposal(topic_id: str) -> None:
     """Dismiss a topic's live proposal card once a human has decided on it
     (suppress / allow / reset). Best-effort — never raises into the caller."""
-    try:
-        from lib.agent_messages import store as messages
-        messages.dismiss_keyed(_TRACE, _key(topic_id))
-    except Exception:  # noqa: BLE001 — resolution is cosmetic
-        log.error("topic_proposal_resolve_failed", exc_info=True)
+    from lib.agent_messages import events
+    events.resolve(_TRACE, _key(topic_id))
 
 
 __all__ = ["notify_proposals", "resolve_proposal"]

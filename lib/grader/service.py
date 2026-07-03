@@ -187,6 +187,7 @@ def grade_session(trace_id: str, *, axes: tuple[str, ...] = AXES,
         _maybe_distill_on_fail(trace_id, grades, evidence, is_test, distill)
         _maybe_score_injection_usefulness(trace_id, evidence, is_test)
         _maybe_apply_injection_relevance(trace_id, grades, evidence, is_test)
+        _maybe_notify_grade(trace_id, grades, is_test)
     log.write("session_graded", trace_id=trace_id,
               verdicts={a: g.verdict for a, g in grades.items()})
     return {"trace_id": trace_id,
@@ -307,6 +308,23 @@ def _notify_topic_proposals(store) -> None:
     proposed = [r for r in store.topic_relevance_summary()
                 if r["status"] == "proposed"]
     notify_proposals(proposed)
+
+
+def _maybe_notify_grade(trace_id: str, grades: dict[str, AxisGrade],
+                        is_test: int) -> None:
+    """Emit a `grade.finished` inbox event deep-linked to the graded
+    session's trace view. Skipped for test grades; off unless the operator
+    enables the kind. `events.emit` is best-effort and swallows failures."""
+    if is_test:
+        return
+    from lib.agent_messages import events
+    verdicts = ", ".join(f"{a}: {g.verdict}" for a, g in grades.items())
+    events.emit(
+        "grade.finished", trace_id=trace_id, title="Session grade finished",
+        body=f"Grading completed for this session — {verdicts}.",
+        key=f"grade-finished:{trace_id}",
+        links=[{"label": "View session trace",
+                "href": events.session_url(trace_id)}])
 
 
 def _persist_grades(trace_id: str, grades: dict[str, AxisGrade],

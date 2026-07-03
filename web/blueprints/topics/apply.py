@@ -332,6 +332,10 @@ def _advance_drift_baseline_after_apply(
     if strategy in ("create", "replace"):
         _capture_ref_digests_on_accept(repo_path, applied_id)
     _restore_topic_memories_on_accept(applied_id)
+    # Applying a refresh resolves the drift → clear its inbox card (no-op
+    # for a non-drift apply, which has no live drift card under this key).
+    from lib.topics.content_drift import resolve_drift_card
+    resolve_drift_card(repo_path, applied_id)
 
 
 def _already_applied_noop_snapshot(

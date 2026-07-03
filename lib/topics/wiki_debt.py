@@ -25,6 +25,29 @@ from lib.topics.wiki import wiki_dir
 log = get_activity_logger("topics")
 
 
+def _notify_drift(repo_path, row: dict[str, Any]) -> None:
+    """Surface a detected content-drift as an inbox event deep-linked to the
+    repo's Topics view, where the queued refresh proposal is reviewed /
+    regenerated. Keyed per repo+topic with `once` so a still-open drift card
+    isn't re-surfaced on every audit; the card is cleared by
+    `content_drift.resolve_drift_card` when the drift is applied or dismissed.
+    `events.emit` is best-effort and gated by the `content.drift` kind."""
+    from lib.agent_messages import events
+    from lib.topics.content_drift import DRIFT_CARD_TRACE, drift_card_key
+    paths = ", ".join(row.get("drifted_paths") or []) or "its covered files"
+    queued = (" A refresh proposal is queued;" if row.get("proposal_id")
+              else "")
+    events.emit(
+        "content.drift", trace_id=DRIFT_CARD_TRACE,
+        title=f"Wiki drift: {row['topic_id']}",
+        body=(f"Topic **{row['topic_id']}** drifted from its code — {paths} "
+              f"changed since the wiki was digested.{queued} review or "
+              f"regenerate it in the Topics view."),
+        key=drift_card_key(repo_path, row["topic_id"]),
+        links=[{"label": "Review in Topics",
+                "href": events.topics_url(repo_path)}], once=True)
+
+
 def _changed_files(repo_path, changed_since: str) -> Optional[set[str]]:
     """Repo-relative paths changed between `changed_since` and HEAD. None when
     git couldn't run, so the caller can tell "no changes" from "can't scope"."""
@@ -114,7 +137,10 @@ def emit_wiki_debt_proposals(repo_path, *,
             except Exception:  # noqa: BLE001 - one emit must not sink the batch
                 log.error("wiki_debt_emit_failed",
                           topic_id=row["topic_id"], exc_info=True)
-        row["proposal_id"] = proposal_id
+            row["proposal_id"] = proposal_id
+            _notify_drift(repo_path, row)
+        else:
+            row["proposal_id"] = proposal_id
     return rows
 
 

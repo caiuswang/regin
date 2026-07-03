@@ -24,7 +24,6 @@ DB check in `_already_pushed`, not in-process state.
 from __future__ import annotations
 
 from lib.activity_log import get_activity_logger
-from lib.settings import settings
 
 log = get_activity_logger("agent_messages")
 
@@ -49,19 +48,17 @@ def notify_permission_request(*, trace_id: str | None, attrs: dict) -> bool:
     Whether the prompt actually awaits a human (vs. one the harness
     auto-resolves) is decided upstream by the provider before this is
     called — see `permission_events._maybe_notify_push`."""
-    if not settings.agent_messages.push_permission_events or not trace_id:
+    from lib.agent_messages import events
+    if not trace_id or not events.is_enabled("permission.pending"):
         return False
     try:
         title, body = _format_permission(attrs)
         if _already_pushed(trace_id, _PERM_KEY, body):
             return False
-        from lib.agent_messages import store
-        store.record_message(
-            trace_id=trace_id, body=body, msg_type="blocker", title=title,
-            msg_key=_PERM_KEY, span_id=attrs.get("tool_use_id"))
-        log.write("permission_event_pushed", trace_id=trace_id,
-                  tool=attrs.get("tool_name"))
-        return True
+        data = events.emit(
+            "permission.pending", trace_id=trace_id, body=body, title=title,
+            key=_PERM_KEY, span_id=attrs.get("tool_use_id"))
+        return data is not None
     except Exception:  # noqa: BLE001 — must never break the permission hook
         log.error("permission_event_push_failed", exc_info=True)
         return False
@@ -70,29 +67,25 @@ def notify_permission_request(*, trace_id: str | None, attrs: dict) -> bool:
 def resolve_permission(trace_id: str | None) -> None:
     """Dismiss the live permission card once the prompt is resolved
     (denied/answered), so a stale 'pending' card doesn't linger."""
-    if not settings.agent_messages.push_permission_events or not trace_id:
+    from lib.agent_messages import events
+    if not trace_id or not events.is_enabled("permission.pending"):
         return
-    try:
-        from lib.agent_messages import store
-        store.dismiss_keyed(trace_id, _PERM_KEY)
-    except Exception:  # noqa: BLE001 — resolution is cosmetic
-        log.error("permission_event_resolve_failed", exc_info=True)
+    events.resolve(trace_id, _PERM_KEY)
 
 
 def notify_plan_ready(*, trace_id: str | None, plan_text: str | None = None) -> bool:
     """Surface a plan ready for review (ExitPlanMode). Returns True if pushed."""
-    if not settings.agent_messages.push_plan_events or not trace_id:
+    from lib.agent_messages import events
+    if not trace_id or not events.is_enabled("plan.ready"):
         return False
     try:
         body = _format_plan(plan_text)
         if _already_pushed(trace_id, _PLAN_KEY, body):
             return False
-        from lib.agent_messages import store
-        store.record_message(
-            trace_id=trace_id, body=body, msg_type="warning",
-            title="Plan ready for review", msg_key=_PLAN_KEY)
-        log.write("plan_event_pushed", trace_id=trace_id)
-        return True
+        data = events.emit(
+            "plan.ready", trace_id=trace_id, body=body,
+            title="Plan ready for review", key=_PLAN_KEY)
+        return data is not None
     except Exception:  # noqa: BLE001 — must never break the plan hook
         log.error("plan_event_push_failed", exc_info=True)
         return False

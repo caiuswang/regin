@@ -81,6 +81,27 @@ def _repo_and_id_from_out_dir(out_dir: Path) -> tuple[Path, str]:
     return repo_path, proposal_id
 
 
+def _notify_proposal_ready(ctx: "_AgentRunContext") -> None:
+    """Surface a finished external-agent proposal as an inbox event, deep-
+    linked to the repo's Topics view where a human applies or regenerates
+    it. `events.emit` is itself best-effort and gated by `proposal.ready`'s
+    enablement; the try only shields the repo-path derivation."""
+    from lib.agent_messages import events
+    try:
+        repo_path, _ = _repo_and_id_from_out_dir(ctx.out_dir)
+    except (IndexError, OSError, AttributeError):
+        return
+    events.emit(
+        "proposal.ready", trace_id=ctx.trace_id,
+        title=f"Proposal ready: {ctx.proposal_id}",
+        body=(f"External agent **{ctx.agent}** finished drafting proposal "
+              f"**{ctx.proposal_id}**. Review, apply, or regenerate it in the "
+              f"Topics view."),
+        key=f"proposal-ready:{ctx.proposal_id}",
+        links=[{"label": "Open Topics view",
+                "href": events.topics_url(repo_path)}])
+
+
 def write_status(out_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
     """Persist proposal run status to the ORM (the authoritative store).
 
@@ -360,6 +381,7 @@ def run_external_agent_proposal(
         stderr_path.write_text(stderr or "")
         signaled = _load_signaled_result(ctx)
         if signaled is not None:
+            _notify_proposal_ready(ctx)
             return signaled
         return _fail(
             out_dir,
@@ -425,6 +447,7 @@ def _handle_agent_output(
     if signaled is not None:
         _emit(ctx.trace_id, "proposal.agent.complete", {"proposal_id": ctx.proposal_id, "agent": ctx.agent, "duration_ms": duration_ms, "signaled": True}, status_code="OK")
         _emit_session_end(ctx.trace_id, reason="completed")
+        _notify_proposal_ready(ctx)
         return signaled
     if stdout:
         _emit(ctx.trace_id, "proposal.agent.stdout", {"proposal_id": ctx.proposal_id, "chunk": stdout[-4000:]})
@@ -460,6 +483,7 @@ def _handle_agent_output(
     write_status(ctx.out_dir, status)
     _emit(ctx.trace_id, "proposal.agent.complete", {"proposal_id": ctx.proposal_id, "agent": ctx.agent, "duration_ms": duration_ms}, status_code="OK")
     _emit_session_end(ctx.trace_id, reason="completed")
+    _notify_proposal_ready(ctx)
     return proposal, wiki
 
 

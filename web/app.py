@@ -150,6 +150,10 @@ def create_app():
     from web.blueprints.grader_config import grader_config_bp
     app.register_blueprint(grader_config_bp)
 
+    # ── Notification event-bus catalog (lib/agent_messages/events) ──
+    from web.blueprints.events import events_bp
+    app.register_blueprint(events_bp)
+
     # Auth gate installed last so it can validate its allowlist against the
     # fully-registered route table.
     _install_auth_gate(app)

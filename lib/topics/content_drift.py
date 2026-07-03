@@ -27,6 +27,7 @@ default) and best-effort: evolution must never raise into a CLI or cron caller.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -45,6 +46,29 @@ REFRESH_PROVIDER = "content-drift"
 # onto the original proposal — keeping the topic's whole wiki history in one
 # run instead of spawning a divorced `content-drift-<topic>` proposal.
 CONTENT_DRIFT_THREAD_KIND = "content_drift"
+
+# Synthetic session the content-drift inbox cards live under (the notify
+# bus groups system events here). The card key is repo-scoped so a
+# same-named topic in a different repo can't collide — the inbox dedups on
+# `(trace_id, msg_key)`, so an unscoped key would drop the second repo's
+# drift and mis-point its deep-link.
+DRIFT_CARD_TRACE = "wiki-debt"
+
+
+def drift_card_key(repo_path: str | Path, topic_id: str) -> str:
+    """Inbox card key for a topic's content-drift notification, scoped by
+    repo basename so two repos with the same topic id don't collide."""
+    repo = os.path.basename(os.path.realpath(str(repo_path)))
+    return f"content-drift:{repo}:{topic_id}"
+
+
+def resolve_drift_card(repo_path: str | Path, topic_id: str) -> None:
+    """Dismiss the live content-drift inbox card once its drift is handled
+    (the refresh was applied, or the drift dismissed as unrelated), so a
+    `once`-gated card doesn't linger — and a *later* drift on the same topic
+    can surface a fresh card. Best-effort; a no-op when no card is live."""
+    from lib.agent_messages import events
+    events.resolve(DRIFT_CARD_TRACE, drift_card_key(repo_path, topic_id))
 
 
 def _content_hash(text: str) -> str:
@@ -305,6 +329,7 @@ def dismiss_content_drift(repo_path: str | Path, topic_id: str, *,
         if updated is not None:
             dismissed.append(thread["thread_id"])
     proposal_ignored = _ignore_standalone_refresh(repo_path, topic_id)
+    resolve_drift_card(repo_path, topic_id)
     log.write("content_drift_dismissed", topic_id=topic_id,
               digests_captured=captured, threads_dismissed=len(dismissed),
               proposal_ignored=proposal_ignored)

@@ -19,7 +19,7 @@ import typer
 
 from lib.activity_log import configure_activity_log, get_activity_logger
 from lib.logging_setup import configure_logging
-from cli.commands import db, gate, goal, grader, logs, memory, messages, meta, patterns, repo, route, rules, schema, server, session, skills, topics, trace, users, wiki
+from cli.commands import db, events, gate, goal, grader, logs, memory, messages, meta, patterns, repo, route, rules, schema, server, session, skills, topics, trace, users, wiki
 
 
 app = typer.Typer(
@@ -95,6 +95,7 @@ app.add_typer(wiki.wiki_app)
 app.add_typer(logs.logs_app)
 app.add_typer(memory.memory_app)
 messages.register(app)  # messages stats / prune (inbox retention)
+app.add_typer(events.events_app)  # events list (notification bus catalog)
 app.add_typer(grader.grade_app)
 
 

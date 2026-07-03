@@ -696,6 +696,15 @@ class AgentMessagesConfig(BaseModel):
     push_permission_events: bool = False
     push_plan_events: bool = False
 
+    # ── Event bus overrides ──
+    # Per-kind enable/disable for the declared notifiable events in
+    # `lib.agent_messages.events.REGISTRY` (proposal.ready, content.drift,
+    # grade.finished, …). A `{kind: bool}` here overrides that kind's
+    # registry default; kinds absent from the map keep their default (the two
+    # interaction kinds also honor the `push_*_events` booleans above for
+    # back-compat). Enumerate the full catalog with `regin events list`.
+    events: dict[str, bool] = Field(default_factory=dict)
+
     # ── Retention (opt-in) ──
     # The inbox is otherwise grow-forever. When `retention_days` is set,
     # messages older than that are hard-deleted automatically after each
