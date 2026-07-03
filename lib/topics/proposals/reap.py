@@ -79,6 +79,19 @@ def reap_stranded_proposal_runs(repo_path: str | Path) -> int:
         status = load_status(out_dir) or {}
         if status.get("agent_signaled") or status.get("state") not in _ACTIVE_STATES:
             continue
+        # Re-check staleness against the authoritative status just loaded.
+        # `_is_stranded` runs off the cheap list snapshot (`_orm_run_row`),
+        # which carries no `status` dict — only `last_activity_at`, the *prior*
+        # revision's timestamp for a run whose id a regenerate reused. During
+        # the fresh run's queued→running startup window (before its subprocess
+        # registers, so `is_live` is False) that stale timestamp makes a
+        # perfectly healthy regenerate look stranded, and it gets stamped
+        # `failed` mid-flight. `write_status` bumps `updated_at` on every write,
+        # so the authoritative status reads age≈0 for a run that just
+        # (re)started and must not be reaped.
+        fresh_age = _seconds_since(status.get("updated_at"))
+        if fresh_age is not None and fresh_age < grace:
+            continue
         status.update(
             state="failed",
             error="agent session ended without emitting the completion signal",

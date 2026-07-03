@@ -269,3 +269,35 @@ def test_reaper_skips_recent_and_signaled_runs(fake_git_repo, tmp_db):
     assert reap_stranded_proposal_runs(fake_git_repo) == 0
     assert load_proposal_status(fake_git_repo, "recent")["state"] == "running"
     assert load_proposal_status(fake_git_repo, "signaled")["state"] == "running"
+
+
+def _regenerate_reuse_state(run_id, old_ts="2000-01-01T00:00:00"):
+    """Model a regenerate that reused an old run id: the *activity* timestamps
+    the reaper's cheap list snapshot exposes (`last_activity_at` → the prior
+    revision's / started_at) are stale from the previous cycle, but the
+    kickoff `write_status` just bumped `updated_at` to now."""
+    from lib.orm import SessionLocal
+    from lib.orm.models import ProposalRun
+
+    with SessionLocal() as s:
+        run = s.get(ProposalRun, run_id)
+        run.started_at = old_ts
+        run.updated_at = utc_now()  # the regenerate kickoff just wrote status
+        s.commit()
+
+
+def test_reaper_skips_freshly_restarted_regenerate(fake_git_repo, tmp_db):
+    """A regenerate reuses the run id, so the list snapshot's `last_activity_at`
+    is the prior cycle's (stale) and `is_live` is briefly False before the new
+    subprocess registers — making a healthy, just-restarted run look stranded.
+    The reaper must key off the authoritative `updated_at` the kickoff bumped
+    and NOT stamp the live run `failed` mid-flight (the transient 'failed' badge
+    users saw right after clicking Regenerate)."""
+    _commit_service(fake_git_repo)
+    _seed_run(fake_git_repo)  # state=running
+    _regenerate_reuse_state("run1")
+
+    reaped = reap_stranded_proposal_runs(fake_git_repo)
+
+    assert reaped == 0
+    assert load_proposal_status(fake_git_repo, "run1")["state"] == "running"
