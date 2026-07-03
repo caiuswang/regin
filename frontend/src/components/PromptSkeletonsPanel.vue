@@ -158,8 +158,11 @@ onMounted(load)
 
     <div v-if="error" class="alert alert-info">{{ error }}</div>
 
-    <div class="agents-ref">
-      <h3 class="area-title">Agents</h3>
+    <Card class="agents-card">
+      <div class="agents-card-head">
+        <h3 class="area-title">Agents</h3>
+        <span v-if="agents.length" class="agents-count">{{ agents.length }} configured</span>
+      </div>
       <p v-if="!agents.length" class="agents-empty">
         No external agents configured. Add one under
         <code>topic_proposal_external_agents</code> in <code>settings.local.json</code>,
@@ -167,31 +170,40 @@ onMounted(load)
       </p>
       <ul v-else class="agents-list">
         <li v-for="a in agents" :key="a.id">
-          <span class="font-medium">{{ a.id }}</span>
+          <span class="agent-id">{{ a.id }}</span>
           <Badge v-if="a.id === defaultAgent" color="gray" label="default" />
           <code class="agent-cmd">{{ a.command }}</code>
         </li>
       </ul>
-    </div>
+    </Card>
 
     <div v-for="group in grouped" :key="group.area" class="area-group">
       <h3 class="area-title">{{ group.label }}</h3>
       <Card :no-padding="true">
         <table class="tbl">
+          <thead>
+            <tr>
+              <th>Prompt</th>
+              <th>Agent</th>
+              <th class="text-right">Actions</th>
+            </tr>
+          </thead>
           <tbody>
             <template v-for="s in group.items" :key="s.slug">
-              <tr :class="{ 'row-editing': editingSlug === s.slug }">
+              <tr :class="{ 'row-editing': editingSlug === s.slug, 'tbl-row-active': editingSlug === s.slug }">
                 <td>
                   <div class="flex items-center gap-2">
                     <span class="font-medium">{{ s.label }}</span>
-                    <Badge color="purple" label="skeleton" />
                     <Badge v-if="s.builtin" color="gray" label="built-in" />
                   </div>
-                  <div v-if="s.description" class="text-xs text-slate-600 mt-1">{{ s.description }}</div>
-                  <div class="text-xs text-slate-400 mt-1">{{ (s.variables || []).length }} variable(s)</div>
+                  <div v-if="s.description" class="row-desc">{{ s.description }}</div>
+                  <div class="row-meta">
+                    <code class="row-slug">{{ s.slug }}</code>
+                    <span class="row-dot">·</span>
+                    <span>{{ (s.variables || []).length }} variable(s)</span>
+                  </div>
                 </td>
                 <td class="agent-cell">
-                  <div class="agent-cell-label">Agent</div>
                   <SurfaceAgentPicker
                     :model-value="s.agent"
                     :agents="agents"
@@ -200,7 +212,7 @@ onMounted(load)
                     @update:model-value="(v) => onBindAgent(s, v)"
                   />
                 </td>
-                <td class="text-right">
+                <td class="text-right actions-cell">
                   <Button variant="secondary" size="sm" class="mr-1" @click="startEdit(s)">
                     {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
                   </Button>
@@ -247,9 +259,21 @@ onMounted(load)
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--color-slate-500);
-    margin: 0 0 0.4rem;
+    margin: 0;
 }
-.agents-ref { margin-bottom: 1.25rem; }
+.agents-card { margin-bottom: 1.5rem; }
+.agents-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+}
+.agents-count {
+    font-size: 0.72rem;
+    color: var(--color-slate-400);
+    white-space: nowrap;
+}
 .agents-empty {
     font-size: 0.8rem;
     color: var(--color-slate-500);
@@ -259,32 +283,42 @@ onMounted(load)
     list-style: none;
     margin: 0;
     padding: 0;
-    font-size: 0.82rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+    gap: 0.1rem 1.25rem;
 }
 .agents-list li {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 0.5rem;
-    padding: 0.2rem 0;
+    padding: 0.25rem 0;
+    min-width: 0;
 }
+.agent-id { font-weight: 500; font-size: 0.82rem; }
 .agent-cmd {
     color: var(--color-slate-500);
     font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .agent-cell { white-space: nowrap; vertical-align: top; }
 .agent-cell :deep(.ds-select-wrap) { min-width: 9.5rem; }
-.agent-cell-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+.actions-cell { white-space: nowrap; vertical-align: top; }
+.row-desc {
+    font-size: 0.75rem;
+    color: var(--color-slate-600);
+    margin-top: 0.2rem;
+    max-width: 46rem;
+}
+.row-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.3rem;
+    font-size: 0.72rem;
     color: var(--color-slate-400);
-    margin-bottom: 0.2rem;
 }
-.row-editing > td {
-    border-bottom: none;
-}
-.editor-row > td {
-    padding: 0 0.75rem 0.75rem;
-    background: var(--color-slate-50);
-}
+.row-slug { font-family: var(--font-mono, monospace); }
+.row-dot { color: var(--color-slate-300); }
 </style>

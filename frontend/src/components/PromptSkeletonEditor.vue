@@ -171,12 +171,4 @@ function onSave() {
     max-height: 27rem;
     overflow: auto;
 }
-.form-label {
-    display: block;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-gray-500);
-    margin-bottom: 0.25rem;
-}
 </style>

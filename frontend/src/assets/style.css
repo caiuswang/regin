@@ -858,6 +858,26 @@ body {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger) 20%, transparent);
 }
 
+/* Shared form field label. Lived duplicated in several component <style scoped>
+   blocks; scoped styles don't reach extracted child editors, so it is global. */
+.form-label {
+    display: block;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-gray-500);
+    margin-bottom: 0.25rem;
+}
+
+/* Inline row-editor pattern for `.tbl` list/detail workflows: the summary row
+   drops its bottom border and the editor unfolds in a tinted full-width row
+   directly beneath it. Shared by the Prompts skeleton + fragment panels. */
+.tbl tbody tr.row-editing > td { border-bottom: none; }
+.tbl tbody tr.editor-row > td {
+    padding: 0 0.75rem 0.75rem;
+    background: var(--color-slate-50);
+}
+
 /* Two-column key/value list inside detail pages */
 .meta-list {
     display: grid;
