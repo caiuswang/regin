@@ -310,27 +310,27 @@ async function onDiffApplied() {
   await Promise.all([loadSummary(), loadWiki(), loadProposals()])
 }
 
-const lastPolledState = new Map()
 async function refreshActiveProposalRuns() {
-  const activeIds = activeProposalRuns.value.map((run) => run.id)
-  if (!activeIds.length || workspace.value !== 'proposals') {
+  const activeRuns = activeProposalRuns.value
+  if (!activeRuns.length || workspace.value !== 'proposals') {
     refreshProposalPolling()
     return
   }
   try {
     let changed = false
-    for (const id of activeIds) {
-      const body = await api.get(`/repos/${repo.value}/topics/proposals/${id}/status`)
+    for (const run of activeRuns) {
+      const body = await api.get(`/repos/${repo.value}/topics/proposals/${run.id}/status`)
       if (body.status?.error) proposalError.value = body.status.error
       const next = body.status?.state
-      if (next && lastPolledState.get(id) !== next) {
-        lastPolledState.set(id, next)
-        changed = true
-      }
+      // Refetch the workspace when the polled state differs from the one the
+      // UI currently shows for this run — NOT from a persistent map. A
+      // regenerate reuses the run id and replays queued→running→completed, so
+      // a map entry left at 'completed' from the prior cycle masked the repeat
+      // transition and stranded the surface on stale content until a manual
+      // refresh. Comparing against the displayed state self-corrects: once the
+      // refetch lands, displayed == polled and the 2.5s tick stops thrashing.
+      if (next && next !== run.state) changed = true
     }
-    // Only refetch the full workspace when a polled status actually
-    // moved. Without this we re-fetched summary + proposals every 2.5s
-    // even when nothing had changed since the last tick.
     if (changed) await refreshSummaryAndProposals()
   } catch (err) {
     proposalError.value = err.message || String(err)
