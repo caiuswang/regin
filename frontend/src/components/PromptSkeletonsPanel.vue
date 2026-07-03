@@ -181,20 +181,13 @@ onMounted(load)
       <h3 class="area-title">{{ group.label }}</h3>
       <Card :no-padding="true">
         <table class="tbl">
-          <thead>
-            <tr>
-              <th>Prompt</th>
-              <th>Agent</th>
-              <th class="text-right">Actions</th>
-            </tr>
-          </thead>
           <tbody>
             <template v-for="s in group.items" :key="s.slug">
               <tr :class="{ 'row-editing': editingSlug === s.slug, 'tbl-row-active': editingSlug === s.slug }">
-                <td>
+                <td class="prompt-cell">
                   <div class="flex items-center gap-2">
                     <span class="font-medium">{{ s.label }}</span>
-                    <Badge v-if="s.builtin" color="gray" label="built-in" />
+                    <Badge v-if="!s.builtin" color="blue" label="custom" />
                   </div>
                   <div v-if="s.description" class="row-desc">{{ s.description }}</div>
                   <div class="row-meta">
@@ -203,26 +196,28 @@ onMounted(load)
                     <span>{{ (s.variables || []).length }} variable(s)</span>
                   </div>
                 </td>
-                <td class="agent-cell">
-                  <SurfaceAgentPicker
-                    :model-value="s.agent"
-                    :agents="agents"
-                    :default-agent="defaultAgent"
-                    :disabled="busy === 'bind'"
-                    @update:model-value="(v) => onBindAgent(s, v)"
-                  />
-                </td>
-                <td class="text-right actions-cell">
-                  <Button variant="secondary" size="sm" class="mr-1" @click="startEdit(s)">
-                    {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
-                  </Button>
-                  <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
-                    Reset
-                  </Button>
+                <td class="controls-cell">
+                  <div class="controls-cluster">
+                    <SurfaceAgentPicker
+                      :model-value="s.agent"
+                      :agents="agents"
+                      :default-agent="defaultAgent"
+                      :disabled="busy === 'bind'"
+                      @update:model-value="(v) => onBindAgent(s, v)"
+                    />
+                    <div class="action-btns">
+                      <Button variant="secondary" size="sm" @click="startEdit(s)">
+                        {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
+                      </Button>
+                      <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
                 </td>
               </tr>
               <tr v-if="editingSlug === s.slug" class="editor-row">
-                <td colspan="3">
+                <td colspan="2">
                   <PromptSkeletonEditor
                     :skeleton="s"
                     :busy="busy"
@@ -302,9 +297,22 @@ onMounted(load)
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.agent-cell { white-space: nowrap; vertical-align: top; }
-.agent-cell :deep(.ds-select-wrap) { min-width: 9.5rem; }
-.actions-cell { white-space: nowrap; vertical-align: top; }
+.prompt-cell { width: 100%; }
+.controls-cell {
+    white-space: nowrap;
+    vertical-align: top;
+    text-align: right;
+}
+.controls-cluster {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.controls-cluster :deep(.ds-select-wrap) { min-width: 9.5rem; }
+.action-btns {
+    display: inline-flex;
+    gap: 0.25rem;
+}
 .row-desc {
     font-size: 0.75rem;
     color: var(--color-slate-600);

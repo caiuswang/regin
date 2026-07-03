@@ -140,7 +140,7 @@ onMounted(load)
               <td>
                 <div class="flex items-center gap-2">
                   <span class="font-medium">{{ t.label }}</span>
-                  <Badge v-if="t.builtin" color="gray" label="built-in" />
+                  <Badge v-if="!t.builtin" color="blue" label="custom" />
                 </div>
                 <div class="row-meta"><code class="row-slug">{{ t.slug }}</code></div>
                 <div v-if="t.description" class="row-desc">{{ t.description }}</div>

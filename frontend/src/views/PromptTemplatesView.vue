@@ -16,7 +16,7 @@ const tab = useTabRoute({ default: 'skeletons', valid: ['skeletons', 'fragments'
 </script>
 
 <template>
-  <div>
+  <div class="max-w-6xl">
     <header class="page-header">
       <div class="page-header-text">
         <div class="page-eyebrow">Library</div>
