@@ -147,16 +147,19 @@ function chooseDraftTopic(topicId) {
   })
 }
 
-async function regenerateProposal() {
+async function regenerateProposal(topicIds) {
   const proposalId = selectedProposalId.value
   if (!proposalId) return
   if (!selectedRevisionIsLatest.value) {
     emit('error', 'Switch to the latest revision before regenerating.')
     return
   }
+  // An explicit topic-id array narrows the redraft to those wikis; anything
+  // else (e.g. the sidebar/review-note buttons) regenerates the whole run.
+  const body = Array.isArray(topicIds) ? { topic_ids: topicIds } : {}
   startBusy('regenerate-proposal')
   try {
-    const result = await api.post(`/repos/${props.repo}/topics/proposals/${proposalId}/regenerate`, {})
+    const result = await api.post(`/repos/${props.repo}/topics/proposals/${proposalId}/regenerate`, body)
     if (!result.ok) {
       emit('error', result.msg || result.error || 'Proposal regeneration failed')
       return
@@ -399,6 +402,8 @@ watch(selectedProposalId, () => {
         :selected-revision="selectedRevision"
         :selected-revision-is-latest="selectedRevisionIsLatest"
         :selected-proposal-id="selectedProposalId"
+        :regenerate-topics="data?.draft_topics || []"
+        :drift-topic-ids="selectedRun?.open_drift_topics || []"
         :busy-action="busyAction"
         @back="backToList"
         @choose-run="chooseRun"

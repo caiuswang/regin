@@ -1,6 +1,7 @@
 <script setup>
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
+import RegenerateScopeMenu from './RegenerateScopeMenu.vue'
 import { fmtAgo } from '../../utils/traceFormatters'
 
 const props = defineProps({
@@ -12,6 +13,8 @@ const props = defineProps({
   selectedRevision: { type: Object, default: null },
   selectedRevisionIsLatest: { type: Boolean, default: true },
   selectedProposalId: { type: String, default: '' },
+  regenerateTopics: { type: Array, default: () => [] },
+  driftTopicIds: { type: Array, default: () => [] },
   busyAction: { type: String, default: '' },
 })
 
@@ -107,11 +110,13 @@ function proposalReviewColor(status) {
         :disabled="isBusy() || !selectedRevisionIsLatest"
         @click="emit('update-review-state', 'ready_to_apply')"
       >Mark ready</Button>
-      <Button
-        variant="secondary"
+      <RegenerateScopeMenu
+        :topics="regenerateTopics"
+        :drift-topic-ids="driftTopicIds"
         :disabled="isBusy() || !selectedProposalId || !selectedRevisionIsLatest"
-        @click="emit('regenerate')"
-      >Regenerate</Button>
+        :busy="isBusy('regenerate-proposal')"
+        @regenerate="(ids) => emit('regenerate', ids)"
+      />
       <Button
         variant="danger"
         :disabled="isBusy()"

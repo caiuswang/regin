@@ -324,11 +324,47 @@ def _resolve_drift_scope(repo: Path, proposal_id: str) -> dict[str, Any]:
     return {"topic_ids": topic_ids, "drifted_paths": drifted_paths}
 
 
+def _prior_topic_ids(inputs: "_RegenerateInputs") -> set[str]:
+    """Ids of the topics already in the run's prior draft — the set a
+    caller-chosen regenerate scope is validated against."""
+    prior = (inputs.prior_draft or {}).get("proposal") or {}
+    return {t.get("id") for t in prior.get("topics") or [] if t.get("id")}
+
+
+def _scope_for_regenerate(
+    repo: Path, proposal_id: str, inputs: "_RegenerateInputs",
+    topic_ids: list[str] | None,
+) -> dict[str, Any]:
+    """The scope a regenerate should re-derive.
+
+    A caller-chosen `topic_ids` subset (validated against the run's own topics)
+    takes precedence — that is the user picking which wikis to refresh. When
+    none is given (or none is valid), fall back to the drift-derived scope,
+    which is empty for a clean run ⇒ full re-draft. Drift paths are carried
+    onto chosen topics where known so the prompt can point at the changed files."""
+    drift = _resolve_drift_scope(repo, proposal_id)
+    if not topic_ids:
+        return drift
+    valid = _prior_topic_ids(inputs)
+    chosen = [t for t in dict.fromkeys(topic_ids) if t in valid]
+    if not chosen:
+        return drift
+    drifted_paths = drift.get("drifted_paths") or {}
+    return {"topic_ids": chosen,
+            "drifted_paths": {t: drifted_paths.get(t, []) for t in chosen}}
+
+
 def start_external_regenerate_run(
     repo_path: str | Path,
     proposal_id: str,
+    *,
+    topic_ids: list[str] | None = None,
 ) -> dict[str, Path]:
-    """Start an external-agent regenerate job in the background."""
+    """Start an external-agent regenerate job in the background.
+
+    `topic_ids` optionally narrows the redraft to a caller-chosen subset of the
+    run's topics; when omitted the run's open content-drift notes decide the
+    scope (empty ⇒ full re-draft)."""
     repo = Path(repo_path)
     proposal_dir = topic_dir(repo) / "proposals" / proposal_id
     wiki_path = proposal_dir / "wiki.md"
@@ -336,10 +372,10 @@ def start_external_regenerate_run(
     _guard_regenerate_not_in_flight(repo, proposal_id)
 
     inputs = _resolve_regenerate_inputs(repo, proposal_id)
-    # Scope the redraft to the topics that actually drifted (empty ⇒ full
-    # re-draft). Persisted on the run status so the splice can recover it in
-    # the agent's own process on the notify-on-finish path.
-    scope = _resolve_drift_scope(repo, proposal_id)
+    # Scope the redraft (empty ⇒ full re-draft). Persisted on the run status so
+    # the splice can recover it in the agent's own process on the
+    # notify-on-finish path.
+    scope = _scope_for_regenerate(repo, proposal_id, inputs, topic_ids)
 
     from lib.topics.proposal_external import external_trace_id, write_status
 
@@ -441,12 +477,20 @@ def _external_regenerate_job(
         run_control.release(proposal_id)
 
 
-def regenerate_proposal_run(repo_path: str | Path, proposal_id: str) -> dict[str, Path]:
+def regenerate_proposal_run(
+    repo_path: str | Path, proposal_id: str,
+    *, topic_ids: list[str] | None = None,
+) -> dict[str, Path]:
     """Re-draft a proposal via the external agent.
+
+    `topic_ids` optionally narrows the redraft to a caller-chosen subset of the
+    run's topics (the rest are preserved verbatim). When omitted, the run's
+    open content-drift notes decide the scope (or a full re-draft when there
+    are none).
 
     Delegates to the background runner so the web worker never blocks on
     the agent subprocess; the in-flight guard lives in
     `start_external_regenerate_run`. Failures land in the run's status
     file rather than propagating.
     """
-    return start_external_regenerate_run(repo_path, proposal_id)
+    return start_external_regenerate_run(repo_path, proposal_id, topic_ids=topic_ids)

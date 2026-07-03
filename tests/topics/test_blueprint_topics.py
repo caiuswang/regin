@@ -139,7 +139,7 @@ def test_regenerate_ok_when_started_run_has_no_wiki(
     )
     started = {"called": False}
 
-    def _fake_regenerate(repo_path, pid):
+    def _fake_regenerate(repo_path, pid, *, topic_ids=None):
         started["called"] = True
         return {"wiki": missing_wiki}
 
@@ -683,7 +683,7 @@ def test_topics_proposal_regenerate_endpoint(stub_proposal_provider, flask_clien
     create_resp = flask_client.post(f"/api/repos/{name}/topics/proposals", json={"scope": "all"})
     proposal_id = create_resp.get_json()["proposal"]["id"]
 
-    def fake_regenerate(repo_path, run_id):
+    def fake_regenerate(repo_path, run_id, *, topic_ids=None):
         from lib.topics.proposals import load_proposal, save_proposal
         proposal_dir = fake_git_repo / ".regin/topics/proposals" / run_id
         proposal = load_proposal(fake_git_repo, run_id)
@@ -754,7 +754,7 @@ def test_topics_proposal_regenerate_endpoint_reports_provider_error(
 
     monkeypatch.setattr(
         "web.blueprints.topics.regenerate_proposal_run",
-        lambda repo_path, proposal_id: (_ for _ in ()).throw(
+        lambda repo_path, proposal_id, *, topic_ids=None: (_ for _ in ()).throw(
             ValueError("provider HTTP 503 from https://example.test/v1/chat/completions: model not found")
         ),
     )
@@ -799,7 +799,7 @@ def test_topics_external_agent_regenerate_endpoint_returns_without_blocking(flas
 
     called = {}
 
-    def fake_start(repo_path, proposal_id):
+    def fake_start(repo_path, proposal_id, *, topic_ids=None):
         called["repo_path"] = str(repo_path)
         called["proposal_id"] = proposal_id
         return {
@@ -815,6 +815,32 @@ def test_topics_external_agent_regenerate_endpoint_returns_without_blocking(flas
 
     assert resp.status_code == 200
     assert called == {"repo_path": str(fake_git_repo), "proposal_id": "run1"}
+
+
+def test_regenerate_endpoint_forwards_selected_topic_ids(flask_client, tmp_db, fake_git_repo, monkeypatch):
+    name = _seed_repo_record(fake_git_repo)
+    bootstrap(fake_git_repo)
+    seen = {}
+
+    def _fake_regenerate(repo_path, pid, *, topic_ids=None):
+        seen["topic_ids"] = topic_ids
+        return {"wiki": fake_git_repo / ".regin/topics/proposals" / pid / "wiki.md"}
+
+    monkeypatch.setattr("web.blueprints.topics.regenerate_proposal_run", _fake_regenerate)
+
+    # a chosen subset is forwarded; non-string entries are dropped
+    flask_client.post(f"/api/repos/{name}/topics/proposals/run1/regenerate",
+                      json={"topic_ids": ["alpha", "beta", 7, ""]})
+    assert seen["topic_ids"] == ["alpha", "beta"]
+
+    # an empty body forwards None (⇒ drift/full re-draft, unchanged behaviour)
+    flask_client.post(f"/api/repos/{name}/topics/proposals/run1/regenerate", json={})
+    assert seen["topic_ids"] is None
+
+    # "regenerate all" sends an empty list → forwarded as [] (falsy ⇒ full/drift)
+    flask_client.post(f"/api/repos/{name}/topics/proposals/run1/regenerate",
+                      json={"topic_ids": []})
+    assert seen["topic_ids"] == []
 
 
 def test_topics_proposal_feedback_threads_round_trip(stub_proposal_provider, flask_client, tmp_db, fake_git_repo):

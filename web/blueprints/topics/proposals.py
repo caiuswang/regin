@@ -125,8 +125,14 @@ def api_repo_topic_proposal_regenerate(name, proposal_id):
     repo_path = _repo_path_or_404(name)
     if repo_path is None:
         return jsonify({"error": "not found"}), 404
+    # Optional caller-chosen scope: regenerate only these topics' wikis (the
+    # rest are preserved verbatim). Absent/empty ⇒ full re-draft, or the
+    # drift-derived scope when the run carries open content-drift notes.
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("topic_ids")
+    topic_ids = [t for t in raw_ids if isinstance(t, str) and t] if isinstance(raw_ids, list) else None
     try:
-        paths = _pkg.regenerate_proposal_run(repo_path, proposal_id)
+        paths = _pkg.regenerate_proposal_run(repo_path, proposal_id, topic_ids=topic_ids)
     except (ValueError, TopicGraphError) as exc:
         return _error(exc)
     # The run has started (state=queued) once regenerate_proposal_run returns.

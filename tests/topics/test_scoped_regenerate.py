@@ -22,7 +22,11 @@ from lib.topics.proposal_external import (
 from lib.topics.proposal_orm.feedback import _wiki_range_changed
 from lib.topics.proposal_orm.runs import orm_save_proposal
 from lib.topics.proposals.core_io import load_proposal
-from lib.topics.proposals.external_jobs import _resolve_drift_scope
+from lib.topics.proposals.external_jobs import (
+    _resolve_drift_scope,
+    _resolve_regenerate_inputs,
+    _scope_for_regenerate,
+)
 from lib.topics.snapshots import resolve_or_create_repo
 
 
@@ -223,3 +227,38 @@ def test_drift_thread_without_topic_id_does_not_poison_scope(fake_git_repo):
     _seed_multi_topic_run(repo, run_id)
     # no drift notes at all → empty scope → full regenerate (unchanged behaviour)
     assert _resolve_drift_scope(repo, run_id) == {"topic_ids": [], "drifted_paths": {}}
+
+
+def test_explicit_topic_ids_scope_the_regenerate(fake_git_repo):
+    # A user picking which wikis to regenerate: explicit ids win over drift and
+    # are validated against the run's own topics.
+    repo = fake_git_repo
+    run_id = "run-scoped-3"
+    _seed_multi_topic_run(repo, run_id)   # topics: alpha, beta
+    inputs = _resolve_regenerate_inputs(repo, run_id)
+
+    # a valid subset is the scope
+    assert _scope_for_regenerate(repo, run_id, inputs, ["beta"]) == {
+        "topic_ids": ["beta"], "drifted_paths": {"beta": []}}
+    # unknown ids are filtered out; duplicates collapse
+    assert _scope_for_regenerate(repo, run_id, inputs, ["beta", "beta", "zzz"]) == {
+        "topic_ids": ["beta"], "drifted_paths": {"beta": []}}
+    # all-invalid selection → fall back to drift (empty here ⇒ full re-draft)
+    assert _scope_for_regenerate(repo, run_id, inputs, ["zzz"]) == {
+        "topic_ids": [], "drifted_paths": {}}
+    # no explicit ids → drift scope (empty ⇒ full)
+    assert _scope_for_regenerate(repo, run_id, inputs, None) == {
+        "topic_ids": [], "drifted_paths": {}}
+
+
+def test_explicit_ids_carry_drift_paths_when_known(fake_git_repo):
+    # If a chosen topic also drifted, its drifted files ride along for the prompt.
+    repo = fake_git_repo
+    run_id = "run-scoped-4"
+    _seed_multi_topic_run(repo, run_id)
+    _append_drift_note_to_origin(repo, run_id, "beta", ["lib/b.py"])
+    inputs = _resolve_regenerate_inputs(repo, run_id)
+
+    scope = _scope_for_regenerate(repo, run_id, inputs, ["alpha", "beta"])
+    assert scope["topic_ids"] == ["alpha", "beta"]
+    assert scope["drifted_paths"] == {"alpha": [], "beta": ["lib/b.py"]}
