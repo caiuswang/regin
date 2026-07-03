@@ -48,28 +48,9 @@ class SplitCluster:
 
 # ── 1. propose (agentic) ────────────────────────────────────────
 
-_PROMPT = """You are reorganizing one over-large topic in a repo's knowledge base.
-
-The topic "{label}" has accumulated too many memories to navigate. Group them
-into {lo}-{hi} coherent SUB-THEMES so a future reader can drill into the right
-cluster. Rules:
-- Each memory goes in exactly ONE sub-theme. Cover every memory id given.
-- A sub-theme needs at least a few memories — don't make singletons.
-- Give each a short Title-Case label and a one-line intent written as a router
-  card ("drill in here when …"), not a description.
-- Group by SUBJECT (what the lesson teaches), not by incidental file mentions.
-
-<topic-intent>{intent}</topic-intent>
-
-<memories>
-{memories}
-</memories>
-
-<output_format>
-Respond with ONLY a JSON array:
-  [{{"label": "...", "intent": "...", "memory_ids": ["<id>", ...]}}, ...]
-</output_format>
-"""
+# The clustering prompt now lives as the editable `topic-split-leaf` surface
+# (lib/prompts/surfaces/topics.py::_DEFAULT_BODY_SPLIT); `propose_clusters`
+# wires the leaf's label/intent/memories into its `{{ … }}` slots.
 
 
 def _memories_block(memories: list[dict]) -> str:
@@ -116,10 +97,12 @@ def propose_clusters(leaf_node: dict, memories: list[dict], llm, *,
                      lo: int = 2, hi: int = 5) -> list[SplitCluster]:
     """Agentically cluster `memories` into sub-themes. Fail-loud: raises
     `ClusterProposerUnavailable` when the LLM returns nothing."""
-    prompt = _PROMPT.format(
-        label=leaf_node.get("label") or "topic",
-        intent=" ".join((leaf_node.get("intent") or "").split())[:400],
-        memories=_memories_block(memories), lo=lo, hi=hi)
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.topics import SPLIT_LEAF_SURFACE_ID
+    prompt = render_surface(SPLIT_LEAF_SURFACE_ID, {
+        "label": leaf_node.get("label") or "topic",
+        "intent": " ".join((leaf_node.get("intent") or "").split())[:400],
+        "memories": _memories_block(memories), "lo": lo, "hi": hi})
     answer = llm.complete(prompt, max_tokens=4096)
     if not answer:
         raise ClusterProposerUnavailable(

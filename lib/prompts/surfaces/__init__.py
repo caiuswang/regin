@@ -12,7 +12,8 @@ from lib.prompts.surfaces import (  # noqa: F401  (import side effect: registrat
     grader,
     memory,
     review,
+    topics,
     triage,
 )
 
-__all__ = ["drafting", "grader", "memory", "review", "triage"]
+__all__ = ["drafting", "grader", "memory", "review", "topics", "triage"]

@@ -147,12 +147,10 @@ def _merge_pair(store, keeper: dict, loser: dict, *, dry_run: bool,
 
 
 def _llm_says_contradiction(llm, a: dict, b: dict) -> bool:
-    prompt = (
-        "Two memory entries from past coding sessions follow. Answer with "
-        "exactly one word — CONTRADICT if they make incompatible claims "
-        "about the same thing, or DISTINCT otherwise.\n\n"
-        f"A: {_doc_text(a)[:1500]}\n\nB: {_doc_text(b)[:1500]}\n"
-    )
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import CONTRADICTION_SURFACE_ID
+    prompt = render_surface(CONTRADICTION_SURFACE_ID, {
+        "memory_a": _doc_text(a)[:1500], "memory_b": _doc_text(b)[:1500]})
     answer = llm.complete(prompt, max_tokens=8)
     return bool(answer) and "CONTRADICT" in answer.upper()
 

@@ -71,23 +71,9 @@ class GroupGateResult:
 
 # ── 1. propose (agentic) ────────────────────────────────────────
 
-_PROMPT = """You are organizing a repo's knowledge base whose topics are all
-sitting at the top level, unbucketed. Group them into {lo}-{hi} coherent
-top-level BUCKETS so a future reader can drill into the right area. Rules:
-- Each topic goes in exactly ONE bucket. Cover every topic id given.
-- Give each bucket a short Title-Case label and a one-line intent written as a
-  router card ("drill in here when …"), not a description.
-- Group by SUBJECT (what the topic is about), not by incidental overlaps.
-
-<topics>
-{topics}
-</topics>
-
-<output_format>
-Respond with ONLY a JSON array:
-  [{{"label": "...", "intent": "...", "topic_ids": ["<id>", ...]}}, ...]
-</output_format>
-"""
+# The bucketing prompt now lives as the editable `topic-group-buckets` surface
+# (lib/prompts/surfaces/topics.py::_DEFAULT_BODY_GROUP); `propose_buckets` wires
+# the flat topics into its `{{topics}}` / `{{lo}}` / `{{hi}}` slots.
 
 
 def _topics_block(flat_topics: list[dict]) -> str:
@@ -134,8 +120,10 @@ def propose_buckets(flat_topics: list[dict], llm, *,
                     lo: int = 3, hi: int = 8) -> list[BucketCluster]:
     """Agentically cluster `flat_topics` into top-level buckets. Fail-loud:
     raises `ClusterProposerUnavailable` when the LLM returns nothing."""
-    prompt = _PROMPT.format(
-        topics=_topics_block(flat_topics), lo=lo, hi=hi)
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.topics import GROUP_BUCKETS_SURFACE_ID
+    prompt = render_surface(GROUP_BUCKETS_SURFACE_ID, {
+        "topics": _topics_block(flat_topics), "lo": lo, "hi": hi})
     answer = llm.complete(prompt, max_tokens=4096)
     if not answer:
         raise ClusterProposerUnavailable(

@@ -28,6 +28,7 @@ TOPIC_CLASSIFY_SURFACE_ID = "memory-topic-classify"
 EXPAND_SURFACE_ID = "memory-expand"
 SYNTHESIS_SURFACE_ID = "memory-reflect-synthesis"
 DIGEST_SURFACE_ID = "memory-reflect-digest"
+CONTRADICTION_SURFACE_ID = "memory-reflect-contradiction"
 
 
 # --- Memory distiller (lib/memory/distill.py::_compose_prompt) ---------------
@@ -202,6 +203,19 @@ _DEFAULT_BODY_SYNTHESIS = (
 )
 
 
+# --- Reflect contradiction judge (lib/memory/reflect.py::_llm_says_contradiction) ---
+# Old builder: an inline f-string — a static instruction + `A: {a}` / `B: {b}`
+# with each memory's `_doc_text(...)[:1500]` interpolated. The two clipped
+# bodies become the `{{memory_a}}` / `{{memory_b}}` slots; the call site does
+# the clipping so the rendered string is byte-identical.
+_DEFAULT_BODY_CONTRADICTION = (
+    "Two memory entries from past coding sessions follow. Answer with "
+    "exactly one word — CONTRADICT if they make incompatible claims "
+    "about the same thing, or DISTINCT otherwise.\n\n"
+    "A: {{memory_a}}\n\nB: {{memory_b}}\n"
+)
+
+
 # --- Reflect digest (lib/memory/reflect.py::_llm_digest) ---------------------
 # Old builder: `_DIGEST_PROMPT.replace("{entries}", entries)`.
 _DEFAULT_BODY_DIGEST = (
@@ -285,6 +299,23 @@ register_surface(
 )
 
 register_surface(
+    CONTRADICTION_SURFACE_ID,
+    label="Memory — reflect contradiction judge",
+    area="memory",
+    default_body=_DEFAULT_BODY_CONTRADICTION,
+    description=(
+        "The reflect-pass judge that decides whether two related memories make "
+        "incompatible claims (CONTRADICT) — the trigger for supersede "
+        "(`lib/memory/reflect.py`)."
+    ),
+    applies_to=("memory",),
+    variables=(
+        PromptVariable("memory_a", "The first memory's doc text (clipped to 1500 chars)."),
+        PromptVariable("memory_b", "The second memory's doc text (clipped to 1500 chars)."),
+    ),
+)
+
+register_surface(
     DIGEST_SURFACE_ID,
     label="Memory — reflect digest",
     area="memory",
@@ -300,6 +331,7 @@ register_surface(
 )
 
 __all__ = [
+    "CONTRADICTION_SURFACE_ID",
     "DIGEST_SURFACE_ID",
     "DISTILL_SURFACE_ID",
     "EXPAND_SURFACE_ID",
