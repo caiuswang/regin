@@ -726,6 +726,7 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
     fetch content lazily via /spans/<id>/content)."""
     from sqlmodel import select as _select
     from lib.trace.merge import merge_spans
+    from lib.trace.trace_service.queries import _attach_prompt_expansions
 
     with SessionLocal() as session:
         rows = session.execute(
