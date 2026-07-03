@@ -266,7 +266,11 @@ def api_repo_topic_proposal_ignore(name, proposal_id):
     if not proposed_topic_id:
         return _error(TopicGraphError("proposed_topic_id is required"))
     try:
-        topic = ignore_proposed_topic(repo_path, proposal_id, proposed_topic_id)
+        # Human ignore: for a standalone content-drift refresh this means "the
+        # change was unrelated to the wiki", so advance the drift baseline too.
+        # Automated ignores (expiry / trivial-dismiss) deliberately do not.
+        topic = ignore_proposed_topic(repo_path, proposal_id, proposed_topic_id,
+                                      rebaseline_drift=True)
         return jsonify({"ok": True, "topic": topic})
     except OSError:
         return jsonify({"error": "not found"}), 404

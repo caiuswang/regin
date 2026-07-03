@@ -240,14 +240,44 @@ def emit_refresh_proposal(repo_path: str | Path, topic_id: str,
     return proposal_id
 
 
+def _ignore_standalone_refresh(repo_path: str | Path, topic_id: str) -> bool:
+    """Dismiss the standalone `content-drift-<topic>` refresh proposal (the
+    fallback surface for a drifted topic with no origin run) by marking its
+    single topic ignored. Returns whether one was dismissed.
+
+    A no-op for the common case: a topic whose drift routed to an origin-run
+    note has no standalone proposal, so `load_proposal` misses (caught) and this
+    returns False. The `ignore_proposed_topic` call runs only after the
+    existence / `pending_review` / un-reviewed guards pass, so it does not raise
+    here (default `rebaseline_drift=False`; the digest was already advanced by
+    the `capture_ref_digests` at the top of `dismiss_content_drift`)."""
+    from lib.topics.proposals import ignore_proposed_topic, load_proposal
+
+    proposal_id = _refresh_proposal_id(topic_id)
+    try:
+        proposal = load_proposal(repo_path, proposal_id)
+    except Exception:  # noqa: BLE001 - no standalone proposal → nothing to dismiss
+        return False
+    if proposal.get("status") != "pending_review":
+        return False
+    topic = next((t for t in proposal.get("topics", [])
+                  if t.get("id") == topic_id), None)
+    if topic is None or topic.get("review_status"):
+        return False
+    ignore_proposed_topic(repo_path, proposal_id, topic_id)
+    return True
+
+
 def dismiss_content_drift(repo_path: str | Path, topic_id: str, *,
                           embedder=None) -> dict[str, Any]:
     """Mark a topic's content drift as *unrelated to its wiki*: advance the
     drift baseline (re-fingerprint the topic's refs so detection stops flagging
-    them) and dismiss every open content-drift note for the topic.
+    them) and dismiss the drift signal on **both** surfaces — every open
+    content-drift note (origin-run path) *and* the standalone
+    `content-drift-<topic>` refresh proposal (no-origin-run fallback path).
 
     This is the escape hatch for a ref edit that didn't change what the wiki
-    documents. Plain thread-dismissal alone doesn't stick: the stored
+    documents. Dismissing the signal alone doesn't stick: the stored
     `TopicRefDigest.content_hash` stays stale, so the next `run_content_evolution`
     pass re-detects the same hash mismatch and — because `emit_refresh_proposal`
     only skips *open* notes — opens a fresh one, resurrecting the drift forever.
@@ -256,8 +286,9 @@ def dismiss_content_drift(repo_path: str | Path, topic_id: str, *,
     Ungated and best-effort (the low-level `capture_ref_digests` never raises):
     the whole point of the action is to sync the baseline to current code on
     demand, so it must work regardless of `evolution_enabled`. Returns
-    `{topic_id, digests_captured, threads_dismissed}` — `threads_dismissed` is
-    the list of dismissed note ids (empty when none were open)."""
+    `{topic_id, digests_captured, threads_dismissed, proposal_ignored}` —
+    `threads_dismissed` is the dismissed note ids (empty when none were open),
+    `proposal_ignored` whether a standalone refresh proposal was dismissed."""
     from lib.topics.proposal_orm import (
         orm_open_content_drift_threads,
         orm_set_feedback_thread_resolution,
@@ -273,10 +304,12 @@ def dismiss_content_drift(repo_path: str | Path, topic_id: str, *,
             resolution_state="dismissed")
         if updated is not None:
             dismissed.append(thread["thread_id"])
+    proposal_ignored = _ignore_standalone_refresh(repo_path, topic_id)
     log.write("content_drift_dismissed", topic_id=topic_id,
-              digests_captured=captured, threads_dismissed=len(dismissed))
+              digests_captured=captured, threads_dismissed=len(dismissed),
+              proposal_ignored=proposal_ignored)
     return {"topic_id": topic_id, "digests_captured": captured,
-            "threads_dismissed": dismissed}
+            "threads_dismissed": dismissed, "proposal_ignored": proposal_ignored}
 
 
 def run_content_evolution(repo_path: str | Path, *,

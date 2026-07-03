@@ -310,18 +310,39 @@ def _merge_into_target(original_target: dict[str, Any], proposed: dict[str, Any]
     return target
 
 
-def ignore_proposed_topic(repo_path: str | Path, proposal_id: str, proposed_topic_id: str) -> dict[str, Any]:
-    """Mark a proposed topic ignored without mutating approved graph data."""
+def ignore_proposed_topic(repo_path: str | Path, proposal_id: str,
+                          proposed_topic_id: str, *,
+                          rebaseline_drift: bool = False) -> dict[str, Any]:
+    """Mark a proposed topic ignored without mutating approved graph data.
+
+    `rebaseline_drift` is the *explicit human "this change is unrelated"* signal
+    and defaults **off**. When set AND the proposal is a standalone content-drift
+    refresh (`provider == content-drift`, the fallback for a drifted topic with
+    no origin run), advance the topic's drift baseline so `detect_drifted_topics`
+    stops re-emitting it — the standalone-proposal analogue of dismissing an
+    origin-run drift note.
+
+    It must stay opt-in: the automated callers (`expire_stale_auto_proposals`,
+    `agent_spawn._dismiss_trivial`) also ignore content-drift proposals, and
+    silently re-baselining there would permanently retire a *genuine* drift the
+    user never judged — leaving the wiki stale forever. Only the human `/ignore`
+    entry point passes `rebaseline_drift=True`."""
     proposal = load_proposal(repo_path, proposal_id)
     proposed = _find_proposed_topic(proposal, proposed_topic_id)
     proposed["review_status"] = "ignored"
     proposed["ignored_at"] = utc_now()
     _recompute_proposal_status(proposal)
     save_proposal(repo_path, proposal_id, proposal)
+    rebaselined = False
+    if rebaseline_drift:
+        from lib.topics.content_drift import REFRESH_PROVIDER
+        if proposal.get("provider") == REFRESH_PROVIDER:
+            from lib.topics.ref_digest import capture_ref_digests
+            rebaselined = capture_ref_digests(repo_path, proposed_topic_id) > 0
     _topics_log().write(
         "proposal_topic_ignored",
         proposal_id=proposal_id, proposed_topic_id=proposed_topic_id,
-        repo_path=str(repo_path),
+        drift_rebaselined=rebaselined, repo_path=str(repo_path),
     )
     return proposed
 

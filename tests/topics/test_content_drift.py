@@ -26,6 +26,7 @@ from lib.topics.content_drift import (
 from lib.topics.core import topic_path
 from lib.topics.proposals import (
     dismiss_content_drift_thread,
+    ignore_proposed_topic,
     list_proposal_runs,
     load_proposal,
     set_proposal_feedback_thread_resolution,
@@ -258,6 +259,81 @@ def test_dismiss_content_drift_advances_baseline_and_dismisses_note(fake_git_rep
     # and the note is dismissed, not merely resolved
     note = _drift_threads(repo, "origin-run-1")[0]
     assert note["resolution_state"] == "dismissed"
+    # the origin-run path has no standalone proposal to ignore
+    assert result["proposal_ignored"] is False
+
+
+# ── dismiss drift on the standalone content-drift-<topic> path ─
+
+
+def _seed_standalone_drift(repo: Path) -> None:
+    """A drifted topic with NO origin run → `emit_refresh_proposal` mints the
+    standalone `content-drift-<topic>` proposal (no feedback note)."""
+    (repo / "a.py").write_text("x\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})
+    _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("unrelated change\n")   # hash drifts
+    assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "content-drift-t1"
+
+
+def test_human_ignore_content_drift_proposal_rebaselines(fake_git_repo, monkeypatch):
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
+    repo = fake_git_repo
+    _seed_standalone_drift(repo)
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+    # the human /ignore path passes rebaseline_drift=True
+    ignore_proposed_topic(repo, "content-drift-t1", "t1", rebaseline_drift=True)
+
+    # ignoring a content-drift refresh advanced the baseline → drift gone
+    assert detect_drifted_topics(repo) == []
+    # and a full evolve pass does not resurrect it
+    assert run_content_evolution(repo)["drifted"] == 0
+
+
+def test_auto_ignore_content_drift_does_not_rebaseline(fake_git_repo):
+    """The default (auto) path — expiry / trivial-dismiss — must NOT silently
+    advance the baseline: a genuine drift the user never judged must survive so
+    it isn't forgotten with a stale wiki."""
+    repo = fake_git_repo
+    _seed_standalone_drift(repo)
+
+    # no rebaseline_drift flag → mirrors expire_stale_auto_proposals
+    ignore_proposed_topic(repo, "content-drift-t1", "t1")
+
+    # baseline untouched → the real drift is still detectable
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+
+def test_dismiss_content_drift_ignores_standalone_proposal(fake_git_repo):
+    repo = fake_git_repo
+    _seed_standalone_drift(repo)
+
+    result = dismiss_content_drift(repo, "t1")
+    assert result["proposal_ignored"] is True
+    assert result["digests_captured"] == 1
+    assert detect_drifted_topics(repo) == []
+    proposal = load_proposal(repo, "content-drift-t1")
+    assert proposal["topics"][0]["review_status"] == "ignored"
+
+
+def test_ignore_non_drift_proposal_does_not_touch_baseline(fake_git_repo):
+    """The re-baseline is scoped to content-drift refresh proposals: ignoring a
+    plain proposal for one topic must not clear a real drift on another."""
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})
+    repo_id = _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("real drift\n")
+    # a plain (non content-drift) proposal proposing some other topic
+    _seed_origin_run(repo, repo_id, "plain-run", "t2")
+
+    ignore_proposed_topic(repo, "plain-run", "t2")
+
+    # t1's genuine drift is untouched — ignore didn't fire a global re-baseline
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
 
 
 def test_dismiss_content_drift_stops_resurrection(fake_git_repo, monkeypatch):
