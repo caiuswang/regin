@@ -112,6 +112,12 @@ def finish_proposal_run(
         append_revision=is_regenerate,
         revision_kind="regenerated" if is_regenerate else "generated",
     )
+    # `proposal-finish` runs *inside the drafting agent's own process*, so its
+    # `$CLAUDE_CODE_SESSION_ID` is the real drafting session — the authoritative
+    # `agent_trace_id`, captured reliably here (the title/time heuristic on the
+    # runner path often can't). Only trust the env id on the agent path; a
+    # server/test caller's env would be a different session entirely.
+    agent_trace_id = _resolve_agent_trace_id(source)
     status.update(
         state="completed",
         agent_signaled=True,
@@ -119,6 +125,9 @@ def finish_proposal_run(
         completed_at=utc_now(),
         error=None,
     )
+    if agent_trace_id:
+        status["agent_trace_id"] = agent_trace_id
+        status["agent_trace_url"] = f"/trace/sessions/{agent_trace_id}"
     write_status(out_dir, status)
     log.write("proposal_finish_ingested", proposal_id=proposal_id, source=source)
     # This self-ingest is the authoritative completion in the notify-on-finish
@@ -127,7 +136,20 @@ def finish_proposal_run(
     # Best-effort: a notify must never break the ingest it announces.
     try:
         from lib.topics.proposal_external import notify_proposal_ready
-        notify_proposal_ready(repo, proposal_id, status.get("agent"))
+        notify_proposal_ready(
+            repo, proposal_id, status.get("agent"),
+            session_trace_id=agent_trace_id)
     except Exception:  # noqa: BLE001 — notify is cosmetic; ingest already stuck
         log.error("proposal_finish_notify_failed", proposal_id=proposal_id, exc_info=True)
     return {"proposal_id": proposal_id, "state": "completed", "ingested": True}
+
+
+def _resolve_agent_trace_id(source: str) -> str | None:
+    """The drafting agent's own Claude Code session id, from the finish
+    command's environment — but only on the `agent` path, where this runs in
+    that agent's process. Returns None otherwise (a server/test caller's
+    session is not the drafting session)."""
+    if source != "agent":
+        return None
+    from lib.session_probe import resolve
+    return resolve()

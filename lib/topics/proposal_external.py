@@ -83,38 +83,50 @@ def _repo_and_id_from_out_dir(out_dir: Path) -> tuple[Path, str]:
 
 def notify_proposal_ready(
     repo: Path, proposal_id: str, agent: str | None,
+    session_trace_id: str | None = None,
 ) -> None:
-    """Surface a finished external-agent proposal as an inbox event, deep-
-    linked to the repo's Topics view where a human applies or regenerates it.
+    """Surface a finished external-agent proposal as an inbox event whose
+    action link opens the *specific* proposal run in the Topics review
+    workspace.
+
+    `session_trace_id` is the real drafting-agent Claude Code session (the run's
+    `agent_trace_id`), used as the message's `trace_id` so the card's footer
+    "session" link resolves to the actual drafting session rather than the
+    synthetic `topic-proposal-<id>` orchestration wrapper. It falls back to that
+    wrapper id when the drafting session isn't known.
 
     Called from BOTH completion paths — the server-runner exit (via the
     `_notify_proposal_ready` ctx wrapper) AND the agent's own `proposal-finish`
-    self-ingest (`lib.topics.proposals.finish`), which is the authoritative
-    completion in the notify-on-finish design. Emitting from both is safe:
-    `events.emit` supersedes on `(trace_id, key)`, so a proposal that finishes
-    via the signal and is later observed by the runner shows one card, not two.
-    `events.emit` is itself best-effort and gated by `proposal.ready`'s
-    enablement."""
+    self-ingest (`lib.topics.proposals.finish`), the authoritative completion in
+    the notify-on-finish design. Both read the same stored `agent_trace_id`, so
+    they resolve the same `trace_id`; `events.emit` then supersedes on
+    `(trace_id, key)` and one card shows, not two. `events.emit` is itself
+    best-effort and gated by `proposal.ready`'s enablement."""
     from lib.agent_messages import events
     events.emit(
-        "proposal.ready", trace_id=external_trace_id(proposal_id),
+        "proposal.ready",
+        trace_id=session_trace_id or external_trace_id(proposal_id),
         title=f"Proposal ready: {proposal_id}",
         body=(f"External agent **{agent or 'external agent'}** finished "
               f"drafting proposal **{proposal_id}**. Review, apply, or "
               f"regenerate it in the Topics view."),
         key=f"proposal-ready:{proposal_id}",
-        links=[{"label": "Open Topics view",
-                "href": events.topics_url(repo)}])
+        links=[{"label": "Open proposal run",
+                "href": events.proposal_url(repo, proposal_id)}])
 
 
 def _notify_proposal_ready(ctx: "_AgentRunContext") -> None:
-    """Runner-exit wrapper: derive the repo from the out_dir, then delegate to
+    """Runner-exit wrapper: derive the repo from the out_dir and read the
+    drafting-agent session id the runner/finish path recorded, then delegate to
     `notify_proposal_ready`. The try only shields the repo-path derivation."""
     try:
         repo_path, _ = _repo_and_id_from_out_dir(ctx.out_dir)
     except (IndexError, OSError, AttributeError):
         return
-    notify_proposal_ready(repo_path, ctx.proposal_id, ctx.agent)
+    status = load_status(ctx.out_dir) or {}
+    notify_proposal_ready(
+        repo_path, ctx.proposal_id, ctx.agent,
+        session_trace_id=status.get("agent_trace_id"))
 
 
 def write_status(out_dir: Path, status: dict[str, Any]) -> dict[str, Any]:

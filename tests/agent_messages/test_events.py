@@ -201,8 +201,12 @@ def test_producer_proposal_ready(recorded, monkeypatch):
     (call,) = recorded["calls"]
     assert call["msg_type"] == "result"
     assert call["msg_key"] == "proposal-ready:42"
-    assert call["links"] == [{"label": "Open Topics view",
-                              "href": "/repos/myrepo/topics"}]
+    # action link deep-links to the specific proposal run
+    assert call["links"] == [{"label": "Open proposal run",
+                              "href": "/repos/myrepo/topics?tab=proposals&proposal=42"}]
+    # no recorded agent_trace_id for this run dir → footer falls back to the
+    # synthetic wrapper trace rather than an empty trace_id
+    assert call["trace_id"] == "topic-proposal-42"
     assert "42" in call["body"]
 
 
