@@ -1,11 +1,11 @@
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import api from '../api'
 import Badge from './Badge.vue'
 import Card from './Card.vue'
 import Button from './ui/Button.vue'
+import PromptSkeletonEditor from './PromptSkeletonEditor.vue'
 import { useConfirm } from '../composables/useConfirm'
-import { renderPreview, unknownVariables } from '../composables/usePromptPreview'
 
 const { confirm } = useConfirm()
 
@@ -15,15 +15,11 @@ const error = ref('')
 const busy = ref('')
 
 const editingSlug = ref(null)
-const draftBody = ref('')
-const bodyRef = ref(null)
+const saveError = ref('')
 
 // Literal double-brace strings can't be written inline in a Vue template
-// (the tokenizer reads the inner }} as an interpolation close), so build them here.
+// (the tokenizer reads the inner }} as an interpolation close), so build it here.
 const VAR_SYNTAX = '{{variable}}'
-function varToken(name) {
-  return `{{${name}}}`
-}
 
 const AREA_LABELS = {
   'topic-proposal': 'Topic proposal',
@@ -56,18 +52,6 @@ const grouped = computed(() => {
     .sort((a, b) => a.label.localeCompare(b.label))
 })
 
-const current = computed(() => skeletons.value.find(s => s.slug === editingSlug.value) || null)
-const currentVars = computed(() => current.value?.variables || [])
-
-const unknownVars = computed(() =>
-  current.value ? unknownVariables(draftBody.value, currentVars.value) : [],
-)
-const preview = computed(() =>
-  current.value ? renderPreview(draftBody.value, currentVars.value) : '',
-)
-const unknownVarsLabel = computed(() => unknownVars.value.map(varToken).join(', '))
-const dirty = computed(() => current.value && draftBody.value !== (current.value.body || ''))
-
 async function load() {
   loading.value = true
   error.value = ''
@@ -82,57 +66,30 @@ async function load() {
 }
 
 function startEdit(skeleton) {
-  editingSlug.value = skeleton.slug
-  draftBody.value = skeleton.body || ''
+  // Toggle the inline editor open/closed under the clicked row.
+  editingSlug.value = editingSlug.value === skeleton.slug ? null : skeleton.slug
+  saveError.value = ''
   error.value = ''
 }
 
 function cancelEdit() {
   editingSlug.value = null
-  draftBody.value = ''
+  saveError.value = ''
 }
 
-function insertVar(name) {
-  const token = `{{${name}}}`
-  const el = bodyRef.value
-  if (!el) {
-    draftBody.value += token
-    return
-  }
-  // Insert at the caret (replacing any selection) instead of appending.
-  const start = el.selectionStart ?? draftBody.value.length
-  const end = el.selectionEnd ?? start
-  const text = draftBody.value
-  draftBody.value = text.slice(0, start) + token + text.slice(end)
-  nextTick(() => {
-    el.focus()
-    const caret = start + token.length
-    el.setSelectionRange(caret, caret)
-  })
-}
-
-async function saveDraft() {
-  error.value = ''
-  if (!draftBody.value.trim()) {
-    error.value = 'Body cannot be empty.'
-    return
-  }
-  if (unknownVars.value.length) {
-    error.value = `Unknown variable(s): ${unknownVarsLabel.value}. `
-      + 'Only the declared variables above are filled at render time — remove these or a run falls back to the default.'
-    return
-  }
+async function onSave(body) {
+  saveError.value = ''
   busy.value = 'save'
   try {
-    const result = await api.patch(`/prompt-templates/${editingSlug.value}`, { body: draftBody.value })
+    const result = await api.patch(`/prompt-templates/${editingSlug.value}`, { body })
     if (!result.ok) {
-      error.value = result.error || 'Save failed'
+      saveError.value = result.error || 'Save failed'
       return
     }
     await load()
     cancelEdit()
   } catch (err) {
-    error.value = err.message || String(err)
+    saveError.value = err.message || String(err)
   } finally {
     busy.value = ''
   }
@@ -152,8 +109,9 @@ async function resetToDefault(skeleton) {
       error.value = result.error || 'Reset failed'
       return
     }
+    // load() replaces the skeleton object; the open editor watches skeleton.body
+    // and picks up the restored default.
     await load()
-    if (editingSlug.value === skeleton.slug) draftBody.value = result.template.body || ''
   } catch (err) {
     error.value = err.message || String(err)
   } finally {
@@ -175,85 +133,44 @@ onMounted(load)
 
     <div v-if="error" class="alert alert-info">{{ error }}</div>
 
-    <Card v-if="current" class="skeleton-editor">
-      <div class="editor-head">
-        <div>
-          <h2 class="text-lg font-semibold">{{ current.label }}</h2>
-          <code class="text-xs text-slate-500">{{ current.slug }}</code>
-        </div>
-        <div class="flex gap-2">
-          <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(current)">
-            Reset to default
-          </Button>
-        </div>
-      </div>
-
-      <div v-if="currentVars.length" class="var-palette">
-        <span class="palette-label">Variables</span>
-        <Button
-          v-for="v in currentVars"
-          :key="v.name"
-          variant="ghost"
-          size="sm"
-          class="var-chip"
-          :title="v.description || v.name"
-          @click="insertVar(v.name)"
-        >
-          {{ varToken(v.name) }}
-          <span v-if="v.required === false" class="var-optional">opt</span>
-        </Button>
-      </div>
-
-      <div class="editor-grid">
-        <label class="block">
-          <span class="form-label">Body</span>
-          <textarea
-            ref="bodyRef"
-            v-model="draftBody"
-            rows="18"
-            class="topics-input w-full font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-          ></textarea>
-        </label>
-        <div class="block">
-          <span class="form-label">Live preview (sample values)</span>
-          <pre class="preview-pane">{{ preview }}</pre>
-        </div>
-      </div>
-
-      <div v-if="unknownVars.length" class="alert alert-warn mt-2">
-        Unknown variable(s): {{ unknownVarsLabel }} — not filled at render time.
-      </div>
-
-      <div class="mt-4 flex gap-2 justify-end">
-        <Button variant="secondary" :disabled="busy === 'save'" @click="cancelEdit">Close</Button>
-        <Button variant="primary" :disabled="busy === 'save' || !dirty || unknownVars.length > 0" @click="saveDraft">
-          {{ busy === 'save' ? 'Saving…' : 'Save' }}
-        </Button>
-      </div>
-    </Card>
-
     <div v-for="group in grouped" :key="group.area" class="area-group">
       <h3 class="area-title">{{ group.label }}</h3>
       <Card :no-padding="true">
         <table class="tbl">
           <tbody>
-            <tr v-for="s in group.items" :key="s.slug">
-              <td>
-                <div class="flex items-center gap-2">
-                  <span class="font-medium">{{ s.label }}</span>
-                  <Badge color="purple" label="skeleton" />
-                  <Badge v-if="s.builtin" color="gray" label="built-in" />
-                </div>
-                <div v-if="s.description" class="text-xs text-slate-600 mt-1">{{ s.description }}</div>
-                <div class="text-xs text-slate-400 mt-1">{{ (s.variables || []).length }} variable(s)</div>
-              </td>
-              <td class="text-right">
-                <Button variant="secondary" size="sm" class="mr-1" @click="startEdit(s)">Edit</Button>
-                <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
-                  Reset
-                </Button>
-              </td>
-            </tr>
+            <template v-for="s in group.items" :key="s.slug">
+              <tr :class="{ 'row-editing': editingSlug === s.slug }">
+                <td>
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium">{{ s.label }}</span>
+                    <Badge color="purple" label="skeleton" />
+                    <Badge v-if="s.builtin" color="gray" label="built-in" />
+                  </div>
+                  <div v-if="s.description" class="text-xs text-slate-600 mt-1">{{ s.description }}</div>
+                  <div class="text-xs text-slate-400 mt-1">{{ (s.variables || []).length }} variable(s)</div>
+                </td>
+                <td class="text-right">
+                  <Button variant="secondary" size="sm" class="mr-1" @click="startEdit(s)">
+                    {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
+                  </Button>
+                  <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
+                    Reset
+                  </Button>
+                </td>
+              </tr>
+              <tr v-if="editingSlug === s.slug" class="editor-row">
+                <td colspan="2">
+                  <PromptSkeletonEditor
+                    :skeleton="s"
+                    :busy="busy"
+                    :save-error="saveError"
+                    @save="onSave"
+                    @cancel="cancelEdit"
+                    @reset="resetToDefault(s)"
+                  />
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </Card>
@@ -272,65 +189,6 @@ onMounted(load)
     max-width: 52rem;
     margin-bottom: 1rem;
 }
-.skeleton-editor {
-    margin-bottom: 1.25rem;
-}
-.editor-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 0.75rem;
-}
-.var-palette {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.4rem;
-    margin-bottom: 0.75rem;
-}
-.palette-label {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-gray-500);
-}
-.var-chip {
-    font-family: var(--font-mono, monospace);
-    border: 1px solid var(--color-slate-300);
-}
-.var-optional {
-    color: var(--color-slate-400);
-    margin-left: 0.25rem;
-}
-.editor-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-}
-@media (max-width: 900px) {
-    .editor-grid { grid-template-columns: 1fr; }
-}
-.preview-pane {
-    background: var(--color-slate-50);
-    border: 1px solid var(--color-slate-200);
-    border-radius: 0.4rem;
-    padding: 0.6rem;
-    font-size: 0.72rem;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 27rem;
-    overflow: auto;
-}
-.form-label {
-    display: block;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-gray-500);
-    margin-bottom: 0.25rem;
-}
 .area-group { margin-bottom: 1.25rem; }
 .area-title {
     font-size: 0.8rem;
@@ -339,5 +197,12 @@ onMounted(load)
     letter-spacing: 0.04em;
     color: var(--color-slate-500);
     margin: 0 0 0.4rem;
+}
+.row-editing > td {
+    border-bottom: none;
+}
+.editor-row > td {
+    padding: 0 0.75rem 0.75rem;
+    background: var(--color-slate-50);
 }
 </style>
