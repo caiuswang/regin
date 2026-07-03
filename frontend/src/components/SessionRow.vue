@@ -17,9 +17,10 @@ defineProps({
   s: { type: Object, required: true },
   selected: { type: Boolean, default: false },
   isDeleting: { type: Boolean, default: false },
+  isClosing: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['toggle', 'delete'])
+const emit = defineEmits(['toggle', 'delete', 'close'])
 
 const { copyText } = useCopy()
 
@@ -237,9 +238,9 @@ function activityMoreTitle(s) {
       <span
         v-else-if="s.status === 'ended'"
         class="ml-2 inline-block rounded bg-gray-100 text-gray-600 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-        :title="s.ended_reason ? `reason: ${s.ended_reason}` : 'SessionEnd fired'"
+        :title="s.ended_reason === 'manual' ? 'Manually closed' : (s.ended_reason ? `reason: ${s.ended_reason}` : 'SessionEnd fired')"
       >
-        ended
+        {{ s.ended_reason === 'manual' ? 'closed' : 'ended' }}
       </span>
       <template v-if="s.is_test">
         <span
@@ -307,10 +308,18 @@ function activityMoreTitle(s) {
       </template>
     </td>
     <td class="text-gray-400 text-xs whitespace-nowrap" :title="timeTitle(s)">{{ fmtRelative(s.last_seen) }}</td>
-    <td class="text-right">
+    <td class="text-right whitespace-nowrap">
+      <button
+        v-if="s.status !== 'ended'"
+        type="button"
+        class="row-action text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
+        :disabled="isClosing"
+        @click="emit('close', s)"
+        :title="`Mark session ${s.trace_id.slice(0, 12)}… as closed (keeps its trace data)`"
+      >{{ isClosing ? 'Closing…' : 'Close' }}</button>
       <button
         type="button"
-        class="row-delete text-xs text-red-600 hover:text-red-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
+        class="row-action row-delete ml-3 text-xs text-red-600 hover:text-red-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
         :disabled="isDeleting"
         @click="emit('delete', s)"
         :title="`Delete session ${s.trace_id.slice(0, 12)}… and all its trace data`"
@@ -339,19 +348,19 @@ function activityMoreTitle(s) {
   min-width: 11rem;
 }
 
-/* Delete stays out of the way until the row is hovered or keyboard focus
- * lands inside it, so it never competes with the row content. */
-.sessions-tbl .row-delete {
+/* Close/Delete stay out of the way until the row is hovered or keyboard
+ * focus lands inside it, so they never compete with the row content. */
+.sessions-tbl .row-action {
   opacity: 0;
   transition: opacity 0.12s ease;
 }
-.sessions-tbl tbody tr:hover .row-delete,
-.sessions-tbl tbody tr:focus-within .row-delete {
+.sessions-tbl tbody tr:hover .row-action,
+.sessions-tbl tbody tr:focus-within .row-action {
   opacity: 1;
 }
 @media (hover: none) {
   /* Touch / non-hover pointers can't reveal on hover — keep it visible. */
-  .sessions-tbl .row-delete { opacity: 1; }
+  .sessions-tbl .row-action { opacity: 1; }
 }
 /* Copy-id button sits next to the truncated trace id. Hidden until the row
  * is hovered or focus lands inside it (same affordance as .row-delete) so it

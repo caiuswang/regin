@@ -1144,6 +1144,53 @@ def api_session_delete(trace_id):
     })
 
 
+@trace_bp.route('/api/sessions/<trace_id>/close', methods=['POST'])
+def api_session_close(trace_id):
+    """Manually mark a session as ended.
+
+    Some sessions crash or get interrupted before a SessionEnd span ever
+    fires, so their status stays 'active' (or NULL) with no way to settle
+    it from the trace itself. This records a manual close: status='ended',
+    ended_reason='manual', and — when no natural end exists yet — ended_at
+    set to now.
+
+    Setting ended_at is what makes the close *stick*: the sessions upsert
+    (`_SESSIONS_UPSERT_SQL` in trace_service.ingest) recomputes status on
+    every re-ingested span batch from `ended_at` vs `last_start_at`, so a
+    status-only write would flip back to 'active' the next time a late span
+    lands. A now() ended_at is >= any past start, so the CASE resolves to
+    'ended' and holds. An existing (natural) ended_at is left untouched.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.get(SessionModel, trace_id)
+            if row is None:
+                return jsonify({
+                    'ok': False,
+                    'trace_id': trace_id,
+                    'error': 'session not found',
+                }), 404
+            row.status = 'ended'
+            row.ended_reason = 'manual'
+            if row.ended_at is None:
+                row.ended_at = datetime.now().isoformat()
+            session.commit()
+            ended_at = row.ended_at
+    except Exception as exc:
+        return jsonify({
+            'ok': False,
+            'trace_id': trace_id,
+            'error': f'{type(exc).__name__}: {exc}',
+        }), 500
+    return jsonify({
+        'ok': True,
+        'trace_id': trace_id,
+        'status': 'ended',
+        'ended_reason': 'manual',
+        'ended_at': ended_at,
+    })
+
+
 @trace_bp.route('/api/sessions/<trace_id>/materialize', methods=['POST'])
 def api_session_materialize(trace_id):
     """Persist the orphan-graft + envelope-widen projection back to the DB.
