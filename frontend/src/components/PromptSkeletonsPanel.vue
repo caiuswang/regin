@@ -179,59 +179,53 @@ onMounted(load)
 
     <div v-for="group in grouped" :key="group.area" class="area-group">
       <h3 class="area-title">{{ group.label }}</h3>
-      <Card :no-padding="true">
-        <table class="tbl">
-          <tbody>
-            <template v-for="s in group.items" :key="s.slug">
-              <tr :class="{ 'row-editing': editingSlug === s.slug, 'tbl-row-active': editingSlug === s.slug }">
-                <td class="prompt-cell">
-                  <div class="flex items-center gap-2">
-                    <span class="font-medium">{{ s.label }}</span>
-                    <Badge v-if="!s.builtin" color="blue" label="custom" />
-                  </div>
-                  <div v-if="s.description" class="row-desc">{{ s.description }}</div>
-                  <div class="row-meta">
-                    <code class="row-slug">{{ s.slug }}</code>
-                    <span class="row-dot">·</span>
-                    <span>{{ (s.variables || []).length }} variable(s)</span>
-                  </div>
-                </td>
-                <td class="controls-cell">
-                  <div class="controls-cluster">
-                    <SurfaceAgentPicker
-                      :model-value="s.agent"
-                      :agents="agents"
-                      :default-agent="defaultAgent"
-                      :disabled="busy === 'bind'"
-                      @update:model-value="(v) => onBindAgent(s, v)"
-                    />
-                    <div class="action-btns">
-                      <Button variant="secondary" size="sm" @click="startEdit(s)">
-                        {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
-                      </Button>
-                      <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
-                        Reset
-                      </Button>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="editingSlug === s.slug" class="editor-row">
-                <td colspan="2">
-                  <PromptSkeletonEditor
-                    :skeleton="s"
-                    :busy="busy"
-                    :save-error="saveError"
-                    @save="onSave"
-                    @cancel="cancelEdit"
-                    @reset="resetToDefault(s)"
-                  />
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </Card>
+      <div class="prompt-grid">
+        <div
+          v-for="s in group.items"
+          :key="s.slug"
+          class="prompt-card"
+          :class="{ 'prompt-card-editing': editingSlug === s.slug }"
+        >
+          <div class="prompt-card-main">
+            <div class="flex items-center gap-2">
+              <span class="font-medium">{{ s.label }}</span>
+              <Badge v-if="!s.builtin" color="blue" label="custom" />
+            </div>
+            <div v-if="s.description" class="row-desc">{{ s.description }}</div>
+            <div class="row-meta">
+              <code class="row-slug">{{ s.slug }}</code>
+              <span class="row-dot">·</span>
+              <span>{{ (s.variables || []).length }} variable(s)</span>
+            </div>
+          </div>
+          <div class="prompt-card-controls">
+            <SurfaceAgentPicker
+              :model-value="s.agent"
+              :agents="agents"
+              :default-agent="defaultAgent"
+              :disabled="busy === 'bind'"
+              @update:model-value="(v) => onBindAgent(s, v)"
+            />
+            <div class="action-btns">
+              <Button variant="secondary" size="sm" @click="startEdit(s)">
+                {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
+              </Button>
+              <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
+                Reset
+              </Button>
+            </div>
+          </div>
+          <PromptSkeletonEditor
+            v-if="editingSlug === s.slug"
+            :skeleton="s"
+            :busy="busy"
+            :save-error="saveError"
+            @save="onSave"
+            @cancel="cancelEdit"
+            @reset="resetToDefault(s)"
+          />
+        </div>
+      </div>
     </div>
 
     <div v-if="!skeletons.length" class="empty-state">
@@ -297,18 +291,45 @@ onMounted(load)
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.prompt-cell { width: 100%; }
-.controls-cell {
-    white-space: nowrap;
-    vertical-align: top;
-    text-align: right;
-}
-.controls-cluster {
-    display: inline-flex;
-    align-items: center;
+.prompt-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
     gap: 0.75rem;
+    align-items: start;
 }
-.controls-cluster :deep(.ds-select-wrap) { min-width: 9.5rem; }
+.prompt-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.875rem 1rem;
+    transition: border-color 150ms, box-shadow 150ms;
+}
+.prompt-card:hover { border-color: var(--color-border-strong); }
+/* An open editor takes the full grid width so the body + live-preview
+   two-pane layout has room; the accent rail mirrors .tbl-row-active. */
+.prompt-card-editing {
+    grid-column: 1 / -1;
+    border-color: var(--color-blue-500);
+    box-shadow: inset 3px 0 0 var(--color-blue-500);
+}
+.prompt-card-editing:hover { border-color: var(--color-blue-500); }
+.prompt-card-main { flex: 1 1 auto; min-width: 0; }
+.prompt-card-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.85rem;
+}
+.prompt-card-controls :deep(.ds-select-wrap) { min-width: 9.5rem; }
+.prompt-card-editing :deep(.skeleton-editor) {
+    margin-top: 0.85rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--color-border);
+}
 .action-btns {
     display: inline-flex;
     gap: 0.25rem;
