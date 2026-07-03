@@ -496,6 +496,7 @@ def _persist_agent_payload(
     payload = _load_agent_payload(ctx.temp_output_path, stdout)
     proposal, wiki = _normalise_agent_payload(ctx.repo, payload)
     _validate_paths(ctx.repo, proposal)
+    proposal, wiki = _apply_regenerate_scope(ctx.repo, ctx.out_dir, proposal, wiki)
     if ctx.temp_output_path.exists():
         shutil.copyfile(ctx.temp_output_path, ctx.output_path)
     else:
@@ -686,6 +687,37 @@ def _sibling_refresh_section(repo: Path, out_dir: Path) -> str:
     )
 
 
+def _scoped_refresh_directive(prior_draft: dict[str, Any]) -> str:
+    """Regenerate-only block that narrows the redraft to the drifted topics.
+
+    Empty unless the run is a scoped content-drift regenerate. When present it
+    names exactly the topics whose refs drifted (with the drifted files) and
+    tells the agent to re-derive only those pages; every other topic is
+    preserved verbatim by the splice, so the agent may omit them from its
+    output entirely. Correctness does not depend on the agent obeying this —
+    the splice discards any non-scoped topic bodies regardless — it only saves
+    the agent from re-exploring untouched areas."""
+    topic_ids = prior_draft.get("scope_topic_ids") or []
+    if not topic_ids:
+        return ""
+    drifted_paths = prior_draft.get("scope_drifted_paths") or {}
+    lines = []
+    for topic_id in topic_ids:
+        paths = drifted_paths.get(topic_id) or []
+        listed = ", ".join(f"`{p}`" for p in paths) if paths else "(this topic's refs)"
+        lines.append(f"- **{topic_id}** — drifted files: {listed}")
+    listing = "\n".join(lines)
+    return f"""Scoped refresh — the code changed under only these topics:
+{listing}
+
+Re-derive the wiki page for ONLY the topics listed above, from their current
+refs. You may omit every other topic from your output: unchanged topics are
+preserved as-is and must NOT be rewritten. Focus your exploration on the
+drifted files.
+
+"""
+
+
 def _prior_reference_block(prior_draft: dict[str, Any] | None) -> str:
     """The regenerate-only 'Prior draft reference' block, or '' on a fresh run.
 
@@ -700,10 +732,11 @@ def _prior_reference_block(prior_draft: dict[str, Any] | None) -> str:
 {feedback_block}
 
 """
+    scope_reference = _scoped_refresh_directive(prior_draft)
     return f"""
 
 Prior draft reference:
-{feedback_reference}Use the previous proposal and wiki only as reference — to keep good coverage and to address any review feedback above — not as a baseline to diff against. Re-check every topic against the current repository.
+{feedback_reference}{scope_reference}Use the previous proposal and wiki only as reference — to keep good coverage and to address any review feedback above — not as a baseline to diff against. Re-check every topic against the current repository.
 
 Write each topic's wiki and the notes as a standalone description of the repository as it is NOW. Do NOT write changelog or diff prose comparing this revision to the previous one: avoid phrasing like "was removed", "is now", "no longer", "the old …", "previously", "changed from", or "renamed to". The reader has never seen the prior draft — describe the current structure and behavior directly, citing files that exist today.
 
@@ -855,6 +888,92 @@ def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[
     if not wiki.strip():
         raise ValueError("external agent returned an empty wiki")
     return proposal, wiki
+
+
+def _regenerate_scope_topic_ids(out_dir: Path) -> list[str]:
+    """The drifted topic ids a scoped content-drift regenerate must re-derive,
+    read from the run status (set by `start_external_regenerate_run`). Empty on
+    a fresh run or a full manual regenerate."""
+    status = load_status(out_dir) or {}
+    scope = status.get("regenerate_drift_scope") or {}
+    ids = scope.get("topic_ids") or []
+    return [tid for tid in ids if isinstance(tid, str) and tid]
+
+
+def _pick_topic(
+    topic: dict[str, Any], scope: set[str], drafted_by_id: dict[str, Any],
+) -> dict[str, Any]:
+    """The freshly drafted body for a scoped (drifted) topic, else the prior
+    topic verbatim — so untouched pages stay byte-identical."""
+    topic_id = topic.get("id")
+    if topic_id in scope and topic_id in drafted_by_id:
+        return drafted_by_id[topic_id]
+    return topic
+
+
+def _rebuild_combined_wiki(prior_wiki: str, merged_topics: list[dict[str, Any]]) -> str:
+    """Prior intro + one `## ` section per (merged) per-topic wiki."""
+    from lib.topics.wiki_sections import split_wiki_sections
+
+    intro, _ = split_wiki_sections(prior_wiki)
+    sections = [s for s in (_topic_wiki_section(t) for t in merged_topics) if s]
+    parts = ([intro] if intro else []) + sections
+    return "\n\n".join(parts).strip()
+
+
+def _splice_scoped_topics(
+    prior: dict[str, Any], drafted: dict[str, Any], prior_wiki: str,
+    scope_topic_ids: list[str],
+) -> tuple[dict[str, Any], str]:
+    """Merge a scoped redraft back onto the prior full topic list.
+
+    Only the scoped (drifted) topics take the freshly drafted body; every other
+    topic is copied verbatim from the prior revision, so non-drifted wiki pages
+    are byte-identical across the regenerate. The combined wiki is rebuilt from
+    the prior intro plus one `## ` section per (merged) topic — keeping the full
+    topic set means per-doc apply never loses a forward edge."""
+    scope = set(scope_topic_ids)
+    drafted_by_id = {
+        t.get("id"): t for t in drafted.get("topics") or [] if t.get("id")
+    }
+    merged_topics = [_pick_topic(t, scope, drafted_by_id) for t in prior.get("topics") or []]
+    merged = {**prior, "topics": merged_topics}
+    # Drop the prior revision's stamped fields so the appended `regenerated`
+    # revision is stamped fresh (`_append_new_revision` reuses a carried-over
+    # `generated_at`); the inert `revision`/`revisions` keys would otherwise
+    # ride along too.
+    for stale_key in ("generated_at", "revision", "revisions"):
+        merged.pop(stale_key, None)
+    base_wiki = prior_wiki or str(prior.get("wiki") or "")
+    merged_wiki = _rebuild_combined_wiki(base_wiki, merged_topics)
+    return merged, (merged_wiki or base_wiki)
+
+
+def _apply_regenerate_scope(
+    repo: Path, out_dir: Path, proposal: dict[str, Any], wiki: str,
+) -> tuple[dict[str, Any], str]:
+    """If this run is a scoped content-drift regenerate, splice the drifted
+    topics over the prior revision so untouched wikis stay byte-identical.
+
+    A no-op (returns the drafted proposal unchanged) when the run isn't scoped,
+    or when there's no prior revision to splice against (a fresh run). Called
+    from BOTH ingest paths — the runner exit and `proposal-finish` — since the
+    agent may self-ingest in its own process; the status-persisted scope is the
+    shared input across that boundary."""
+    scope_topic_ids = _regenerate_scope_topic_ids(out_dir)
+    if not scope_topic_ids:
+        return proposal, wiki
+    from lib.topics.proposals.core_io import load_proposal
+
+    try:
+        prior = load_proposal(repo, out_dir.name)
+    except Exception:  # noqa: BLE001 — best-effort; fall back to full redraft
+        return proposal, wiki
+    if not prior or not (prior.get("topics") or []):
+        return proposal, wiki
+    prior_wiki_path = out_dir / "wiki.md"
+    prior_wiki = prior_wiki_path.read_text() if prior_wiki_path.exists() else ""
+    return _splice_scoped_topics(prior, proposal, prior_wiki, scope_topic_ids)
 
 
 def _validate_paths(repo: Path, proposal: dict[str, Any]) -> None:

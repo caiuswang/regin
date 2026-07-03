@@ -452,8 +452,34 @@ def _thread_addressed_by_revision(
     if thread.anchor_kind == "proposal_summary":
         return _topic_snapshot_value(previous_topic) != _topic_snapshot_value(next_topic)
     if thread.anchor_kind == "wiki_range":
-        return (previous_proposal.get("wiki") or "") != (next_proposal.get("wiki") or "")
+        return _wiki_range_changed(
+            previous_topic, next_topic, previous_proposal, next_proposal)
     return False
+
+
+def _wiki_range_changed(
+    previous_topic: dict[str, Any] | None,
+    next_topic: dict[str, Any] | None,
+    previous_proposal: dict[str, Any],
+    next_proposal: dict[str, Any],
+) -> bool:
+    """Whether a wiki_range-anchored note's content changed between revisions.
+
+    A wiki_range note is anchored to one topic's page, so diff that topic's OWN
+    wiki body — not the combined run-level blob. Otherwise a scoped
+    content-drift regenerate (which rewrites only the drifted topics' sections)
+    would flip the combined blob and spuriously auto-close every open
+    wiki_range note, including untouched topics'. Fall back to the combined
+    blob only when the anchored topic is absent from BOTH revisions (a note
+    whose topic was dropped); a topic that is present always carries a
+    per-topic wiki string (the serializer emits ``""``, never ``None``), so the
+    per-topic diff is authoritative for it.
+    """
+    previous_body = None if previous_topic is None else previous_topic.get("wiki")
+    next_body = None if next_topic is None else next_topic.get("wiki")
+    if previous_body is not None or next_body is not None:
+        return (previous_body or "") != (next_body or "")
+    return (previous_proposal.get("wiki") or "") != (next_proposal.get("wiki") or "")
 
 
 def _is_thread_visible_at_revision(

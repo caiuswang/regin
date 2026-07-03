@@ -301,6 +301,29 @@ def _maybe_review_note(repo: Path, proposal_id: str) -> None:
 # ───────────────────────── regenerate (async) ──────────────────────────
 
 
+def _resolve_drift_scope(repo: Path, proposal_id: str) -> dict[str, Any]:
+    """Topics on this run that still carry an open content-drift note — the
+    scope a content-drift regenerate should re-derive, and nothing else.
+
+    Returns ``{"topic_ids": [...], "drifted_paths": {id: [paths]}}``. An empty
+    ``topic_ids`` means "no drift pending" → the regenerate stays a full
+    re-draft (unchanged behaviour, e.g. a manual Regenerate on a clean run)."""
+    from lib.topics.content_drift import CONTENT_DRIFT_THREAD_KIND
+    from lib.topics.proposal_orm import orm_open_content_drift_threads
+
+    topic_ids: list[str] = []
+    drifted_paths: dict[str, list[str]] = {}
+    for thread in orm_open_content_drift_threads(
+        repo, kind=CONTENT_DRIFT_THREAD_KIND, proposal_id=proposal_id
+    ):
+        topic_id = thread.get("topic_id")
+        if not topic_id or topic_id in drifted_paths:
+            continue
+        topic_ids.append(topic_id)
+        drifted_paths[topic_id] = list(thread.get("drifted_paths") or [])
+    return {"topic_ids": topic_ids, "drifted_paths": drifted_paths}
+
+
 def start_external_regenerate_run(
     repo_path: str | Path,
     proposal_id: str,
@@ -313,6 +336,10 @@ def start_external_regenerate_run(
     _guard_regenerate_not_in_flight(repo, proposal_id)
 
     inputs = _resolve_regenerate_inputs(repo, proposal_id)
+    # Scope the redraft to the topics that actually drifted (empty ⇒ full
+    # re-draft). Persisted on the run status so the splice can recover it in
+    # the agent's own process on the notify-on-finish path.
+    scope = _resolve_drift_scope(repo, proposal_id)
 
     from lib.topics.proposal_external import external_trace_id, write_status
 
@@ -330,6 +357,10 @@ def start_external_regenerate_run(
         # keys) or this regenerate would short-circuit as already-ingested.
         "agent_signaled": False,
         "signaled_by": None,
+        # Splice input for both ingest paths (runner exit + proposal-finish).
+        # Distinct key from ProposalRun's legacy `regenerate_scope` String
+        # column ("run"/"topic"); this rides in the status metadata bag.
+        "regenerate_drift_scope": scope,
     })
     run_control.reset(proposal_id)
     threading.Thread(
@@ -343,6 +374,7 @@ def start_external_regenerate_run(
             "prompt_template_ids": inputs.prompt_template_ids,
             "previous_revision_id": inputs.previous_revision_id,
             "topic_request": inputs.topic_request,
+            "scope": scope,
         },
         daemon=True,
     ).start()
@@ -363,9 +395,18 @@ def _external_regenerate_job(
     prompt_template_ids: list[str] | None = None,
     previous_revision_id: int | None = None,
     topic_request: str | None = None,
+    scope: dict[str, Any] | None = None,
 ) -> None:
     try:
         templates = _resolve_prompt_templates(prompt_template_ids)
+        # A scoped regenerate tells the agent to re-derive only the drifted
+        # topics; the splice (in the ingest path) preserves the rest verbatim.
+        if prior_draft is not None and scope and scope.get("topic_ids"):
+            prior_draft = {
+                **prior_draft,
+                "scope_topic_ids": scope["topic_ids"],
+                "scope_drifted_paths": scope.get("drifted_paths") or {},
+            }
         proposals, wiki = _draft_proposal(
             repo=repo,
             out_dir=proposal_dir,

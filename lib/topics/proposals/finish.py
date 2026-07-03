@@ -38,7 +38,8 @@ def _parse_agent_output(repo: Path, out_dir: Path) -> tuple[dict[str, Any], str]
     """
     from lib.topics.proposal_external import (
         OUTPUT_FILE, TEMP_OUTPUT_DIR, TEMP_OUTPUT_FILE,
-        _load_agent_payload, _normalise_agent_payload, _validate_paths,
+        _apply_regenerate_scope, _load_agent_payload,
+        _normalise_agent_payload, _validate_paths,
     )
 
     temp_output = out_dir / TEMP_OUTPUT_DIR / TEMP_OUTPUT_FILE
@@ -47,6 +48,10 @@ def _parse_agent_output(repo: Path, out_dir: Path) -> tuple[dict[str, Any], str]
     payload = _load_agent_payload(source, "")
     proposal, wiki = _normalise_agent_payload(repo, payload)
     _validate_paths(repo, proposal)
+    # Scoped content-drift regenerate: splice the drifted topics back over the
+    # prior full draft so untouched wikis stay verbatim. Must run here too —
+    # the agent self-ingests in its own process on the notify-on-finish path.
+    proposal, wiki = _apply_regenerate_scope(repo, out_dir, proposal, wiki)
     if temp_output.exists() and not canonical.exists():
         canonical.write_text(temp_output.read_text())
     return proposal, wiki
