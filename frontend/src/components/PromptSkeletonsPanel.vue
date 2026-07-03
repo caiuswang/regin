@@ -39,21 +39,22 @@ function areaOf(slug) {
   return 'other'
 }
 
-const grouped = computed(() => {
-  const buckets = new Map()
-  for (const s of skeletons.value) {
-    const area = areaOf(s.slug)
-    if (!buckets.has(area)) buckets.set(area, [])
-    buckets.get(area).push(s)
-  }
-  return [...buckets.entries()]
-    .map(([area, items]) => ({
-      area,
-      label: AREA_LABELS[area] || 'Other',
-      items: items.sort((a, b) => (a.label || '').localeCompare(b.label || '')),
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-})
+function areaLabelOf(s) {
+  return AREA_LABELS[areaOf(s.slug)] || 'Other'
+}
+
+// One flat, uniformly-tiled grid — NOT a separate grid per area. Grouping by
+// area fragmented the grid so small groups (Grader: 2) left whole empty
+// columns while large ones (Memory: 6) wrapped raggedly. Sorting by (area,
+// label) keeps each category visually clustered — the slug prefix + the card
+// eyebrow still name the area — while the grid stays dense at any width.
+const sortedSkeletons = computed(() =>
+  [...skeletons.value].sort(
+    (a, b) =>
+      areaLabelOf(a).localeCompare(areaLabelOf(b)) ||
+      (a.label || '').localeCompare(b.label || ''),
+  ),
+)
 
 async function load() {
   loading.value = true
@@ -177,54 +178,52 @@ onMounted(load)
       </ul>
     </Card>
 
-    <div v-for="group in grouped" :key="group.area" class="area-group">
-      <h3 class="area-title">{{ group.label }}</h3>
-      <div class="prompt-grid">
-        <div
-          v-for="s in group.items"
-          :key="s.slug"
-          class="prompt-card"
-          :class="{ 'prompt-card-editing': editingSlug === s.slug }"
-        >
-          <div class="prompt-card-main">
-            <div class="flex items-center gap-2">
-              <span class="font-medium">{{ s.label }}</span>
-              <Badge v-if="!s.builtin" color="blue" label="custom" />
-            </div>
-            <div v-if="s.description" class="row-desc">{{ s.description }}</div>
-            <div class="row-meta">
-              <code class="row-slug">{{ s.slug }}</code>
-              <span class="row-dot">·</span>
-              <span>{{ (s.variables || []).length }} variable(s)</span>
-            </div>
+    <div class="prompt-grid">
+      <div
+        v-for="s in sortedSkeletons"
+        :key="s.slug"
+        class="prompt-card"
+        :class="{ 'prompt-card-editing': editingSlug === s.slug }"
+      >
+        <div class="prompt-card-main">
+          <div class="card-eyebrow">{{ areaLabelOf(s) }}</div>
+          <div class="flex items-center gap-2">
+            <span class="font-medium">{{ s.label }}</span>
+            <Badge v-if="!s.builtin" color="blue" label="custom" />
           </div>
-          <div class="prompt-card-controls">
-            <SurfaceAgentPicker
-              :model-value="s.agent"
-              :agents="agents"
-              :default-agent="defaultAgent"
-              :disabled="busy === 'bind'"
-              @update:model-value="(v) => onBindAgent(s, v)"
-            />
-            <div class="action-btns">
-              <Button variant="secondary" size="sm" @click="startEdit(s)">
-                {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
-              </Button>
-              <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
-                Reset
-              </Button>
-            </div>
+          <div v-if="s.description" class="row-desc">{{ s.description }}</div>
+          <div class="row-meta">
+            <code class="row-slug">{{ s.slug }}</code>
+            <span class="row-dot">·</span>
+            <span>{{ (s.variables || []).length }} variable(s)</span>
           </div>
-          <PromptSkeletonEditor
-            v-if="editingSlug === s.slug"
-            :skeleton="s"
-            :busy="busy"
-            :save-error="saveError"
-            @save="onSave"
-            @cancel="cancelEdit"
-            @reset="resetToDefault(s)"
-          />
         </div>
+        <div class="prompt-card-controls">
+          <SurfaceAgentPicker
+            :model-value="s.agent"
+            :agents="agents"
+            :default-agent="defaultAgent"
+            :disabled="busy === 'bind'"
+            @update:model-value="(v) => onBindAgent(s, v)"
+          />
+          <div class="action-btns">
+            <Button variant="secondary" size="sm" @click="startEdit(s)">
+              {{ editingSlug === s.slug ? 'Close' : 'Edit' }}
+            </Button>
+            <Button variant="secondary" size="sm" :disabled="busy === 'reset'" @click="resetToDefault(s)">
+              Reset
+            </Button>
+          </div>
+        </div>
+        <PromptSkeletonEditor
+          v-if="editingSlug === s.slug"
+          :skeleton="s"
+          :busy="busy"
+          :save-error="saveError"
+          @save="onSave"
+          @cancel="cancelEdit"
+          @reset="resetToDefault(s)"
+        />
       </div>
     </div>
 
@@ -241,7 +240,6 @@ onMounted(load)
     max-width: 52rem;
     margin-bottom: 1rem;
 }
-.area-group { margin-bottom: 1.25rem; }
 .area-title {
     font-size: 0.8rem;
     font-weight: 600;
@@ -317,6 +315,14 @@ onMounted(load)
 }
 .prompt-card-editing:hover { border-color: var(--color-blue-500); }
 .prompt-card-main { flex: 1 1 auto; min-width: 0; }
+.card-eyebrow {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-slate-400);
+    margin-bottom: 0.3rem;
+}
 .prompt-card-controls {
     display: flex;
     align-items: center;
