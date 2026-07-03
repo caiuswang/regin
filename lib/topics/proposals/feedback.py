@@ -149,6 +149,45 @@ def set_proposal_feedback_thread_resolution(
     return thread
 
 
+def dismiss_content_drift_thread(
+    repo_path: str | Path,
+    proposal_id: str,
+    feedback_thread_id: int,
+) -> dict[str, Any]:
+    """Dismiss a content-drift note as *unrelated to the wiki* — and advance
+    the topic's drift baseline so the note doesn't resurrect on the next
+    evolve pass (see `lib.topics.content_drift.dismiss_content_drift`).
+
+    Only valid on an *open* `content_drift` note: the eligible set comes from
+    `orm_open_content_drift_threads` (open + kind-filtered), which also yields
+    the topic to re-baseline. Anything else — a resolved note, a plain review
+    comment, an unknown id — raises rather than silently re-fingerprinting the
+    wrong topic."""
+    from lib.topics.content_drift import (
+        CONTENT_DRIFT_THREAD_KIND,
+        dismiss_content_drift,
+    )
+    from lib.topics.proposal_orm import orm_open_content_drift_threads
+
+    eligible = orm_open_content_drift_threads(
+        repo_path, kind=CONTENT_DRIFT_THREAD_KIND, proposal_id=proposal_id)
+    match = next(
+        (t for t in eligible if t["thread_id"] == feedback_thread_id), None)
+    if match is None:
+        raise TopicGraphError(
+            f"no open content-drift note {feedback_thread_id} on {proposal_id}")
+
+    result = dismiss_content_drift(repo_path, match["topic_id"])
+    _topics_log().write(
+        "proposal_content_drift_dismissed",
+        proposal_id=proposal_id, feedback_thread_id=feedback_thread_id,
+        topic_id=match["topic_id"], digests_captured=result["digests_captured"],
+        threads_dismissed=len(result["threads_dismissed"]),
+        repo_path=str(repo_path),
+    )
+    return result
+
+
 def update_proposal_feedback_comment(
     repo_path: str | Path,
     proposal_id: str,

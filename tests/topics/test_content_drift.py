@@ -14,13 +14,22 @@ from pathlib import Path
 from lib.memory import get_store
 from lib.memory.models import MemoryInput
 from lib.settings import settings
+import pytest
+
+from lib.topics import TopicGraphError
 from lib.topics.content_drift import (
     detect_drifted_topics,
+    dismiss_content_drift,
     emit_refresh_proposal,
     run_content_evolution,
 )
 from lib.topics.core import topic_path
-from lib.topics.proposals import list_proposal_runs, load_proposal
+from lib.topics.proposals import (
+    dismiss_content_drift_thread,
+    list_proposal_runs,
+    load_proposal,
+    set_proposal_feedback_thread_resolution,
+)
 from lib.topics.ref_digest import capture_ref_digests
 from lib.topics.snapshots import resolve_or_create_repo
 
@@ -216,6 +225,107 @@ def test_emit_refresh_origin_note_is_idempotent(fake_git_repo):
     # a second detection of the same unresolved drift must not stack a note
     assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "origin-run-1"
     assert len(_drift_threads(repo, "origin-run-1")) == 1
+
+
+# ── dismiss drift as unrelated (re-baseline + dismiss note) ───
+
+
+def _seed_drifted_with_note(repo: Path) -> None:
+    """Digest a ref, seed the origin run, mutate the ref (hash drifts), and
+    open the content-drift note on the origin run — the state a user faces
+    when a ref changed but the wiki narrative is unaffected."""
+    (repo / "a.py").write_text("x\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})
+    repo_id = _register(repo)
+    capture_ref_digests(repo, "t1")
+    _seed_origin_run(repo, repo_id, "origin-run-1", "t1")
+    (repo / "a.py").write_text("unrelated formatting only\n")   # hash drifts
+    assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "origin-run-1"
+
+
+def test_dismiss_content_drift_advances_baseline_and_dismisses_note(fake_git_repo):
+    repo = fake_git_repo
+    _seed_drifted_with_note(repo)
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+    result = dismiss_content_drift(repo, "t1")
+    assert result["topic_id"] == "t1"
+    assert result["digests_captured"] == 1
+    assert len(result["threads_dismissed"]) == 1
+
+    # baseline synced to current code → topic no longer drifts
+    assert detect_drifted_topics(repo) == []
+    # and the note is dismissed, not merely resolved
+    note = _drift_threads(repo, "origin-run-1")[0]
+    assert note["resolution_state"] == "dismissed"
+
+
+def test_dismiss_content_drift_stops_resurrection(fake_git_repo, monkeypatch):
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
+    repo = fake_git_repo
+    _seed_drifted_with_note(repo)
+
+    dismiss_content_drift(repo, "t1")
+
+    # a full evolve pass finds nothing to re-flag and opens no fresh note
+    result = run_content_evolution(repo)
+    assert result["drifted"] == 0
+    assert result["proposals"] == 0
+    open_notes = [n for n in _drift_threads(repo, "origin-run-1")
+                  if n["resolution_state"] == "open"]
+    assert open_notes == []
+
+
+def test_plain_dismiss_without_rebaseline_resurrects(fake_git_repo, monkeypatch):
+    """The bug this feature fixes: dismissing the note WITHOUT advancing the
+    baseline leaves the digest stale, so the next evolve pass opens a fresh
+    note — the drift resurrects."""
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
+    repo = fake_git_repo
+    _seed_drifted_with_note(repo)
+
+    note = _drift_threads(repo, "origin-run-1")[0]
+    set_proposal_feedback_thread_resolution(
+        repo, "origin-run-1", note["id"], resolution_state="dismissed")
+
+    run_content_evolution(repo)   # baseline still stale → re-detects
+    open_notes = [n for n in _drift_threads(repo, "origin-run-1")
+                  if n["resolution_state"] == "open"]
+    assert len(open_notes) == 1   # resurrected, exactly what dismiss_content_drift prevents
+
+
+def test_dismiss_content_drift_no_open_note_still_rebaselines(fake_git_repo):
+    """With no open note (topic drifted but never emitted), the call is a
+    safe no-op on the thread side yet still advances the baseline."""
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})
+    _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("changed\n")
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+    result = dismiss_content_drift(repo, "t1")
+    assert result["threads_dismissed"] == []
+    assert result["digests_captured"] == 1
+    assert detect_drifted_topics(repo) == []
+
+
+def test_dismiss_content_drift_thread_wrapper(fake_git_repo):
+    repo = fake_git_repo
+    _seed_drifted_with_note(repo)
+    note = _drift_threads(repo, "origin-run-1")[0]
+
+    result = dismiss_content_drift_thread(repo, "origin-run-1", note["id"])
+    assert result["topic_id"] == "t1"
+    assert detect_drifted_topics(repo) == []
+
+    # the note is no longer open → re-dismissing it raises, not silently rebaselines
+    with pytest.raises(TopicGraphError):
+        dismiss_content_drift_thread(repo, "origin-run-1", note["id"])
+    # unknown thread id raises too
+    with pytest.raises(TopicGraphError):
+        dismiss_content_drift_thread(repo, "origin-run-1", 999999)
 
 
 # ── orchestrator ──────────────────────────────────────────────

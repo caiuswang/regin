@@ -25,6 +25,7 @@ from lib.topics.proposals import (
     create_proposal_feedback_thread,
     delete_proposal_feedback_comment,
     delete_proposal_run,
+    dismiss_content_drift_thread,
     downgrade_topic_to_proposal,
     ignore_proposed_topic,
     list_proposal_feedback_threads,
@@ -315,6 +316,27 @@ def api_repo_topic_proposal_feedback_thread_resolution(name, proposal_id, feedba
             resolution_state=payload.get("resolution_state") or "",
         )
         return jsonify({"ok": True, "feedback_thread": thread})
+    except OSError:
+        return jsonify({"error": "not found"}), 404
+    except TopicGraphError as exc:
+        return _error(exc)
+
+
+@topics_bp.route(
+    "/api/repos/<name>/topics/proposals/<proposal_id>/feedback-threads/<int:feedback_thread_id>/dismiss-drift",
+    methods=["POST"],
+)
+def api_repo_topic_proposal_feedback_thread_dismiss_drift(name, proposal_id, feedback_thread_id):
+    """Dismiss a content-drift note as unrelated to the wiki *and* re-baseline
+    the topic's ref digests so it doesn't re-fire on the next evolve pass —
+    the escape hatch plain 'resolve' can't provide."""
+    repo_path = _repo_path_or_404(name)
+    if repo_path is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        result = dismiss_content_drift_thread(
+            repo_path, proposal_id, feedback_thread_id)
+        return jsonify({"ok": True, **result})
     except OSError:
         return jsonify({"error": "not found"}), 404
     except TopicGraphError as exc:

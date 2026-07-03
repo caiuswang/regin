@@ -54,6 +54,7 @@ from .feedback import (
     add_proposal_feedback_comment,
     create_proposal_feedback_thread,
     delete_proposal_feedback_comment,
+    dismiss_content_drift_thread,
     list_proposal_feedback_threads,
     set_proposal_feedback_thread_resolution,
     update_proposal_feedback_comment,
@@ -106,6 +107,7 @@ __all__ = [
     "add_proposal_feedback_comment",
     "update_proposal_feedback_comment",
     "delete_proposal_feedback_comment",
+    "dismiss_content_drift_thread",
     "set_proposal_feedback_thread_resolution",
     # private helpers used by tests / blueprints / CLI directly
     "_approved_topic_from_proposal",

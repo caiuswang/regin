@@ -322,6 +322,49 @@ def test_workspace_runs_annotate_open_drift_notes(stub_proposal_provider, flask_
     assert resolved_row["open_drift_topics"] == []
 
 
+def test_dismiss_drift_endpoint(stub_proposal_provider, flask_client, tmp_db, fake_git_repo):
+    """`/dismiss-drift` dismisses an open content_drift note; it rejects plain
+    comments and already-dismissed notes with a 400."""
+    name = _seed_repo_record(fake_git_repo)
+    bootstrap(fake_git_repo)
+    create_proposal_run(fake_git_repo, run_id="run1")
+    proposal = flask_client.get(f"/api/repos/{name}/topics/proposals/run1").get_json()["proposal"]
+    topic_id = proposal["topics"][0]["id"]
+
+    def _thread(kind, body):
+        return _post_ok(
+            flask_client,
+            f"/api/repos/{name}/topics/proposals/run1/feedback-threads",
+            {"proposal_topic_id": topic_id, "kind": kind, "author_kind": "agent", "body": body},
+        )["feedback_thread"]
+
+    drift = _thread("content_drift", "The refs under this topic drifted.")
+    base = f"/api/repos/{name}/topics/proposals/run1/feedback-threads/{drift['id']}/dismiss-drift"
+
+    result = _post_ok(flask_client, base, {})
+    assert result["ok"] is True
+    assert result["topic_id"] == topic_id
+    assert drift["id"] in result["threads_dismissed"]
+
+    # the note is now dismissed, not open
+    threads = flask_client.get(
+        f"/api/repos/{name}/topics/proposals/run1"
+    ).get_json()["feedback_threads"]
+    dismissed = next(t for t in threads if t["id"] == drift["id"])
+    assert dismissed["resolution_state"] == "dismissed"
+
+    # re-dismissing a no-longer-open drift note is rejected
+    assert flask_client.post(base, json={}).status_code == 400
+
+    # a plain comment is not a drift note → rejected, cannot re-baseline the topic
+    comment = _thread("comment", "Just a review comment.")
+    bad = flask_client.post(
+        f"/api/repos/{name}/topics/proposals/run1/feedback-threads/{comment['id']}/dismiss-drift",
+        json={},
+    )
+    assert bad.status_code == 400
+
+
 def test_topics_feedback_thread_resolution(stub_proposal_provider, flask_client, tmp_db, fake_git_repo):
     name, thread_id, _ = _seed_feedback_thread(flask_client, fake_git_repo)
     base = f"/api/repos/{name}/topics/proposals/run1/feedback-threads/{thread_id}/resolution"

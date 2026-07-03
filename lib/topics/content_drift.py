@@ -240,6 +240,45 @@ def emit_refresh_proposal(repo_path: str | Path, topic_id: str,
     return proposal_id
 
 
+def dismiss_content_drift(repo_path: str | Path, topic_id: str, *,
+                          embedder=None) -> dict[str, Any]:
+    """Mark a topic's content drift as *unrelated to its wiki*: advance the
+    drift baseline (re-fingerprint the topic's refs so detection stops flagging
+    them) and dismiss every open content-drift note for the topic.
+
+    This is the escape hatch for a ref edit that didn't change what the wiki
+    documents. Plain thread-dismissal alone doesn't stick: the stored
+    `TopicRefDigest.content_hash` stays stale, so the next `run_content_evolution`
+    pass re-detects the same hash mismatch and — because `emit_refresh_proposal`
+    only skips *open* notes — opens a fresh one, resurrecting the drift forever.
+    Re-capturing the digest here is what actually retires it.
+
+    Ungated and best-effort (the low-level `capture_ref_digests` never raises):
+    the whole point of the action is to sync the baseline to current code on
+    demand, so it must work regardless of `evolution_enabled`. Returns
+    `{topic_id, digests_captured, threads_dismissed}` — `threads_dismissed` is
+    the list of dismissed note ids (empty when none were open)."""
+    from lib.topics.proposal_orm import (
+        orm_open_content_drift_threads,
+        orm_set_feedback_thread_resolution,
+    )
+    from lib.topics.ref_digest import capture_ref_digests
+
+    captured = capture_ref_digests(repo_path, topic_id, embedder=embedder)
+    dismissed: list[int] = []
+    for thread in orm_open_content_drift_threads(
+            repo_path, kind=CONTENT_DRIFT_THREAD_KIND, topic_id=topic_id):
+        updated = orm_set_feedback_thread_resolution(
+            repo_path, thread["run_id"], thread["thread_id"],
+            resolution_state="dismissed")
+        if updated is not None:
+            dismissed.append(thread["thread_id"])
+    log.write("content_drift_dismissed", topic_id=topic_id,
+              digests_captured=captured, threads_dismissed=len(dismissed))
+    return {"topic_id": topic_id, "digests_captured": captured,
+            "threads_dismissed": dismissed}
+
+
 def run_content_evolution(repo_path: str | Path, *,
                           embedder=None) -> dict[str, Any]:
     """One content-drift evolve pass: detect drifted topics, cascade staleness
@@ -285,5 +324,6 @@ def run_content_evolution(repo_path: str | Path, *,
                 "error": True}
 
 
-__all__ = ["detect_drifted_topics", "emit_refresh_proposal",
-           "run_content_evolution"]
+__all__ = ["detect_drifted_topics", "dismiss_content_drift",
+           "emit_refresh_proposal", "run_content_evolution",
+           "CONTENT_DRIFT_THREAD_KIND"]

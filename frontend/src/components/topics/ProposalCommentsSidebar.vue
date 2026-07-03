@@ -211,6 +211,27 @@ async function setResolution(threadId, resolutionState) {
   }
 }
 
+async function dismissDrift(thread) {
+  if (!props.proposalId || resolveBusyThreadId.value) return
+  resolveBusyThreadId.value = thread.id
+  composerError.value = ''
+  try {
+    const res = await api.post(
+      `/repos/${props.repoName}/topics/proposals/${props.proposalId}/feedback-threads/${thread.id}/dismiss-drift`,
+      {},
+    )
+    if (res?.ok) {
+      emit('updated')
+      return
+    }
+    composerError.value = res?.msg || res?.error || 'Failed to dismiss drift'
+  } catch (err) {
+    composerError.value = err?.message || String(err)
+  } finally {
+    resolveBusyThreadId.value = null
+  }
+}
+
 function startEditComment(comment) {
   editingCommentId.value = comment.id
   editDraft.value = comment.body || ''
@@ -463,6 +484,16 @@ watch(
         </div>
       </div>
        <div v-else-if="!readonly" class="flex justify-end gap-2">
+        <Button
+          v-if="thread.kind === 'content_drift' && !isResolvedThread(thread)"
+          variant="secondary"
+          size="sm"
+          :disabled="resolveBusyThreadId === thread.id"
+          title="This code change didn't affect the wiki: sync the drift baseline to current code and dismiss this note so it won't re-fire."
+          @click="dismissDrift(thread)"
+        >
+          {{ resolveBusyThreadId === thread.id ? 'Dismissing…' : 'Not a real drift' }}
+        </Button>
         <Button
           v-if="!isResolvedThread(thread)"
           variant="secondary"
