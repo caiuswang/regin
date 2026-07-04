@@ -693,6 +693,127 @@ test.describe('NOW zone (acceptance #8)', () => {
     await expect(nowZone).toHaveAttribute('data-state', 'permission')
   })
 
+  test('a PENDING AskUserQuestion shows the dedicated "question" state (v8)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'now-zone question fixture', is_test: true } },
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null,
+        name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`, is_test: true,
+          questions: [{ question: 'QUESTION_ONE_MARKER — which approach should we take?',
+            header: 'Approach', multiSelect: false,
+            options: [{ label: 'Option Alpha', description: 'first way' },
+              { label: 'Option Beta', description: 'second way' },
+              { label: 'Option Gamma', description: 'third way' }] }] } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toBeVisible({ timeout: 10_000 })
+    // The question state — not the generic "running tool.AskUserQuestion" —
+    // with the amber attention treatment, like permission.
+    await expect(nowZone).toHaveAttribute('data-state', 'question')
+    await expect(nowZone).toHaveClass(/live-now-attention/)
+    await expect(nowZone).toContainText('waiting for your answer')
+    await expect(nowZone).toContainText('QUESTION_ONE_MARKER')
+    await expect(nowZone).toContainText('3 options')
+    await expect(nowZone).not.toContainText('running tool')
+
+    // options ▾ opens the read-only pending Q&A sheet (no chosen mark).
+    await page.locator('[data-testid="live-now-options"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+    await expect(sheet).toContainText('Option Beta')
+    await expect(sheet).toContainText('read-only')
+    await expect(sheet.locator('.live-qa-chosen')).toHaveCount(0)
+  })
+
+  test('a second question cleanly replaces an answered first one (v8)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const q1 = 'FIRST_QUESTION_MARKER — where should the fix land?'
+    const q2 = 'SECOND_QUESTION_MARKER — how should the NOW zone present a waiting question, including when another one arrives right after the first is answered?'
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'two-questions fixture', is_test: true } },
+      // Question 1: already answered — its resolved span is in the tail.
+      { trace_id: traceId, span_id: `ask1-${sfx}`, parent_id: null,
+        name: 'tool.AskUserQuestion', start_time: now, duration_ms: 9000,
+        attributes: { tool_name: 'AskUserQuestion', is_test: true,
+          questions: [{ question: q1, header: 'Scope', multiSelect: false,
+            options: [{ label: 'Artifact first', description: 'prototype now' },
+              { label: 'Real page only', description: 'skip the prototype' }] }],
+          answers: { [q1]: 'Artifact first' } } },
+      // Question 2: waiting — a long question that fills both clamp lines.
+      { trace_id: traceId, span_id: `pending-tu2-${sfx}`, parent_id: null,
+        name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu2-${sfx}`, is_test: true,
+          questions: [{ question: q2, header: 'NOW zone', multiSelect: false,
+            options: [{ label: 'Dedicated state' }, { label: 'Inline options' }] }] } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toBeVisible({ timeout: 10_000 })
+    // The footer holds ONLY the newest unanswered question — no stale Q1 text.
+    await expect(nowZone).toHaveAttribute('data-state', 'question')
+    await expect(nowZone).toContainText('SECOND_QUESTION_MARKER')
+    await expect(nowZone).not.toContainText('FIRST_QUESTION_MARKER')
+
+    // options ▾ must stay visible below the clamp even for a long question.
+    const btn = page.locator('[data-testid="live-now-options"]')
+    await expect(btn).toBeVisible()
+    const btnBox = await btn.boundingBox()
+    const nowBox = await nowZone.boundingBox()
+    expect(btnBox, 'options button must have a box').toBeTruthy()
+    expect(btnBox.y + btnBox.height,
+      'options ▾ must sit inside the footer, not clipped below the clamp')
+      .toBeLessThanOrEqual(nowBox.y + nowBox.height + 1)
+
+    // The answered question 1 landed in the tail as a delicate qa row.
+    const qaRow = page.locator(`[data-testid="live-row"][data-span-id="ask1-${sfx}"]`)
+    await expect(qaRow).toHaveAttribute('data-kind', 'qa')
+    await expect(qaRow).toContainText('FIRST_QUESTION_MARKER')
+    await expect(qaRow).toContainText('✓')
+    await expect(qaRow).toContainText('Artifact first')
+
+    // Tapping it opens the full Q&A sheet with the chosen option marked.
+    await qaRow.click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.locator('.live-qa-chosen')).toHaveCount(1)
+    await expect(sheet.locator('.live-qa-chosen')).toContainText('Artifact first')
+  })
+
+  test('a PENDING permission renders a delicate qa row in the tail (v8)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'perm qa-row fixture', is_test: true } },
+      { trace_id: traceId, span_id: `permreq-tu-${sfx}`, parent_id: null,
+        name: 'permission.request', start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'Bash', tool_use_id: `tu-${sfx}`,
+          command_preview: 'rm -rf web/static/dist', is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const qaRow = page.locator(`[data-testid="live-row"][data-span-id="permreq-tu-${sfx}"]`)
+    await expect(qaRow).toBeVisible({ timeout: 10_000 })
+    await expect(qaRow).toHaveAttribute('data-kind', 'qa')
+    await expect(qaRow).toContainText('Permission')
+    await expect(qaRow).toContainText('rm -rf web/static/dist')
+    await expect(qaRow).toContainText('waiting for permission')
+  })
+
   test('a promptlive- placeholder shows the "processing your prompt" state', async ({ page }) => {
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)

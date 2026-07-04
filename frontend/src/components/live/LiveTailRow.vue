@@ -8,7 +8,7 @@
 import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import { fmtTime, fmtClock, fmtDuration, toolRowDotClass } from '../../utils/traceFormatters.js'
-import { humanMain, isSignal, isHotSpan, rowKind } from '../../utils/liveRows.js'
+import { humanMain, isSignal, isHotSpan, rowKind, qaRowModel } from '../../utils/liveRows.js'
 
 const props = defineProps({
   span: { type: Object, required: true },
@@ -23,6 +23,8 @@ const emit = defineEmits(['select'])
 
 const kind = computed(() => rowKind(props.span))
 const main = computed(() => humanMain(props.span))
+// Ask-user / permission rows (v8): delicate 2-line mini card projection.
+const qa = computed(() => (kind.value === 'qa' ? qaRowModel(props.span) : null))
 const who = computed(() => (props.span.name === 'prompt' ? 'You' : 'Assistant'))
 const dur = computed(() =>
   props.span.duration_ms >= 1000 ? ` · ${fmtDuration(props.span.duration_ms)}` : '')
@@ -35,7 +37,9 @@ const dur = computed(() =>
     :class="[
       kind === 'msg'
         ? ['live-row-msg', span.name === 'prompt' ? 'live-row-msg-user' : '']
-        : ['live-row-act', { 'live-row-sub': sub, 'live-row-sys': !isSignal(span) }],
+        : kind === 'qa'
+          ? ['live-row-qa']
+          : ['live-row-act', { 'live-row-sub': sub, 'live-row-sys': !isSignal(span) }],
       { 'live-row-entering': entering },
     ]"
     data-testid="live-row"
@@ -47,6 +51,19 @@ const dur = computed(() =>
       <!-- Eyebrows are HH:MM (spec v7.2); activity-row times keep seconds. -->
       <span class="live-msg-eyebrow">{{ who }} · {{ fmtTime(span.start_time) }}</span>
       <span class="live-msg-body">{{ main.text }}<span v-if="caret" class="live-caret"></span></span>
+    </template>
+    <template v-else-if="kind === 'qa'">
+      <span class="live-qa-wrap" :class="{ 'live-qa-denied': qa.denied }">
+        <span class="live-qa-glyph" aria-hidden="true">{{ qa.glyph }}</span>
+        <span class="live-qa-main">
+          <span class="live-qa-eyebrow">{{ qa.eyebrow }}
+            <span v-if="qa.badge" class="live-qa-badge">{{ qa.badge }}</span>
+            <span class="live-qa-time">{{ fmtClock(span.start_time) }}</span></span>
+          <span class="live-qa-q" :class="{ 'live-mono': qa.mono }">{{ qa.main }}</span>
+          <span class="live-qa-a"><span class="live-qa-mark">{{ qa.mark }}</span>
+            <span class="live-qa-choice">{{ qa.answer }}</span></span>
+        </span>
+      </span>
     </template>
     <template v-else>
       <span class="live-row-1">

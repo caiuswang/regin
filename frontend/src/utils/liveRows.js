@@ -26,7 +26,69 @@ export const CATEGORIES = SPAN_CATEGORIES
 
 export function rowKind(span) {
   const n = span?.name || ''
-  return (n === 'prompt' || n === 'assistant_response') ? 'msg' : 'act'
+  if (n === 'prompt' || n === 'assistant_response') return 'msg'
+  if (isQaSpan(span)) return 'qa'
+  return 'act'
+}
+
+// Ask-user-question / permission spans get their own delicate 2-line row
+// (v8) instead of the generic one-line activity row.
+export function isQaSpan(span) {
+  const n = span?.name || ''
+  return n === 'tool.AskUserQuestion' || n === 'permission.request'
+    || (span?.span_id || '').startsWith('permreq-')
+}
+
+// Pure projection for the qa mini row: glyph + eyebrow, the question (or
+// requested command), and the outcome line. Full detail lives in the sheet.
+function askRowOutcome(a, chosen, pending) {
+  if (a.denied) {
+    const label = a.deny_kind === 'chat' ? 'answered in chat instead' : 'denied'
+    return { mark: '✗', answer: label }
+  }
+  if (chosen) return { mark: '✓', answer: chosen }
+  return { mark: '…', answer: pending ? 'waiting for your answer' : 'answered' }
+}
+
+function askRowModel(a, pending) {
+  const qs = a.questions || []
+  const q = qs[0] || {}
+  const ans = a.denied ? '' : (a.answers || {})[q.question]
+  const chosen = Array.isArray(ans) ? ans.join(', ') : (ans || '')
+  return {
+    glyph: '?',
+    eyebrow: `Ask user${qs.length > 1 ? ` · +${qs.length - 1} more` : ''}`,
+    badge: a.denied ? (a.deny_kind === 'chat' ? 'chat instead' : 'denied') : '',
+    denied: !!a.denied,
+    main: q.question || 'Question for you',
+    mono: false,
+    ...askRowOutcome(a, chosen, pending),
+  }
+}
+
+function permRowModel(a, pending) {
+  const denied = a.decision === 'denied' || !!a.denied
+  const tool = toolDisplayName(a.tool_name || 'tool')
+  return {
+    glyph: '⚠',
+    eyebrow: `Permission · ${tool}`,
+    badge: '',
+    denied,
+    main: a.command_preview
+      ? `$ ${a.command_preview}`
+      : (a.requested_permission || `tool.${tool}`),
+    mono: true,
+    mark: pending ? '…' : (denied ? '✗' : '✓'),
+    answer: pending ? 'waiting for permission' : (denied ? 'denied' : 'granted'),
+  }
+}
+
+export function qaRowModel(span) {
+  const a = span?.attributes || {}
+  const pending = span?.status_code === 'PENDING'
+  return span?.name === 'tool.AskUserQuestion'
+    ? askRowModel(a, pending)
+    : permRowModel(a, pending)
 }
 
 // Signal spans that keep a full-saturation dot (edits, failures, denials);
@@ -41,7 +103,7 @@ export function isHotSpan(span) {
 
 const SIGNAL_EXACT = new Set([
   'prompt', 'assistant_response', 'subagent.start', 'subagent.stop',
-  'file.edit', 'plan.edit', 'memory.recall',
+  'file.edit', 'plan.edit', 'memory.recall', 'permission.request',
 ])
 
 export function isSignal(span) {

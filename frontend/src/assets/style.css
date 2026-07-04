@@ -2154,7 +2154,7 @@ details summary {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    bottom: calc(96px + env(safe-area-inset-bottom));
+    bottom: calc(112px + env(safe-area-inset-bottom));
     z-index: 5;
     height: auto;
     padding: 5px 12px;
@@ -2172,7 +2172,8 @@ details summary {
     background: var(--color-background);
     border-top: 1px solid var(--color-border);
     padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
-    max-height: calc(92px + env(safe-area-inset-bottom));
+    /* Tall enough for eyebrow + 2 clamped lines + the action row (v8). */
+    max-height: calc(104px + env(safe-area-inset-bottom));
     overflow: hidden;
     box-shadow: 0 -6px 16px -10px rgba(0, 0, 0, 0.25);
     position: relative;
@@ -2238,6 +2239,177 @@ details summary {
     font-size: 11.5px;
     font-weight: 600;
 }
+/* Action row OUTSIDE the clamped text: a long question/response fills both
+   clamp lines and would clip a button rendered inside .live-now-text. */
+.live-now-act { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; }
+.live-now-qmeta {
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.live-now-attention .live-now-more { color: var(--color-amber-700); }
+
+/* ask-user-question / permission rows (v8): delicate 2-line mini cards.
+   History rows stay quiet — neutral chrome, one amber glyph; only denied
+   outcomes and the live NOW zone get the amber attention treatment. */
+.live-row-qa { padding: 5px 16px 6px; border-bottom: 0; }
+.live-qa-wrap {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface-2);
+}
+.live-qa-denied {
+    border-color: var(--color-amber-200);
+    background: var(--color-amber-50);
+}
+.live-qa-glyph {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: 99px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--color-amber-500);
+    color: var(--color-background);
+}
+.live-qa-main { flex: 1; min-width: 0; }
+.live-qa-eyebrow {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-fg-subtle);
+    margin-bottom: 2px;
+}
+.live-qa-time {
+    margin-left: auto;
+    font-family: ui-monospace, Menlo, monospace;
+    font-weight: 400;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+}
+.live-qa-badge {
+    font-size: 9px;
+    padding: 0 4px;
+    border-radius: 4px;
+    text-transform: none;
+    letter-spacing: 0;
+    background: var(--color-amber-50);
+    border: 1px solid var(--color-amber-200);
+    color: var(--color-amber-700);
+}
+.live-qa-q {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: 12.5px;
+    font-weight: 550;
+    color: var(--color-fg);
+    line-height: 1.4;
+    text-align: left;
+    white-space: normal;
+}
+.live-qa-q.live-mono { font-size: 11.5px; font-weight: 450; }
+.live-qa-a {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    min-width: 0;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--color-fg-subtle);
+}
+.live-qa-mark { flex-shrink: 0; font-weight: 700; color: var(--color-success); }
+.live-qa-denied .live-qa-mark { color: var(--color-amber-700); }
+.live-qa-choice {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-fg-muted);
+    font-weight: 550;
+}
+.live-qa-denied .live-qa-choice { color: var(--color-amber-700); }
+
+/* Q&A bottom sheet (full options list, ported from the desktop card) */
+.live-qa-pending-note { font-size: 12px; color: var(--color-fg-subtle); margin: 0 0 10px; }
+.live-qa-card {
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+.live-qa-card-hd {
+    padding: 8px 12px;
+    background: var(--color-surface-2);
+    border-bottom: 1px solid var(--color-border);
+}
+.live-qa-h {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-fg-subtle);
+    margin-bottom: 2px;
+}
+.live-qa-title { font-size: 13px; font-weight: 600; color: var(--color-fg); overflow-wrap: anywhere; }
+.live-qa-opt {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 7px 12px;
+    font-size: 12.5px;
+}
+.live-qa-opt + .live-qa-opt { border-top: 1px solid var(--color-border-subtle); }
+.live-qa-optmark {
+    flex-shrink: 0;
+    width: 16px;
+    text-align: center;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: var(--color-fg-subtle);
+}
+.live-qa-chosen { background: var(--color-emerald-50); }
+.live-qa-chosen .live-qa-optmark { color: var(--color-success); font-weight: 700; }
+.live-qa-optbody { min-width: 0; }
+.live-qa-optlbl { display: block; font-weight: 600; color: var(--color-fg); overflow-wrap: anywhere; }
+.live-qa-optdesc { display: block; color: var(--color-fg-subtle); margin-top: 1px; overflow-wrap: anywhere; }
+.live-qa-free { background: var(--color-amber-50); }
+.live-qa-free .live-qa-optmark { color: var(--color-amber-700); }
+.live-qa-note {
+    padding: 6px 12px;
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-surface-2);
+    font-size: 11px;
+    font-style: italic;
+    color: var(--color-fg-subtle);
+}
+.live-qa-deny {
+    border: 1px solid var(--color-amber-200);
+    background: var(--color-amber-50);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--color-fg-muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.live-qa-deny .live-qa-h { color: var(--color-amber-700); margin-bottom: 3px; }
 
 /* bottom sheets (float highest; internal scroll; 80dvh cap) */
 .live-sheet-layer { position: absolute; inset: 0; z-index: 9; }

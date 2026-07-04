@@ -15,10 +15,11 @@ import LiveTailRow from '../components/live/LiveTailRow.vue'
 import LiveNowZone from '../components/live/LiveNowZone.vue'
 import LiveSheet from '../components/live/LiveSheet.vue'
 import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
+import LiveQaSheet from '../components/live/LiveQaSheet.vue'
 import { useLiveTail } from '../composables/useLiveTail.js'
 import { fmtClock, fmtDuration, terminalSpanLabel } from '../utils/traceFormatters.js'
 import {
-  CATEGORIES, filterSpans, countByCategory, isSignal, rowKind,
+  CATEGORIES, filterSpans, countByCategory, isSignal, rowKind, isQaSpan,
   activityCopyPayload,
 } from '../utils/liveRows.js'
 
@@ -183,6 +184,11 @@ const sheetTitle = computed(() => {
   if (sheetKind.value === 'sessions') return 'Switch session'
   const s = sheetSpan.value
   if (!s) return ''
+  if (sheetKind.value === 'qa') {
+    const ask = s.name === 'tool.AskUserQuestion'
+    if (ask && s.status_code === 'PENDING') return 'Ask user · waiting'
+    return `${ask ? 'Ask user' : 'Permission'} · ${fmtClock(s.start_time)}`
+  }
   const who = s.name === 'prompt' ? 'You' : 'Assistant'
   const label = sheetKind.value === 'message' ? who : terminalSpanLabel(s)
   return `${label} · ${fmtClock(s.start_time)}`
@@ -192,6 +198,13 @@ const sheetCopy = computed(() => {
   const s = sheetSpan.value
   if (sheetKind.value === 'message') return s?.attributes?.text || ''
   if (sheetKind.value === 'detail') return s ? activityCopyPayload(s) : null
+  if (sheetKind.value === 'qa' && s) {
+    const a = s.attributes || {}
+    if (s.name === 'tool.AskUserQuestion') {
+      return JSON.stringify({ questions: a.questions || [], answers: a.answers || null }, null, 2)
+    }
+    return a.command_preview || a.requested_permission || ''
+  }
   return null
 })
 
@@ -201,11 +214,20 @@ const detailAttrs = computed(() => {
     [k, typeof v === 'string' ? v : JSON.stringify(v)])
 })
 
-// Message tap → full text sheet; activity tap → attrs sheet, lazy-fetching
-// full attributes for shallow rows (mirrors the Terminal's onRowClick).
+// Message tap → full text sheet; ask/permission tap → Q&A sheet; activity
+// tap → attrs sheet, lazy-fetching full attributes for shallow rows
+// (mirrors the Terminal's onRowClick).
 function onRowSelect(span) {
   if (rowKind(span) === 'msg' && span.attributes?.text) {
     openSheet('message', span)
+    return
+  }
+  if (isQaSpan(span)) {
+    openSheet('qa', span)
+    // Only ask spans lazy-load: a shallow ask lacks `questions`; permission
+    // spans never carry them, so this guard would refetch on every tap.
+    if (span.name === 'tool.AskUserQuestion'
+      && !(span.attributes?.questions || []).length) fetchContent(span)
     return
   }
   openSheet('detail', span)
@@ -342,6 +364,7 @@ onUnmounted(() => {
         :spans="spans"
         :ended="ended"
         @open-response="s => openSheet('message', s)"
+        @open-question="s => openSheet('qa', s)"
       />
 
       <LiveSheet v-model:open="sheetOpen" :title="sheetTitle" :copy-payload="sheetCopy">
@@ -363,6 +386,10 @@ onUnmounted(() => {
             </template>
           </dl>
           <p v-else class="live-empty">Loading attributes…</p>
+        </template>
+
+        <template v-else-if="sheetKind === 'qa'">
+          <LiveQaSheet v-if="sheetSpan" :span="sheetSpan" />
         </template>
 
         <template v-else-if="sheetKind === 'sessions'">
