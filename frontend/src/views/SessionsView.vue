@@ -10,6 +10,7 @@ import { useFlash } from '../composables/useFlash'
 import { useCopy } from '../composables/useCopy'
 import { useCursor } from '../composables/useCursor'
 import { useStickyHeader } from '../composables/useStickyHeader'
+import { isActiveSession, parseLocalIso } from '../utils/sessionActivity.js'
 
 const { confirm } = useConfirm()
 const { flash } = useFlash()
@@ -247,16 +248,9 @@ function toggleSelectAll(e) {
     : new Set()
 }
 
-const STALE_FALLBACK_WINDOW_MS = 10 * 60 * 1000
-
-function isActive(s) {
-  if (s.status === 'active') return true
-  if (s.status === 'ended') return false
-  const d = parseLocalIso(s.last_seen)
-  if (!d) return false
-  const age = Date.now() - d.getTime()
-  return age >= 0 && age < STALE_FALLBACK_WINDOW_MS
-}
+// Active rule + local-ISO parsing shared via utils/sessionActivity.js
+// (one source for SessionsView, SessionRow, and the /live poll cadence).
+const isActive = isActiveSession
 
 async function deleteSession(s) {
   const label = titlePreview(s.title) || s.trace_id.slice(0, 12) + '...'
@@ -364,14 +358,6 @@ watch(searchScope, (v) => {
   // the box is empty doesn't change the result set.
   if (activeSearch.value) reload()
 })
-
-function parseLocalIso(iso) {
-  if (!iso) return null
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/)
-  if (!m) return new Date(iso)
-  const ms = m[7] ? parseInt(m[7].slice(0, 3).padEnd(3, '0'), 10) : 0
-  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms)
-}
 
 function fmtDate(iso) {
   const d = parseLocalIso(iso)

@@ -1,4 +1,5 @@
 import { test, expect } from './auth-fixture.js'
+import { contentOverflow, settle, squishedColumns } from './helpers/overflow.js'
 
 test.describe('Responsive layout', () => {
   test('mobile shows hamburger button and hides inline nav links', async ({ page, viewport }) => {
@@ -70,73 +71,11 @@ const STATIC_ROUTES = [
   '/trace/skill-reads',
   '/trace/mcp-calls',
   '/trace/ingest-errors',
+  '/live', // no id -> latest session (mobile live-tail card, docs/mobile-progress-card-design.md)
 ]
 
-// Measure the app content pane's horizontal overflow. Returns the pane's
-// scroll/client widths plus, when it overflows, the offending descendants so a
-// failure names the culprit instead of just a number. A 1px rounding slack is
-// allowed (sub-pixel layout).
-async function contentOverflow(page) {
-  return page.evaluate(() => {
-    const pane = document.querySelector('.content-scroll')
-    if (!pane) return { pane: false, scrollWidth: 0, clientWidth: 0, offenders: [] }
-    const slack = pane.clientWidth + 1
-    const offenders = []
-    if (pane.scrollWidth > slack) {
-      for (const el of pane.querySelectorAll('*')) {
-        const r = el.getBoundingClientRect()
-        if (r.right > pane.getBoundingClientRect().right + 1 && r.width > 0) {
-          offenders.push(
-            `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(/\s+/).slice(0, 3).join('.')}`
-          )
-          if (offenders.length >= 6) break
-        }
-      }
-    }
-    return {
-      pane: true,
-      scrollWidth: pane.scrollWidth,
-      clientWidth: pane.clientWidth,
-      offenders: [...new Set(offenders)],
-    }
-  })
-}
-
-async function settle(page) {
-  await page.waitForLoadState('domcontentloaded')
-  // Give data-driven views a beat to fetch + render their tables/grids.
-  await page.waitForLoadState('networkidle').catch(() => {})
-  await page.waitForTimeout(300)
-}
-
-// Detect a text column *collapsed* so narrow (a flex sibling that won't shrink
-// eating all the width) that its text wraps one CHARACTER per line — the
-// "renders vertically" breakage. This does NOT trigger horizontal overflow (the
-// text wraps), so the overflow invariant above misses it.
-//
-// The bar is deliberately strict — box < 24px wide (can't fit even ~2
-// characters) AND taller than ~4 lines. A merely-narrow-but-functional cell
-// (e.g. a long id that legitimately word-wraps inside a scrollable table
-// column, ~26px+) is NOT flagged; only a true collapse-to-a-sliver is.
-async function squishedColumns(page) {
-  return page.evaluate(() => {
-    const pane = document.querySelector('.content-scroll')
-    if (!pane) return []
-    const out = []
-    for (const el of pane.querySelectorAll('*')) {
-      const hasText = [...el.childNodes].some(
-        (n) => n.nodeType === 3 && n.textContent.trim().length > 8)
-      if (!hasText) continue
-      const b = el.getBoundingClientRect()
-      const lh = parseFloat(getComputedStyle(el).lineHeight) || 16
-      if (b.width > 0 && b.width < 24 && b.height > lh * 4) {
-        out.push(`${el.tagName.toLowerCase()} w=${Math.round(b.width)} "${el.textContent.trim().slice(0, 24)}"`)
-        if (out.length >= 5) break
-      }
-    }
-    return out
-  })
-}
+// contentOverflow / settle / squishedColumns now live in ./helpers/overflow.js
+// so live-card.spec.js can reuse the exact same detectors.
 
 test.describe('No horizontal overflow at narrow widths', () => {
   for (const route of STATIC_ROUTES) {

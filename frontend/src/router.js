@@ -27,6 +27,7 @@ import IngestErrorsView from './views/IngestErrorsView.vue'
 import TraceView from './views/TraceView.vue'
 import SessionsView from './views/SessionsView.vue'
 import SessionTraceView from './views/SessionTraceView.vue'
+import LiveSessionView from './views/LiveSessionView.vue'
 import SettingsView from './views/SettingsView.vue'
 import LoginView from './views/LoginView.vue'
 import AuditView from './views/AuditView.vue'
@@ -55,6 +56,7 @@ const routes = [
   { path: '/experiments/:id', name: 'experiment-detail', component: ExperimentDetailView },
   { path: '/plans', name: 'plans', component: PlansView },
   { path: '/plans/:filename(.*)', name: 'plan-detail', component: PlanDetailView },
+  { path: '/live/:id?', name: 'live', component: LiveSessionView },
   { path: '/inbox', name: 'inbox', component: InboxView },
   { path: '/memory', name: 'memory', component: MemoryView },
   { path: '/grades', name: 'grades', component: GradesView },

@@ -662,6 +662,71 @@ export function toolRowTextClass(span) {
   return 'text-slate-700'
 }
 
+// ── Span category buckets (Terminal filter bar + /live filter sheet) ──
+//
+// ONE source for the category split, chip list, and search haystack —
+// shared by SessionTerminalLog (desktop) and the /live mobile card
+// (utils/liveRows.js). Moved verbatim out of SessionTerminalLog.
+
+// File-mutating tools. They are `tool.*` spans but bucket under `edit`
+// (not the generic `tool` pill) so the edit filter mirrors the Sessions
+// list's Edits column. Must be checked before the tool-prefix rule.
+export const EDIT_TOOL_NAMES = new Set([
+  'tool.Edit', 'tool.Write', 'tool.MultiEdit', 'tool.NotebookEdit', 'tool.apply_patch',
+])
+
+// Categorize a span into one of the visible buckets (excluding 'all').
+// Server-side tools (advisor today, any future ones with
+// attributes.server_side) bucket separately from local tools so users
+// can isolate model-to-model calls — they look like a tool span but
+// cost orders of magnitude more and carry a textual reply.
+export function categoryOf(span) {
+  const n = span.name || ''
+  if (n === 'prompt') return 'prompt'
+  if (n === 'assistant_response') return 'assistant'
+  if (n === 'assistant.thinking') return 'thinking'
+  if (span.attributes?.server_side || n === 'tool.advisor') return 'advisor'
+  if (EDIT_TOOL_NAMES.has(n)) return 'edit'
+  if (n.startsWith('tool.') || n.startsWith('pre_tool.')) return 'tool'
+  if (n === 'skill.read' || n === 'skill.invoke' || n === 'skill.launch') return 'skill'
+  if (n === 'rule.check') return 'rule'
+  return 'other'
+}
+
+// Chip palette mirrors the dot color used per row. Soft tints for the
+// chip background, saturated dots — matches the sketch.
+export const SPAN_CATEGORIES = [
+  { id: 'all',       label: 'All',       dotClass: 'bg-slate-400' },
+  { id: 'prompt',    label: 'prompt',    dotClass: 'bg-purple-500' },
+  { id: 'assistant', label: 'assistant', dotClass: 'bg-emerald-500' },
+  { id: 'thinking',  label: 'thinking',  dotClass: 'bg-amber-400' },
+  { id: 'tool',      label: 'tool',      dotClass: 'bg-blue-500' },
+  { id: 'advisor',   label: 'advisor',   dotClass: 'bg-violet-500' },
+  { id: 'skill',     label: 'skill',     dotClass: 'bg-green-500' },
+  { id: 'edit',      label: 'edit',      dotClass: 'bg-orange-500' },
+  { id: 'rule',      label: 'rule',      dotClass: 'bg-red-500' },
+  { id: 'other',     label: 'other',     dotClass: 'bg-slate-400' },
+]
+
+export function spanMatchesSearch(span, q) {
+  if (!q) return true
+  const a = span.attributes || {}
+  const hay = [
+    span.name,
+    a.file_path,
+    a.tool_name,
+    a.command_preview,
+    a.pattern,
+    a.skill_id,
+    a.rule_id,
+    a.plan_filename,
+    a.text,
+    a.questions && a.questions.map(x => x.question).join(' '),
+    a.answers && Object.values(a.answers).join(' '),
+  ].filter(Boolean).join(' ').toLowerCase()
+  return hay.includes(q.toLowerCase())
+}
+
 // ── Task row chips ──────────────────────────────────────────
 
 // Status chip rendered before the label on task spans. TaskCreate

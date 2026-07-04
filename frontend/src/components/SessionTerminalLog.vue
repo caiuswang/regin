@@ -1,6 +1,9 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { terminalSpanLabel, terminalSpanDetail } from '../utils/traceFormatters.js'
+import {
+  terminalSpanLabel, terminalSpanDetail,
+  EDIT_TOOL_NAMES, categoryOf, SPAN_CATEGORIES, spanMatchesSearch,
+} from '../utils/traceFormatters.js'
 
 const props = defineProps({
   spans: { type: Array, default: () => [] },
@@ -35,46 +38,11 @@ function parentIsSubagent(span) {
   return parent?.name === 'subagent.start'
 }
 
-// Categorize each span into one of the visible buckets (excluding 'all').
-// Tracked once for chip counts and reused by the filter predicate.
-// Server-side tools (advisor today, any future ones with
-// attributes.server_side) bucket separately from local tools so users
-// can isolate model-to-model calls — they look like a tool span but
-// cost orders of magnitude more and carry a textual reply.
-// File-mutating tools. They are `tool.*` spans but bucket under `edit`
-// (not the generic `tool` pill) so the edit filter mirrors the Sessions
-// list's Edits column. Must be checked before the tool-prefix rule.
-const EDIT_TOOL_NAMES = new Set([
-  'tool.Edit', 'tool.Write', 'tool.MultiEdit', 'tool.NotebookEdit', 'tool.apply_patch',
-])
-
-function categoryOf(span) {
-  const n = span.name || ''
-  if (n === 'prompt') return 'prompt'
-  if (n === 'assistant_response') return 'assistant'
-  if (n === 'assistant.thinking') return 'thinking'
-  if (span.attributes?.server_side || n === 'tool.advisor') return 'advisor'
-  if (EDIT_TOOL_NAMES.has(n)) return 'edit'
-  if (n.startsWith('tool.') || n.startsWith('pre_tool.')) return 'tool'
-  if (n === 'skill.read' || n === 'skill.invoke' || n === 'skill.launch') return 'skill'
-  if (n === 'rule.check') return 'rule'
-  return 'other'
-}
-
-// Chip palette mirrors the dot color used per row. Soft tints for the
-// chip background, saturated dots — matches the sketch.
-const FILTERS = [
-  { id: 'all',       label: 'All',       dotClass: 'bg-slate-400' },
-  { id: 'prompt',    label: 'prompt',    dotClass: 'bg-purple-500' },
-  { id: 'assistant', label: 'assistant', dotClass: 'bg-emerald-500' },
-  { id: 'thinking',  label: 'thinking',  dotClass: 'bg-amber-400' },
-  { id: 'tool',      label: 'tool',      dotClass: 'bg-blue-500' },
-  { id: 'advisor',   label: 'advisor',   dotClass: 'bg-violet-500' },
-  { id: 'skill',     label: 'skill',     dotClass: 'bg-green-500' },
-  { id: 'edit',      label: 'edit',      dotClass: 'bg-orange-500' },
-  { id: 'rule',      label: 'rule',      dotClass: 'bg-red-500' },
-  { id: 'other',     label: 'other',     dotClass: 'bg-slate-400' },
-]
+// Category split + chip palette + edit-tool set are shared with the /live
+// mobile card — one source in utils/traceFormatters.js (categoryOf,
+// EDIT_TOOL_NAMES, SPAN_CATEGORIES). FILTERS keeps its local name so the
+// template stays unchanged.
+const FILTERS = SPAN_CATEGORIES
 
 // Pre-compute spans in chronological order. The terminal view is a flat
 // log so we ignore parent_id for ordering — caret prefixes carry the
@@ -95,25 +63,6 @@ const counts = computed(() => {
   return c
 })
 
-function matchesSearch(span, q) {
-  if (!q) return true
-  const a = span.attributes || {}
-  const hay = [
-    span.name,
-    a.file_path,
-    a.tool_name,
-    a.command_preview,
-    a.pattern,
-    a.skill_id,
-    a.rule_id,
-    a.plan_filename,
-    a.text,
-    a.questions && a.questions.map(q => q.question).join(' '),
-    a.answers && Object.values(a.answers).join(' '),
-  ].filter(Boolean).join(' ').toLowerCase()
-  return hay.includes(q.toLowerCase())
-}
-
 const ROW_CAP = 400 // soft cap on rendered rows; footer notes the rest
 
 const filteredSpans = computed(() => {
@@ -121,7 +70,7 @@ const filteredSpans = computed(() => {
   const cat = activeFilter.value
   return orderedSpans.value.filter(s => {
     if (cat !== 'all' && categoryOf(s) !== cat) return false
-    if (!matchesSearch(s, q)) return false
+    if (!spanMatchesSearch(s, q)) return false
     return true
   })
 })

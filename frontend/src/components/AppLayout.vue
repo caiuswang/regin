@@ -72,6 +72,7 @@ const navGroups = computed(() => [
     label: 'Observability',
     links: [
       { to: '/trace', label: 'Trace', icon: 'trace' },
+      { to: '/live', label: 'Live', icon: 'live' },
       { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox', badge: () => inboxUnread.value },
       { to: '/memory', label: 'Memory', exact: true, icon: 'patterns' },
       { to: '/grades', label: 'Grades', exact: true, icon: 'rules' },
@@ -156,6 +157,7 @@ const userInitials = computed(() => {
                 <template v-else-if="link.icon === 'skills'"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></template>
                 <template v-else-if="link.icon === 'prompts'"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></template>
                 <template v-else-if="link.icon === 'trace'"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></template>
+                <template v-else-if="link.icon === 'live'"><circle cx="12" cy="12" r="2"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M4.9 19.1C1 15.2 1 8.8 4.9 4.9M19.1 4.9c3.9 3.9 3.9 10.3 0 14.2"/></template>
                 <template v-else-if="link.icon === 'inbox'"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></template>
                 <template v-else-if="link.icon === 'audit'"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/></template>
                 <template v-else-if="link.icon === 'rules'"><path d="M4 7h16M4 12h10M4 17h7"/></template>
