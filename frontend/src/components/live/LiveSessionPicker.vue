@@ -5,6 +5,10 @@
 // change). Active sessions sort first, each group newest-last_seen-first;
 // isActiveSession/parseLocalIso are the ONE shared source for that rule
 // (utils/sessionActivity.js) — do not reimplement here.
+// List query uses kind=real (Playwright/test fixtures excluded); a direct
+// /live/<test-session-id> deep-link still resolves via useLiveTail's own
+// kind=all lookup, so switching TO a test session isn't possible but
+// visiting one directly still works.
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -40,7 +44,7 @@ function rowTitle(row) {
 
 onMounted(async () => {
   try {
-    const data = await api.get('/sessions?kind=all&size=20')
+    const data = await api.get('/sessions?kind=real&size=20')
     rows.value = data.sessions || []
   } catch (e) {
     error.value = e?.message || 'Failed to load sessions.'
