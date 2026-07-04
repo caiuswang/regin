@@ -1940,12 +1940,6 @@ details summary {
     height: 100%;
     overflow: hidden;
 }
-/* /live route: freeze the app-shell scroll so only .live-tail scrolls. */
-.content-scroll-fixed {
-    overflow: hidden;
-    padding: 0;
-    overscroll-behavior: contain;
-}
 .live-card {
     position: relative;
     display: flex;
@@ -2319,6 +2313,22 @@ details summary {
 }
 .live-send-btn { flex-shrink: 0; width: 36px; height: 36px; }
 .live-composer-steer .live-send-btn { width: 32px; height: 32px; }
+/* Esc recovery button — quiet furniture beside send; dismisses a harness
+   overlay that has swallowed composer input. */
+.live-esc-btn {
+    flex-shrink: 0;
+    height: 36px;
+    padding: 0 9px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--color-fg-subtle);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+}
+.live-esc-btn:hover { color: var(--color-fg-muted); background: var(--color-surface-2); }
+.live-composer-steer .live-esc-btn { height: 32px; }
 .live-bridge-meta {
     display: flex;
     align-items: center;

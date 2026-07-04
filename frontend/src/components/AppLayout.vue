@@ -219,7 +219,7 @@ const userInitials = computed(() => {
           <router-link to="/" class="mobile-brand no-underline">regin</router-link>
         </div>
 
-        <div class="content-scroll">
+        <div class="content-scroll" :class="{ 'content-scroll-fixed': route.name === 'live' }">
           <FlashMessage />
           <router-view />
         </div>
@@ -606,8 +606,18 @@ const userInitials = computed(() => {
   padding: 1.5rem 2rem;
 }
 
+/* /live route (LiveSessionView): freeze the app-shell scroll and drop the
+   padding so the card fills the viewport exactly and only .live-tail scrolls.
+   Compound selector so it beats the scoped `.content-scroll` above. */
+.content-scroll.content-scroll-fixed {
+  overflow: hidden;
+  padding: 0;
+  overscroll-behavior: contain;
+}
+
 @media (max-width: 767px) {
   .content-scroll { padding: 1rem; }
+  .content-scroll.content-scroll-fixed { padding: 0; }
 }
 
 /* Custom scrollbars within sidebar/content */

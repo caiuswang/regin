@@ -80,8 +80,21 @@ export function useLiveTail(getRouteId) {
     return gen !== epoch || stopped
   }
 
-  const ended = computed(() =>
-    meta.value.status === 'ended' || !!meta.value.ended_at)
+  // A resumed session (exit tmux → `claude --resume` in a fresh pane) keeps
+  // its stale `ended_at` + `prompt_input_exit` reason, but the server flips
+  // `status` back to 'active' and advances `last_seen` past the recorded end.
+  // Trust `status` first; only honour `ended_at` when no activity followed it
+  // — otherwise the card wrongly reads "✓ finished" mid-run.
+  const ended = computed(() => {
+    const m = meta.value
+    if (m.status === 'active') return false
+    if (m.status === 'ended') return true
+    if (!m.ended_at) return false
+    const e = Date.parse(m.ended_at)
+    const s = Date.parse(m.last_seen)
+    // last_seen more than 1s past ended_at ⇒ resumed, not ended.
+    return !(Number.isFinite(e) && Number.isFinite(s) && s > e + 1000)
+  })
 
   // Same rule as the Sessions table's green badge (utils/sessionActivity):
   // status='active' → active, status='ended' → not, anything else falls
@@ -162,12 +175,19 @@ export function useLiveTail(getRouteId) {
   function applySummary(data) {
     const patch = {}
     // bridge_reachable / bridge_pane ride the same poll (no extra client
-    // polling loop) — they gate the NOW zone's bridge composer.
+    // polling loop) — they gate the NOW zone's bridge composer. server_now
+    // is the server's wall-clock at read time — the NOW-zone elapsed anchors
+    // to it so a viewer in a different timezone doesn't leak the offset.
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
-      'bridge_reachable', 'bridge_pane']
+      'bridge_reachable', 'bridge_pane', 'server_now']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }
+    // Phone-clock stamp of when this server_now landed — only DELTAS of the
+    // phone clock are taken from it (never an absolute compare to a server
+    // timestamp), so the elapsed ticks between polls without reintroducing
+    // the timezone skew.
+    if ('server_now' in data) patch.server_now_at = Date.now()
     meta.value = { ...meta.value, ...patch }
     if (data.span_count_total != null) spanCountTotal.value = data.span_count_total
   }

@@ -641,6 +641,13 @@ def _session_summary(trace_id: str) -> dict:
         'started_at': started_at,
         'ended_at': ended_at,
         'last_seen': last_seen,
+        # Server wall-clock at read time (naive local, same basis as every
+        # span start_time). The /live NOW-zone elapsed anchors to THIS instead
+        # of the viewer's Date.now(): span timestamps are the server's local
+        # time, so a phone in a different timezone subtracting its own clock
+        # leaks the offset (a tool reads "4h00m"). server_now − start_time is
+        # server−server, so the offset cancels.
+        'server_now': datetime.now().isoformat(),
         'title': title,
         'title_source': title_source,
     }

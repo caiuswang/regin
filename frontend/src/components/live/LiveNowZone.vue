@@ -26,6 +26,7 @@ import {
   toolDisplayName,
 } from '../../utils/traceFormatters.js'
 import { stripMarkdown, findLastSpan } from '../../utils/liveRows.js'
+import { parseLocalIso } from '../../utils/sessionActivity.js'
 
 const props = defineProps({
   spans: { type: Array, default: () => [] },
@@ -34,6 +35,12 @@ const props = defineProps({
   sessionId: { type: String, default: '' },
   bridgeReachable: { type: Boolean, default: false },
   bridgePane: { type: String, default: '' },
+  // Server wall-clock at the last poll (naive local, same basis as span
+  // start_time) + the phone-clock ms when it landed. The elapsed anchors to
+  // these so a viewer in a different timezone than the server doesn't leak
+  // the offset into the readout (see `elapsed`).
+  serverNow: { type: String, default: '' },
+  serverNowAt: { type: Number, default: 0 },
 })
 const emit = defineEmits(['open-response', 'open-question', 'state-change'])
 
@@ -54,7 +61,7 @@ const livePrompt = computed(() => findLastSpan(props.spans, s =>
 const lastResponse = computed(() => findLastSpan(props.spans, s =>
   s.name === 'assistant_response' && s.attributes?.text))
 
-const state = computed(() => {
+const rawState = computed(() => {
   if (pendingPerm.value) return 'permission'
   if (pendingQuestion.value) return 'question'
   if (pendingTool.value) return 'tool'
@@ -63,6 +70,24 @@ const state = computed(() => {
   if (props.active && props.bridgeReachable) return 'idle'
   return 'response'
 })
+
+// 'idle' is inferred from the ABSENCE of any pending span — but a turn also
+// has no pending span mid-flight: between one tool's PostToolUse and the
+// next tool's PreToolUse, and while the agent thinks / composes a response.
+// At a 4s poll cadence those gaps would flash "idle". Debounce the flip INTO
+// idle: require the idle condition to hold before we believe the agent is
+// actually waiting; until then keep showing the working 'response' view.
+const IDLE_SETTLE_MS = 6000
+const idleReady = ref(false)
+let idleTimer = null
+watch(() => rawState.value === 'idle', (isIdle) => {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+  if (!isIdle) { idleReady.value = false; return }
+  idleTimer = setTimeout(() => { idleReady.value = true; idleTimer = null }, IDLE_SETTLE_MS)
+}, { immediate: true })
+
+const state = computed(() =>
+  (rawState.value === 'idle' && !idleReady.value) ? 'response' : rawState.value)
 // The view mirrors this state for the header dot/label and the caret
 // (idle suppresses both the pulse and the caret).
 watch(state, s => emit('state-change', s), { immediate: true })
@@ -124,14 +149,50 @@ watch(
   },
   { immediate: true },
 )
-onUnmounted(stopTick)
+onUnmounted(() => {
+  stopTick()
+  if (idleTimer) clearTimeout(idleTimer)
+})
+
+// Newest activity timestamp across the loaded tail — the reference for
+// deciding whether a PENDING span is still the live step or has been
+// overtaken by fresher spans (a subagent's streaming children, or a newer
+// completed tool while an old placeholder was never retired).
+const newestSpanTime = computed(() => {
+  let mx = 0
+  for (const s of props.spans) {
+    const t = s.start_time ? (parseLocalIso(s.start_time)?.getTime() || 0) : 0
+    if (t > mx) mx = t
+  }
+  return mx
+})
+// A genuinely-running tool IS the newest span (delta ≈ 0). A subagent
+// parent (tool.Task) or an orphaned placeholder stays PENDING while newer
+// spans stream past it — timing those reports the whole subagent runtime /
+// a dead placeholder's age, so the clock reads "much bigger than it is".
+const STALE_PENDING_MS = 45000
+
 const elapsed = computed(() => {
   const span = pendingPerm.value || pendingQuestion.value || pendingTool.value
-  if (!span?.start_time) return ''
-  const secs = Math.floor((nowMs.value - new Date(span.start_time).getTime()) / 1000)
+  const startMs = span?.start_time ? parseLocalIso(span.start_time)?.getTime() : NaN
+  if (!Number.isFinite(startMs)) return ''
+  // Suppress the clock when fresher activity exists beyond this span — the
+  // elapsed would time a subagent parent / orphan, not the current step.
+  // (newestSpanTime and startMs are both server-local, so this delta is
+  // timezone-safe.)
+  if (newestSpanTime.value - startMs > STALE_PENDING_MS) return ''
+  // Anchor "now" to the server's clock, NOT the viewer's: span timestamps
+  // are the server's local wall-clock, so a phone in a different timezone
+  // subtracting its own Date.now() leaks the offset (a tool reads "4h00m").
+  // (server_now − start) is server−server so the offset cancels; the phone
+  // delta since server_now landed only makes the readout tick.
+  const serverNowMs = props.serverNow
+    ? parseLocalIso(props.serverNow)?.getTime() : NaN
+  const secs = (Number.isFinite(serverNowMs) && props.serverNowAt)
+    ? Math.floor(((serverNowMs - startMs) + (nowMs.value - props.serverNowAt)) / 1000)
+    : Math.floor((nowMs.value - startMs) / 1000) // fallback: same-TZ (dev)
   // Shared rollover formatter: a long-running pending tool reads as
-  // "8m09s" / "1h05m", never a raw "489s" — and because it is anchored to
-  // span.start_time, a fresh page load shows the full elapsed time.
+  // "8m09s" / "1h05m", never a raw "489s".
   return fmtElapsedSeconds(secs)
 })
 </script>

@@ -105,6 +105,28 @@ async function send() {
   }
 }
 
+// Recovery: inject an Escape keystroke into the pane. A harness overlay
+// (slash-command help, a menu) swallows the composer's typed text, so a
+// normal send fails its ack — one Esc dismisses the overlay so typing works
+// again. Independent of the draft (nothing to type) and of `canSend`.
+async function sendEsc() {
+  if (delivering.value) return
+  clearConfirmTimer()
+  phase.value = 'delivering'
+  let res = null
+  try {
+    res = await api.post(`/sessions/${props.sessionId}/bridge-key`, { key: 'Escape' })
+  } catch { res = null }
+  if (res && res.delivered) {
+    phase.value = 'delivered'
+    detail.value = res.detail || 'Esc sent'
+    confirmTimer = setTimeout(() => { phase.value = 'ready' }, 2000)
+  } else {
+    phase.value = 'failed'
+    detail.value = res?.detail || res?.msg || 'Esc failed'
+  }
+}
+
 // Current caret offset in the textarea (end-of-text when unfocused/unknown).
 function caret() {
   return taEl.value?.selectionStart ?? draft.value.length
@@ -186,6 +208,16 @@ function onKeydown(e) {
       @click="onCaretSync"
       @blur="menu.close"
     ></textarea>
+    <Button
+      variant="ghost"
+      size="sm"
+      class="live-esc-btn"
+      aria-label="Send Escape to dismiss a stuck terminal overlay"
+      title="Dismiss a stuck overlay (sends Esc to the terminal)"
+      :disabled="delivering"
+      data-testid="live-composer-esc"
+      @click="sendEsc"
+    >esc</Button>
     <Button
       variant="primary"
       size="icon"
