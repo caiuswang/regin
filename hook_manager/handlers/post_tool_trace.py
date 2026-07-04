@@ -804,17 +804,24 @@ def _remember_lesson(payload, tool_input: dict, attrs: dict,
         import lib.memory as memory
         if not memory.enabled():
             return
+        from lib.memory import retitle
         from lib.memory.scoping import resolve_write_scope
         from lib.memory.store import title_from_body
         body = str(tool_input.get('message', ''))
         # A lesson's title is mandatory; if the agent didn't supply one,
-        # derive it from the body so the lesson is still captured (not
-        # silently dropped by the guard below).
+        # derive a placeholder from the body so the lesson is still captured
+        # (not silently dropped by the guard below) — and tag it `auto-title`
+        # so `regin memory retitle` can later distill a real one-line rule.
+        # A truncated body-slice recalls markedly worse than a crafted title.
+        supplied_title = (tool_input.get('title') or '').strip()
+        tags = ['send_to_user']
+        if not supplied_title:
+            tags.append(retitle.AUTO_TITLE_TAG)
         common = dict(
             kind='lesson',
-            title=tool_input.get('title') or title_from_body(body),
+            title=supplied_title or title_from_body(body),
             scope=resolve_write_scope(payload.cwd),
-            tags=['send_to_user'],
+            tags=tags,
             source_trace_id=payload.session_id,
             source_span_id=span_id,
             source_agent_id=attrs.get('agent_id'),

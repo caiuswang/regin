@@ -311,6 +311,35 @@ def cmd_backfill_titles() -> None:
     print(f"backfilled {fixed} lesson title(s)")
 
 
+@memory_app.command("retitle")
+def cmd_retitle(
+    scope: Optional[str] = typer.Option(
+        None, "--scope", help="Limit to one repo scope (e.g. repo:regin)"),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", help="Max lessons to retitle this run"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show old→new titles without writing"),
+) -> None:
+    """LLM-upgrade auto-derived lesson titles into one-line rules.
+
+    A lesson captured via `send_to_user(type=lesson)` without a `title` gets a
+    truncated body-slice placeholder (tagged `auto-title`) that recalls poorly
+    and reads badly in every list. This distils a real imperative headline from
+    each such body, in batches, and rewrites it in place (FTS refreshes now; the
+    dense embedding self-heals on next recall). Needs an external agent
+    configured, else it no-ops."""
+    import lib.memory as memory
+    from lib.memory.adapters import resolve_retitler
+    from lib.memory.retitle import retitle_memories
+    result = retitle_memories(memory.get_store(), resolve_retitler(),
+                              scope=scope, limit=limit, dry_run=dry_run)
+    print(f"scanned={result.scanned} candidates={result.candidates} "
+          f"retitled={result.retitled} batches={result.batches} "
+          f"unparsed={result.unparsed}{' (dry run)' if dry_run else ''}")
+    for ch in result.changes:
+        print(f"  {ch['id'][:8]}  {ch['old'][:60]!r}\n         → {ch['new']!r}")
+
+
 @memory_app.command("export-tree")
 def cmd_export_tree(
     repo: Optional[str] = typer.Option(

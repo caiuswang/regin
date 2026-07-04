@@ -39,7 +39,11 @@ in `lib/agent_messages/push/` and are pluggable. Internals: *Agent Messages* in 
 cross-session **agent memory** (`lib/memory/`, browsable at `/memory`, auto-injected as
 `<recalled_experience>` into future matching prompts, pulled deeper via the memory `recall`
 MCP tool). Send one whenever you learn something a future session should know — a gotcha,
-a non-obvious root cause, a decision and its why. To **correct or refresh** an existing
+a non-obvious root cause, a decision and its why. **Always pass a `title` on a lesson**: it
+becomes the memory's permanent one-line rule — the headline every recall result, the
+`/memory` list, and the topic tree key off, and the text the ranker matches queries against.
+State the rule imperatively in ≤80 chars ("Restart vite after proxy edits", not "Vite issue");
+omit it and regin backfills a truncated body-slice that recalls markedly worse. To **correct or refresh** an existing
 lesson instead of stacking a near-duplicate, pass `supersedes=<memory-id>`: it retires the
 old memory (chained via `superseded_by`, hidden from recall but kept for audit) and
 replaces it — the non-destructive alternative to `regin memory forget` (a hard delete). The

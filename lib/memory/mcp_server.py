@@ -43,7 +43,8 @@ def _format_hit(hit) -> str:
 
 
 @mcp.tool()
-def recall(query: str, top_k: int = 5, scope: str = "") -> str:
+def recall(query: str, top_k: int = 5, scope: str = "",
+           reinforce: bool = True) -> str:
     """Recall experience from regin's cross-session agent memory.
 
     Use mid-task when past sessions may have hit the same problem:
@@ -58,6 +59,12 @@ def recall(query: str, top_k: int = 5, scope: str = "") -> str:
         top_k: Max memories to return (default 5).
         scope: Optional repo scope filter like "repo:regin"; empty
             searches every scope.
+        reinforce: Whether this pull counts as usage. A genuine pull
+            (default) bumps the hit's recall_count/last_recalled — the
+            usefulness signal that feeds quality ranking and the forget
+            rule. Pass False for AUDIT / curation / eval sweeps (e.g.
+            surveying what's stored, scoring recall quality) so the
+            measurement never inflates the very signal it measures.
 
     Returns:
         Matching memories (best first) with kind, scope, score, and the
@@ -67,7 +74,8 @@ def recall(query: str, top_k: int = 5, scope: str = "") -> str:
     if not memory.enabled():
         return "agent memory is disabled (settings.agent_memory.enabled)"
     hits = memory.recall(query, top_k=max(1, min(int(top_k), 20)),
-                         scope=scope or None, mode="auto")
+                         scope=scope or None, mode="auto",
+                         reinforce=bool(reinforce))
     if not hits:
         return "no stored experience matched this query"
     return "\n\n".join(_format_hit(h) for h in hits)

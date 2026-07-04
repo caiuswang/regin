@@ -145,6 +145,14 @@ def resolve_topic_classifier() -> ExternalAgentLLM:
     return ExternalAgentLLM(surface_id=TOPIC_CLASSIFY_SURFACE_ID)
 
 
+def resolve_retitler() -> ExternalAgentLLM:
+    """The LLM behind `memory retitle`: plain text in, JSON out — it reads a
+    lesson body and returns a one-line rule title, granting no tools (nothing
+    to fetch)."""
+    from lib.prompts.surfaces.memory import RETITLE_SURFACE_ID
+    return ExternalAgentLLM(surface_id=RETITLE_SURFACE_ID)
+
+
 def resolve_proposal_reviewer() -> ExternalAgentLLM:
     """The LLM behind proposal review notes: granted read-only repo tools so
     it can verify the draft against the current refs itself (agentic review),
@@ -157,4 +165,5 @@ def resolve_proposal_reviewer() -> ExternalAgentLLM:
 
 
 __all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller",
-           "resolve_topic_classifier", "resolve_proposal_reviewer"]
+           "resolve_topic_classifier", "resolve_retitler",
+           "resolve_proposal_reviewer"]

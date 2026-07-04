@@ -29,6 +29,7 @@ EXPAND_SURFACE_ID = "memory-expand"
 SYNTHESIS_SURFACE_ID = "memory-reflect-synthesis"
 DIGEST_SURFACE_ID = "memory-reflect-digest"
 CONTRADICTION_SURFACE_ID = "memory-reflect-contradiction"
+RETITLE_SURFACE_ID = "memory-retitle"
 
 
 # --- Memory distiller (lib/memory/distill.py::_compose_prompt) ---------------
@@ -233,6 +234,25 @@ _DEFAULT_BODY_DIGEST = (
 )
 
 
+# --- Title distiller (lib/memory/retitle.py::_compose_prompt) ----------------
+# Each lesson below was captured without an explicit title, so it currently
+# carries a truncated slice of its own first line as a placeholder. Re-derive
+# a real one-line rule from the body — the headline recall, lists, and the
+# topic tree key off, and the text the ranker matches queries against.
+_DEFAULT_BODY_RETITLE = (
+    "Each block below is a coding-session lesson whose TITLE is missing — it "
+    "currently holds a truncated slice of the body as a placeholder. Write a "
+    "better title for each: the ONE rule the lesson teaches, stated as a "
+    "single imperative line a future session can scan (\"Restart vite after "
+    "proxy edits\", not \"Vite issue\"). Concrete over vague; <= 80 chars; no "
+    "trailing ellipsis; do not just copy the body's first line.\n\n"
+    "Respond with a JSON array and NOTHING else — one object per block, "
+    "keyed by its `i`:\n"
+    '  [{"i": 0, "title": "the rule in one line, <= 80 chars"}, ...]\n\n'
+    "{{entries}}"
+)
+
+
 register_surface(
     DISTILL_SURFACE_ID,
     label="Memory — session distiller",
@@ -330,11 +350,28 @@ register_surface(
     ),
 )
 
+register_surface(
+    RETITLE_SURFACE_ID,
+    label="Memory — title distiller",
+    area="memory",
+    default_body=_DEFAULT_BODY_RETITLE,
+    description=(
+        "Re-derives a proper one-line rule TITLE for lessons that were "
+        "captured without one (a truncated body-slice placeholder). Batched "
+        "bodies in, JSON titles out (`lib/memory/retitle.py`)."
+    ),
+    applies_to=("memory",),
+    variables=(
+        PromptVariable("entries", "The lessons to retitle, one `<lesson i=n>…</lesson>` block each."),
+    ),
+)
+
 __all__ = [
     "CONTRADICTION_SURFACE_ID",
     "DIGEST_SURFACE_ID",
     "DISTILL_SURFACE_ID",
     "EXPAND_SURFACE_ID",
+    "RETITLE_SURFACE_ID",
     "SYNTHESIS_SURFACE_ID",
     "TOPIC_CLASSIFY_SURFACE_ID",
 ]

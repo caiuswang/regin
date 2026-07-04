@@ -46,8 +46,17 @@ def send_to_user(
             whether the message fans out to the configured webhook.
             "lesson" additionally saves the message into regin's
             cross-session agent memory, so send one whenever you learn
-            something a future session should know.
-        title: Optional short heading for the message card.
+            something a future session should know. When type="lesson",
+            ALWAYS pass `title` — see below.
+        title: Short heading for the message card. For type="lesson" this
+            is load-bearing, not cosmetic: the title becomes the memory's
+            permanent one-line rule — the headline every recall result,
+            the /memory list, and the topic tree key off, and the signal
+            the ranker matches queries against. State the rule in one
+            imperative line, ≤80 chars ("Restart vite after proxy edits",
+            not "Vite issue"). Omit it and regin falls back to a truncated
+            slice of the body — a mid-sentence fragment that recalls ~5×
+            worse. Optional (cosmetic) for every other type.
         key: Optional supersede key, scoped to this session. Re-sending
             with the same key updates that message in place instead of
             stacking a new card — use it for a single progress line that
