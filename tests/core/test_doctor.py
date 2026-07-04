@@ -354,3 +354,39 @@ def _patch_settings_path(monkeypatch, settings_file):
         return real_expanduser(p)
 
     monkeypatch.setattr("os.path.expanduser", _redir)
+
+
+# ── _agent_bridge_items ──────────────────────────────────────
+
+def test_agent_bridge_items_disabled_single_optional_row(monkeypatch):
+    monkeypatch.setattr(doctor._settings.agent_bridge, "enabled", False)
+    items = doctor._agent_bridge_items(doctor._check_tool)
+    assert [i["id"] for i in items] == ["bridge_enabled"]
+    assert items[0]["present"] is False
+    assert items[0]["optional"] is True
+    assert "settings.local.json" in items[0]["install_hint"]
+
+
+def test_agent_bridge_items_enabled_reports_all_conditions(monkeypatch):
+    monkeypatch.setattr(doctor._settings.agent_bridge, "enabled", True)
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setattr(
+        "lib.agent_bridge.store.list_reachable_sessions",
+        lambda: [{"trace_id": "t1"}, {"trace_id": "t2"}],
+    )
+    items = {i["id"]: i for i in doctor._agent_bridge_items(doctor._check_tool)}
+    assert items["bridge_enabled"]["present"] is True
+    assert items["bridge_env"]["present"] is True
+    assert items["bridge_panes"]["present"] is True
+    assert items["bridge_panes"]["version"] == "2 registered"
+    assert "bridge_tmux" in items
+
+
+def test_agent_bridge_items_env_unset_and_no_panes(monkeypatch):
+    monkeypatch.setattr(doctor._settings.agent_bridge, "enabled", True)
+    monkeypatch.delenv("REGIN_BRIDGE", raising=False)
+    monkeypatch.setattr("lib.agent_bridge.store.list_reachable_sessions", lambda: [])
+    items = {i["id"]: i for i in doctor._agent_bridge_items(doctor._check_tool)}
+    assert items["bridge_env"]["present"] is False
+    assert items["bridge_panes"]["present"] is False
+    assert items["bridge_panes"]["version"] == "0 registered"

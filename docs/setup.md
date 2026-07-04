@@ -164,6 +164,47 @@ regin users delete alice                              # delete user
 
 Admins can also manage roles from the web UI at `/account`.
 
+## Agent bridge (steer live sessions from /live)
+
+Off by default. When enabled, the `/live` session page renders a composer that
+sends a prompt into an idle Claude Code session — or a steering message into a
+running one — via guarded tmux keystroke injection. Design and security model:
+[agent-bridge-design.md](./agent-bridge-design.md).
+
+All four conditions must hold before the composer appears:
+
+1. **Enable the feature** — in the gitignored `config/settings.local.json`
+   (`scripts/setup.sh` offers this when creating the file):
+
+   ```json
+   "agent_bridge": { "enabled": true }
+   ```
+
+   The `token` field is only for headless callers of `/api/bridge/*`; the web
+   composer authenticates with your normal login and never needs it.
+
+2. **Export the opt-in env var in the shell that launches claude.** Pane
+   registration is per-session consent: the SessionStart hook reads
+   `REGIN_BRIDGE` from the claude process's environment at launch, so a
+   one-off prefix in another terminal does nothing. Set it at profile level:
+
+   ```fish
+   set -Ux REGIN_BRIDGE 1         # fish (universal, survives restarts)
+   ```
+
+   ```bash
+   export REGIN_BRIDGE=1          # zsh/bash — add to your profile
+   ```
+
+3. **Run claude inside tmux.** Delivery is tmux `send-keys`; a session
+   launched outside tmux never registers a pane.
+
+4. **Log in with an editor-role account.** Sending is gated `require_editor`
+   (see [User roles](#user-roles)); viewers see the page but cannot send.
+
+`regin doctor` has an *Agent bridge* group that checks each condition and
+reports how many sessions are currently reachable.
+
 ## CLI reference
 
 ```bash

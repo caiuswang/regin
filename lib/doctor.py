@@ -258,6 +258,41 @@ def _rule_engine_items(check_tool, check_module) -> list[dict]:
     return items
 
 
+def _agent_bridge_items(check_tool) -> list[dict]:
+    """Doctor rows mirroring the /live composer's render conditions: the
+    feature flag, the launch-shell opt-in env var, tmux on PATH, and at
+    least one registered reachable pane. Every row is optional — the
+    bridge ships disabled (see docs/setup.md, *Agent bridge*).
+    """
+    if not _settings.agent_bridge.enabled:
+        return [{'id': 'bridge_enabled', 'label': 'bridge enabled',
+                 'present': False, 'optional': True,
+                 'install_hint': 'set {"agent_bridge": {"enabled": true}} in '
+                                 'config/settings.local.json — see docs/setup.md'}]
+    env_on = os.environ.get('REGIN_BRIDGE', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    items = [
+        {'id': 'bridge_enabled', 'label': 'bridge enabled', 'present': True},
+        {'id': 'bridge_env', 'label': 'REGIN_BRIDGE in this shell',
+         'present': env_on, 'optional': True,
+         'install_hint': 'export REGIN_BRIDGE=1 in the shell that launches '
+                         'claude (fish: set -Ux REGIN_BRIDGE 1)'},
+        {'id': 'bridge_tmux', 'label': 'tmux',
+         **check_tool('tmux', ['tmux', '-V']),
+         'optional': True, 'install_hint': 'brew install tmux'},
+    ]
+    try:
+        from lib.agent_bridge.store import list_reachable_sessions
+        n = len(list_reachable_sessions())
+        items.append({'id': 'bridge_panes', 'label': 'reachable panes',
+                      'present': n > 0, 'version': f'{n} registered', 'optional': True,
+                      'install_hint': 'launch claude inside tmux with REGIN_BRIDGE=1 set'})
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash a row
+        items.append({'id': 'bridge_panes', 'label': 'reachable panes',
+                      'present': False, 'optional': True,
+                      'install_hint': f'registry query failed: {exc}'})
+    return items
+
+
 def _version(cmd: list[str]) -> str:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -379,6 +414,9 @@ def run_checks() -> dict:
     topic_sync = _topic_sync_items()
     if topic_sync:
         groups.append({'name': 'Topic graph sync (per repo)', 'items': topic_sync})
+
+    groups.append({'name': 'Agent bridge (web steering)',
+                   'items': _agent_bridge_items(_check_tool)})
 
     groups.append({'name': f'{provider.display_name} hooks (script paths in {provider.hook_settings_path()})', 'items': [
         {

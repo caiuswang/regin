@@ -97,7 +97,50 @@
     ],
     "external_agent": null
   },
+  "agent_memory": {
+    "topic_route_inject": true,
+    "negative_demotion_weight": 0.3,
+    "topic_negative_suppress_sim": 0.82,
+    "enabled": true,
+    "auto_inject": false,
+    "dense_enabled": true,
+    "scope_policy": "per-repo-tagged",
+    "distill_min_importance": 0.3,
+    "auto_approve_importance": 0.85,
+    "recall_top_k": 5,
+    "recall_min_score": 0.25,
+    "recall_quality_weighting": true,
+    "recall_mode": "inline",
+    "recall_recency_half_life_days": 30.0,
+    "inject_top_k": 3,
+    "inject_max_chars": 2000,
+    "inject_min_overlap": 3,
+    "inject_dedup_session": true,
+    "inject_dense_via_server": true,
+    "inject_server_url": "http://127.0.0.1:8321",
+    "inject_server_timeout_seconds": 3.0,
+    "trace_recall": true,
+    "inject_skip_commands": [
+      "/goal",
+      "/goal-verified",
+      "/goal-verified-treenav"
+    ],
+    "topic_context_max_chars": 600,
+    "topic_route_querylog_min_queries": 150,
+    "topic_route_querylog_floor": 0.2,
+    "forget_after_days": 45,
+    "dedup_cosine_threshold": 0.92,
+    "dedup_text_threshold": 0.9,
+    "decay_ignored_threshold": 5,
+    "decay_injected_threshold": 8
+  },
   "topic_evolution": {
+    "evolution_enabled": true,
+    "mechanical_autoapply": false,
+    "auto_spawn_agents": true,
+    "content_drift_cosine": 0.6,
+    "drift_proposal_batch_max": 3,
+    "auto_proposal_expire_days": 14,
     "auto_review_notes": true
   }
 }

@@ -195,7 +195,9 @@ via the
 `lib.orm.engine.get_connection` idiom already used by
 `session_lifecycle.py`. Reachability is **opt-in**: the row is only marked
 bridge-reachable when the session was launched with the opt-in env var
-(`REGIN_BRIDGE=1`); default off.
+(`REGIN_BRIDGE=1`); default off. The operator-facing setup checklist
+(settings flag, env var, tmux, editor role) lives in
+[setup.md](./setup.md#agent-bridge-steer-live-sessions-from-live).
 
 ### Slice 2 — schema, settings, store
 

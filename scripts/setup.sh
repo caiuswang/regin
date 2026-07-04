@@ -110,6 +110,26 @@ EOF
 fi
 echo "  Local settings saved"
 
+# --- 4b. Agent bridge (optional) ---
+# Lets the /live page send prompts / steering messages into a running claude
+# session via tmux. Full checklist: docs/setup.md § Agent bridge.
+if ! grep -q '"agent_bridge"' config/settings.local.json; then
+  echo ""
+  read -rp "  Enable the agent bridge (steer live claude sessions from /live)? [y/N]: " BRIDGE_INPUT
+  if [[ "${BRIDGE_INPUT:-n}" =~ ^[Yy]$ ]]; then
+    .venv/bin/python - <<'PY'
+import json, pathlib
+p = pathlib.Path('config/settings.local.json')
+cfg = json.loads(p.read_text())
+cfg['agent_bridge'] = {'enabled': True}
+p.write_text(json.dumps(cfg, indent=2) + '\n')
+PY
+    echo "  agent_bridge.enabled=true written to config/settings.local.json"
+    echo "  Also required: export REGIN_BRIDGE=1 in the shell that launches claude,"
+    echo "  run claude inside tmux, and log in with an editor-role account."
+  fi
+fi
+
 # Discover repos
 .venv/bin/python cli/regin.py discover
 
