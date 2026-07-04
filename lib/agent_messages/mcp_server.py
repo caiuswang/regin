@@ -47,7 +47,12 @@ def send_to_user(
             "lesson" additionally saves the message into regin's
             cross-session agent memory, so send one whenever you learn
             something a future session should know. When type="lesson",
-            ALWAYS pass `title` — see below.
+            ALWAYS pass `title` — see below — and keep the `message`
+            body tight: the rule, its why, and how to apply it, roughly
+            ≤600 chars. It is stored verbatim (no distillation), so paste
+            no transcripts/logs; a future session recalls a crisp rule
+            faster than a wall of narration. Keep the code refs, file
+            paths, and counts that make it actionable — trim only padding.
         title: Short heading for the message card. For type="lesson" this
             is load-bearing, not cosmetic: the title becomes the memory's
             permanent one-line rule — the headline every recall result,

@@ -43,7 +43,9 @@ a non-obvious root cause, a decision and its why. **Always pass a `title` on a l
 becomes the memory's permanent one-line rule — the headline every recall result, the
 `/memory` list, and the topic tree key off, and the text the ranker matches queries against.
 State the rule imperatively in ≤80 chars ("Restart vite after proxy edits", not "Vite issue");
-omit it and regin backfills a truncated body-slice that recalls markedly worse. To **correct or refresh** an existing
+omit it and regin backfills a truncated body-slice that recalls markedly worse. Keep the **body**
+tight too — rule + why + how, ~≤600 chars; it's stored verbatim (no distillation), so paste no
+transcripts and trim padding, but keep the code refs / paths / counts that make it actionable. To **correct or refresh** an existing
 lesson instead of stacking a near-duplicate, pass `supersedes=<memory-id>`: it retires the
 old memory (chained via `superseded_by`, hidden from recall but kept for audit) and
 replaces it — the non-destructive alternative to `regin memory forget` (a hard delete). The
