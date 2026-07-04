@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from lib.agent_messages.push import base, registry
+from lib.agent_messages.push.lark import LarkChannel
 from lib.agent_messages.push.telegram import TelegramChannel
 from lib.agent_messages.push.webhook import WebhookChannel
 from lib.settings import settings
@@ -24,7 +25,8 @@ def _clean_channels(monkeypatch):
     "nothing configured" assertions fan out for real. Clear the keys each
     channel's `is_configured` reads; tests that need a channel set it back
     via `_cfg`."""
-    for key in ("webhook_url", "telegram_bot_token", "telegram_chat_id"):
+    for key in ("webhook_url", "telegram_bot_token", "telegram_chat_id",
+                "lark_webhook_url", "lark_secret"):
         monkeypatch.setattr(settings.agent_messages, key, None)
 
 
@@ -86,6 +88,35 @@ def test_telegram_only_sends_bot_api_text(monkeypatch, captured):
     assert payload["chat_id"] == "42"
     assert "[BLOCKER] Down" in payload["text"]
     assert "db gone" in payload["text"]
+
+
+def test_lark_only_sends_custom_bot_text(monkeypatch, captured):
+    _cfg(monkeypatch, lark_webhook_url="https://open.feishu.cn/hook/abc")
+    assert registry.maybe_dispatch(_msg(title="Down", body="db gone")) == "sent"
+    url, payload = captured[0]
+    assert url == "https://open.feishu.cn/hook/abc"
+    assert payload["msg_type"] == "text"
+    assert "[BLOCKER] Down" in payload["content"]["text"]
+    assert "db gone" in payload["content"]["text"]
+    # unsigned when no secret is configured
+    assert "sign" not in payload and "timestamp" not in payload
+
+
+def test_lark_signs_when_secret_set(monkeypatch, captured):
+    _cfg(monkeypatch, lark_webhook_url="https://open.feishu.cn/hook/abc",
+         lark_secret="s3cr3t")
+    assert registry.maybe_dispatch(_msg()) == "sent"
+    _, payload = captured[0]
+    # timestamp + sign folded into the body, and the sign is derived from
+    # that exact timestamp per Lark's HMAC-SHA256(empty, "{ts}\n{secret}").
+    assert payload["timestamp"] and payload["sign"]
+    import base64 as _b64
+    import hashlib
+    import hmac
+    expected = _b64.b64encode(hmac.new(
+        f"{payload['timestamp']}\ns3cr3t".encode(), b"",
+        hashlib.sha256).digest()).decode()
+    assert payload["sign"] == expected
 
 
 def test_fans_out_to_every_configured_channel(monkeypatch, captured):
@@ -152,7 +183,7 @@ def test_should_dispatch_reflects_gates(monkeypatch):
 
 
 def test_channel_classes_implement_contract():
-    for cls in (WebhookChannel, TelegramChannel):
+    for cls in (WebhookChannel, TelegramChannel, LarkChannel):
         c = cls()
         assert c.channel_id != "unknown"
         assert c.display_name

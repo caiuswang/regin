@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from lib.activity_log import get_activity_logger
 from lib.agent_messages.push.base import PushChannel, build_push_message
+from lib.agent_messages.push.lark import LarkChannel
 from lib.agent_messages.push.telegram import TelegramChannel
 from lib.agent_messages.push.webhook import WebhookChannel
 
@@ -23,6 +24,7 @@ log = get_activity_logger("agent_messages")
 _CHANNEL_CLASSES: tuple[type[PushChannel], ...] = (
     WebhookChannel,
     TelegramChannel,
+    LarkChannel,
 )
 
 

@@ -201,6 +201,23 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
     {"key": "telegram_timeout_seconds", "group": "Telegram", "type": "float",
      "min": 0, "step": 0.5, "label": "Telegram timeout (s)",
      "description": "How long to wait on the Telegram API call before giving up."},
+    {"key": "lark_webhook_url", "group": "Lark / Feishu", "type": "string",
+     "label": "Custom-bot webhook URL",
+     "description": "Incoming-webhook URL of a Lark group custom bot (group "
+                    "Settings → Bots → Add Bot → Custom Bot). Empty = Lark off. "
+                    "Stored machine-local."},
+    {"key": "lark_secret", "group": "Lark / Feishu", "type": "string",
+     "label": "Signing secret",
+     "description": "Only if the bot has signature verification enabled — each "
+                    "request is then signed. Leave empty otherwise."},
+    {"key": "lark_min_severity", "group": "Lark / Feishu", "type": "choice",
+     "options": ["progress", "note", "lesson", "result", "summary",
+                 "warning", "blocker"],
+     "label": "Minimum severity",
+     "description": "Only messages at or above this severity are sent to Lark."},
+    {"key": "lark_timeout_seconds", "group": "Lark / Feishu", "type": "float",
+     "min": 0, "step": 0.5, "label": "Lark timeout (s)",
+     "description": "How long to wait on the Lark webhook POST before giving up."},
     {"key": "push_permission_events", "group": "Interaction events", "type": "bool",
      "label": "Push permission prompts",
      "description": "Surface a pending permission prompt / AskUserQuestion as a "

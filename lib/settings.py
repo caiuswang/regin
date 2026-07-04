@@ -684,6 +684,16 @@ class AgentMessagesConfig(BaseModel):
     telegram_min_severity: _SEVERITY = "warning"
     telegram_timeout_seconds: float = 5.0
 
+    # ── Lark / Feishu channel (custom-bot incoming webhook) ──
+    # In a Lark group: Settings → Bots → Add Bot → Custom Bot → copy the
+    # webhook URL into `lark_webhook_url`. If you enable the bot's
+    # "signature verification", put that secret in `lark_secret` (the
+    # channel then signs each request); leave it None otherwise.
+    lark_webhook_url: str | None = None
+    lark_secret: str | None = None
+    lark_min_severity: _SEVERITY = "warning"
+    lark_timeout_seconds: float = 5.0
+
     # ── Interaction-event pushes (opt-in) ──
     # Beyond agent-authored `send_to_user`, surface the moments where the
     # agent is *blocked waiting on you* as inbox cards that also fan out to
