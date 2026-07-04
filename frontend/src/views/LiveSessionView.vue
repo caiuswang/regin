@@ -4,7 +4,7 @@
 // full-message / filter interactions live in bottom sheets. Data + poll
 // lifecycle live in useLiveTail; row semantics in utils/liveRows.js.
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
@@ -14,6 +14,7 @@ import MarkdownContent from '../components/MarkdownContent.vue'
 import LiveTailRow from '../components/live/LiveTailRow.vue'
 import LiveNowZone from '../components/live/LiveNowZone.vue'
 import LiveSheet from '../components/live/LiveSheet.vue'
+import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
 import { useLiveTail } from '../composables/useLiveTail.js'
 import { fmtClock, fmtDuration, terminalSpanLabel } from '../utils/traceFormatters.js'
 import {
@@ -22,6 +23,7 @@ import {
 } from '../utils/liveRows.js'
 
 const route = useRoute()
+const router = useRouter()
 const {
   sessionId, meta, spans, hasMoreOlder, earlierCount,
   loading, loadingOlder, error, ended, appendedSpans,
@@ -171,8 +173,14 @@ function closeSheet() {
   })
 }
 
+function onPickSession(row) {
+  closeSheet()
+  if (row.trace_id && row.trace_id !== sessionId.value) router.push('/live/' + row.trace_id)
+}
+
 const sheetTitle = computed(() => {
   if (sheetKind.value === 'filter') return 'Filter · loaded spans'
+  if (sheetKind.value === 'sessions') return 'Switch session'
   const s = sheetSpan.value
   if (!s) return ''
   const who = s.name === 'prompt' ? 'You' : 'Assistant'
@@ -263,6 +271,16 @@ onUnmounted(() => {
             variant="ghost"
             size="icon"
             class="live-hd-btn"
+            data-testid="live-switch"
+            aria-label="Switch session"
+            @click="openSheet('sessions')"
+          >
+            <Icon name="list" :size="14" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="live-hd-btn"
             data-testid="live-filter"
             aria-label="Filter and search spans"
             @click="openSheet('filter')"
@@ -345,6 +363,10 @@ onUnmounted(() => {
             </template>
           </dl>
           <p v-else class="live-empty">Loading attributes…</p>
+        </template>
+
+        <template v-else-if="sheetKind === 'sessions'">
+          <LiveSessionPicker :current-id="sessionId" @select="onPickSession" />
         </template>
 
         <template v-else-if="sheetKind === 'filter'">
