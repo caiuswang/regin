@@ -95,6 +95,7 @@ async function removeRepo(repo) {
     </header>
 
     <Card :no-padding="true">
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead>
           <tr>
@@ -135,6 +136,7 @@ async function removeRepo(repo) {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
 
     <Teleport to="body">

@@ -28,7 +28,7 @@ defineEmits(['activate'])
       <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
       <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
       <span class="text-slate-400 shrink-0 select-none w-3 text-center">{{ folding.diffExpanded(span.span_id) ? '▾' : '▸' }}</span>
-      <span class="font-mono text-slate-700 shrink-0">
+      <span class="font-mono text-slate-700 min-w-0 truncate">
         <span class="font-semibold">{{ diffOpLabel(span.attributes?.edit_op) }}</span><span class="text-slate-500">({{ diffFileName(span) }})</span>
       </span>
       <span class="flex-1 min-w-0 flex items-center gap-2">

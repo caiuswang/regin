@@ -128,7 +128,7 @@ const roleBadgeColor = (role) => {
     <!-- Profile -->
     <Card>
       <h2 class="card-header">Profile</h2>
-      <div class="grid grid-cols-2 gap-4 max-w-lg">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
         <div>
           <label class="field-label">Username</label>
           <Input :model-value="currentUser?.username" disabled aria-label="Username" class="is-readonly font-mono" />
@@ -177,6 +177,7 @@ const roleBadgeColor = (role) => {
     <template v-if="isAdmin">
       <h2 class="section-heading">Team members</h2>
       <Card :no-padding="true">
+        <div class="overflow-x-auto">
         <table class="tbl">
           <thead>
             <tr>
@@ -211,6 +212,7 @@ const roleBadgeColor = (role) => {
             </tr>
           </tbody>
         </table>
+        </div>
       </Card>
     </template>
   </div>

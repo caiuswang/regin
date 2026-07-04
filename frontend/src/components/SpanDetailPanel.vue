@@ -186,7 +186,7 @@ function annotationNote(q) {
 <template>
   <Card v-if="selectedSpan">
     <h2 class="text-sm font-semibold text-slate-700 mb-3">Span details</h2>
-    <div class="grid grid-cols-2 gap-3 text-sm mb-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm mb-4">
       <div>
         <div class="text-xs text-gray-400">Name</div>
         <div class="font-medium break-words flex items-center gap-1 flex-wrap">

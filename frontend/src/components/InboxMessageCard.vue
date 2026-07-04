@@ -119,28 +119,28 @@ const timeLabel = computed(() => {
     >Read full message →</router-link>
 
     <ul v-if="classifiedLinks.length" class="mt-2 flex flex-wrap gap-1.5">
-      <li v-for="(lnk, i) in classifiedLinks" :key="i">
+      <li v-for="(lnk, i) in classifiedLinks" :key="i" class="min-w-0 max-w-full">
         <a
           v-if="lnk.kind === 'external'"
           :href="lnk.href"
           target="_blank"
           rel="noopener"
-          class="inline-flex items-center gap-1 text-[11px] font-mono text-blue-600 hover:text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
-        >{{ lnk.label }}</a>
+          class="inline-flex items-center gap-1 min-w-0 max-w-full text-[11px] font-mono text-blue-600 hover:text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
+        ><span class="truncate min-w-0">{{ lnk.label }}</span></a>
         <router-link
           v-else-if="lnk.kind === 'route'"
           :to="lnk.href"
-          class="inline-flex items-center gap-1 text-[11px] font-mono text-blue-600 hover:text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
-        >{{ lnk.label }}</router-link>
+          class="inline-flex items-center gap-1 min-w-0 max-w-full text-[11px] font-mono text-blue-600 hover:text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
+        ><span class="truncate min-w-0">{{ lnk.label }}</span></router-link>
         <button
           v-else
           type="button"
           :title="`Copy path: ${lnk.href}`"
-          class="inline-flex items-center gap-1 text-[11px] font-mono text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded focus-visible:outline-2 focus-visible:outline-blue-500"
+          class="inline-flex items-center gap-1 min-w-0 max-w-full text-[11px] font-mono text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded focus-visible:outline-2 focus-visible:outline-blue-500"
           @click="copyText(lnk.href)"
         >
           <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          {{ lnk.label }}
+          <span class="truncate min-w-0">{{ lnk.label }}</span>
         </button>
       </li>
     </ul>

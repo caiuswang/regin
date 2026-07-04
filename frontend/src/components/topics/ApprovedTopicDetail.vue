@@ -206,18 +206,20 @@ function roleColor(role) {
 
         <div>
           <h3 class="topics-subsection-title">References</h3>
-          <table class="tbl">
-            <thead><tr><th>Role</th><th>Path</th></tr></thead>
-            <tbody>
-              <tr v-for="ref in (selectedTopic.refs || [])" :key="`${ref.role}:${ref.path}`">
-                <td><Badge :color="roleColor(ref.role)" :label="ref.role" /></td>
-                <td><code class="text-xs">{{ ref.path }}</code></td>
-              </tr>
-              <tr v-if="!(selectedTopic.refs || []).length">
-                <td colspan="2" class="text-gray-500">No references recorded.</td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="overflow-x-auto">
+            <table class="tbl">
+              <thead><tr><th>Role</th><th>Path</th></tr></thead>
+              <tbody>
+                <tr v-for="ref in (selectedTopic.refs || [])" :key="`${ref.role}:${ref.path}`">
+                  <td><Badge :color="roleColor(ref.role)" :label="ref.role" /></td>
+                  <td><code class="text-xs">{{ ref.path }}</code></td>
+                </tr>
+                <tr v-if="!(selectedTopic.refs || []).length">
+                  <td colspan="2" class="text-gray-500">No references recorded.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div v-if="selectedTopic.wiki_content" class="topics-markdown">

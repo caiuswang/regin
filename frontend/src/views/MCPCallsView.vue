@@ -109,6 +109,7 @@ function shortTestName(nodeid) {
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Sessions <span class="text-gray-400 font-normal">(recent 50)</span></div>
+        <div class="overflow-x-auto">
         <table v-if="sessions.length" class="tbl">
           <thead><tr><th>Session</th><th class="text-right">Calls</th><th class="text-right">Tools</th><th>Last</th></tr></thead>
           <tbody>
@@ -135,10 +136,12 @@ function shortTestName(nodeid) {
           </tbody>
         </table>
         <p v-else class="p-4 text-sm text-gray-400">No sessions yet.</p>
+        </div>
       </Card>
 
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Per-tool summary</div>
+        <div class="overflow-x-auto">
         <table v-if="stats.length" class="tbl">
           <thead><tr><th>Tool</th><th class="text-right">Calls</th><th>Last seen</th></tr></thead>
           <tbody>
@@ -154,11 +157,13 @@ function shortTestName(nodeid) {
           </tbody>
         </table>
         <p v-else class="p-4 text-sm text-gray-400">No MCP calls yet.</p>
+        </div>
       </Card>
     </div>
 
     <Card :no-padding="true">
       <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Recent calls</div>
+      <div class="overflow-x-auto">
       <table v-if="items.length" class="tbl hidden sm:table">
         <thead><tr><th>When</th><th>Tool</th><th>Session</th><th class="text-right">Duration</th><th>Input keys</th></tr></thead>
         <tbody>
@@ -178,6 +183,7 @@ function shortTestName(nodeid) {
           </tr>
         </tbody>
       </table>
+      </div>
       <ul v-if="items.length" class="sm:hidden divide-y divide-gray-200">
         <li v-for="r in items" :key="r.id" class="p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2 mb-1">

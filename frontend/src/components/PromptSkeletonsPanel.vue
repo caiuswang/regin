@@ -285,7 +285,9 @@ onMounted(load)
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+    /* min(18rem, 100%) so the column shrinks below 18rem on a phone-width
+       pane instead of forcing a hard 288px min that overflows sideways. */
+    grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr));
     gap: 0.1rem 1.25rem;
 }
 .agents-list li {
@@ -305,7 +307,7 @@ onMounted(load)
 }
 .prompt-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(28rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(28rem, 100%), 1fr));
     gap: 0.75rem;
     align-items: start;
 }
@@ -338,6 +340,7 @@ onMounted(load)
 }
 .prompt-card-controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
@@ -361,12 +364,21 @@ onMounted(load)
 }
 .row-meta {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem;
     margin-top: 0.3rem;
+    min-width: 0;
     font-size: 0.72rem;
     color: var(--color-slate-400);
 }
-.row-slug { font-family: var(--font-mono, monospace); }
+.row-slug {
+    font-family: var(--font-mono, monospace);
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .row-dot { color: var(--color-slate-300); }
 </style>

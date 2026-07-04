@@ -112,6 +112,7 @@ const typeDescriptions = {
           </h3>
           <p class="card-group-meta">{{ typeDescriptions[typeName] }}</p>
         </div>
+        <div class="overflow-x-auto">
         <table class="tbl" style="table-layout:fixed;width:100%">
           <colgroup>
             <col style="width:30%"><col style="width:14%"><col style="width:10%"><col style="width:46%">
@@ -142,6 +143,7 @@ const typeDescriptions = {
             </tr>
           </tbody>
         </table>
+        </div>
       </Card>
     </template>
 
@@ -162,6 +164,7 @@ const typeDescriptions = {
           <code>{{ proj.project_path }}/{{ projectSubpath }}/</code>
         </p>
       </div>
+      <div class="overflow-x-auto">
       <table class="tbl" style="table-layout:fixed;width:100%">
         <colgroup>
           <col style="width:30%"><col style="width:18%"><col style="width:22%"><col style="width:30%">
@@ -185,6 +188,7 @@ const typeDescriptions = {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
   </div>
 </template>

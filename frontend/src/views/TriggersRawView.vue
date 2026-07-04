@@ -114,6 +114,7 @@ async function resetTriggers() {
         <div class="card-group-header">
           <h2 class="card-group-title">Sessions <span class="text-slate-400 font-normal font-mono text-xs ml-1">recent 50</span></h2>
         </div>
+        <div class="overflow-x-auto">
         <table v-if="sessions.length" class="tbl">
           <thead>
             <tr><th>Session</th><th class="text-right">Checks</th><th class="text-right">Fired</th><th class="text-right">Rules</th><th class="text-right">Files</th><th>Plan</th><th>Last</th></tr>
@@ -148,12 +149,14 @@ async function resetTriggers() {
           </tbody>
         </table>
         <p v-else class="empty-state">No sessions yet.</p>
+        </div>
       </Card>
 
       <Card :no-padding="true">
         <div class="card-group-header">
           <h2 class="card-group-title">Per-rule summary</h2>
         </div>
+        <div class="overflow-x-auto">
         <table v-if="stats.length" class="tbl">
           <thead>
             <tr><th>Rule</th><th class="text-right">Checks</th><th class="text-right">Fired</th><th>Last seen</th></tr>
@@ -177,6 +180,7 @@ async function resetTriggers() {
           </tbody>
         </table>
         <p v-else class="empty-state">No trace logs yet.</p>
+        </div>
       </Card>
     </div>
 
@@ -184,6 +188,7 @@ async function resetTriggers() {
       <div class="card-group-header">
         <h2 class="card-group-title">Recent events</h2>
       </div>
+      <div class="overflow-x-auto">
       <table v-if="items.length" class="tbl hidden sm:table">
         <thead>
           <tr><th>When</th><th>Rule</th><th class="text-right">Matches</th><th>Severity</th><th>File</th><th>Repo</th><th>Session</th></tr>
@@ -216,6 +221,7 @@ async function resetTriggers() {
           </tr>
         </tbody>
       </table>
+      </div>
       <p v-if="!items.length" class="empty-state">No events match the current filter.</p>
       <CursorControls
         v-if="items.length"

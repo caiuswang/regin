@@ -764,7 +764,7 @@ function timeTitle(s) {
                 <span v-if="s.title">{{ titlePreview(s.title) }}</span>
                 <span v-else class="text-gray-400 italic text-xs">no prompt</span>
               </div>
-              <dl class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600">
+              <dl class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600">
                 <div class="flex justify-between"><dt class="text-gray-400">Spans</dt><dd>{{ s.span_count }}</dd></div>
                 <div class="flex justify-between"><dt class="text-gray-400">Edits</dt><dd>{{ s.file_edits }}</dd></div>
                 <div class="flex justify-between"><dt class="text-gray-400">Tools</dt><dd>{{ s.tool_calls }}</dd></div>
@@ -898,14 +898,18 @@ function timeTitle(s) {
 .search-group {
   display: inline-flex;
   align-items: stretch;
+  max-width: 100%;
 }
 .search-group .search-input {
   width: 22rem;
+  min-width: 0;
+  max-width: 100%;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   border-right: 0;
 }
 .search-group .search-scope {
+  min-width: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
   border-left: 1px solid var(--color-slate-300);

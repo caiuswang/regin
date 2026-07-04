@@ -57,7 +57,7 @@ async function createPattern() {
 <template>
   <Card>
     <h2 class="card-header">Create new pattern</h2>
-    <div class="grid grid-cols-2 gap-4 max-w-2xl">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
         <Input v-model="newTitle" type="text" aria-label="Pattern title" @blur="autoSlug" placeholder="e.g. Distributed Lock with RLockUtil" />

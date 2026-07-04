@@ -194,7 +194,7 @@ const folderResultGlyph = {
             resolved → {{ folderResolvedPath }}
           </p>
 
-          <div v-if="folderCandidates.length" class="mt-4 max-h-72 overflow-y-auto border border-slate-200 rounded">
+          <div v-if="folderCandidates.length" class="mt-4 max-h-72 overflow-x-auto overflow-y-auto border border-slate-200 rounded">
             <table class="tbl tbl-compact">
               <thead>
                 <tr>
@@ -240,7 +240,7 @@ const folderResultGlyph = {
               ]" />
           </div>
 
-          <div v-if="folderResults.length" class="mt-4 max-h-72 overflow-y-auto border border-slate-200 rounded">
+          <div v-if="folderResults.length" class="mt-4 max-h-72 overflow-x-auto overflow-y-auto border border-slate-200 rounded">
             <table class="tbl tbl-compact">
               <thead>
                 <tr><th></th><th>Folder</th><th>Slug</th><th>Status</th><th>Note</th></tr>

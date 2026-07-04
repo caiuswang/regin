@@ -678,10 +678,17 @@ body {
     background: var(--color-slate-100);
     padding: 0.25rem;
     border-radius: 0.75rem;
+    /* When the pill group is wider than its container (e.g. the 5-item Trace
+       nav on a phone), scroll it horizontally instead of forcing the whole
+       content pane to scroll sideways. */
+    max-width: 100%;
+    overflow-x: auto;
 }
 .segmented-item {
     display: inline-flex;
     align-items: center;
+    flex-shrink: 0;
+    white-space: nowrap;
     padding: 0.375rem 1rem;
     font-size: 0.8125rem;
     font-weight: 500;
@@ -791,6 +798,8 @@ body {
     padding: 0.0625rem 0.375rem;
     border-radius: 0.25rem;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* Long ids/slugs must break rather than push the page sideways on mobile. */
+    overflow-wrap: anywhere;
 }
 
 /* Group header inside a no-padding Card (e.g. tables grouped by category) */
@@ -1646,6 +1655,9 @@ code {
     background: var(--color-gray-100);
     padding: 0.125rem 0.375rem;
     border-radius: 0.25rem;
+    /* Break long inline tokens on a phone instead of overflowing the pane.
+       (No effect on `pre code`, whose white-space:pre keeps it scrolling.) */
+    overflow-wrap: anywhere;
 }
 pre code {
     background: transparent;

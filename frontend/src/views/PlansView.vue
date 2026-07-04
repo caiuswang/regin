@@ -75,7 +75,8 @@ function fmtDate(iso) {
 
     <Card :no-padding="true">
       <div v-if="loading" class="empty-state">Loading plans…</div>
-      <table v-else class="tbl">
+      <div v-else class="overflow-x-auto">
+      <table class="tbl">
         <thead>
           <tr>
             <th>Title</th>
@@ -112,6 +113,7 @@ function fmtDate(iso) {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
   </div>
 </template>

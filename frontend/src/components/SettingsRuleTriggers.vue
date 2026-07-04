@@ -104,7 +104,7 @@ defineEmits(['update:resetPolicy', 'save-thresholds', 'reset-log'])
     <Card>
       <div v-if="!stats" class="text-sm text-gray-500">Loading…</div>
       <div v-else class="space-y-3">
-        <dl class="grid grid-cols-3 gap-3 text-sm">
+        <dl class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-sm">
           <div>
             <dt class="text-xs text-gray-500">Total events</dt>
             <dd class="font-mono text-base text-gray-900">{{ stats.total.toLocaleString() }}</dd>

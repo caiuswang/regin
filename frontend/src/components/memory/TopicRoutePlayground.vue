@@ -94,7 +94,7 @@ defineExpose({ preview, probe })
       <input
         v-model="query"
         placeholder="a prompt — e.g. fix the recall ranking bug"
-        class="flex-1 max-w-2xl min-w-[18rem] text-sm border border-slate-200 rounded-md px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-blue-500"
+        class="flex-1 max-w-2xl min-w-[12rem] text-sm border border-slate-200 rounded-md px-3 py-1.5 focus-visible:outline-2 focus-visible:outline-blue-500"
         @keyup.enter="preview"
       />
       <Button variant="primary" size="sm" :disabled="loading" @click="preview">Preview route</Button>
@@ -132,7 +132,7 @@ defineExpose({ preview, probe })
       </div>
 
       <!-- Topics whose exemplars lean on this query, ranked by the stronger signal. -->
-      <div v-if="result.candidates.length" class="rounded-lg border border-slate-200 bg-white overflow-hidden mb-2">
+      <div v-if="result.candidates.length" class="rounded-lg border border-slate-200 bg-white overflow-x-auto mb-2">
         <table class="w-full text-sm">
           <thead class="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
             <tr>
@@ -184,7 +184,7 @@ defineExpose({ preview, probe })
       <!-- Build a case against any topic, even one with no exemplars yet. -->
       <div class="flex flex-wrap items-center gap-2 text-sm">
         <span class="text-[11px] text-slate-400">label this query for</span>
-        <Select v-model="pickTopic" :options="topicOptions" class="text-[12px] min-w-[14rem] focus-visible:ring-2" />
+        <Select v-model="pickTopic" :options="topicOptions" class="text-[12px] min-w-[12rem] focus-visible:ring-2" />
         <Button variant="secondary" size="sm" class="gap-1.5 hover:text-emerald-700 focus-visible:ring-2" :disabled="busy === `${pickTopic}:positive`" @click="label(pickTopic, 'positive')"><Icon name="thumbs-up" :size="14" />protect</Button>
         <Button variant="secondary" size="sm" class="gap-1.5 hover:text-red-700 focus-visible:ring-2" :disabled="busy === `${pickTopic}:negative`" @click="label(pickTopic, 'negative')"><Icon name="thumbs-down" :size="14" />suppress</Button>
       </div>

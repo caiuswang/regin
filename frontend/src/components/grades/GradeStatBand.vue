@@ -119,7 +119,7 @@ const distributions = computed(() => {
     >
       <div class="flex items-center justify-between gap-3 mb-3">
         <h2 class="text-sm font-semibold text-slate-800">Verdict distribution</h2>
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-3">
           <span v-for="t in TONE_ORDER" :key="t" class="flex items-center gap-1.5 text-[11px] text-slate-500">
             <span :class="['h-2 w-2 rounded-full', TONE_META[t].dot]" aria-hidden="true"></span>
             {{ TONE_META[t].label }}

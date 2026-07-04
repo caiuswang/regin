@@ -123,6 +123,7 @@ const totals = computed(() => {
         Recent entries
         <span class="text-gray-400 font-normal">({{ data.rows.length }})</span>
       </div>
+      <div class="overflow-x-auto">
       <table v-if="data.rows.length" class="tbl hidden sm:table">
         <thead>
           <tr>
@@ -161,6 +162,7 @@ const totals = computed(() => {
           </tr>
         </tbody>
       </table>
+      </div>
       <ul v-if="data.rows.length" class="sm:hidden divide-y divide-gray-200">
         <li v-for="(row, pos) in data.rows" :key="pos" class="p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2 mb-1">

@@ -146,6 +146,7 @@ function onToggle() { emit('toggle') }
 .rule-card__header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   width: 100%;
   background: transparent;
@@ -166,6 +167,11 @@ function onToggle() { emit('toggle') }
   font-size: 15px;
   font-weight: 600;
   color: var(--color-slate-800);
+  /* Long rule ids must break instead of forcing the header wider than a
+     phone's content pane. */
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .rule-card__last-seen {
   font-size: 11px;

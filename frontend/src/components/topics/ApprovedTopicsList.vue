@@ -139,6 +139,7 @@ function chooseTopic(id) {
         @click="clearFilters"
       >Clear</Button>
     </div>
+    <div class="overflow-x-auto">
     <table class="tbl tbl-workbench">
       <thead>
         <tr>
@@ -181,6 +182,7 @@ function chooseTopic(id) {
         </tr>
       </tbody>
     </table>
+    </div>
     <div v-if="totalPages > 1" class="topics-runs-pagination">
       <Button variant="secondary" size="sm" :disabled="page <= 1" @click="page--">← Prev</Button>
       <span class="text-xs text-slate-600">Page {{ page }} of {{ totalPages }} · {{ filtered.length }} topic{{ filtered.length === 1 ? '' : 's' }}</span>

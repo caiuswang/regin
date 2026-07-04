@@ -114,6 +114,7 @@ onMounted(load)
     <div v-if="error" class="alert alert-info">{{ error }}</div>
 
     <Card :no-padding="true">
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead>
           <tr>
@@ -189,6 +190,7 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
   </div>
 </template>

@@ -40,6 +40,7 @@ onMounted(async () => {
 
     <h2 class="section-heading">Branches</h2>
     <Card :no-padding="true" class="mb-6">
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead><tr><th>Branch</th><th>Tracked</th></tr></thead>
         <tbody>
@@ -49,10 +50,12 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
 
     <h2 class="section-heading">Patterns ({{ data.patterns.length }})</h2>
     <Card :no-padding="true" class="mb-6">
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead><tr><th>Title</th><th style="width: 12rem">Category</th></tr></thead>
         <tbody>
@@ -67,10 +70,12 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
 
     <h2 class="section-heading">Approved Wiki ({{ data.wiki.length }})</h2>
     <Card :no-padding="true" class="mb-6">
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead><tr><th>Topic</th><th style="width: 12rem">Category</th></tr></thead>
         <tbody>
@@ -95,6 +100,7 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
 
   </div>

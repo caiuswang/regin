@@ -107,7 +107,8 @@ function pretty(obj) {
       <div v-else-if="!drifts.length" class="empty-state-inline pad">
         No pending drift findings — this schema matches every live payload so far.
       </div>
-      <table v-else class="tbl findings-tbl">
+      <div v-else class="overflow-x-auto">
+      <table class="tbl findings-tbl">
         <thead>
           <tr>
             <th class="caret-col"></th>
@@ -177,6 +178,7 @@ function pretty(obj) {
           </template>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </template>

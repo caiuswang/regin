@@ -192,6 +192,7 @@ function ruleRate(checks, fired) {
       <div class="card-group-header">
         <h2 class="card-group-title">Per-rule breakdown</h2>
       </div>
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead>
           <tr>
@@ -230,6 +231,7 @@ function ruleRate(checks, fired) {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
 
     <Card>

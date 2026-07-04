@@ -195,9 +195,15 @@ const emptyMode = computed(() => {
 <style scoped>
 .kpi-strip {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Two tiles per row on a phone, four once there's room — minmax(0,…) lets
+     the tabular-nums value shrink instead of forcing the strip wider than the
+     content pane. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+@media (min-width: 640px) {
+  .kpi-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 .kpi-tile {
   background: var(--color-slate-50);

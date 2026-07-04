@@ -522,6 +522,7 @@ const skillBadge = {
       <Button v-if="activeFilterCount && !denseActive" variant="secondary" @click="clearFilters">Clear filters</Button>
     </div>
     <Card v-else :no-padding="true">
+      <div class="overflow-x-auto">
       <table class="tbl">
         <thead>
           <tr>
@@ -567,6 +568,7 @@ const skillBadge = {
           </tr>
         </tbody>
       </table>
+      </div>
     </Card>
   </div>
 </template>

@@ -53,9 +53,9 @@ function chooseTopic(id) {
 </script>
 
 <template>
-  <div class="flex items-stretch border border-border rounded-lg overflow-hidden bg-surface min-h-[28rem] h-[calc(100vh-18rem)]">
+  <div class="flex flex-col lg:flex-row lg:items-stretch border border-border rounded-lg lg:overflow-hidden bg-surface min-h-[28rem] h-[calc(100vh-18rem)]">
     <!-- left rail: filter + bucket tree -->
-    <aside class="shrink-0 w-72 flex flex-col min-h-0 border-r border-border bg-surface-2">
+    <aside class="w-full lg:w-72 lg:shrink-0 flex flex-col min-h-0 border-b lg:border-b-0 lg:border-r border-border bg-surface-2">
       <div class="p-2 border-b border-border-subtle space-y-2">
         <div class="flex items-baseline justify-between px-1 text-[11px] text-fg-faint font-mono tabular-nums">
           <span>{{ roots.length }} buckets</span>

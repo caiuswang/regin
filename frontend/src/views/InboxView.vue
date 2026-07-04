@@ -251,8 +251,8 @@ onMounted(loadInbox)
       </div>
     </Card>
     <template v-else>
-      <ul class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-start">
-        <li v-for="m in paged" :key="m.id ?? m.span_id">
+      <ul class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 items-start">
+        <li v-for="m in paged" :key="m.id ?? m.span_id" class="min-w-0">
           <InboxMessageCard :message="m" @open="onOpen" @read="onRead" @dismiss="onDismiss" />
         </li>
       </ul>

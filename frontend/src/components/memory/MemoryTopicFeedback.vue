@@ -211,6 +211,7 @@ defineExpose({ reload })
     </div>
 
     <div v-if="summary.length" class="rounded-lg border border-slate-200 bg-white overflow-hidden mb-3">
+      <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
           <tr>
@@ -266,6 +267,7 @@ defineExpose({ reload })
           </tr>
         </tbody>
       </table>
+      </div>
       <PageControls
         v-if="sumRaw > sumSize"
         :page="sumP"
@@ -307,6 +309,7 @@ defineExpose({ reload })
             class="shrink-0 w-44 text-xs border border-slate-200 rounded-md px-2.5 py-1 focus-visible:outline-2 focus-visible:outline-blue-500"
           />
         </div>
+        <div class="overflow-x-auto">
         <table class="w-full text-sm table-fixed">
           <thead class="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
             <tr>
@@ -364,6 +367,7 @@ defineExpose({ reload })
             </tr>
           </tbody>
         </table>
+        </div>
         <PageControls
           v-if="recRaw > recSize"
           :page="recP"

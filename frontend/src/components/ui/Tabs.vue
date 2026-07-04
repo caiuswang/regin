@@ -28,7 +28,10 @@ defineProps({
 </template>
 
 <style scoped>
-.ds-tablist { display: inline-flex; align-items: center; }
+/* Scroll the tab bar horizontally when it outgrows a narrow (mobile)
+   container rather than pushing the whole page sideways. */
+.ds-tablist { display: inline-flex; align-items: center; max-width: 100%; overflow-x: auto; }
+.ds-tab { flex-shrink: 0; white-space: nowrap; }
 
 /* Segmented (pill group) */
 .ds-tabs-segmented .ds-tablist {

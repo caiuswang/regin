@@ -127,7 +127,7 @@ function baseName(p) {
             <span class="font-mono text-slate-700 truncate" :title="f.path">{{ baseName(f.path) }}</span>
             <span class="text-slate-400 truncate">{{ f.path }}</span>
           </button>
-          <div v-if="openPath === f.path" class="grid grid-cols-2 gap-2 p-2 border-t border-rose-100">
+          <div v-if="openPath === f.path" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2 border-t border-rose-100">
             <div>
               <div class="text-rose-600 mb-0.5">before (discarded)</div>
               <pre class="whitespace-pre-wrap break-words bg-rose-50/40 rounded px-2 py-1 max-h-[40vh] overflow-y-auto">{{ f.before_text ?? '(file absent)' }}</pre>

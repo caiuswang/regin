@@ -220,10 +220,10 @@ onBeforeUnmount(() => headerObserver?.disconnect())
          -top-4) with matching pt so the white background covers the gutter and
          no scrolled content peeks above it. -->
     <div ref="headerEl" class="sticky -top-6 z-20 -mx-8 px-8 pt-6 bg-white border-b border-slate-200 max-md:-top-4 max-md:-mx-4 max-md:px-4 max-md:pt-4">
-    <div class="flex items-center gap-3 mb-1">
+    <div class="flex flex-wrap items-center gap-3 mb-1">
       <h1 class="text-xl font-semibold text-slate-900">Memory</h1>
       <span class="text-xs text-slate-500 font-mono">{{ stats.total || 0 }} memories</span>
-      <div class="ml-auto flex items-center gap-2">
+      <div class="ml-auto flex flex-wrap items-center gap-2">
         <Button
           :variant="includeTests ? 'primary' : 'secondary'"
           size="sm"

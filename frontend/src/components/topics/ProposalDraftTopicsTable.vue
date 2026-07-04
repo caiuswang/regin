@@ -39,6 +39,7 @@ const pendingCount = computed(() => props.draftTopics.filter(isPendingTopic).len
         <Badge color="purple" :label="String(draftTopics.length)" />
       </div>
     </div>
+    <div class="overflow-x-auto">
     <table class="tbl tbl-workbench">
       <thead>
         <tr>
@@ -73,5 +74,6 @@ const pendingCount = computed(() => props.draftTopics.filter(isPendingTopic).len
         </tr>
       </tbody>
     </table>
+    </div>
   </Card>
 </template>

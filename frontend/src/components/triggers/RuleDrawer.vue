@@ -75,7 +75,8 @@ function topSessionLink(sid) {
       <div class="rule-drawer__grid">
         <div>
           <h3 class="rule-drawer__heading">Top files</h3>
-          <table v-if="detail.files.length" class="tbl rule-drawer__table">
+          <div v-if="detail.files.length" class="overflow-x-auto">
+          <table class="tbl rule-drawer__table">
             <thead>
               <tr><th>File</th><th class="text-right">Checks</th><th class="text-right">Fires</th><th>Last</th></tr>
             </thead>
@@ -91,12 +92,14 @@ function topSessionLink(sid) {
               </tr>
             </tbody>
           </table>
+          </div>
           <p v-else class="rule-drawer__empty">No file activity in range.</p>
         </div>
 
         <div>
           <h3 class="rule-drawer__heading">Top sessions</h3>
-          <table v-if="detail.sessions.length" class="tbl rule-drawer__table">
+          <div v-if="detail.sessions.length" class="overflow-x-auto">
+          <table class="tbl rule-drawer__table">
             <thead>
               <tr><th>Session</th><th class="text-right">Checks</th><th class="text-right">Fires</th><th>Last</th></tr>
             </thead>
@@ -118,6 +121,7 @@ function topSessionLink(sid) {
               </tr>
             </tbody>
           </table>
+          </div>
           <p v-else class="rule-drawer__empty">No session activity in range.</p>
         </div>
       </div>
@@ -130,7 +134,8 @@ function topSessionLink(sid) {
         Recent matched events
         <span class="rule-drawer__heading-hint">click → jumps to the exact span in conversation view</span>
       </h3>
-      <table v-if="detail.events.length" class="tbl rule-drawer__table">
+      <div v-if="detail.events.length" class="overflow-x-auto">
+      <table class="tbl rule-drawer__table">
         <thead>
           <tr>
             <th>When</th>
@@ -171,6 +176,7 @@ function topSessionLink(sid) {
           </tr>
         </tbody>
       </table>
+      </div>
       <p v-else class="rule-drawer__empty">No events in range.</p>
 
       <!-- Actions -->

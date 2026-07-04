@@ -78,7 +78,7 @@ function jumpToLive() {
        header and "Jump to live" footer stay pinned. -->
   <aside
     ref="turnsAsideEl"
-    class="shrink-0 sticky self-start flex flex-col"
+    class="hidden lg:flex shrink-0 sticky self-start flex-col"
     :style="{
       width: railWidth + 'px',
       top: 'calc(var(--regin-trace-header-h, 5rem) + 0.5rem)',

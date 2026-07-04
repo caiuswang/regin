@@ -42,6 +42,7 @@ onMounted(async () => {
             </router-link>
           </h2>
         </div>
+        <div class="overflow-x-auto">
         <table class="tbl" style="table-layout:fixed;width:100%">
           <colgroup>
             <col style="width:22%"><col style="width:8%"><col style="width:30%"><col style="width:8%"><col style="width:8%"><col style="width:15%"><col style="width:9%">
@@ -79,6 +80,7 @@ onMounted(async () => {
             </tr>
           </tbody>
         </table>
+        </div>
       </Card>
     </div>
   </div>

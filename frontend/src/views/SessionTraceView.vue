@@ -764,6 +764,18 @@ const {
 .trace-detail-root :deep(.p-treetable-table-container) {
   overflow: visible !important;
 }
+/* At mobile the ~416px span timeline exceeds a 375px viewport; the
+   `overflow: visible` overrides above delete the horizontal scroll that
+   would let it pan. Restore horizontal scroll only on small screens
+   (desktop keeps sticky headers via `visible`). */
+@media (max-width: 767px) {
+  .trace-detail-root :deep(.trace-content-card.card) {
+    overflow-x: auto;
+  }
+  .trace-detail-root :deep(.p-treetable-table-container) {
+    overflow-x: auto !important;
+  }
+}
 .trace-detail-root :deep(.p-treetable-thead > tr > th) {
   position: sticky;
   /* Page header pins at `top: -1rem` (mobile) / `-1.5rem` (desktop) so its

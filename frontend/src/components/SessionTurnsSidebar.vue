@@ -211,7 +211,7 @@ function turnCtxClass(pct) {
         </div>
         <!-- Row 3 (expanded): full token breakdown the top row elides. -->
         <div v-if="expandedTurnUuid === t.turn_uuid"
-             class="mt-1.5 ml-8 text-[10px] text-gray-500 font-mono grid grid-cols-5 gap-2">
+             class="mt-1.5 ml-8 text-[10px] text-gray-500 font-mono grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           <div :title="'fresh (uncached) input this turn'">
             <span class="text-gray-400">in</span> {{ fmtTokens(t.input_tokens) }}</div>
           <div :title="'cache_creation — new bytes written into the prompt cache this turn'">

@@ -108,7 +108,7 @@ function submit() {
 
       <!-- Dimension toggles, grouped. -->
       <div class="flex flex-wrap gap-2">
-        <fieldset class="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+        <fieldset class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
           <legend class="float-none px-0 text-[0.65rem] font-semibold uppercase tracking-wider text-slate-400">Axes</legend>
           <Checkbox v-model="runAxes.correctness" label="correctness" />
           <Checkbox v-model="runAxes.process" label="process" />
@@ -116,7 +116,7 @@ function submit() {
 
         <fieldset
           v-if="aspects.length"
-          class="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2"
+          class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2"
           :class="{ 'opacity-60': !aspectsAvailable }"
           :title="aspectsAvailable ? 'Each graded aspect gets its own verdict' : 'Aspects need the deep or auto tier'"
         >
@@ -130,7 +130,7 @@ function submit() {
           />
         </fieldset>
 
-        <fieldset class="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+        <fieldset class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
           <legend class="float-none px-0 text-[0.65rem] font-semibold uppercase tracking-wider text-slate-400">On fail</legend>
           <Checkbox v-model="distillOnFail" label="distill into lessons" />
         </fieldset>

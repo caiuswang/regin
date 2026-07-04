@@ -433,8 +433,8 @@ function contextBadgeClass(pct) {
         </ul>
       </div>
     </div>
-    <div class="flex flex-col items-end gap-1.5 shrink-0">
-      <div class="inline-flex items-center gap-1.5">
+    <div class="flex flex-col items-end gap-1.5 min-w-0 max-w-full">
+      <div class="flex flex-wrap justify-end items-center gap-1.5">
         <button
           v-for="opt in [
             { id: 'conversation', label: 'Conversation' },
