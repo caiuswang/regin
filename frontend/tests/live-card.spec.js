@@ -1239,6 +1239,118 @@ test.describe('Composer pinning + geometry (v5)', () => {
   })
 })
 
+// ---- v6: slash-command / skill autocomplete in the composer -----------------
+//
+// The composer's `/`-autocomplete. The catalog endpoint
+// (`/api/sessions/<id>/bridge-commands`) is stubbed with a deterministic
+// two-item fixture so ordering/filtering is exact; `bridgeReachableMap` forces
+// the idle composer to render. Menu contract: data-testids live-command-menu,
+// live-command-item, live-command-empty; the accept writes `/<name> `.
+async function stubBridgeCommands(page, traceId, commands) {
+  await page.route(`**/api/sessions/${traceId}/bridge-commands`, async (route) => {
+    await route.fulfill({ json: { commands } })
+  })
+}
+
+const FIXTURE_COMMANDS = [
+  { name: 'deploy', description: 'Ship the current branch to prod.', kind: 'command', scope: 'project' },
+  { name: 'lint', description: 'Lint the tree.', kind: 'skill', scope: 'project' },
+]
+
+const cmdMenu = (page) => page.locator('[data-testid="live-command-menu"]')
+const cmdItems = (page) => page.locator('[data-testid="live-command-item"]')
+
+async function idleComposer(page, traceId) {
+  await bridgeReachableMap(page, traceId)
+  await stubBridgeCommands(page, traceId, FIXTURE_COMMANDS)
+  await page.goto(`/live/${traceId}`)
+  await settle(page)
+  await expect(page.locator('[data-testid="live-now"]'))
+    .toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+}
+
+test.describe('Slash-command autocomplete (v6)', () => {
+  test('typing "/" opens the menu with every command + its description and kind', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await idleComposer(page, traceId)
+
+    await composerTa(page).fill('/')
+    await expect(cmdMenu(page)).toBeVisible({ timeout: 5_000 })
+    await expect(cmdItems(page)).toHaveCount(2)
+    await expect(cmdItems(page).nth(0)).toContainText('/deploy')
+    await expect(cmdItems(page).nth(0)).toContainText('Ship the current branch')
+    await expect(cmdItems(page).nth(0)).toContainText('command')
+    await expect(cmdItems(page).nth(1)).toContainText('/lint')
+    await expect(cmdItems(page).nth(1)).toContainText('skill')
+  })
+
+  test('the query narrows the list; a non-match shows the empty state', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await idleComposer(page, traceId)
+
+    await composerTa(page).fill('/li')
+    await expect(cmdItems(page)).toHaveCount(1)
+    await expect(cmdItems(page).nth(0)).toContainText('/lint')
+
+    await composerTa(page).fill('/zzz')
+    await expect(page.locator('[data-testid="live-command-empty"]')).toBeVisible()
+    await expect(cmdItems(page)).toHaveCount(0)
+  })
+
+  test('ArrowDown + Enter accepts the highlighted item as "/<name> " and closes', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await idleComposer(page, traceId)
+
+    await composerTa(page).fill('/')
+    await expect(cmdMenu(page)).toBeVisible()
+    await composerTa(page).press('ArrowDown') // highlight lint (index 1)
+    await composerTa(page).press('Enter')
+
+    await expect(composerTa(page)).toHaveValue('/lint ')
+    await expect(cmdMenu(page)).toHaveCount(0) // caret past the token → closed
+  })
+
+  test('clicking an item inserts it; plain Enter (menu closed) does not send', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    const posts = await stubBridgeSend(page, traceId, { delivered: true, detail: 'ok' })
+    await idleComposer(page, traceId)
+
+    await composerTa(page).fill('/')
+    await cmdItems(page).nth(0).click() // /deploy
+    await expect(composerTa(page)).toHaveValue('/deploy ')
+
+    // Menu is closed now; a plain Enter must NOT send (it inserts a newline).
+    await composerTa(page).press('Enter')
+    await expect(cmdMenu(page)).toHaveCount(0)
+    expect(posts, 'plain Enter must never deliver').toEqual([])
+  })
+
+  test('after accepting, Cmd/Ctrl+Enter still sends the full prompt', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    const posts = await stubBridgeSend(page, traceId, { delivered: true, detail: 'delivered to %3' })
+    await idleComposer(page, traceId)
+
+    await composerTa(page).fill('/')
+    await composerTa(page).press('Enter') // accept /deploy
+    await composerTa(page).type('the web app')
+    await composerTa(page).press('ControlOrMeta+Enter')
+
+    await expect(bridgeMeta(page)).toContainText('✓ delivered to %3', { timeout: 5_000 })
+    expect(posts).toEqual([{ text: '/deploy the web app' }])
+  })
+
+  test('Escape dismisses the menu without altering the draft', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await idleComposer(page, traceId)
+
+    await composerTa(page).fill('/dep')
+    await expect(cmdMenu(page)).toBeVisible()
+    await composerTa(page).press('Escape')
+    await expect(cmdMenu(page)).toHaveCount(0)
+    await expect(composerTa(page)).toHaveValue('/dep')
+  })
+})
+
 test.describe('Long-content invariant (acceptance #8b)', () => {
   test('an 8KB response keeps the NOW zone capped, the tail majority-height, and the sheet 80dvh-capped', async ({ page }) => {
     const traceId = randomUUID()

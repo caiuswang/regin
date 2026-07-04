@@ -19,10 +19,12 @@
 // text typed mid-draft survives this component unmounting — a reachability
 // blip for one poll, or the state flipping to question/permission — and is
 // restored on remount.
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import LiveCommandMenu from './LiveCommandMenu.vue'
+import { useSlashCommands } from '../../composables/useSlashCommands'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -35,6 +37,24 @@ const phase = ref('ready') // ready | delivering | delivered | failed
 const detail = ref('')
 const taEl = ref(null)
 let confirmTimer = null
+
+// Slash-command / skill autocomplete. The composable owns the popup state;
+// this component only wires textarea events into it and applies accepted text.
+const menu = useSlashCommands()
+const { open: menuOpen, filtered: menuItems, activeIndex: menuActive } = menu
+// The teleported menu is fixed-positioned above the textarea (recomputed each
+// time the popup opens or the textarea grows).
+const menuStyle = ref({})
+function updateMenuPos() {
+  const el = taEl.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  menuStyle.value = {
+    left: `${r.left}px`,
+    width: `${r.width}px`,
+    bottom: `${window.innerHeight - r.top + 6}px`,
+  }
+}
 
 const delivering = computed(() => phase.value === 'delivering')
 const canSend = computed(() => !!draft.value.trim() && !delivering.value)
@@ -74,6 +94,7 @@ async function send() {
     phase.value = 'delivered'
     detail.value = res.detail || 'delivered'
     draft.value = ''
+    menu.close()
     if (taEl.value) taEl.value.style.height = 'auto'
     confirmTimer = setTimeout(() => { phase.value = 'ready' }, 2000)
   } else {
@@ -84,13 +105,67 @@ async function send() {
   }
 }
 
+// Current caret offset in the textarea (end-of-text when unfocused/unknown).
+function caret() {
+  return taEl.value?.selectionStart ?? draft.value.length
+}
+
+// Recompute the popup on every draft change; lazily load the catalog once.
+function onInput() {
+  autogrow()
+  menu.ensureLoaded(props.sessionId)
+  menu.sync(draft.value, caret())
+  if (menuOpen.value) updateMenuPos()
+}
+
+// Caret moved without editing (arrow keys, click): only re-evaluate an
+// already-open menu so it dismisses when the caret leaves the leading
+// `/token`. Never re-opens a closed menu — otherwise the keyup after Escape
+// would immediately re-trigger it. Typing (onInput) is what opens it.
+function onCaretSync() {
+  if (!menuOpen.value) return
+  menu.sync(draft.value, caret())
+  if (menuOpen.value) updateMenuPos()
+}
+
+// Apply an accepted `/command ` draft and restore the caret after it.
+function applyAccepted(text, pos) {
+  draft.value = text
+  nextTick(() => {
+    const el = taEl.value
+    if (el) { el.focus(); el.setSelectionRange(pos, pos) }
+    autogrow()
+  })
+}
+
+function onMenuSelect(item) {
+  const res = menu.accept(draft.value, item)
+  if (res) applyAccepted(res.text, res.caret)
+}
+
 function onKeydown(e) {
+  // The open menu claims nav/accept/dismiss keys before send handling.
+  const r = menu.handleKeydown(e, draft.value)
+  if (r.handled) {
+    e.preventDefault()
+    if (r.text !== undefined) applyAccepted(r.text, r.caret)
+    return
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSend.value) send()
 }
 </script>
 
 <template>
   <div class="live-composer" :class="{ 'live-composer-steer': steer }" data-testid="live-composer">
+    <LiveCommandMenu
+      v-if="menuOpen"
+      :items="menuItems"
+      :active-index="menuActive"
+      :query="menu.query.value"
+      :anchor-style="menuStyle"
+      @select="onMenuSelect"
+      @hover="menu.setActive"
+    />
     <textarea
       ref="taEl"
       v-model="draft"
@@ -99,9 +174,17 @@ function onKeydown(e) {
       :placeholder="placeholder"
       :aria-label="steer ? 'Steering message for the running turn' : 'Prompt to send to this session'"
       :disabled="delivering"
+      role="combobox"
+      aria-autocomplete="list"
+      aria-controls="live-command-menu"
+      :aria-expanded="menuOpen"
+      :aria-activedescendant="menuOpen ? `live-cmd-opt-${menuActive}` : undefined"
       data-testid="live-composer-ta"
-      @input="autogrow"
+      @input="onInput"
       @keydown="onKeydown"
+      @keyup="onCaretSync"
+      @click="onCaretSync"
+      @blur="menu.close"
     ></textarea>
     <Button
       variant="primary"

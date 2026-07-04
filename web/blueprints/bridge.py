@@ -35,7 +35,7 @@ from flask import Blueprint, request, jsonify
 
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
-from lib.agent_bridge import store, delivery
+from lib.agent_bridge import store, delivery, commands
 
 bridge_bp = Blueprint('bridge', __name__)
 
@@ -148,6 +148,24 @@ def api_session_bridge_send(trace_id):
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,
                     "detail": result.detail, "id": row_id})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-commands', methods=['GET'])
+@require_editor
+def api_session_bridge_commands(trace_id):
+    """The /live composer's `/`-autocomplete accept list (editor+ only).
+
+    The slash commands + skills the target session would accept, enumerated
+    from its own project `.claude/` (resolved via the pane registry's cwd)
+    plus `~/.claude/`. Same JWT + `require_editor` gate as `bridge-send`;
+    read-only and fail-closed — any error collapses to `{"commands": []}` so
+    the composer just shows no menu, never an error.
+    """
+    try:
+        rows = commands.list_session_commands(trace_id)
+    except Exception:  # noqa: BLE001 — read-only convenience list, never 500
+        rows = []
+    return jsonify({"commands": rows})
 
 
 @bridge_bp.route('/api/bridge/sessions', methods=['GET'])

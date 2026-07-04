@@ -27,7 +27,7 @@ and panes are seeded straight into `bridge_panes` — both idioms from
 
 from __future__ import annotations
 
-from lib.agent_bridge import delivery
+from lib.agent_bridge import commands, delivery
 from lib.orm.engine import get_connection
 from lib.settings import settings
 
@@ -215,3 +215,41 @@ def test_map_reachability_true_with_reachable_pane(flask_client, monkeypatch):
         "/api/sessions/T-on/map?shallow=1&limit=5").get_json()
     assert body["bridge_reachable"] is True
     assert body["bridge_pane"] == "%3"
+
+
+# ── accept list: /-autocomplete catalog (editor-gated, fail-closed) ──
+
+
+def test_bridge_commands_anonymous_401(anon_client):
+    """Same JWT gate as bridge-send — not in PUBLIC_API_ENDPOINTS."""
+    resp = anon_client.get("/api/sessions/T-1/bridge-commands")
+    assert resp.status_code == 401
+
+
+def test_bridge_commands_viewer_403(flask_client, monkeypatch):
+    from lib.auth import create_token
+    viewer = {"Authorization":
+              f"Bearer {create_token(2, 'viewer-tester', 'viewer')}"}
+    resp = flask_client.get("/api/sessions/T-1/bridge-commands",
+                            headers=viewer)
+    assert resp.status_code == 403
+
+
+def test_bridge_commands_editor_returns_catalog(flask_client, monkeypatch):
+    fixture = [{"name": "deploy", "description": "Ship it.",
+                "kind": "command", "scope": "project"}]
+    monkeypatch.setattr(commands, "list_session_commands",
+                        lambda trace_id: fixture)
+    resp = flask_client.get("/api/sessions/T-9/bridge-commands")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"commands": fixture}
+
+
+def test_bridge_commands_fail_closed_to_empty(flask_client, monkeypatch):
+    """Any enumeration error degrades to {commands: []}, never a 500."""
+    def _boom(trace_id):
+        raise RuntimeError("disk gone")
+    monkeypatch.setattr(commands, "list_session_commands", _boom)
+    resp = flask_client.get("/api/sessions/T-9/bridge-commands")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"commands": []}

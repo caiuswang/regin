@@ -66,6 +66,14 @@ ORDER BY updated_at DESC, id DESC
 LIMIT 1
 """
 
+_PANE_CWD_SQL = """
+SELECT cwd
+FROM bridge_panes
+WHERE trace_id = ?
+ORDER BY updated_at DESC, id DESC
+LIMIT 1
+"""
+
 
 def get_reachable_pane(trace_id: str) -> dict | None:
     """The bridge-reachable pane identity for a session, or None.
@@ -167,6 +175,28 @@ def list_reachable_sessions() -> list[dict]:
         conn.close()
     log.read("bridge_sessions_listed", count=len(rows))
     return [dict(r) for r in rows]
+
+
+def get_pane_cwd(trace_id: str) -> str | None:
+    """The starting cwd registered for a session's pane, or None.
+
+    None when the session never registered, has no recorded cwd, or the
+    registry is absent/drifted — same fail-closed contract as the other
+    reads. Callers fall back to the regin project root.
+    """
+    if not trace_id:
+        return None
+    conn = get_connection()
+    try:
+        row = conn.execute(_PANE_CWD_SQL, (trace_id,)).fetchone()
+    except sqlite3.OperationalError:
+        log.error("bridge_pane_cwd_failed", trace_id=trace_id, exc_info=True)
+        return None
+    finally:
+        conn.close()
+    cwd = row["cwd"] if row is not None else None
+    log.read("bridge_pane_cwd_resolved", trace_id=trace_id, found=bool(cwd))
+    return cwd or None
 
 
 def resolve_latest_trace_id() -> str | None:

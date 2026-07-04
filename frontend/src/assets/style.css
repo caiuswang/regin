@@ -1933,10 +1933,18 @@ details summary {
    cap ≤ ~90px + env(safe-area-inset-bottom). */
 
 .live-page {
-    /* Fill the .content-scroll viewport; the dvh cap guards the mobile
-       URL-bar collapse (ancestors size off 100vh). */
+    /* Fill the (non-scrolling) .content-scroll-fixed host exactly. The card
+       owns its own single scroll region (.live-tail); the outer container
+       must NOT scroll, or the whole card drifts up/down while a sheet is
+       open. No dvh guess — the host is already viewport-bounded. */
     height: 100%;
-    max-height: calc(100dvh - 5.5rem);
+    overflow: hidden;
+}
+/* /live route: freeze the app-shell scroll so only .live-tail scrolls. */
+.content-scroll-fixed {
+    overflow: hidden;
+    padding: 0;
+    overscroll-behavior: contain;
 }
 .live-card {
     position: relative;
@@ -2272,6 +2280,7 @@ details summary {
    sets the `padding` shorthand and would override per-variant padding at
    equal specificity (source order wins). */
 .live-composer {
+    position: relative; /* anchors the /-autocomplete menu (LiveCommandMenu) */
     display: flex;
     align-items: flex-end;
     gap: 8px;
