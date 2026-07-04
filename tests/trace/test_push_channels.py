@@ -80,6 +80,33 @@ def test_webhook_session_url_deep_links_to_span(monkeypatch, captured):
     assert payload["session_url"].endswith("/trace/sessions/s1?span=tu_42")
 
 
+def test_webhook_omits_session_url_for_non_session_trace(monkeypatch, captured):
+    """A content-drift card lives under the synthetic `wiki-debt` trace, which
+    is not a navigable session — the push must not render a dead
+    /trace/sessions/wiki-debt link (regression for the reported bad URL)."""
+    _cfg(monkeypatch, webhook_url="http://hook.test/x")
+    registry.maybe_dispatch(_msg(trace_id="wiki-debt"))
+    payload = next(p for _, p in captured if p.get("event") == "agent_message")
+    assert payload["session_url"] is None
+
+
+def test_push_resolves_relative_link_hrefs_to_absolute_urls(monkeypatch, captured):
+    """App-relative link hrefs (`/repos/…`) are absolutized against base_url so
+    a Feishu/Telegram/webhook reader can actually click them — a bare
+    `/repos/regin/topics` is not a working link outside the SPA."""
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         lark_webhook_url="https://open.feishu.cn/hook/abc",
+         base_url="https://regin.example")
+    links = [{"label": "Review in Topics", "href": "/repos/regin/topics"}]
+    registry.maybe_dispatch(_msg(links=links))
+    webhook = next(p for _, p in captured if p.get("event") == "agent_message")
+    assert webhook["links"] == [
+        {"label": "Review in Topics",
+         "href": "https://regin.example/repos/regin/topics"}]
+    lark = next(p for _, p in captured if p.get("msg_type") == "text")
+    assert "https://regin.example/repos/regin/topics" in lark["content"]["text"]
+
+
 def test_telegram_only_sends_bot_api_text(monkeypatch, captured):
     _cfg(monkeypatch, telegram_bot_token="BOT:1", telegram_chat_id="42")
     assert registry.maybe_dispatch(_msg(title="Down", body="db gone")) == "sent"

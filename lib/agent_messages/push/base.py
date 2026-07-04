@@ -49,11 +49,29 @@ def build_push_message(msg: dict) -> PushMessage:
         msg_type=msg.get("msg_type"),
         title=msg.get("title"),
         body=msg.get("body"),
-        links=msg.get("links"),
+        links=_absolute_links(base, msg.get("links")),
         session_id=trace_id,
         session_url=_session_url(base, trace_id, msg.get("span_id")),
         timestamp=msg.get("created_at"),
     )
+
+
+def _absolute_links(base: str, links: Optional[list]) -> Optional[list]:
+    """Resolve each link's app-relative `href` (`/repos/…`) to a full URL.
+
+    In-app the inbox card routes relative hrefs within the SPA, but a push
+    lands in Feishu/Telegram/a webhook where a bare `/repos/x/topics` is not
+    clickable — so every channel needs the absolute `{base}/repos/x/topics`.
+    Absolute hrefs (already `http…`) and non-path values are passed through."""
+    if not links:
+        return links
+    out = []
+    for link in links:
+        href = link.get("href")
+        if isinstance(href, str) and href.startswith("/"):
+            link = {**link, "href": f"{base}{href}"}
+        out.append(link)
+    return out
 
 
 def _session_url(base: str, trace_id: str, span_id: Optional[str]) -> Optional[str]:
@@ -62,8 +80,15 @@ def _session_url(base: str, trace_id: str, span_id: Optional[str]) -> Optional[s
     Mirrors the in-app inbox card (`InboxMessageCard.sessionHref`): a
     `?span=` query is what `useTraceData` reads to focus/scroll to the exact
     span, so a permission-blocker push lands on the prompt it's about rather
-    than the top of the session."""
-    if not trace_id:
+    than the top of the session.
+
+    Returns None for a synthetic non-session sentinel trace (see
+    `events.NON_SESSION_TRACE_IDS`, e.g. content-drift's `wiki-debt`): those
+    group system-event cards but are not real sessions, so a
+    `/trace/sessions/<id>` link would 404. Such cards carry their own action
+    links instead (e.g. "Review in Topics", "Detected in session")."""
+    from lib.agent_messages.events import NON_SESSION_TRACE_IDS
+    if not trace_id or trace_id in NON_SESSION_TRACE_IDS:
         return None
     url = f"{base}/trace/sessions/{trace_id}"
     return f"{url}?span={span_id}" if span_id else url

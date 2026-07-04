@@ -25,18 +25,32 @@ from lib.topics.wiki import wiki_dir
 log = get_activity_logger("topics")
 
 
-def _notify_drift(repo_path, row: dict[str, Any]) -> None:
+def _notify_drift(repo_path, row: dict[str, Any],
+                  session_trace_id: str | None = None) -> None:
     """Surface a detected content-drift as an inbox event deep-linked to the
     repo's Topics view, where the queued refresh proposal is reviewed /
     regenerated. Keyed per repo+topic with `once` so a still-open drift card
     isn't re-surfaced on every audit; the card is cleared by
     `content_drift.resolve_drift_card` when the drift is applied or dismissed.
-    `events.emit` is best-effort and gated by the `content.drift` kind."""
+
+    The card's `trace_id` is the *stable* synthetic `DRIFT_CARD_TRACE`, not the
+    detecting session — the `once` dedup and `resolve_drift_card` dismissal are
+    both keyed on it, so it must not vary per audit. Since that sentinel is not
+    a navigable session (`events.NON_SESSION_TRACE_IDS` suppresses its footer
+    link), the real detecting session — when known — is surfaced as an explicit
+    "Detected in session" action link instead, so the card still links back to
+    the run that raised it. `events.emit` is best-effort and gated by the
+    `content.drift` kind."""
     from lib.agent_messages import events
     from lib.topics.content_drift import DRIFT_CARD_TRACE, drift_card_key
     paths = ", ".join(row.get("drifted_paths") or []) or "its covered files"
     queued = (" A refresh proposal is queued;" if row.get("proposal_id")
               else "")
+    links = [{"label": "Review in Topics",
+              "href": events.topics_url(repo_path)}]
+    if session_trace_id:
+        links.append({"label": "Detected in session",
+                      "href": events.session_url(session_trace_id)})
     events.emit(
         "content.drift", trace_id=DRIFT_CARD_TRACE,
         title=f"Wiki drift: {row['topic_id']}",
@@ -44,8 +58,7 @@ def _notify_drift(repo_path, row: dict[str, Any]) -> None:
               f"changed since the wiki was digested.{queued} review or "
               f"regenerate it in the Topics view."),
         key=drift_card_key(repo_path, row["topic_id"]),
-        links=[{"label": "Review in Topics",
-                "href": events.topics_url(repo_path)}], once=True)
+        links=links, once=True)
 
 
 def _changed_files(repo_path, changed_since: str) -> Optional[set[str]]:
@@ -116,13 +129,18 @@ def wiki_debt(repo_path, *,
 
 
 def emit_wiki_debt_proposals(repo_path, *,
-                             changed_since: Optional[str] = None
+                             changed_since: Optional[str] = None,
+                             session_trace_id: Optional[str] = None
                              ) -> list[dict[str, Any]]:
     """Detect wiki debt, then emit a fast, agent-free *stub* refresh proposal
     for each `drifted` topic (an idempotent DB write via `emit_refresh_proposal`
     — no agent, no gate). `missing` topics stay report-only: there is no
     agent-free way to author a brand-new wiki, so drafting those remains a
     human/server action.
+
+    `session_trace_id` is the Claude Code session running this emit (the CLI
+    passes `$CLAUDE_CODE_SESSION_ID`); when set, each drift card links back to
+    it as its "Detected in session" run.
 
     Returns the debt rows (same shape as `wiki_debt`), each annotated with a
     `proposal_id` — the stub id for an emitted `drifted` row, else None. Never
@@ -138,7 +156,7 @@ def emit_wiki_debt_proposals(repo_path, *,
                 log.error("wiki_debt_emit_failed",
                           topic_id=row["topic_id"], exc_info=True)
             row["proposal_id"] = proposal_id
-            _notify_drift(repo_path, row)
+            _notify_drift(repo_path, row, session_trace_id)
         else:
             row["proposal_id"] = proposal_id
     return rows

@@ -58,8 +58,15 @@ const canMarkRead = computed(
   () => isUnread.value && typeof props.message.id === 'number')
 const isAttention = computed(
   () => ['warning', 'blocker'].includes(props.message.msg_type))
+// Trace ids that group system-event cards but are NOT navigable sessions
+// (content-drift lives under "wiki-debt") — routing to /trace/sessions/<id>
+// would show a blank pane. Keep in sync with lib/agent_messages/events.py
+// NON_SESSION_TRACE_IDS. Such cards carry their own action links instead.
+const NON_SESSION_TRACES = new Set(['wiki-debt'])
 const sessionHref = computed(() => {
-  const base = `/trace/sessions/${props.message.trace_id}`
+  const traceId = props.message.trace_id
+  if (!traceId || NON_SESSION_TRACES.has(traceId)) return null
+  const base = `/trace/sessions/${traceId}`
   return props.message.span_id ? `${base}?span=${props.message.span_id}` : base
 })
 const timeLabel = computed(() => {
@@ -105,7 +112,7 @@ const timeLabel = computed(() => {
       ></div>
     </div>
     <router-link
-      v-if="overflowing"
+      v-if="overflowing && sessionHref"
       :to="sessionHref"
       class="mt-1 inline-block text-[11px] font-medium text-blue-600 hover:text-blue-800 no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
       @click="emit('open', message)"
@@ -140,6 +147,7 @@ const timeLabel = computed(() => {
 
     <div class="mt-2.5 flex items-center gap-3 text-[11px] text-slate-500">
       <router-link
+        v-if="sessionHref"
         :to="sessionHref"
         class="inline-flex items-center gap-1 text-slate-500 hover:text-blue-600 no-underline truncate max-w-[60%] rounded focus-visible:outline-2 focus-visible:outline-blue-500"
         @click="emit('open', message)"

@@ -580,12 +580,20 @@ def cmd_topics_wiki_debt(
         False, "--emit",
         help="Emit a fast, agent-free stub refresh proposal (pending_review) "
              "for each drifted topic. missing topics stay report-only."),
+    session_id: str | None = typer.Option(
+        None, "--session-id",
+        help="Attribute emitted drift cards to this Claude Code session so the "
+             "inbox card links back to the run that detected the drift. "
+             "Defaults to $CLAUDE_CODE_SESSION_ID."),
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
+    from lib.session_probe import resolve as resolve_session
     from lib.topics.wiki_debt import emit_wiki_debt_proposals, wiki_debt
 
     rp = _repo_path(repo)
-    rows = (emit_wiki_debt_proposals(rp, changed_since=changed_since) if emit
+    sid = session_id or resolve_session()
+    rows = (emit_wiki_debt_proposals(rp, changed_since=changed_since,
+                                     session_trace_id=sid) if emit
             else wiki_debt(rp, changed_since=changed_since))
     if as_json:
         print(json.dumps(rows, indent=2))

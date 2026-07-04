@@ -225,6 +225,30 @@ def test_producer_content_drift(recorded):
     assert "refresh proposal is queued" in call["body"]
 
 
+def test_producer_content_drift_links_detecting_session(recorded):
+    """When the detecting session is known, the card gains a "Detected in
+    session" action link to it — while the card's trace_id stays the synthetic
+    `wiki-debt` (so `once` dedup + resolve stay keyed on one stable trace, not
+    the per-audit session)."""
+    from lib.topics import wiki_debt
+    row = {"topic_id": "trace-merge", "status": "drifted",
+           "drifted_paths": ["lib/trace/merge.py"], "proposal_id": "cd-1"}
+    wiki_debt._notify_drift("/tmp/myrepo", row, session_trace_id="sess-xyz")
+    (call,) = recorded["calls"]
+    assert call["trace_id"] == "wiki-debt"          # dedup trace unchanged
+    assert call["links"] == [
+        {"label": "Review in Topics", "href": "/repos/myrepo/topics"},
+        {"label": "Detected in session", "href": "/trace/sessions/sess-xyz"}]
+
+
+def test_drift_trace_is_registered_non_session():
+    """The drift card's synthetic dedup trace must be registered as a
+    non-session sentinel, or the push/inbox would render a dead
+    `/trace/sessions/wiki-debt` link. Pins the two constants in sync."""
+    from lib.topics.content_drift import DRIFT_CARD_TRACE
+    assert DRIFT_CARD_TRACE in events.NON_SESSION_TRACE_IDS
+
+
 def test_producer_content_drift_key_scoped_per_repo(recorded):
     from lib.topics import wiki_debt
     row = {"topic_id": "auth", "status": "drifted", "drifted_paths": []}

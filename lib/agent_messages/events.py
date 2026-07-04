@@ -67,6 +67,15 @@ _KINDS: tuple[EventKind, ...] = (
 
 REGISTRY: dict[str, EventKind] = {k.kind: k for k in _KINDS}
 
+# Trace ids that group *system-event* cards but are NOT navigable Claude Code
+# sessions — a card under one must not render a `/trace/sessions/<id>` link
+# (it 404s / shows a blank pane). Producers that group cards under a synthetic
+# sentinel register it here so the inbox card + every push channel omit the
+# dead link. Kept in sync with the producers' constants — currently just
+# content-drift's `lib.topics.content_drift.DRIFT_CARD_TRACE` — by
+# `tests/agent_messages/test_events.py::test_drift_trace_is_registered_non_session`.
+NON_SESSION_TRACE_IDS: frozenset[str] = frozenset({"wiki-debt"})
+
 
 def is_enabled(kind: str) -> bool:
     """Whether `kind` should currently notify (see the precedence in the
@@ -160,5 +169,5 @@ def session_url(trace_id: str) -> str:
     return f"/trace/sessions/{trace_id}"
 
 
-__all__ = ["EventKind", "REGISTRY", "emit", "resolve", "is_enabled",
-           "catalog", "topics_url", "proposal_url", "session_url"]
+__all__ = ["EventKind", "REGISTRY", "NON_SESSION_TRACE_IDS", "emit", "resolve",
+           "is_enabled", "catalog", "topics_url", "proposal_url", "session_url"]
