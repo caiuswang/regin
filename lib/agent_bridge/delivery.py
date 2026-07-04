@@ -72,9 +72,15 @@ def _tmux(socket: str | None, *args: str):
                                            stderr=str(exc))
 
 
-def _sanitize(text: str) -> str:
+def sanitize_text(text: str) -> str:
     """Printable single-line text only: no ANSI, no control bytes, no
-    newlines; capped at `settings.agent_bridge.max_text_len`."""
+    newlines; capped at `settings.agent_bridge.max_text_len`.
+
+    Public so the HTTP surface can bound/clean the STORED body (the inbox
+    row) with the same rule delivery applies to the typed copy — one
+    sanitizer, no drift. Idempotent: re-sanitizing already-clean text is a
+    no-op, so the view may store the cleaned text and still pass it to
+    deliver()."""
     text = _ANSI_RE.sub("", text or "")
     text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
     text = _CTRL_RE.sub("", text)
@@ -171,7 +177,7 @@ def deliver(trace_id: str, text: str) -> DeliveryResult:
         return _refuse(trace_id, "bridge disabled")
     if not _rate_ok(trace_id):
         return _refuse(trace_id, "rate limit exceeded")
-    clean = _sanitize(text)
+    clean = sanitize_text(text)
     if not clean:
         return _refuse(trace_id, "empty message after sanitization")
     row = store.get_reachable_pane(trace_id)

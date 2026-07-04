@@ -295,6 +295,37 @@ def init_bridge_panes_schema(conn) -> None:
     conn.commit()
 
 
+def init_bridge_messages_schema(conn) -> None:
+    """Create `bridge_messages` (agent-bridge inbox) if missing.
+
+    New table — no ALTER path. Same DDL as `db/schema.sql`; keep the two in
+    sync so a fresh install and an upgraded install converge on one shape.
+    """
+    if not _table_exists(conn, "bridge_messages"):
+        conn.execute("""
+            CREATE TABLE bridge_messages (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id        TEXT NOT NULL,
+                body            TEXT NOT NULL DEFAULT '',
+                sender          TEXT,
+                delivered       INTEGER NOT NULL DEFAULT 0,
+                delivery_detail TEXT,
+                delivery_path   TEXT,
+                is_test         INTEGER NOT NULL DEFAULT 0,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                delivered_at    TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX idx_bridge_messages_trace ON bridge_messages(trace_id)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_bridge_messages_created "
+            "ON bridge_messages(created_at DESC)"
+        )
+    conn.commit()
+
+
 def init_pattern_deployments_schema(conn) -> None:
     """Bring an older `pattern_deployments` table up to the multi-provider
     shape if it predates the `provider` column.

@@ -178,6 +178,30 @@ CREATE TABLE IF NOT EXISTS bridge_panes (
 
 CREATE INDEX IF NOT EXISTS idx_bridge_panes_reachable ON bridge_panes(reachable);
 
+-- Agent-bridge inbox: append-only rows for steering messages pushed at a
+-- live session (POST /api/bridge/messages). Canonical, mutable store written
+-- by the HTTP surface — one row per attempt, with a clipped sender, a
+-- sanitized+capped body (ANSI/control bytes stripped, newlines flattened,
+-- bounded at agent_bridge.max_text_len at insert — safe to render in the
+-- inbox), and the delivery outcome (delivered flag, detail, path) stamped
+-- after the tmux send. Undeliverable attempts stay recorded (delivered=0)
+-- rather than vanishing, so the inbox shows what came from where.
+CREATE TABLE IF NOT EXISTS bridge_messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id        TEXT NOT NULL,
+    body            TEXT NOT NULL DEFAULT '',
+    sender          TEXT,
+    delivered       INTEGER NOT NULL DEFAULT 0,
+    delivery_detail TEXT,
+    delivery_path   TEXT,
+    is_test         INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    delivered_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bridge_messages_trace ON bridge_messages(trace_id);
+CREATE INDEX IF NOT EXISTS idx_bridge_messages_created ON bridge_messages(created_at DESC);
+
 -- Post-hoc rubric grades for captured sessions (lib/grader/). Two
 -- independent axes per session — 'correctness' (claim groundedness /
 -- coverage / source quality) and 'process' (tool-use, redundancy,

@@ -46,6 +46,7 @@ from web.startup import (
     init_topic_proposal_schema as _init_topic_proposal_schema,
     init_session_grades_schema as _init_session_grades_schema,
     init_bridge_panes_schema as _init_bridge_panes_schema,
+    init_bridge_messages_schema as _init_bridge_messages_schema,
     init_pattern_deployments_schema as _init_pattern_deployments_schema,
 )
 
@@ -68,6 +69,7 @@ def create_app():
         _init_topic_proposal_schema(conn)
         _init_session_grades_schema(conn)
         _init_bridge_panes_schema(conn)
+        _init_bridge_messages_schema(conn)
         _init_pattern_deployments_schema(conn)
     finally:
         conn.close()
@@ -156,6 +158,10 @@ def create_app():
     from web.blueprints.events import events_bp
     app.register_blueprint(events_bp)
 
+    # ── Agent bridge HTTP surface (human/system → live session) ───
+    from web.blueprints.bridge import bridge_bp
+    app.register_blueprint(bridge_bp)
+
     # Auth gate installed last so it can validate its allowlist against the
     # fully-registered route table.
     _install_auth_gate(app)
@@ -215,6 +221,12 @@ PUBLIC_API_ENDPOINTS = frozenset({
     "trace.api_ingest_prompt_images",
     "plans.api_ingest_plan_session",
     "rules.api_ingest_rule_trigger",
+    # Agent bridge: guarded by its own bearer token (require_bridge_token),
+    # a credential SEPARATE from the web-UI JWT. The gate's PUBLIC branch
+    # returns with no auth, so that decorator is the sole guard — intended.
+    "bridge.api_bridge_post_message",
+    "bridge.api_bridge_list_sessions",
+    "bridge.api_bridge_list_messages",
 })
 
 
