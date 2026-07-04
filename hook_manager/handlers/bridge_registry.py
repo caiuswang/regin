@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS bridge_panes (
     pane_id         TEXT NOT NULL,
     tmux_server_pid INTEGER NOT NULL,
     pane_pid        INTEGER NOT NULL,
+    tmux_socket     TEXT,
     reachable       INTEGER NOT NULL DEFAULT 0,
     cwd             TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -52,13 +53,14 @@ CREATE TABLE IF NOT EXISTS bridge_panes (
 # never inherit stale coordinates from a prior tmux server lifetime.
 _UPSERT_SQL = """
 INSERT INTO bridge_panes
-    (trace_id, pane_id, tmux_server_pid, pane_pid, reachable, cwd,
+    (trace_id, pane_id, tmux_server_pid, pane_pid, tmux_socket, reachable, cwd,
      created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 ON CONFLICT(trace_id) DO UPDATE SET
     pane_id         = excluded.pane_id,
     tmux_server_pid = excluded.tmux_server_pid,
     pane_pid        = excluded.pane_pid,
+    tmux_socket     = excluded.tmux_socket,
     reachable       = excluded.reachable,
     cwd             = excluded.cwd,
     updated_at      = excluded.updated_at
@@ -99,7 +101,13 @@ def _register_pane(payload: HookPayload) -> None:
     if identity is None:
         return
     server_pid, pane_pid = identity
-    _upsert_pane(trace_id, pane_id, server_pid, pane_pid, payload.cwd)
+    # $TMUX = "<socket_path>,<server_pid>,<session_id>"; the first
+    # comma-field is the absolute socket path. NULL when outside tmux or on
+    # the default socket — delivery threads a non-NULL value into every
+    # tmux call and omits -S when NULL.
+    tmux_socket = (os.environ.get('TMUX') or '').split(',')[0] or None
+    _upsert_pane(trace_id, pane_id, server_pid, pane_pid, tmux_socket,
+                 payload.cwd)
 
 
 def _query_pane_identity(pane_id: str) -> tuple[int, int] | None:
@@ -128,10 +136,20 @@ def _query_pane_identity(pane_id: str) -> tuple[int, int] | None:
         return None
 
 
-def ensure_schema() -> None:
-    """Create `bridge_panes` if this DB predates the agent bridge.
+def _column_exists(conn, table: str, column: str) -> bool:
+    return any(row[1] == column
+               for row in conn.execute(f"PRAGMA table_info({table})"))
 
-    Same DDL as `db/schema.sql` (fresh installs) and
+
+def ensure_schema() -> None:
+    """Create `bridge_panes` if this DB predates the agent bridge, and
+    backfill `tmux_socket` on tables created before that column landed.
+
+    `CREATE TABLE IF NOT EXISTS` is a no-op on a pre-existing table, so an
+    upgraded install (or the live `db/regin.db` from slice 1) needs the
+    additive ALTER — otherwise the socket-aware UPSERT/SELECT hit
+    `OperationalError: no column named tmux_socket`. Same DDL as
+    `db/schema.sql` (fresh installs) and
     `web/startup.py:init_bridge_panes_schema` (serve startup) — keep all
     three in sync.
     """
@@ -142,6 +160,8 @@ def ensure_schema() -> None:
     conn = get_connection()
     try:
         conn.execute(_SCHEMA_SQL)
+        if not _column_exists(conn, "bridge_panes", "tmux_socket"):
+            conn.execute("ALTER TABLE bridge_panes ADD COLUMN tmux_socket TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bridge_panes_reachable "
                      "ON bridge_panes(reachable)")
         conn.commit()
@@ -151,7 +171,8 @@ def ensure_schema() -> None:
 
 
 def _upsert_pane(trace_id: str, pane_id: str, server_pid: int,
-                 pane_pid: int, cwd: str | None) -> None:
+                 pane_pid: int, tmux_socket: str | None,
+                 cwd: str | None) -> None:
     ensure_schema()
     from lib.orm.engine import get_connection
     conn = get_connection()
@@ -160,7 +181,8 @@ def _upsert_pane(trace_id: str, pane_id: str, server_pid: int,
         # bridge-reachable; later slices may flip the column off without
         # deleting the identity row.
         conn.execute(_UPSERT_SQL,
-                     (trace_id, pane_id, server_pid, pane_pid, 1, cwd))
+                     (trace_id, pane_id, server_pid, pane_pid, tmux_socket,
+                      1, cwd))
         conn.commit()
     finally:
         conn.close()
@@ -169,4 +191,5 @@ def _upsert_pane(trace_id: str, pane_id: str, server_pid: int,
         'bridge_pane_registered',
         trace_id=trace_id, pane_id=pane_id,
         tmux_server_pid=server_pid, pane_pid=pane_pid,
+        tmux_socket=tmux_socket,
     )

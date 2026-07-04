@@ -725,6 +725,30 @@ class AgentMessagesConfig(BaseModel):
     retention_keep_pinned: bool = True
 
 
+class AgentBridgeConfig(BaseModel):
+    """The agent bridge: HTTP `POST` → guarded tmux keystroke injection into
+    a live claude session's pane (`lib/agent_bridge`, `docs/agent-bridge-design.md`).
+
+    Off by default. This endpoint is remote keystroke injection into a
+    terminal — the `token` is equivalent to SSH access to the machine, so it
+    lives only in the gitignored `config/settings.local.json`, never in the
+    tracked `config/settings.json`. Delivery is bounded per-session by
+    `rate_limit_per_minute`; each message is sanitized and capped at
+    `max_text_len` before it is typed literally into the pane. Only panes
+    whose foreground process is in `allowed_pane_commands` accept delivery —
+    the guard that stops a message typed at a fallen-back shell from
+    executing as a shell command (native builds report `claude.exe`; NVM
+    installs report `claude` or `node`).
+    """
+
+    enabled: bool = False
+    token: str = ""
+    rate_limit_per_minute: int = 30
+    max_text_len: int = 4000
+    allowed_pane_commands: list[str] = Field(
+        default_factory=lambda: ["claude", "claude.exe", "node"])
+
+
 class TopicEvolutionConfig(BaseModel):
     """Code-driven topic/memory co-evolution (`lib/topics` drift loop).
 
@@ -981,6 +1005,9 @@ class Settings(BaseSettings):
 
     # ── Agent → human messages (send_to_user inbox + webhook) ─
     agent_messages: AgentMessagesConfig = Field(default_factory=AgentMessagesConfig)
+
+    # ── Agent bridge (HTTP → guarded tmux keystroke injection) ──
+    agent_bridge: AgentBridgeConfig = Field(default_factory=AgentBridgeConfig)
 
     # ── Trace retention (opt-in prune of superseded pending spans) ──
     trace_retention: TraceRetentionConfig = Field(default_factory=TraceRetentionConfig)

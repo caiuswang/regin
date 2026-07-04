@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS bridge_panes (
     pane_id         TEXT NOT NULL,
     tmux_server_pid INTEGER NOT NULL,
     pane_pid        INTEGER NOT NULL,
+    tmux_socket     TEXT,
     reachable       INTEGER NOT NULL DEFAULT 0,
     cwd             TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),

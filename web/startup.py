@@ -277,6 +277,7 @@ def init_bridge_panes_schema(conn) -> None:
                 pane_id         TEXT NOT NULL,
                 tmux_server_pid INTEGER NOT NULL,
                 pane_pid        INTEGER NOT NULL,
+                tmux_socket     TEXT,
                 reachable       INTEGER NOT NULL DEFAULT 0,
                 cwd             TEXT,
                 created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -286,6 +287,11 @@ def init_bridge_panes_schema(conn) -> None:
         conn.execute(
             "CREATE INDEX idx_bridge_panes_reachable ON bridge_panes(reachable)"
         )
+    elif 'tmux_socket' not in _column_names(conn, 'bridge_panes'):
+        # Additive repair for the slice-1 table shape (created before the
+        # tmux_socket column landed). Without it the socket-aware
+        # UPSERT/SELECT raise OperationalError on upgraded installs.
+        conn.execute("ALTER TABLE bridge_panes ADD COLUMN tmux_socket TEXT")
     conn.commit()
 
 
