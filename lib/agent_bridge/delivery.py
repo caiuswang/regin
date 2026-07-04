@@ -156,17 +156,155 @@ def _type_and_ack(row: dict, text: str, in_mode: bool) -> DeliveryResult:
     r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", text)
     if r.returncode != 0:
         return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
-    time.sleep(0.3)
-    capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
-    if text[:30] not in (capture.stdout or ""):
+    # Ack that the text landed in the composer before submitting. Claude's
+    # echo can lag the keystroke, so POLL the pane (up to ~1.5s) rather than
+    # reading once at 0.3s — a single early read was a false "not visible"
+    # failure on a perfectly good send.
+    needle = text[:30]
+    if not _await_pane_text(socket, pane, needle):
         return DeliveryResult(False, "typed text not visible in pane; not submitting")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
     return DeliveryResult(True, f"delivered to {pane}")
 
 
+def _await_pane_text(socket: str | None, pane: str, needle: str,
+                     attempts: int = 5, interval: float = 0.3) -> bool:
+    """Poll capture-pane until `needle` appears (echo can lag the keystroke).
+    True as soon as it is seen; False if it never shows within the budget."""
+    for _ in range(attempts):
+        time.sleep(interval)
+        capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+        if needle in (capture.stdout or ""):
+            return True
+    return False
+
+
+# Named keys the bridge may inject as a RAW keystroke (no literal text, no
+# trailing Enter, no composer ack). Escape is the recovery key: a harness
+# overlay (slash-command help, a menu) swallows the composer's typed text so
+# a normal send fails its ack ("typed text not visible") — one Escape
+# dismisses the overlay from mobile so typing works again. Allowlisted so the
+# key path can never be coerced into an arbitrary control sequence.
+_ALLOWED_KEYS = {"Escape"}
+
+
+def _send_key(row: dict, key: str) -> DeliveryResult:
+    """Inject a single named key into the pane (no ack — a keystroke leaves
+    no reliable capture-pane trace like typed text does)."""
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    r = _tmux(socket, "send-keys", "-t", pane, key)
+    if r.returncode != 0:
+        return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+    return DeliveryResult(True, f"{key} sent to {pane}")
+
+
+def deliver_key(trace_id: str, key: str) -> DeliveryResult:
+    """Inject an allowlisted named key into `trace_id`'s reachable pane under
+    the same reachability / identity / rate guards as `deliver()`. Structured
+    refusal (never an exception) on every expected failure; audited."""
+    if not settings.agent_bridge.enabled:
+        return _refuse(trace_id, "bridge disabled")
+    if key not in _ALLOWED_KEYS:
+        return _refuse(trace_id, f"unsupported key {key!r}")
+    if not _rate_ok(trace_id):
+        return _refuse(trace_id, "rate limit exceeded")
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return _refuse(trace_id, "no reachable session")
+    identity = _verify_identity(row)
+    if not identity["ok"]:
+        return _refuse(trace_id, identity["detail"])
+    result = _send_key(row, key)
+    log.write("bridge_key_outcome", trace_id=trace_id, key=key,
+              delivered=result.delivered, detail=result.detail)
+    return result
+
+
 def _refuse(trace_id: str, detail: str) -> DeliveryResult:
     log.write("bridge_delivery_refused", trace_id=trace_id, detail=detail)
     return DeliveryResult(False, detail)
+
+
+# An AskUserQuestion is answered by driving its select TUI: the cursor starts
+# on the first option (index 0), so option `i` is reached with Down×i then
+# Enter — one Enter, one submission, deterministic regardless of number-key
+# semantics. The auto-appended "Type something." free-text entry sits at index
+# = the number of listed options; selecting it opens a text field we then type
+# into and ack (like `deliver`) before the final Enter. Bound the walk so a bad
+# index can't spin the arrow loop.
+_ANSWER_MAX_NAV = 50
+_NAV_STEP_SEC = 0.03
+
+
+def _navigate(socket: str | None, pane: str, steps: int) -> None:
+    """Move the AskUserQuestion cursor `steps` options down from the top."""
+    for _ in range(steps):
+        _tmux(socket, "send-keys", "-t", pane, "Down")
+        time.sleep(_NAV_STEP_SEC)
+
+
+def _send_answer(row: dict, option_index: int, free_text: str | None,
+                 in_mode: bool) -> DeliveryResult:
+    """Drive the ask's select TUI to option `option_index`; when `free_text`
+    is set, treat that index as the "Type something." entry, open it, type and
+    ack the text, then submit. A plain option pick leaves no capture-pane trace
+    (the menu vanishes), so it is best-effort like `_send_key`."""
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    if in_mode:
+        _tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
+        time.sleep(0.1)
+    _navigate(socket, pane, option_index)
+    if free_text is None:
+        r = _tmux(socket, "send-keys", "-t", pane, "Enter")
+        if r.returncode != 0:
+            return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+        return DeliveryResult(True, f"selected option {option_index + 1} in {pane}")
+    # Free-text: Enter opens the "Type something." field, then type + ack + Enter.
+    _tmux(socket, "send-keys", "-t", pane, "Enter")
+    time.sleep(0.1)
+    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", free_text)
+    if r.returncode != 0:
+        return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+    # Ack the typed answer landed in the field before submitting (same
+    # capture-pane check `_type_and_ack` applies to a steering message).
+    time.sleep(0.3)
+    capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+    if free_text[:30] not in (capture.stdout or ""):
+        return DeliveryResult(False, "typed answer not visible in pane; not submitting")
+    _tmux(socket, "send-keys", "-t", pane, "Enter")
+    return DeliveryResult(True, f"typed answer delivered to {pane}")
+
+
+def deliver_answer(trace_id: str, option_index: int,
+                   free_text: str | None = None) -> DeliveryResult:
+    """Answer a pending AskUserQuestion in `trace_id`'s reachable pane by
+    selecting option `option_index` (0-based), or, when `free_text` is given,
+    the "Type something." entry at that index typed with `free_text`. Same
+    reachability / identity / rate guards as `deliver`; structured refusal
+    (never an exception) on every expected failure; audited."""
+    if not settings.agent_bridge.enabled:
+        return _refuse(trace_id, "bridge disabled")
+    if not isinstance(option_index, int) or option_index < 0 \
+            or option_index > _ANSWER_MAX_NAV:
+        return _refuse(trace_id, f"option index out of range: {option_index}")
+    clean = None
+    if free_text is not None:
+        clean = sanitize_text(free_text)
+        if not clean:
+            return _refuse(trace_id, "empty answer after sanitization")
+    if not _rate_ok(trace_id):
+        return _refuse(trace_id, "rate limit exceeded")
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return _refuse(trace_id, "no reachable session")
+    identity = _verify_identity(row)
+    if not identity["ok"]:
+        return _refuse(trace_id, identity["detail"])
+    result = _send_answer(row, option_index, clean, identity["in_mode"])
+    log.write("bridge_answer_outcome", trace_id=trace_id,
+              option_index=option_index, free_text=clean is not None,
+              delivered=result.delivered, detail=result.detail)
+    return result
 
 
 def deliver(trace_id: str, text: str) -> DeliveryResult:

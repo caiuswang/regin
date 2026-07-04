@@ -2476,6 +2476,41 @@ details summary {
 .live-qa-optdesc { display: block; color: var(--color-fg-subtle); margin-top: 1px; overflow-wrap: anywhere; }
 .live-qa-free { background: var(--color-amber-50); }
 .live-qa-free .live-qa-optmark { color: var(--color-amber-700); }
+/* Answerable option: the whole row is a tappable button (live single-question
+   ask over a reachable bridge). Reset the native button chrome to match the
+   read-only rows, add a pointer + hover/active affordance and a leading caret. */
+button.live-qa-pick {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    transition: background 0.12s ease;
+}
+button.live-qa-pick + button.live-qa-pick { border-top: 1px solid var(--color-border-subtle); }
+button.live-qa-pick .live-qa-optmark { color: var(--color-primary); font-weight: 700; }
+button.live-qa-pick:hover:not(:disabled) { background: var(--color-surface-2); }
+button.live-qa-pick:active:not(:disabled) { background: var(--color-emerald-50); }
+button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
+.live-qa-answer { margin-top: 10px; }
+.live-qa-free-row { display: flex; gap: 8px; align-items: stretch; }
+.live-qa-free-input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    color: var(--color-fg);
+    font-size: 13px;
+}
+.live-qa-free-input:focus { outline: none; border-color: var(--color-ring); }
+.live-qa-free-input:disabled { opacity: 0.6; }
+.live-qa-answer-meta { margin: 6px 2px 0; font-size: 11.5px; color: var(--color-fg-subtle); }
+.live-qa-answer-meta.live-qa-failed { color: var(--color-danger); }
 .live-qa-note {
     padding: 6px 12px;
     border-top: 1px solid var(--color-border-subtle);

@@ -286,3 +286,100 @@ def test_rate_limit_is_per_trace_id(monkeypatch):
     assert r1.delivered is True and r2.delivered is True
     assert r3.delivered is False and "rate limit" in r3.detail
     assert other.delivered is True  # a different trace_id is unaffected
+
+
+# ── 11. deliver_answer: AskUserQuestion select-TUI driving ────
+def _downs(calls):
+    return [c for c in calls if c[-1] == "Down"]
+
+
+def _enters(calls):
+    return [c for c in calls if c[-1] == "Enter"]
+
+
+def test_answer_option_navigates_and_submits(monkeypatch):
+    # Pick option index 2: Down×2 then a single Enter, no literal typing.
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 2)
+
+    assert res.delivered is True
+    assert len(_downs(calls)) == 2
+    assert len(_enters(calls)) == 1  # exactly one submission
+    assert not _literal_sends(calls)  # a plain pick never types
+
+
+def test_answer_option_zero_sends_no_down(monkeypatch):
+    # The cursor starts on option 0 — no navigation, just Enter.
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 0)
+
+    assert res.delivered is True
+    assert _downs(calls) == []
+    assert len(_enters(calls)) == 1
+
+
+def test_answer_free_text_navigates_types_acks_submits(monkeypatch):
+    # Free-text at index 3 (the "Type something." entry): Down×3, Enter to
+    # open the field, literal type, ack, then a final Enter.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="prompt> my own answer")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 3, "my own answer")
+
+    assert res.delivered is True
+    assert len(_downs(calls)) == 3
+    assert _literal_sends(calls)[0][-1] == "my own answer"
+    assert len(_enters(calls)) == 2  # open the field + submit
+
+
+def test_answer_free_text_ack_failure_does_not_submit(monkeypatch):
+    # The typed answer never echoes → not delivered, and the SUBMIT Enter is
+    # withheld (only the field-opening Enter fires).
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="a different screen")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 1, "unseen answer")
+
+    assert res.delivered is False
+    assert "not visible" in res.detail
+    assert len(_enters(calls)) == 1  # field opened, but never submitted
+
+
+def test_answer_out_of_range_refuses_before_tmux(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    lo = delivery.deliver_answer("t1", -1)
+    hi = delivery.deliver_answer("t1", 999)
+
+    assert lo.delivered is False and "out of range" in lo.detail
+    assert hi.delivered is False and "out of range" in hi.detail
+    assert calls == []  # refused before any tmux subprocess
+
+
+def test_answer_empty_free_text_refuses(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 0, "   \x1b[0m ")  # empty after sanitize
+
+    assert res.delivered is False
+    assert "empty answer" in res.detail
+    assert calls == []
+
+
+def test_answer_stale_identity_refuses(monkeypatch):
+    calls = _install_tmux(monkeypatch, server_pid=999)  # live 999 != row 111
+    _set_row(monkeypatch, _pane_row(tmux_server_pid=111))
+
+    res = delivery.deliver_answer("t1", 1)
+
+    assert res.delivered is False
+    assert "stale" in res.detail
+    assert _downs(calls) == [] and _enters(calls) == []  # never drove the TUI

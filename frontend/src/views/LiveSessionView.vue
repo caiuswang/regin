@@ -406,6 +406,8 @@ onUnmounted(() => {
         :session-id="sessionId || ''"
         :bridge-reachable="!!meta.bridge_reachable"
         :bridge-pane="meta.bridge_pane || ''"
+        :server-now="meta.server_now || ''"
+        :server-now-at="meta.server_now_at || 0"
         @state-change="s => (nowState = s)"
         @open-response="s => openSheet('message', s)"
         @open-question="s => openSheet('qa', s)"
@@ -433,7 +435,13 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="sheetKind === 'qa'">
-          <LiveQaSheet v-if="sheetSpan" :span="sheetSpan" />
+          <LiveQaSheet
+            v-if="sheetSpan"
+            :span="sheetSpan"
+            :session-id="sessionId || ''"
+            :bridge-reachable="!!meta.bridge_reachable"
+            @answered="closeSheet"
+          />
         </template>
 
         <template v-else-if="sheetKind === 'sessions'">

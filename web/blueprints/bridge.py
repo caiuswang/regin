@@ -150,6 +150,69 @@ def api_session_bridge_send(trace_id):
                     "detail": result.detail, "id": row_id})
 
 
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-key', methods=['POST'])
+@require_editor
+def api_session_bridge_key(trace_id):
+    """Inject an allowlisted control key (currently Escape) into the /live
+    card's session — the composer's recovery affordance for a harness overlay
+    that has swallowed typed input. Same JWT + `require_editor` gate as
+    `bridge-send`; a keystroke into a live agent terminal outranks every
+    editor-gated mutation, so viewers get 403. Not recorded in the steering
+    inbox (a control keystroke is not a message); audited in the delivery log.
+    A disabled bridge is a clean structured refusal, not a 404.
+    """
+    if not settings.agent_bridge.enabled:
+        return jsonify({"delivered": False, "detail": "bridge disabled"})
+    payload = request.get_json(silent=True) or {}
+    key = payload.get("key")
+    if not isinstance(key, str) or not key:
+        return jsonify({"error": "key required"}), 400
+    result = delivery.deliver_key(trace_id, key)
+    return jsonify({"delivered": result.delivered, "detail": result.detail})
+
+
+def _parse_answer(payload: dict):
+    """(option_index, text, body) from an answer payload, or (None, ...) when
+    `option_index` is missing/invalid. `text` is the sanitized free-form answer
+    (None when absent); `body` is the human-readable line recorded in the inbox
+    (the label, else the text, else the option ordinal)."""
+    option_index = payload.get("option_index")
+    if not isinstance(option_index, int) or option_index < 0:
+        return None, None, None
+    raw_text = payload.get("text")
+    text = (delivery.sanitize_text(raw_text)
+            if isinstance(raw_text, str) and raw_text.strip() else None)
+    raw_label = payload.get("label")
+    label = delivery.sanitize_text(raw_label) if isinstance(raw_label, str) else ""
+    return option_index, text, (text or label or f"option {option_index + 1}")
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-answer', methods=['POST'])
+@require_editor
+def api_session_bridge_answer(trace_id):
+    """Answer a pending AskUserQuestion in the /live card's session by driving
+    its select TUI (editor+ only). `option_index` (0-based) picks a listed
+    option; an optional `text` selects the auto-appended "Type something."
+    entry at that index and types a free-form answer. Same JWT + `require_editor`
+    gate as `bridge-send` — driving a live agent terminal outranks every
+    editor-gated mutation, so viewers get 403. The human-readable answer
+    (`label`, else the free text) is recorded in the steering inbox for audit,
+    mirroring `bridge-send`. A disabled bridge is a clean structured refusal.
+    """
+    if not settings.agent_bridge.enabled:
+        return jsonify({"delivered": False, "detail": "bridge disabled"})
+    option_index, text, body = _parse_answer(request.get_json(silent=True) or {})
+    if option_index is None:
+        return jsonify({"error": "option_index required"}), 400
+    user = get_current_user()
+    sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    row_id = store.record_bridge_message(trace_id, body, sender)
+    result = delivery.deliver_answer(trace_id, option_index, text)
+    store.mark_delivered(row_id, result.delivered, result.detail)
+    return jsonify({"delivered": result.delivered,
+                    "detail": result.detail, "id": row_id})
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-commands', methods=['GET'])
 @require_editor
 def api_session_bridge_commands(trace_id):

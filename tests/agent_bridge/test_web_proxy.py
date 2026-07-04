@@ -217,6 +217,99 @@ def test_map_reachability_true_with_reachable_pane(flask_client, monkeypatch):
     assert body["bridge_pane"] == "%3"
 
 
+# ── answer proxy: AskUserQuestion answering (editor-gated) ───
+
+
+def _mock_answer(monkeypatch, *, delivered=True, detail="selected option 2 in %7"):
+    calls: list[tuple] = []
+
+    def _fake(trace_id, option_index, free_text=None):
+        calls.append((trace_id, option_index, free_text))
+        return delivery.DeliveryResult(delivered, detail)
+
+    monkeypatch.setattr(delivery, "deliver_answer", _fake)
+    return calls
+
+
+def test_anonymous_answer_401(anon_client, monkeypatch):
+    _enable(monkeypatch)
+    _mock_answer(monkeypatch)
+    resp = anon_client.post("/api/sessions/T-1/bridge-answer",
+                            json={"option_index": 1})
+    assert resp.status_code == 401
+
+
+def test_viewer_role_answer_403(flask_client, monkeypatch):
+    from lib.auth import create_token
+    _enable(monkeypatch)
+    calls = _mock_answer(monkeypatch)
+    viewer = {"Authorization":
+              f"Bearer {create_token(2, 'viewer-tester', 'viewer')}"}
+    resp = flask_client.post("/api/sessions/T-1/bridge-answer",
+                             json={"option_index": 1}, headers=viewer)
+    assert resp.status_code == 403
+    assert calls == []
+    assert _rows("T-1") == []
+
+
+def test_answer_disabled_structured_refusal(flask_client, monkeypatch):
+    _enable(monkeypatch, enabled=False)
+    calls = _mock_answer(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-1/bridge-answer",
+                             json={"option_index": 1})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"delivered": False, "detail": "bridge disabled"}
+    assert calls == []
+    assert _rows("T-1") == []
+
+
+def test_answer_missing_option_index_400(flask_client, monkeypatch):
+    _enable(monkeypatch)
+    _mock_answer(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-1/bridge-answer",
+                             json={"text": "hi"})  # no option_index
+    assert resp.status_code == 400
+    assert _rows("T-1") == []
+
+
+def test_answer_option_records_label(flask_client, monkeypatch):
+    """A predefined pick records the human label and passes text=None."""
+    _enable(monkeypatch)
+    calls = _mock_answer(monkeypatch, detail="selected option 3 in %7")
+    resp = flask_client.post(
+        "/api/sessions/T-a/bridge-answer",
+        json={"option_index": 2, "label": "Use Postgres"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["delivered"] is True and isinstance(body["id"], int)
+    assert calls == [("T-a", 2, None)]  # option pick → no free text
+    rows = _rows("T-a")
+    assert len(rows) == 1
+    assert rows[0]["body"] == "Use Postgres"
+    assert rows[0]["sender"] == "web:test-editor"
+    assert rows[0]["delivered"] == 1
+
+
+def test_answer_free_text_records_and_passes_text(flask_client, monkeypatch):
+    _enable(monkeypatch)
+    calls = _mock_answer(monkeypatch, detail="typed answer delivered to %7")
+    resp = flask_client.post(
+        "/api/sessions/T-b/bridge-answer",
+        json={"option_index": 4, "text": "my own answer"})
+    assert resp.status_code == 200
+    assert calls == [("T-b", 4, "my own answer")]
+    rows = _rows("T-b")
+    assert len(rows) == 1 and rows[0]["body"] == "my own answer"
+
+
+def test_answer_bridge_token_never_in_response(flask_client, monkeypatch):
+    _enable(monkeypatch)
+    _mock_answer(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-sec/bridge-answer",
+                             json={"option_index": 0, "label": "yes"})
+    assert _TOKEN not in resp.get_data(as_text=True)
+
+
 # ── accept list: /-autocomplete catalog (editor-gated, fail-closed) ──
 
 

@@ -917,6 +917,16 @@ async function stubBridgeSend(page, traceId, result, { delayMs = 0 } = {}) {
   return posts
 }
 
+// Stub the answer proxy; returns the collected POST bodies.
+async function stubBridgeAnswer(page, traceId, result = { delivered: true, detail: 'ok' }) {
+  const posts = []
+  await page.route(`**/api/sessions/${traceId}/bridge-answer`, async (route) => {
+    posts.push(route.request().postDataJSON())
+    await route.fulfill({ json: { id: 1, ...result } })
+  })
+  return posts
+}
+
 async function postActiveSession(page, { pendingTool = false, extraRows = 0 } = {}) {
   const traceId = randomUUID()
   const sfx = traceId.slice(0, 8)
@@ -1388,5 +1398,95 @@ test.describe('Long-content invariant (acceptance #8b)', () => {
     const capPx = 0.8 * 667
     expect(sheetBox.height, `sheet height ${sheetBox.height}px exceeds the 80dvh cap (~${capPx}px)`)
       .toBeLessThanOrEqual(capPx + 4)
+  })
+})
+
+// ---- v9: answer a pending single-question ask from the QA sheet -------------
+//
+// The QA sheet is read-only by default. When the span is a PENDING
+// single-question ask AND the bridge is reachable, each option becomes a
+// tappable button (POST bridge-answer → drives the pane's select TUI) and a
+// free-text input selects the auto-appended "Type something." entry. These
+// tests pin the browser-side contract (POST bodies + sheet close), not tmux.
+test.describe('Answer a pending ask from the QA sheet (v9)', () => {
+  async function seedPendingQuestion(page) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'answerable-question fixture', is_test: true } },
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null,
+        name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`, is_test: true,
+          questions: [{ question: 'ANSWERABLE_MARKER — which database?', header: 'DB',
+            multiSelect: false,
+            options: [{ label: 'Postgres', description: 'relational' },
+              { label: 'SQLite', description: 'embedded' }] }] } },
+    ])
+    await bridgeReachableMap(page, traceId)
+    return { traceId, sfx }
+  }
+
+  test('tapping an option POSTs its index + label and closes the sheet', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'selected option 2 in %3' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'question', { timeout: 10_000 })
+
+    await page.locator('[data-testid="live-now-options"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+    // Answerable: options are buttons, and there is NO read-only note.
+    const picks = sheet.locator('[data-testid="live-qa-pick"]')
+    await expect(picks).toHaveCount(2)
+    await expect(sheet).not.toContainText('read-only')
+
+    // Tap the second option → POST {option_index:1, label:'SQLite'}, no text.
+    await picks.nth(1).click()
+    await expect.poll(() => posts.length).toBe(1)
+    expect(posts[0].option_index).toBe(1)
+    expect(posts[0].label).toBe('SQLite')
+    expect(posts[0].text).toBeUndefined()
+    // A delivered answer closes the sheet (the poll then retires the span).
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('the free-text input answers the "Type something." entry (index = option count)', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'typed answer delivered to %3' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await page.locator('[data-testid="live-now-options"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+
+    await sheet.locator('[data-testid="live-qa-free-input"]').fill('MySQL, actually')
+    await sheet.locator('[data-testid="live-qa-free-send"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    // Two listed options → the free-text entry is at index 2.
+    expect(posts[0].option_index).toBe(2)
+    expect(posts[0].text).toBe('MySQL, actually')
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('a failed answer surfaces the detail and keeps the sheet open', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    await stubBridgeAnswer(page, traceId, { delivered: false, detail: 'no reachable session' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await page.locator('[data-testid="live-now-options"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+
+    await sheet.locator('[data-testid="live-qa-pick"]').first().click()
+    await expect(sheet).toContainText('no reachable session')
+    await expect(sheet).toBeVisible()  // not closed on failure
   })
 })
