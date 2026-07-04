@@ -95,12 +95,15 @@ def notify_proposal_ready(
     synthetic `topic-proposal-<id>` orchestration wrapper. It falls back to that
     wrapper id when the drafting session isn't known.
 
-    Called from BOTH completion paths — the server-runner exit (via the
-    `_notify_proposal_ready` ctx wrapper) AND the agent's own `proposal-finish`
-    self-ingest (`lib.topics.proposals.finish`), the authoritative completion in
-    the notify-on-finish design. Both read the same stored `agent_trace_id`, so
-    they resolve the same `trace_id`; `events.emit` then supersedes on
-    `(trace_id, key)` and one card shows, not two. `events.emit` is itself
+    Emitted from exactly ONE completion path per run. When the agent signals
+    via `proposal-finish` (`lib.topics.proposals.finish`, the authoritative
+    completion in the notify-on-finish design), *that* path notifies and the
+    server-runner exit deliberately does NOT re-notify on its signalled branch.
+    Only when the agent exits *without* signalling does the runner exit notify
+    instead (the fallback). Keeping it to one emit matters because supersede
+    dedups the inbox *card* but NOT the push channels: `record_message` pushes
+    on every write (supersede included), so a second emit double-notifies
+    Feishu/webhook even though only one card shows. `events.emit` is itself
     best-effort and gated by `proposal.ready`'s enablement."""
     from lib.agent_messages import events
     events.emit(
@@ -408,7 +411,11 @@ def run_external_agent_proposal(
         stderr_path.write_text(stderr or "")
         signaled = _load_signaled_result(ctx)
         if signaled is not None:
-            _notify_proposal_ready(ctx)
+            # The agent already signalled via `proposal-finish`, which is the
+            # authoritative completion and *already emitted* `proposal.ready`
+            # (see finish.py). Re-notifying here supersedes the same inbox card
+            # but re-fires the push channels (record_message pushes on every
+            # write, supersede included), double-notifying Feishu/webhook.
             return signaled
         return _fail(
             out_dir,
@@ -474,7 +481,11 @@ def _handle_agent_output(
     if signaled is not None:
         _emit(ctx.trace_id, "proposal.agent.complete", {"proposal_id": ctx.proposal_id, "agent": ctx.agent, "duration_ms": duration_ms, "signaled": True}, status_code="OK")
         _emit_session_end(ctx.trace_id, reason="completed")
-        _notify_proposal_ready(ctx)
+        # No `_notify_proposal_ready` here: the agent's `proposal-finish`
+        # self-ingest is authoritative and already emitted `proposal.ready`.
+        # Re-emitting would re-push the notification (Feishu/webhook fire on
+        # every record_message, supersede included) — a duplicate. The notify
+        # lives only on the non-signalled fallback below, where finish never ran.
         return signaled
     if stdout:
         _emit(ctx.trace_id, "proposal.agent.stdout", {"proposal_id": ctx.proposal_id, "chunk": stdout[-4000:]})

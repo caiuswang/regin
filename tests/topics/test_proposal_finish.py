@@ -164,6 +164,53 @@ def test_finish_noop_does_not_re_emit(fake_git_repo, tmp_db, monkeypatch):
     assert calls == []
 
 
+def test_runner_signaled_exit_does_not_re_notify(fake_git_repo, tmp_db, monkeypatch):
+    """Regression: the agent's `proposal-finish` self-ingest is the authoritative
+    notifier. When the server-runner exit later observes the *same* signalled
+    run, it must NOT re-emit `proposal.ready` — a second emit dedups the inbox
+    card via `msg_key` but re-fires the push channels (Feishu/webhook push on
+    every `record_message`, supersede included), so the user gets two Feishu
+    cards for one proposal. Guards lib/topics/proposal_external.py:_handle_agent_output."""
+    from lib.topics import proposal_external as pe
+    from lib.topics.proposals import run_control
+
+    class _FakePopen:
+        returncode = 0
+
+        def poll(self):
+            return 0
+
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+
+    calls = _spy_events(monkeypatch)
+    # Authoritative completion: the agent signals → emits proposal.ready once.
+    finish_proposal_run(fake_git_repo, "run1")
+    assert [k for k, _ in calls] == ["proposal.ready"]
+
+    # Runner exit later observes the signalled run. Stub the trace-span emits
+    # (a different bus, not the inbox event bus) so only notify behaviour is
+    # under test; the agent name differs on purpose (the real bug's fingerprint).
+    monkeypatch.setattr(pe, "_emit", lambda *a, **k: None)
+    monkeypatch.setattr(pe, "_emit_session_end", lambda *a, **k: None)
+    run_control.reset("run1")
+    ctx = pe._AgentRunContext(
+        repo=fake_git_repo, out_dir=out_dir,
+        trace_id="topic-proposal-run1", proposal_id="run1", agent="claude-opus",
+        before_topic=None,
+        temp_output_path=out_dir / ".tmp" / "agent-output.json",
+        output_path=out_dir / "agent-output.json",
+        stdout_path=out_dir / "stdout.log", stderr_path=out_dir / "stderr.log",
+        started=0.0, prompt_templates=None)
+    result = pe._handle_agent_output(
+        ctx, _FakePopen(), "out", "err", load_status(out_dir))
+
+    # The signalled branch returns the persisted proposal AND fires no 2nd emit.
+    assert result[0]["topics"][0]["id"] == "service"
+    assert [k for k, _ in calls] == ["proposal.ready"]  # still exactly one
+
+
 def test_finish_survives_notify_failure(fake_git_repo, tmp_db, monkeypatch):
     """A notify must never break the ingest it announces: if the event emit
     blows up, the run is still ingested and stamped completed."""
