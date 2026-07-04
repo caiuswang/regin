@@ -128,11 +128,19 @@ Controls, ranked:
 
 1. **Bind 127.0.0.1 only.** Remote senders come in via a tunnel
    (Tailscale/SSH), never a wider bind.
-2. **Bearer token in a header** — long random value in settings,
-   constant-time compare, separate from the web-UI auth (separately
-   revocable; a leaked UI token must not grant agent-steering). Header-only
-   auth also defeats drive-by `fetch()` from a browser tab (CORS preflight
-   fails without the header).
+2. **Two credentials, one delivery layer.** Headless/external callers
+   (`/api/bridge/*`) authenticate with the bearer token — long random value
+   in settings, constant-time compare, separately revocable from the web-UI
+   auth. Header-only auth also defeats drive-by `fetch()` from a browser
+   tab (CORS preflight fails without the header). The /live composer's
+   proxy (`POST /api/sessions/<sid>/bridge-send`,
+   `web/blueprints/bridge.py`) instead grants agent-steering to
+   **editor-role web JWTs** — a deliberate, product-approved surface, gated
+   `require_editor` because steering outranks every editor-gated mutation.
+   The invariant that holds on both paths: the bridge token itself never
+   reaches the browser (the proxy calls the delivery layer in-process, no
+   token-carrying HTTP hop), and the rate limit plus the pane-identity/ack
+   guards below apply identically.
 3. **Target verification** (above) — the injection→shell-execution
    escalation is closed by refusing non-claude panes.
 4. **Sanitization** (above) — no control bytes, no ANSI, no tmux key names.

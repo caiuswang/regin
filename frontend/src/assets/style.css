@@ -1970,6 +1970,8 @@ details summary {
     animation: live-pulse 1.6s ease-in-out infinite;
 }
 .live-status-ended { background: var(--color-fg-faint); }
+/* alive but not working: steady green, no pulse */
+.live-status-idle { background: var(--color-emerald-500); }
 @keyframes live-pulse { 50% { opacity: 0.35; } }
 .live-hd-status {
     font-size: 12px;
@@ -2154,7 +2156,10 @@ details summary {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
-    bottom: calc(112px + env(safe-area-inset-bottom));
+    /* Rides the NOW zone's LIVE height (the composer states are taller than
+       the old fixed cap) — the view's ResizeObserver keeps the var current;
+       the fallback approximates the composer-less zone + safe area. */
+    bottom: calc(var(--live-now-h, calc(96px + env(safe-area-inset-bottom))) + 8px);
     z-index: 5;
     height: auto;
     padding: 5px 12px;
@@ -2166,7 +2171,8 @@ details summary {
 }
 @keyframes live-chip-pop { from { transform: translate(-50%, 8px); opacity: 0; } }
 
-/* NOW zone (hard-capped; never grows — [more] opens a sheet) */
+/* NOW zone (state-capped: the cap is per-state, content never scrolls —
+   [more] opens a sheet; the composer states raise it, see below) */
 .live-now {
     flex-shrink: 0;
     background: var(--color-background);
@@ -2178,6 +2184,17 @@ details summary {
     box-shadow: 0 -6px 16px -10px rgba(0, 0, 0, 0.25);
     position: relative;
     z-index: 2;
+}
+/* v5 bridge composer: the zone must fit state content + textarea (autogrow
+   caps at 88px) + meta line — the old 104px cap would clip the composer. */
+.live-now-composer { max-height: calc(220px + env(safe-area-inset-bottom)); }
+.live-now-idle { background: var(--color-surface); }
+.live-now-idle-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
+    flex-shrink: 0;
+    background: var(--color-emerald-500);
 }
 .live-now-attention {
     background: var(--color-amber-50);
@@ -2249,6 +2266,65 @@ details summary {
     font-variant-numeric: tabular-nums;
 }
 .live-now-attention .live-now-more { color: var(--color-amber-700); }
+
+/* v5 bridge composer — full-width when idle, compact steer while working.
+   Dedicated .live-composer-* classes on purpose: the shared `.input` class
+   sets the `padding` shorthand and would override per-variant padding at
+   equal specificity (source order wins). */
+.live-composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin-top: 7px;
+}
+.live-composer-steer {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border-subtle);
+}
+.live-composer-ta {
+    flex: 1;
+    min-width: 0;
+    resize: none;
+    min-height: 36px;
+    max-height: 88px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-background);
+    color: var(--color-fg);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.45;
+}
+.live-composer-ta::placeholder { color: var(--color-fg-faint); }
+.live-composer-ta:focus-visible {
+    outline: 2px solid var(--color-blue-500);
+    outline-offset: -1px;
+}
+.live-composer-ta:disabled { opacity: 0.55; }
+.live-composer-steer .live-composer-ta {
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+}
+.live-send-btn { flex-shrink: 0; width: 36px; height: 36px; }
+.live-composer-steer .live-send-btn { width: 32px; height: 32px; }
+.live-bridge-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    min-height: 15px;
+    font-size: 10.5px;
+    color: var(--color-fg-faint);
+    font-variant-numeric: tabular-nums;
+}
+.live-bridge-meta .live-mono { font-size: 10px; }
+.live-bridge-delivering { color: var(--color-fg-subtle); }
+.live-bridge-delivered { color: var(--color-success); font-weight: 600; }
+.live-bridge-failed { color: var(--color-amber-700); font-weight: 600; }
+.live-spinner-sm { width: 10px; height: 10px; border-width: 2px; }
 
 /* ask-user-question / permission rows (v8): delicate 2-line mini cards.
    History rows stay quiet — neutral chrome, one amber glyph; only denied

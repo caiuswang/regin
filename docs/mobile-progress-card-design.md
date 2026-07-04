@@ -115,20 +115,40 @@ The card's job is "let me focus on what matters", not "every span". Two tiers:
 Sticky at the card's bottom edge; a pure projection of the already-loaded tail, one
 state at a time by priority:
 
-1. **`permission.request` PENDING** → amber attention state: "⚠ waiting for permission:
-   tool.X" — the highest-value thing to see on a phone.
-2. **`pending-<tool_use_id>` tool span** → spinner + `terminalSpanLabel` + detail +
-   live elapsed (client 1s tick off `start_time`).
-3. **`promptlive-` placeholder** → "processing your prompt…".
-4. **Otherwise** → latest `assistant_response` text (attr `text`), plain-text
+1. **`permreq-*` / `permission.request` PENDING** → amber attention state: "⚠ waiting
+   for permission: tool.X" — the highest-value thing to see on a phone.
+2. **`pending-*` AskUserQuestion (v8)** → amber "? waiting for your answer" with the
+   question text and an `options ▾` opener for the read-only Q&A sheet.
+3. **`pending-<tool_use_id>` tool span** → spinner + `terminalSpanLabel` + detail +
+   live elapsed (client 1s tick off `start_time`, rolled over past a minute:
+   `fmtElapsedSeconds` renders "8m09s"/"1h05m", never a raw seconds dump).
+4. **`promptlive-` placeholder** → "processing your prompt…".
+5. **Session ended** → the final `assistant_response` under a `✓ finished` header.
+6. **Alive + bridge-reachable, nothing pending (v5 idle)** → "idle — waiting for your
+   prompt": steady green header dot (no pulse), caret suppressed, full-width composer.
+7. **Otherwise** → latest `assistant_response` text (attr `text`), plain-text
    projection (markdown syntax stripped), 2-line clamp; tap **opens a bottom sheet**
    with the full `MarkdownContent` render — never expands in place.
-5. **Session ended** → the final `assistant_response` under a `✓ finished` header.
 
 PENDING placeholders arrive through the same shallow-map window and are retired by the
 serve-time merge once resolved (`lib/trace/pending_spans.py`, `merge.py`) — the zone
 updates on the same 4s poll + `retired_span_ids` prune; no extra endpoint, no extra
 state machine beyond the priority pick.
+
+### The bridge composer (v5)
+
+When the session's tmux pane is bridge-reachable (`bridge_reachable` rides the shallow
+map's summary; the composer never makes its own polling loop), the NOW zone hosts
+`LiveComposer`: full-width in **idle** ("starts the next turn"), a compact **steer**
+variant below the response / tool / prompt content ("queues into the running turn"),
+and none at all in question / permission / finished. Sends go to the web-JWT proxy
+`POST /api/sessions/<id>/bridge-send` (`web/blueprints/bridge.py`), which calls the
+delivery layer in-process — the bridge bearer token never reaches the browser. A
+`{delivered:false}` refusal or HTTP error surfaces the server's `detail` and preserves
+the draft; a delivery clears it. The sent prompt is never appended client-side: it
+appears only when the poll returns the real `promptlive-`/`prompt` span. Zone height
+changes (composer mount, textarea autogrow) re-pin a pinned tail and re-seat the
+"N new" chip via a ResizeObserver in the view.
 
 ### Visual detail spec (v7 — the polish layer, grounded in ui-ux-regin-surfaces)
 

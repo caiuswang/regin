@@ -49,6 +49,19 @@ export function fmtDuration(ms) {
   return `${minutes}m`
 }
 
+// Live elapsed readout for an in-flight span, in whole seconds with unit
+// rollover: 45 → "45s", 489 → "8m09s", 3900 → "1h05m". Distinct from
+// fmtDuration (which ms-formats completed sub-second spans): the input is
+// a client-ticked second count anchored to the span's start_time, so a
+// long-running pending tool reads as minutes/hours, never "489s".
+export function fmtElapsedSeconds(secs) {
+  if (!Number.isFinite(secs) || secs < 0) return ''
+  if (secs < 60) return `${secs}s`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m${String(secs % 60).padStart(2, '0')}s`
+  return `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}m`
+}
+
 // Relative "time ago" for a timestamp. Coarse buckets (just now / Nm /
 // Nh / Nd) up to a week, then a plain Y-M-D date. Empty string for
 // missing/unparseable input so callers can render nothing.

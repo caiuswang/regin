@@ -761,6 +761,22 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
     return grafted
 
 
+def _bridge_reachability(trace_id: str) -> dict:
+    """Per-session agent-bridge availability for the /live composer.
+
+    Rides the existing shallow-map poll so the client needs no extra
+    polling loop. Exposes only a boolean + the pane label — never the
+    bridge bearer token (that credential must not reach the browser).
+    """
+    from lib.settings import settings
+    if not settings.agent_bridge.enabled:
+        return {'bridge_reachable': False, 'bridge_pane': None}
+    from lib.agent_bridge import store as bridge_store
+    pane = bridge_store.get_reachable_pane(trace_id)
+    return {'bridge_reachable': pane is not None,
+            'bridge_pane': pane['pane_id'] if pane else None}
+
+
 def _shallow_map_response(trace_id: str):
     """Paginated structural map for the live trace view (`?shallow=1`): root
     spans + lazy tree nodes + cursors + the merge's `retired_span_ids` (rows the
@@ -817,6 +833,7 @@ def _shallow_map_response(trace_id: str):
         # currently queued (derived live from the transcript, ephemeral).
         'queued_prompts': _queued_prompts(trace_id),
         'task_list': _fetch_session_task_list(trace_id),
+        **_bridge_reachability(trace_id),
         **_session_summary(trace_id),
     })
 

@@ -13,6 +13,14 @@ the sole guard. It fails closed: a disabled bridge 404s, and any missing /
 mismatched / (crucially) unconfigured token 401s. Both GETs are guarded too;
 the inbox exposes steering bodies.
 
+One deliberate exception: `api_session_bridge_send` (the /live composer's
+proxy) is NOT bridge-token-guarded and NOT in PUBLIC_API_ENDPOINTS — its
+auth is the app-wide JWT gate plus `require_editor` (keystroke injection
+into a live agent terminal outranks every editor-gated mutation, so viewer
+JWTs are refused). It calls the same delivery layer in-process, so the
+bridge bearer token never reaches the browser; that token remains the
+credential for headless/external callers only.
+
 The VIEW orchestrates record → deliver → mark; the store never calls delivery
 (avoids the store→delivery import cycle).
 """
@@ -25,6 +33,7 @@ from functools import wraps
 
 from flask import Blueprint, request, jsonify
 
+from lib.auth import get_current_user, require_editor
 from lib.settings import settings
 from lib.agent_bridge import store, delivery
 
@@ -106,6 +115,35 @@ def api_bridge_post_message():
     if refusal is not None:
         store.mark_delivered(row_id, False, refusal["detail"])
         return jsonify({**refusal, "id": row_id})
+    result = delivery.deliver(trace_id, text)
+    store.mark_delivered(row_id, result.delivered, result.detail)
+    return jsonify({"delivered": result.delivered,
+                    "detail": result.detail, "id": row_id})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-send', methods=['POST'])
+@require_editor
+def api_session_bridge_send(trace_id):
+    """Web-JWT-authed proxy for the /live card's composer (editor+ only).
+
+    Same record → deliver → mark orchestration as the bridge POST, called
+    in-process (never an HTTP hop carrying the bridge token). Auth is the
+    app-wide JWT gate plus `require_editor` — steering a live agent
+    terminal outranks every editor-gated mutation, so viewers get 403.
+    Deliberately absent from both PUBLIC_API_ENDPOINTS and the
+    bridge-token decorator. A disabled bridge is a clean structured
+    refusal, not a 404: the composer surfaces `detail` verbatim.
+    """
+    if not settings.agent_bridge.enabled:
+        return jsonify({"delivered": False, "detail": "bridge disabled"})
+    payload = request.get_json(silent=True) or {}
+    raw_text = payload.get("text")
+    text = delivery.sanitize_text(raw_text if isinstance(raw_text, str) else "")
+    if not text:
+        return jsonify({"error": "text required"}), 400
+    user = get_current_user()
+    sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    row_id = store.record_bridge_message(trace_id, text, sender)
     result = delivery.deliver(trace_id, text)
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,

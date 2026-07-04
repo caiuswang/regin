@@ -27,9 +27,13 @@ const route = useRoute()
 const router = useRouter()
 const {
   sessionId, meta, spans, hasMoreOlder, earlierCount,
-  loading, loadingOlder, error, ended, appendedSpans,
+  loading, loadingOlder, error, ended, active, appendedSpans,
   start, stop, loadOlder, mergeSpans,
 } = useLiveTail(() => route.params.id)
+
+// Mirrored NOW-zone state (emitted by LiveNowZone) — drives the header's
+// idle dot/label and suppresses the caret while idle.
+const nowState = ref('response')
 
 // ── Filters (signal tier + category + search, all in the filter sheet) ──
 const showSystem = ref(false)
@@ -60,9 +64,10 @@ const subagentIds = computed(() => {
   return ids
 })
 
-// Blinking caret rides the newest visible row while the session runs.
+// Blinking caret rides the newest visible row while the session runs —
+// suppressed while idle (the agent isn't producing anything).
 const caretSpanId = computed(() => {
-  if (ended.value) return null
+  if (ended.value || nowState.value === 'idle') return null
   const rows = visibleRows.value
   return rows.length ? rows[rows.length - 1].span_id : null
 })
@@ -70,6 +75,15 @@ const caretSpanId = computed(() => {
 // ── Header ──
 const goalOpen = ref(false)
 const hdScrolled = ref(false)
+// idle = alive but not working: steady green dot (no pulse) + "idle".
+const statusClass = computed(() => {
+  if (ended.value) return 'live-status-ended'
+  return nowState.value === 'idle' ? 'live-status-idle' : 'live-status-running'
+})
+const statusLabel = computed(() => {
+  if (ended.value) return '✓ finished'
+  return nowState.value === 'idle' ? 'idle' : 'running'
+})
 const elapsedLabel = computed(() => {
   const t0 = meta.value.started_at ? Date.parse(meta.value.started_at) : NaN
   const t1 = meta.value.last_seen ? Date.parse(meta.value.last_seen) : NaN
@@ -83,6 +97,8 @@ const elapsedLabel = computed(() => {
 
 // ── Tail scroll: follow-tail when pinned, "N new" chip when scrolled up ──
 const tailEl = ref(null)
+const cardEl = ref(null)
+const nowZoneRef = ref(null)
 const newCount = ref(0)
 const enteringIds = ref(new Set())
 
@@ -96,11 +112,27 @@ function scrollToBottom(smooth) {
   if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
 }
 
+// Pinned-ness as of the last user scroll. The NOW zone's ResizeObserver
+// cannot measure isPinned() AFTER a height change (a grown footer shrinks
+// the tail and misreads a pinned user as scrolled up), so the pre-change
+// answer is tracked here and consumed by onNowZoneResize.
+let pinnedBeforeResize = true
+let nowRo = null
+
 function onTailScroll() {
   const el = tailEl.value
   if (!el) return
   hdScrolled.value = el.scrollTop > 4
+  pinnedBeforeResize = isPinned()
   if (newCount.value && isPinned()) newCount.value = 0
+}
+
+// NOW-zone height changes (composer mount/unmount, textarea autogrow):
+// keep the "N new" chip riding the zone (--live-now-h) and re-pin the tail
+// if the user was pinned before the change.
+function onNowZoneResize(el) {
+  cardEl.value?.style.setProperty('--live-now-h', `${el.offsetHeight}px`)
+  if (pinnedBeforeResize) nextTick(() => scrollToBottom(false))
 }
 
 function markEntering(rows) {
@@ -262,17 +294,23 @@ onMounted(() => {
   // Programmatic listener (not @scroll) — the tail is a scroll region, not
   // a clickable surface; rows carry their own pointer affordance.
   tailEl.value?.addEventListener('scroll', onTailScroll, { passive: true })
+  const nowEl = nowZoneRef.value?.$el
+  if (nowEl && typeof ResizeObserver !== 'undefined') {
+    nowRo = new ResizeObserver(() => onNowZoneResize(nowEl))
+    nowRo.observe(nowEl) // fires once on observe → seeds --live-now-h
+  }
   init()
 })
 onUnmounted(() => {
   tailEl.value?.removeEventListener('scroll', onTailScroll)
+  nowRo?.disconnect()
   stop()
 })
 </script>
 
 <template>
   <div class="live-page">
-    <div class="live-card" data-testid="live-card">
+    <div ref="cardEl" class="live-card" data-testid="live-card">
       <header
         class="live-hd"
         :class="{ 'live-hd-scrolled': hdScrolled }"
@@ -281,10 +319,10 @@ onUnmounted(() => {
         <div class="live-hd-row">
           <span
             class="live-status-dot"
-            :class="ended ? 'live-status-ended' : 'live-status-running'"
+            :class="statusClass"
             aria-hidden="true"
           ></span>
-          <span class="live-hd-status">{{ ended ? '✓ finished' : 'running' }}</span>
+          <span class="live-hd-status">{{ statusLabel }}</span>
           <span class="live-hd-elapsed">
             <template v-if="elapsedLabel">· {{ elapsedLabel }}</template>
             <template v-if="ended && meta.ended_reason"> · {{ meta.ended_reason }}</template>
@@ -361,8 +399,14 @@ onUnmounted(() => {
       >↓ {{ newCount }} new</Button>
 
       <LiveNowZone
+        ref="nowZoneRef"
         :spans="spans"
         :ended="ended"
+        :active="active"
+        :session-id="sessionId || ''"
+        :bridge-reachable="!!meta.bridge_reachable"
+        :bridge-pane="meta.bridge_pane || ''"
+        @state-change="s => (nowState = s)"
         @open-response="s => openSheet('message', s)"
         @open-question="s => openSheet('qa', s)"
       />

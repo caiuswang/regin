@@ -885,6 +885,360 @@ test.describe('NOW zone (acceptance #8)', () => {
   })
 })
 
+// ---- v5: NOW-zone elapsed rollover + idle/bridge composer -------------------
+//
+// The test server runs with agent_bridge DISABLED (default), so
+// `bridge_reachable` is always false in real /map responses. Every
+// bridge-dependent scenario patches the map response in-flight
+// (route.fetch → patched json) and stubs the web-JWT proxy endpoint
+// (`/api/sessions/<id>/bridge-send`) with page.route — the browser-side
+// contract is what's under test, not tmux delivery.
+
+async function bridgeReachableMap(page, traceId, pane = '%3') {
+  await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+    const resp = await route.fetch()
+    const json = await resp.json()
+    await route.fulfill({
+      response: resp,
+      json: { ...json, bridge_reachable: true, bridge_pane: pane },
+    })
+  })
+}
+
+// Stub the proxy; returns the collected POST bodies. `delayMs` keeps the
+// "delivering…" phase observable.
+async function stubBridgeSend(page, traceId, result, { delayMs = 0 } = {}) {
+  const posts = []
+  await page.route(`**/api/sessions/${traceId}/bridge-send`, async (route) => {
+    posts.push(route.request().postDataJSON())
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs))
+    await route.fulfill({ json: { id: 1, ...result } })
+  })
+  return posts
+}
+
+async function postActiveSession(page, { pendingTool = false, extraRows = 0 } = {}) {
+  const traceId = randomUUID()
+  const sfx = traceId.slice(0, 8)
+  const now = new Date().toISOString()
+  const spans = [
+    { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+      start_time: now, attributes: { text: 'bridge fixture prompt', is_test: true } },
+    { trace_id: traceId, span_id: `resp-${sfx}`, parent_id: null, name: 'assistant_response',
+      start_time: now, attributes: { text: 'IDLE_RESPONSE_MARKER', is_test: true } },
+  ]
+  for (let i = 0; i < extraRows; i++) {
+    spans.push({ trace_id: traceId, span_id: `read-${sfx}-${i}`, parent_id: null,
+      name: 'tool.Read', start_time: now,
+      attributes: { file_path: `src/f${i}.js`, is_test: true } })
+  }
+  if (pendingTool) {
+    spans.push({ trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null,
+      name: 'tool.Bash', start_time: now, status_code: 'PENDING',
+      attributes: { command_preview: 'npx vite build', tool_use_id: `tu-${sfx}`, is_test: true } })
+  }
+  await post(page, spans)
+  return { traceId, sfx }
+}
+
+const composer = (page) => page.locator('[data-testid="live-composer"]')
+const composerTa = (page) => page.locator('[data-testid="live-composer-ta"]')
+const composerSend = (page) => page.locator('[data-testid="live-composer-send"]')
+const bridgeMeta = (page) => page.locator('[data-testid="live-bridge-meta"]')
+
+test.describe('NOW-zone elapsed rollover (duration fix)', () => {
+  test('a PENDING tool started 10 minutes ago reads rolled-over minutes on a fresh load, and keeps ticking', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const tenMinAgo = new Date(Date.now() - 600_000).toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: tenMinAgo, attributes: { text: 'rollover fixture', is_test: true } },
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: tenMinAgo, status_code: 'PENDING',
+        attributes: { tool_name: 'Agent', tool_use_id: `tu-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'tool', { timeout: 10_000 })
+
+    // A fresh load shows the FULL elapsed (anchored to start_time), in the
+    // rolled-over unit — "10m02s", never a raw seconds dump like "602s".
+    const elapsed = nowZone.locator('.live-now-elapsed')
+    await expect(elapsed).toHaveText(/^10m\d{2}s$/, { timeout: 5_000 })
+
+    // Still ticks every second after the rollover.
+    const t1 = await elapsed.textContent()
+    await page.waitForTimeout(2_100)
+    const t2 = await elapsed.textContent()
+    expect(t2, 'rolled-over elapsed must keep ticking').not.toBe(t1)
+    expect(t2).toMatch(/^10m\d{2}s$/)
+  })
+})
+
+test.describe('Idle state + bridge composer (v5)', () => {
+  test('alive + no pending + bridge reachable → idle: composer, steady dot, no caret', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+
+    // Full composer with the idle placeholder + bridge meta naming the pane.
+    await expect(composerTa(page)).toBeVisible()
+    await expect(composerTa(page)).toHaveAttribute('placeholder', /Send a prompt/)
+    await expect(bridgeMeta(page)).toContainText('%3')
+    await expect(bridgeMeta(page)).toContainText('starts the next turn')
+    // Send disabled while the textarea is empty.
+    await expect(composerSend(page)).toBeDisabled()
+
+    // Header: steady green dot + "idle" label (pulse class absent).
+    await expect(page.locator('[data-testid="live-header"]')).toContainText('idle')
+    const dot = page.locator('.live-status-dot')
+    await expect(dot).toHaveClass(/live-status-idle/)
+    await expect(dot).not.toHaveClass(/live-status-running/)
+
+    // Idle suppresses the caret on the last tail row.
+    await expect(page.locator('.live-caret')).toHaveCount(0)
+  })
+
+  test('bridge not reachable → no composer and the non-idle response fallback', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    // No map patch: the real server (bridge disabled) reports
+    // bridge_reachable: false.
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'response', { timeout: 10_000 })
+    await expect(composer(page)).toHaveCount(0)
+  })
+
+  test('question / permission / finished never render a composer, even when reachable', async ({ page }) => {
+    const now = new Date().toISOString()
+    const fixtures = {
+      question: (traceId, sfx) => [
+        { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null,
+          name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
+          attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`, is_test: true,
+            questions: [{ question: 'Which way?', options: [{ label: 'A' }, { label: 'B' }] }] } },
+      ],
+      permission: (traceId, sfx) => [
+        { trace_id: traceId, span_id: `permreq-tu-${sfx}`, parent_id: null,
+          name: 'permission.request', start_time: now, status_code: 'PENDING',
+          attributes: { tool_name: 'Bash', tool_use_id: `tu-${sfx}`, is_test: true } },
+      ],
+      finished: (traceId, sfx) => [
+        { trace_id: traceId, span_id: `end-${sfx}`, parent_id: null, name: 'session.end',
+          start_time: now, status_code: 'OK', attributes: { reason: 'clear', is_test: true } },
+      ],
+    }
+    for (const [state, extra] of Object.entries(fixtures)) {
+      const traceId = randomUUID()
+      const sfx = traceId.slice(0, 8)
+      await post(page, [
+        { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+          start_time: now, attributes: { text: `${state} composer-free fixture`, is_test: true } },
+        ...extra(traceId, sfx),
+      ])
+      await bridgeReachableMap(page, traceId)
+      await page.goto(`/live/${traceId}`)
+      await settle(page)
+      const nowZone = page.locator('[data-testid="live-now"]')
+      await expect(nowZone).toHaveAttribute('data-state', state, { timeout: 10_000 })
+      await expect(composer(page), `${state} must not render a composer`).toHaveCount(0)
+    }
+  })
+
+  test('a mid-draft composer unmount (one-poll reachability blip) preserves the draft', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    // Serve bridge_reachable=true except on the SECOND map response — a
+    // one-poll blip (tmux hiccup / registry churn) that unmounts the
+    // composer and must not eat the user's typed draft.
+    let served = 0
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      served += 1
+      const reachable = served !== 2
+      await route.fulfill({
+        response: resp,
+        json: { ...json, bridge_reachable: reachable, bridge_pane: reachable ? '%3' : null },
+      })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+
+    await composerTa(page).fill('half-typed steering thought')
+
+    // Blip: next poll reports unreachable → composer unmounts, state falls
+    // back to response.
+    await expect(nowZone).toHaveAttribute('data-state', 'response', { timeout: 10_000 })
+    await expect(composer(page)).toHaveCount(0)
+
+    // Recovery: the following poll restores reachability → the remounted
+    // composer still carries the draft.
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    await expect(composerTa(page)).toHaveValue('half-typed steering thought')
+  })
+
+  test('response and tool states show the compact steer composer', async ({ page }) => {
+    // response state
+    const idle = await postActiveSession(page)
+    await bridgeReachableMap(page, idle.traceId)
+    // A pending tool forces 'tool' — bridge still reachable → steer variant.
+    const busy = await postActiveSession(page, { pendingTool: true })
+    await bridgeReachableMap(page, busy.traceId)
+
+    await page.goto(`/live/${busy.traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'tool', { timeout: 10_000 })
+    await expect(composer(page)).toHaveClass(/live-composer-steer/)
+    await expect(composerTa(page)).toHaveAttribute('placeholder', /Steer the agent/)
+    await expect(bridgeMeta(page)).toContainText('queues into the running turn')
+  })
+})
+
+test.describe('Bridge send lifecycle (v5)', () => {
+  test('delivered path: delivering → ✓ detail, textarea clears + re-enables, state and rows unchanged', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId)
+    const posts = await stubBridgeSend(page, traceId,
+      { delivered: true, detail: 'delivered to %3' }, { delayMs: 400 })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    const rowsBefore = await rows(page).count()
+
+    await composerTa(page).fill('run the flaky spec again')
+    await expect(composerSend(page)).toBeEnabled()
+    await composerSend(page).click()
+
+    // Delivering phase: spinner meta + disabled textarea.
+    await expect(bridgeMeta(page)).toContainText('delivering', { timeout: 2_000 })
+    await expect(composerTa(page)).toBeDisabled()
+
+    // Delivered: server detail surfaced, composer freed and cleared.
+    await expect(bridgeMeta(page)).toContainText('✓ delivered to %3', { timeout: 5_000 })
+    await expect(composerTa(page)).toBeEnabled()
+    await expect(composerTa(page)).toHaveValue('')
+    expect(posts).toEqual([{ text: 'run the flaky spec again' }])
+
+    // Sending never changes data-state, and NO client-stamped row appears —
+    // the prompt lands only when the poll returns the real span (the stubbed
+    // map never will, so the count must hold).
+    await expect(nowZone).toHaveAttribute('data-state', 'idle')
+    expect(await rows(page).count(), 'send must not append a client-stamped row').toBe(rowsBefore)
+  })
+
+  test('failure path: {delivered:false} surfaces detail, preserves the text, re-enables', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId)
+    await stubBridgeSend(page, traceId,
+      { delivered: false, detail: 'no reachable session' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-now"]'))
+      .toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+
+    await composerTa(page).fill('keep this draft')
+    await composerSend(page).click()
+
+    await expect(bridgeMeta(page)).toContainText('no reachable session', { timeout: 5_000 })
+    await expect(composerTa(page)).toBeEnabled()
+    await expect(composerTa(page)).toHaveValue('keep this draft')
+  })
+
+  test('steer send from a working state keeps the state; Cmd/Ctrl+Enter sends', async ({ page }) => {
+    const { traceId } = await postActiveSession(page, { pendingTool: true })
+    await bridgeReachableMap(page, traceId)
+    const posts = await stubBridgeSend(page, traceId,
+      { delivered: true, detail: 'delivered to %3' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'tool', { timeout: 10_000 })
+
+    await composerTa(page).fill('also check the dark theme')
+    await composerTa(page).press('ControlOrMeta+Enter')
+
+    await expect(bridgeMeta(page)).toContainText('✓ delivered to %3', { timeout: 5_000 })
+    expect(posts).toEqual([{ text: 'also check the dark theme' }])
+    await expect(nowZone).toHaveAttribute('data-state', 'tool')
+  })
+})
+
+test.describe('Composer pinning + geometry (v5)', () => {
+  test('pinned tail stays pinned across composer appearance and autogrow; nothing clips', async ({ page }) => {
+    const { traceId } = await postActiveSession(page, { extraRows: 30 })
+    await bridgeReachableMap(page, traceId)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+
+    const tail = page.locator('[data-testid="live-tail"]')
+    const gap = () => tail.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)
+
+    // Pinned after boot + composer mount (the zone grew past the old cap).
+    await page.waitForTimeout(300)
+    expect(await gap(), 'tail must stay pinned when the composer mounts').toBeLessThan(40)
+
+    // Autogrow: multi-line draft grows the zone; the tail must re-pin.
+    await composerTa(page).fill('line one\nline two\nline three\nline four\nline five')
+    await page.waitForTimeout(300)
+    expect(await gap(), 'tail must stay pinned across textarea autogrow').toBeLessThan(40)
+
+    // Nothing clips under the old 104px cap: the send button renders fully
+    // inside the (now taller) zone.
+    const nowBox = await nowZone.boundingBox()
+    const sendBox = await composerSend(page).boundingBox()
+    expect(sendBox, 'send button must be visible (not clipped)').toBeTruthy()
+    expect(sendBox.y + sendBox.height).toBeLessThanOrEqual(nowBox.y + nowBox.height + 1)
+    expect(nowBox.height, 'idle zone must exceed the old 104px cap').toBeGreaterThan(104)
+  })
+
+  test('the "N new" chip rides above the taller composer zone', async ({ page }) => {
+    const { traceId, sfx } = await postActiveSession(page, { extraRows: 25 })
+    await bridgeReachableMap(page, traceId)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+
+    const tail = page.locator('[data-testid="live-tail"]')
+    await tail.evaluate((el) => { el.scrollTop = 0 })
+    await page.waitForTimeout(150)
+
+    await post(page, [
+      { trace_id: traceId, span_id: `newspan-${sfx}`, parent_id: null, name: 'tool.Write',
+        start_time: new Date(Date.now() + 1000).toISOString(),
+        attributes: { file_path: 'src/late-arrival.js', is_test: true } },
+    ])
+
+    const chip = page.locator('[data-testid="live-newchip"]')
+    await expect(chip).toBeVisible({ timeout: 8_000 })
+    const chipBox = await chip.boundingBox()
+    const nowBox = await nowZone.boundingBox()
+    expect(chipBox.y + chipBox.height,
+      'chip must sit above the composer zone, not under it')
+      .toBeLessThanOrEqual(nowBox.y + 1)
+  })
+})
+
 test.describe('Long-content invariant (acceptance #8b)', () => {
   test('an 8KB response keeps the NOW zone capped, the tail majority-height, and the sheet 80dvh-capped', async ({ page }) => {
     const traceId = randomUUID()

@@ -161,7 +161,11 @@ export function useLiveTail(getRouteId) {
 
   function applySummary(data) {
     const patch = {}
-    for (const k of ['title', 'started_at', 'ended_at', 'last_seen']) {
+    // bridge_reachable / bridge_pane ride the same poll (no extra client
+    // polling loop) — they gate the NOW zone's bridge composer.
+    const keys = ['title', 'started_at', 'ended_at', 'last_seen',
+      'bridge_reachable', 'bridge_pane']
+    for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }
     meta.value = { ...meta.value, ...patch }

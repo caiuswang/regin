@@ -4,7 +4,12 @@
 //   permreq-* PENDING → permission  ›  pending-* AskUserQuestion → question
 //   › pending-* PENDING tool → tool  ›  promptlive-* PENDING → prompt
 //   › session ended → finished
+//   › alive + bridge-reachable → idle (full composer; steady dot upstream)
 //   › else → latest assistant_response (2-line clamp; [more] opens a sheet).
+// The bridge composer (v5) is a CHILD component (LiveComposer) so all async
+// send state stays out of this projection: full-width in idle, compact
+// steer in response/tool/prompt, absent in question/permission/finished or
+// when the bridge is unreachable/disabled.
 // A waiting AskUserQuestion is a pending- span like any blocking tool, but it
 // gets its own attention state: the question itself, not "running tool.…" —
 // and because findLastSpan always reads the NEWEST pending ask, a second
@@ -15,16 +20,22 @@
 // a long question/response fills both clamp lines and would clip them.
 import { computed, ref, watch, onUnmounted } from 'vue'
 import Button from '../ui/Button.vue'
+import LiveComposer from './LiveComposer.vue'
 import {
-  fmtClock, terminalSpanLabel, terminalSpanDetail, toolDisplayName,
+  fmtClock, fmtElapsedSeconds, terminalSpanLabel, terminalSpanDetail,
+  toolDisplayName,
 } from '../../utils/traceFormatters.js'
 import { stripMarkdown, findLastSpan } from '../../utils/liveRows.js'
 
 const props = defineProps({
   spans: { type: Array, default: () => [] },
   ended: { type: Boolean, default: false },
+  active: { type: Boolean, default: false },
+  sessionId: { type: String, default: '' },
+  bridgeReachable: { type: Boolean, default: false },
+  bridgePane: { type: String, default: '' },
 })
-const emit = defineEmits(['open-response', 'open-question'])
+const emit = defineEmits(['open-response', 'open-question', 'state-change'])
 
 function isPendingAsk(s) {
   return s.attributes?.tool_name === 'AskUserQuestion'
@@ -49,8 +60,29 @@ const state = computed(() => {
   if (pendingTool.value) return 'tool'
   if (livePrompt.value) return 'prompt'
   if (props.ended) return 'finished'
+  if (props.active && props.bridgeReachable) return 'idle'
   return 'response'
 })
+// The view mirrors this state for the header dot/label and the caret
+// (idle suppresses both the pulse and the caret).
+watch(state, s => emit('state-change', s), { immediate: true })
+
+// idle → full composer; working states → compact steer; question /
+// permission / finished (and bridge unreachable/disabled) → none.
+const composerMode = computed(() => {
+  if (!props.bridgeReachable) return null
+  if (state.value === 'idle') return 'idle'
+  const steerable = state.value === 'response' || state.value === 'tool'
+    || state.value === 'prompt'
+  return steerable ? 'steer' : null
+})
+
+// The draft lives HERE (this footer never unmounts) so text typed
+// mid-draft survives the composer unmounting — a one-poll reachability
+// blip or a question/permission takeover — and reappears on remount.
+// It only resets when the view switches sessions.
+const composerDraft = ref('')
+watch(() => props.sessionId, () => { composerDraft.value = '' })
 
 const permLabel = computed(() => {
   const tool = pendingPerm.value?.attributes?.tool_name
@@ -97,14 +129,21 @@ const elapsed = computed(() => {
   const span = pendingPerm.value || pendingQuestion.value || pendingTool.value
   if (!span?.start_time) return ''
   const secs = Math.floor((nowMs.value - new Date(span.start_time).getTime()) / 1000)
-  return secs >= 0 ? `${secs}s` : ''
+  // Shared rollover formatter: a long-running pending tool reads as
+  // "8m09s" / "1h05m", never a raw "489s" — and because it is anchored to
+  // span.start_time, a fresh page load shows the full elapsed time.
+  return fmtElapsedSeconds(secs)
 })
 </script>
 
 <template>
   <footer
     class="live-now"
-    :class="{ 'live-now-attention': state === 'permission' || state === 'question' }"
+    :class="{
+      'live-now-attention': state === 'permission' || state === 'question',
+      'live-now-idle': state === 'idle',
+      'live-now-composer': !!composerMode,
+    }"
     data-testid="live-now"
     :data-state="state"
   >
@@ -156,6 +195,14 @@ const elapsed = computed(() => {
       </div>
     </template>
 
+    <template v-else-if="state === 'idle'">
+      <div class="live-now-1">
+        <span class="live-now-tag">NOW</span>
+        <span class="live-now-idle-dot" aria-hidden="true"></span>
+        <span class="live-now-label">idle — waiting for your prompt</span>
+      </div>
+    </template>
+
     <template v-else>
       <div class="live-now-1">
         <span class="live-now-tag">NOW</span>
@@ -180,5 +227,13 @@ const elapsed = computed(() => {
         >more ▾</Button>
       </div>
     </template>
+
+    <LiveComposer
+      v-if="composerMode"
+      v-model:draft="composerDraft"
+      :session-id="sessionId"
+      :steer="composerMode === 'steer'"
+      :pane="bridgePane"
+    />
   </footer>
 </template>
