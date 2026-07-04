@@ -45,6 +45,7 @@ from web.startup import (
     init_prompt_images_schema as _init_prompt_images_schema,
     init_topic_proposal_schema as _init_topic_proposal_schema,
     init_session_grades_schema as _init_session_grades_schema,
+    init_bridge_panes_schema as _init_bridge_panes_schema,
     init_pattern_deployments_schema as _init_pattern_deployments_schema,
 )
 
@@ -66,6 +67,7 @@ def create_app():
         _init_prompt_images_schema(conn)
         _init_topic_proposal_schema(conn)
         _init_session_grades_schema(conn)
+        _init_bridge_panes_schema(conn)
         _init_pattern_deployments_schema(conn)
     finally:
         conn.close()

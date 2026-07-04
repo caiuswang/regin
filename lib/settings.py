@@ -864,7 +864,7 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "hooks", "patterns", "sync", "web", "cli", "rules",
             "trace_ingest", "topics", "auth", "rebuild",
-            "agent_messages", "memory", "grader", "goal", "gate", "prompts", "other",
+            "agent_messages", "agent_bridge", "memory", "grader", "goal", "gate", "prompts", "other",
         ]
     )
 

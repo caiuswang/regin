@@ -263,6 +263,32 @@ def init_session_grades_schema(conn) -> None:
     conn.commit()
 
 
+def init_bridge_panes_schema(conn) -> None:
+    """Create `bridge_panes` (agent-bridge pane registry) if missing.
+
+    Same DDL as `db/schema.sql` and the handler-side `ensure_schema()` in
+    `hook_manager/handlers/bridge_registry.py` — keep all three in sync.
+    """
+    if not _table_exists(conn, "bridge_panes"):
+        conn.execute("""
+            CREATE TABLE bridge_panes (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id        TEXT NOT NULL UNIQUE,
+                pane_id         TEXT NOT NULL,
+                tmux_server_pid INTEGER NOT NULL,
+                pane_pid        INTEGER NOT NULL,
+                reachable       INTEGER NOT NULL DEFAULT 0,
+                cwd             TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX idx_bridge_panes_reachable ON bridge_panes(reachable)"
+        )
+    conn.commit()
+
+
 def init_pattern_deployments_schema(conn) -> None:
     """Bring an older `pattern_deployments` table up to the multi-provider
     shape if it predates the `provider` column.

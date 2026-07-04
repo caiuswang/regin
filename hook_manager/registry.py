@@ -72,6 +72,7 @@ def _safe_import(name: str):
         return _NoOpHandlerModule(name)
 
 
+bridge_registry     = _safe_import('bridge_registry')
 compact_lifecycle   = _safe_import('compact_lifecycle')
 cwd_changed         = _safe_import('cwd_changed')
 doc_check           = _safe_import('doc_check')
@@ -238,6 +239,17 @@ REGISTRY: list[Handler] = [
         kind='trace',
         priority=50,
         fn=session_lifecycle.handle_start,
+    ),
+    Handler(
+        name='bridge_pane_registry',
+        label='Bridge Pane Registry',
+        summary='Registers the session\'s tmux pane identity triple for '
+                'agent-bridge delivery (REGIN_BRIDGE opt-in; no-op otherwise).',
+        match_hint='SessionStart when REGIN_BRIDGE is truthy and $TMUX_PANE is set',
+        events=['SessionStart'],
+        kind='trace',
+        priority=55,
+        fn=bridge_registry.handle_start,
     ),
     Handler(
         name='session_end',

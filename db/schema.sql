@@ -157,6 +157,26 @@ CREATE INDEX IF NOT EXISTS idx_agent_messages_unread ON agent_messages(read_at);
 -- Supersede lookup: one live keyed message per (session, key).
 CREATE INDEX IF NOT EXISTS idx_agent_messages_key ON agent_messages(trace_id, msg_key);
 
+-- Agent-bridge pane registry: session → tmux pane identity triple (pane id,
+-- tmux server pid, pane shell pid). Canonical, mutable store written by the
+-- SessionStart hook — NOT reconstructed from session_spans. One row per
+-- trace_id; a resume UPSERT overwrites all coordinates. `reachable` is the
+-- per-session bridge opt-in (REGIN_BRIDGE=1 at launch); later slices may
+-- flip it off without deleting the identity row.
+CREATE TABLE IF NOT EXISTS bridge_panes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id        TEXT NOT NULL UNIQUE,
+    pane_id         TEXT NOT NULL,
+    tmux_server_pid INTEGER NOT NULL,
+    pane_pid        INTEGER NOT NULL,
+    reachable       INTEGER NOT NULL DEFAULT 0,
+    cwd             TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bridge_panes_reachable ON bridge_panes(reachable);
+
 -- Post-hoc rubric grades for captured sessions (lib/grader/). Two
 -- independent axes per session — 'correctness' (claim groundedness /
 -- coverage / source quality) and 'process' (tool-use, redundancy,
