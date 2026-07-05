@@ -106,12 +106,13 @@ def test_sync_leaves_exposure_rows_untouched():
     assert len(exposure) == 1 and exposure[0].recall_count == 1
 
 
-def test_wiki_recall_totals_sums_across_signals():
+def test_wiki_read_counts_keys_on_read_signal_only():
     store = memory.get_store()
+    # exposure alone must NOT rank a wiki up — only genuine reads count
     store.bump_wiki_recall("alpha", signal="exposure")
     store.bump_wiki_recall("alpha", signal="exposure")
     store.replace_wiki_read_counts({"alpha": {"count": 3, "last_read": None}})
-    store.bump_wiki_recall("beta", signal="exposure")
-    totals = store.wiki_recall_totals()
-    assert totals == {"alpha": 5, "beta": 1}  # 2 exposure + 3 read, then 1
-    assert store.wiki_recall_totals().get("absent", 0) == 0
+    store.bump_wiki_recall("beta", signal="exposure")  # exposure-only
+    reads = store.wiki_read_counts()
+    assert reads == {"alpha": 3}          # beta absent: surfaced but never read
+    assert store.wiki_read_counts().get("absent", 0) == 0

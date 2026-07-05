@@ -99,25 +99,25 @@ def _subtree_mem_count(store, graph, node_id: str, scope: str) -> int:
 
 
 def _format_card(card: dict, mem_count: Optional[int],
-                 wiki_count: int = 0) -> str:
+                 read_count: int = 0) -> str:
     shape = f"{card['child_count']} sub" if card["child_count"] else "leaf"
     mc = f", {mem_count} mem" if mem_count is not None else ""
-    wc = f", wiki×{wiki_count}" if wiki_count else ""
-    return (f"- {card['id']} · {card['label']} ({shape}{mc}{wc})"
+    rc = f", read×{read_count}" if read_count else ""
+    return (f"- {card['id']} · {card['label']} ({shape}{mc}{rc})"
             f"\n    {card['blurb']}")
 
 
-def _wiki_section(node_id: str, wiki_count: int = 0) -> tuple[str, bool]:
+def _wiki_section(node_id: str, read_count: int = 0) -> tuple[str, bool]:
     """Address of the curated per-topic wiki — the agent Reads it if it wants
     the narrative. We hand over the path, not the contents. Returns
     (section_text, wiki_exists); the bool lets index_fetch record an exposure
-    only when a real wiki was actually surfaced. `wiki_count` annotates how
-    often this wiki has been consulted (a battle-tested signal)."""
+    only when a real wiki was actually surfaced. `read_count` annotates how
+    many past sessions actually read this wiki (a battle-tested signal)."""
     from lib.settings import settings
     from lib.topics.wiki import wiki_dir
     if not (wiki_dir(settings.project_root) / f"{node_id}.md").exists():
         return "## wiki\n(none — bucket or un-accepted topic)", False
-    consulted = f"consulted {wiki_count}×; " if wiki_count else ""
+    consulted = f"read in {read_count} past session(s); " if read_count else ""
     return (f"## wiki\n.regin/topics/wiki/{node_id}.md  "
             f"({consulted}Read this for the full topic narrative)"), True
 
@@ -186,10 +186,10 @@ def index_root(scope: str = "") -> str:
         return "agent memory is disabled (settings.agent_memory.enabled)"
     graph = _load_graph()
     store = memory.get_store()
-    totals = store.wiki_recall_totals()
+    reads = store.wiki_read_counts()
     lines = [_format_card(node_card(graph, rid),
                           _subtree_mem_count(store, graph, rid, scope),
-                          totals.get(rid, 0))
+                          reads.get(rid, 0))
              for rid in build_tree(graph)["roots"]]
     if not lines:
         return "topic graph has no nodes (run `regin topics scan`)"
@@ -225,13 +225,13 @@ def index_expand(node_id: str, scope: str = "") -> str:
     kids = build_tree(graph)["children"].get(node_id, [])
     if not kids:
         return head + "\n\n(leaf — use index_fetch to read its memories)"
-    totals = store.wiki_recall_totals()
-    ranked = sorted(kids, key=lambda k: totals.get(k, 0), reverse=True)
+    reads = store.wiki_read_counts()
+    ranked = sorted(kids, key=lambda k: reads.get(k, 0), reverse=True)
     lines = [_format_card(node_card(graph, k),
                           _subtree_mem_count(store, graph, k, scope),
-                          totals.get(k, 0))
+                          reads.get(k, 0))
              for k in ranked]
-    return (head + "\n\nchildren (most-consulted wiki first):\n"
+    return (head + "\n\nchildren (most-read wiki first):\n"
             + "\n".join(lines))
 
 
@@ -275,8 +275,8 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "",
     ids = store.memories_for_topic_subtree(subtree_ids(graph, node_id),
                                            scope=scope or None)
     label = node.get("label") or node_id
-    wiki_count = store.wiki_recall_totals().get(node_id, 0)
-    wiki_text, wiki_exists = _wiki_section(node_id, wiki_count)
+    read_count = store.wiki_read_counts().get(node_id, 0)
+    wiki_text, wiki_exists = _wiki_section(node_id, read_count)
     if wiki_exists and reinforce:
         store.bump_wiki_recall(node_id, signal="exposure")
     sections = [wiki_text, _refs_section(node),
