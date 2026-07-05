@@ -93,6 +93,7 @@ skill_launch        = _safe_import('skill_launch')
 skill_read          = _safe_import('skill_read')
 subagent_lifecycle  = _safe_import('subagent_lifecycle')
 task_lifecycle      = _safe_import('task_lifecycle')
+wiki_read_sync      = _safe_import('wiki_read_sync')
 trace_payload       = _safe_import('trace_payload')
 turn_trace          = _safe_import('turn_trace')
 
@@ -268,6 +269,16 @@ REGISTRY: list[Handler] = [
         kind='trace',
         priority=55,
         fn=session_lifecycle.handle_stop_fallback,
+    ),
+    Handler(
+        name='wiki_read_sync',
+        label='Wiki Read-Signal Sync',
+        summary="Recomputes the trace-derived wiki 'read' recall signal.",
+        match_hint='SessionEnd; recomputes wiki read counts from tool.Read spans',
+        events=['SessionEnd'],
+        kind='trace',
+        priority=130,
+        fn=wiki_read_sync.handle_end,
     ),
 
     # ── Subagent lifecycle ─────────────────────────────────────────────

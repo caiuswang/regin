@@ -23,9 +23,10 @@ def test_topic_id_extraction_rejects_index_nested_and_nonwiki():
     assert _topic_id_from_path("/Users/x/regin/lib/foo.md") is None
 
 
-def _read_span(span_id: str, attributes: dict, start_time: str) -> SessionSpan:
+def _read_span(span_id: str, attributes: dict, start_time: str,
+               trace_id: str = "t1") -> SessionSpan:
     return SessionSpan(
-        trace_id="t1", span_id=span_id, name="tool.Read",
+        trace_id=trace_id, span_id=span_id, name="tool.Read",
         start_time=start_time, attributes=json.dumps(attributes))
 
 
@@ -36,18 +37,19 @@ def _seed(spans: list[SessionSpan]) -> None:
         session.commit()
 
 
-def test_compute_counts_only_wiki_file_reads():
+def test_compute_counts_distinct_sessions_and_excludes_nonwiki():
     wiki = "/repo/.regin/topics/wiki"
     _seed([
-        _read_span("a", {"file_path": f"{wiki}/alpha.md"}, "2026-01-01T00:00:00"),
-        _read_span("b", {"file_path": f"{wiki}/alpha.md"}, "2026-01-02T00:00:00"),
-        _read_span("c", {"file_path": f"{wiki}/beta.md"}, "2026-01-01T00:00:00"),
-        _read_span("d", {"file_path": f"{wiki}/index.md"}, "2026-01-01T00:00:00"),
+        # alpha read in TWO distinct sessions -> count 2
+        _read_span("a", {"file_path": f"{wiki}/alpha.md"}, "2026-01-01T00:00:00", "s1"),
+        _read_span("b", {"file_path": f"{wiki}/alpha.md"}, "2026-01-02T00:00:00", "s2"),
+        _read_span("c", {"file_path": f"{wiki}/beta.md"}, "2026-01-01T00:00:00", "s1"),
+        _read_span("d", {"file_path": f"{wiki}/index.md"}, "2026-01-01T00:00:00", "s1"),
         # wiki path only in read CONTENT, not the file being read -> excluded
         _read_span("e", {"file_path": "/repo/lib/x.py",
-                         "content": f"see {wiki}/alpha.md"}, "2026-01-03T00:00:00"),
+                         "content": f"see {wiki}/alpha.md"}, "2026-01-03T00:00:00", "s1"),
         # unrelated read -> not even prefiltered
-        _read_span("f", {"file_path": "/repo/lib/y.py"}, "2026-01-01T00:00:00"),
+        _read_span("f", {"file_path": "/repo/lib/y.py"}, "2026-01-01T00:00:00", "s1"),
     ])
     agg = compute_wiki_reads()
     assert set(agg) == {"alpha", "beta"}
@@ -56,11 +58,28 @@ def test_compute_counts_only_wiki_file_reads():
     assert agg["beta"]["count"] == 1
 
 
+def test_repeated_reads_in_one_session_count_once():
+    """A wiki opened several times in ONE session — paginated line ranges or a
+    re-read — is one consultation, not many (the anti-inflation invariant)."""
+    wiki = "/repo/.regin/topics/wiki"
+    _seed([
+        _read_span("a", {"file_path": f"{wiki}/alpha.md",
+                         "start_line": 1}, "2026-01-01T00:00:00", "s1"),
+        _read_span("b", {"file_path": f"{wiki}/alpha.md",
+                         "start_line": 200}, "2026-01-01T00:05:00", "s1"),
+        _read_span("c", {"file_path": f"{wiki}/alpha.md",
+                         "start_line": 400}, "2026-01-01T00:09:00", "s1"),
+    ])
+    agg = compute_wiki_reads()
+    assert agg["alpha"]["count"] == 1
+    assert agg["alpha"]["last_read"] == "2026-01-01T00:09:00"
+
+
 def test_sync_is_idempotent_set_semantics():
     wiki = "/repo/.regin/topics/wiki"
     _seed([
-        _read_span("a", {"file_path": f"{wiki}/alpha.md"}, "2026-01-01T00:00:00"),
-        _read_span("b", {"file_path": f"{wiki}/alpha.md"}, "2026-01-02T00:00:00"),
+        _read_span("a", {"file_path": f"{wiki}/alpha.md"}, "2026-01-01T00:00:00", "s1"),
+        _read_span("b", {"file_path": f"{wiki}/alpha.md"}, "2026-01-02T00:00:00", "s2"),
     ])
     sync_wiki_reads()
     sync_wiki_reads()  # re-run must SET, not accumulate

@@ -28,36 +28,52 @@ def _topic_id_from_path(file_path: str) -> str | None:
     return topic_id if topic_id and topic_id != "index" else None
 
 
+def _wiki_topic_from_attributes(attributes: str) -> str | None:
+    """The wiki topic id a `tool.Read` span's `file_path` points at, or None
+    when the span isn't a per-topic wiki read (parses the JSON blob defensively;
+    the LIKE prefilter also matches spans that merely quote a wiki path in their
+    read *content*, which key on a non-wiki file_path and drop out here)."""
+    try:
+        file_path = (json.loads(attributes or "{}") or {}).get("file_path")
+    except (ValueError, TypeError):
+        return None
+    return _topic_id_from_path(file_path) if file_path else None
+
+
 def compute_wiki_reads() -> dict[str, dict]:
     """Aggregate wiki `tool.Read` spans into
     ``{topic_id: {'count': int, 'last_read': str|None}}``.
 
-    The `attributes` LIKE prefilter narrows the (large) Read-span set to the
-    handful touching the wiki dir before any JSON is parsed."""
+    `count` is the number of **distinct sessions** that read the wiki, not raw
+    Read spans: a session that opens one wiki several times — paginated line
+    ranges, or a re-read after working — is one consultation, not many. Counting
+    spans would inflate a long wiki (read in chunks) over a short one. `last_read`
+    is the most recent read across all sessions. The `attributes` LIKE prefilter
+    narrows the (large) Read-span set to the handful touching the wiki dir before
+    any JSON is parsed."""
     from sqlmodel import select
 
     from lib.orm import SessionLocal
     from lib.orm.models.trace import SessionSpan
 
-    stmt = (select(SessionSpan.attributes, SessionSpan.start_time)
+    stmt = (select(SessionSpan.trace_id, SessionSpan.attributes,
+                   SessionSpan.start_time)
             .where(SessionSpan.name == "tool.Read")
             .where(SessionSpan.attributes.like(f"%{_WIKI_SEG}%")))
-    agg: dict[str, dict] = {}
+    sessions_by_topic: dict[str, set] = {}
+    last_read: dict[str, str] = {}
     with SessionLocal() as session:
-        for attributes, start_time in session.exec(stmt).all():
-            try:
-                file_path = (json.loads(attributes or "{}") or {}).get("file_path")
-            except (ValueError, TypeError):
-                continue
-            topic_id = _topic_id_from_path(file_path) if file_path else None
+        for trace_id, attributes, start_time in session.exec(stmt).all():
+            topic_id = _wiki_topic_from_attributes(attributes)
             if topic_id is None:
                 continue
-            row = agg.setdefault(topic_id, {"count": 0, "last_read": None})
-            row["count"] += 1
-            if start_time and (row["last_read"] is None
-                               or start_time > row["last_read"]):
-                row["last_read"] = start_time
-    return agg
+            sessions_by_topic.setdefault(topic_id, set()).add(trace_id)
+            if start_time and (topic_id not in last_read
+                               or start_time > last_read[topic_id]):
+                last_read[topic_id] = start_time
+    return {topic_id: {"count": len(traces),
+                       "last_read": last_read.get(topic_id)}
+            for topic_id, traces in sessions_by_topic.items()}
 
 
 def sync_wiki_reads() -> list[dict]:
