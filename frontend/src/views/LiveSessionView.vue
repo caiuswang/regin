@@ -16,12 +16,18 @@ import LiveNowZone from '../components/live/LiveNowZone.vue'
 import LiveSheet from '../components/live/LiveSheet.vue'
 import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
 import LiveQaSheet from '../components/live/LiveQaSheet.vue'
+import LiveAgentSheet from '../components/live/LiveAgentSheet.vue'
+import LiveTaskSheet from '../components/live/LiveTaskSheet.vue'
+import LiveCtxMeter from '../components/live/LiveCtxMeter.vue'
+import LiveScopeBar from '../components/live/LiveScopeBar.vue'
 import { useLiveTail } from '../composables/useLiveTail.js'
-import { fmtClock, fmtDuration, terminalSpanLabel } from '../utils/traceFormatters.js'
+import { useLiveAgents } from '../composables/useLiveAgents.js'
+import { useLiveScope } from '../composables/useLiveScope.js'
+import { fmtClock, fmtDuration, fmtModel, terminalSpanLabel } from '../utils/traceFormatters.js'
 import { parseLocalIso } from '../utils/sessionActivity.js'
 import {
   CATEGORIES, filterSpans, countByCategory, isSignal, rowKind, isQaSpan,
-  activityCopyPayload,
+  activityCopyPayload, taskSummaryOf,
 } from '../utils/liveRows.js'
 import { categoryOf } from '../utils/traceFormatters.js'
 
@@ -38,6 +44,15 @@ const {
 // idle dot/label and suppresses the caret while idle.
 const nowState = ref('response')
 
+// Agent roster: the server's whole-session agent_roster is the single
+// source of truth (window-independent — the loaded tail silently drops
+// agents whose markers aged out); the server owns classification.
+const liveAgents = useLiveAgents(() => spans.value, () => meta.value.agent_roster)
+// Per-agent span scoping: scopeId re-partitions the tail to one subagent;
+// the header keeps showing MAIN-session truth. Scroll save/restore on
+// enter/exit stays here (this view owns the tail element) via a watch.
+const scope = useLiveScope(() => spans.value, () => liveAgents.agents)
+
 // ── Filters (signal tier + category + search, all in the filter sheet) ──
 const showSystem = ref(false)
 const filterCat = ref('all')
@@ -50,7 +65,9 @@ const filtersActive = computed(() =>
 // advertising 12 rows must not select down to an empty tail because a
 // query was active). One shared tier+query pass; the category chip is a
 // cheap refinement of it.
-const searchedSpans = computed(() => filterSpans(spans.value, {
+// Scope partition first: main scope drops agent-internal spans, an
+// agent scope keeps only that agent's — then the usual signal/query lens.
+const searchedSpans = computed(() => filterSpans(scope.scopedSpans, {
   showSystem: showSystem.value,
   category: 'all',
   query: filterQuery.value,
@@ -73,9 +90,16 @@ const subagentIds = computed(() => {
 // Blinking caret rides the newest visible row while the session runs —
 // suppressed while idle (the agent isn't producing anything).
 const caretSpanId = computed(() => {
-  if (ended.value || nowState.value === 'idle') return null
+  // Scoped: the caret is a MAIN-session liveness cue — suppress it in an
+  // agent scope (a finished agent's frozen tail must not blink).
+  if (ended.value || nowState.value === 'idle' || scope.scopeId) return null
+  // Phase bands are structure, not content — the caret belongs on the
+  // newest real row even when a band is last.
   const rows = visibleRows.value
-  return rows.length ? rows[rows.length - 1].span_id : null
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rowKind(rows[i]) !== 'phase') return rows[i].span_id
+  }
+  return null
 })
 
 // ── Header ──
@@ -105,6 +129,21 @@ const elapsedLabel = computed(() => {
   return `${dur} · ${fmtClock(meta.value.last_seen)}`
 })
 
+// ── Header tasks chip + agents button ──
+// Tasks: done/total sourced ONLY from the server's final snapshot (loaded
+// tail spans fold away and would make a client tally diverge).
+const taskSummary = computed(() => taskSummaryOf(meta.value.task_list?.final))
+
+// Header meta line: repo · model + the segment-aware live-peak ctx%.
+const ctxPct = computed(() => {
+  const p = meta.value.context_pct
+  return typeof p === 'number' ? p : null
+})
+const metaIdLabel = computed(() => [
+  meta.value.repo,
+  meta.value.model ? fmtModel(meta.value.model) : '',
+].filter(Boolean).join(' · '))
+
 // ── Tail scroll: follow-tail when pinned, "N new" chip when scrolled up ──
 const tailEl = ref(null)
 const cardEl = ref(null)
@@ -121,6 +160,17 @@ function scrollToBottom(smooth) {
   const el = tailEl.value
   if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
 }
+
+// Entering a scope pins the (short) scoped tail to its bottom; exiting
+// restores the main tail's exact pre-scope scroll position.
+let scopeReturnScroll = 0
+watch(() => scope.scopeId, (id, prev) => {
+  if (id && !prev) scopeReturnScroll = tailEl.value?.scrollTop ?? 0
+  nextTick(() => {
+    if (id) scrollToBottom(false)
+    else if (tailEl.value) tailEl.value.scrollTop = scopeReturnScroll
+  })
+})
 
 // Pinned-ness as of the last user scroll. The NOW zone's ResizeObserver
 // cannot measure isPinned() AFTER a height change (a grown footer shrinks
@@ -231,9 +281,17 @@ function onPickSession(row) {
   if (row.trace_id && row.trace_id !== sessionId.value) router.push('/live/' + row.trace_id)
 }
 
+// Sheet title/copy are dispatch tables keyed on kind (not if-ladders): the
+// static-title kinds collapse to one lookup, leaving only the span-derived
+// kinds to compute.
 const sheetTitle = computed(() => {
-  if (sheetKind.value === 'filter') return 'Filter · loaded spans'
-  if (sheetKind.value === 'sessions') return 'Switch session'
+  const fixed = {
+    filter: 'Filter · loaded spans',
+    sessions: 'Switch session',
+    agents: 'Agents',
+    tasks: 'Tasks',
+  }[sheetKind.value]
+  if (fixed) return fixed
   const s = sheetSpan.value
   if (!s) return ''
   if (sheetKind.value === 'qa') {
@@ -248,18 +306,17 @@ const sheetTitle = computed(() => {
 
 const sheetCopy = computed(() => {
   const s = sheetSpan.value
-  if (sheetKind.value === 'message') return s?.attributes?.text || ''
-  if (sheetKind.value === 'detail') return s ? activityCopyPayload(s) : null
-  if (sheetKind.value === 'qa' && s) {
-    const a = s.attributes || {}
-    if (s.name === 'tool.AskUserQuestion') {
-      return JSON.stringify({ questions: a.questions || [], answers: a.answers || null }, null, 2)
-    }
-    // null, not '' — an empty string still renders the Copy button and
-    // flips it to a misleading "✓ Copied" for nothing.
-    return a.command_preview || a.requested_permission || null
-  }
-  return null
+  const a = s?.attributes || {}
+  // null, not '' — an empty string still renders the Copy button and flips
+  // it to a misleading "✓ Copied" for nothing.
+  const byKind = {
+    message: () => s?.attributes?.text || '',
+    detail: () => (s ? activityCopyPayload(s) : null),
+    qa: () => (s?.name === 'tool.AskUserQuestion'
+      ? JSON.stringify({ questions: a.questions || [], answers: a.answers || null }, null, 2)
+      : (a.command_preview || a.requested_permission || null)),
+  }[sheetKind.value]
+  return byKind ? byKind() : null
 })
 
 const detailAttrs = computed(() => {
@@ -314,6 +371,7 @@ function resetViewState() {
   enteringIds.value = new Set()
   sheet.value = null
   savedTailScroll = 0
+  scope.exit()
 }
 
 async function init() {
@@ -370,6 +428,34 @@ onUnmounted(() => {
             class="live-hd-conn"
             data-testid="live-conn-lost"
           >connection lost</span>
+          <span class="live-hd-spacer" aria-hidden="true"></span>
+          <Button
+            v-if="taskSummary"
+            variant="ghost"
+            class="live-hd-tasks"
+            :class="{ 'live-hd-tasks-active': taskSummary.inProgress > 0 }"
+            data-testid="live-tasks-chip"
+            aria-label="Open task list"
+            @click="openSheet('tasks')"
+          >
+            <Icon name="list-checks" :size="12" />
+            <span class="live-tabnum">{{ taskSummary.done }}/{{ taskSummary.total }}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="live-hd-agents"
+            data-testid="live-agents-btn"
+            aria-label="Open running agents"
+            @click="openSheet('agents')"
+          >
+            <Icon name="workflow" :size="14" />
+            <span
+              v-if="liveAgents.runningCount > 0"
+              class="live-agent-badge live-tabnum"
+              data-testid="live-agents-badge"
+            >{{ liveAgents.runningCount }}</span>
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -404,11 +490,25 @@ onUnmounted(() => {
           @keydown.enter="goalOpen = !goalOpen"
           @keydown.space.prevent="goalOpen = !goalOpen"
         >{{ meta.title }}</div>
+        <div v-if="metaIdLabel || ctxPct != null" class="live-hd-meta" data-testid="live-hd-meta">
+          <span class="live-hd-meta-id">{{ metaIdLabel }}</span>
+          <LiveCtxMeter :pct="ctxPct" />
+        </div>
       </header>
 
+      <LiveScopeBar
+        v-if="scope.scopedAgent"
+        :agent="scope.scopedAgent"
+        :server-now="meta.server_now || ''"
+        :server-now-at="meta.server_now_at || 0"
+        @exit="scope.exit"
+      />
+
       <div ref="tailEl" class="live-tail" data-testid="live-tail">
+        <!-- Paging is a main-scope concept: an agent's span set is small and
+             shown whole, so the fold row is suppressed while scoped. -->
         <Button
-          v-if="hasMoreOlder"
+          v-if="hasMoreOlder && !scope.scopeId"
           variant="ghost"
           class="live-fold"
           data-testid="live-fold"
@@ -419,6 +519,26 @@ onUnmounted(() => {
         <div v-if="error" class="live-empty">{{ error }}</div>
         <div v-else-if="loading && !spans.length" class="live-empty">loading…</div>
         <div v-else-if="!spans.length" class="live-empty">no spans yet</div>
+        <!-- Scoped-empty is TERMINAL, not a spinner; the hint distinguishes
+             "not loaded" (the roster says spans exist) from "never
+             captured". The fold row stays hidden in scope, so the
+             not-loaded state carries its own load action. -->
+        <div
+          v-else-if="scope.scopeId && !visibleRows.length"
+          class="live-empty"
+          data-testid="live-scope-empty"
+        >
+          {{ scope.scopedEmptyHint }}
+          <Button
+            v-if="scope.scopedSpansExist"
+            variant="link"
+            size="sm"
+            class="live-now-more"
+            data-testid="live-scope-load"
+            :loading="loadingOlder"
+            @click="unfold"
+          >load earlier history</Button>
+        </div>
         <div v-else-if="!visibleRows.length" class="live-empty">
           no spans match the current filter
         </div>
@@ -444,7 +564,7 @@ onUnmounted(() => {
 
       <LiveNowZone
         ref="nowZoneRef"
-        :spans="spans"
+        :spans="scope.mainSpans"
         :ended="ended"
         :active="active"
         :last-activity-ago-ms="lastSeenAgeMs"
@@ -453,9 +573,15 @@ onUnmounted(() => {
         :bridge-pane="meta.bridge_pane || ''"
         :server-now="meta.server_now || ''"
         :server-now-at="meta.server_now_at || 0"
+        :ctx-pct="ctxPct"
+        :scope-agent="scope.scopedAgent"
+        :agents-running="liveAgents.runningCount"
+        :agents-waiting="liveAgents.waitingCount"
         @state-change="s => (nowState = s)"
         @open-response="s => openSheet('message', s)"
         @open-question="s => openSheet('qa', s)"
+        @exit-scope="scope.exit"
+        @open-agents="openSheet('agents')"
       />
 
       <LiveSheet v-model:open="sheetOpen" :title="sheetTitle" :copy-payload="sheetCopy">
@@ -487,6 +613,21 @@ onUnmounted(() => {
             :bridge-reachable="!!meta.bridge_reachable"
             @answered="closeSheet"
           />
+        </template>
+
+        <template v-else-if="sheetKind === 'agents'">
+          <LiveAgentSheet
+            :running-agents="liveAgents.runningAgents"
+            :finished-agents="liveAgents.finishedAgents"
+            :server-now="meta.server_now || ''"
+            :server-now-at="meta.server_now_at || 0"
+            @select-span="onRowSelect"
+            @scope="a => { scope.enter(a.agentId); closeSheet() }"
+          />
+        </template>
+
+        <template v-else-if="sheetKind === 'tasks'">
+          <LiveTaskSheet :tasks="meta.task_list?.final || []" />
         </template>
 
         <template v-else-if="sheetKind === 'sessions'">

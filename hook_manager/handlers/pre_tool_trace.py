@@ -80,6 +80,7 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
             # No tool-specific flat attrs (BashOutput, MCP, …) — keep a raw
             # input preview so the detail panel still shows the call.
             attrs['tool_input'] = ti
+    _stamp_subagent(attrs, payload)
     post_span(
         trace_id=payload.session_id,
         name=f'tool.{tool}',
@@ -87,6 +88,19 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
         attributes=attrs,
         status_code='PENDING',
     )
+
+
+def _stamp_subagent(attrs: dict, payload: HookPayload) -> None:
+    """Same subagent tagging as the resolved span (post_tool_trace): without
+    it every in-flight subagent tool renders under the MAIN agent until the
+    PostToolUse twin retires the placeholder."""
+    raw = payload.raw or {}
+    agent_id = raw.get('agent_id')
+    if agent_id:
+        attrs['agent_id'] = agent_id
+        agent_type = raw.get('agent_type')
+        if agent_type:
+            attrs['agent_type'] = agent_type
 
 
 def _ask_questions(tool_input: dict) -> list[dict]:

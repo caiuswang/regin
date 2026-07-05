@@ -8,7 +8,9 @@
 import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import { fmtTime, fmtClock, fmtDuration, toolRowDotClass } from '../../utils/traceFormatters.js'
-import { humanMain, isSignal, isHotSpan, rowKind, qaRowModel } from '../../utils/liveRows.js'
+import {
+  humanMain, isSignal, isHotSpan, rowKind, qaRowModel, phaseBandLabel,
+} from '../../utils/liveRows.js'
 
 const props = defineProps({
   span: { type: Object, required: true },
@@ -31,7 +33,17 @@ const dur = computed(() =>
 </script>
 
 <template>
+  <div
+    v-if="kind === 'phase'"
+    class="live-phase-band"
+    data-testid="live-row"
+    data-kind="phase"
+    :data-span-id="span.span_id"
+  >
+    <span>{{ phaseBandLabel(span) }}</span>
+  </div>
   <Button
+    v-else
     variant="ghost"
     class="live-row"
     :class="[
@@ -68,14 +80,28 @@ const dur = computed(() =>
     <template v-else>
       <span class="live-row-1">
         <span
+          v-if="main.taskGlyph"
+          class="live-task-glyph"
+          :class="main.taskCls ? `live-task-${main.taskCls}` : ''"
+          aria-hidden="true"
+        >{{ main.taskGlyph }}</span>
+        <span
+          v-else
           class="live-dot"
-          :class="[toolRowDotClass(span), { 'live-dot-hot': isHotSpan(span) }]"
+          :class="[
+            main.agent ? 'live-dot-agent' : toolRowDotClass(span),
+            { 'live-dot-hot': isHotSpan(span), 'live-dot-agent-muted': main.agentDone },
+          ]"
         ></span>
         <span v-if="sub" class="live-sub-mark">↳</span>
         <span
           class="live-row-main"
-          :class="{ 'live-mono': main.mono, 'live-dim': main.dim }"
-        ><span v-if="main.pre" class="live-row-pre">{{ main.pre }}</span>
+          :class="{ 'live-mono': main.mono, 'live-dim': main.dim, 'live-struck': main.struck }"
+        ><span
+          v-if="main.pre"
+          class="live-row-pre"
+          :class="{ 'live-row-pre-agent': main.agent }"
+        >{{ main.pre }}</span>
           {{ main.text }}<span v-if="caret" class="live-caret"></span></span>
         <span class="live-row-dur">{{ fmtClock(span.start_time) }}{{ dur }}</span>
       </span>

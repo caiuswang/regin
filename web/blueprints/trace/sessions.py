@@ -514,6 +514,7 @@ def _apply_task_row(r, events, state, last_span_by_status) -> None:
     tid = str(tid)
     subject = _str_attr(attrs.get('subject'))
     status = _str_attr(attrs.get('status'))
+    active_form = _str_attr(attrs.get('active_form'))
     event: dict = {
         'span_id': r.span_id,
         'timestamp': r.start_time,
@@ -528,11 +529,14 @@ def _apply_task_row(r, events, state, last_span_by_status) -> None:
         'task_id': tid,
         'subject': '',
         'status': 'pending',
+        'active_form': '',
         # First TaskCreate's span_id — fallback for pending tasks.
         'created_span_id': r.span_id,
     })
     if subject and not entry['subject']:
         entry['subject'] = subject
+    if active_form and not entry['active_form']:
+        entry['active_form'] = active_form
     if status:
         entry['status'] = status
         last_span_by_status.setdefault(tid, {})[status] = r.span_id
@@ -554,6 +558,347 @@ def _finalize_task_state(state, last_span_by_status) -> list[dict]:
         int(t['task_id']) if t['task_id'].isdigit() else 1_000_000,
         t['task_id'],
     ))
+
+
+# ── Session agent roster (whole-session, window-independent) ─────────
+# The /live tail is a paged window, so a client-side roster tally silently
+# drops agents whose markers sit outside the loaded window — and "ghost"
+# agents whose markers were lost to an ingest outage entirely (only their
+# agent_id-tagged internal spans survive). Roster truth comes from the
+# server over ALL spans; tail spans come from the window; "roster row
+# exists but spans not loaded" is a designed state the client renders.
+
+_AGENT_MARKER_NAMES = ('subagent.start', 'subagent.stop')
+# Markers plus the launch span — the main timeline's representation of a
+# subagent, never part of its internal span count.
+_AGENT_SCOPE_MARKER_NAMES = _AGENT_MARKER_NAMES + ('tool.Agent',)
+_AGENT_STALE_AFTER_SEC = 600
+
+
+def _in_placeholders(names) -> str:
+    return ','.join('?' for _ in names)
+
+
+def _roster_ts(iso) -> datetime | None:
+    """Span timestamps are naive server-local; test fixtures post UTC `...Z`.
+    Normalize both to naive local so comparisons never mix awareness."""
+    if not isinstance(iso, str) or not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def _row_attrs(raw) -> dict:
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _roster_rows(trace_id: str):
+    """(activity rows, marker rows, launch rows, waiting map, session ended).
+
+    PENDING placeholders count toward `last_ts` — a live agent mid-way
+    through a long tool has only its placeholder as fresh activity, and
+    dropping it would stale a genuinely-running agent — but stay OUT of
+    `internal_count` (the append-only store keeps resolved placeholders, so
+    counting them inflates span_count)."""
+    from lib.orm.engine import get_connection
+
+    scope_ph = _in_placeholders(_AGENT_SCOPE_MARKER_NAMES)
+    marker_ph = _in_placeholders(_AGENT_MARKER_NAMES)
+    conn = get_connection()
+    try:
+        act = conn.execute(
+            "SELECT json_extract(attributes,'$.agent_id') AS aid, "
+            "       MIN(start_time) AS first_ts, MAX(start_time) AS last_ts, "
+            f"      SUM(CASE WHEN name IN ({scope_ph}) OR status_code = 'PENDING' "
+            "                THEN 0 ELSE 1 END) AS internal_count, "
+            "       MAX(json_extract(attributes,'$.agent_type')) AS agent_type "
+            "  FROM session_spans "
+            " WHERE trace_id = ? AND json_extract(attributes,'$.agent_id') IS NOT NULL "
+            " GROUP BY aid",
+            (*_AGENT_SCOPE_MARKER_NAMES, trace_id)).fetchall()
+        marks = conn.execute(
+            "SELECT id, span_id, name, start_time, attributes FROM session_spans "
+            f" WHERE trace_id = ? AND name IN ({marker_ph}) "
+            " ORDER BY id ASC",
+            (trace_id, *_AGENT_MARKER_NAMES)).fetchall()
+        launches = conn.execute(
+            "SELECT id, span_id, status_code, start_time, attributes "
+            "  FROM session_spans WHERE trace_id = ? AND name = 'tool.Agent' "
+            " ORDER BY id ASC",
+            (trace_id,)).fetchall()
+        # Blocked-on-a-human detection: the newest PENDING ask/permission
+        # placeholder per agent (compared against last_ts downstream).
+        asks = conn.execute(
+            "SELECT json_extract(attributes,'$.agent_id') AS aid, "
+            "       MAX(start_time) AS ts "
+            "  FROM session_spans "
+            " WHERE trace_id = ? AND json_extract(attributes,'$.agent_id') IS NOT NULL "
+            "   AND status_code = 'PENDING' "
+            "   AND (name = 'tool.AskUserQuestion' OR name = 'permission.request' "
+            "        OR span_id LIKE 'permreq-%') "
+            " GROUP BY aid",
+            (trace_id,)).fetchall()
+        sess = conn.execute(
+            'SELECT status FROM sessions WHERE trace_id = ?',
+            (trace_id,)).fetchone()
+    finally:
+        conn.close()
+    parsed_launches = [
+        {'span_id': r['span_id'], 'status_code': r['status_code'],
+         'ts': _roster_ts(r['start_time']), 'attrs': _row_attrs(r['attributes'])}
+        for r in launches
+    ]
+    waiting = {r['aid']: r['ts'] for r in asks if r['aid']}
+    ended = bool(sess and sess['status'] == 'ended')
+    return act, marks, parsed_launches, waiting, ended
+
+
+def _marker_order(m) -> tuple:
+    """Span-time ordering with ingest-id tiebreak. The raw store's marker
+    times are authoritative here (unlike the client's merge-rewritten view),
+    and a REPAIRED marker (reconstruct_subagent_markers) is ingested long
+    after the events it represents — id-only ordering would let a
+    synthesized start float past the real stop that closes it."""
+    ts = _roster_ts(m['start_time'])
+    return (ts or datetime.min, m['id'])
+
+
+def _roster_segments(marks) -> dict:
+    """agent_id → {'starts': [...], 'stops': [...]}, each time-ordered."""
+    seg: dict[str, dict] = {}
+    for r in marks:
+        a = _row_attrs(r['attributes'])
+        aid = a.get('agent_id')
+        if not aid:
+            continue
+        entry = seg.setdefault(aid, {'starts': [], 'stops': []})
+        key = 'starts' if r['name'] == 'subagent.start' else 'stops'
+        entry[key].append({'id': r['id'], 'span_id': r['span_id'],
+                           'start_time': r['start_time'], 'attrs': a})
+    for entry in seg.values():
+        entry['starts'].sort(key=_marker_order)
+        entry['stops'].sort(key=_marker_order)
+    return seg
+
+
+def _roster_latest_segment(entry):
+    """(latest_start, matching_stop). Segment pairing — a resumed agent
+    re-starts under the SAME agent_id, so the stop that closes a segment is
+    the first one ordered at/after its start; an agent whose start marker
+    was lost may still have a stop (start-less segment)."""
+    starts, stops = entry['starts'], entry['stops']
+    if not starts:
+        return None, (stops[-1] if stops else None)
+    latest = starts[-1]
+    key = _marker_order(latest)
+    stop = next((x for x in stops if _marker_order(x) >= key), None)
+    return latest, stop
+
+
+def _launch_type(attrs) -> str | None:
+    ti = attrs.get('tool_input')
+    return attrs.get('subagent_type') or (
+        ti.get('subagent_type') if isinstance(ti, dict) else None)
+
+
+def _launch_for_tu(launches, tu):
+    """The non-error launch (the PENDING placeholder) sharing a deny's
+    tool_use_id — the deny's only trustworthy anchor."""
+    if not tu:
+        return None
+    for r in launches:
+        if r['status_code'] == 'ERROR' or r['attrs'].get('denied'):
+            continue
+        if r['attrs'].get('tool_use_id') == tu:
+            return r
+    return None
+
+
+def _anchored_start(open_entries, launch, taken):
+    """The start this launch actually spawned: the nearest same-type start
+    at/after the launch's own timestamp."""
+    typ = _launch_type(launch['attrs'])
+    lts = launch['ts']
+    if not typ or not lts:
+        return None
+    best, best_dt = None, None
+    for e in open_entries:
+        if e['agent_id'] in taken or e['agent_type'] != typ:
+            continue
+        if not e['start_ts'] or e['start_ts'] < lts:
+            continue
+        dt = (e['start_ts'] - lts).total_seconds()
+        if best is None or dt < best_dt:
+            best, best_dt = e, dt
+    return best
+
+
+def _roster_interrupted(launches, open_entries) -> set[str]:
+    """agent_ids whose launch was denied/killed. A deny claims ONLY through
+    its anchor chain — deny tool_use_id → the launch placeholder sharing it
+    → the start that launch spawned. An unanchored deny (its agent never
+    started) claims nothing: guessing by nearest-same-type could mark an
+    innocent running agent interrupted."""
+    out: set[str] = set()
+    for r in launches:
+        if r['status_code'] != 'ERROR' and not r['attrs'].get('denied'):
+            continue
+        launch = _launch_for_tu(launches, r['attrs'].get('tool_use_id'))
+        if launch is None:
+            continue
+        best = _anchored_start(open_entries, launch, out)
+        if best:
+            out.add(best['agent_id'])
+    return out
+
+
+def _launch_description(attrs) -> str:
+    ti = attrs.get('tool_input')
+    return attrs.get('description') or (
+        ti.get('description') if isinstance(ti, dict) else '') or ''
+
+
+def _roster_description(launches, agent_type, start_ts, claimed) -> str:
+    """The launch description for one agent: nearest same-type tool.Agent
+    launch not yet claimed by another agent (mirrors the client's
+    useAgentLaunchMerge pairing)."""
+    best, best_dt = None, None
+    for r in launches:
+        if r['span_id'] in claimed or _launch_type(r['attrs']) != agent_type:
+            continue
+        if not _launch_description(r['attrs']):
+            continue
+        dt = abs((r['ts'] - start_ts).total_seconds()) \
+            if (r['ts'] and start_ts) else 0.0
+        if best is None or dt < best_dt:
+            best, best_dt = r, dt
+    if not best:
+        return ''
+    claimed.add(best['span_id'])
+    return _launch_description(best['attrs'])
+
+
+def _entry_agent_type(latest, stop, act) -> str:
+    for src in (latest, stop):
+        typ = src['attrs'].get('agent_type') if src else None
+        if typ:
+            return typ
+    return act.get('agent_type') or 'agent'
+
+
+def _entry_marker_facts(latest, stop) -> dict:
+    attrs = latest['attrs'] if latest else {}
+    return {
+        'start_span_id': latest['span_id'] if latest else None,
+        'description': attrs.get('description') or attrs.get('label') or '',
+        'marker_seen': (stop or latest or {}).get('start_time'),
+    }
+
+
+def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
+    """Segment + activity facts for one agent, before status/description."""
+    latest, stop = _roster_latest_segment(
+        seg_entry or {'starts': [], 'stops': []})
+    act = activity.get(aid) or {}
+    facts = _entry_marker_facts(latest, stop)
+    started_at = latest['start_time'] if latest else act.get('first_ts')
+    last_seen = act.get('last_ts') or facts['marker_seen']
+    # Blocked on a human: the newest PENDING ask/permission IS the agent's
+    # newest span (a later resolved span means the ask was answered).
+    ask_ts = _roster_ts(waiting.get(aid))
+    seen_ts = _roster_ts(last_seen)
+    return {
+        'agent_id': aid,
+        'agent_type': _entry_agent_type(latest, stop, act),
+        'started_at': started_at,
+        'start_ts': _roster_ts(started_at),
+        'stop': stop,
+        'start_span_id': facts['start_span_id'],
+        'last_seen': last_seen,
+        'span_count': int(act.get('internal_count') or 0),
+        'description': facts['description'],
+        'waiting': bool(ask_ts and seen_ts and ask_ts >= seen_ts),
+    }
+
+
+def _roster_status(entry, interrupted_ids, now, ended) -> str:
+    if entry['stop']:
+        return 'finished'
+    if entry['agent_id'] in interrupted_ids:
+        return 'interrupted'
+    # An ended session cannot have a running (or waiting) agent — an
+    # unstopped one is stale immediately.
+    if ended:
+        return 'stale'
+    if entry['waiting']:
+        return 'waiting'
+    # Age alone stales an unstopped agent: a genuinely-running one always
+    # has fresh activity — resolved spans or PENDING placeholders, both of
+    # which advance last_ts — so 10 min of total silence means dead, even
+    # when the agent's last span is the newest thing in the session.
+    seen = _roster_ts(entry['last_seen'])
+    if seen and (now - seen).total_seconds() > _AGENT_STALE_AFTER_SEC:
+        return 'stale'
+    return 'running'
+
+
+def _roster_output_entry(e, status, launches, claimed) -> dict:
+    stop_ts = _roster_ts(e['stop']['start_time']) if e['stop'] else None
+    duration_ms = None
+    if stop_ts and e['start_ts']:
+        duration_ms = max(0, int((stop_ts - e['start_ts']).total_seconds() * 1000))
+    result_preview = e['stop']['attrs'].get('result_preview') if e['stop'] else ''
+    return {
+        'agent_id': e['agent_id'],
+        'agent_type': e['agent_type'],
+        'description': e['description'] or _roster_description(
+            launches, e['agent_type'], e['start_ts'], claimed),
+        'status': status,
+        'started_at': e['started_at'],
+        'last_seen': e['last_seen'],
+        'duration_ms': duration_ms,
+        'result_preview': result_preview or '',
+        'start_span_id': e['start_span_id'],
+        'span_count': e['span_count'],
+    }
+
+
+def _fetch_session_agent_roster(trace_id: str) -> list[dict]:
+    """Whole-session subagent roster for the /live header badge + agents
+    sheet: one entry per agent_id, from marker segments (ingest-id ordered)
+    plus orphan agents whose markers were lost but whose agent_id-tagged
+    spans survive. Status mirrors the client rules: running / finished /
+    interrupted (deny markers) / stale (silent past the stale window while
+    the main agent moved on), evaluated with server time."""
+    act_rows, marks, launches, waiting, ended = _roster_rows(trace_id)
+    if not act_rows and not marks:
+        return []
+    activity = {r['aid']: dict(r) for r in act_rows if r['aid']}
+    segments = _roster_segments(marks)
+    entries = [
+        _roster_entry_base(aid, segments.get(aid), activity, waiting)
+        for aid in set(activity) | set(segments)
+    ]
+    entries.sort(key=lambda e: e['started_at'] or '')
+    open_entries = [e for e in entries if not e['stop']]
+    interrupted = _roster_interrupted(launches, open_entries)
+    now = datetime.now()
+    claimed: set[str] = set()
+    return [
+        _roster_output_entry(
+            e, _roster_status(e, interrupted, now, ended),
+            launches, claimed)
+        for e in entries
+    ]
 
 
 def _pct(value, window) -> float | None:
@@ -580,6 +925,25 @@ def _workflow_total_tokens(trace_id: str) -> int | None:
     return int(row[0]) if row and row[0] is not None else None
 
 
+def _session_repo_name(trace_id: str, cwd) -> str | None:
+    """Short repo label for the session header: the primary registered repo
+    name, falling back to the basename of the session cwd."""
+    from sqlmodel import select as _sel
+    from lib.orm.models import Repo, SessionRepo
+    with SessionLocal() as session:
+        name = session.exec(
+            _sel(Repo.name)
+            .join(SessionRepo, SessionRepo.repo_id == Repo.id)
+            .where(SessionRepo.trace_id == trace_id)
+            .order_by(SessionRepo.is_primary.desc(), Repo.name.asc())
+        ).first()
+    if name:
+        return name
+    if isinstance(cwd, str) and cwd.strip():
+        return os.path.basename(cwd.rstrip('/')) or None
+    return None
+
+
 def _session_summary(trace_id: str) -> dict:
     """Read the session-row fields that aren't derivable from spans alone
     (model + transcript-derived token counters). Safe to call for a
@@ -591,6 +955,7 @@ def _session_summary(trace_id: str) -> dict:
         row = session.exec(
             _select(
                 SessionModel.model,
+                SessionModel.cwd,
                 SessionModel.input_tokens, SessionModel.output_tokens,
                 SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
                 SessionModel.peak_context_tokens,
@@ -608,7 +973,7 @@ def _session_summary(trace_id: str) -> dict:
         ).first()
     if not row:
         return {}
-    (model, input_tokens, output_tokens,
+    (model, cwd, input_tokens, output_tokens,
      cache_read, cache_creation, peak, peak_main, live, active_work_ms,
      started_at, ended_at, last_seen, status, ended_reason,
      title, title_source) = row
@@ -623,6 +988,7 @@ def _session_summary(trace_id: str) -> dict:
         (v for v in (live, peak_main, peak) if isinstance(v, int)), peak)
     return {
         'model': model,
+        'repo': _session_repo_name(trace_id, cwd),
         # Workflow runs have no single context window (peak is NULL), so the
         # ctx% chip is absent; surface the run's authoritative grand total
         # (manifest totalTokens, stamped on the run-root span) for a header
@@ -849,6 +1215,7 @@ def _shallow_map_response(trace_id: str):
         # currently queued (derived live from the transcript, ephemeral).
         'queued_prompts': _queued_prompts(trace_id),
         'task_list': _fetch_session_task_list(trace_id),
+        'agent_roster': _fetch_session_agent_roster(trace_id),
         **_bridge_reachability(trace_id),
         **_session_summary(trace_id),
     })

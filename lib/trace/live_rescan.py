@@ -113,6 +113,19 @@ def _do_rescan(trace_id: str) -> None:
                 trace_id, path, agent_id, subs.get(path), seen=_load_seen(trace_id),
             )
 
+        # Self-heal ghost agents: agent_id-tagged spans with no
+        # subagent.start (markers lost to an ingest outage) get their
+        # markers reconstructed from the on-disk transcripts. Gated on one
+        # cheap EXISTS query; the reconstruction itself is idempotent
+        # (deterministic substart-sa-* span ids). Own guard so a heal
+        # failure can't lose the scan states below.
+        try:
+            from lib.trace.repair import has_ghost_agents, reconstruct_subagent_markers
+            if has_ghost_agents(trace_id):
+                reconstruct_subagent_markers(trace_id)
+        except Exception:
+            pass
+
         with _lock:
             if main_state is not None:
                 _scan_states[trace_id] = main_state

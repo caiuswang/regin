@@ -7,7 +7,7 @@
 // block.
 //
 // When the span is a PENDING single-question ask AND the agent bridge is
-// reachable, the sheet becomes ANSWERABLE (v9): each option is a tappable
+// reachable, the sheet becomes ANSWERABLE: each option is a tappable
 // button (POST bridge-answer → drives the pane's select TUI to that option),
 // plus a free-text input that selects the auto-appended "Type something."
 // entry. Multi-question asks and unreachable/completed spans stay read-only —

@@ -25,8 +25,9 @@ import {
   fmtClock, fmtElapsedSeconds, terminalSpanLabel, terminalSpanDetail,
   toolDisplayName,
 } from '../../utils/traceFormatters.js'
-import { stripMarkdown, findLastSpan } from '../../utils/liveRows.js'
+import { stripMarkdown, findLastSpan, agentStatusLabel } from '../../utils/liveRows.js'
 import { parseLocalIso } from '../../utils/sessionActivity.js'
+import { useAgentElapsed } from '../../composables/useAgentElapsed.js'
 
 const props = defineProps({
   spans: { type: Array, default: () => [] },
@@ -47,8 +48,36 @@ const props = defineProps({
   // Grep) has NO pending span while demonstrably working — absence of one
   // is not evidence of idleness, but a quiet ingest stream is.
   lastActivityAgoMs: { type: Number, default: NaN },
+  // Segment-aware live-peak ctx% — passed straight through to the composer's
+  // bridge row (the second surface for the header's ctx meter).
+  ctxPct: { type: Number, default: null },
+  // When the tail is scoped to a subagent, the NOW zone shows that agent's
+  // status + a way back — the composer is hidden (the bridge only reaches
+  // the MAIN agent). null = normal main-scope zone.
+  scopeAgent: { type: Object, default: null },
+  // Roster counts for the idle sub-note: a subagent's question is invisible
+  // to the main projection (its ask is agent-internal), so an idle-looking
+  // session with running/waiting agents must say so.
+  agentsRunning: { type: Number, default: 0 },
+  agentsWaiting: { type: Number, default: 0 },
 })
-const emit = defineEmits(['open-response', 'open-question', 'state-change'])
+const emit = defineEmits([
+  'open-response', 'open-question', 'state-change', 'exit-scope', 'open-agents',
+])
+
+// Scoped elapsed: same server−server anchor as the main pending-span elapsed,
+// so a viewer's timezone never leaks into the agent's running clock.
+const scopeElapsed = useAgentElapsed(
+  () => props.scopeAgent?.startTime,
+  () => props.serverNow,
+  () => props.serverNowAt,
+  () => props.scopeAgent?.running,
+)
+// Shared status phrasing (liveRows.agentStatusLabel): running · elapsed,
+// finished · duration, interrupted, stale · last seen HH:MM.
+const scopeStatus = computed(() => (props.scopeAgent
+  ? `agent ${agentStatusLabel(props.scopeAgent, scopeElapsed.value)}`
+  : ''))
 
 function isPendingAsk(s) {
   return s.attributes?.tool_name === 'AskUserQuestion'
@@ -113,6 +142,9 @@ watch(state, s => emit('state-change', s), { immediate: true })
 // idle → full composer; working states → compact steer; question /
 // permission / finished (and bridge unreachable/disabled) → none.
 const composerMode = computed(() => {
+  // Scoped to a subagent → no composer/steer: the bridge reaches only the
+  // main agent, so a steer box here would mislead.
+  if (props.scopeAgent) return null
   if (!props.bridgeReachable) return null
   if (state.value === 'idle') return 'idle'
   const steerable = state.value === 'response' || state.value === 'tool'
@@ -221,14 +253,41 @@ const elapsed = computed(() => {
   <footer
     class="live-now"
     :class="{
-      'live-now-attention': state === 'permission' || state === 'question',
-      'live-now-idle': state === 'idle',
+      'live-now-attention': !scopeAgent && (state === 'permission' || state === 'question'),
+      'live-now-idle': !scopeAgent && state === 'idle',
       'live-now-composer': !!composerMode,
+      'live-now-scoped': !!scopeAgent,
     }"
     data-testid="live-now"
-    :data-state="state"
+    :data-state="scopeAgent ? 'scoped' : state"
   >
-    <template v-if="state === 'permission'">
+    <template v-if="scopeAgent">
+      <div class="live-now-1">
+        <span class="live-now-tag live-now-agent-tag">NOW</span>
+        <span
+          class="live-now-agent-dot"
+          :class="{
+            'live-now-agent-dot-live': scopeAgent.running && scopeAgent.status !== 'waiting',
+            'live-now-agent-dot-waiting': scopeAgent.status === 'waiting',
+          }"
+          aria-hidden="true"
+        ></span>
+        <span class="live-now-label">{{ scopeStatus }}</span>
+        <span class="live-now-elapsed">{{ scopeAgent.agentType }}</span>
+      </div>
+      <!-- back-to-main sits OUTSIDE any clamp (its own action row). -->
+      <div class="live-now-act">
+        <Button
+          variant="link"
+          size="sm"
+          class="live-now-more"
+          data-testid="live-now-back"
+          @click="emit('exit-scope')"
+        >back to main ↩</Button>
+      </div>
+    </template>
+
+    <template v-else-if="state === 'permission'">
       <div class="live-now-1">
         <span class="live-now-tag">NOW</span>
         <span class="live-now-label">{{ permLabel }}</span>
@@ -282,6 +341,20 @@ const elapsed = computed(() => {
         <span class="live-now-idle-dot" aria-hidden="true"></span>
         <span class="live-now-label">idle — waiting for your prompt</span>
       </div>
+      <!-- "idle" is the MAIN agent's truth only — background agents may
+           still be working or blocked on a question the main projection
+           can't see. Own action row, outside any clamp. -->
+      <div v-if="agentsRunning > 0" class="live-now-act">
+        <Button
+          variant="link"
+          size="sm"
+          class="live-now-more"
+          :class="{ 'live-now-agents-warn': agentsWaiting > 0 }"
+          data-testid="live-now-agents-note"
+          @click="emit('open-agents')"
+        >◈ {{ agentsRunning }} agent{{ agentsRunning === 1 ? '' : 's' }} running{{
+          agentsWaiting > 0 ? ` · ${agentsWaiting} waiting` : '' }}</Button>
+      </div>
     </template>
 
     <template v-else>
@@ -325,6 +398,7 @@ const elapsed = computed(() => {
       :session-id="sessionId"
       :steer="composerMode === 'steer'"
       :pane="bridgePane"
+      :ctx-pct="ctxPct"
     />
   </footer>
 </template>

@@ -24,12 +24,16 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import LiveCommandMenu from './LiveCommandMenu.vue'
+import LiveCtxMeter from './LiveCtxMeter.vue'
 import { useSlashCommands } from '../../composables/useSlashCommands'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
   steer: { type: Boolean, default: false },
   pane: { type: String, default: '' },
+  // Segment-aware live-peak ctx% — the second surface for the header's ctx
+  // meter, right-aligned on the bridge-meta line (amber past 80%).
+  ctxPct: { type: Number, default: null },
 })
 
 const draft = defineModel('draft', { type: String, default: '' })
@@ -230,24 +234,27 @@ function onKeydown(e) {
       <Icon name="arrow-up" :size="15" />
     </Button>
   </div>
-  <div
-    class="live-bridge-meta"
-    :class="{
-      'live-bridge-delivering': phase === 'delivering',
-      'live-bridge-delivered': phase === 'delivered',
-      'live-bridge-failed': phase === 'failed',
-    }"
-    data-testid="live-bridge-meta"
-  >
-    <template v-if="phase === 'delivering'">
-      <span class="live-spinner live-spinner-sm" aria-hidden="true"></span>
-      <span>delivering via bridge…</span>
-    </template>
-    <span v-else-if="phase === 'delivered'">✓ {{ detail }}</span>
-    <span v-else-if="phase === 'failed'">✗ {{ detail }}</span>
-    <span v-else>
-      bridge<template v-if="pane"> · <span class="live-mono">{{ pane }}</span></template>
-      · {{ idleMeta }}
-    </span>
+  <div class="live-bridge-row">
+    <div
+      class="live-bridge-meta"
+      :class="{
+        'live-bridge-delivering': phase === 'delivering',
+        'live-bridge-delivered': phase === 'delivered',
+        'live-bridge-failed': phase === 'failed',
+      }"
+      data-testid="live-bridge-meta"
+    >
+      <template v-if="phase === 'delivering'">
+        <span class="live-spinner live-spinner-sm" aria-hidden="true"></span>
+        <span>delivering via bridge…</span>
+      </template>
+      <span v-else-if="phase === 'delivered'">✓ {{ detail }}</span>
+      <span v-else-if="phase === 'failed'">✗ {{ detail }}</span>
+      <span v-else>
+        bridge<template v-if="pane"> · <span class="live-mono">{{ pane }}</span></template>
+        · {{ idleMeta }}
+      </span>
+    </div>
+    <LiveCtxMeter :pct="ctxPct" verbose />
   </div>
 </template>

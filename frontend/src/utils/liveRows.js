@@ -17,6 +17,7 @@ import {
   categoryOf,
   SPAN_CATEGORIES,
   spanMatchesSearch,
+  fmtDuration,
 } from './traceFormatters.js'
 
 // The filter sheet renders the same 10 buckets as the desktop Terminal
@@ -29,7 +30,17 @@ export function rowKind(span) {
   const n = span?.name || ''
   if (n === 'prompt' || n === 'assistant_response') return 'msg'
   if (isQaSpan(span)) return 'qa'
+  // Workflow phase markers are structure, not a tappable row — the view
+  // renders them as a centered divider band, not a LiveTailRow button.
+  if (n === 'workflow.phase') return 'phase'
   return 'act'
+}
+
+// Centered phase-band label ("PHASE 3 · verify"). index is 0-based on the span.
+export function phaseBandLabel(span) {
+  const a = span?.attributes || {}
+  const idx = (a.index == null ? 0 : a.index) + 1
+  return `Phase ${idx}${a.title ? ` · ${a.title}` : ''}`
 }
 
 // Ask-user-question / permission spans get their own delicate 2-line row
@@ -122,7 +133,7 @@ export function isHotSpan(span) {
 const SIGNAL_EXACT = new Set([
   'prompt', 'assistant_response', 'subagent.start', 'subagent.stop',
   'file.edit', 'plan.edit', 'memory.recall', 'permission.request',
-  'permission.denied',
+  'permission.denied', 'workflow.phase',
 ])
 
 export function isSignal(span) {
@@ -225,6 +236,24 @@ function toolOutcomeMain(span, a, t) {
   return null
 }
 
+// Task-event row phrasing: checklist glyph replaces the dot, subject as the
+// line (prefixed "started · " while in progress), struck when completed.
+function taskEventMain(a) {
+  const st = a.status
+  let glyph = '☐'
+  let taskCls = ''
+  if (st === 'in_progress') { glyph = '◔'; taskCls = 'doing' }
+  else if (st === 'completed') { glyph = '☑'; taskCls = 'done' }
+  const subject = a.subject || ''
+  return {
+    text: st === 'in_progress' ? `started · ${subject}` : subject,
+    dim: true,
+    taskGlyph: glyph,
+    taskCls,
+    struck: st === 'completed',
+  }
+}
+
 // Exact-name phrasing builders (same idiom as traceFormatters'
 // _TERMINAL_DETAIL_BUILDERS — keyed dispatch instead of a branch ladder).
 // Every signal-tier span name needs a human phrasing here or below —
@@ -234,7 +263,22 @@ const MAIN_BUILDERS = {
   assistant_response: a => ({ text: stripMarkdown(a.text) }),
   'assistant.thinking': a => ({ pre: 'Thinking', text: stripMarkdown(a.thinking_text), dim: true }),
   'subagent.start': a => ({ text: `Agent ${a.agent_type || (a.agent_id || '').slice(0, 8)} started` }),
-  'subagent.stop': a => ({ text: a.agent_type ? `Agent ${a.agent_type} finished` : 'Agent finished' }),
+  // Agent launch/done + task events are the four differentiated row kinds
+  // : violet agent affordance, quiet checklist glyphs. `agent` tints the
+  // dot/pre violet; `taskGlyph`/`struck` swap the dot for a checklist mark.
+  'tool.Agent': a => ({
+    pre: `Agent · ${a.subagent_type || a.agent_type || 'agent'}`,
+    text: a.description ? `— ${a.description}` : '',
+    agent: true,
+  }),
+  'subagent.stop': a => ({
+    pre: `◆ ${a.agent_type || 'agent'} finished`,
+    text: a.result_preview || '',
+    agent: true,
+    agentDone: true,
+  }),
+  'tool.TaskCreate': a => taskEventMain(a),
+  'tool.TaskUpdate': a => taskEventMain(a),
   'rule.check': a => ({
     text: `Rule ${a.rule_id || ''}${a.findings
       ? ` · ${a.findings} finding${a.findings > 1 ? 's' : ''}`
@@ -301,4 +345,64 @@ export function findLastSpan(spans, predicate) {
     if (predicate(spans[i])) return spans[i]
   }
   return null
+}
+
+// ── Per-agent span scoping ───────────────────────────────────
+// A span is agent-internal iff attributes.agent_id is set. The three marker
+// names are the compact representation of each subagent in the MAIN timeline
+// (they also carry agent_id, but belong to main's view, never a scope).
+const SCOPE_MARKERS = new Set(['tool.Agent', 'subagent.start', 'subagent.stop'])
+
+// scopeId null → main scope: spans WITHOUT agent_id, plus the markers.
+// scopeId set → that agent's spans only (agent_id === scopeId), markers out.
+export function inScope(span, scopeId) {
+  const aid = span?.attributes?.agent_id
+  if (scopeId) return aid === scopeId && !SCOPE_MARKERS.has(span?.name)
+  return !aid || SCOPE_MARKERS.has(span?.name)
+}
+
+export function partitionScope(spans, scopeId) {
+  return (spans || []).filter(s => inScope(s, scopeId))
+}
+
+// One status phrasing for every scoped-agent surface (scope bar, scoped NOW
+// zone, the agents sheet's status column). Server statuses beyond the plain
+// running/finished pair:
+//   waiting     — alive but blocked on a human (pending ask/permission);
+//   interrupted — the launch was denied/killed (tooldeny ERROR marker), so a
+//                 subagent.stop will never come;
+//   stale       — no deny marker, but the agent went silent (killed
+//                 terminal etc. — real activity always advances last_seen).
+// `compact` shortens for narrow slots (the agents sheet's time column at
+// 375px — the full phrase squeezes the description to ~10ch); the scope
+// bar / NOW zone keep the verbose form.
+export function agentStatusLabel(agent, elapsed, { compact = false } = {}) {
+  if (agent.status === 'interrupted') return 'interrupted'
+  if (agent.status === 'waiting') return compact ? 'waiting' : 'waiting for input'
+  if (agent.status === 'stale') {
+    return compact
+      ? `stale · ${agent.lastSeenClock}`
+      : `stale · last seen ${agent.lastSeenClock}`
+  }
+  if (agent.running) return `running · ${elapsed}`
+  // Real subagent.stop markers are point events (duration_ms 0); the
+  // duration derives from segment span times and can still be unknown —
+  // never render a dangling "finished · ".
+  const dur = fmtDuration(agent.durationMs)
+  return dur ? `finished · ${dur}` : 'finished'
+}
+
+// done/total across the session's FINAL task snapshot (meta.task_list.final),
+// never re-derived from the loaded tail. Null when the session used no tasks.
+export function taskSummaryOf(finalTasks) {
+  if (!Array.isArray(finalTasks) || !finalTasks.length) return null
+  let done = 0
+  let inProgress = 0
+  let open = 0
+  for (const t of finalTasks) {
+    if (t.status === 'completed') done += 1
+    else if (t.status === 'in_progress') inProgress += 1
+    else open += 1
+  }
+  return { total: finalTasks.length, done, inProgress, open }
 }

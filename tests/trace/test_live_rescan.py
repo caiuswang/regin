@@ -149,3 +149,36 @@ def test_trigger_rescan_ignores_empty_trace(monkeypatch):
     )
     lr.trigger_rescan('')
     assert started == []
+
+
+def test_do_rescan_selfheals_ghost_markers_only_when_flagged(tmp_path, monkeypatch):
+    """The rescan reconstructs lost subagent markers, gated on the cheap
+    ghost check — a clean trace must skip the reconstruction entirely."""
+    main = tmp_path / 'sess.jsonl'
+    main.write_text('{}\n')
+    monkeypatch.setattr(lr, '_find_main_transcript', lambda tid: str(main))
+    monkeypatch.setattr(
+        'hook_manager.handlers.turn_trace.entry.ingest_transcript_usage_resumable',
+        lambda tid, path, state, **k: state,
+    )
+    monkeypatch.setattr(
+        'hook_manager.handlers.turn_trace.cache._load_seen', lambda tid: set(),
+    )
+    ghost = {'value': False}
+    calls = {'reconstruct': 0}
+    monkeypatch.setattr(
+        'lib.trace.repair.has_ghost_agents', lambda tid: ghost['value'])
+    monkeypatch.setattr(
+        'lib.trace.repair.reconstruct_subagent_markers',
+        lambda tid: calls.__setitem__('reconstruct', calls['reconstruct'] + 1))
+    lr._last_mtime.clear()
+    lr._scan_states.clear()
+    lr._sub_scan_states.clear()
+    lr._running.clear()
+
+    lr._do_rescan('t-heal')
+    assert calls['reconstruct'] == 0            # clean trace: skipped
+
+    ghost['value'] = True
+    lr._do_rescan('t-heal')
+    assert calls['reconstruct'] == 1            # ghost detected: healed once

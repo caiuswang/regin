@@ -1421,14 +1421,14 @@ test.describe('Long-content invariant (acceptance #8b)', () => {
   })
 })
 
-// ---- v9: answer a pending single-question ask from the QA sheet -------------
+// ---- answer a pending single-question ask from the QA sheet -----------------
 //
 // The QA sheet is read-only by default. When the span is a PENDING
 // single-question ask AND the bridge is reachable, each option becomes a
 // tappable button (POST bridge-answer → drives the pane's select TUI) and a
 // free-text input selects the auto-appended "Type something." entry. These
 // tests pin the browser-side contract (POST bodies + sheet close), not tmux.
-test.describe('Answer a pending ask from the QA sheet (v9)', () => {
+test.describe('Answer a pending ask from the QA sheet', () => {
   async function seedPendingQuestion(page) {
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)
@@ -1511,7 +1511,7 @@ test.describe('Answer a pending ask from the QA sheet (v9)', () => {
   })
 })
 
-// ---- Review regressions (v9) ------------------------------------------------
+// ---- review regressions -----------------------------------------------------
 //
 // Header/status lifecycle, outcome-row phrasing, filter-count, and
 // connection-health invariants. The session-switch state-reset spec lives in
@@ -1534,7 +1534,7 @@ function shiftServerTimestamp(iso, deltaMs) {
     + `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`
 }
 
-test.describe('Review regressions (v9)', () => {
+test.describe('Review regressions', () => {
   test('status flips to finished mid-view once a session.end span lands (applySummary refresh)', async ({ page }) => {
     const { traceId, sfx } = await postActiveSession(page)
 
@@ -1724,5 +1724,872 @@ test.describe('Review regressions (v9)', () => {
     const dot = page.locator('.live-status-dot')
     await expect(dot).toHaveClass(/live-status-stale/)
     await expect(dot).not.toHaveClass(/live-status-running/)
+  })
+})
+
+// ---- tasks chip, agents, differentiated rows, ctx meter --------------------
+
+test.describe('Header tasks chip + tasks sheet', () => {
+  // task_list.final is computed server-side; posting the raw TaskCreate/
+  // TaskUpdate spans exercises the real derivation, not a client re-tally.
+  async function seedTasks(page) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'tasks fixture', is_test: true } },
+      { trace_id: traceId, span_id: `tc1-${sfx}`, parent_id: null, name: 'tool.TaskCreate',
+        start_time: now, attributes: { task_id: '1', subject: 'Alpha task', status: 'pending',
+          active_form: 'Doing alpha', is_test: true } },
+      { trace_id: traceId, span_id: `tc2-${sfx}`, parent_id: null, name: 'tool.TaskCreate',
+        start_time: now, attributes: { task_id: '2', subject: 'Beta task', status: 'pending',
+          active_form: 'Doing beta now', is_test: true } },
+      { trace_id: traceId, span_id: `tc3-${sfx}`, parent_id: null, name: 'tool.TaskCreate',
+        start_time: now, attributes: { task_id: '3', subject: 'Gamma task', status: 'pending', is_test: true } },
+      { trace_id: traceId, span_id: `tu1-${sfx}`, parent_id: null, name: 'tool.TaskUpdate',
+        start_time: now, attributes: { task_id: '1', status: 'completed', is_test: true } },
+      { trace_id: traceId, span_id: `tu2-${sfx}`, parent_id: null, name: 'tool.TaskUpdate',
+        start_time: now, attributes: { task_id: '2', status: 'in_progress', is_test: true } },
+    ])
+    return { traceId, sfx }
+  }
+
+  test('chip shows done/total from the final snapshot and is accent-tinted while a task is in progress', async ({ page }) => {
+    const { traceId } = await seedTasks(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const chip = page.locator('[data-testid="live-tasks-chip"]')
+    await expect(chip).toBeVisible({ timeout: 10_000 })
+    await expect(chip).toContainText('1/3')
+    await expect(chip).toHaveClass(/live-hd-tasks-active/)
+  })
+
+  test('chip is hidden when the session used no tasks', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: new Date().toISOString(), attributes: { text: 'no tasks', is_test: true } },
+    ])
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('[data-testid="live-tasks-chip"]')).toHaveCount(0)
+  })
+
+  test('tap → tasks sheet: counts strip; completed sorts last but stays visible and struck', async ({ page }) => {
+    const { traceId } = await seedTasks(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const chip = page.locator('[data-testid="live-tasks-chip"]')
+    await expect(chip).toBeVisible({ timeout: 10_000 })
+    await chip.click()
+    const sheet = page.locator('[data-testid="live-task-sheet"]')
+    await expect(sheet).toBeVisible()
+    await expect(page.locator('[data-testid="live-task-counts"]'))
+      .toContainText('1 in progress · 1 open · 1 done')
+    const items = page.locator('[data-testid="live-task-item"]')
+    await expect(items).toHaveCount(3)
+    // in_progress row carries its active_form line
+    await expect(sheet).toContainText('Doing beta now')
+    // completed 'Alpha task' still present, sorted LAST, and struck
+    const last = items.last()
+    await expect(last).toContainText('Alpha task')
+    await expect(last).toHaveClass(/live-task-item-done/)
+  })
+})
+
+test.describe('Header agents button + agents sheet', () => {
+  async function seedAgents(page, { withStop } = { withStop: true }) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const spans = [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'agents fixture', is_test: true } },
+      { trace_id: traceId, span_id: `agent-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, attributes: { subagent_type: 'verifier',
+          description: 'Verify acceptance items against the diff', tool_use_id: `tu-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'verifier', agent_id: `ag-${sfx}`, is_test: true } },
+    ]
+    if (withStop) {
+      // Realistic: subagent.stop is an instantaneous point event — real
+      // markers never carry duration_ms; the UI derives it from span times.
+      spans.push({ trace_id: traceId, span_id: `substop-${sfx}`, parent_id: null,
+        name: 'subagent.stop', start_time: now,
+        attributes: { agent_type: 'verifier', agent_id: `ag-${sfx}`,
+          result_preview: 'All checks passed', is_test: true } })
+    }
+    await post(page, spans)
+    return { traceId, sfx }
+  }
+
+  test('a running agent → violet count badge; sheet lists it with type + description', async ({ page }) => {
+    const { traceId } = await seedAgents(page, { withStop: false })
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const badge = page.locator('[data-testid="live-agents-badge"]')
+    await expect(badge).toBeVisible({ timeout: 10_000 })
+    await expect(badge).toHaveText('1')
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    const sheet = page.locator('[data-testid="live-agent-sheet"]')
+    await expect(sheet).toBeVisible()
+    const card = page.locator('[data-testid="live-agent-card"]').first()
+    await expect(card).toContainText('verifier')
+    await expect(card).toContainText('Verify acceptance items')
+  })
+
+  test('a finished agent → no badge; Finished group is collapsed by default and expands to the result', async ({ page }) => {
+    const { traceId } = await seedAgents(page, { withStop: true })
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('[data-testid="live-agents-badge"]')).toHaveCount(0)
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible()
+    // collapsed by default
+    await expect(page.locator('[data-testid="live-agent-finished"]')).toHaveCount(0)
+    const toggle = page.locator('[data-testid="live-agent-finished-toggle"]')
+    await expect(toggle).toContainText('Finished (1)')
+    await toggle.click()
+    await expect(page.locator('[data-testid="live-agent-finished"]')).toBeVisible()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toContainText('All checks passed')
+  })
+
+  test('empty state when no agents were launched', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: new Date().toISOString(), attributes: { text: 'no agents', is_test: true } },
+    ])
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('[data-testid="live-agents-badge"]')).toHaveCount(0)
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-empty"]'))
+      .toContainText('no agents launched this session')
+  })
+})
+
+test.describe('Differentiated tail rows', () => {
+  test('agent launch / subagent stop / workflow phase / task events get human phrasing — no raw span-type names', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'diff-rows fixture', is_test: true } },
+      { trace_id: traceId, span_id: `phase-${sfx}`, parent_id: null, name: 'workflow.phase',
+        start_time: now, attributes: { title: 'verify', index: 2, is_test: true } },
+      { trace_id: traceId, span_id: `agent-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, attributes: { subagent_type: 'builder', description: 'Port the design',
+          tool_use_id: `tu-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `substop-${sfx}`, parent_id: null, name: 'subagent.stop',
+        start_time: now,
+        attributes: { agent_type: 'builder', agent_id: `ag-${sfx}`,
+          result_preview: 'done building', is_test: true } },
+      { trace_id: traceId, span_id: `tc-${sfx}`, parent_id: null, name: 'tool.TaskCreate',
+        start_time: now, attributes: { task_id: '1', subject: 'first task', status: 'completed', is_test: true } },
+    ])
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    const phase = page.locator(`[data-testid="live-row"][data-span-id="phase-${sfx}"]`)
+    await expect(phase).toHaveAttribute('data-kind', 'phase')
+    await expect(phase).toContainText('Phase 3 · verify')
+
+    const agent = page.locator(`[data-testid="live-row"][data-span-id="agent-${sfx}"]`)
+    await expect(agent).toContainText('Agent · builder')
+    await expect(agent).toContainText('Port the design')
+
+    await expect(page.locator(`[data-testid="live-row"][data-span-id="substop-${sfx}"]`))
+      .toContainText('builder finished')
+    await expect(page.locator(`[data-testid="live-row"][data-span-id="tc-${sfx}"]`))
+      .toContainText('first task')
+
+    // No raw span-type name may reach the default view.
+    const tail = page.locator('[data-testid="live-tail"]')
+    await expect(tail).not.toContainText('tool.Agent')
+    await expect(tail).not.toContainText('workflow.phase')
+    await expect(tail).not.toContainText('tool.TaskCreate')
+    await expect(tail).not.toContainText('subagent.stop')
+  })
+})
+
+test.describe('Header meta line + ctx meter', () => {
+  async function withCtx(page, traceId, patch) {
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, ...patch } })
+    })
+  }
+
+  test('meta line shows repo · model and the ctx meter goes amber past 80%', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await withCtx(page, traceId, { repo: 'regin', model: 'claude-opus-4-8', context_pct: 87 })
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const meta = page.locator('[data-testid="live-hd-meta"]')
+    await expect(meta).toBeVisible({ timeout: 10_000 })
+    await expect(meta).toContainText('regin')
+    await expect(meta).toContainText('opus 4.8')
+    const ctx = meta.locator('[data-testid="live-ctx-meter"]')
+    await expect(ctx).toContainText('ctx 87%')
+    await expect(ctx).toHaveClass(/live-ctx-warn/)
+  })
+
+  test('ctx meter stays neutral (no amber) at/under 80%', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await withCtx(page, traceId, { repo: 'regin', model: 'claude-opus-4-8', context_pct: 62 })
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const ctx = page.locator('[data-testid="live-hd-meta"] [data-testid="live-ctx-meter"]')
+    await expect(ctx).toContainText('ctx 62%', { timeout: 10_000 })
+    await expect(ctx).not.toHaveClass(/live-ctx-warn/)
+  })
+})
+
+// ---- per-agent span scoping -------------------------------------------------
+//
+// The partition rule under test is purely attribute-based: a span is
+// agent-internal iff attributes.agent_id is set (liveRows.inScope). These
+// fixtures post the internal spans as roots so they load deterministically
+// into the tail; the real delivery path (deep-children of the subagent.start
+// root returning agent_id-tagged spans) was verified against db/regin.db
+// out-of-band and needs no live subagent to exercise the client partition.
+
+test.describe('Per-agent span scoping', () => {
+  const MAIN_CMD = 'echo MAIN_ONLY_CMD_MARKER'
+  const INT_FILE = 'src/AGENT_INTERNAL_MARKER.js'
+
+  // A main-agent turn + one running subagent whose internal spans (same
+  // agent_id) sit in the tail. Optionally a finished subagent with NO
+  // internal spans, to exercise the empty-scope terminal state.
+  async function seedScoped(page, { emptyAgent = false } = {}) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const later = new Date(Date.now() + 2000).toISOString()
+    const agId = `ag-run-${sfx}`
+    const spans = [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'scoping fixture', is_test: true } },
+      // Main-agent activity (no agent_id) — main scope only.
+      { trace_id: traceId, span_id: `mainbash-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, attributes: { command_preview: MAIN_CMD, is_test: true } },
+      // Launch marker (carries description for the roster) + start marker.
+      { trace_id: traceId, span_id: `agent-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, attributes: { subagent_type: 'explorer',
+          description: 'Map the breakpoints', tool_use_id: `tu-${sfx}`, agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'explorer', agent_id: agId, is_test: true } },
+      // Subagent-internal spans (agent_id === agId) — agent scope only.
+      { trace_id: traceId, span_id: `int-read-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: later, attributes: { file_path: INT_FILE, agent_id: agId, is_test: true } },
+      // Main-agent's own latest response (newest) so the main NOW zone is stable.
+      { trace_id: traceId, span_id: `mainresp-${sfx}`, parent_id: null, name: 'assistant_response',
+        start_time: later, attributes: { text: 'MAIN_RESP_MARKER', is_test: true } },
+    ]
+    if (emptyAgent) {
+      // A finished subagent whose internal spans were never captured.
+      // Start before stop — pairing is by ingest order, as in real ingest.
+      spans.push({ trace_id: traceId, span_id: `substart2-${sfx}`, parent_id: null,
+        name: 'subagent.start', start_time: now,
+        attributes: { agent_type: 'ghost', agent_id: `ag-empty-${sfx}`, is_test: true } })
+      spans.push({ trace_id: traceId, span_id: `substop2-${sfx}`, parent_id: null,
+        name: 'subagent.stop', start_time: now,
+        attributes: { agent_type: 'ghost', agent_id: `ag-empty-${sfx}`,
+          result_preview: 'nothing captured', is_test: true } })
+    }
+    await post(page, spans)
+    return { traceId, sfx, agId }
+  }
+
+  const tail = (page) => page.locator('[data-testid="live-tail"]')
+  const scopeBar = (page) => page.locator('[data-testid="live-scope-bar"]')
+
+  async function openAgents(page) {
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible({ timeout: 5_000 })
+  }
+
+  test('scope entry from the sheet: tapping an agent scopes the tail and closes the sheet', async ({ page }) => {
+    const { traceId } = await seedScoped(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    // Primary card tap = scope (NOT the chevron, which opens span detail).
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+
+    await expect(scopeBar(page)).toBeVisible({ timeout: 5_000 })
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeHidden()
+  })
+
+  test('the chevron opens span detail instead of scoping', async ({ page }) => {
+    const { traceId } = await seedScoped(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-info"]').first().click()
+    // The span-detail sheet opens; the scope bar must NOT appear.
+    await expect(page.locator('[data-testid="live-sheet"]')).toBeVisible()
+    await expect(scopeBar(page)).toHaveCount(0)
+  })
+
+  test('partition: agent-internal rows are absent in main and present in scope; main-only rows invert', async ({ page }) => {
+    const { traceId } = await seedScoped(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(tail(page)).toBeVisible({ timeout: 10_000 })
+
+    // MAIN scope: the main command shows; the agent-internal file does NOT.
+    await expect(tail(page)).toContainText('MAIN_ONLY_CMD_MARKER')
+    await expect(tail(page)).not.toContainText('AGENT_INTERNAL_MARKER')
+    // The subagent launch/start marker DOES stand in for the agent in main.
+    await expect(tail(page)).toContainText('explorer')
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    await expect(scopeBar(page)).toBeVisible({ timeout: 5_000 })
+
+    // AGENT scope: the internal file shows; the main-only command is gone.
+    await expect(tail(page)).toContainText('AGENT_INTERNAL_MARKER')
+    await expect(tail(page)).not.toContainText('MAIN_ONLY_CMD_MARKER')
+  })
+
+  test('scope bar content + ✕ restores the main tail and its exact scroll position', async ({ page }) => {
+    const { traceId } = await seedScoped(page)
+    // Extra main rows so the tail is scrollable.
+    const sfx2 = traceId.slice(0, 8)
+    const filler = []
+    for (let i = 0; i < 30; i++) {
+      filler.push({ trace_id: traceId, span_id: `fill-${sfx2}-${i}`, parent_id: null,
+        name: 'tool.Read', start_time: new Date().toISOString(),
+        attributes: { file_path: `src/fill${i}.js`, is_test: true } })
+    }
+    await post(page, filler)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(tail(page)).toBeVisible({ timeout: 10_000 })
+
+    // Land the main tail at a non-zero, non-bottom scroll position.
+    await tail(page).evaluate((el) => { el.scrollTop = Math.floor(el.scrollHeight / 3) })
+    await page.waitForTimeout(150)
+    const before = await tail(page).evaluate((el) => el.scrollTop)
+    expect(before).toBeGreaterThan(0)
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    const bar = scopeBar(page)
+    await expect(bar).toBeVisible({ timeout: 5_000 })
+    await expect(bar).toContainText('explorer')
+    await expect(bar).toContainText('running')
+
+    // ✕ returns to main and restores the exact pre-scope scroll.
+    await page.locator('[data-testid="live-scope-exit"]').click()
+    await expect(bar).toHaveCount(0)
+    await expect(tail(page)).toContainText('MAIN_ONLY_CMD_MARKER')
+    await page.waitForTimeout(150)
+    const after = await tail(page).evaluate((el) => el.scrollTop)
+    expect(after, 'exiting scope must restore the main tail scroll position').toBe(before)
+  })
+
+  test('NOW zone while scoped: agent status + back-to-main, no composer', async ({ page }) => {
+    const { traceId } = await seedScoped(page)
+    // Make the session bridge-reachable + idle so a composer WOULD show in main
+    // scope — proving the scoped zone suppresses it, not just the bridge gate.
+    await bridgeReachableMap(page, traceId)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'scoped', { timeout: 5_000 })
+    await expect(nowZone).toContainText('agent running')
+    await expect(page.locator('[data-testid="live-now-back"]')).toBeVisible()
+    // The bridge composer must be absent while scoped.
+    await expect(page.locator('[data-testid="live-composer"]')).toHaveCount(0)
+
+    // back-to-main also exits the scope.
+    await page.locator('[data-testid="live-now-back"]').click()
+    await expect(scopeBar(page)).toHaveCount(0)
+  })
+
+  test('empty-scope terminal state: an agent with no captured spans shows "no spans captured"', async ({ page }) => {
+    const { traceId } = await seedScoped(page, { emptyAgent: true })
+    // Pageable history existing says nothing about THIS agent's spans — the
+    // hint must read the roster's span_count, not hasMoreOlder.
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, has_more_older: true } })
+    })
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    // The empty (ghost) agent is finished → expand the Finished group first.
+    await page.locator('[data-testid="live-agent-finished-toggle"]').click()
+    await page.locator('[data-testid="live-agent-finished"] [data-testid="live-agent-card"]')
+      .first().click()
+
+    await expect(scopeBar(page)).toBeVisible({ timeout: 5_000 })
+    const empty = page.locator('[data-testid="live-scope-empty"]')
+    await expect(empty).toBeVisible()
+    await expect(empty).toContainText('no spans captured for this agent')
+    await expect(empty).not.toContainText('spans not loaded')
+    await expect(page.locator('[data-testid="live-scope-load"]')).toHaveCount(0)
+    // Terminal, not a spinner.
+    await expect(page.locator('[data-testid="live-now"] .live-spinner')).toHaveCount(0)
+  })
+})
+
+// ---- agent lifecycle — interrupted / stale / resumed ------------------------
+//
+// A denied/interrupted Task launch never emits subagent.stop: the launch
+// stays a PENDING placeholder and a tooldeny-* marker (name tool.Agent,
+// status ERROR, same tool_use_id) is the deterministic interruption signal.
+// A resumed agent (SendMessage) emits a NEW subagent.start under the SAME
+// agent_id — pairing must be chronological segments, or the old stop
+// swallows the resumed start. Neither may ever show "running forever" /
+// "finished" respectively.
+
+test.describe('Agent lifecycle — interrupted / stale / resumed', () => {
+  async function openAgents(page) {
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible({ timeout: 5_000 })
+  }
+  const badge = (page) => page.locator('[data-testid="live-agents-badge"]')
+  const finishedToggle = (page) => page.locator('[data-testid="live-agent-finished-toggle"]')
+  const agentStatus = (page) => page.locator('[data-testid="live-agent-status"]')
+
+  // The exact dogfooded failure shape (trace 04f5c665, agent adf9bdfa…):
+  // PENDING tool.Agent launch + tooldeny-* ERROR marker sharing its
+  // tool_use_id + a subagent.start that never gets a stop.
+  async function seedInterrupted(page) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'interrupted-agent fixture', is_test: true } },
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'Agent', tool_use_id: `tu-${sfx}`, subagent_type: 'builder',
+          description: 'Build the thing', is_test: true } },
+      { trace_id: traceId, span_id: `tooldeny-tu-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, status_code: 'ERROR',
+        attributes: { tool_name: 'Agent', tool_use_id: `tu-${sfx}`, denied: true,
+          deny_kind: 'deny', agent_type: 'claude',
+          tool_input: { subagent_type: 'builder', description: 'Build the thing' }, is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'builder', agent_id: `ag-int-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `resp-${sfx}`, parent_id: null, name: 'assistant_response',
+        start_time: now, attributes: { text: 'main moved on', is_test: true } },
+    ])
+    return { traceId, sfx }
+  }
+
+  test('deny marker → interrupted: excluded from the badge, shown in the disclosure group', async ({ page }) => {
+    const { traceId } = await seedInterrupted(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    // Not running: no violet badge at all.
+    await expect(badge(page)).toHaveCount(0)
+
+    await openAgents(page)
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toContainText('no agents running')
+    await expect(finishedToggle(page)).toContainText('Finished (1)')
+    await finishedToggle(page).click()
+    await expect(agentStatus(page)).toContainText('interrupted')
+    await expect(agentStatus(page)).toHaveClass(/live-agent-time-warn/)
+  })
+
+  test('staleness fallback: a silent unstopped agent goes stale while a recent one stays running', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const t20 = new Date(Date.now() - 20 * 60_000).toISOString()
+    const t15 = new Date(Date.now() - 15 * 60_000).toISOString()
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: t20, attributes: { text: 'stale-agent fixture', is_test: true } },
+      // Old unstopped agent: last own span 15 min ago, then silence.
+      { trace_id: traceId, span_id: `substart-old-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t20, attributes: { agent_type: 'explorer', agent_id: `ag-old-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `int-old-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: t15, attributes: { file_path: 'src/old.js', agent_id: `ag-old-${sfx}`, is_test: true } },
+      // Recent unstopped agent: must NEVER be flagged.
+      { trace_id: traceId, span_id: `substart-new-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'checker', agent_id: `ag-new-${sfx}`, is_test: true } },
+      // Main agent kept going past the stale agent's last sign of life.
+      { trace_id: traceId, span_id: `resp-${sfx}`, parent_id: null, name: 'assistant_response',
+        start_time: now, attributes: { text: 'main still working', is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(badge(page)).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveText('1')
+
+    await openAgents(page)
+    // The recent agent rides the running group…
+    const running = page.locator('[data-testid="live-agent-card"]').first()
+    await expect(running).toContainText('checker')
+    // …the silent one sits in the disclosure group as stale, with its last
+    // sign of life (compact "stale · HH:MM" — the sheet's time column is
+    // narrow at 375px), not a ticking elapsed.
+    await finishedToggle(page).click()
+    await expect(agentStatus(page)).toContainText(/stale · \d{2}:\d{2}/)
+  })
+
+  test('scoped to an interrupted agent: NOW zone says "agent interrupted", scope bar agrees', async ({ page }) => {
+    const { traceId } = await seedInterrupted(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await finishedToggle(page).click()
+    await page.locator('[data-testid="live-agent-finished"] [data-testid="live-agent-card"]')
+      .first().click()
+
+    const bar = page.locator('[data-testid="live-scope-bar"]')
+    await expect(bar).toBeVisible({ timeout: 5_000 })
+    await expect(bar).toContainText('interrupted')
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'scoped')
+    await expect(nowZone).toContainText('agent interrupted')
+    await expect(nowZone).not.toContainText('agent running')
+  })
+
+  test('main NOW zone ignores an agent-internal assistant_response (partitioned projection)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const later = new Date(Date.now() + 2000).toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'main-now partition fixture', is_test: true } },
+      { trace_id: traceId, span_id: `mainresp-${sfx}`, parent_id: null, name: 'assistant_response',
+        start_time: now, attributes: { text: 'MAIN_RESP_MARKER', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'builder', agent_id: `ag-${sfx}`, is_test: true } },
+      // NEWER than the main response, but agent-internal — must not surface.
+      { trace_id: traceId, span_id: `intresp-${sfx}`, parent_id: null, name: 'assistant_response',
+        start_time: later,
+        attributes: { text: 'AGENT_INTERNAL_RESP_MARKER', agent_id: `ag-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toBeVisible({ timeout: 10_000 })
+    await expect(nowZone).toContainText('MAIN_RESP_MARKER')
+    await expect(nowZone).not.toContainText('AGENT_INTERNAL_RESP_MARKER')
+  })
+
+  // Resumed agent: same agent_id, [start, stop, start] in ingest order with
+  // fresh own spans → the roster's ONE row is RUNNING off the second start.
+  test('resumed agent [start,stop,start] + fresh spans → running, elapsed from the second start', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const agId = `ag-res-${sfx}`
+    const t30 = new Date(Date.now() - 30 * 60_000).toISOString()
+    const t25 = new Date(Date.now() - 25 * 60_000).toISOString()
+    const t2 = new Date(Date.now() - 2 * 60_000).toISOString()
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: t30, attributes: { text: 'resumed-agent fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart1-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t30, attributes: { agent_type: 'builder', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `substop1-${sfx}`, parent_id: null, name: 'subagent.stop',
+        start_time: t25,
+        attributes: { agent_type: 'builder', agent_id: agId, result_preview: 'segment one done', is_test: true } },
+      { trace_id: traceId, span_id: `substart2-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t2, attributes: { agent_type: 'builder', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `int-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: now, attributes: { file_path: 'src/fresh.js', agent_id: agId, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    // ONE running agent — the old stop must not swallow the resumed start.
+    await expect(badge(page)).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveText('1')
+
+    await openAgents(page)
+    const card = page.locator('[data-testid="live-agent-card"]').first()
+    await expect(card).toContainText('builder')
+    // Elapsed anchors to the SECOND start (~2 min), not the first (~30 min).
+    await expect(card).toContainText(/[12]m\d{2}s/)
+    await expect(card).not.toContainText(/(2[89]|3[01])m\d{2}s/)
+    // One row per agent_id: no duplicate segment rows.
+    await expect(page.locator('[data-testid="live-agent-card"]')).toHaveCount(1)
+  })
+
+  test('resumed agent [start,stop,start,stop] → finished with the SECOND segment\'s duration', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const agId = `ag-res2-${sfx}`
+    const t30 = new Date(Date.now() - 30 * 60_000).toISOString()
+    const t25 = new Date(Date.now() - 25 * 60_000).toISOString()
+    const t20 = new Date(Date.now() - 20 * 60_000).toISOString()
+    const t18 = new Date(Date.now() - 18 * 60_000).toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: t30, attributes: { text: 'resumed-finished fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart1-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t30, attributes: { agent_type: 'builder', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `substop1-${sfx}`, parent_id: null, name: 'subagent.stop',
+        start_time: t25,
+        attributes: { agent_type: 'builder', agent_id: agId, result_preview: 'segment one done', is_test: true } },
+      { trace_id: traceId, span_id: `substart2-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t20, attributes: { agent_type: 'builder', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `substop2-${sfx}`, parent_id: null, name: 'subagent.stop',
+        start_time: t18,
+        attributes: { agent_type: 'builder', agent_id: agId, result_preview: 'segment two done', is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveCount(0)
+
+    await openAgents(page)
+    await expect(finishedToggle(page)).toContainText('Finished (1)')
+    await finishedToggle(page).click()
+    const card = page.locator('[data-testid="live-agent-finished"] [data-testid="live-agent-card"]').first()
+    // Latest segment's outcome: result + 2m duration, never segment one's 5m.
+    await expect(card).toContainText('segment two done')
+    await expect(card).toContainText('2m')
+    await expect(card).not.toContainText('5m')
+  })
+
+  test('scoped to a roster agent whose spans are not in the window → "spans not loaded" hint', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'unloaded-scope fixture', is_test: true } },
+    ])
+    // The roster is server truth over the WHOLE session; simulate an agent
+    // whose 42 internal spans all sit outside the loaded window.
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, agent_roster: [
+        { agent_id: `ag-far-${sfx}`, agent_type: 'digger',
+          description: 'Dig through old history', status: 'stale',
+          started_at: now, last_seen: now, duration_ms: null,
+          result_preview: '', start_span_id: null, span_count: 42 },
+      ] } })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await finishedToggle(page).click()
+    await page.locator('[data-testid="live-agent-finished"] [data-testid="live-agent-card"]')
+      .first().click()
+
+    const empty = page.locator('[data-testid="live-scope-empty"]')
+    await expect(empty).toBeVisible({ timeout: 5_000 })
+    // Distinguished from "no spans captured": the roster KNOWS spans exist.
+    await expect(empty).toContainText('spans not loaded — load earlier history to view')
+    // The fold row stays hidden in scope — the not-loaded state carries its
+    // own load action instead.
+    await expect(page.locator('[data-testid="live-scope-load"]')).toBeVisible()
+  })
+
+  test('an agent whose only fresh span is a PENDING placeholder stays running; span_count still excludes it', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const agId = `ag-pend-${sfx}`
+    const t20 = new Date(Date.now() - 20 * 60_000).toISOString()
+    const t15 = new Date(Date.now() - 15 * 60_000).toISOString()
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: t20, attributes: { text: 'pending-roster fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t20, attributes: { agent_type: 'builder', agent_id: agId, is_test: true } },
+      // Last RESOLVED span is 15 min old — without PENDING liveness this
+      // agent would misread stale mid-long-tool.
+      { trace_id: traceId, span_id: `int-ok-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: t15, attributes: { file_path: 'src/done.js', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, status_code: 'PENDING',
+        attributes: { command_preview: 'sleep 999', tool_use_id: `tu-${sfx}`,
+          agent_id: agId, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveText('1')
+
+    const headers = await authHeaders(page)
+    const resp = await page.request.get(
+      `/api/sessions/${traceId}/map?shallow=1&limit=5`, { headers })
+    expect(resp.ok()).toBeTruthy()
+    const roster = (await resp.json()).agent_roster || []
+    expect(roster).toHaveLength(1)
+    expect(roster[0].status, 'the PENDING placeholder is live activity').toBe('running')
+    expect(roster[0].span_count, 'PENDING placeholder must not count').toBe(1)
+    expect(roster[0].last_seen, 'liveness reads the PENDING row').toBe(now)
+  })
+
+  test('age alone stales a lost-stop agent on a LIVE session, even as the session\'s newest span', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const t20 = new Date(Date.now() - 20 * 60_000).toISOString()
+    const t15 = new Date(Date.now() - 15 * 60_000).toISOString()
+    await post(page, [
+      // The MAIN agent's last span is OLDER than the agent's — the old
+      // `seen < latest_main` guard read this as running forever.
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: t20, attributes: { text: 'lost-stop fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: t20, attributes: { agent_type: 'digger', agent_id: `ag-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `int-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: t15, attributes: { file_path: 'src/last.js', agent_id: `ag-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveCount(0)
+
+    await openAgents(page)
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toContainText('no agents running')
+    await finishedToggle(page).click()
+    await expect(agentStatus(page)).toContainText('stale')
+  })
+
+  test('an unanchored deny never claims a same-type running agent', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'unanchored-deny fixture', is_test: true } },
+      // A deny with NO matching launch placeholder (its agent never
+      // started) — it must claim nothing.
+      { trace_id: traceId, span_id: `tooldeny-tux-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, status_code: 'ERROR',
+        attributes: { tool_name: 'Agent', tool_use_id: `tux-${sfx}`, denied: true,
+          deny_kind: 'deny', agent_type: 'claude',
+          tool_input: { subagent_type: 'builder', description: 'Never started' }, is_test: true } },
+      // An innocent same-type running agent.
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'builder', agent_id: `ag-run-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `int-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: now, attributes: { file_path: 'src/busy.js', agent_id: `ag-run-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(badge(page)).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveText('1')
+
+    const headers = await authHeaders(page)
+    const resp = await page.request.get(
+      `/api/sessions/${traceId}/map?shallow=1&limit=5`, { headers })
+    const roster = (await resp.json()).agent_roster || []
+    expect(roster).toHaveLength(1)
+    expect(roster[0].status, 'the deny has no anchor chain to this agent').toBe('running')
+  })
+
+  test('a subagent blocked on AskUserQuestion reads waiting; the idle NOW zone says so', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'waiting-agent fixture', is_test: true } },
+      { trace_id: traceId, span_id: `resp-${sfx}`, parent_id: null, name: 'assistant_response',
+        start_time: now, attributes: { text: 'main is done for now', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'builder', agent_id: `ag-${sfx}`, is_test: true } },
+      // The agent's question is agent-internal — INVISIBLE to the main
+      // NOW-zone projection; only the roster can surface it.
+      { trace_id: traceId, span_id: `pending-ask-${sfx}`, parent_id: null,
+        name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`,
+          agent_id: `ag-${sfx}`, is_test: true,
+          questions: [{ question: 'Which file?', options: [{ label: 'A' }, { label: 'B' }] }] } },
+    ])
+    await bridgeReachableMap(page, traceId)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    // Waiting counts as running for the badge.
+    await expect(badge(page)).toHaveText('1', { timeout: 10_000 })
+
+    // The MAIN zone goes idle (the subagent's ask is not its concern)…
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
+    // …but the sub-note surfaces the blocked agent, amber.
+    const note = page.locator('[data-testid="live-now-agents-note"]')
+    await expect(note).toBeVisible()
+    await expect(note).toContainText('1 agent running · 1 waiting')
+    await expect(note).toHaveClass(/live-now-agents-warn/)
+
+    // Tapping the note opens the agents sheet; the row reads waiting, amber.
+    await note.click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible()
+    await expect(agentStatus(page)).toContainText('waiting')
+    await expect(agentStatus(page)).toHaveClass(/live-agent-time-warn/)
+  })
+
+  test('an ended session cannot have a running agent: unstopped agent reads stale, no badge', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'ended-roster fixture', is_test: true } },
+      // Unstopped agent whose last span POSTDATES the last main span — the
+      // age-based stale check alone would read "running" forever.
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'builder', agent_id: `ag-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `int-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: new Date(Date.now() + 1000).toISOString(),
+        attributes: { file_path: 'src/late.js', agent_id: `ag-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `end-${sfx}`, parent_id: null, name: 'session.end',
+        start_time: now, attributes: { reason: 'clear', is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+    await expect(badge(page)).toHaveCount(0)
+
+    await openAgents(page)
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toContainText('no agents running')
+    await expect(finishedToggle(page)).toContainText('Finished (1)')
+    await finishedToggle(page).click()
+    await expect(agentStatus(page)).toContainText('stale')
   })
 })

@@ -183,3 +183,36 @@ def test_repair_unlocks_turn_with_missing_tool_use_error_child(tmp_path, monkeyp
     )
 
 
+
+
+def _insert_span(db_module, trace_id, span_id, name, attributes):
+    with db_module.get_connection() as conn:
+        conn.execute(
+            """INSERT INTO session_spans
+               (trace_id, span_id, parent_id, name, kind,
+                start_time, end_time, duration_ms, attributes, status_code)
+               VALUES (?, ?, NULL, ?, 'internal', ?, ?, 0, ?, 'OK')""",
+            (trace_id, span_id, name,
+             '2026-05-20T21:52:10', '2026-05-20T21:52:10',
+             json.dumps(attributes)),
+        )
+        conn.commit()
+
+
+def test_has_ghost_agents_flags_missing_start_marker_only():
+    """An agent_id-tagged span with no subagent.start is the lost-marker
+    signature; adding the start marker clears the flag (the live rescan's
+    cheap gate for reconstruct_subagent_markers)."""
+    import lib.orm.engine as db_module
+    from lib.trace.repair import has_ghost_agents
+
+    trace_id = 'trace-ghost-1'
+    assert has_ghost_agents(trace_id) is False  # empty trace: clean
+
+    _insert_span(db_module, trace_id, 'resp-sa-ghost1', 'assistant_response',
+                 {'agent_id': 'ag-ghost', 'text': 'orphaned'})
+    assert has_ghost_agents(trace_id) is True
+
+    _insert_span(db_module, trace_id, 'substart-sa-ag-ghost', 'subagent.start',
+                 {'agent_id': 'ag-ghost'})
+    assert has_ghost_agents(trace_id) is False

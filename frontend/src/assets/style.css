@@ -68,6 +68,13 @@
   --color-info-strong: var(--color-blue-700);
   --color-info-soft: var(--color-blue-100);
 
+  /* Agent (subagent affordances only) — violet, distinct from the blue
+     primary so a launched sub-agent reads as a different actor. Aliases the
+     invertible violet ramp, so it flips under [data-theme="dark"] too. */
+  --color-agent: var(--color-violet-600);
+  --color-agent-soft: var(--color-violet-50);
+  --color-agent-line: var(--color-violet-200);
+
   /* Radius scale (generates rounded-*) */
   --radius-md: 0.5rem;
   --radius-lg: 0.625rem;
@@ -2725,6 +2732,342 @@ button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
 .live-toggle-row { margin-top: 12px; }
 .live-toggle-hint { color: var(--color-fg-faint); }
 
+/* ── header tasks chip + agents button ── */
+.live-tabnum { font-variant-numeric: tabular-nums; }
+.live-hd-spacer { flex: 1 1 auto; min-width: 4px; }
+.live-hd-tasks {
+    flex-shrink: 0;
+    height: 24px;
+    padding: 0 9px;
+    gap: 5px;
+    border: 1px solid var(--color-border);
+    border-radius: 99px;
+    background: var(--color-surface);
+    color: var(--color-fg-subtle);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.live-hd-tasks:hover { background: var(--color-surface-2); }
+.live-hd-tasks-active,
+.live-hd-tasks-active:hover {
+    border-color: var(--color-blue-500);
+    background: var(--color-blue-50);
+    color: var(--color-blue-600);
+}
+.live-hd-agents {
+    flex-shrink: 0;
+    position: relative;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    color: var(--color-fg-subtle);
+}
+.live-hd-agents:hover { color: var(--color-agent); background: var(--color-agent-soft); }
+.live-agent-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 99px;
+    background: var(--color-agent);
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 15px;
+    text-align: center;
+}
+
+/* header meta line + ctx micro-meter (texture, not chrome) */
+.live-hd-meta {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 3px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    color: var(--color-fg-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.live-hd-meta-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.live-ctx-meter {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+.live-ctx-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.live-ctx-bar {
+    display: inline-block;
+    width: 24px;
+    height: 3px;
+    flex-shrink: 0;
+    border-radius: 99px;
+    background: var(--color-border);
+    overflow: hidden;
+}
+.live-ctx-fill { display: block; height: 100%; border-radius: 99px; background: var(--color-primary); }
+.live-ctx-warn { color: var(--color-warning); }
+.live-ctx-warn .live-ctx-fill { background: var(--color-warning); }
+
+/* composer bridge row: meta line + right-aligned ctx meter */
+.live-bridge-row { display: flex; align-items: center; gap: 10px; }
+.live-bridge-row .live-bridge-meta { flex: 1; min-width: 0; }
+.live-bridge-row .live-ctx-meter {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+}
+
+/* ── differentiated tail rows ── */
+.live-dot-agent { background: var(--color-agent) !important; opacity: 1 !important; }
+.live-dot-agent-muted { opacity: 0.5 !important; }
+.live-row-pre-agent { color: var(--color-agent); }
+.live-task-glyph {
+    flex-shrink: 0;
+    width: 13px;
+    margin-top: 2px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.1;
+    color: var(--color-fg-faint);
+}
+.live-task-doing { color: var(--color-blue-500); }
+.live-task-done { color: var(--color-success); }
+.live-row-main.live-struck { text-decoration: line-through; color: var(--color-fg-faint); }
+
+/* workflow phase band — structure, not a tappable row */
+.live-phase-band {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--color-border-subtle);
+}
+.live-phase-band::before,
+.live-phase-band::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+}
+.live-phase-band span {
+    flex-shrink: 0;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-fg-faint);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── agents sheet ── */
+.live-sheet-empty { color: var(--color-fg-faint); font-size: 12.5px; padding: 6px 0; }
+.live-agent-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    height: auto;
+    text-align: left;
+    padding: 8px 10px 9px;
+    margin-bottom: 8px;
+    border: 1px solid var(--color-agent-line);
+    border-radius: 10px;
+    background: var(--color-agent-soft);
+    font-weight: 400;
+    white-space: normal;
+}
+.live-agent-card:hover { border-color: var(--color-agent); background: var(--color-agent-soft); }
+.live-agent-card-done { border-color: var(--color-border); background: var(--color-surface-2); }
+.live-agent-card-done:hover { background: var(--color-surface-2); }
+.live-agent-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    margin-top: 4px;
+    border-radius: 99px;
+    background: var(--color-agent);
+}
+.live-agent-card-done .live-agent-dot { background: var(--color-fg-faint); }
+.live-agent-dot-live { animation: live-pulse 1.6s ease-in-out infinite; }
+/* blocked on a human — amber, steady (nothing is progressing to pulse) */
+.live-agent-dot-waiting { background: var(--color-warning); }
+.live-agent-main { flex: 1; min-width: 0; }
+.live-agent-eyebrow {
+    display: block;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-agent);
+    margin-bottom: 2px;
+}
+.live-agent-card-done .live-agent-eyebrow { color: var(--color-fg-subtle); }
+.live-agent-desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: 12.5px;
+    color: var(--color-fg);
+    line-height: 1.4;
+}
+.live-agent-card-done .live-agent-desc { color: var(--color-fg-muted); }
+.live-agent-time {
+    flex-shrink: 0;
+    margin-left: 8px;
+    margin-top: 2px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+    font-variant-numeric: tabular-nums;
+}
+/* interrupted / stale outcome — muted amber, quieter than an error */
+.live-agent-time-warn { color: var(--color-warning); opacity: 0.85; }
+.live-disclosure {
+    width: 100%;
+    height: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 2px;
+    margin: 4px 0 8px;
+    border: 0;
+    background: none;
+    justify-content: flex-start;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-fg-faint);
+}
+.live-disclosure:hover { color: var(--color-fg-muted); background: none; }
+.live-disclosure-tw { display: inline-block; transition: transform 0.18s; }
+.live-disclosure-open { transform: rotate(90deg); }
+
+/* ── tasks sheet ── */
+.live-task-counts {
+    font-size: 12px;
+    color: var(--color-fg-subtle);
+    margin: 0 0 10px;
+    font-variant-numeric: tabular-nums;
+}
+.live-task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 7px 2px;
+}
+.live-task-item + .live-task-item { border-top: 1px solid var(--color-border-subtle); }
+.live-task-mark {
+    flex-shrink: 0;
+    width: 15px;
+    margin-top: 1px;
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.3;
+}
+.live-task-mark-pending { color: var(--color-fg-faint); }
+.live-task-mark-doing { color: var(--color-blue-500); }
+.live-task-mark-done { color: var(--color-success); }
+.live-task-body { flex: 1; min-width: 0; }
+.live-task-subject { font-size: 12.5px; color: var(--color-fg-muted); overflow-wrap: anywhere; }
+.live-task-item-doing .live-task-subject { font-weight: 600; color: var(--color-fg); }
+.live-task-item-done .live-task-subject { text-decoration: line-through; color: var(--color-fg-subtle); }
+.live-task-active {
+    display: block;
+    margin-top: 2px;
+    font-size: 11.5px;
+    font-style: italic;
+    color: var(--color-fg-subtle);
+    overflow-wrap: anywhere;
+}
+
+/* ── per-agent span scoping ── */
+/* Agents sheet row: primary card (scope) + chevron (span detail, own target). */
+.live-agent-row { display: flex; align-items: stretch; gap: 6px; margin-bottom: 8px; }
+.live-agent-row .live-agent-card { flex: 1; min-width: 0; margin-bottom: 0; min-height: 44px; }
+.live-agent-info {
+    flex-shrink: 0;
+    width: 34px;
+    height: auto;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface);
+    color: var(--color-fg-faint);
+}
+.live-agent-info:hover {
+    color: var(--color-agent);
+    border-color: var(--color-agent-line);
+    background: var(--color-agent-soft);
+}
+.live-sheet-hint { font-size: 11.5px; color: var(--color-fg-faint); margin: 0 0 10px; }
+
+/* Scope bar: the slim violet bar pinned under the header while scoped. It is
+   the ONLY scoped-state chrome — the tail itself stays untinted. */
+.live-scope-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 8px 4px 14px;
+    background: var(--color-agent-soft);
+    border-bottom: 1px solid var(--color-agent-line);
+    font-size: 11px;
+    color: var(--color-agent);
+    position: relative;
+    z-index: 2;
+}
+.live-scope-glyph { flex-shrink: 0; }
+.live-scope-name { flex-shrink: 0; font-weight: 700; }
+.live-scope-desc {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-fg-subtle);
+}
+.live-scope-status {
+    flex-shrink: 0;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10px;
+}
+.live-scope-x {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-agent);
+}
+.live-scope-x:hover { background: var(--color-agent-line); }
+
+/* NOW zone while scoped: agent status + a way back, no composer. */
+.live-now-agent-tag { color: var(--color-agent); }
+.live-now-agent-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 99px;
+    flex-shrink: 0;
+    background: var(--color-agent);
+}
+.live-now-agent-dot-live { animation: live-pulse 1.6s ease-in-out infinite; }
+.live-now-agent-dot-waiting { background: var(--color-warning); }
+
+/* idle sub-note: background agents still running/waiting while the MAIN
+   agent idles — amber once any of them is blocked on a human. */
+.live-now-agents-warn,
+.live-now-agents-warn:hover { color: var(--color-warning); }
+
 @media (max-width: 767px) {
     .live-card { max-width: none; border-radius: var(--radius-lg); }
 }
@@ -2734,6 +3077,9 @@ button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
     .live-caret,
     .live-row-entering,
     .live-newchip,
+    .live-agent-dot-live,
+    .live-now-agent-dot-live,
     .live-sheet { animation: none; }
+    .live-disclosure-tw { transition: none; }
     .live-spinner { animation-duration: 2s; }
 }

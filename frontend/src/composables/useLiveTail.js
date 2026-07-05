@@ -214,8 +214,13 @@ export function useLiveTail(getRouteId) {
     // status/ended_reason must refresh every poll too: pinning them to the
     // page-load row froze the header — a session ending (or resuming) while
     // viewed never flipped.
+    // task_list (final task snapshot for the header chip + tasks sheet),
+    // agent_roster (whole-session subagent roster — window-independent),
+    // model / repo (header meta line), and the segment-aware live-peak
+    // context_pct (ctx meter) all refresh every poll off the same summary.
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
-      'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now']
+      'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now',
+      'task_list', 'agent_roster', 'model', 'repo', 'context_pct']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }

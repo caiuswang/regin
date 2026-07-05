@@ -245,16 +245,32 @@ def _relabel_turns_by_lookahead(out: list[dict]) -> None:
         _attach_turn_to_following_prompt(s, s_start_dt, prompts_by_start)
 
 
-def _subagent_starts_by_agent(out: list[dict]) -> dict[str, str]:
-    """agent_id → its `subagent.start` span_id."""
-    starts: dict[str, str] = {}
+def _subagent_starts_by_agent(out: list[dict]) -> dict[str, list[dict]]:
+    """agent_id → its `subagent.start` spans, in ingest (DB id) order."""
+    starts: dict[str, list[dict]] = {}
     for s in out:
         if s['name'] != 'subagent.start':
             continue
         aid = (s.get('attributes') or {}).get('agent_id')
         if aid:
-            starts[aid] = s['span_id']
+            starts.setdefault(aid, []).append(s)
+    for lst in starts.values():
+        lst.sort(key=lambda s: s.get('id') or 0)
     return starts
+
+
+def _owning_start_id(starts: list[dict], span: dict) -> str | None:
+    """The start this span's segment belongs to: the latest start ingested
+    at/before it. A span ingested before any start (rescan interleaving)
+    falls back to the first."""
+    if not starts:
+        return None
+    sid = span.get('id') or 0
+    owner = None
+    for st in starts:
+        if (st.get('id') or 0) <= sid:
+            owner = st
+    return (owner or starts[0])['span_id']
 
 
 def _reparent_subagents(out: list[dict]) -> None:
@@ -262,7 +278,13 @@ def _reparent_subagents(out: list[dict]) -> None:
     tags every hook payload fired inside a subagent with `agent_id`,
     persisted onto the resulting span; here we redirect any such span onto
     its subagent so the tree becomes prompt → subagent → its tool calls.
-    Structural (keyed on agent_id), not chronological."""
+    A resumed agent (SendMessage) emits a NEW subagent.start under the SAME
+    agent_id, so ownership is per SEGMENT — the latest start preceding the
+    span in ingest order. A flat agent_id → last-start map would pull the
+    whole history (including the first segment's stop) under the resumed
+    start, and the envelope widening would then drag that start's
+    start_time back to the first segment — breaking every consumer that
+    anchors an elapsed to it."""
     starts_by_agent = _subagent_starts_by_agent(out)
     if not starts_by_agent:
         return
@@ -270,7 +292,7 @@ def _reparent_subagents(out: list[dict]) -> None:
         if s['name'] == 'subagent.start':
             continue
         aid = (s.get('attributes') or {}).get('agent_id')
-        target = starts_by_agent.get(aid) if aid else None
+        target = _owning_start_id(starts_by_agent.get(aid, []), s) if aid else None
         if target and target != s['span_id']:
             s['parent_id'] = target
 

@@ -261,6 +261,164 @@ def _should_reemit(uuid: str, expected: set[str] | None, existing: set[str]) -> 
     return not expected.issubset(existing)
 
 
+def has_ghost_agents(trace_id: str) -> bool:
+    """True when the trace holds agent_id-tagged spans whose agent has NO
+    subagent.start marker — the lost-marker signature. One EXISTS query so
+    the live rescan can gate `reconstruct_subagent_markers` cheaply and
+    skip fast when the trace is clean."""
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT EXISTS ("
+            "  SELECT 1 FROM session_spans"
+            "   WHERE trace_id = ?"
+            "     AND json_extract(attributes, '$.agent_id') IS NOT NULL"
+            "     AND json_extract(attributes, '$.agent_id') NOT IN ("
+            "       SELECT json_extract(attributes, '$.agent_id')"
+            "         FROM session_spans"
+            "        WHERE trace_id = ? AND name = 'subagent.start'"
+            "          AND json_extract(attributes, '$.agent_id') IS NOT NULL))",
+            (trace_id, trace_id),
+        ).fetchone()
+        return bool(row and row[0])
+    finally:
+        conn.close()
+
+
+def _agent_ids_with_start_marker(trace_id: str) -> set[str]:
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT json_extract(attributes, '$.agent_id') AS aid "
+            "  FROM session_spans "
+            " WHERE trace_id = ? AND name = 'subagent.start'",
+            (trace_id,),
+        ).fetchall()
+        return {r['aid'] for r in rows if r['aid']}
+    finally:
+        conn.close()
+
+
+def _session_has_ended(trace_id: str) -> bool:
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            'SELECT status FROM sessions WHERE trace_id = ?', (trace_id,),
+        ).fetchone()
+        return bool(row and row['status'] == 'ended')
+    finally:
+        conn.close()
+
+
+def _agent_meta(transcript_path: str) -> dict:
+    """The `agent-<id>.meta.json` sidecar Claude writes next to each subagent
+    transcript: `{agentType, description, toolUseId, spawnDepth}`. The only
+    durable source of the agent's type/description once the live markers and
+    the tool.Agent launch span were lost."""
+    import json
+
+    meta_path = Path(transcript_path).with_suffix('').with_suffix('.meta.json')
+    try:
+        with open(meta_path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _synthesize_markers_for_agent(trace_id: str, agent_id: str,
+                                  transcript_path: str, ended: bool) -> tuple[int, int]:
+    """Synthesize the missing subagent.start (and, for an ended session, the
+    subagent.stop) for one agent from its on-disk transcript. Returns
+    `(starts_posted, stops_posted)`."""
+    from hook_manager.handlers.subagent_lifecycle import (
+        _normalize_subagent_ts, emit_subagent_responses,
+    )
+    from lib.hook_plugin import post_span
+    from lib.trace.transcript_usage import read_usage
+
+    usage = read_usage(transcript_path, max_text_bytes=0)
+    turns = [t for t in (usage.turns if usage else []) if t.timestamp]
+    if not turns:
+        return 0, 0
+    meta = _agent_meta(transcript_path)
+    attrs: dict = {'agent_id': agent_id, 'synthesized': True}
+    if meta.get('agentType'):
+        attrs['agent_type'] = meta['agentType']
+    if meta.get('description'):
+        attrs['description'] = meta['description']
+    first_ts = _normalize_subagent_ts(turns[0].timestamp)
+    starts = int(post_span(
+        trace_id=trace_id, name='subagent.start',
+        span_id=f'substart-sa-{agent_id}',
+        start_time=first_ts, end_time=first_ts, attributes=attrs,
+    ))
+    stops = 0
+    # Only an ended session proves the agent is genuinely done; on a live
+    # session liveness is undeterminable from the transcript alone, so
+    # synthesize the start only and let status derive from activity.
+    if ended:
+        last_ts = _normalize_subagent_ts(turns[-1].timestamp)
+        stops = int(post_span(
+            trace_id=trace_id, name='subagent.stop',
+            span_id=f'substop-sa-{agent_id}',
+            start_time=last_ts, end_time=last_ts, attributes=dict(attrs),
+        ))
+    # The agent's internal turns were lost alongside the markers — replay
+    # them from the same transcript (idempotent resp-sa-/think-sa- ids).
+    emit_subagent_responses(trace_id, transcript_path, agent_id)
+    return starts, stops
+
+
+def reconstruct_subagent_markers(trace_id: str) -> dict:
+    """Recover subagent.start/stop markers lost to an ingest outage.
+
+    Markers (and tool.Agent launches) are the only span classes with no
+    replay path: turn_trace re-emits the main transcript and subagent turns
+    replay at SubagentStop, but SubagentStart/Stop hooks fire exactly once —
+    an ingest failure loses them permanently, leaving "ghost" agents whose
+    agent_id-tagged spans have no subagent.start to hang off. Synthesize the
+    markers from the on-disk `subagents/agent-*.jsonl` transcripts
+    (start = first turn ts, stop = last turn ts). Deterministic span ids
+    (`substart-sa-<agent_id>`, mirroring `resp-sa-*`) keep repeated repairs
+    idempotent; agents that already have a start marker are skipped.
+    """
+    from lib.trace.claude_subagents import _agent_transcripts
+
+    agents = _agent_transcripts(trace_id)
+    result = {'agents_on_disk': len(agents), 'starts_synthesized': 0,
+              'stops_synthesized': 0}
+    if not agents:
+        return result
+    have_start = _agent_ids_with_start_marker(trace_id)
+    ended = _session_has_ended(trace_id)
+    for agent_id, path in agents:
+        if agent_id in have_start:
+            continue
+        try:
+            starts, stops = _synthesize_markers_for_agent(
+                trace_id, agent_id, path, ended)
+        except Exception:
+            _trace_log().error(
+                'subagent_marker_reconstruct_failed',
+                trace_id=trace_id, agent_id=agent_id, exc_info=True,
+            )
+            continue
+        result['starts_synthesized'] += starts
+        result['stops_synthesized'] += stops
+    if result['starts_synthesized'] or result['stops_synthesized']:
+        _trace_log().write(
+            'subagent_markers_reconstructed', trace_id=trace_id, **result,
+        )
+    return result
+
+
 def repair_session_spans(trace_id: str) -> dict:
     """Heal a session whose seen-uuid cache locked out its
     assistant_response / assistant.thinking / harness.* spans.
@@ -321,6 +479,8 @@ def repair_session_spans(trace_id: str) -> dict:
     )
     _tt.handle(payload)
 
+    markers = reconstruct_subagent_markers(trace_id)
+
     # Persist the healed projection: the re-emit re-wrote the prompt
     # anchors and assistant_response/thinking spans with their correct
     # parentUuid-derived parents, so a materialize now durably records the
@@ -348,4 +508,5 @@ def repair_session_spans(trace_id: str) -> dict:
         'cached_uuids_after': len(kept),
         'uuids_unlocked': len(dropped),
         'spans_recovered': recovered,
+        'subagent_markers': markers,
     }
