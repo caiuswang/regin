@@ -163,11 +163,13 @@ def api_memory_wiki_recalls():
     whether the wiki file still exists. Pass `?sync=1` to recompute the read
     signal from the trace first (the panel's manual refresh); it auto-refreshes
     at SessionEnd otherwise."""
+    from pathlib import Path
     from lib.settings import settings
     from lib.memory.wiki_reads import sync_wiki_reads, wiki_recall_rows
     if _bool_arg("sync"):
         sync_wiki_reads()
-    return jsonify({"rows": wiki_recall_rows(str(settings.project_root))})
+    root = str(settings.project_root)
+    return jsonify({"rows": wiki_recall_rows(root), "repo": Path(root).name})
 
 
 @memory_bp.route("/api/memory/topics")

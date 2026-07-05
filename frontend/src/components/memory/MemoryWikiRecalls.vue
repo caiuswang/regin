@@ -6,8 +6,10 @@
 import { onMounted, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
+import Icon from '../ui/Icon.vue'
 
 const rows = ref([])
+const repo = ref('')
 const loading = ref(false)
 
 async function load(sync = false) {
@@ -15,9 +17,14 @@ async function load(sync = false) {
   try {
     const data = await api.get(`/memory/wiki-recalls${sync ? '?sync=1' : ''}`)
     rows.value = data.rows || []
+    repo.value = data.repo || ''
   } finally {
     loading.value = false
   }
+}
+
+function wikiLink(topicId) {
+  return `/repos/${repo.value}/topics?tab=wiki&topic=${encodeURIComponent(topicId)}`
 }
 
 function shortDate(iso) {
@@ -62,7 +69,13 @@ onMounted(() => load(false))
           class="border-t border-border/60"
         >
           <td class="py-1 pr-2">
-            <span class="text-fg">{{ r.label }}</span>
+            <router-link
+              v-if="r.wiki_present && repo"
+              :to="wikiLink(r.topic_id)"
+              class="text-link inline-flex items-center gap-0.5"
+              title="Open this topic's wiki page"
+            >{{ r.label }}<Icon name="arrow-up-right" :size="12" class="opacity-60" /></router-link>
+            <span v-else class="text-fg">{{ r.label }}</span>
             <span
               v-if="!r.wiki_present"
               class="ml-1 text-[10px] text-amber-700"
