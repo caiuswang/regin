@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from lib.trace.pending_spans import is_agent_scoped_prompt
+
 # A `turn` span emitted on UserPromptSubmit fires in the same hook
 # invocation as the new `prompt` span, so its timestamp lands a handful
 # of milliseconds BEFORE the new prompt's timestamp. In older data (and
@@ -173,7 +175,7 @@ def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict) -> None:
     current_prompt = None
     for span in sorted_spans:
         resolved = by_id[span['span_id']]
-        if resolved['name'] == 'prompt':
+        if resolved['name'] == 'prompt' and not is_agent_scoped_prompt(resolved):
             current_prompt = resolved
         elif resolved['name'] in _FIRST_CLASS_BOUNDARY_NAMES:
             continue
@@ -232,7 +234,8 @@ def _relabel_turns_by_lookahead(out: list[dict]) -> None:
     `_SUBMIT_LOOKAHEAD_NAMES`. These spans carry no deterministic parent,
     so this chronological nudge stays."""
     prompts_by_start = sorted(
-        (s for s in out if s['name'] == 'prompt' and not _is_pending(s)),
+        (s for s in out if s['name'] == 'prompt' and not _is_pending(s)
+         and not is_agent_scoped_prompt(s)),
         key=lambda s: s['start_time'],
     )
     for s in out:

@@ -19,7 +19,10 @@ because span ingest uses INSERT OR REPLACE on (trace_id, span_id).
 
 from __future__ import annotations
 
+import json
 import os
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -419,6 +422,310 @@ def reconstruct_subagent_markers(trace_id: str) -> dict:
     return result
 
 
+# ── Transcript tool-span backfill ───────────────────────────────────
+#
+# The live rescan re-derives only assistant turns + subagent responses — it
+# NEVER re-emits `tool.*` spans, so a server killed mid-tool permanently loses
+# the PostToolUse span (stuck `pending-<tu>` placeholders, missing
+# TaskCreate/TaskUpdate → a frozen task panel). This pass walks the transcript's
+# assistant tool_use blocks + their user tool_result blocks and re-emits the
+# missing `tool.*` spans through the SAME per-tool attribute builders the live
+# PostToolUse handler uses. Deterministic span ids (`bftool-<tool_use_id>`) keep
+# re-runs idempotent; carrying `tool_use_id` on the attrs lets merge.py retire
+# the matching `pending-<tu>`/`permreq-<tu>` placeholder at read time exactly as
+# a live resolution would. A tool_use with no transcript result yet (still
+# running, or lost with no record) is SKIPPED — never fabricated as resolved —
+# so the pass is safe to run on an active session.
+
+INTERRUPT_SOURCE_USER = 'user'
+_INTERRUPT_PREFIX = '[Request interrupted by user'
+_TASK_CREATE_ID_RE = re.compile(r'Task #(\d+)')
+_BACKFILL_SPAN_PREFIX = 'bftool-'
+
+
+def _load_transcript_entries(path: str) -> list[dict]:
+    out: list[dict] = []
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
+def _iter_tool_uses(entries: list[dict]):
+    """Yield `(tool_use_id, name, input, assistant_ts)` for every assistant
+    tool_use block, in transcript order."""
+    for e in entries:
+        if e.get('type') != 'assistant':
+            continue
+        ts = e.get('timestamp')
+        for b in e.get('message', {}).get('content', []) or []:
+            if (isinstance(b, dict) and b.get('type') == 'tool_use'
+                    and isinstance(b.get('id'), str)):
+                yield b['id'], b.get('name') or 'unknown', b.get('input') or {}, ts
+
+
+def _tool_results(entries: list[dict]) -> dict:
+    """`tool_use_id -> {content, is_error, ts}` from user tool_result blocks."""
+    out: dict = {}
+    for e in entries:
+        if e.get('type') != 'user':
+            continue
+        ts = e.get('timestamp')
+        content = e.get('message', {}).get('content')
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get('type') == 'tool_result':
+                tuid = b.get('tool_use_id')
+                if isinstance(tuid, str) and tuid:
+                    out[tuid] = {'content': b.get('content'),
+                                 'is_error': bool(b.get('is_error')), 'ts': ts}
+    return out
+
+
+def _result_is_interrupt(content) -> bool:
+    if isinstance(content, str):
+        return content.strip().startswith(_INTERRUPT_PREFIX)
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict) and isinstance(b.get('text'), str)
+            and b['text'].strip().startswith(_INTERRUPT_PREFIX)
+            for b in content
+        )
+    return False
+
+
+def _entry_has_interrupt_text(entry: dict) -> bool:
+    content = entry.get('message', {}).get('content')
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(b, dict) and b.get('type') == 'text'
+        and isinstance(b.get('text'), str)
+        and b['text'].strip().startswith(_INTERRUPT_PREFIX)
+        for b in content
+    )
+
+
+def _unresolved_tool_uses_in(entry: dict | None, results: dict) -> set:
+    """tool_use_ids in one assistant entry that have no tool_result yet."""
+    if not entry or entry.get('type') != 'assistant':
+        return set()
+    out = set()
+    for b in entry.get('message', {}).get('content', []) or []:
+        if (isinstance(b, dict) and b.get('type') == 'tool_use'
+                and isinstance(b.get('id'), str) and b['id'] not in results):
+            out.add(b['id'])
+    return out
+
+
+def _interrupted_tool_use_ids(entries: list[dict], results: dict) -> set:
+    """tool_use_ids the USER interrupted, from two reliable signals: a
+    tool_result whose content is the interrupt marker (the tuid is named), and
+    a bare `[Request interrupted by user…]` text entry whose parentUuid resolves
+    to an assistant turn holding a still-unresolved tool_use. The fuzzy
+    "newest unresolved tool" guess is intentionally NOT used — a mislabelled
+    interrupt is worse than leaving the pending for the stale-demotion sweep."""
+    interrupted = {
+        tuid for tuid, meta in results.items()
+        if _result_is_interrupt(meta.get('content'))
+    }
+    by_uuid = {e.get('uuid'): e for e in entries}
+    for e in entries:
+        if e.get('type') == 'user' and _entry_has_interrupt_text(e):
+            parent = by_uuid.get(e.get('parentUuid'))
+            interrupted |= _unresolved_tool_uses_in(parent, results)
+    return interrupted
+
+
+def _synthetic_tool_response(tool: str, result_meta: dict | None) -> dict:
+    """Best-effort structured tool_response for a builder. The transcript keeps
+    only the rendered tool_result (a string or text blocks), NOT the rich
+    `{stdout, file, task, …}` the live PostToolUse hook receives — so most
+    builders get `{}` and fall back to input-derived attrs. TaskCreate is the
+    exception: its `task_id` lives only in the result text (`Task #N created`),
+    and the fold in `_fetch_session_task_list` drops any task event without one,
+    so we recover it here."""
+    if result_meta is None:
+        return {}
+    content = result_meta.get('content')
+    if tool == 'TaskCreate' and isinstance(content, str):
+        m = _TASK_CREATE_ID_RE.search(content)
+        if m:
+            return {'task': {'id': m.group(1)}}
+    return content if isinstance(content, dict) else {}
+
+
+def _backfill_span_attrs(tool: str, tool_input: dict, result_meta: dict | None,
+                         agent_id: str | None, tuid: str, interrupted: bool) -> dict:
+    from hook_manager.handlers.post_tool_trace import (
+        _TOOL_BUILDERS, _build_mcp_attrs, _file_path,
+    )
+    attrs: dict = {'tool_name': tool, 'tool_use_id': tuid, 'backfilled': True}
+    fp = _file_path(tool_input)
+    if fp:
+        attrs['file_path'] = fp
+    tool_response = _synthetic_tool_response(tool, result_meta)
+    builder = _TOOL_BUILDERS.get(tool)
+    try:
+        if builder is not None:
+            builder(attrs, tool_input, tool_response, None)
+        elif tool.startswith('mcp__'):
+            _build_mcp_attrs(attrs, tool, tool_input, tool_response)
+    except Exception:
+        pass
+    if agent_id:
+        attrs['agent_id'] = agent_id
+    if interrupted:
+        attrs['is_interrupt'] = True
+        attrs['interrupted'] = True
+        attrs['interrupt_source'] = INTERRUPT_SOURCE_USER
+    return attrs
+
+
+def _norm_ts(ts):
+    from hook_manager.handlers.subagent_lifecycle import _normalize_subagent_ts
+    if not isinstance(ts, str) or not ts:
+        return None
+    try:
+        return _normalize_subagent_ts(ts)
+    except ValueError:
+        return None
+
+
+def _emit_backfill_span(trace_id, tuid, tool, tool_input, result_meta,
+                        agent_id, interrupted, assistant_ts, span_id) -> bool:
+    from lib.hook_plugin import post_span
+    attrs = _backfill_span_attrs(
+        tool, tool_input, result_meta, agent_id, tuid, interrupted)
+    status = 'ERROR' if (interrupted or (result_meta and result_meta.get('is_error'))) else 'OK'
+    start = _norm_ts(assistant_ts)
+    end = _norm_ts(result_meta.get('ts')) if result_meta else None
+    return bool(post_span(
+        trace_id=trace_id, name=f'tool.{tool}', span_id=span_id,
+        attributes=attrs, status_code=status,
+        start_time=start, end_time=end or start,
+    ))
+
+
+def _resolved_tool_use_ids(trace_id: str) -> set:
+    """tool_use_ids that already have a NON-pending `tool.*` span — the live
+    PostToolUse spans (and prior backfills). Read from the attributes JSON,
+    which the raw ingest always writes (the `tool_use_id` column is filled by a
+    later attribution pass and may be NULL for freshly-ingested rows)."""
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT json_extract(attributes, '$.tool_use_id') tu "
+            "  FROM session_spans "
+            " WHERE trace_id = ? AND status_code != 'PENDING' "
+            "   AND name LIKE 'tool.%' "
+            "   AND json_extract(attributes, '$.tool_use_id') IS NOT NULL",
+            (trace_id,),
+        ).fetchall()
+        return {r[0] for r in rows if r[0]}
+    finally:
+        conn.close()
+
+
+def has_stuck_pending_tools(trace_id: str, older_than_sec: int = 60) -> bool:
+    """Cheap gate for the backfill: does the trace hold a PENDING
+    `tool.*`/`permission.request` placeholder older than `older_than_sec`?
+    One EXISTS narrowed by the `idx_session_spans_trace` index (there is no
+    status_code index; the trace filter alone keeps it cheap). Placeholder
+    start_times and `datetime.now()` are both naive-local ISO, so the lexical
+    `<` is a valid time comparison."""
+    from lib.orm.engine import get_connection
+
+    cutoff = (datetime.now() - timedelta(seconds=older_than_sec)).isoformat()
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM session_spans "
+            " WHERE trace_id = ? AND status_code = 'PENDING' "
+            "   AND (name LIKE 'tool.%' OR name = 'permission.request') "
+            "   AND start_time < ?)",
+            (trace_id, cutoff),
+        ).fetchone()
+        return bool(row and row[0])
+    finally:
+        conn.close()
+
+
+def _backfill_one_transcript(trace_id: str, path: str, agent_id: str | None,
+                             resolved: set, existing: set) -> int:
+    entries = _load_transcript_entries(path)
+    if not entries:
+        return 0
+    results = _tool_results(entries)
+    interrupted = _interrupted_tool_use_ids(entries, results)
+    posted = 0
+    for tuid, tool, tool_input, a_ts in _iter_tool_uses(entries):
+        if tuid in resolved:
+            continue
+        span_id = f'{_BACKFILL_SPAN_PREFIX}{tuid[:13]}'
+        if span_id in existing:
+            continue
+        is_int = tuid in interrupted
+        rmeta = results.get(tuid)
+        # No transcript result and not interrupted → still running or lost with
+        # no record. Never fabricate a resolved span; the read-time stale sweep
+        # (merge._demote_stale_pending) covers the abandoned case.
+        if not is_int and rmeta is None:
+            continue
+        if _emit_backfill_span(trace_id, tuid, tool, tool_input, rmeta,
+                               agent_id, is_int, a_ts, span_id):
+            posted += 1
+            existing.add(span_id)
+            resolved.add(tuid)
+    return posted
+
+
+def backfill_transcript_tool_spans(trace_id: str) -> dict:
+    """Re-emit `tool.*` spans the live path lost, from the on-disk transcripts.
+
+    Walks the main transcript and every subagent transcript, re-emitting any
+    tool_use whose resolved span is missing (keyed by tool_use_id) using the
+    live per-tool attribute builders. Idempotent: deterministic `bftool-<tu>`
+    span ids + a skip on already-resolved tool_use_ids make repeated runs a
+    no-op. Subagent tool spans are tagged with their `agent_id`. Returns
+    `{trace_id, spans_backfilled, transcripts_walked}`."""
+    result = {'trace_id': trace_id, 'spans_backfilled': 0, 'transcripts_walked': 0}
+    main = _find_transcript(trace_id)
+    if not main:
+        return result
+    resolved = _resolved_tool_use_ids(trace_id)
+    existing = _existing_span_ids(trace_id)
+    total = _backfill_one_transcript(trace_id, main, None, resolved, existing)
+    result['transcripts_walked'] = 1
+    try:
+        from lib.trace.claude_subagents import _agent_transcripts
+        for agent_id, sub_path in _agent_transcripts(trace_id):
+            total += _backfill_one_transcript(
+                trace_id, sub_path, agent_id, resolved, existing)
+            result['transcripts_walked'] += 1
+    except Exception:
+        _trace_log().error('tool_span_backfill_subagents_failed',
+                           trace_id=trace_id, exc_info=True)
+    result['spans_backfilled'] = total
+    if total:
+        _trace_log().write('tool_spans_backfilled', trace_id=trace_id,
+                           spans_backfilled=total,
+                           transcripts_walked=result['transcripts_walked'])
+    return result
+
+
 def repair_session_spans(trace_id: str) -> dict:
     """Heal a session whose seen-uuid cache locked out its
     assistant_response / assistant.thinking / harness.* spans.
@@ -481,6 +788,11 @@ def repair_session_spans(trace_id: str) -> dict:
 
     markers = reconstruct_subagent_markers(trace_id)
 
+    # Recover tool.* spans (incl. TaskCreate/TaskUpdate and user-interrupted
+    # calls) the live PostToolUse path lost — the turn re-emit above never
+    # touches them.
+    tool_backfill = backfill_transcript_tool_spans(trace_id)
+
     # Persist the healed projection: the re-emit re-wrote the prompt
     # anchors and assistant_response/thinking spans with their correct
     # parentUuid-derived parents, so a materialize now durably records the
@@ -509,4 +821,5 @@ def repair_session_spans(trace_id: str) -> dict:
         'uuids_unlocked': len(dropped),
         'spans_recovered': recovered,
         'subagent_markers': markers,
+        'tool_backfill': tool_backfill,
     }

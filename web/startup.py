@@ -53,6 +53,9 @@ def init_session_spans_schema(conn) -> None:
                 cost_usd        REAL,
                 tool_use_id     TEXT,
                 turn_uuid       TEXT,
+                -- Owning agent: NULL = main agent, else subagent id. See
+                -- db/schema.sql; keep the two in step.
+                agent_id        TEXT,
                 -- Capture source: 'hook' (live hook events) or 'transcript'
                 -- (the transcript scan). See lib/trace/merge.py. Mirrors
                 -- db/schema.sql; keep the two in step.
@@ -71,14 +74,48 @@ def init_session_spans_schema(conn) -> None:
             "CREATE UNIQUE INDEX ux_session_spans_trace_span "
             "ON session_spans(trace_id, span_id)"
         )
-    elif 'source' not in _column_names(conn, 'session_spans'):
-        # Additive repair for DBs created before the append-only capture
-        # split (migration 0002) added the source discriminator.
-        conn.execute(
-            "ALTER TABLE session_spans ADD COLUMN source TEXT NOT NULL "
-            "DEFAULT 'hook'"
-        )
+    else:
+        cols = _column_names(conn, 'session_spans')
+        if 'source' not in cols:
+            # Additive repair for DBs created before the append-only capture
+            # split (migration 0002) added the source discriminator.
+            conn.execute(
+                "ALTER TABLE session_spans ADD COLUMN source TEXT NOT NULL "
+                "DEFAULT 'hook'"
+            )
+        if 'agent_id' not in cols:
+            # Promote attributes.agent_id to a real column (migration 0007).
+            # ADD COLUMN is O(1).
+            conn.execute("ALTER TABLE session_spans ADD COLUMN agent_id TEXT")
+        _heal_agent_id_column(conn)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_session_spans_trace_agent "
+        "ON session_spans(trace_id, agent_id)"
+    )
     conn.commit()
+
+
+def _heal_agent_id_column(conn) -> None:
+    """Promote attributes.agent_id onto the real column for any row the
+    write-time stamp missed — rows written before migration 0007, or by a
+    pre-stamp dev build that set only the JSON attribute. Re-runnable (not
+    gated on the one-time ADD COLUMN), so it heals installs whose column was
+    added while such rows already existed. The EXISTS probe skips taking a
+    write lock on the steady-state DB where nothing needs healing."""
+    unhealed = conn.execute(
+        "SELECT 1 FROM session_spans "
+        "WHERE agent_id IS NULL "
+        "AND json_extract(attributes, '$.agent_id') IS NOT NULL "
+        "LIMIT 1"
+    ).fetchone()
+    if not unhealed:
+        return
+    conn.execute(
+        "UPDATE session_spans SET agent_id = "
+        "json_extract(attributes, '$.agent_id') "
+        "WHERE agent_id IS NULL "
+        "AND json_extract(attributes, '$.agent_id') IS NOT NULL"
+    )
 
 
 def init_sessions_schema(conn) -> None:

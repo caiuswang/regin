@@ -59,6 +59,42 @@ def test_init_session_spans_is_idempotent(tmp_path):
         conn.close()
 
 
+def test_agent_id_heal_is_rerunnable(tmp_path):
+    """A row carrying attributes.agent_id but a NULL agent_id column (written
+    by a pre-stamp build) is healed on a LATER init call, not only when the
+    column is first added."""
+    conn = _conn(tmp_path / "heal.db")
+    try:
+        startup.init_session_spans_schema(conn)  # column exists from here on
+        conn.execute(
+            "INSERT INTO session_spans "
+            "(trace_id, span_id, name, start_time, attributes, agent_id) "
+            "VALUES ('t1', 'prompt-sa-a', 'prompt', '2026-01-01T00:00:00', "
+            "'{\"agent_id\":\"agentX\"}', NULL)"
+        )
+        conn.commit()
+        startup.init_session_spans_schema(conn)  # re-run must heal the row
+        healed = conn.execute(
+            "SELECT agent_id FROM session_spans WHERE span_id = 'prompt-sa-a'"
+        ).fetchone()[0]
+        assert healed == 'agentX'
+        # And it must leave a genuinely-main row (no attr agent_id) untouched.
+        conn.execute(
+            "INSERT INTO session_spans "
+            "(trace_id, span_id, name, start_time, attributes, agent_id) "
+            "VALUES ('t1', 'prompt-main', 'prompt', '2026-01-01T00:00:01', "
+            "'{}', NULL)"
+        )
+        conn.commit()
+        startup.init_session_spans_schema(conn)
+        main = conn.execute(
+            "SELECT agent_id FROM session_spans WHERE span_id = 'prompt-main'"
+        ).fetchone()[0]
+        assert main is None
+    finally:
+        conn.close()
+
+
 def test_init_sessions_creates_table(tmp_path):
     conn = _conn(tmp_path / "s.db")
     try:

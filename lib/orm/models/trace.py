@@ -116,6 +116,13 @@ class SessionSpan(Base, table=True):
         default=None,
         sa_column=Column("turn_uuid", String),
     )
+    # Owning agent: NULL = main agent, else the subagent id. Promoted from
+    # attributes.agent_id so roster/phase reads group on an indexed column
+    # instead of json_extract-scanning. Mirrors db/schema.sql + web/startup.py.
+    agent_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("agent_id", String),
+    )
     # Capture source: 'hook' (live hook events) or 'transcript' (the
     # transcript scan). The append-only store keeps both; lib/trace/merge.py
     # selects winners at read time. Mirrors db/schema.sql + web/startup.py.

@@ -245,7 +245,10 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
     conn = get_connection()
     try:
         raw = _fetch_spans(conn, trace_id)
-        grafted = merge_spans(raw)
+        grafted = merge_spans(
+            raw, prompt_id_ceiling=_prompt_ceiling(conn, trace_id),
+            session_activity=_session_activity(conn, trace_id),
+        )
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
@@ -411,16 +414,35 @@ def _fetch_window_rows(conn, trace_id, window_start, window_end):
 
 
 def _prompt_ceiling(conn, trace_id):
-    """The GLOBAL max prompt id, threaded into merge_spans so a stray prompt
-    placeholder still drops when it happens to be the newest anchor *within
-    an older window* (window-local max alone would keep it — see
-    merge._drop_stale_blockers)."""
+    """The GLOBAL max MAIN-agent prompt id, threaded into merge_spans so a stray
+    prompt placeholder still drops when it happens to be the newest anchor
+    *within an older window* (window-local max alone would keep it — see
+    merge._drop_stale_blockers). Subagent launch prompts (`prompt-sa-`,
+    agent_id set) are excluded: they are not main turn anchors, so a subagent
+    prompt with a higher id must never raise the cutoff and drop the user's
+    live main placeholder."""
+    from lib.trace.pending_spans import AGENT_ID_SQL
     ceiling_row = conn.execute(
         "SELECT MAX(id) FROM session_spans "
-        "WHERE trace_id = ? AND name = 'prompt'",
+        f"WHERE trace_id = ? AND name = 'prompt' AND {AGENT_ID_SQL} IS NULL",
         (trace_id,),
     ).fetchone()
     return ceiling_row[0] if ceiling_row else None
+
+
+def _session_activity(conn, trace_id):
+    """{'status', 'last_seen'} for the session, threaded into merge_spans so
+    the stuck-pending demotion can tell an active session (never demote) from
+    an inactive/ended one (demote old blockers). None when the row is absent
+    (a not-yet-summarised trace) — demotion then falls back to the
+    same-agent-moved-on path alone."""
+    row = conn.execute(
+        "SELECT status, last_seen FROM sessions WHERE trace_id = ?",
+        (trace_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {'status': row['status'], 'last_seen': row['last_seen']}
 
 
 def _compute_retired_ids(raw, grafted):
@@ -494,6 +516,7 @@ def fetch_session_paginated(
         # runs the deterministic reparent ladder.
         grafted = merge_spans(
             raw, prompt_id_ceiling=_prompt_ceiling(conn, trace_id),
+            session_activity=_session_activity(conn, trace_id),
         )
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)

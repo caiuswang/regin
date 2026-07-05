@@ -36,6 +36,7 @@ const props = defineProps({
   ctxPct: { type: Number, default: null },
 })
 
+const emit = defineEmits(['sent'])
 const draft = defineModel('draft', { type: String, default: '' })
 const phase = ref('ready') // ready | delivering | delivered | failed
 const detail = ref('')
@@ -97,6 +98,10 @@ async function send() {
   if (res && res.delivered) {
     phase.value = 'delivered'
     detail.value = res.detail || 'delivered'
+    // Optimistic queued chip: the steer lands in the tail only when a later
+    // poll returns the real prompt span / queued_prompts entry — surface it
+    // meanwhile so a busy-agent steer isn't invisible.
+    emit('sent', text)
     draft.value = ''
     menu.close()
     if (taEl.value) taEl.value.style.height = 'auto'

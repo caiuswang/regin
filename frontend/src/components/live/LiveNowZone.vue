@@ -42,12 +42,11 @@ const props = defineProps({
   // the offset into the readout (see `elapsed`).
   serverNow: { type: String, default: '' },
   serverNowAt: { type: Number, default: 0 },
-  // Age of the newest ingested span (server_now − last_seen, both server
-  // clocks; NaN until known). Gates `idle`: pending placeholders exist only
-  // for a whitelist of slow/blocking tools, so a fast-tool turn (Read/Edit/
-  // Grep) has NO pending span while demonstrably working — absence of one
-  // is not evidence of idleness, but a quiet ingest stream is.
-  lastActivityAgoMs: { type: Number, default: NaN },
+  // Server phase verdict for THIS zone's agent (main → agent_phase.main;
+  // scoped → agent_phase[scopeId]). The zone SELECTS its state from this and
+  // only fills CONTENT from the spans — it never re-derives idleness. Empty
+  // until the first summary lands (legacy pending-priority fallback then).
+  phase: { type: String, default: '' },
   // Segment-aware live-peak ctx% — passed straight through to the composer's
   // bridge row (the second surface for the header's ctx meter).
   ctxPct: { type: Number, default: null },
@@ -62,7 +61,7 @@ const props = defineProps({
   agentsWaiting: { type: Number, default: 0 },
 })
 const emit = defineEmits([
-  'open-response', 'open-question', 'state-change', 'exit-scope', 'open-agents',
+  'open-response', 'open-question', 'exit-scope', 'open-agents', 'sent',
 ])
 
 // Scoped elapsed: same server−server anchor as the main pending-span elapsed,
@@ -96,48 +95,43 @@ const livePrompt = computed(() => findLastSpan(props.spans, s =>
 const lastResponse = computed(() => findLastSpan(props.spans, s =>
   s.name === 'assistant_response' && s.attributes?.text))
 
-// Idle additionally requires the ingest stream to have been quiet for a
-// while: fast tools (Read/Edit/Grep/Write) never emit a pending placeholder
-// (lib/trace/pending_spans.py whitelist) and promptlive- retires at the
-// turn's first PreToolUse, so "no pending span" alone shows the full idle
-// composer MID-TURN. Every span ingest advances last_seen, so a working
-// agent keeps the age below this floor; an unknown age (NaN, before the
-// first summary) falls back to the debounce alone.
-const IDLE_ACTIVITY_MS = 12000
-const quietLongEnough = computed(() =>
-  !Number.isFinite(props.lastActivityAgoMs)
-  || props.lastActivityAgoMs >= IDLE_ACTIVITY_MS)
-
-const rawState = computed(() => {
+// The newest pending placeholder by attention priority — the CONTENT a
+// working/blocked state fills itself with. null when no pending is loaded.
+const pendingState = computed(() => {
   if (pendingPerm.value) return 'permission'
   if (pendingQuestion.value) return 'question'
   if (pendingTool.value) return 'tool'
   if (livePrompt.value) return 'prompt'
-  if (props.ended) return 'finished'
-  if (props.active && props.bridgeReachable && quietLongEnough.value) return 'idle'
-  return 'response'
+  return null
 })
 
-// 'idle' is inferred from the ABSENCE of any pending span — but a turn also
-// has no pending span mid-flight: between one tool's PostToolUse and the
-// next tool's PreToolUse, and while the agent thinks / composes a response.
-// At a 4s poll cadence those gaps would flash "idle". Debounce the flip INTO
-// idle: require the idle condition to hold before we believe the agent is
-// actually waiting; until then keep showing the working 'response' view.
-const IDLE_SETTLE_MS = 6000
-const idleReady = ref(false)
-let idleTimer = null
-watch(() => rawState.value === 'idle', (isIdle) => {
-  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
-  if (!isIdle) { idleReady.value = false; return }
-  idleTimer = setTimeout(() => { idleReady.value = true; idleTimer = null }, IDLE_SETTLE_MS)
-}, { immediate: true })
+// State SELECTION is the server phase; the spans only fill CONTENT. A
+// pending-driven view may win ONLY while the phase says the agent is blocked
+// (waiting-*) or working — an inactive/ended session with a leftover pending
+// never ticks (kills the "header inactive + ticking tool" contradiction).
+const PHASE_STATE = {
+  ended: () => 'finished',
+  'inactive-stale': () => 'inactive',
+  'waiting-permission': () => (pendingPerm.value ? 'permission' : 'response'),
+  'waiting-input': () => (pendingQuestion.value ? 'question' : 'response'),
+  idle: () => 'idle',
+  working: () => (['tool', 'prompt'].includes(pendingState.value)
+    ? pendingState.value : 'response'),
+}
 
-const state = computed(() =>
-  (rawState.value === 'idle' && !idleReady.value) ? 'response' : rawState.value)
-// The view mirrors this state for the header dot/label and the caret
-// (idle suppresses both the pulse and the caret).
-watch(state, s => emit('state-change', s), { immediate: true })
+const state = computed(() => {
+  const resolve = PHASE_STATE[props.phase]
+  if (resolve) return resolve()
+  // No phase yet (pre-first-summary / old payload): legacy pending priority,
+  // but never idle (a server verdict) nor a stale finished.
+  return pendingState.value || (props.ended ? 'finished' : 'response')
+})
+
+// The working spinner / "working…" text belongs to a genuinely-working
+// session only. An 'inactive' state (server phase inactive-stale) stays
+// neutral even if the client's `active` gate hasn't caught up — the footer
+// must never contradict the header's "inactive".
+const showWorking = computed(() => state.value === 'response' && props.active)
 
 // idle → full composer; working states → compact steer; question /
 // permission / finished (and bridge unreachable/disabled) → none.
@@ -201,10 +195,7 @@ watch(
   },
   { immediate: true },
 )
-onUnmounted(() => {
-  stopTick()
-  if (idleTimer) clearTimeout(idleTimer)
-})
+onUnmounted(stopTick)
 
 // Newest activity timestamp across the loaded tail — the reference for
 // deciding whether a PENDING span is still the live step or has been
@@ -361,13 +352,13 @@ const elapsed = computed(() => {
       <div class="live-now-1">
         <span class="live-now-tag">NOW</span>
         <span
-          v-if="!lastResponse && state !== 'finished' && active"
+          v-if="!lastResponse && showWorking"
           class="live-spinner"
           aria-hidden="true"
         ></span>
         <span class="live-now-label" :class="{ 'live-now-done': state === 'finished' }">
           {{ state === 'finished' ? '✓ finished'
-            : (lastResponse ? 'assistant' : (active ? 'working…' : 'assistant')) }}
+            : (lastResponse ? 'assistant' : (showWorking ? 'working…' : 'assistant')) }}
         </span>
         <span v-if="lastResponse" class="live-now-elapsed">
           {{ fmtClock(lastResponse.start_time) }}
@@ -375,10 +366,10 @@ const elapsed = computed(() => {
       </div>
       <div class="live-now-text">
         <template v-if="lastResponse">{{ responseText }}</template>
-        <!-- Only a live session may claim to be working — a stale/crashed
-             one (active=false, never ended) must stay neutral or the footer
-             contradicts the header's "inactive". -->
-        <template v-else-if="state !== 'finished' && active">waiting for the first response…</template>
+        <!-- Only a genuinely-working session may claim to be working — a
+             stale/inactive one must stay neutral or the footer contradicts
+             the header's "inactive". -->
+        <template v-else-if="showWorking">waiting for the first response…</template>
         <template v-else>no response yet</template>
       </div>
       <div v-if="lastResponse" class="live-now-act">
@@ -399,6 +390,7 @@ const elapsed = computed(() => {
       :steer="composerMode === 'steer'"
       :pane="bridgePane"
       :ctx-pct="ctxPct"
+      @sent="t => emit('sent', t)"
     />
   </footer>
 </template>

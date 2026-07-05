@@ -220,9 +220,16 @@ function toolOutcomeMain(span, a, t) {
   // A command preview keeps the code font even on the failure path — that's
   // exactly where the literal command matters most.
   const mono = !!a.command_preview
+  // A stuck/aborted tool is served as status ERROR with `is_interrupt` (merge
+  // demotion for lost ingest, or the user-interrupt capture). It keeps its
+  // original tool name, so the interrupt marker — not the tool's success verb
+  // — must lead the row. `interrupt_source: 'user'` distinguishes a human abort.
+  if (a.is_interrupt) {
+    const byUser = a.interrupt_source === 'user' ? ' by user' : ''
+    return { pre: '⏹', text: `${t} interrupted${byUser}${what ? ` · ${what}` : ''}`, mono }
+  }
   if (span.name === 'tool.failure') {
-    const verb = a.is_interrupt ? 'interrupted' : 'failed'
-    return { pre: '✗', text: `${t} ${verb}${what ? ` · ${what}` : ''}`, mono }
+    return { pre: '✗', text: `${t} failed${what ? ` · ${what}` : ''}`, mono }
   }
   // Same predicates that drive the hot-dot/signal tiering — the outcome
   // text and the tier must never disagree about rejected/denied.

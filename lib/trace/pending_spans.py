@@ -18,6 +18,35 @@ The id is the handoff key:
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
+
+# The silence window (seconds) after which an unstopped agent / stuck pending
+# span is considered dead. Shared by the roster stale gate
+# (web/blueprints/trace/sessions.py) and the merge demotion (lib/trace/merge.py)
+# so the two verdicts can never drift.
+INACTIVE_THRESHOLD_SEC = 600
+
+# The per-agent id, preferring the dedicated column and falling back to the
+# JSON attribute (older rows never populated the column). Interpolated into the
+# raw agent-scoped SQL in sessions.py / trace_service.queries so the fragment
+# lives in exactly one place.
+AGENT_ID_SQL = "COALESCE(agent_id, json_extract(attributes,'$.agent_id'))"
+
+
+def parse_naive_ts(iso) -> datetime | None:
+    """Normalize a span timestamp to naive local. Hook placeholders are naive
+    server-local; transcript anchors + test fixtures are tz-aware (`...Z`) —
+    comparisons must never mix awareness."""
+    if not isinstance(iso, str) or not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
 
 PROMPT_PLACEHOLDER_PREFIX = 'promptlive-'
 TOOL_PENDING_PREFIX = 'pending-'
@@ -39,6 +68,26 @@ _PROMPT_HASH_CHARS = 512
 def is_pending_span_id(span_id) -> bool:
     """True if `span_id` is a reserved pending-placeholder id."""
     return isinstance(span_id, str) and span_id.startswith(_RESERVED_PREFIXES)
+
+
+# A subagent's launch-prompt span carries name=='prompt' but is agent-scoped:
+# id `prompt-sa-<agent_id>`, attributes.agent_id set. The main-conversation
+# prompt-anchor machinery (ceiling, stale-blocker cutoff, orphan grafting,
+# turn-lookahead) must EXCLUDE these, or a subagent prompt fired mid-run acts
+# as a main turn anchor — dropping the user's live placeholder and grafting
+# main orphans under the subagent subtree.
+SUBAGENT_PROMPT_PREFIX = 'prompt-sa-'
+
+
+def is_agent_scoped_prompt(span: dict, attrs: dict | None = None) -> bool:
+    """True for a subagent-scoped `prompt` span. Detected by attributes.agent_id
+    (present on every emit, old and new rows) or the `prompt-sa-` id prefix.
+    `attrs` covers callers that carry attributes separately from the span row."""
+    for candidate in (attrs, span.get('attributes')):
+        if isinstance(candidate, dict) and candidate.get('agent_id'):
+            return True
+    sid = span.get('span_id')
+    return isinstance(sid, str) and sid.startswith(SUBAGENT_PROMPT_PREFIX)
 
 
 def prompt_placeholder_id(session_id, text: str) -> str:
@@ -75,13 +124,18 @@ def pending_id_for_resolved(span: dict, attrs: dict) -> list[str]:
     span_id = span.get('span_id')
     if is_pending_span_id(span_id):
         return []
-    out: list[str] = []
-    if span.get('name') == 'prompt':
-        text = (attrs or {}).get('text')
-        if isinstance(text, str) and text:
-            out.append(prompt_placeholder_id(span.get('trace_id'), text))
+    out = _prompt_supersede_ids(span, attrs)
     tu_id = (attrs or {}).get('tool_use_id')
     if isinstance(tu_id, str) and tu_id:
         out.append(tool_pending_id(tu_id))
         out.append(perm_pending_id(tu_id))
     return out
+
+
+def _prompt_supersede_ids(span: dict, attrs: dict) -> list[str]:
+    if span.get('name') != 'prompt' or is_agent_scoped_prompt(span, attrs):
+        return []
+    text = (attrs or {}).get('text')
+    if not isinstance(text, str) or not text:
+        return []
+    return [prompt_placeholder_id(span.get('trace_id'), text)]

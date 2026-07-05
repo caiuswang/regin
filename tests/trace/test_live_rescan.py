@@ -65,6 +65,30 @@ def test_do_rescan_scans_main_and_subagents_then_mtime_gates(tmp_path, monkeypat
     lr._sub_scan_states.clear()
 
 
+def test_throttle_gate_sees_subagent_freshness(tmp_path, monkeypatch):
+    """`_should_skip_rescan` must NOT skip when a subagent transcript changed
+    even though the MAIN file is static — otherwise a subagent streaming while
+    the main agent sits blocked on an Agent tool stales up to 10s."""
+    main = tmp_path / 'sess.jsonl'
+    main.write_text('{}\n')
+    subdir = tmp_path / 'sess' / 'subagents'
+    subdir.mkdir(parents=True)
+    sub = subdir / 'agent-abc123.jsonl'
+    sub.write_text('{}\n')
+    monkeypatch.setattr(lr, '_find_main_transcript', lambda tid: str(main))
+    lr._rescan_gate.clear()
+
+    # Record the gate at the current max mtime, well within the interval.
+    lr._record_rescan_gate('t-thr', str(main))
+    assert lr._should_skip_rescan('t-thr', str(main)) is True   # nothing changed
+
+    # Main stays static; only the subagent transcript advances.
+    future = 9_999_999_999
+    os.utime(sub, (future, future))
+    assert lr._should_skip_rescan('t-thr', str(main)) is False  # subagent fresh
+    lr._rescan_gate.clear()
+
+
 def test_bound_tracked_evicts_least_recently_rescanned():
     lr._scan_states.clear()
     lr._sub_scan_states.clear()

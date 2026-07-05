@@ -894,15 +894,28 @@ test.describe('NOW zone (acceptance #8)', () => {
 // (`/api/sessions/<id>/bridge-send`) with page.route — the browser-side
 // contract is what's under test, not tmux delivery.
 
-// The NOW zone refuses `idle` while the ingest stream looks active
-// (IDLE_ACTIVITY_MS gates on server_now − last_seen): a genuinely idle
-// session's last ingest is OLD, so quietness must be simulated alongside
-// reachability — fixtures post their spans seconds before the assertion.
+// State is now a SERVER verdict (`phase` / `agent_phase`), not a client
+// re-derivation — so a scenario that needs a specific state patches the map's
+// phase directly instead of simulating quietness. `quietLastSeen` only keeps
+// the CLIENT's stale/active gate (poll cadence) out of the way.
 function quietLastSeen() {
   return new Date(Date.now() - 30_000).toISOString()
 }
 
-async function bridgeReachableMap(page, traceId, pane = '%3') {
+const PHASE_CONFIG = { working_window_sec: 12, idle_settle_sec: 6, inactive_threshold_sec: 600 }
+
+// Build the phase fields for a map patch. `phase` sets both the rollup and
+// agent_phase.main; pass `agentPhase` for a richer per-agent map.
+function phaseFields(phase, agentPhase) {
+  if (!phase && !agentPhase) return {}
+  return {
+    phase: phase || (agentPhase && agentPhase.main) || 'working',
+    agent_phase: agentPhase || { main: phase },
+    phase_config: PHASE_CONFIG,
+  }
+}
+
+async function bridgeReachableMap(page, traceId, { pane = '%3', phase, agentPhase } = {}) {
   await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
     const resp = await route.fetch()
     const json = await resp.json()
@@ -913,6 +926,7 @@ async function bridgeReachableMap(page, traceId, pane = '%3') {
         bridge_reachable: true,
         bridge_pane: pane,
         last_seen: quietLastSeen(),
+        ...phaseFields(phase, agentPhase),
       },
     })
   })
@@ -981,6 +995,15 @@ test.describe('NOW-zone elapsed rollover (duration fix)', () => {
         start_time: tenMinAgo, status_code: 'PENDING',
         attributes: { tool_name: 'Agent', tool_use_id: `tu-${sfx}`, is_test: true } },
     ])
+    // A genuinely long-running tool on an active session: force the working
+    // phase (the 10-min-old span would otherwise age out of the working
+    // window server-side and read idle). The rollover formatter is what's
+    // under test here, not the phase.
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, ...phaseFields('working') } })
+    })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -1004,7 +1027,7 @@ test.describe('NOW-zone elapsed rollover (duration fix)', () => {
 test.describe('Idle state + bridge composer (v5)', () => {
   test('alive + no pending + bridge reachable → idle: composer, steady dot, no caret', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
-    await bridgeReachableMap(page, traceId)
+    await bridgeReachableMap(page, traceId, { phase: 'idle' })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -1029,14 +1052,20 @@ test.describe('Idle state + bridge composer (v5)', () => {
     await expect(page.locator('.live-caret')).toHaveCount(0)
   })
 
-  test('bridge not reachable → no composer and the non-idle response fallback', async ({ page }) => {
+  test('bridge not reachable → still idle (server phase), but no composer', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
-    // No map patch: the real server (bridge disabled) reports
-    // bridge_reachable: false.
+    // Patch the phase to idle; leave the bridge unreachable (real server
+    // default — disabled). Idle is a SERVER verdict, independent of the
+    // bridge; the bridge only gates the composer's visibility.
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, ...phaseFields('idle') } })
+    })
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
-    await expect(nowZone).toHaveAttribute('data-state', 'response', { timeout: 10_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
     await expect(composer(page)).toHaveCount(0)
   })
 
@@ -1079,10 +1108,10 @@ test.describe('Idle state + bridge composer (v5)', () => {
   test('a mid-draft composer unmount (one-poll reachability blip) preserves the draft', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
     // Serve bridge_reachable=true except on the FOURTH map response — a
-    // one-poll blip (tmux hiccup / registry churn) that unmounts the
-    // composer and must not eat the user's typed draft. The blip must land
-    // AFTER the 6s idle debounce has completed (polls run every 4s; a blip
-    // on poll 2 resets the debounce and the first idle never settles).
+    // one-poll blip (tmux hiccup / registry churn) that unmounts the composer
+    // and must not eat the user's typed draft. The phase stays idle
+    // throughout (a server verdict, NOT bridge-gated) — only the composer's
+    // visibility follows the bridge.
     let served = 0
     await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
       const resp = await route.fetch()
@@ -1096,6 +1125,7 @@ test.describe('Idle state + bridge composer (v5)', () => {
           bridge_reachable: reachable,
           bridge_pane: reachable ? '%3' : null,
           last_seen: quietLastSeen(),
+          ...phaseFields('idle'),
         },
       })
     })
@@ -1104,17 +1134,17 @@ test.describe('Idle state + bridge composer (v5)', () => {
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
     await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
+    await expect(composerTa(page)).toBeVisible()
 
     await composerTa(page).fill('half-typed steering thought')
 
-    // Blip: the served!==4 poll reports unreachable → composer unmounts,
-    // state falls back to response.
-    await expect(nowZone).toHaveAttribute('data-state', 'response', { timeout: 20_000 })
-    await expect(composer(page)).toHaveCount(0)
+    // Blip: the served===4 poll reports unreachable → the composer unmounts,
+    // but the state stays idle (phase is a server verdict, not bridge-gated).
+    await expect(composer(page)).toHaveCount(0, { timeout: 20_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle')
 
-    // Recovery: the following poll restores reachability → after the idle
-    // debounce re-settles, the remounted composer still carries the draft.
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
+    // Recovery: the next reachable poll remounts the composer with the draft.
+    await expect(composerTa(page)).toBeVisible({ timeout: 20_000 })
     await expect(composerTa(page)).toHaveValue('half-typed steering thought')
   })
 
@@ -1122,9 +1152,9 @@ test.describe('Idle state + bridge composer (v5)', () => {
     // response state
     const idle = await postActiveSession(page)
     await bridgeReachableMap(page, idle.traceId)
-    // A pending tool forces 'tool' — bridge still reachable → steer variant.
+    // A pending tool + working phase forces 'tool' — bridge reachable → steer.
     const busy = await postActiveSession(page, { pendingTool: true })
-    await bridgeReachableMap(page, busy.traceId)
+    await bridgeReachableMap(page, busy.traceId, { phase: 'working' })
 
     await page.goto(`/live/${busy.traceId}`)
     await settle(page)
@@ -1139,7 +1169,7 @@ test.describe('Idle state + bridge composer (v5)', () => {
 test.describe('Bridge send lifecycle (v5)', () => {
   test('delivered path: delivering → ✓ detail, textarea clears + re-enables, state and rows unchanged', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
-    await bridgeReachableMap(page, traceId)
+    await bridgeReachableMap(page, traceId, { phase: 'idle' })
     const posts = await stubBridgeSend(page, traceId,
       { delivered: true, detail: 'delivered to %3' }, { delayMs: 400 })
 
@@ -1172,7 +1202,7 @@ test.describe('Bridge send lifecycle (v5)', () => {
 
   test('failure path: {delivered:false} surfaces detail, preserves the text, re-enables', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
-    await bridgeReachableMap(page, traceId)
+    await bridgeReachableMap(page, traceId, { phase: 'idle' })
     await stubBridgeSend(page, traceId,
       { delivered: false, detail: 'no reachable session' })
 
@@ -1191,7 +1221,7 @@ test.describe('Bridge send lifecycle (v5)', () => {
 
   test('steer send from a working state keeps the state; Cmd/Ctrl+Enter sends', async ({ page }) => {
     const { traceId } = await postActiveSession(page, { pendingTool: true })
-    await bridgeReachableMap(page, traceId)
+    await bridgeReachableMap(page, traceId, { phase: 'working' })
     const posts = await stubBridgeSend(page, traceId,
       { delivered: true, detail: 'delivered to %3' })
 
@@ -1212,7 +1242,7 @@ test.describe('Bridge send lifecycle (v5)', () => {
 test.describe('Composer pinning + geometry (v5)', () => {
   test('pinned tail stays pinned across composer appearance and autogrow; nothing clips', async ({ page }) => {
     const { traceId } = await postActiveSession(page, { extraRows: 30 })
-    await bridgeReachableMap(page, traceId)
+    await bridgeReachableMap(page, traceId, { phase: 'idle' })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -1242,7 +1272,7 @@ test.describe('Composer pinning + geometry (v5)', () => {
 
   test('the "N new" chip rides above the taller composer zone', async ({ page }) => {
     const { traceId, sfx } = await postActiveSession(page, { extraRows: 25 })
-    await bridgeReachableMap(page, traceId)
+    await bridgeReachableMap(page, traceId, { phase: 'idle' })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -1291,7 +1321,7 @@ const cmdMenu = (page) => page.locator('[data-testid="live-command-menu"]')
 const cmdItems = (page) => page.locator('[data-testid="live-command-item"]')
 
 async function idleComposer(page, traceId) {
-  await bridgeReachableMap(page, traceId)
+  await bridgeReachableMap(page, traceId, { phase: 'idle' })
   await stubBridgeCommands(page, traceId, FIXTURE_COMMANDS)
   await page.goto(`/live/${traceId}`)
   await settle(page)
@@ -1556,19 +1586,20 @@ test.describe('Review regressions', () => {
     await expect(nowZone).toHaveAttribute('data-state', 'finished', { timeout: 15_000 })
   })
 
-  test('a false "idle" is suppressed while the ingest stream stays fresh, then fires once it quiets (IDLE_ACTIVITY_MS)', async ({ page }) => {
+  test('the NOW state follows the server phase and only changes on a poll (no client re-derivation)', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
-    let fresh = true
+    // The server owns the phase verdict; the client renders it and never
+    // re-derives idleness. While the server says working, the zone must never
+    // flap to idle between polls; once the server flips to idle, it follows.
+    let phase = 'working'
     await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
       const resp = await route.fetch()
       const json = await resp.json()
       await route.fulfill({
         response: resp,
         json: {
-          ...json,
-          bridge_reachable: true,
-          bridge_pane: '%3',
-          last_seen: fresh ? new Date().toISOString() : quietLastSeen(),
+          ...json, bridge_reachable: true, bridge_pane: '%3',
+          last_seen: quietLastSeen(), ...phaseFields(phase),
         },
       })
     })
@@ -1578,16 +1609,14 @@ test.describe('Review regressions', () => {
     const nowZone = page.locator('[data-testid="live-now"]')
     await expect(nowZone).toBeVisible({ timeout: 10_000 })
 
-    // Observation window: last_seen keeps refreshing to "now" every poll, so
-    // the ingest-quiet gate must never clear and 'idle' must never appear.
+    // Server says working → zone never flaps to idle between polls.
     for (const wait of [3_000, 3_000, 3_000]) {
       await page.waitForTimeout(wait)
       await expect(nowZone).not.toHaveAttribute('data-state', 'idle')
     }
 
-    // Flip to a genuinely quiet stream: idle must now be reached (next poll
-    // clears the activity gate, then the 6s debounce settles).
-    fresh = false
+    // Server flips to idle → the next poll's applySummary follows it.
+    phase = 'idle'
     await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 15_000 })
   })
 
@@ -1713,7 +1742,12 @@ test.describe('Review regressions', () => {
       const staleLastSeen = json.server_now
         ? shiftServerTimestamp(json.server_now, -15 * 60 * 1000)
         : new Date(Date.now() - 15 * 60 * 1000).toISOString()
-      await route.fulfill({ response: resp, json: { ...json, last_seen: staleLastSeen } })
+      // The header reads the SERVER phase now — a stale session's verdict is
+      // inactive-stale; last_seen still feeds the client's poll cadence.
+      await route.fulfill({
+        response: resp,
+        json: { ...json, last_seen: staleLastSeen, ...phaseFields('inactive-stale') },
+      })
     })
 
     await page.goto(`/live/${traceId}`)
@@ -2540,7 +2574,12 @@ test.describe('Agent lifecycle — interrupted / stale / resumed', () => {
           agent_id: `ag-${sfx}`, is_test: true,
           questions: [{ question: 'Which file?', options: [{ label: 'A' }, { label: 'B' }] }] } },
     ])
-    await bridgeReachableMap(page, traceId)
+    // Main idle, the subagent blocked on input — the server verdict the main
+    // NOW zone reads (agent_phase.main). The roster (real backend) still
+    // surfaces the waiting subagent for the badge + note.
+    await bridgeReachableMap(page, traceId, {
+      agentPhase: { main: 'idle', [`ag-${sfx}`]: 'waiting-input' },
+    })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -2591,5 +2630,210 @@ test.describe('Agent lifecycle — interrupted / stale / resumed', () => {
     await expect(finishedToggle(page)).toContainText('Finished (1)')
     await finishedToggle(page).click()
     await expect(agentStatus(page)).toContainText('stale')
+  })
+})
+
+// ---- Slice C: server-phase rendering, interrupts, queued/steer, scoped prompt
+//
+// Phase is the single state truth (agent_phase.main → header + main NOW zone).
+// These pin the render contract the phase model enables: a stale payload can
+// never show a ticking pending, an interrupted tool row says so, queued/steer
+// prompts are visible, and a scoped tail opens with the agent's task prompt.
+
+test.describe('Phase-driven state (Slice C)', () => {
+  test('inactive-stale + a leftover PENDING tool → header "inactive", NEVER a ticking tool state', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'inactive-with-pending fixture', is_test: true } },
+      // A stuck PENDING tool the server would demote — but even un-demoted,
+      // the phase guard must stop the NOW zone ticking it.
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, status_code: 'PENDING',
+        attributes: { command_preview: 'sleep 9999', tool_use_id: `tu-${sfx}`, is_test: true } },
+    ])
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, ...phaseFields('inactive-stale') } })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toBeVisible({ timeout: 10_000 })
+
+    // Header reads inactive; the NOW zone is NOT ticking a tool (no spinner,
+    // no 'tool' state) — the header-inactive + ticking-tool contradiction is
+    // unreachable.
+    await expect(page.locator('[data-testid="live-header"]')).toContainText('inactive')
+    await expect(nowZone).not.toHaveAttribute('data-state', 'tool')
+    await expect(nowZone.locator('.live-spinner')).toHaveCount(0)
+    const dot = page.locator('.live-status-dot')
+    await expect(dot).toHaveClass(/live-status-stale/)
+    await expect(dot).not.toHaveClass(/live-status-running/)
+  })
+})
+
+test.describe('Interrupted tool rows (Slice C)', () => {
+  test('an is_interrupt tool span renders "⏹ interrupted" (and "by user" for a user abort), never a success verb; NOW never ticks it', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'interrupt-render fixture', is_test: true } },
+      // Lost-ingest demotion: status ERROR + is_interrupt, interrupt_source stale.
+      { trace_id: traceId, span_id: `stale-tu-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, status_code: 'ERROR',
+        attributes: { command_preview: 'pkill -f server', is_interrupt: true, interrupted: true,
+          interrupt_source: 'stale', tool_use_id: `s-${sfx}`, is_test: true } },
+      // The human interrupted execution: interrupt_source user.
+      { trace_id: traceId, span_id: `user-tu-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, status_code: 'ERROR',
+        attributes: { command_preview: 'rm -rf build', is_interrupt: true, interrupted: true,
+          interrupt_source: 'user', tool_use_id: `u-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    const staleRow = page.locator(`[data-testid="live-row"][data-span-id="stale-tu-${sfx}"]`)
+    await expect(staleRow).toBeVisible()
+    await expect(staleRow).toContainText('interrupted')
+    await expect(staleRow).toContainText('⏹')
+    await expect(staleRow).not.toContainText('by user')
+
+    const userRow = page.locator(`[data-testid="live-row"][data-span-id="user-tu-${sfx}"]`)
+    await expect(userRow).toContainText('interrupted by user')
+
+    // ERROR (not PENDING) → the NOW zone never selects it as a live tool.
+    await expect(page.locator('[data-testid="live-now"]')).not.toHaveAttribute('data-state', 'tool')
+  })
+})
+
+test.describe('Queued / steer prompts (Slice C)', () => {
+  test('server queued_prompts render, with a bridge steer reading "steering" and a plain one "queued"', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, queued_prompts: [
+        { content: 'PLAIN_QUEUED_MARKER waiting turn' },
+        { content: 'BRIDGE_STEER_MARKER mid-turn steer', source: 'bridge' },
+      ] } })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const queued = page.locator('[data-testid="live-queued"]')
+    await expect(queued).toBeVisible({ timeout: 10_000 })
+    const items = page.locator('[data-testid="live-queued-item"]')
+    await expect(items.filter({ hasText: 'BRIDGE_STEER_MARKER' })).toContainText('steering')
+    await expect(items.filter({ hasText: 'PLAIN_QUEUED_MARKER' })).toContainText('queued')
+  })
+
+  test('an optimistic steer chip appears after a bridge send and clears when the real prompt span lands', async ({ page }) => {
+    const { traceId, sfx } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId, { phase: 'idle' })
+    await stubBridgeSend(page, traceId, { delivered: true, detail: 'delivered to %3' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-now"]'))
+      .toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
+
+    const STEER = 'OPTIMISTIC_STEER_MARKER run the flaky spec'
+    await composerTa(page).fill(STEER)
+    await composerSend(page).click()
+
+    // The just-sent steer surfaces as an optimistic queued chip.
+    const queued = page.locator('[data-testid="live-queued"]')
+    await expect(queued).toContainText('OPTIMISTIC_STEER_MARKER', { timeout: 5_000 })
+
+    // The real prompt span landing (same text) dedupes the optimistic chip away.
+    await post(page, [
+      { trace_id: traceId, span_id: `realprompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: new Date(Date.now() + 1000).toISOString(),
+        attributes: { text: STEER, is_test: true } },
+    ])
+    await expect(page.locator('[data-testid="live-queued-item"]').filter({ hasText: 'OPTIMISTIC_STEER_MARKER' }))
+      .toHaveCount(0, { timeout: 15_000 })
+  })
+})
+
+test.describe('Scoped tail opens with the agent prompt (Slice C)', () => {
+  async function openAgents(page) {
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible({ timeout: 5_000 })
+  }
+
+  test('a real prompt-sa span leads the scoped tail', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const later = new Date(Date.now() + 2000).toISOString()
+    const agId = `ag-${sfx}`
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'scoped-prompt fixture', is_test: true } },
+      { trace_id: traceId, span_id: `agent-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, attributes: { subagent_type: 'explorer', description: 'Map the code',
+          tool_use_id: `tu-${sfx}`, agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'explorer', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `prompt-sa-${agId}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'SCOPED_PROMPT_MARKER — the task statement', agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `int-read-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: later, attributes: { file_path: 'src/x.js', agent_id: agId, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    await expect(page.locator('[data-testid="live-scope-bar"]')).toBeVisible({ timeout: 5_000 })
+
+    // The scoped tail's FIRST row is the agent's prompt (a message row).
+    const first = rows(page).first()
+    await expect(first).toContainText('SCOPED_PROMPT_MARKER')
+    await expect(first).toHaveAttribute('data-kind', 'msg')
+  })
+
+  test('an old session (no prompt-sa) synthesizes the leading prompt from the launch description', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const later = new Date(Date.now() + 2000).toISOString()
+    const agId = `ag-${sfx}`
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'old-scoped fixture', is_test: true } },
+      { trace_id: traceId, span_id: `agent-${sfx}`, parent_id: null, name: 'tool.Agent',
+        start_time: now, attributes: { subagent_type: 'explorer', description: 'SYNTH_DESC_MARKER map the breakpoints',
+          tool_use_id: `tu-${sfx}`, agent_id: agId, is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'explorer', agent_id: agId, is_test: true } },
+      // Internal spans, but NO prompt-sa span (old session).
+      { trace_id: traceId, span_id: `int-read-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: later, attributes: { file_path: 'src/y.js', agent_id: agId, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    await expect(page.locator('[data-testid="live-scope-bar"]')).toBeVisible({ timeout: 5_000 })
+
+    const first = rows(page).first()
+    await expect(first).toContainText('SYNTH_DESC_MARKER')
+    await expect(first).toHaveAttribute('data-kind', 'msg')
   })
 })

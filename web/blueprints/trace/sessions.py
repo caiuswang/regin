@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import request, jsonify, Response
 
@@ -29,6 +29,11 @@ from web.helpers import (
 # reference; doing `from web.helpers import _INGEST_DEDUP_WINDOW_SEC`
 # would bind the initial value forever.
 from web import helpers as _helpers
+from lib.trace.pending_spans import (
+    AGENT_ID_SQL,
+    INACTIVE_THRESHOLD_SEC as _AGENT_STALE_AFTER_SEC,
+    parse_naive_ts as _roster_ts,
+)
 from lib.trace.projection import (
     _fetch_spans, _graft_orphans, _widen_envelopes,
     _build_span_tree, _persist_projection,
@@ -572,25 +577,10 @@ _AGENT_MARKER_NAMES = ('subagent.start', 'subagent.stop')
 # Markers plus the launch span — the main timeline's representation of a
 # subagent, never part of its internal span count.
 _AGENT_SCOPE_MARKER_NAMES = _AGENT_MARKER_NAMES + ('tool.Agent',)
-_AGENT_STALE_AFTER_SEC = 600
 
 
 def _in_placeholders(names) -> str:
     return ','.join('?' for _ in names)
-
-
-def _roster_ts(iso) -> datetime | None:
-    """Span timestamps are naive server-local; test fixtures post UTC `...Z`.
-    Normalize both to naive local so comparisons never mix awareness."""
-    if not isinstance(iso, str) or not iso:
-        return None
-    try:
-        dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
-    except ValueError:
-        return None
-    if dt.tzinfo is not None:
-        dt = dt.astimezone().replace(tzinfo=None)
-    return dt
 
 
 def _row_attrs(raw) -> dict:
@@ -602,13 +592,19 @@ def _row_attrs(raw) -> dict:
 
 
 def _roster_rows(trace_id: str):
-    """(activity rows, marker rows, launch rows, waiting map, session ended).
+    """(activity rows, marker rows, launch rows, session ended).
 
-    PENDING placeholders count toward `last_ts` — a live agent mid-way
-    through a long tool has only its placeholder as fresh activity, and
-    dropping it would stale a genuinely-running agent — but stay OUT of
-    `internal_count` (the append-only store keeps resolved placeholders, so
-    counting them inflates span_count)."""
+    ONE grouped pass over the indexed agent_id column feeds BOTH the roster
+    badge and the phase verdict — the main bucket (aid IS NULL) is included so
+    the phase needn't re-scan. Each row also carries `perm_ts`/`ask_ts` (newest
+    PENDING permission / ask-or-plan span), so the waiting-on-a-human check
+    reuses the same rows instead of a second GROUP BY.
+
+    PENDING placeholders count toward `last_ts` — a live agent mid-way through a
+    long tool has only its placeholder as fresh activity, and dropping it would
+    stale a genuinely-running agent — but stay OUT of `internal_count` (the
+    append-only store keeps resolved placeholders, so counting them inflates
+    span_count)."""
     from lib.orm.engine import get_connection
 
     scope_ph = _in_placeholders(_AGENT_SCOPE_MARKER_NAMES)
@@ -616,13 +612,19 @@ def _roster_rows(trace_id: str):
     conn = get_connection()
     try:
         act = conn.execute(
-            "SELECT json_extract(attributes,'$.agent_id') AS aid, "
+            f"SELECT {AGENT_ID_SQL} AS aid, "
             "       MIN(start_time) AS first_ts, MAX(start_time) AS last_ts, "
             f"      SUM(CASE WHEN name IN ({scope_ph}) OR status_code = 'PENDING' "
             "                THEN 0 ELSE 1 END) AS internal_count, "
-            "       MAX(json_extract(attributes,'$.agent_type')) AS agent_type "
+            "       MAX(json_extract(attributes,'$.agent_type')) AS agent_type, "
+            "       MAX(CASE WHEN status_code = 'PENDING' "
+            "                 AND (name = 'permission.request' OR span_id LIKE 'permreq-%') "
+            "                THEN start_time END) AS perm_ts, "
+            "       MAX(CASE WHEN status_code = 'PENDING' "
+            "                 AND name IN ('tool.AskUserQuestion','tool.ExitPlanMode') "
+            "                THEN start_time END) AS ask_ts "
             "  FROM session_spans "
-            " WHERE trace_id = ? AND json_extract(attributes,'$.agent_id') IS NOT NULL "
+            " WHERE trace_id = ? "
             " GROUP BY aid",
             (*_AGENT_SCOPE_MARKER_NAMES, trace_id)).fetchall()
         marks = conn.execute(
@@ -635,18 +637,6 @@ def _roster_rows(trace_id: str):
             "  FROM session_spans WHERE trace_id = ? AND name = 'tool.Agent' "
             " ORDER BY id ASC",
             (trace_id,)).fetchall()
-        # Blocked-on-a-human detection: the newest PENDING ask/permission
-        # placeholder per agent (compared against last_ts downstream).
-        asks = conn.execute(
-            "SELECT json_extract(attributes,'$.agent_id') AS aid, "
-            "       MAX(start_time) AS ts "
-            "  FROM session_spans "
-            " WHERE trace_id = ? AND json_extract(attributes,'$.agent_id') IS NOT NULL "
-            "   AND status_code = 'PENDING' "
-            "   AND (name = 'tool.AskUserQuestion' OR name = 'permission.request' "
-            "        OR span_id LIKE 'permreq-%') "
-            " GROUP BY aid",
-            (trace_id,)).fetchall()
         sess = conn.execute(
             'SELECT status FROM sessions WHERE trace_id = ?',
             (trace_id,)).fetchone()
@@ -657,9 +647,18 @@ def _roster_rows(trace_id: str):
          'ts': _roster_ts(r['start_time']), 'attrs': _row_attrs(r['attributes'])}
         for r in launches
     ]
-    waiting = {r['aid']: r['ts'] for r in asks if r['aid']}
     ended = bool(sess and sess['status'] == 'ended')
-    return act, marks, parsed_launches, waiting, ended
+    return act, marks, parsed_launches, ended
+
+
+def _waiting_from_activity(row) -> str | None:
+    """Newest PENDING ask/permission timestamp for one agent — the later of the
+    row's `perm_ts`/`ask_ts`. `_roster_entry_base` compares it against the
+    agent's newest span to decide whether it is blocked on a human."""
+    cands = [t for t in (row['perm_ts'], row['ask_ts']) if t]
+    if not cands:
+        return None
+    return max(cands, key=lambda t: _roster_ts(t) or datetime.min)
 
 
 def _marker_order(m) -> tuple:
@@ -872,17 +871,23 @@ def _roster_output_entry(e, status, launches, claimed) -> dict:
     }
 
 
-def _fetch_session_agent_roster(trace_id: str) -> list[dict]:
-    """Whole-session subagent roster for the /live header badge + agents
-    sheet: one entry per agent_id, from marker segments (ingest-id ordered)
-    plus orphan agents whose markers were lost but whose agent_id-tagged
-    spans survive. Status mirrors the client rules: running / finished /
-    interrupted (deny markers) / stale (silent past the stale window while
-    the main agent moved on), evaluated with server time."""
-    act_rows, marks, launches, waiting, ended = _roster_rows(trace_id)
-    if not act_rows and not marks:
-        return []
+def _waiting_map(act_rows) -> dict:
+    """agent_id → newest PENDING ask/permission ts, for subagents that have
+    one. Derived from the shared rows' perm_ts/ask_ts (no extra query)."""
+    out: dict = {}
+    for r in act_rows:
+        w = _waiting_from_activity(r) if r['aid'] else None
+        if w:
+            out[r['aid']] = w
+    return out
+
+
+def _build_roster(act_rows, marks, launches, ended) -> list[dict]:
+    """Assemble roster entries from the shared grouped rows. `waiting` (newest
+    PENDING ask/permission per agent) is derived from each row's perm_ts/ask_ts
+    rather than a separate query."""
     activity = {r['aid']: dict(r) for r in act_rows if r['aid']}
+    waiting = _waiting_map(act_rows)
     segments = _roster_segments(marks)
     entries = [
         _roster_entry_base(aid, segments.get(aid), activity, waiting)
@@ -899,6 +904,117 @@ def _fetch_session_agent_roster(trace_id: str) -> list[dict]:
             launches, claimed)
         for e in entries
     ]
+
+
+def _roster_with_activity(trace_id: str) -> tuple:
+    """(roster, per-agent activity map incl. main under None, ended) from ONE
+    grouped pass. The activity map feeds the phase verdict so it needn't
+    re-scan session_spans a third time per poll.
+
+    Roster: one entry per agent_id, from marker segments (ingest-id ordered)
+    plus orphan agents whose markers were lost but whose agent_id-tagged spans
+    survive. Status mirrors the client rules: running / finished / interrupted
+    (deny markers) / stale (silent past the stale window while the main agent
+    moved on), evaluated with server time."""
+    act_rows, marks, launches, ended = _roster_rows(trace_id)
+    activity = {r['aid']: dict(r) for r in act_rows}
+    if not act_rows and not marks:
+        return [], activity, ended
+    return _build_roster(act_rows, marks, launches, ended), activity, ended
+
+
+# ── Per-agent phase (server verdict) ─────────────────────────────────
+# The /live card renders phase; it never re-derives state. `phase` is the
+# session rollup; `agent_phase` maps "main" (agent_id IS NULL) + each
+# subagent id → its phase. Constants live here (item 4): the client keeps
+# only its poll cadence + cosmetic ticks. WORKING_WINDOW mirrors the client's
+# old IDLE_ACTIVITY floor; INACTIVE_THRESHOLD reuses the roster stale window.
+WORKING_WINDOW_SEC = 12
+IDLE_SETTLE_SEC = 6
+INACTIVE_THRESHOLD_SEC = _AGENT_STALE_AFTER_SEC
+
+# Rollup precedence: a blocked subagent surfaces while main is idle.
+_PHASE_PRECEDENCE = (
+    'waiting-permission', 'waiting-input', 'working',
+    'idle', 'inactive-stale', 'ended',
+)
+
+
+def _waiting_kind(act) -> str | None:
+    """'permission' | 'input' | None — the agent is blocked on a human iff a
+    PENDING permission/ask is its NEWEST span (a later resolved span means the
+    blocker was answered, which also makes it demotable in merge.py)."""
+    last = _roster_ts(act.get('last_ts'))
+    perm = _roster_ts(act.get('perm_ts'))
+    ask = _roster_ts(act.get('ask_ts'))
+    if perm and (last is None or perm >= last):
+        return 'permission'
+    if ask and (last is None or ask >= last):
+        return 'input'
+    return None
+
+
+def _idle_phase(dt, ended) -> str:
+    """Non-blocked main phase from activity age alone."""
+    if ended:
+        return 'ended'
+    if dt is None:
+        return 'idle'
+    if dt > INACTIVE_THRESHOLD_SEC:
+        return 'inactive-stale'
+    return 'working' if dt <= WORKING_WINDOW_SEC else 'idle'
+
+
+def _main_phase(act, now, ended) -> str:
+    """Main-agent phase. A blocker only counts while the session is active —
+    an inactive/ended session's stuck pending is demoted (merge.py), so it is
+    never 'waiting'."""
+    last = _roster_ts(act.get('last_ts')) if act else None
+    dt = (now - last).total_seconds() if last else None
+    inactive = ended or (dt is not None and dt > INACTIVE_THRESHOLD_SEC)
+    kind = _waiting_kind(act) if act else None
+    if kind and not inactive:
+        return 'waiting-permission' if kind == 'permission' else 'waiting-input'
+    return _idle_phase(dt, ended)
+
+
+def _phase_from_roster(status, kind) -> str:
+    """Map a subagent roster status into the phase vocabulary for the rollup."""
+    if status in ('finished', 'interrupted'):
+        return 'ended'
+    if status == 'stale':
+        return 'inactive-stale'
+    if status == 'waiting':
+        return 'waiting-permission' if kind == 'permission' else 'waiting-input'
+    return 'working'
+
+
+def _phase_rollup(phases) -> str | None:
+    present = set(phases)
+    for p in _PHASE_PRECEDENCE:
+        if p in present:
+            return p
+    return None
+
+
+def _session_phase(by_aid: dict, roster, ended: bool) -> tuple:
+    """(rollup phase, agent_phase map). Main from its own activity; each
+    subagent from its roster status. `by_aid` is the shared per-agent activity
+    map (main under None) so no third scan is needed.
+
+    Rollup = highest-precedence phase across all agents, EXCEPT that an ended
+    session always rolls up to 'ended': once the session itself ended nothing
+    can be genuinely waiting, so a ghost unstopped subagent (rolled up as
+    inactive-stale) must not mask the 'ended' verdict."""
+    now = datetime.now()
+    agent_phase = {'main': _main_phase(by_aid.get(None), now, ended)}
+    for r in roster:
+        aid = r['agent_id']
+        agent_phase[aid] = _phase_from_roster(
+            r['status'], _waiting_kind(by_aid.get(aid) or {}))
+    if agent_phase['main'] == 'ended':
+        return 'ended', agent_phase
+    return _phase_rollup(agent_phase.values()) or agent_phase['main'], agent_phase
 
 
 def _pct(value, window) -> float | None:
@@ -944,10 +1060,15 @@ def _session_repo_name(trace_id: str, cwd) -> str | None:
     return None
 
 
-def _session_summary(trace_id: str) -> dict:
+def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
     """Read the session-row fields that aren't derivable from spans alone
-    (model + transcript-derived token counters). Safe to call for a
-    non-existent trace_id — returns an empty dict.
+    (model + transcript-derived token counters) plus the server phase verdict.
+    Safe to call for a non-existent trace_id — returns an empty dict.
+
+    `roster` + `activity` (the whole-session agent roster and its shared
+    per-agent activity map) are threaded from the shallow-map hot path so the
+    phase rollup reuses them instead of recomputing; other callers pass None
+    and both are computed here in one grouped pass.
     """
     from sqlmodel import select as _select
     from lib.tokens.model_windows import infer_window as _infer_window
@@ -986,8 +1107,16 @@ def _session_summary(trace_id: str) -> dict:
     window = _infer_window(model, peak) if isinstance(peak, int) else None
     main_for_pct = next(
         (v for v in (live, peak_main, peak) if isinstance(v, int)), peak)
+    if roster is None or activity is None:
+        roster, activity, _ended = _roster_with_activity(trace_id)
+    phase, agent_phase = _session_phase(activity, roster, status == 'ended')
     return {
         'model': model,
+        # Server phase verdict — the /live card selects on this, never
+        # re-derives it. `phase` = session rollup; `agent_phase` = "main"
+        # + each subagent id → its phase.
+        'phase': phase,
+        'agent_phase': agent_phase,
         'repo': _session_repo_name(trace_id, cwd),
         # Workflow runs have no single context window (peak is NULL), so the
         # ctx% chip is absent; surface the run's authoritative grand total
@@ -1124,6 +1253,12 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
             .where(SessionSpan.trace_id == trace_id)
             .order_by(SessionSpan.start_time.asc(), SessionSpan.id.asc())
         ).mappings().all()
+        act_row = session.exec(
+            _select(SessionModel.status, SessionModel.last_seen)
+            .where(SessionModel.trace_id == trace_id)
+        ).first()
+    session_activity = (
+        {'status': act_row[0], 'last_seen': act_row[1]} if act_row else None)
     spans = []
     for r in rows:
         d = dict(r)
@@ -1132,7 +1267,7 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
         except (TypeError, ValueError):
             d['attributes'] = {}
         spans.append(d)
-    grafted = merge_spans(spans)
+    grafted = merge_spans(spans, session_activity=session_activity)
     _attach_prompt_expansions(trace_id, grafted)
     for s in grafted:
         kept = _kept_map_attrs(s.get('attributes'))
@@ -1188,6 +1323,7 @@ def _shallow_map_response(trace_id: str):
     widened, tree, has_more_older, retired_span_ids = trace_service.fetch_session_paginated(
         trace_id, limit=limit, before_id=before_id, after_id=after_id,
     )
+    roster, activity, _ended = _roster_with_activity(trace_id)
     root_ids = {n['data']['span_id'] for n in tree}
     # Cursors use DB `id`: stable, monotonic, unambiguous on ties.
     ids = [n['data']['id'] for n in tree if 'id' in n.get('data', {})]
@@ -1215,18 +1351,92 @@ def _shallow_map_response(trace_id: str):
         # currently queued (derived live from the transcript, ephemeral).
         'queued_prompts': _queued_prompts(trace_id),
         'task_list': _fetch_session_task_list(trace_id),
-        'agent_roster': _fetch_session_agent_roster(trace_id),
+        'agent_roster': roster,
         **_bridge_reachability(trace_id),
-        **_session_summary(trace_id),
+        **_session_summary(trace_id, roster=roster, activity=activity),
     })
+
+
+# A bridge steer is typed into the same tmux composer a human types into, so
+# once Claude Code enqueues it, it becomes a `queue-operation` the transcript
+# path already captures. This window only covers the brief gap between the
+# bridge's send + Claude flushing the queue-op (or the steer being submitted
+# immediately as a real prompt) — after it, the transcript is authoritative.
+_BRIDGE_STEER_WINDOW_SEC = 90
 
 
 def _queued_prompts(trace_id: str) -> list:
     from lib.trace.queued_prompts import current_queued_prompts
     try:
-        return current_queued_prompts(trace_id)
+        queued = current_queued_prompts(trace_id)
+    except Exception:
+        queued = []
+    return _merge_bridge_steers(trace_id, queued)
+
+
+def _steer_key(content) -> str:
+    """Normalized body for deduping a bridge steer against the transcript
+    queue — whitespace-collapsed so a composer echo and the enqueued copy
+    match."""
+    return ' '.join(str(content or '').split())
+
+
+def _recent_bridge_steers(trace_id: str) -> list:
+    """Bridge steers delivered into this session's pane within the window,
+    newest first. Empty when the bridge is off or the registry is absent."""
+    from lib.settings import settings
+    if not settings.agent_bridge.enabled:
+        return []
+    try:
+        from lib.agent_bridge import store as bridge_store
+        rows = bridge_store.list_bridge_messages(trace_id, limit=20)
     except Exception:
         return []
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now_utc - timedelta(seconds=_BRIDGE_STEER_WINDOW_SEC)
+    out = []
+    for r in rows:
+        if not r.get('delivered'):
+            continue
+        delivered_at = _parse_bridge_ts(r.get('delivered_at'))
+        if delivered_at is None or delivered_at < cutoff:
+            continue
+        body = r.get('body')
+        if isinstance(body, str) and body.strip():
+            out.append({'content': body, 'delivered_at': r.get('delivered_at')})
+    return out
+
+
+def _parse_bridge_ts(value) -> datetime | None:
+    """`bridge_messages.delivered_at` is SQLite `datetime('now')` (naive UTC,
+    'YYYY-MM-DD HH:MM:SS'). Compared against `datetime.utcnow()`."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace('T', ' ').split('.')[0])
+    except ValueError:
+        return None
+
+
+def _merge_bridge_steers(trace_id: str, queued: list) -> list:
+    """Append recently-delivered bridge steers not already represented in the
+    transcript-derived queue (deduped by normalized body). The transcript copy
+    wins when both exist — a steer surfaces optimistically only until Claude
+    Code records it as a queue-op or a real prompt."""
+    steers = _recent_bridge_steers(trace_id)
+    if not steers:
+        return queued
+    seen = {_steer_key(q.get('content')) for q in queued}
+    for s in steers:
+        key = _steer_key(s.get('content'))
+        if key and key not in seen:
+            seen.add(key)
+            queued.append({
+                'content': s['content'],
+                'enqueued_at': s.get('delivered_at'),
+                'source': 'bridge',
+            })
+    return queued
 
 
 @trace_bp.route('/api/sessions/<trace_id>/map')

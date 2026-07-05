@@ -248,6 +248,12 @@ CREATE TABLE IF NOT EXISTS session_spans (
     cost_usd        REAL,
     tool_use_id     TEXT,
     turn_uuid       TEXT,
+    -- Owning agent for the span: NULL = the main agent, else the subagent's
+    -- id. Promoted from attributes.agent_id (the JSON was the sole home) so
+    -- the roster/phase reads group on an indexed column instead of
+    -- json_extract-scanning every row. Stamped at ingest; the kimi subagent
+    -- pass (lib/trace/kimi_subagents.py) also sets it when it tags tool spans.
+    agent_id        TEXT,
     -- Which capture source wrote this row: 'hook' (live hook events —
     -- tool timing, permissions, skill reads, the in-flight prompt
     -- placeholder) or 'transcript' (the transcript scan — prompt anchors,
@@ -263,6 +269,7 @@ CREATE INDEX IF NOT EXISTS idx_session_spans_start ON session_spans(start_time);
 CREATE INDEX IF NOT EXISTS idx_session_spans_name ON session_spans(name);
 CREATE INDEX IF NOT EXISTS idx_session_spans_parent ON session_spans(parent_id);
 CREATE INDEX IF NOT EXISTS idx_session_spans_tool_use_id ON session_spans(tool_use_id);
+CREATE INDEX IF NOT EXISTS idx_session_spans_trace_agent ON session_spans(trace_id, agent_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_session_spans_trace_span ON session_spans(trace_id, span_id);
 
 -- Per-session metadata, maintained incrementally at ingest time so the

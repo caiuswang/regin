@@ -171,11 +171,12 @@ def _stamp_tool_spans(conn, trace_id: str, agent_id: str, tool_ids: list[str]) -
     ph = ",".join("?" * len(tool_ids))
     cur = conn.execute(
         f"UPDATE session_spans "
-        f"   SET attributes = json_set(attributes, '$.agent_id', ?) "
+        f"   SET attributes = json_set(attributes, '$.agent_id', ?), "
+        f"       agent_id = ? "
         f" WHERE trace_id = ? "
         f"   AND (tool_use_id IN ({ph}) "
         f"        OR json_extract(attributes, '$.tool_use_id') IN ({ph}))",
-        [agent_id, trace_id, *tool_ids, *tool_ids],
+        [agent_id, agent_id, trace_id, *tool_ids, *tool_ids],
     )
     return cur.rowcount
 
@@ -192,8 +193,9 @@ def _enrich_marker(conn, row, agent_id: str, info: dict) -> None:
     if info.get("result_preview") and not attrs.get("result_preview"):
         attrs["result_preview"] = info["result_preview"]
     conn.execute(
-        "UPDATE session_spans SET attributes = ? WHERE trace_id = ? AND span_id = ?",
-        (json.dumps(attrs), row["trace_id"], row["span_id"]),
+        "UPDATE session_spans SET attributes = ?, agent_id = ? "
+        "WHERE trace_id = ? AND span_id = ?",
+        (json.dumps(attrs), agent_id, row["trace_id"], row["span_id"]),
     )
 
 

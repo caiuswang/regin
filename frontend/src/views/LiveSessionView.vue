@@ -13,6 +13,7 @@ import Checkbox from '../components/ui/Checkbox.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import LiveTailRow from '../components/live/LiveTailRow.vue'
 import LiveNowZone from '../components/live/LiveNowZone.vue'
+import LiveQueuedChips from '../components/live/LiveQueuedChips.vue'
 import LiveSheet from '../components/live/LiveSheet.vue'
 import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
 import LiveQaSheet from '../components/live/LiveQaSheet.vue'
@@ -23,6 +24,7 @@ import LiveScopeBar from '../components/live/LiveScopeBar.vue'
 import { useLiveTail } from '../composables/useLiveTail.js'
 import { useLiveAgents } from '../composables/useLiveAgents.js'
 import { useLiveScope } from '../composables/useLiveScope.js'
+import { useQueuedPrompts } from '../composables/useQueuedPrompts.js'
 import { fmtClock, fmtDuration, fmtModel, terminalSpanLabel } from '../utils/traceFormatters.js'
 import { parseLocalIso } from '../utils/sessionActivity.js'
 import {
@@ -35,14 +37,19 @@ const route = useRoute()
 const router = useRouter()
 const {
   sessionId, meta, spans, hasMoreOlder, earlierCount,
-  loading, loadingOlder, error, ended, active, stale, lastSeenAgeMs,
+  loading, loadingOlder, error, ended, active, stale,
   connectionLost, appendedSpans,
   start, stop, loadOlder, mergeSpans,
 } = useLiveTail(() => route.params.id)
 
-// Mirrored NOW-zone state (emitted by LiveNowZone) — drives the header's
-// idle dot/label and suppresses the caret while idle.
-const nowState = ref('response')
+// The server phase is the single state truth. The header always shows the
+// MAIN agent (agent_phase.main); the NOW zone gets the scoped agent's phase
+// when scoped, else main (computed inline in the template). Empty until the
+// first summary lands.
+const mainPhase = computed(() => meta.value.agent_phase?.main || meta.value.phase || '')
+
+// Queued / steer prompts (server-derived + optimistic just-sent steers).
+const queued = useQueuedPrompts(() => meta.value.queued_prompts, () => spans.value)
 
 // Agent roster: the server's whole-session agent_roster is the single
 // source of truth (window-independent — the loaded tail silently drops
@@ -88,11 +95,13 @@ const subagentIds = computed(() => {
 })
 
 // Blinking caret rides the newest visible row while the session runs —
-// suppressed while idle (the agent isn't producing anything).
+// suppressed unless the MAIN agent is actively working/blocked (idle,
+// inactive-stale, ended never blink).
+const CARET_LIVE_PHASES = new Set(['working', 'waiting-permission', 'waiting-input'])
 const caretSpanId = computed(() => {
   // Scoped: the caret is a MAIN-session liveness cue — suppress it in an
   // agent scope (a finished agent's frozen tail must not blink).
-  if (ended.value || nowState.value === 'idle' || scope.scopeId) return null
+  if (ended.value || scope.scopeId || !CARET_LIVE_PHASES.has(mainPhase.value)) return null
   // Phase bands are structure, not content — the caret belongs on the
   // newest real row even when a band is last.
   const rows = visibleRows.value
@@ -105,18 +114,24 @@ const caretSpanId = computed(() => {
 // ── Header ──
 const goalOpen = ref(false)
 const hdScrolled = ref(false)
-// idle = alive but not working: steady green dot (no pulse) + "idle".
-// stale = claims 'active' but nothing ingested for 10+ min (a crashed CLI
-// never fires SessionEnd, so status alone would pulse "running" forever).
-const statusClass = computed(() => {
-  if (ended.value) return 'live-status-ended'
-  if (stale.value) return 'live-status-stale'
-  return nowState.value === 'idle' ? 'live-status-idle' : 'live-status-running'
-})
-const statusLabel = computed(() => {
-  if (ended.value) return '✓ finished'
-  if (stale.value) return 'inactive'
-  return nowState.value === 'idle' ? 'idle' : 'running'
+// Header status = the MAIN agent's server phase: { class, label }. The dot
+// pulses only while working; waiting-* gets amber attention; idle a steady
+// green; inactive-stale amber; ended a grey done dot. A pre-summary fallback
+// keeps the header honest for the sub-second before the first phase lands.
+const PHASE_STATUS = {
+  ended: { cls: 'live-status-ended', label: '✓ finished' },
+  'inactive-stale': { cls: 'live-status-stale', label: 'inactive' },
+  idle: { cls: 'live-status-idle', label: 'idle' },
+  'waiting-permission': { cls: 'live-status-waiting', label: 'waiting' },
+  'waiting-input': { cls: 'live-status-waiting', label: 'waiting' },
+  working: { cls: 'live-status-running', label: 'running' },
+}
+const headerStatus = computed(() => {
+  const s = PHASE_STATUS[mainPhase.value]
+  if (s) return s
+  if (ended.value) return PHASE_STATUS.ended
+  if (stale.value) return PHASE_STATUS['inactive-stale']
+  return PHASE_STATUS.working
 })
 const elapsedLabel = computed(() => {
   const t0 = parseLocalIso(meta.value.started_at)?.getTime() ?? NaN
@@ -364,7 +379,6 @@ async function fetchContent(span) {
 // Filters deliberately persist: carrying a lens across sessions is useful,
 // and the header badge keeps it visible.
 function resetViewState() {
-  nowState.value = 'response'
   newCount.value = 0
   goalOpen.value = false
   hdScrolled.value = false
@@ -415,10 +429,10 @@ onUnmounted(() => {
         <div class="live-hd-row">
           <span
             class="live-status-dot"
-            :class="statusClass"
+            :class="headerStatus.cls"
             aria-hidden="true"
           ></span>
-          <span class="live-hd-status">{{ statusLabel }}</span>
+          <span class="live-hd-status">{{ headerStatus.label }}</span>
           <span class="live-hd-elapsed">
             <template v-if="elapsedLabel">· {{ elapsedLabel }}</template>
             <template v-if="ended && meta.ended_reason"> · {{ meta.ended_reason }}</template>
@@ -562,12 +576,14 @@ onUnmounted(() => {
         @click="jumpToNew"
       >↓ {{ newCount }} new</Button>
 
+      <LiveQueuedChips v-if="!scope.scopeId" :items="queued.items" />
+
       <LiveNowZone
         ref="nowZoneRef"
         :spans="scope.mainSpans"
         :ended="ended"
         :active="active"
-        :last-activity-ago-ms="lastSeenAgeMs"
+        :phase="scope.scopeId ? (meta.agent_phase?.[scope.scopeId] || '') : mainPhase"
         :session-id="sessionId || ''"
         :bridge-reachable="!!meta.bridge_reachable"
         :bridge-pane="meta.bridge_pane || ''"
@@ -577,7 +593,7 @@ onUnmounted(() => {
         :scope-agent="scope.scopedAgent"
         :agents-running="liveAgents.runningCount"
         :agents-waiting="liveAgents.waitingCount"
-        @state-change="s => (nowState = s)"
+        @sent="queued.noteSent"
         @open-response="s => openSheet('message', s)"
         @open-question="s => openSheet('qa', s)"
         @exit-scope="scope.exit"

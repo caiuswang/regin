@@ -159,6 +159,77 @@ def _subagent_capture(transcript_path, agent_id) -> tuple[bool, int | None]:
     return True, (mb if mb > 0 else None)
 
 
+# Prompt-span text cap — mirrors the main-agent anchor
+# (`span_posters._PROMPT_ANCHOR_TEXT_MAX_BYTES`) so a scoped subagent view opens
+# with the same clamp as a normal prompt card. The full launch prompt already
+# lives on the `tool.Agent` span; this is the scoped-view fallback.
+_SUBAGENT_PROMPT_MAX_BYTES = 8 * 1024
+
+
+def _first_user_prompt(transcript_path) -> tuple[str, str | None] | None:
+    """`(text, timestamp)` of a subagent transcript's first user message — its
+    launch prompt — or None. Accepts either a bare-string content or a
+    text-block list; a tool_result-only first entry (shouldn't happen for a
+    subagent) yields no text."""
+    import json
+    try:
+        with open(transcript_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or '"user"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get('type') != 'user':
+                    continue
+                text = _user_entry_text(e.get('message', {}).get('content'))
+                if text:
+                    return text, e.get('timestamp')
+                return None
+    except OSError:
+        return None
+    return None
+
+
+def _user_entry_text(content) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        for b in content:
+            if (isinstance(b, dict) and b.get('type') == 'text'
+                    and isinstance(b.get('text'), str) and b['text'].strip()):
+                return b['text'].strip()
+    return ''
+
+
+def _emit_subagent_prompt(trace_id, transcript_path, agent_id) -> None:
+    """Emit one `prompt` span (`prompt-sa-<agent_id>`) from the subagent's
+    launch prompt, agent_id-tagged so a scoped view opens with the task
+    statement. Idempotent via the deterministic span_id."""
+    import os
+
+    from lib.hook_plugin import post_span  # type: ignore
+    if not (isinstance(transcript_path, str) and transcript_path
+            and os.path.isfile(transcript_path) and agent_id):
+        return
+    first = _first_user_prompt(transcript_path)
+    if first is None:
+        return
+    text, ts = first
+    capped = text.encode('utf-8')[:_SUBAGENT_PROMPT_MAX_BYTES].decode(
+        'utf-8', 'ignore')
+    attrs = {'text': capped, 'chars': len(text), 'agent_id': agent_id}
+    if len(capped) < len(text):
+        attrs['text_truncated'] = True
+    ts_norm = _normalize_subagent_ts(ts) if isinstance(ts, str) and ts else None
+    post_span(
+        trace_id=trace_id, span_id=f'prompt-sa-{agent_id}', name='prompt',
+        start_time=ts_norm, end_time=ts_norm, attributes=attrs,
+    )
+
+
 def emit_subagent_responses(trace_id, transcript_path, agent_id, *, seen=None) -> None:
     """Emit one `assistant_response`/`assistant.thinking` span per turn in the
     subagent's own transcript, tagged `agent_id` (the dashboard's `_graft_orphans`
@@ -166,6 +237,7 @@ def emit_subagent_responses(trace_id, transcript_path, agent_id, *, seen=None) -
     (full-read) path used at SubagentStop; the live rescan uses the resumable
     variant below. `seen` (a turn-uuid set) gates re-posts; None posts all
     (idempotent via the `resp-sa-`/`think-sa-` span_id)."""
+    _emit_subagent_prompt(trace_id, transcript_path, agent_id)
     ok, read_cap = _subagent_capture(transcript_path, agent_id)
     if not ok:
         return
@@ -181,7 +253,11 @@ def emit_subagent_responses_resumable(
     """Resumable variant for the live rescan: parse only bytes appended to the
     subagent transcript since the last poll (reusing the accumulator in
     `state`), then post the same spans. Returns the updated
-    `ResumableScanState` to thread back into the next poll."""
+    `ResumableScanState` to thread back into the next poll. The launch-prompt
+    span is emitted once, on the first scan (`state is None`) — the first user
+    message sits before the committed byte offset on every later poll."""
+    if state is None:
+        _emit_subagent_prompt(trace_id, transcript_path, agent_id)
     ok, read_cap = _subagent_capture(transcript_path, agent_id)
     if not ok:
         return state

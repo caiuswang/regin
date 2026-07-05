@@ -27,8 +27,9 @@ import {
 // limit=50 on a heavy session hydrates ~every span and the fold row never
 // renders (verified against the worst-case fixture).
 const PAGE_SIZE = 5
-// LiveNowZone's idle gates (IDLE_SETTLE_MS, IDLE_ACTIVITY_MS) are sized
-// against this cadence — retune them if it changes, or idle will flap.
+// State (idle/working/…) is a SERVER verdict now (phase / agent_phase) —
+// the client only chooses how often to ask for it. The server's idle-settle
+// window absorbs the mid-turn quiet gaps that this cadence would otherwise flap.
 const POLL_ACTIVE_MS = 4000
 const POLL_STALE_MS = 15000
 // Deep-refresh the trailing N roots every poll — children stream in under
@@ -218,9 +219,13 @@ export function useLiveTail(getRouteId) {
     // agent_roster (whole-session subagent roster — window-independent),
     // model / repo (header meta line), and the segment-aware live-peak
     // context_pct (ctx meter) all refresh every poll off the same summary.
+    // phase / agent_phase are the server's state verdict — the card renders
+    // them, never re-derives state (no client idle debounce).
+    // queued_prompts (transcript-derived + bridge steers) drive the queued chips.
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
       'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now',
-      'task_list', 'agent_roster', 'model', 'repo', 'context_pct']
+      'task_list', 'agent_roster', 'model', 'repo', 'context_pct',
+      'phase', 'agent_phase', 'queued_prompts']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }

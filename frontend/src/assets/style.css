@@ -1983,6 +1983,8 @@ details summary {
 .live-status-idle { background: var(--color-emerald-500); }
 /* claims 'active' but nothing ingested for 10+ min (likely crashed) */
 .live-status-stale { background: var(--color-amber-500); }
+/* blocked on a human (permission / input): amber attention, steady. */
+.live-status-waiting { background: var(--color-amber-500); }
 @keyframes live-pulse { 50% { opacity: 0.35; } }
 .live-hd-conn {
     flex-shrink: 0;
@@ -2196,6 +2198,41 @@ details summary {
 
 /* NOW zone (state-capped: the cap is per-state, content never scrolls —
    [more] opens a sheet; the composer states raise it, see below) */
+/* Queued / steer strip: sits between the tail and the NOW zone; one
+   truncated line per pending prompt. Steer (bridge / optimistic) reads amber. */
+.live-queued {
+    flex-shrink: 0;
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    padding: 5px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 66px;
+    overflow-y: auto;
+}
+.live-queued-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--color-fg-muted);
+}
+.live-queued-tag {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: var(--color-fg-faint);
+    white-space: nowrap;
+}
+.live-queued-steer .live-queued-tag { color: var(--color-amber-700); }
+.live-queued-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
 .live-now {
     flex-shrink: 0;
     background: var(--color-background);

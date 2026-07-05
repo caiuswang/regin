@@ -34,10 +34,14 @@ property the read path relies on.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 from lib.trace.pending_spans import (
+    INACTIVE_THRESHOLD_SEC,
     PROMPT_PLACEHOLDER_PREFIX,
+    is_agent_scoped_prompt,
     is_pending_span_id,
+    parse_naive_ts as _merge_ts,
     pending_id_for_resolved,
 )
 from lib.trace.projection import _graft_orphans
@@ -321,7 +325,7 @@ def _drop_stale_blockers(spans: list[dict], prompt_id_ceiling=None) -> list[dict
     is always kept."""
     window_max: dict[str, int] = {}
     for s in spans:
-        if s.get('name') != 'prompt':
+        if s.get('name') != 'prompt' or is_agent_scoped_prompt(s):
             continue
         sid = s.get('id')
         if sid is None:
@@ -350,25 +354,151 @@ def _drop_stale_blockers(spans: list[dict], prompt_id_ceiling=None) -> list[dict
     return [s for s in spans if not stale(s)]
 
 
-def merge_spans(raw: list[dict], prompt_id_ceiling=None) -> list[dict]:
+# A stuck PENDING that the stale-blocker sweep can't reach — it is NEWER than
+# the last prompt, so no later prompt supersedes it — is instead demoted to a
+# resolved-interrupted rendering here. `_STALE_PENDING_OLDER_THAN_SEC` guards
+# the session-inactive path so a tool that only just started on a
+# just-abandoned session isn't prematurely called dead. `INACTIVE_THRESHOLD`
+# mirrors the roster stale window (web/blueprints/trace/sessions.py).
+INTERRUPT_SOURCE_STALE = 'stale'
+_STALE_PENDING_OLDER_THAN_SEC = 60
+# Rule (a) grace: a pending is only demoted-as-interrupted once the same agent
+# has demonstrably moved on for this long. Set ABOVE the 60s transcript
+# backfill gate (repair.has_stuck_pending_tools) so a merely-lost PostToolUse
+# always gets a shot at being superseded by its true OK span before we render
+# it "⏹ interrupted".
+_MOVED_ON_GRACE_SEC = 90
+
+
+def _is_demotable_pending(span: dict) -> bool:
+    """A PENDING tool / permission-request / ask placeholder that could be a
+    stuck blocker. Prompt placeholders are excluded — those are handled by
+    `_drop_stale_blockers` / `_absorb_slash_command_expansions`."""
+    if span.get('status_code') != 'PENDING':
+        return False
+    name = span.get('name') or ''
+    return name.startswith('tool.') or name == 'permission.request'
+
+
+def _latest_move_on_ts(spans: list[dict]) -> dict:
+    """`(trace_id, agent_id) → latest assistant_response/prompt start_time`
+    (naive local) in ONE pass, so `_moved_on_past_grace` is an O(1) lookup
+    rather than a rescan of the whole window per pending span."""
+    out: dict = {}
+    for s in spans:
+        if s.get('name') not in ('assistant_response', 'prompt'):
+            continue
+        ts = _merge_ts(s.get('start_time'))
+        if ts is None:
+            continue
+        key = (s.get('trace_id'), _attrs(s).get('agent_id'))
+        prev = out.get(key)
+        if prev is None or ts > prev:
+            out[key] = ts
+    return out
+
+
+def _moved_on_past_grace(pending: dict, move_on_ts: dict) -> bool:
+    """True when a same-agent `assistant_response`/`prompt` started at least
+    `_MOVED_ON_GRACE_SEC` after the pending — Claude demonstrably moved past the
+    blocking call AND enough time has elapsed that a lost PostToolUse would have
+    been backfilled with the true OK span (rule a). The grace keeps a merely-
+    lost result from being mislabeled '⏹ interrupted' seconds after the next
+    response lands."""
+    p_ts = _merge_ts(pending.get('start_time'))
+    if p_ts is None:
+        return False
+    key = (pending.get('trace_id'), _attrs(pending).get('agent_id'))
+    newer = move_on_ts.get(key)
+    return newer is not None and (newer - p_ts).total_seconds() >= _MOVED_ON_GRACE_SEC
+
+
+def _session_is_inactive(session_activity: dict | None, now: datetime) -> bool:
+    if not session_activity:
+        return False
+    if session_activity.get('status') == 'ended':
+        return True
+    last_seen = _merge_ts(session_activity.get('last_seen'))
+    if last_seen is None:
+        return False
+    return (now - last_seen).total_seconds() > INACTIVE_THRESHOLD_SEC
+
+
+def _demote(pending: dict) -> dict:
+    """Copy of the pending rendered as resolved-interrupted (status ERROR +
+    interrupt markers the frontend already reads). Merge stays pure — a copy,
+    never a mutation."""
+    out = dict(pending)
+    out['status_code'] = 'ERROR'
+    out['attributes'] = {
+        **_attrs(pending),
+        'is_interrupt': True,
+        'interrupted': True,
+        'interrupt_source': INTERRUPT_SOURCE_STALE,
+    }
+    return out
+
+
+def _demote_stale_pending(
+    spans: list[dict], session_activity: dict | None = None,
+) -> list[dict]:
+    """Demote stuck PENDING tool/permission/ask placeholders to a
+    resolved-interrupted rendering (see `merge_spans`). Two triggers:
+
+      (a) a same-agent newer `assistant_response`/`prompt` started at least
+          `_MOVED_ON_GRACE_SEC` after the pending — Claude moved on and the
+          backfill has had its shot, OR
+      (b) the session is inactive (ended, or silent past INACTIVE_THRESHOLD)
+          and the pending is older than `_STALE_PENDING_OLDER_THAN_SEC`.
+
+    INVARIANT: a legitimately-running long tool on an ACTIVE session with no
+    same-agent completion activity after it is never demoted — (a) needs a
+    later same-agent move-on past the grace, (b) needs an inactive session."""
+    if not any(_is_demotable_pending(s) for s in spans):
+        return spans
+    now = (session_activity or {}).get('now') or datetime.now()
+    inactive = _session_is_inactive(session_activity, now)
+    move_on_ts = _latest_move_on_ts(spans)
+
+    def demote(s: dict) -> bool:
+        if _moved_on_past_grace(s, move_on_ts):
+            return True
+        if not inactive:
+            return False
+        p_ts = _merge_ts(s.get('start_time'))
+        return p_ts is not None and \
+            (now - p_ts).total_seconds() > _STALE_PENDING_OLDER_THAN_SEC
+
+    return [
+        _demote(s) if _is_demotable_pending(s) and demote(s) else s
+        for s in spans
+    ]
+
+
+def merge_spans(
+    raw: list[dict], prompt_id_ceiling=None, session_activity=None,
+) -> list[dict]:
     """Reconcile one window of append-only rows into the canonical span list.
 
     Pure: returns a new list, mutates neither `raw` nor the DB. Dedup runs
     first (so superseded placeholders can't open phantom turns), then a
     slash-command rescue (`_absorb_slash_command_expansions` moves an
     expansion onto its resolved echo before the stale sweep could drop it),
-    then the deterministic reparent ladder. Drop-in replacement for
-    `_graft_orphans` at the read path — identical over already-reconciled
-    windows.
+    the stale-blocker drop, then the stuck-pending demotion. Drop-in
+    replacement for `_graft_orphans` at the read path — identical over
+    already-reconciled windows.
 
     `prompt_id_ceiling` is the per-trace GLOBAL max prompt id; a windowed
     reader passes it so stray prompt placeholders drop even in an older
     scroll-up window (see `_drop_stale_blockers`). Whole-session readers omit
-    it."""
+    it. `session_activity` ({'status', 'last_seen'}, optional) enables the
+    session-inactive demotion path (`_demote_stale_pending`); without it only
+    the same-agent-moved-on path fires."""
     if not raw:
         return raw
     spans = _drop_superseded_placeholders(raw)
     spans = _drop_resolved_permission_requests(spans)
     spans = _absorb_slash_command_expansions(spans)
     spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling)
+    spans = _demote_stale_pending(spans, session_activity=session_activity)
     return _graft_orphans(spans)
