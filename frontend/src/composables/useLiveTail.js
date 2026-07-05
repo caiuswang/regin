@@ -1,7 +1,9 @@
 import { ref, computed } from 'vue'
 import api from '../api'
 import { dropRetiredSpans } from '../utils/traceFormatters.js'
-import { isActiveSession } from '../utils/sessionActivity.js'
+import {
+  isActiveSession, parseLocalIso, STALE_FALLBACK_WINDOW_MS,
+} from '../utils/sessionActivity.js'
 
 // Data + poll lifecycle for the /live mobile session-tail card.
 //
@@ -25,19 +27,22 @@ import { isActiveSession } from '../utils/sessionActivity.js'
 // limit=50 on a heavy session hydrates ~every span and the fold row never
 // renders (verified against the worst-case fixture).
 const PAGE_SIZE = 5
+// LiveNowZone's idle gates (IDLE_SETTLE_MS, IDLE_ACTIVITY_MS) are sized
+// against this cadence — retune them if it changes, or idle will flap.
 const POLL_ACTIVE_MS = 4000
 const POLL_STALE_MS = 15000
 // Deep-refresh the trailing N roots every poll — children stream in under
 // the active prompt (and late subagents under the prior ones).
 const DEEP_REFRESH_TAIL = 3
 const CHILD_CONCURRENCY = 4
+const MAX_ROOT_RETRIES = 5
 
 // Reserved live-placeholder span_id prefixes (lib/trace/pending_spans.py).
 const PENDING_PREFIXES = ['promptlive-', 'pending-', 'permreq-']
 
 function bySpanTime(a, b) {
-  const at = a.start_time ? new Date(a.start_time).getTime() : 0
-  const bt = b.start_time ? new Date(b.start_time).getTime() : 0
+  const at = a.start_time ? (parseLocalIso(a.start_time)?.getTime() ?? 0) : 0
+  const bt = b.start_time ? (parseLocalIso(b.start_time)?.getTime() ?? 0) : 0
   if (at !== bt) return at - bt
   return (a.id || 0) - (b.id || 0)
 }
@@ -66,8 +71,12 @@ export function useLiveTail(getRouteId) {
   let roots = []              // [{ id, span_id, leaf }] ascending by DB id
   let rootIds = new Set()
   // Roots whose children fetch failed — retried on subsequent polls so a
-  // transient 500 doesn't permanently lose a turn's rows.
+  // transient 500 doesn't permanently lose a turn's rows. A root that keeps
+  // failing is abandoned after MAX_ROOT_RETRIES: while any root is failing
+  // the stale-PENDING sweep is suspended, so one persistently-500ing root
+  // must not be allowed to pin a dead placeholder in the NOW zone forever.
   let failedRootIds = new Set()
+  let rootFailCounts = new Map()
   let timer = null
   let stopped = true
   let pollBusy = false
@@ -90,16 +99,40 @@ export function useLiveTail(getRouteId) {
     if (m.status === 'active') return false
     if (m.status === 'ended') return true
     if (!m.ended_at) return false
-    const e = Date.parse(m.ended_at)
-    const s = Date.parse(m.last_seen)
+    const e = parseLocalIso(m.ended_at)?.getTime()
+    const s = parseLocalIso(m.last_seen)?.getTime()
     // last_seen more than 1s past ended_at ⇒ resumed, not ended.
     return !(Number.isFinite(e) && Number.isFinite(s) && s > e + 1000)
   })
 
-  // Same rule as the Sessions table's green badge (utils/sessionActivity):
-  // status='active' → active, status='ended' → not, anything else falls
-  // back to the 10-minute last-seen recency check.
-  const active = computed(() => isActiveSession(meta.value))
+  // Age of the newest ingested span, measured server−server (server_now vs
+  // last_seen, both the server's wall-clock) so a viewer in another timezone
+  // reads the same age. NaN until the first map summary lands.
+  const lastSeenAgeMs = computed(() => {
+    const m = meta.value
+    const now = m.server_now ? parseLocalIso(m.server_now)?.getTime() : NaN
+    const seen = m.last_seen ? parseLocalIso(m.last_seen)?.getTime() : NaN
+    return Number.isFinite(now) && Number.isFinite(seen) ? now - seen : NaN
+  })
+
+  // `status` stays 'active' forever when a session dies without its
+  // SessionEnd hook (crash/SIGKILL) — no server heartbeat corrects it. A
+  // session that claims to be active but has ingested nothing for the
+  // stale window gets its own header state instead of pulsing "running".
+  const stale = computed(() => !ended.value
+    && Number.isFinite(lastSeenAgeMs.value)
+    && lastSeenAgeMs.value > STALE_FALLBACK_WINDOW_MS)
+
+  // Same rule as the Sessions table's green badge (utils/sessionActivity),
+  // except a stale-but-'active' session is demoted: it slows the poll to
+  // the 15s cadence and keeps the NOW zone out of the idle-composer state.
+  const active = computed(() => !stale.value && isActiveSession(meta.value))
+
+  // Consecutive mid-session poll failures. One blip is normal; two misses
+  // (≥8s dark) surface a "connection lost" hint — without this the card
+  // keeps its last healthy render indefinitely during an outage.
+  const pollFailCount = ref(0)
+  const connectionLost = computed(() => pollFailCount.value >= 2)
 
   // Fold-row remainder. `span_count_total` excludes PENDING placeholders
   // (append-only store keeps them), so the loaded count must too.
@@ -178,8 +211,11 @@ export function useLiveTail(getRouteId) {
     // polling loop) — they gate the NOW zone's bridge composer. server_now
     // is the server's wall-clock at read time — the NOW-zone elapsed anchors
     // to it so a viewer in a different timezone doesn't leak the offset.
+    // status/ended_reason must refresh every poll too: pinning them to the
+    // page-load row froze the header — a session ending (or resuming) while
+    // viewed never flipped.
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
-      'bridge_reachable', 'bridge_pane', 'server_now']
+      'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }
@@ -226,9 +262,13 @@ export function useLiveTail(getRouteId) {
       if (isStale(gen)) break
       for (const { id, list } of results) {
         if (list === null) {
-          failedRootIds.add(id)
+          const n = (rootFailCounts.get(id) || 0) + 1
+          rootFailCounts.set(id, n)
+          if (n <= MAX_ROOT_RETRIES) failedRootIds.add(id)
+          else failedRootIds.delete(id)
         } else {
           failedRootIds.delete(id)
+          rootFailCounts.delete(id)
           collected.push(...list)
         }
       }
@@ -237,8 +277,8 @@ export function useLiveTail(getRouteId) {
   }
 
   // Resolve the session row: explicit route id (full id or prefix), else the
-  // newest session. The row is the only source of `status`/`ended_reason` —
-  // the map summary carries ended_at/last_seen but not those two.
+  // newest session. The map summary refreshes the header fields (including
+  // status/ended_reason) every poll; this row fetch only bootstraps them.
   async function resolveSessionRow() {
     const routeId = getRouteId()
     const qs = routeId
@@ -248,17 +288,6 @@ export function useLiveTail(getRouteId) {
     const row = (data.sessions || [])[0] || null
     sessionId.value = row?.trace_id || routeId || null
     if (row) meta.value = { ...meta.value, ...row }
-  }
-
-  async function refreshMetaRow() {
-    if (!sessionId.value) return
-    try {
-      const data = await api.get(
-        `/sessions?trace_id=${encodeURIComponent(sessionId.value)}&kind=all&size=1`,
-      )
-      const row = (data.sessions || [])[0]
-      if (row) meta.value = { ...meta.value, ...row }
-    } catch { /* keep the map-derived meta */ }
   }
 
   function applyWindow(data) {
@@ -274,7 +303,12 @@ export function useLiveTail(getRouteId) {
 
   function scheduleNext() {
     clearTimer()
-    if (stopped || ended.value) return
+    if (stopped) return
+    // An ended session normally schedules nothing — but if any root's
+    // children fetch failed during the initial load there would be no later
+    // poll to retry it, leaving a permanent hole in the tail. Keep polling
+    // until the retries succeed or hit the give-up cap.
+    if (ended.value && failedRootIds.size === 0) return
     if (document.hidden) return // visibilitychange resumes
     timer = setTimeout(pollOnce, active.value ? POLL_ACTIVE_MS : POLL_STALE_MS)
   }
@@ -319,8 +353,12 @@ export function useLiveTail(getRouteId) {
       pruneRetired(data.retired_span_ids)
       await refreshSubtrees(data, fresh, gen)
       if (isStale(gen)) return
-      if (ended.value && !meta.value.ended_reason) await refreshMetaRow()
-    } catch { /* transient poll failure — keep the cadence */ }
+      pollFailCount.value = 0
+    } catch {
+      // Keep the cadence, but count the miss — consecutive failures flip
+      // `connectionLost` so the header can say the data is no longer live.
+      if (!isStale(gen)) pollFailCount.value += 1
+    }
     finally { pollBusy = false }
     if (isStale(gen)) return
     const appended = prevLast
@@ -332,7 +370,11 @@ export function useLiveTail(getRouteId) {
 
   function onVisibility() {
     if (document.hidden) { clearTimer(); return }
-    if (!stopped && !ended.value && !timer && !pollBusy) pollOnce()
+    // Same gate as scheduleNext: an ended session with failed root fetches
+    // still owes retries — plain !ended here would orphan them on a
+    // hide/show cycle.
+    const done = ended.value && failedRootIds.size === 0
+    if (!stopped && !done && !timer && !pollBusy) pollOnce()
   }
 
   function resetState() {
@@ -348,6 +390,8 @@ export function useLiveTail(getRouteId) {
     roots = []
     rootIds = new Set()
     failedRootIds = new Set()
+    rootFailCounts = new Map()
+    pollFailCount.value = 0
   }
 
   async function start() {
@@ -414,7 +458,8 @@ export function useLiveTail(getRouteId) {
 
   return {
     sessionId, meta, spans, spanCountTotal, hasMoreOlder, earlierCount,
-    loading, loadingOlder, error, ended, active, appendedSpans,
+    loading, loadingOlder, error, ended, active, stale, lastSeenAgeMs,
+    connectionLost, appendedSpans,
     start, stop, loadOlder, mergeSpans,
   }
 }

@@ -1974,7 +1974,16 @@ details summary {
 .live-status-ended { background: var(--color-fg-faint); }
 /* alive but not working: steady green, no pulse */
 .live-status-idle { background: var(--color-emerald-500); }
+/* claims 'active' but nothing ingested for 10+ min (likely crashed) */
+.live-status-stale { background: var(--color-amber-500); }
 @keyframes live-pulse { 50% { opacity: 0.35; } }
+.live-hd-conn {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--color-warning);
+    white-space: nowrap;
+}
 .live-hd-status {
     font-size: 12px;
     font-weight: 600;
@@ -1990,12 +1999,15 @@ details summary {
     text-overflow: ellipsis;
     min-width: 0;
 }
+/* 36px visual box + padding-boxed hit area ≈ 40px — mobile tap target */
 .live-hd-btn {
     margin-left: auto;
     flex-shrink: 0;
     position: relative;
-    width: 30px;
-    height: 30px;
+    width: 36px;
+    height: 36px;
+    margin-top: -3px;
+    margin-bottom: -3px;
     border: 1px solid var(--color-border);
     border-radius: 8px;
     color: var(--color-fg-subtle);
@@ -2013,6 +2025,7 @@ details summary {
 }
 .live-goal {
     margin-top: 4px;
+    padding: 6px 0;
     font-size: 12.5px;
     color: var(--color-fg-subtle);
     overflow: hidden;
@@ -2039,6 +2052,7 @@ details summary {
     display: flex;
     width: 100%;
     height: auto;
+    min-height: 40px;
     align-items: center;
     justify-content: center;
     gap: 6px;

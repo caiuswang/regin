@@ -600,6 +600,8 @@ def _session_summary(trace_id: str) -> dict:
                 SessionModel.started_at,
                 SessionModel.ended_at,
                 SessionModel.last_seen,
+                SessionModel.status,
+                SessionModel.ended_reason,
                 SessionModel.title,
                 SessionModel.title_source,
             ).where(SessionModel.trace_id == trace_id)
@@ -608,7 +610,8 @@ def _session_summary(trace_id: str) -> dict:
         return {}
     (model, input_tokens, output_tokens,
      cache_read, cache_creation, peak, peak_main, live, active_work_ms,
-     started_at, ended_at, last_seen, title, title_source) = row
+     started_at, ended_at, last_seen, status, ended_reason,
+     title, title_source) = row
     # Compute window at read time from the session's richer `model` id —
     # see _row_to_dict() for the rationale. Window inference uses the
     # all-inclusive peak; the headline `context_pct` divides the *live*
@@ -641,6 +644,12 @@ def _session_summary(trace_id: str) -> dict:
         'started_at': started_at,
         'ended_at': ended_at,
         'last_seen': last_seen,
+        # status/ended_reason ride the summary so the /live poll can flip a
+        # session to "finished" (or back, on resume) without a separate row
+        # fetch — the row endpoint alone left the header frozen at its
+        # page-load value.
+        'status': status,
+        'ended_reason': ended_reason,
         # Server wall-clock at read time (naive local, same basis as every
         # span start_time). The /live NOW-zone elapsed anchors to THIS instead
         # of the viewer's Date.now(): span timestamps are the server's local

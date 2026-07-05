@@ -30,7 +30,10 @@ const emit = defineEmits(['answered'])
 const a = computed(() => props.span?.attributes || {})
 const isAsk = computed(() => props.span?.name === 'tool.AskUserQuestion')
 const pending = computed(() => props.span?.status_code === 'PENDING')
-const permDenied = computed(() => a.value.decision === 'denied' || !!a.value.denied)
+// Same rule as liveRows.permRowModel: the backend never writes decision
+// fields onto permission spans — the denial IS the permission.denied span.
+const permDenied = computed(() => props.span?.name === 'permission.denied'
+  || a.value.decision === 'denied' || !!a.value.denied)
 const permRequested = computed(() => (a.value.command_preview
   ? `$ ${a.value.command_preview}`
   : (a.value.requested_permission || `tool.${toolDisplayName(a.value.tool_name || 'tool')}`)))
@@ -172,7 +175,9 @@ function sendFree() {
           <span class="live-qa-optlbl">
             {{ pending ? 'Waiting for your decision' : (permDenied ? 'Denied' : 'Granted') }}
           </span>
-          <span v-if="a.denial_reason" class="live-qa-optdesc">{{ a.denial_reason }}</span>
+          <span v-if="a.reason || a.denial_reason" class="live-qa-optdesc">
+            {{ a.reason || a.denial_reason }}
+          </span>
         </span>
       </div>
     </div>

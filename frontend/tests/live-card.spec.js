@@ -894,13 +894,26 @@ test.describe('NOW zone (acceptance #8)', () => {
 // (`/api/sessions/<id>/bridge-send`) with page.route — the browser-side
 // contract is what's under test, not tmux delivery.
 
+// The NOW zone refuses `idle` while the ingest stream looks active
+// (IDLE_ACTIVITY_MS gates on server_now − last_seen): a genuinely idle
+// session's last ingest is OLD, so quietness must be simulated alongside
+// reachability — fixtures post their spans seconds before the assertion.
+function quietLastSeen() {
+  return new Date(Date.now() - 30_000).toISOString()
+}
+
 async function bridgeReachableMap(page, traceId, pane = '%3') {
   await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
     const resp = await route.fetch()
     const json = await resp.json()
     await route.fulfill({
       response: resp,
-      json: { ...json, bridge_reachable: true, bridge_pane: pane },
+      json: {
+        ...json,
+        bridge_reachable: true,
+        bridge_pane: pane,
+        last_seen: quietLastSeen(),
+      },
     })
   })
 }
@@ -996,7 +1009,7 @@ test.describe('Idle state + bridge composer (v5)', () => {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 
     // Full composer with the idle placeholder + bridge meta naming the pane.
     await expect(composerTa(page)).toBeVisible()
@@ -1065,36 +1078,43 @@ test.describe('Idle state + bridge composer (v5)', () => {
 
   test('a mid-draft composer unmount (one-poll reachability blip) preserves the draft', async ({ page }) => {
     const { traceId } = await postActiveSession(page)
-    // Serve bridge_reachable=true except on the SECOND map response — a
+    // Serve bridge_reachable=true except on the FOURTH map response — a
     // one-poll blip (tmux hiccup / registry churn) that unmounts the
-    // composer and must not eat the user's typed draft.
+    // composer and must not eat the user's typed draft. The blip must land
+    // AFTER the 6s idle debounce has completed (polls run every 4s; a blip
+    // on poll 2 resets the debounce and the first idle never settles).
     let served = 0
     await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
       const resp = await route.fetch()
       const json = await resp.json()
       served += 1
-      const reachable = served !== 2
+      const reachable = served !== 4
       await route.fulfill({
         response: resp,
-        json: { ...json, bridge_reachable: reachable, bridge_pane: reachable ? '%3' : null },
+        json: {
+          ...json,
+          bridge_reachable: reachable,
+          bridge_pane: reachable ? '%3' : null,
+          last_seen: quietLastSeen(),
+        },
       })
     })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 
     await composerTa(page).fill('half-typed steering thought')
 
-    // Blip: next poll reports unreachable → composer unmounts, state falls
-    // back to response.
-    await expect(nowZone).toHaveAttribute('data-state', 'response', { timeout: 10_000 })
+    // Blip: the served!==4 poll reports unreachable → composer unmounts,
+    // state falls back to response.
+    await expect(nowZone).toHaveAttribute('data-state', 'response', { timeout: 20_000 })
     await expect(composer(page)).toHaveCount(0)
 
-    // Recovery: the following poll restores reachability → the remounted
-    // composer still carries the draft.
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    // Recovery: the following poll restores reachability → after the idle
+    // debounce re-settles, the remounted composer still carries the draft.
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
     await expect(composerTa(page)).toHaveValue('half-typed steering thought')
   })
 
@@ -1126,7 +1146,7 @@ test.describe('Bridge send lifecycle (v5)', () => {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
     const rowsBefore = await rows(page).count()
 
     await composerTa(page).fill('run the flaky spec again')
@@ -1159,7 +1179,7 @@ test.describe('Bridge send lifecycle (v5)', () => {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     await expect(page.locator('[data-testid="live-now"]'))
-      .toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+      .toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 
     await composerTa(page).fill('keep this draft')
     await composerSend(page).click()
@@ -1197,7 +1217,7 @@ test.describe('Composer pinning + geometry (v5)', () => {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 
     const tail = page.locator('[data-testid="live-tail"]')
     const gap = () => tail.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)
@@ -1227,7 +1247,7 @@ test.describe('Composer pinning + geometry (v5)', () => {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
-    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 
     const tail = page.locator('[data-testid="live-tail"]')
     await tail.evaluate((el) => { el.scrollTop = 0 })
@@ -1276,7 +1296,7 @@ async function idleComposer(page, traceId) {
   await page.goto(`/live/${traceId}`)
   await settle(page)
   await expect(page.locator('[data-testid="live-now"]'))
-    .toHaveAttribute('data-state', 'idle', { timeout: 10_000 })
+    .toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 }
 
 test.describe('Slash-command autocomplete (v6)', () => {
@@ -1488,5 +1508,221 @@ test.describe('Answer a pending ask from the QA sheet (v9)', () => {
     await sheet.locator('[data-testid="live-qa-pick"]').first().click()
     await expect(sheet).toContainText('no reachable session')
     await expect(sheet).toBeVisible()  // not closed on failure
+  })
+})
+
+// ---- Review regressions (v9) ------------------------------------------------
+//
+// Header/status lifecycle, outcome-row phrasing, filter-count, and
+// connection-health invariants. The session-switch state-reset spec lives in
+// live-picker.spec.js instead — it needs the picker's mocked-list fixture
+// harness.
+
+// Shifts a server-local naive timestamp (no Z/offset — see parseLocalIso) by
+// deltaMs and re-renders it in the SAME naive shape, computed entirely via
+// UTC getters on a Date built from Date.UTC of the parsed components. This
+// keeps the result correct regardless of the TEST RUNNER's own timezone: the
+// y/m/d/h/m/s digits are the only thing that matters, since parseLocalIso
+// re-parses them as local-Date components on the browser side too.
+function shiftServerTimestamp(iso, deltaMs) {
+  const m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/)
+  if (!m) return iso
+  const ms = m[7] ? parseInt(m[7].slice(0, 3).padEnd(3, '0'), 10) : 0
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms) + deltaMs)
+  const pad = (n, w = 2) => String(n).padStart(w, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T`
+    + `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`
+}
+
+test.describe('Review regressions (v9)', () => {
+  test('status flips to finished mid-view once a session.end span lands (applySummary refresh)', async ({ page }) => {
+    const { traceId, sfx } = await postActiveSession(page)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const header = page.locator('[data-testid="live-header"]')
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(rows(page).first()).toBeVisible({ timeout: 10_000 })
+    await expect(header).toContainText('running', { timeout: 5_000 })
+    await expect(nowZone).not.toHaveAttribute('data-state', 'finished')
+
+    await post(page, [
+      { trace_id: traceId, span_id: `end-${sfx}`, parent_id: null, name: 'session.end',
+        start_time: new Date().toISOString(), attributes: { reason: 'clear', is_test: true } },
+    ])
+
+    // Two poll cycles at the 4s active cadence, plus fetch/render slack.
+    await expect(header).toContainText('✓ finished', { timeout: 15_000 })
+    await expect(nowZone).toHaveAttribute('data-state', 'finished', { timeout: 15_000 })
+  })
+
+  test('a false "idle" is suppressed while the ingest stream stays fresh, then fires once it quiets (IDLE_ACTIVITY_MS)', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    let fresh = true
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({
+        response: resp,
+        json: {
+          ...json,
+          bridge_reachable: true,
+          bridge_pane: '%3',
+          last_seen: fresh ? new Date().toISOString() : quietLastSeen(),
+        },
+      })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toBeVisible({ timeout: 10_000 })
+
+    // Observation window: last_seen keeps refreshing to "now" every poll, so
+    // the ingest-quiet gate must never clear and 'idle' must never appear.
+    for (const wait of [3_000, 3_000, 3_000]) {
+      await page.waitForTimeout(wait)
+      await expect(nowZone).not.toHaveAttribute('data-state', 'idle')
+    }
+
+    // Flip to a genuinely quiet stream: idle must now be reached (next poll
+    // clears the activity gate, then the 6s debounce settles).
+    fresh = false
+    await expect(nowZone).toHaveAttribute('data-state', 'idle', { timeout: 15_000 })
+  })
+
+  test('a permission.denied span renders a visible ✗ qa row with its reason (isQaSpan/SIGNAL_EXACT)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'permission denied fixture', is_test: true } },
+      { trace_id: traceId, span_id: `permdenied-${sfx}`, parent_id: null, name: 'permission.denied',
+        start_time: now, status_code: 'ERROR',
+        attributes: {
+          tool_name: 'Bash', reason: 'user denied', command_preview: 'rm -rf /tmp/x', is_test: true,
+        } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    // Default filters — no show-system toggle.
+    const row = page.locator(`[data-testid="live-row"][data-span-id="permdenied-${sfx}"]`)
+    await expect(row).toBeVisible({ timeout: 10_000 })
+    await expect(row).toHaveAttribute('data-kind', 'qa')
+    await expect(row).toContainText('Permission')
+    await expect(row).toContainText('✗')
+    await expect(row).toContainText('user denied')
+  })
+
+  test('rejected and failed tool rows say so instead of the success verb (toolOutcomeMain)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'outcome-main fixture', is_test: true } },
+      { trace_id: traceId, span_id: `rejected-${sfx}`, parent_id: null, name: 'tool.Write',
+        start_time: now,
+        attributes: {
+          tool_name: 'Write', file_path: '/tmp/config.py', rejected: true,
+          reject_reason: 'Read before Write', is_test: true,
+        } },
+      { trace_id: traceId, span_id: `failed-${sfx}`, parent_id: null, name: 'tool.failure',
+        start_time: now, status_code: 'ERROR',
+        attributes: { tool_name: 'Bash', command_preview: 'make test', is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+
+    const rejectedRow = page.locator(`[data-testid="live-row"][data-span-id="rejected-${sfx}"]`)
+    await expect(rejectedRow).toBeVisible({ timeout: 10_000 })
+    await expect(rejectedRow).toContainText('blocked')
+    await expect(rejectedRow).not.toContainText('Wrote')
+
+    const failedRow = page.locator(`[data-testid="live-row"][data-span-id="failed-${sfx}"]`)
+    await expect(failedRow).toBeVisible()
+    await expect(failedRow).toContainText('Bash')
+    await expect(failedRow).toContainText('failed')
+    await expect(failedRow).not.toContainText('failure ·')
+  })
+
+  test('the category chip count respects the active search query, and selecting an emptied chip shows the filter-empty state', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const MARKER = 'QUERYMARKER_UNIQUE'
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt1-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: `${MARKER} first prompt`, is_test: true } },
+      { trace_id: traceId, span_id: `prompt2-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: `${MARKER} second prompt`, is_test: true } },
+      { trace_id: traceId, span_id: `bash1-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, attributes: { command_preview: 'echo one', is_test: true } },
+      { trace_id: traceId, span_id: `bash2-${sfx}`, parent_id: null, name: 'tool.Bash',
+        start_time: now, attributes: { command_preview: 'echo two', is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(rows(page).first()).toBeVisible({ timeout: 10_000 })
+
+    await page.locator('[data-testid="live-filter"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible({ timeout: 5_000 })
+
+    // Baseline: the 'tool' chip counts the two tool.Bash spans before any
+    // query narrows the set.
+    const toolChip = sheet.locator('.live-chip', { hasText: 'tool' })
+    await expect(toolChip.locator('.live-chip-n')).toHaveText('2')
+
+    await page.getByPlaceholder(/search spans/i).fill(MARKER)
+    // The query matches only the two prompts — the tool chip's count must
+    // collapse to 0, not keep advertising the pre-query total.
+    await expect(toolChip.locator('.live-chip-n')).toHaveText('0')
+
+    await toolChip.click()
+    await expect(page.getByText('no spans match the current filter')).toBeVisible({ timeout: 5_000 })
+  })
+
+  test('a connection-lost indicator appears after consecutive poll failures and clears on recovery (pollFailCount)', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(rows(page).first()).toBeVisible({ timeout: 10_000 })
+
+    const connLost = page.locator('[data-testid="live-conn-lost"]')
+    await expect(connLost).toHaveCount(0)
+
+    await page.route(`**/api/sessions/${traceId}/map*`, (route) => route.abort())
+    // >=2 misses at the 4s active cadence (~8s) plus render slack.
+    await expect(connLost).toBeVisible({ timeout: 15_000 })
+
+    await page.unroute(`**/api/sessions/${traceId}/map*`)
+    await expect(connLost).toBeHidden({ timeout: 15_000 })
+  })
+
+  test('a stale-but-"active" session reads "inactive", not "running" (stale computed)', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      const staleLastSeen = json.server_now
+        ? shiftServerTimestamp(json.server_now, -15 * 60 * 1000)
+        : new Date(Date.now() - 15 * 60 * 1000).toISOString()
+      await route.fulfill({ response: resp, json: { ...json, last_seen: staleLastSeen } })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const header = page.locator('[data-testid="live-header"]')
+    await expect(header).toContainText('inactive', { timeout: 10_000 })
+
+    const dot = page.locator('.live-status-dot')
+    await expect(dot).toHaveClass(/live-status-stale/)
+    await expect(dot).not.toHaveClass(/live-status-running/)
   })
 })

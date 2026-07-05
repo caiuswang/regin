@@ -41,6 +41,12 @@ const props = defineProps({
   // the offset into the readout (see `elapsed`).
   serverNow: { type: String, default: '' },
   serverNowAt: { type: Number, default: 0 },
+  // Age of the newest ingested span (server_now − last_seen, both server
+  // clocks; NaN until known). Gates `idle`: pending placeholders exist only
+  // for a whitelist of slow/blocking tools, so a fast-tool turn (Read/Edit/
+  // Grep) has NO pending span while demonstrably working — absence of one
+  // is not evidence of idleness, but a quiet ingest stream is.
+  lastActivityAgoMs: { type: Number, default: NaN },
 })
 const emit = defineEmits(['open-response', 'open-question', 'state-change'])
 
@@ -61,13 +67,25 @@ const livePrompt = computed(() => findLastSpan(props.spans, s =>
 const lastResponse = computed(() => findLastSpan(props.spans, s =>
   s.name === 'assistant_response' && s.attributes?.text))
 
+// Idle additionally requires the ingest stream to have been quiet for a
+// while: fast tools (Read/Edit/Grep/Write) never emit a pending placeholder
+// (lib/trace/pending_spans.py whitelist) and promptlive- retires at the
+// turn's first PreToolUse, so "no pending span" alone shows the full idle
+// composer MID-TURN. Every span ingest advances last_seen, so a working
+// agent keeps the age below this floor; an unknown age (NaN, before the
+// first summary) falls back to the debounce alone.
+const IDLE_ACTIVITY_MS = 12000
+const quietLongEnough = computed(() =>
+  !Number.isFinite(props.lastActivityAgoMs)
+  || props.lastActivityAgoMs >= IDLE_ACTIVITY_MS)
+
 const rawState = computed(() => {
   if (pendingPerm.value) return 'permission'
   if (pendingQuestion.value) return 'question'
   if (pendingTool.value) return 'tool'
   if (livePrompt.value) return 'prompt'
   if (props.ended) return 'finished'
-  if (props.active && props.bridgeReachable) return 'idle'
+  if (props.active && props.bridgeReachable && quietLongEnough.value) return 'idle'
   return 'response'
 })
 
@@ -125,7 +143,9 @@ const questionMeta = computed(() => {
   const qs = pendingQuestion.value?.attributes?.questions || []
   const opts = (qs[0]?.options || []).length
   const multi = qs.length > 1 ? `question 1 of ${qs.length} · ` : ''
-  return `${multi}${opts} option${opts === 1 ? '' : 's'}`
+  // 0 options is a legitimate free-text-only ask — "0 options" reads broken.
+  const optsLabel = opts ? `${opts} option${opts === 1 ? '' : 's'}` : 'free text'
+  return `${multi}${optsLabel}`
 })
 const responseText = computed(() =>
   stripMarkdown(lastResponse.value?.attributes?.text))
@@ -267,8 +287,14 @@ const elapsed = computed(() => {
     <template v-else>
       <div class="live-now-1">
         <span class="live-now-tag">NOW</span>
+        <span
+          v-if="!lastResponse && state !== 'finished' && active"
+          class="live-spinner"
+          aria-hidden="true"
+        ></span>
         <span class="live-now-label" :class="{ 'live-now-done': state === 'finished' }">
-          {{ state === 'finished' ? '✓ finished' : 'assistant' }}
+          {{ state === 'finished' ? '✓ finished'
+            : (lastResponse ? 'assistant' : (active ? 'working…' : 'assistant')) }}
         </span>
         <span v-if="lastResponse" class="live-now-elapsed">
           {{ fmtClock(lastResponse.start_time) }}
@@ -276,6 +302,10 @@ const elapsed = computed(() => {
       </div>
       <div class="live-now-text">
         <template v-if="lastResponse">{{ responseText }}</template>
+        <!-- Only a live session may claim to be working — a stale/crashed
+             one (active=false, never ended) must stay neutral or the footer
+             contradicts the header's "inactive". -->
+        <template v-else-if="state !== 'finished' && active">waiting for the first response…</template>
         <template v-else>no response yet</template>
       </div>
       <div v-if="lastResponse" class="live-now-act">

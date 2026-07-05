@@ -11,17 +11,23 @@
 
 // ── Time / number / text ─────────────────────────────────────
 
+// Backend span/session timestamps are NAIVE local ISO strings with 6-digit
+// microseconds; bare `new Date(iso)` on those is engine-dependent (WebKit
+// rejects the long fraction). Every wall-clock formatter parses through
+// parseLocalIso, which handles both naive and explicitly-zoned inputs.
+import { parseLocalIso } from './sessionActivity.js'
+
 export function fmtTime(iso) {
-  if (!iso) return '--:--:--'
-  const d = new Date(iso)
+  const d = parseLocalIso(iso)
+  if (!d || Number.isNaN(d.getTime())) return '--:--:--'
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
   return `${hh}:${mm}`
 }
 
 export function fmtClock(iso) {
-  if (!iso) return '--:--:--'
-  const d = new Date(iso)
+  const d = parseLocalIso(iso)
+  if (!d || Number.isNaN(d.getTime())) return '--:--:--'
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
   const ss = String(d.getSeconds()).padStart(2, '0')
@@ -67,7 +73,7 @@ export function fmtElapsedSeconds(secs) {
 // missing/unparseable input so callers can render nothing.
 export function fmtAgo(iso) {
   if (!iso) return ''
-  const then = Date.parse(iso)
+  const then = parseLocalIso(iso)?.getTime() ?? NaN
   if (Number.isNaN(then)) return ''
   const secs = Math.floor((Date.now() - then) / 1000)
   if (secs < 60) return 'just now'

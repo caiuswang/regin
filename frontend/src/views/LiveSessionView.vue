@@ -18,16 +18,19 @@ import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
 import LiveQaSheet from '../components/live/LiveQaSheet.vue'
 import { useLiveTail } from '../composables/useLiveTail.js'
 import { fmtClock, fmtDuration, terminalSpanLabel } from '../utils/traceFormatters.js'
+import { parseLocalIso } from '../utils/sessionActivity.js'
 import {
   CATEGORIES, filterSpans, countByCategory, isSignal, rowKind, isQaSpan,
   activityCopyPayload,
 } from '../utils/liveRows.js'
+import { categoryOf } from '../utils/traceFormatters.js'
 
 const route = useRoute()
 const router = useRouter()
 const {
   sessionId, meta, spans, hasMoreOlder, earlierCount,
-  loading, loadingOlder, error, ended, active, appendedSpans,
+  loading, loadingOlder, error, ended, active, stale, lastSeenAgeMs,
+  connectionLost, appendedSpans,
   start, stop, loadOlder, mergeSpans,
 } = useLiveTail(() => route.params.id)
 
@@ -42,17 +45,20 @@ const filterQuery = ref('')
 const filtersActive = computed(() =>
   showSystem.value || filterCat.value !== 'all' || !!filterQuery.value.trim())
 
-// Chip counts must equal selectable rows: count over the SAME tier-filtered
-// list the rows use (with system spans hidden, a raw-list count would show
-// e.g. a 'thinking' chip whose selection renders an empty tail).
-const tierSpans = computed(() =>
-  (showSystem.value ? spans.value : spans.value.filter(isSignal)))
-const visibleRows = computed(() => filterSpans(spans.value, {
+// Chip counts must equal selectable rows: count over the list the rows
+// actually use — same signal/system tier AND the live search query (a chip
+// advertising 12 rows must not select down to an empty tail because a
+// query was active). One shared tier+query pass; the category chip is a
+// cheap refinement of it.
+const searchedSpans = computed(() => filterSpans(spans.value, {
   showSystem: showSystem.value,
-  category: filterCat.value,
+  category: 'all',
   query: filterQuery.value,
 }))
-const counts = computed(() => countByCategory(tierSpans.value))
+const visibleRows = computed(() => (filterCat.value === 'all'
+  ? searchedSpans.value
+  : searchedSpans.value.filter(s => categoryOf(s) === filterCat.value)))
+const counts = computed(() => countByCategory(searchedSpans.value))
 // System-span count for the toggle label — independent of the toggle state.
 const hiddenSystemCount = computed(() =>
   spans.value.filter(s => !isSignal(s)).length)
@@ -76,17 +82,21 @@ const caretSpanId = computed(() => {
 const goalOpen = ref(false)
 const hdScrolled = ref(false)
 // idle = alive but not working: steady green dot (no pulse) + "idle".
+// stale = claims 'active' but nothing ingested for 10+ min (a crashed CLI
+// never fires SessionEnd, so status alone would pulse "running" forever).
 const statusClass = computed(() => {
   if (ended.value) return 'live-status-ended'
+  if (stale.value) return 'live-status-stale'
   return nowState.value === 'idle' ? 'live-status-idle' : 'live-status-running'
 })
 const statusLabel = computed(() => {
   if (ended.value) return '✓ finished'
+  if (stale.value) return 'inactive'
   return nowState.value === 'idle' ? 'idle' : 'running'
 })
 const elapsedLabel = computed(() => {
-  const t0 = meta.value.started_at ? Date.parse(meta.value.started_at) : NaN
-  const t1 = meta.value.last_seen ? Date.parse(meta.value.last_seen) : NaN
+  const t0 = parseLocalIso(meta.value.started_at)?.getTime() ?? NaN
+  const t1 = parseLocalIso(meta.value.last_seen)?.getTime() ?? NaN
   if (!Number.isFinite(t0) || !Number.isFinite(t1)) return ''
   const mins = Math.max(0, Math.round((t1 - t0) / 60000))
   const dur = mins >= 60
@@ -167,7 +177,10 @@ watch(appendedSpans, async (added) => {
 })
 
 function jumpToNew() {
-  scrollToBottom(true)
+  // Instant, not smooth: rows keep arriving on a live session, and a
+  // mid-animation arrival reads the tail as unpinned — re-incrementing the
+  // chip that was just cleared and landing short of the bottom.
+  scrollToBottom(false)
   newCount.value = 0
 }
 
@@ -193,6 +206,13 @@ const sheetKind = computed(() => sheet.value?.kind)
 const sheetSpan = computed(() => (sheet.value?.spanId
   ? spans.value.find(s => s.span_id === sheet.value.spanId)
   : null))
+
+// A span-pinned sheet whose span gets pruned mid-open (placeholder resolved,
+// window aged out) would linger as a blank title bar over an empty body —
+// close it instead of stranding it.
+watch(sheetSpan, (s) => {
+  if (sheet.value?.spanId && !s) closeSheet()
+})
 
 function openSheet(kind, span) {
   savedTailScroll = tailEl.value ? tailEl.value.scrollTop : 0
@@ -235,7 +255,9 @@ const sheetCopy = computed(() => {
     if (s.name === 'tool.AskUserQuestion') {
       return JSON.stringify({ questions: a.questions || [], answers: a.answers || null }, null, 2)
     }
-    return a.command_preview || a.requested_permission || ''
+    // null, not '' — an empty string still renders the Copy button and
+    // flips it to a misleading "✓ Copied" for nothing.
+    return a.command_preview || a.requested_permission || null
   }
   return null
 })
@@ -279,7 +301,23 @@ async function fetchContent(span) {
 }
 
 // ── Lifecycle ──
+// View-local state the composable's resetState can't see — without this a
+// session switch leaks the previous session's "N new" chip, an open sheet
+// (blank once spans reset), the expanded goal, and the header shadow.
+// Filters deliberately persist: carrying a lens across sessions is useful,
+// and the header badge keeps it visible.
+function resetViewState() {
+  nowState.value = 'response'
+  newCount.value = 0
+  goalOpen.value = false
+  hdScrolled.value = false
+  enteringIds.value = new Set()
+  sheet.value = null
+  savedTailScroll = 0
+}
+
 async function init() {
+  resetViewState()
   await start()
   await nextTick()
   scrollToBottom(false)
@@ -327,6 +365,11 @@ onUnmounted(() => {
             <template v-if="elapsedLabel">· {{ elapsedLabel }}</template>
             <template v-if="ended && meta.ended_reason"> · {{ meta.ended_reason }}</template>
           </span>
+          <span
+            v-if="connectionLost"
+            class="live-hd-conn"
+            data-testid="live-conn-lost"
+          >connection lost</span>
           <Button
             variant="ghost"
             size="icon"
@@ -359,6 +402,7 @@ onUnmounted(() => {
           title="Tap to expand"
           @click="goalOpen = !goalOpen"
           @keydown.enter="goalOpen = !goalOpen"
+          @keydown.space.prevent="goalOpen = !goalOpen"
         >{{ meta.title }}</div>
       </header>
 
@@ -403,6 +447,7 @@ onUnmounted(() => {
         :spans="spans"
         :ended="ended"
         :active="active"
+        :last-activity-ago-ms="lastSeenAgeMs"
         :session-id="sessionId || ''"
         :bridge-reachable="!!meta.bridge_reachable"
         :bridge-pane="meta.bridge_pane || ''"
@@ -473,7 +518,9 @@ onUnmounted(() => {
           <div class="live-toggle-row">
             <Checkbox v-model="showSystem" data-testid="live-toggle-system">
               Show system spans
-              <span class="live-toggle-hint">({{ hiddenSystemCount }} hidden: turn, hooks, config…)</span>
+              <span class="live-toggle-hint">
+                ({{ hiddenSystemCount }} {{ showSystem ? 'shown' : 'hidden' }}: turn, hooks, config…)
+              </span>
             </Checkbox>
           </div>
         </template>

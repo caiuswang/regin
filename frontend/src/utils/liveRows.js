@@ -11,6 +11,7 @@ import {
   toolDisplayName,
   isErrorToolSpan,
   isDeniedToolSpan,
+  isRejectedToolSpan,
   memoryRecallOneLiner,
   EDIT_TOOL_NAMES,
   categoryOf,
@@ -32,10 +33,14 @@ export function rowKind(span) {
 }
 
 // Ask-user-question / permission spans get their own delicate 2-line row
-// (v8) instead of the generic one-line activity row.
+// (v8) instead of the generic one-line activity row. `permission.denied`
+// belongs here too: the pending permreq- placeholder is retired when the
+// denial lands, so this span is the ONLY surviving record of the outcome —
+// leaving it out meant a denial simply vanished from the card.
 export function isQaSpan(span) {
   const n = span?.name || ''
   return n === 'tool.AskUserQuestion' || n === 'permission.request'
+    || n === 'permission.denied'
     || (span?.span_id || '').startsWith('permreq-')
 }
 
@@ -66,20 +71,33 @@ function askRowModel(a, pending) {
   }
 }
 
-function permRowModel(a, pending) {
-  const denied = a.decision === 'denied' || !!a.denied
+function permOutcome(denied, pending, a) {
+  if (denied) return { mark: '✗', answer: a.reason || 'denied' }
+  if (pending) return { mark: '…', answer: 'waiting for permission' }
+  return { mark: '✓', answer: 'granted' }
+}
+
+function permMain(a, tool) {
+  if (a.command_preview) return { main: `$ ${a.command_preview}`, mono: true }
+  if (a.requested_permission) return { main: a.requested_permission, mono: true }
+  const q = a.questions?.[0]?.question
+  return q ? { main: q, mono: false } : { main: `tool.${tool}`, mono: true }
+}
+
+function permRowModel(span, a, pending) {
+  // The backend never writes decision fields onto permission.request — the
+  // denial arrives as a separate permission.denied span (permission_events
+  // `handle_denied`), so the span NAME is the authoritative denied signal.
+  const denied = span?.name === 'permission.denied'
+    || a.decision === 'denied' || !!a.denied
   const tool = toolDisplayName(a.tool_name || 'tool')
   return {
     glyph: '⚠',
     eyebrow: `Permission · ${tool}`,
-    badge: '',
+    badge: denied ? 'denied' : '',
     denied,
-    main: a.command_preview
-      ? `$ ${a.command_preview}`
-      : (a.requested_permission || `tool.${tool}`),
-    mono: true,
-    mark: pending ? '…' : (denied ? '✗' : '✓'),
-    answer: pending ? 'waiting for permission' : (denied ? 'denied' : 'granted'),
+    ...permMain(a, tool),
+    ...permOutcome(denied, pending, a),
   }
 }
 
@@ -88,7 +106,7 @@ export function qaRowModel(span) {
   const pending = span?.status_code === 'PENDING'
   return span?.name === 'tool.AskUserQuestion'
     ? askRowModel(a, pending)
-    : permRowModel(a, pending)
+    : permRowModel(span, a, pending)
 }
 
 // Signal spans that keep a full-saturation dot (edits, failures, denials);
@@ -104,6 +122,7 @@ export function isHotSpan(span) {
 const SIGNAL_EXACT = new Set([
   'prompt', 'assistant_response', 'subagent.start', 'subagent.stop',
   'file.edit', 'plan.edit', 'memory.recall', 'permission.request',
+  'permission.denied',
 ])
 
 export function isSignal(span) {
@@ -138,30 +157,72 @@ export function stripMarkdown(text) {
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '') // leading list markers
     .replace(/(\*\*|__|~~)([^\n]*?)\1/g, '$2') // paired bold / strike
     .replace(/\b_([^_\n]+)_\b/g, '$1')         // paired italic underscores
-    .replace(/[#*`>]/g, '')
+    // Paired single-asterisk italic; inner edges must be non-space so
+    // arithmetic ("3 * 4") and globs ("*.py and *.md") survive intact.
+    .replace(/\*(\S(?:[^*\n]*\S)?)\*/g, '$1')
+    .replace(/^```.*$/gm, '')                  // fence lines
+    .replace(/`([^`\n]+)`/g, '$1')             // inline code, unwrapped
+    .replace(/^#{1,6}\s+/gm, '')               // heading markers
+    .replace(/^>\s?/gm, '')                    // blockquote markers
+    // No blanket [#*`>] strip: literal `*`/`>`/`#` in prose ("3 * 4",
+    // "a > b", "*.py", "C#") are content, not syntax.
     .replace(/\s+/g, ' ')
     .trim()
 }
 
 function humanToolMain(span, a) {
-  const t = toolDisplayName(span.name.slice(5))
+  // `tool.failure` is a literal span name — the failed tool's identity
+  // rides attributes.tool_name (post_tool_failure), same as desktop's
+  // fullLabel/spanLabel special-case.
+  const t = toolDisplayName(span.name === 'tool.failure'
+    ? (a.tool_name || 'tool') : span.name.slice(5))
+  const outcome = toolOutcomeMain(span, a, t)
+  if (outcome) return outcome
   if (t === 'Bash') {
     return { pre: '$', text: a.command_preview || a.description || 'shell', mono: true }
   }
-  const file = a.file_path ? a.file_path.split('/').pop() : ''
-  if (TOOL_VERB[t] && (file || a.pattern || a.query || a.url)) {
-    const what = a.pattern
-      ? a.pattern + (file ? ` in ${file}` : '')
-      : (file || a.query || a.url)
-    return { text: `${TOOL_VERB[t]} ${what}` }
-  }
+  const verb = toolVerbMain(t, a)
+  if (verb) return verb
   const det = terminalSpanDetail(span)
   return { text: t + (det ? ` · ${det}` : '') }
+}
+
+function toolVerbMain(t, a) {
+  const file = a.file_path ? a.file_path.split('/').pop() : ''
+  if (!TOOL_VERB[t] || !(file || a.pattern || a.query || a.url)) return null
+  const what = a.pattern
+    ? a.pattern + (file ? ` in ${file}` : '')
+    : (file || a.query || a.url)
+  return { text: `${TOOL_VERB[t]} ${what}` }
 }
 
 // Sentence-case a shared one-liner ("recalled 2 memories" → "Recalled …").
 function capitalize(text) {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text
+}
+
+// Failed / rejected / denied tool rows must SAY so — the success verb
+// ("Wrote config.py" for a blocked write) or a bare command line with only
+// an amber dot is a color-only cue that reads as success.
+function toolOutcomeMain(span, a, t) {
+  const what = a.command_preview || (a.file_path ? a.file_path.split('/').pop() : '')
+  // A command preview keeps the code font even on the failure path — that's
+  // exactly where the literal command matters most.
+  const mono = !!a.command_preview
+  if (span.name === 'tool.failure') {
+    const verb = a.is_interrupt ? 'interrupted' : 'failed'
+    return { pre: '✗', text: `${t} ${verb}${what ? ` · ${what}` : ''}`, mono }
+  }
+  // Same predicates that drive the hot-dot/signal tiering — the outcome
+  // text and the tier must never disagree about rejected/denied.
+  if (isRejectedToolSpan(span)) {
+    return { pre: '✗', text: `${t} blocked${a.reject_reason ? ` — ${a.reject_reason}` : ''}` }
+  }
+  if (isDeniedToolSpan(span)) {
+    const chat = a.deny_kind === 'chat' ? ' (answered in chat)' : ''
+    return { pre: '✗', text: `${t} denied${chat}${what ? ` · ${what}` : ''}`, mono }
+  }
+  return null
 }
 
 // Exact-name phrasing builders (same idiom as traceFormatters'

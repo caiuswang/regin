@@ -207,3 +207,62 @@ test.describe('Session switcher (approved roadmap)', () => {
     await expect(testRow).toHaveCount(0)
   })
 })
+
+// ---- Review regressions (v9): resetViewState() on session switch ----------
+//
+// LiveSessionView keeps view-local state (the "N new" chip, open sheets, the
+// expanded goal) OUTSIDE useLiveTail's own resetState() — a session switch
+// via the picker re-inits the SAME component instance (route.params.id
+// watcher), so without an explicit resetViewState() call these would leak
+// from session A into session B. This lives here (not live-card.spec.js)
+// because it needs the picker's mocked-list fixture harness to switch
+// between two synthetic sessions.
+test.describe('Review regressions (v9)', () => {
+  test('switching sessions via the picker clears the "N new" chip and any open sheet (resetViewState)', async ({ page }) => {
+    const { traceId: traceIdA, text: textA } = await postSession(page, 'A')
+    const { traceId: traceIdB, text: textB } = await postSession(page, 'B')
+    // Give A enough rows that the tail can be scrolled away from the bottom.
+    const sfxA = traceIdA.slice(0, 8)
+    const now = new Date().toISOString()
+    const extra = []
+    for (let i = 0; i < 20; i++) {
+      extra.push({ trace_id: traceIdA, span_id: `read-${sfxA}-${i}`, parent_id: null,
+        name: 'tool.Read', start_time: now, attributes: { file_path: `src/f${i}.js`, is_test: true } })
+    }
+    await post(page, extra)
+    await mockPickerList(page, [
+      fakeRow(traceIdA, 'Fixture A', 'active'),
+      fakeRow(traceIdB, 'Fixture B', 'active'),
+    ])
+
+    await page.goto(`/live/${traceIdA}`)
+    await settle(page)
+    await expect(page.getByText(textA).first()).toBeVisible({ timeout: 10_000 })
+
+    const tail = page.locator('[data-testid="live-tail"]')
+    await tail.evaluate((el) => { el.scrollTop = 0 })
+    await page.waitForTimeout(150)
+
+    // A span landing while scrolled up surfaces as the "N new" chip.
+    await post(page, [
+      { trace_id: traceIdA, span_id: `newspan-${sfxA}`, parent_id: null, name: 'tool.Write',
+        start_time: new Date(Date.now() + 1000).toISOString(),
+        attributes: { file_path: 'src/late-arrival.js', is_test: true } },
+    ])
+    const chip = page.locator('[data-testid="live-newchip"]')
+    await expect(chip).toBeVisible({ timeout: 8_000 })
+
+    await page.locator('[data-testid="live-switch"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible({ timeout: 5_000 })
+    await page.locator(`[data-testid="live-picker-row"][data-trace-id="${traceIdB}"]`).click()
+
+    await expect(page).toHaveURL(new RegExp('/live/' + traceIdB))
+    await expect(page.getByText(textB).first()).toBeVisible({ timeout: 10_000 })
+
+    // resetViewState() must have zeroed newCount and closed the sheet — a
+    // leaked chip/sheet from session A would otherwise ride into B.
+    await expect(chip).toHaveCount(0)
+    await expect(sheet).toBeHidden()
+  })
+})
