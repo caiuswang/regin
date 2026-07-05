@@ -611,6 +611,45 @@ def cmd_topics_wiki_debt(
 
 
 @topics_app.command(
+    "backfill-tiers",
+    help="Tag refs a topic's wiki never mentions as tier=reference so they stop "
+         "emitting content-drift debt. Dry-run by default; --apply writes the "
+         "git-tracked topic.json (review the diff before committing). Never "
+         "overrides an existing tier, so it is safe to re-run.")
+def cmd_topics_backfill_tiers(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    topic: str | None = typer.Option(
+        None, "--topic", help="Only backfill this topic id (default: all)."),
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Write tier=reference into topic.json (default: dry-run/report)."),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    from lib.topics.tier_backfill import backfill_reference_tiers
+
+    rp = _repo_path(repo)
+    result = backfill_reference_tiers(rp, apply=apply, topic_id=topic)
+    if as_json:
+        print(json.dumps(result, indent=2))
+        return
+    demotions = result["demotions"]
+    if demotions:
+        verb = "tagged" if result["applied"] else "would tag"
+        for row in demotions:
+            print(f"{verb} reference  {row['topic_id']}  {row['path']}")
+        topics_n = len({row["topic_id"] for row in demotions})
+        where = ("written to topic.json — review `git diff` before committing"
+                 if result["applied"] else "dry-run — pass --apply to write")
+        print(f"\n{len(demotions)} ref(s) across {topics_n} topic(s) ({where})")
+    else:
+        print("No reference-tier candidates — every wiki-unmentioned ref is "
+              "already tagged (or none found).")
+    if result["skipped_no_wiki"]:
+        print(f"skipped {len(result['skipped_no_wiki'])} topic(s) with no wiki "
+              f"(no narrative to judge refs against)")
+
+
+@topics_app.command(
     "backfill-topic-wiki",
     help="One-time: split legacy runs' combined wiki into per-topic wiki "
          "bodies (and add the wiki_md columns on databases that predate them). "
