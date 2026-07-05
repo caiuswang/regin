@@ -807,6 +807,45 @@ def test_accept_proposed_topic_keeps_valid_drops_invalid_ref_roles(stub_proposal
     assert "role" not in refs["tests/test_settings.py"]
 
 
+def test_accept_proposed_topic_carries_ref_tier_through_apply(stub_proposal_provider, fake_git_repo):
+    """A proposal ref tagged `tier: "reference"` must survive apply into the
+    approved graph (the drift-exclusion tag is only useful if it persists).
+    An unset tier stays the canonical bare ref, and an invalid tier is dropped
+    — mirroring how role is handled. Accept and the modern /apply path share
+    this converter (`_approved_topic_from_proposal`), so one is representative."""
+    (fake_git_repo / "lib").mkdir()
+    (fake_git_repo / "lib" / "core.py").write_text("VALUE = 1\n")
+    (fake_git_repo / "lib" / "example.py").write_text("# just an example\n")
+    (fake_git_repo / "lib" / "aux.py").write_text("# aux\n")
+    bootstrap(fake_git_repo)
+    create_proposal_run(fake_git_repo, run_id="run1")
+    proposal = load_proposal(fake_git_repo, "run1")
+    proposal["topics"] = [
+        {
+            "id": "tiered-flow", "label": "Tiered Flow", "aliases": [],
+            "intent": "Tier proposal.", "status": "active",
+            "refs": [
+                {"path": "lib/core.py", "role": "implementation"},   # untagged tier
+                {"path": "lib/example.py", "tier": "reference"},      # explicit reference
+                {"path": "lib/aux.py", "tier": "bogus"},              # invalid → dropped
+            ],
+            "edges": [], "commands": [],
+            "include_globs": ["lib/core.py", "lib/example.py", "lib/aux.py"],
+            "exclude_globs": [],
+            "evidence_paths": ["lib/core.py", "lib/example.py", "lib/aux.py"],
+        }
+    ]
+    save_proposal(fake_git_repo, "run1", proposal)
+
+    accept_proposed_topic(fake_git_repo, "run1", "tiered-flow")
+
+    graph = load_graph_merged(fake_git_repo)
+    refs = {ref["path"]: ref for ref in graph["topics"]["tiered-flow"]["refs"]}
+    assert refs["lib/example.py"]["tier"] == "reference"   # persisted
+    assert "tier" not in refs["lib/core.py"]               # unset stays canonical
+    assert "tier" not in refs["lib/aux.py"]                # invalid dropped, not inferred
+
+
 def test_accept_proposed_topic_drops_unapproved_edges(stub_proposal_provider, fake_git_repo):
     bootstrap(fake_git_repo, seeds=True)
     paths = create_proposal_run(fake_git_repo, run_id="run1")

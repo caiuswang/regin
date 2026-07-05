@@ -15,9 +15,11 @@ from typing import Any
 
 from lib.topics.core import (
     DEFAULT_EXCLUDES,
+    DEFAULT_REF_TIER,
     EDGE_TYPES,
     IGNORED_DIRS,
     REF_ROLES,
+    REF_TIERS,
     ROLE_ORDER,
     SCHEMA_VERSION,
     TOPIC_STATUSES,
@@ -133,10 +135,14 @@ def _validate_refs(
             continue
         path = ref.get("path")
         role = ref.get("role")
-        # role is optional; topics own it (assigned by the proposal LLM
-        # or by hand), so scan never invents one.
+        tier = ref.get("tier")
+        # role and tier are optional; topics own them (assigned by the proposal
+        # LLM or by hand), so scan never invents one — but a set-but-unknown
+        # value is still an error.
         if role is not None and role not in REF_ROLES:
             errors.append(f"topic {topic_id} ref {path!r} has invalid role {role!r}")
+        if tier is not None and tier not in REF_TIERS:
+            errors.append(f"topic {topic_id} ref {path!r} has invalid tier {tier!r}")
         if not isinstance(path, str) or not path:
             errors.append(f"topic {topic_id} has ref with missing path")
             continue
@@ -197,13 +203,22 @@ def _ref_sort_key(ref: dict[str, str]) -> tuple[int, str]:
     return (ROLE_ORDER.index(role) if role in ROLE_ORDER else 99, ref.get("path", ""))
 
 
-def _ref_with_role(path: str, role: Any) -> dict[str, str]:
-    """A ref dict carrying `role` only when it's a known role.
+def _ref_with_meta(path: str, role: Any, tier: Any = None) -> dict[str, str]:
+    """A ref dict carrying its curated `role` and `tier`, each only when valid.
 
-    Roles are owned by the proposal LLM / human edits, never invented by
-    scan, so an unknown or absent role is simply omitted.
+    Both axes are owned by the proposal LLM / human edits, never invented by
+    scan, so an unknown or absent value is simply omitted. `tier` is omitted
+    when it is the default (`primary`) too, so the graph's canonical form for a
+    normal ref stays the bare `{path, role?}` — only an explicit `reference`
+    tier is persisted. A full rescan must round-trip an existing `tier` (see
+    `_apply_full_refs`), or drift-exclusion would silently reset each scan.
     """
-    return {"path": path, "role": role} if role in REF_ROLES else {"path": path}
+    ref: dict[str, str] = {"path": path}
+    if role in REF_ROLES:
+        ref["role"] = role
+    if tier in REF_TIERS and tier != DEFAULT_REF_TIER:
+        ref["tier"] = tier
+    return ref
 
 
 def _apply_staged_refs(topic: dict[str, Any], matched: list[dict[str, str]], covered: set[str]) -> bool:
@@ -231,12 +246,13 @@ def _apply_full_refs(topic: dict[str, Any], matched: list[dict[str, str]], cover
     but preserves the curated `role` of any path that survives. Returns
     whether refs changed.
     """
-    existing_roles = {
-        ref.get("path"): ref.get("role")
+    existing_meta = {
+        ref.get("path"): (ref.get("role"), ref.get("tier"))
         for ref in topic.get("refs", []) if isinstance(ref, dict) and ref.get("path")
     }
     new_refs = sorted(
-        (_ref_with_role(ref["path"], existing_roles.get(ref["path"])) for ref in matched),
+        (_ref_with_meta(ref["path"], *existing_meta.get(ref["path"], (None, None)))
+         for ref in matched),
         key=_ref_sort_key,
     )
     covered.update(ref["path"] for ref in matched)

@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from lib.topics.core import (
     DEFAULT_EXCLUDES,
+    DEFAULT_REF_TIER,
     EDGE_TYPES,
     IGNORED_DIRS,
     IGNORED_SUFFIXES,
+    NON_DRIFTING_REF_TIERS,
     REF_ROLES,
+    REF_TIERS,
     ROLE_ORDER,
     SCHEMA_VERSION,
     TOPIC_FILE,
@@ -80,10 +83,13 @@ from lib.topics.term_weights import rebuild_query_df
 
 __all__ = [
     "DEFAULT_EXCLUDES",
+    "DEFAULT_REF_TIER",
     "EDGE_TYPES",
     "IGNORED_DIRS",
     "IGNORED_SUFFIXES",
+    "NON_DRIFTING_REF_TIERS",
     "REF_ROLES",
+    "REF_TIERS",
     "ROLE_ORDER",
     "SCHEMA_VERSION",
     "TOPIC_FILE",

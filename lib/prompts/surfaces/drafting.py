@@ -27,6 +27,8 @@ Rules:
 - Keep all file paths relative to the repository root.
 - Only propose topics justified by real repository files; every ref path must exist in the repo (regin rejects paths it can't find on disk).
 - A ref's `role` is optional; when you set one, use only: overview, architecture, entrypoint, api, schema, test, migration, implementation, config, docs. Omit it if none clearly fits.
+- A ref's `tier` is optional and orthogonal to `role`: it says how central the file is to THIS wiki. Use `"reference"` for a file the wiki only points at as context or an example and does NOT explain in detail — those are excluded from content-drift, so a later edit to them won't nag for a wiki refresh. Omit `tier` (or set `"primary"`) for a file the wiki actually describes. When in doubt, omit it (defaults to primary). Tag reference-only files generously — it is the main lever for keeping this wiki's drift low.
+- A topic `wiki` is a durable conceptual overview, not a file-by-file catalog: explain the topic's purpose, mental model, main flows, and the invariants/gotchas that outlast the code, and cite specific files or functions only where they anchor that narrative. Keep it tight — a well-scoped page stays roughly the same length as the topic evolves. Do not try to describe every ref; pointer-only (`tier: "reference"`) files need no prose.
 - `aliases` are *alternate* phrases a future agent might search for — not restatements of the `id` or `label`. Do NOT list the topic id or label, and do NOT add variants that differ only in case, spacing, or hyphenation: regin normalizes aliases (lowercased, every run of non-alphanumeric characters → a single space), so `foo-bar`, `Foo Bar`, and `foo bar` all collapse to the same key and a repeat is rejected at apply time. Give 0–6 genuinely distinct phrasings, or leave the list empty.
 - `parent_id` places the topic under one top-level navigation bucket (see "Available buckets" below). Pick the single best-fitting bucket id. If none clearly fits, set it to `null` — the reviewer will place it; do NOT force a weak fit. `blurb` is a one-line router card ("what task should drill in here"), not a description; omit it and `intent` is used instead.
 - Every topic MUST include its own `wiki`: a self-contained Markdown page describing THAT topic — its files, behavior, and how it fits — because each topic becomes a separate `.regin/topics/wiki/<id>.md` page. Do NOT write one combined document covering every topic; give each topic its own distinct page. Put any shared framing that spans topics in the top-level `overview` instead, not repeated into each topic's wiki.
@@ -50,7 +52,7 @@ Output JSON shape:
       "status": "active",
       "parent_id": "one-of-the-bucket-ids-below-or-null",
       "blurb": "One line: what task should drill into this topic",
-      "refs": [{"path": "relative/path.py", "role": "implementation"}],
+      "refs": [{"path": "relative/path.py", "role": "implementation"}, {"path": "relative/example.py", "tier": "reference"}],
       "edges": [],
       "commands": [],
       "include_globs": ["path/**"],

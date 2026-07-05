@@ -13,7 +13,14 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from lib.topics import REF_ROLES, TopicGraphError, topic_dir, utc_now
+from lib.topics import (
+    DEFAULT_REF_TIER,
+    REF_ROLES,
+    REF_TIERS,
+    TopicGraphError,
+    topic_dir,
+    utc_now,
+)
 from lib.topics.apply import ApplyResult, apply_diff
 from lib.topics.diff import GraphDiff, compute_topic_delta
 from lib.topics.graph_io import load_authoritative_graph
@@ -417,11 +424,19 @@ def _approved_refs_from_proposal(refs: list[Any]) -> list[dict[str, str]]:
         path = ref["path"]
         if path in seen:
             continue
+        # Keep a valid role/tier from the proposal; drop unknown/missing ones
+        # rather than inventing one (both axes are LLM/human-owned). `tier` is
+        # persisted only when it's an explicit non-default (`reference`), so a
+        # normal ref stays the canonical `{path, role?}` — this is what carries
+        # a drift-exclusion tag through BOTH apply paths (modern /apply and
+        # legacy accept converge here via `_approved_topic_from_proposal`).
+        approved: dict[str, str] = {"path": path}
         role = ref.get("role")
-        # Keep a valid role from the proposal; drop unknown/missing ones
-        # rather than inventing one (roles are LLM/human-owned).
-        approved_refs.append(
-            {"path": path, "role": role} if role in REF_ROLES else {"path": path}
-        )
+        if role in REF_ROLES:
+            approved["role"] = role
+        tier = ref.get("tier")
+        if tier in REF_TIERS and tier != DEFAULT_REF_TIER:
+            approved["tier"] = tier
+        approved_refs.append(approved)
         seen.add(path)
     return approved_refs

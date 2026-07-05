@@ -25,6 +25,19 @@ REF_ROLES = {
     "overview", "architecture", "entrypoint", "api", "schema",
     "test", "migration", "implementation", "config", "docs",
 }
+# A ref's `tier` is an axis orthogonal to `role`: `role` says *what kind of
+# file* it is, `tier` says *how central it is to the wiki narrative*. A
+# `primary` ref is one the wiki actually explains (so a change under it can
+# genuinely stale the narrative); a `reference` ref is a mere pointer/example
+# the wiki names but doesn't narrate, so a change under it is drift noise.
+# Kept a string enum (not a boolean) so a future middle tier is purely
+# additive — no migration, existing rows keep their meaning.
+REF_TIERS = {"primary", "reference"}
+DEFAULT_REF_TIER = "primary"
+# Tiers whose refs are excluded from content-drift detection. The single
+# extension point for the drift filter: opting a future tier out of drift is a
+# one-line change here.
+NON_DRIFTING_REF_TIERS = {"reference"}
 TOPIC_STATUSES = {"active", "draft", "deprecated", "archived"}
 EDGE_TYPES = {"related", "depends_on", "part_of", "supersedes"}
 IGNORED_DIRS = {

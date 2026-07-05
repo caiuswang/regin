@@ -53,6 +53,33 @@ def test_scan_updates_existing_topic_refs(fake_git_repo):
     assert topics.load_graph(fake_git_repo)["topics"]["web"]["refs"] == []
 
 
+def test_scan_preserves_existing_ref_tier(fake_git_repo):
+    """A full rescan reconciles refs to the matched file set but must round-trip
+    a curated `tier` — otherwise the drift-exclusion tag would silently reset on
+    the next scan and reference-only files would start emitting debt again."""
+    (fake_git_repo / "web").mkdir()
+    (fake_git_repo / "web" / "app.py").write_text("app")
+    subprocess.check_call(["git", "-C", str(fake_git_repo), "add", "."])
+    subprocess.check_call(["git", "-C", str(fake_git_repo), "commit", "-q", "-m", "files"])
+
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"]["web"] = {
+        "label": "Web", "aliases": [], "intent": "Web routes.", "status": "active",
+        "refs": [{"path": "web/app.py", "role": "entrypoint", "tier": "reference"}],
+        "edges": [], "commands": [],
+        "include_globs": ["web/**"], "exclude_globs": [],
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    topics.scan(fake_git_repo)
+
+    merged = topics.load_graph_merged(fake_git_repo)
+    ref = merged["topics"]["web"]["refs"][0]
+    assert ref["role"] == "entrypoint"
+    assert ref["tier"] == "reference"   # survived the reconcile
+
+
 def test_validate_detects_duplicate_alias_and_broken_refs(fake_git_repo):
     topics.bootstrap(fake_git_repo)
     graph = topics.load_graph(fake_git_repo)
@@ -76,6 +103,43 @@ def test_validate_detects_duplicate_alias_and_broken_refs(fake_git_repo):
     assert any("duplicate alias" in error for error in result.errors)
     assert any("ref does not exist" in error for error in result.errors)
     assert any("edge target does not exist" in error for error in result.errors)
+
+
+def test_validate_rejects_invalid_ref_tier(fake_git_repo):
+    (fake_git_repo / "a.py").write_text("x\n")
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "a.py", "tier": "bogus"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert not result.ok
+    assert any("invalid tier" in error for error in result.errors)
+
+
+def test_validate_accepts_valid_ref_tier(fake_git_repo):
+    (fake_git_repo / "a.py").write_text("x\n")
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "a.py", "tier": "reference"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert result.ok
 
 
 def test_match_topic_uses_aliases_and_refs(fake_git_repo):

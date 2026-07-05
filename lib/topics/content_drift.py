@@ -33,6 +33,7 @@ from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
+from lib.topics.core import NON_DRIFTING_REF_TIERS
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.ref_digest import digests_for_topic, repo_id_for_path
 
@@ -125,6 +126,8 @@ def _drifted_paths_for_topic(repo_root: Path, repo_id: int, topic_id: str,
     for ref in topic.get("refs", []):
         if not isinstance(ref, dict):
             continue
+        if ref.get("tier") in NON_DRIFTING_REF_TIERS:
+            continue                              # reference-only → not drift
         path = ref.get("path")
         digest = stored.get(path)
         if not path or digest is None:
@@ -173,8 +176,10 @@ def _drift_note_body(topic_id: str, drifted_paths: list[str]) -> str:
     listed = "\n".join(f"- `{p}`" for p in drifted_paths) or "- (this topic's refs)"
     return (
         f"The code under **{topic_id}** changed since its wiki was last "
-        f"written. Re-derive the narrative from the current refs.\n\n"
-        f"Drifted files:\n{listed}"
+        f"written. Re-check that the wiki's existing explanation still matches "
+        f"these files and correct only what drifted. Keep the page's scope and "
+        f"length — revise in place; do not add new file-by-file detail for the "
+        f"changed files.\n\nChanged files:\n{listed}"
     )
 
 
@@ -256,11 +261,8 @@ def emit_refresh_proposal(repo_path: str | Path, topic_id: str,
         "topics": [snapshot],
         "metadata": {"kind": "refresh", "drifted_paths": drifted_paths},
     }
-    wiki = (f"The code under **{topic_id}** changed since its wiki was last "
-            f"written. Re-derive the narrative from the current refs.\n\n"
-            f"Drifted files:\n"
-            + "\n".join(f"- `{p}`" for p in drifted_paths))
-    orm_save_proposal(repo_path, proposal_id, proposal, wiki=wiki)
+    orm_save_proposal(repo_path, proposal_id, proposal,
+                      wiki=_drift_note_body(topic_id, drifted_paths))
     return proposal_id
 
 

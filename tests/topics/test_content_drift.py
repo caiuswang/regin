@@ -111,6 +111,60 @@ def test_deleted_ref_is_not_content_drift(fake_git_repo):
     assert detect_drifted_topics(repo) == []
 
 
+# ── detection: tier excludes reference-only refs ──────────────
+
+
+def test_reference_tier_ref_does_not_drift(fake_git_repo):
+    repo = fake_git_repo
+    (repo / "a.py").write_text("original\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py", "tier": "reference"}])})
+    _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("MUTATED CONTENT\n")   # hash differs, but tier excludes
+
+    assert detect_drifted_topics(repo) == []
+
+
+def test_primary_tier_ref_still_drifts(fake_git_repo):
+    repo = fake_git_repo
+    (repo / "a.py").write_text("original\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py", "tier": "primary"}])})
+    _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("MUTATED CONTENT\n")
+
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+
+def test_untagged_tier_behaves_as_primary(fake_git_repo):
+    """Regression guard for checklist item 2: an unset tier is unchanged from
+    today — it drifts exactly like an explicit `primary`."""
+    repo = fake_git_repo
+    (repo / "a.py").write_text("original\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py"}])})   # no tier
+    _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("MUTATED CONTENT\n")
+
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+
+def test_mixed_tiers_flags_only_non_reference(fake_git_repo):
+    repo = fake_git_repo
+    (repo / "a.py").write_text("a\n")
+    (repo / "b.py").write_text("b\n")
+    _write_graph(repo, {"t1": _topic([
+        {"path": "a.py"},                          # untagged → primary → drifts
+        {"path": "b.py", "tier": "reference"},     # excluded
+    ])})
+    _register(repo)
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("a changed\n")
+    (repo / "b.py").write_text("b changed\n")
+
+    assert detect_drifted_topics(repo) == [{"topic_id": "t1", "drifted_paths": ["a.py"]}]
+
+
 # ── detection: cosine filter ──────────────────────────────────
 
 

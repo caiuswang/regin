@@ -82,6 +82,24 @@ def test_drifted_ref_with_wiki_is_drifted(fake_git_repo):
                      "drifted_paths": ["a.py"], "changed_refs": ["a.py"]}]
 
 
+def test_reference_tier_change_emits_no_wiki_debt(fake_git_repo):
+    """A change to a `tier: "reference"` ref must produce no `drifted` row and
+    no refresh proposal — the whole point of the tier is to stop weak debt for
+    files the wiki only points at."""
+    repo = fake_git_repo
+    (repo / "a.py").write_text("original\n")
+    _write_graph(repo, {"t1": _topic([{"path": "a.py", "tier": "reference"}])})
+    resolve_or_create_repo(str(repo))
+    capture_ref_digests(repo, "t1")
+    _write_wiki(repo, "t1")
+    (repo / "a.py").write_text("MUTATED\n")   # hash differs, but tier excludes it
+
+    assert wiki_debt(repo) == []
+    # and the emit surface mints no proposal
+    rows = emit_wiki_debt_proposals(repo)
+    assert rows == []
+
+
 def test_changed_since_scopes_to_diff(fake_git_repo):
     repo = fake_git_repo
     (repo / "a.py").write_text("a\n")

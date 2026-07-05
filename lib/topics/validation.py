@@ -32,6 +32,7 @@ from typing import Any, Iterable, Optional
 from lib.topics.core import (
     EDGE_TYPES,
     REF_ROLES,
+    REF_TIERS,
     SCHEMA_VERSION,
     TOPIC_STATUSES,
     _valid_id,
@@ -198,6 +199,30 @@ def _validate_aliases(
                 )
 
 
+def _ref_vocab_issues(
+    tid: str, ref: dict[str, Any], path: Any,
+) -> Iterable[ValidationIssue]:
+    """Validate a ref's optional controlled-vocabulary fields — `role` (what
+    kind of file) and `tier` (how central to the wiki). Both are optional; an
+    unset value is fine, a set-but-unknown value is an error. Kept separate so
+    `_validate_refs` doesn't grow a branch per vocabulary field."""
+    paths = (path,) if isinstance(path, str) else ()
+    role = ref.get("role")
+    if role is not None and role not in REF_ROLES:
+        yield ValidationIssue(
+            severity="error", code="topic.invalid_role",
+            message=f"topic {tid} ref {path!r} has invalid role {role!r}",
+            topic_ids=(tid,), paths=paths,
+        )
+    tier = ref.get("tier")
+    if tier is not None and tier not in REF_TIERS:
+        yield ValidationIssue(
+            severity="error", code="topic.invalid_tier",
+            message=f"topic {tid} ref {path!r} has invalid tier {tier!r}",
+            topic_ids=(tid,), paths=paths,
+        )
+
+
 def _validate_refs(
     tid: str, topic: dict[str, Any], ctx: GraphContext, mode: str,
 ) -> Iterable[ValidationIssue]:
@@ -215,15 +240,7 @@ def _validate_refs(
             )
             continue
         path = ref.get("path")
-        role = ref.get("role")
-        if role is not None and role not in REF_ROLES:
-            yield ValidationIssue(
-                severity="error",
-                code="topic.invalid_role",
-                message=f"topic {tid} ref {path!r} has invalid role {role!r}",
-                topic_ids=(tid,),
-                paths=(path,) if isinstance(path, str) else (),
-            )
+        yield from _ref_vocab_issues(tid, ref, path)
         if not isinstance(path, str) or not path:
             yield ValidationIssue(
                 severity="error",
