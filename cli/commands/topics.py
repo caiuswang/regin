@@ -640,6 +640,10 @@ def cmd_topics_wiki_stats(
         None, "--signal",
         help="Filter to one signal: 'exposure' (index_fetch surfaced the "
              "path) or 'read' (agent Read the file). Omit for all."),
+    sync: bool = typer.Option(
+        False, "--sync",
+        help="Recompute the 'read' signal from the session trace (tool.Read "
+             "spans on wiki files) before reporting. Idempotent."),
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     import lib.memory as memory
@@ -649,6 +653,10 @@ def cmd_topics_wiki_stats(
     if not memory.enabled():
         print("agent memory is disabled (settings.agent_memory.enabled)")
         raise typer.Exit(1)
+
+    if sync:
+        from lib.memory.wiki_reads import sync_wiki_reads
+        sync_wiki_reads()
 
     rp = _repo_path(repo)
     topics = load_authoritative_graph(str(rp)).get("topics") or {}

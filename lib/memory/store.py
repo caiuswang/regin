@@ -968,6 +968,30 @@ class SqliteMemoryStore:
                 stmt = stmt.where(TopicWikiRecall.signal == signal)
             return list(session.exec(stmt).all())
 
+    def replace_wiki_read_counts(self, counts: dict[str, dict]) -> None:
+        """Replace every `signal='read'` row with a freshly-derived set —
+        SET, not increment. The read signal is recomputed from the append-only
+        trace, so this is idempotent: re-running the sync reflects the current
+        span log rather than double-counting. Topics absent from `counts` (their
+        reads vanished, e.g. sessions pruned) have their read rows dropped.
+        `counts` maps topic_id -> {'count': int, 'last_read': str|None}."""
+        with MemorySessionLocal() as session:
+            existing = {
+                r.topic_id: r for r in session.exec(
+                    select(TopicWikiRecall).where(
+                        TopicWikiRecall.signal == "read")).all()}
+            for topic_id, data in counts.items():
+                row = existing.pop(topic_id, None)
+                if row is None:
+                    row = TopicWikiRecall(topic_id=topic_id, signal="read",
+                                          recall_count=0)
+                row.recall_count = int(data["count"])
+                row.last_recalled = data.get("last_read")
+                session.add(row)
+            for stale in existing.values():
+                session.delete(stale)
+            session.commit()
+
     def orphaned_memory_ids(self, *,
                             scope: Optional[str] = None) -> list[str]:
         """Active memory ids with NO authoritative-topic link — the
