@@ -15,8 +15,7 @@ import DiffPanel from './DiffPanel.vue'
 import ProposalCommentsSidebar from './ProposalCommentsSidebar.vue'
 import ProposalRunHeader from './ProposalRunHeader.vue'
 import ProposalDraftTopicsTable from './ProposalDraftTopicsTable.vue'
-import ProposalGeneralReviewNotes from './ProposalGeneralReviewNotes.vue'
-import ProposalFeedbackThread from './ProposalFeedbackThread.vue'
+import ProposalContentThreads from './ProposalContentThreads.vue'
 
 const props = defineProps({
   repo: { type: String, required: true },
@@ -81,35 +80,32 @@ const selectedDraftFeedbackThreadCount = computed(() => {
   if (!selectedDraftTopicId.value) return 0
   return feedbackThreads.value.filter((t) => t.proposal_topic_id === selectedDraftTopicId.value).length
 })
-const selectedProposalThreads = computed(() => {
-  return feedbackThreads.value.filter((t) => !t.proposal_topic_id || t.proposal_topic_id === selectedDraftTopicId.value)
-})
-const selectedTopicSummaryThreads = computed(() => selectedProposalThreads.value.filter((t) =>
-  t.proposal_topic_id && t.anchor_kind === 'proposal_summary'
-))
-const selectedTopicIntentThreads = computed(() => selectedProposalThreads.value.filter((t) =>
-  t.proposal_topic_id && t.anchor_kind === 'topic_field' && t.anchor?.field === 'intent'
-))
-const selectedTopicAliasesThreads = computed(() => selectedProposalThreads.value.filter((t) =>
-  t.proposal_topic_id && t.anchor_kind === 'topic_field' && t.anchor?.field === 'aliases'
-))
-const selectedTopicWikiThreads = computed(() => selectedProposalThreads.value.filter((t) =>
-  t.proposal_topic_id && t.anchor_kind === 'wiki_range'
-))
-// The wiki is one combined doc with a `## Section` per topic. The template
-// shows the selected topic's own section (`selectedDraftTopic.wiki`) and
-// falls back to the full wiki (`data.wiki_preview`) when no section matched,
-// so a topic pane is never blank. Kept inline (not a computed) to avoid
-// growing this already-large SFC's script surface area.
-const selectedGeneralReviewThreads = computed(() => selectedProposalThreads.value.filter((t) =>
-  !t.proposal_topic_id && t.anchor_kind === 'general'
-))
+// Content-card review notes + comments are consolidated + folded inside
+// ProposalContentThreads (it filters `feedbackThreads` by anchor itself). The
+// wiki is one combined doc with a `## Section` per topic; the template shows
+// the selected topic's own section (`selectedDraftTopic.wiki`) and falls back
+// to the full wiki (`data.wiki_preview`) when no section matched, so a topic
+// pane is never blank.
 const selectedDraftAliases = computed(() => selectedDraftTopic.value?.aliases || [])
 const selectedProposalFailure = computed(() =>
   props.data?.selected_status || props.data?.selected_run || null
 )
 const totalCommentsCount = computed(() =>
   (feedbackThreads.value || []).reduce((sum, t) => sum + (t.comments?.length || 0), 0)
+)
+// Proposal-topic ids with an OPEN content-drift note, so the Draft Topics
+// table can flag the drifted wikis among rows that otherwise all read
+// `accepted`. Joined on proposal_topic_id (== a draft topic's id). Only
+// `resolution_state === 'open'` counts: `addressed` is the auto-resolve sweep
+// that fires on regenerate (drift already fixed), and the serializer already
+// re-surfaces an addressed note as `open` when an earlier revision is selected
+// — matching the run-level `orm_open_content_drift_threads` semantics.
+const driftTopicIds = computed(() =>
+  feedbackThreads.value
+    .filter((t) => t.kind === 'content_drift'
+      && t.resolution_state === 'open'
+      && t.proposal_topic_id)
+    .map((t) => t.proposal_topic_id)
 )
 
 function withQuery(next) {
@@ -417,6 +413,7 @@ watch(selectedProposalId, () => {
     <ProposalDraftTopicsTable
       :draft-topics="data?.draft_topics || []"
       :selected-draft-topic-id="selectedDraftTopicId"
+      :drift-topic-ids="driftTopicIds"
       :can-apply-all="proposalReadyToApply && selectedRevisionIsLatest && !applyingTopicId"
       :applying-all="isBusy('apply-all')"
       @select="chooseDraftTopic"
@@ -493,7 +490,11 @@ watch(selectedProposalId, () => {
             </div>
           </div>
 
-          <ProposalGeneralReviewNotes :threads="selectedGeneralReviewThreads" />
+          <ProposalContentThreads
+            :feedback-threads="feedbackThreads"
+            :selected-topic-id="selectedDraftTopicId"
+            :selected-topic-label="selectedDraftTopic.label"
+          />
 
           <div v-if="data?.revisions?.length" class="topics-candidate-card">
             <h3 class="topics-subsection-title">Revision History</h3>
@@ -568,56 +569,17 @@ watch(selectedProposalId, () => {
             <p class="text-sm text-gray-600">Merge uses the topic selected in Approved mode. Open Approved once to choose a target topic.</p>
           </div>
 
-          <div v-if="selectedTopicSummaryThreads.length" class="space-y-3">
-            <h3 class="topics-subsection-title">Inline review: topic summary</h3>
-            <ProposalFeedbackThread
-              v-for="thread in selectedTopicSummaryThreads"
-              :key="`summary-${thread.id}`"
-              :thread="thread"
-              :title="selectedDraftTopic.label"
-              key-prefix="summary"
-            />
-          </div>
-
           <div class="space-y-2">
-            <div class="flex flex-wrap items-center gap-2">
-              <h3 class="topics-subsection-title !mb-0">Intent</h3>
-              <Badge
-                v-if="selectedTopicIntentThreads.length"
-                color="yellow"
-                :label="`${selectedTopicIntentThreads.length} comment${selectedTopicIntentThreads.length === 1 ? '' : 's'}`"
-              />
-            </div>
+            <h3 class="topics-subsection-title !mb-0">Intent</h3>
             <p class="text-sm text-slate-700">{{ selectedDraftTopic.intent }}</p>
-            <ProposalFeedbackThread
-              v-for="thread in selectedTopicIntentThreads"
-              :key="`intent-${thread.id}`"
-              :thread="thread"
-              title="Intent comment"
-              key-prefix="intent"
-            />
           </div>
 
           <div class="space-y-2">
-            <div class="flex flex-wrap items-center gap-2">
-              <h3 class="topics-subsection-title !mb-0">Aliases</h3>
-              <Badge
-                v-if="selectedTopicAliasesThreads.length"
-                color="yellow"
-                :label="`${selectedTopicAliasesThreads.length} comment${selectedTopicAliasesThreads.length === 1 ? '' : 's'}`"
-              />
-            </div>
+            <h3 class="topics-subsection-title !mb-0">Aliases</h3>
             <div v-if="selectedDraftAliases.length" class="flex flex-wrap gap-2">
               <code v-for="alias in selectedDraftAliases" :key="alias" class="text-xs">{{ alias }}</code>
             </div>
             <p v-else class="text-sm text-slate-500">No aliases proposed for this topic.</p>
-            <ProposalFeedbackThread
-              v-for="thread in selectedTopicAliasesThreads"
-              :key="`aliases-${thread.id}`"
-              :thread="thread"
-              title="Alias comment"
-              key-prefix="aliases"
-            />
           </div>
 
           <div>
@@ -642,22 +604,7 @@ watch(selectedProposalId, () => {
           </div>
 
           <div v-if="selectedDraftTopic?.wiki || data?.wiki_preview" class="topics-markdown">
-            <div class="flex flex-wrap items-center gap-2">
-              <h3 class="topics-subsection-title !mb-0">Wiki Preview</h3>
-              <Badge
-                v-if="selectedTopicWikiThreads.length"
-                color="yellow"
-                :label="`${selectedTopicWikiThreads.length} comment${selectedTopicWikiThreads.length === 1 ? '' : 's'}`"
-              />
-            </div>
-            <ProposalFeedbackThread
-              v-for="thread in selectedTopicWikiThreads"
-              :key="`wiki-${thread.id}`"
-              :thread="thread"
-              title="Wiki preview comment"
-              key-prefix="wiki"
-              class="mb-4"
-            />
+            <h3 class="topics-subsection-title !mb-0">Wiki Preview</h3>
             <details v-if="selectedDraftTopic?.wiki && data?.wiki_intro" class="topics-wiki-intro mb-3">
               <summary class="text-xs font-medium text-slate-500">Shared proposal overview</summary>
               <MarkdownContent :markdown="data.wiki_intro" class="mt-2" />

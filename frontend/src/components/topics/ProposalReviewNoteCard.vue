@@ -61,7 +61,7 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
       :key="`review-note-${comment.id}`"
       class="border-l-2 border-indigo-300 pl-3"
     >
-      <p class="whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
+      <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
     </article>
 
     <div v-if="showActions" class="flex justify-end gap-2">

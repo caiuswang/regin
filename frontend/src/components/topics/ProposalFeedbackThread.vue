@@ -22,7 +22,7 @@ function feedbackThreadColor(status) {
       <span class="text-xs font-medium text-slate-700">{{ title }}</span>
       <span v-if="thread.addressed_in_revision_number" class="text-[11px] text-slate-500">addressed in r{{ thread.addressed_in_revision_number }}</span>
     </div>
-    <p v-if="thread.quoted_text" class="mt-2 text-xs text-slate-500">“{{ thread.quoted_text }}”</p>
+    <p v-if="thread.quoted_text" class="mt-2 text-xs text-slate-500 break-words">“{{ thread.quoted_text }}”</p>
     <article
       v-for="comment in (thread.comments || [])"
       :key="`${keyPrefix}-comment-${comment.id}`"
@@ -32,7 +32,7 @@ function feedbackThreadColor(status) {
         <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
         <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
       </div>
-      <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
+      <p class="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
     </article>
   </div>
 </template>

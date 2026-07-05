@@ -9,6 +9,10 @@ import Card from '../Card.vue'
 const props = defineProps({
   draftTopics: { type: Array, default: () => [] },
   selectedDraftTopicId: { type: [String, Number], default: null },
+  // Proposal-topic ids that carry an open content-drift note. Rendered as a
+  // red `drift` badge in the Status cell so a drifted wiki is spottable among
+  // rows that otherwise all read `accepted`.
+  driftTopicIds: { type: Array, default: () => [] },
   // True when the proposal is ready + on the latest revision, so a bulk
   // apply is allowed. Gated by the parent (ProposalRunDetail).
   canApplyAll: { type: Boolean, default: false },
@@ -64,7 +68,12 @@ const pendingCount = computed(() => props.draftTopics.filter(isPendingTopic).len
               <div class="topics-row-meta line-clamp-2">{{ topic.intent_preview }}</div>
             </button>
           </td>
-          <td><Badge :color="topicReviewStatusColor(topic.review_status)" :label="topic.review_status" /></td>
+          <td>
+            <span class="inline-flex flex-wrap items-center gap-1">
+              <Badge :color="topicReviewStatusColor(topic.review_status)" :label="topic.review_status" />
+              <Badge v-if="driftTopicIds.includes(topic.id)" color="red" label="drift" />
+            </span>
+          </td>
           <td class="text-right">{{ topic.evidence_count }}</td>
           <td class="text-right">{{ topic.proposed_ref_count }}</td>
           <td class="text-right">{{ topic.feedback_thread_count || 0 }}</td>

@@ -398,7 +398,7 @@ watch(
               addressed in r{{ thread.addressed_in_revision_number }}
             </span>
           </div>
-          <p v-if="thread.quoted_text" class="text-xs text-slate-500 line-clamp-3">“{{ thread.quoted_text }}”</p>
+          <p v-if="thread.quoted_text" class="text-xs text-slate-500 line-clamp-3 break-words">“{{ thread.quoted_text }}”</p>
         </div>
         <div class="text-[11px] text-slate-400 whitespace-nowrap">{{ fmtLocalDateTime(thread.updated_at) }}</div>
       </div>
@@ -435,7 +435,7 @@ watch(
             </div>
           </template>
           <template v-else>
-            <p class="mt-1 whitespace-pre-wrap text-sm text-slate-800">{{ comment.body }}</p>
+            <p class="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
             <div v-if="!readonly" class="mt-1 flex justify-end gap-2">
               <Button
                 variant="link"
