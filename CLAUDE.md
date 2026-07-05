@@ -73,6 +73,17 @@ Use the `.venv` interpreter; do **not** invoke bare `python` — the system inte
 
 ## Conventions
 
+### Code comments
+
+Default to no comments. Only add one when it captures high-value information that
+the code itself can't: a non-obvious *why* (a hidden constraint, a workaround for a
+specific bug, a rejected alternative and why), or a decision point a future reader
+would otherwise have to re-derive. Never write a comment that narrates *what* the
+code does — well-named identifiers already say that — and never reference the
+current task, a fix, or a caller ("used by X", "added for the Y flow"); that belongs
+in the commit message or PR description, not the source. If deleting a comment
+wouldn't confuse a future reader, delete it.
+
 ### Settings
 
 - All paths/flags come off the `settings` singleton in `lib/settings.py` (pydantic-settings). Don't read env vars directly.
