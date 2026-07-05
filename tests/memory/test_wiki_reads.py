@@ -85,3 +85,14 @@ def test_sync_leaves_exposure_rows_untouched():
     sync_wiki_reads()
     exposure = store.wiki_recall_stats(signal="exposure")
     assert len(exposure) == 1 and exposure[0].recall_count == 1
+
+
+def test_wiki_recall_totals_sums_across_signals():
+    store = memory.get_store()
+    store.bump_wiki_recall("alpha", signal="exposure")
+    store.bump_wiki_recall("alpha", signal="exposure")
+    store.replace_wiki_read_counts({"alpha": {"count": 3, "last_read": None}})
+    store.bump_wiki_recall("beta", signal="exposure")
+    totals = store.wiki_recall_totals()
+    assert totals == {"alpha": 5, "beta": 1}  # 2 exposure + 3 read, then 1
+    assert store.wiki_recall_totals().get("absent", 0) == 0

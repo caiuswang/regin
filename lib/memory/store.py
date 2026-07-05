@@ -968,6 +968,18 @@ class SqliteMemoryStore:
                 stmt = stmt.where(TopicWikiRecall.signal == signal)
             return list(session.exec(stmt).all())
 
+    def wiki_recall_totals(self) -> dict[str, int]:
+        """Total recall count per topic across all signals — the ranking key
+        for floating heavily-consulted wikis to the top of the navigation
+        listing. Topics with no counter are simply absent (caller defaults 0)."""
+        with MemorySessionLocal() as session:
+            rows = session.exec(select(TopicWikiRecall.topic_id,
+                                       TopicWikiRecall.recall_count)).all()
+        totals: dict[str, int] = {}
+        for topic_id, count in rows:
+            totals[topic_id] = totals.get(topic_id, 0) + (count or 0)
+        return totals
+
     def replace_wiki_read_counts(self, counts: dict[str, dict]) -> None:
         """Replace every `signal='read'` row with a freshly-derived set —
         SET, not increment. The read signal is recomputed from the append-only
