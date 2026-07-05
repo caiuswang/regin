@@ -169,7 +169,8 @@
         },
         {
           "path": "ARCHITECTURE.md",
-          "role": "architecture"
+          "role": "architecture",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -196,7 +197,8 @@
       "refs": [
         {
           "path": "lib/agent_messages/__init__.py",
-          "role": "overview"
+          "role": "overview",
+          "tier": "reference"
         },
         {
           "path": "lib/agent_messages/mcp_server.py",
@@ -230,7 +232,8 @@
           "path": "lib/agent_messages/event_notify.py"
         },
         {
-          "path": "lib/agent_messages/push/__init__.py"
+          "path": "lib/agent_messages/push/__init__.py",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -356,7 +359,8 @@
           "path": "lib/grader/judge_io.py"
         },
         {
-          "path": "lib/grader/models.py"
+          "path": "lib/grader/models.py",
+          "tier": "reference"
         },
         {
           "path": "lib/grader/pareto.py"
@@ -365,10 +369,12 @@
           "path": "lib/grader/process.py"
         },
         {
-          "path": "lib/grader/process_agentic.py"
+          "path": "lib/grader/process_agentic.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/grader/prompts.py"
+          "path": "lib/grader/prompts.py",
+          "tier": "reference"
         },
         {
           "path": "lib/grader/source_quality.py"
@@ -418,7 +424,8 @@
       "refs": [
         {
           "path": "cli/commands/goal.py",
-          "role": "entrypoint"
+          "role": "entrypoint",
+          "tier": "reference"
         },
         {
           "path": "lib/goal_feedback.py",
@@ -624,23 +631,28 @@
         },
         {
           "path": "frontend/src/components/memory/MemoryDetail.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/components/memory/MemoryTaxonomy.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/components/memory/TaxonomyDetail.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -689,7 +701,8 @@
         },
         {
           "path": "hook_manager/handlers/post_tool_trace.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -787,11 +800,13 @@
         },
         {
           "path": "lib/memory/feedback.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/memory/models.py",
-          "role": "schema"
+          "role": "schema",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/components/memory/ExemplarCaseList.vue",
@@ -908,11 +923,13 @@
         },
         {
           "path": "lib/grader/service.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/memory/models.py",
-          "role": "schema"
+          "role": "schema",
+          "tier": "reference"
         },
         {
           "path": "web/blueprints/memory.py",
@@ -982,10 +999,12 @@
         },
         {
           "path": "docs/topics/multi-user.md",
-          "role": "docs"
+          "role": "docs",
+          "tier": "reference"
         },
         {
-          "path": ".regin/topics/wiki/multi-user-topic-sharing.md"
+          "path": ".regin/topics/wiki/multi-user-topic-sharing.md",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -1257,64 +1276,84 @@
           "role": "implementation"
         },
         {
-          "path": "cli/__init__.py"
+          "path": "cli/__init__.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/__init__.py"
+          "path": "cli/commands/__init__.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/gate.py"
+          "path": "cli/commands/gate.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/goal.py"
+          "path": "cli/commands/goal.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/grader.py"
+          "path": "cli/commands/grader.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/logs.py"
+          "path": "cli/commands/logs.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/memory.py"
+          "path": "cli/commands/memory.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/messages.py"
+          "path": "cli/commands/messages.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/patterns.py"
+          "path": "cli/commands/patterns.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/repo.py"
+          "path": "cli/commands/repo.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/route.py"
+          "path": "cli/commands/route.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/rules.py"
+          "path": "cli/commands/rules.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/schema.py"
+          "path": "cli/commands/schema.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/server.py"
+          "path": "cli/commands/server.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/session.py"
+          "path": "cli/commands/session.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/skills.py"
+          "path": "cli/commands/skills.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/topics.py"
+          "path": "cli/commands/topics.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/trace.py"
+          "path": "cli/commands/trace.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/users.py"
+          "path": "cli/commands/users.py",
+          "tier": "reference"
         },
         {
-          "path": "cli/commands/wiki.py"
+          "path": "cli/commands/wiki.py",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -1413,7 +1452,8 @@
         },
         {
           "path": "lib/rules/engine_rule_disable.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/rules/grit_rule_index.py",
@@ -1456,7 +1496,8 @@
           "path": "example/rule/frontend-style-convention/checkers/interactive_requires_focus_visible.mjs"
         },
         {
-          "path": "example/rule/frontend-style-convention/checkers/prefer_ds_primitive.mjs"
+          "path": "example/rule/frontend-style-convention/checkers/prefer_ds_primitive.mjs",
+          "tier": "reference"
         },
         {
           "path": "example/rule/frontend-style-convention/checkers/select_input_in_flex_wrap.mjs"
@@ -1465,7 +1506,8 @@
           "path": "example/rule/frontend-style-convention/content.md"
         },
         {
-          "path": "example/rule/frontend-style-convention/design-system.yaml"
+          "path": "example/rule/frontend-style-convention/design-system.yaml",
+          "tier": "reference"
         },
         {
           "path": "example/rule/frontend-style-convention/lib/ast-utils.mjs"
@@ -1495,7 +1537,8 @@
           "path": "example/rule/regin-python-conventions/manifest.json"
         },
         {
-          "path": "example/rule/regin-python-conventions/references/python-conventions.md"
+          "path": "example/rule/regin-python-conventions/references/python-conventions.md",
+          "tier": "reference"
         },
         {
           "path": "example/rule/regin-python-conventions/scripts/filter_grit_output.py"
@@ -1507,70 +1550,89 @@
           "path": "example/rule/vue-complexity/SKILL.md"
         },
         {
-          "path": "example/rule/vue-complexity/bin/vue-complexity-runner.mjs"
+          "path": "example/rule/vue-complexity/bin/vue-complexity-runner.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/script_cyclomatic_function.mjs"
+          "path": "example/rule/vue-complexity/checkers/script_cyclomatic_function.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/script_cyclomatic_module.mjs"
+          "path": "example/rule/vue-complexity/checkers/script_cyclomatic_module.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/script_function_length.mjs"
+          "path": "example/rule/vue-complexity/checkers/script_function_length.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/script_surface_area.mjs"
+          "path": "example/rule/vue-complexity/checkers/script_surface_area.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/template_binding_count.mjs"
+          "path": "example/rule/vue-complexity/checkers/template_binding_count.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/template_conditional_loop.mjs"
+          "path": "example/rule/vue-complexity/checkers/template_conditional_loop.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/template_directive_density.mjs"
+          "path": "example/rule/vue-complexity/checkers/template_directive_density.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/template_max_depth.mjs"
+          "path": "example/rule/vue-complexity/checkers/template_max_depth.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/checkers/template_node_count.mjs"
+          "path": "example/rule/vue-complexity/checkers/template_node_count.mjs",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/lib/complexity-utils.mjs"
+          "path": "example/rule/vue-complexity/lib/complexity-utils.mjs",
+          "tier": "reference"
         },
         {
           "path": "example/rule/vue-complexity/package.json"
         },
         {
-          "path": "example/rule/vue-complexity/references/calibrate.mjs"
+          "path": "example/rule/vue-complexity/references/calibrate.mjs",
+          "tier": "reference"
         },
         {
           "path": "example/rule/vue-complexity/regin-bundle.yaml"
         },
         {
-          "path": "example/rule/vue-complexity/script-js.yaml"
+          "path": "example/rule/vue-complexity/script-js.yaml",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/script.yaml"
+          "path": "example/rule/vue-complexity/script.yaml",
+          "tier": "reference"
         },
         {
-          "path": "example/rule/vue-complexity/template.yaml"
+          "path": "example/rule/vue-complexity/template.yaml",
+          "tier": "reference"
         },
         {
-          "path": "lib/languages/java.py"
+          "path": "lib/languages/java.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/languages/python.py"
+          "path": "lib/languages/python.py",
+          "tier": "reference"
         },
         {
           "path": "lib/rules/__init__.py"
         },
         {
-          "path": "lib/rules/buckets.py"
+          "path": "lib/rules/buckets.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/rules/status.py"
+          "path": "lib/rules/status.py",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -1615,7 +1677,8 @@
       "refs": [
         {
           "path": "hook_manager/handlers/session_id_probe.py",
-          "role": "entrypoint"
+          "role": "entrypoint",
+          "tier": "reference"
         },
         {
           "path": "lib/session_probe.py",
@@ -1669,11 +1732,13 @@
       "refs": [
         {
           "path": "lib/trace/trace_service/__init__.py",
-          "role": "overview"
+          "role": "overview",
+          "tier": "reference"
         },
         {
           "path": "web/blueprints/trace/__init__.py",
-          "role": "api"
+          "role": "api",
+          "tier": "reference"
         },
         {
           "path": "web/blueprints/trace/mcp_calls.py",
@@ -1741,7 +1806,8 @@
         },
         {
           "path": "lib/trace/trace_context.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/trace/trace_service/ingest.py",
@@ -1760,262 +1826,346 @@
           "role": "implementation"
         },
         {
-          "path": "hook_manager/handlers/plan_trace.py"
+          "path": "hook_manager/handlers/plan_trace.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/pre_tool_trace.py"
+          "path": "hook_manager/handlers/pre_tool_trace.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/turn_trace/__init__.py"
+          "path": "hook_manager/handlers/turn_trace/__init__.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/turn_trace/cache.py"
+          "path": "hook_manager/handlers/turn_trace/cache.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+          "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/turn_trace/entry.py"
+          "path": "hook_manager/handlers/turn_trace/entry.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/turn_trace/span_posters.py"
+          "path": "hook_manager/handlers/turn_trace/span_posters.py",
+          "tier": "reference"
         },
         {
-          "path": "hook_manager/handlers/turn_trace/timestamps.py"
+          "path": "hook_manager/handlers/turn_trace/timestamps.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/__init__.py"
+          "path": "lib/trace/__init__.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/claude_subagents.py"
+          "path": "lib/trace/claude_subagents.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/claude_version.py"
+          "path": "lib/trace/claude_version.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/file_history.py"
+          "path": "lib/trace/file_history.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/is_test.py"
+          "path": "lib/trace/is_test.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/kimi_subagents.py"
+          "path": "lib/trace/kimi_subagents.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/kimi_transcript.py"
+          "path": "lib/trace/kimi_transcript.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/live_rescan.py"
+          "path": "lib/trace/live_rescan.py",
+          "tier": "reference"
         },
         {
           "path": "lib/trace/merge.py"
         },
         {
-          "path": "lib/trace/payload_drift_store.py"
+          "path": "lib/trace/payload_drift_store.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/README.md"
+          "path": "lib/trace/payload_schemas/README.md",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Agent.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Agent.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/AskUserQuestion.schema.json"
+          "path": "lib/trace/payload_schemas/claude/AskUserQuestion.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Bash.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Bash.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/CronCreate.schema.json"
+          "path": "lib/trace/payload_schemas/claude/CronCreate.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/CronDelete.schema.json"
+          "path": "lib/trace/payload_schemas/claude/CronDelete.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/CronList.schema.json"
+          "path": "lib/trace/payload_schemas/claude/CronList.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Edit.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Edit.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/ExitPlanMode.schema.json"
+          "path": "lib/trace/payload_schemas/claude/ExitPlanMode.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Glob.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Glob.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Grep.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Grep.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/MultiEdit.schema.json"
+          "path": "lib/trace/payload_schemas/claude/MultiEdit.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Read.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Read.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Skill.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Skill.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/TaskCreate.schema.json"
+          "path": "lib/trace/payload_schemas/claude/TaskCreate.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/TaskList.schema.json"
+          "path": "lib/trace/payload_schemas/claude/TaskList.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/TaskOutput.schema.json"
+          "path": "lib/trace/payload_schemas/claude/TaskOutput.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/TaskStop.schema.json"
+          "path": "lib/trace/payload_schemas/claude/TaskStop.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/TaskUpdate.schema.json"
+          "path": "lib/trace/payload_schemas/claude/TaskUpdate.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/ToolSearch.schema.json"
+          "path": "lib/trace/payload_schemas/claude/ToolSearch.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/WebFetch.schema.json"
+          "path": "lib/trace/payload_schemas/claude/WebFetch.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/WebSearch.schema.json"
+          "path": "lib/trace/payload_schemas/claude/WebSearch.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Workflow.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Workflow.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/Write.schema.json"
+          "path": "lib/trace/payload_schemas/claude/Write.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/ConfigChange.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/ConfigChange.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/CwdChanged.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/CwdChanged.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/InstructionsLoaded.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/InstructionsLoaded.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/Notification.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/Notification.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionDenied.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionDenied.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionRequest.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/PermissionRequest.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/PostToolUseFailure.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/PostToolUseFailure.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/PreToolUse.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/PreToolUse.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/SessionEnd.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/SessionEnd.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/SessionStart.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/SessionStart.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/Stop.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/Stop.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/StopFailure.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/StopFailure.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStart.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStart.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStop.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStop.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCompleted.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCompleted.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCreated.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/TaskCreated.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptExpansion.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptExpansion.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptSubmit.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptSubmit.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json"
+          "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/Agent.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/Agent.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/Bash.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/Bash.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/Edit.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/Edit.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/FetchURL.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/FetchURL.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/Read.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/Read.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/TodoList.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/TodoList.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/Write.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/Write.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/_hooks/PostCompact.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PostCompact.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/_hooks/PostToolUseFailure.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PostToolUseFailure.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/_hooks/PreCompact.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/_hooks/PreCompact.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStart.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStart.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStop.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStop.schema.json",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/payload_schemas/kimi/_hooks/UserPromptSubmit.schema.json"
+          "path": "lib/trace/payload_schemas/kimi/_hooks/UserPromptSubmit.schema.json",
+          "tier": "reference"
         },
         {
           "path": "lib/trace/pending_spans.py"
         },
         {
-          "path": "lib/trace/plan_context.py"
+          "path": "lib/trace/plan_context.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/plans.py"
+          "path": "lib/trace/plans.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/prompt_images_resolve.py"
+          "path": "lib/trace/prompt_images_resolve.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/queued_prompts.py"
+          "path": "lib/trace/queued_prompts.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/rewind_detect.py"
+          "path": "lib/trace/rewind_detect.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/span_gates.py"
+          "path": "lib/trace/span_gates.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/tool_input_summary.py"
+          "path": "lib/trace/tool_input_summary.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/transcript_models.py"
+          "path": "lib/trace/transcript_models.py",
+          "tier": "reference"
         },
         {
-          "path": "lib/trace/workflow_ingest.py"
+          "path": "lib/trace/workflow_ingest.py",
+          "tier": "reference"
         },
         {
-          "path": "web/blueprints/trace/agent_messages.py"
+          "path": "web/blueprints/trace/agent_messages.py",
+          "tier": "reference"
         },
         {
-          "path": "web/blueprints/trace/ingest_errors.py"
+          "path": "web/blueprints/trace/ingest_errors.py",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -2101,11 +2251,13 @@
         },
         {
           "path": "lib/topics/proposal_orm/runs.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/topics/proposal_orm/serializers.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/topics/proposals/__init__.py",
@@ -2144,7 +2296,8 @@
           "role": "implementation"
         },
         {
-          "path": "lib/topics/proposal_expiry.py"
+          "path": "lib/topics/proposal_expiry.py",
+          "tier": "reference"
         },
         {
           "path": "lib/topics/proposal_review.py"
@@ -2201,7 +2354,8 @@
         },
         {
           "path": "lib/topics/scan.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "lib/topics/term_weights.py",
@@ -2209,7 +2363,8 @@
         },
         {
           "path": "lib/topics/wiki.py",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         }
       ],
       "status": "active"
@@ -2671,11 +2826,13 @@
         },
         {
           "path": "frontend/src/views/DashboardView.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/views/LoginView.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/views/SessionTraceView.vue",
@@ -2687,97 +2844,125 @@
         },
         {
           "path": "frontend/src/views/SettingsView.vue",
-          "role": "implementation"
+          "role": "implementation",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/views/DesignSystemView.vue",
-          "role": "docs"
+          "role": "docs",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/AuditView.vue"
+          "path": "frontend/src/views/AuditView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/ExperimentDetailView.vue"
+          "path": "frontend/src/views/ExperimentDetailView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/ExperimentsView.vue"
+          "path": "frontend/src/views/ExperimentsView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/GradesView.vue"
+          "path": "frontend/src/views/GradesView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/InboxView.vue"
+          "path": "frontend/src/views/InboxView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/IngestErrorsView.vue"
+          "path": "frontend/src/views/IngestErrorsView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/MCPCallsView.vue"
+          "path": "frontend/src/views/MCPCallsView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/MemoryView.vue"
+          "path": "frontend/src/views/MemoryView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/PatternDetailView.vue"
+          "path": "frontend/src/views/PatternDetailView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/PatternsView.vue"
+          "path": "frontend/src/views/PatternsView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/PayloadLogView.vue"
+          "path": "frontend/src/views/PayloadLogView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/PlanDetailView.vue"
+          "path": "frontend/src/views/PlanDetailView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/PlansView.vue"
+          "path": "frontend/src/views/PlansView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/PromptTemplatesView.vue"
+          "path": "frontend/src/views/PromptTemplatesView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/RepoDetailView.vue"
+          "path": "frontend/src/views/RepoDetailView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/RepoTopicsView.vue"
+          "path": "frontend/src/views/RepoTopicsView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/ReposView.vue"
+          "path": "frontend/src/views/ReposView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/RuleDetailView.vue"
+          "path": "frontend/src/views/RuleDetailView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/RulesView.vue"
+          "path": "frontend/src/views/RulesView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/SchemaDriftView.vue"
+          "path": "frontend/src/views/SchemaDriftView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/SkillDetailView.vue"
+          "path": "frontend/src/views/SkillDetailView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/SkillReadsView.vue"
+          "path": "frontend/src/views/SkillReadsView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/SkillsView.vue"
+          "path": "frontend/src/views/SkillsView.vue",
+          "tier": "reference"
         },
         {
           "path": "frontend/src/views/TraceView.vue"
         },
         {
-          "path": "frontend/src/views/TriggersRawView.vue"
+          "path": "frontend/src/views/TriggersRawView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/TriggersView.vue"
+          "path": "frontend/src/views/TriggersView.vue",
+          "tier": "reference"
         },
         {
-          "path": "frontend/src/views/UsersView.vue"
+          "path": "frontend/src/views/UsersView.vue",
+          "tier": "reference"
         }
       ],
       "status": "active"
     }
   },
-  "updated_at": "2026-05-26T17:33:31Z",
+  "updated_at": "2026-07-05T06:04:56Z",
   "version": 1
 }
