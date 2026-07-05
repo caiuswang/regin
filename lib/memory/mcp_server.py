@@ -104,15 +104,17 @@ def _format_card(card: dict, mem_count: Optional[int]) -> str:
     return f"- {card['id']} · {card['label']} ({shape}{mc})\n    {card['blurb']}"
 
 
-def _wiki_section(node_id: str) -> str:
+def _wiki_section(node_id: str) -> tuple[str, bool]:
     """Address of the curated per-topic wiki — the agent Reads it if it wants
-    the narrative. We hand over the path, not the contents."""
+    the narrative. We hand over the path, not the contents. Returns
+    (section_text, wiki_exists); the bool lets index_fetch record an exposure
+    only when a real wiki was actually surfaced."""
     from lib.settings import settings
     from lib.topics.wiki import wiki_dir
     if not (wiki_dir(settings.project_root) / f"{node_id}.md").exists():
-        return "## wiki\n(none — bucket or un-accepted topic)"
+        return "## wiki\n(none — bucket or un-accepted topic)", False
     return (f"## wiki\n.regin/topics/wiki/{node_id}.md  "
-            f"(Read this for the full topic narrative)")
+            f"(Read this for the full topic narrative)"), True
 
 
 _REF_CAP = 12  # role-bearing anchors are enough; the wiki has the full file map
@@ -223,7 +225,8 @@ def index_expand(node_id: str, scope: str = "") -> str:
 
 
 @mcp.tool()
-def index_fetch(node_id: str, top_k: int = 10, scope: str = "") -> str:
+def index_fetch(node_id: str, top_k: int = 10, scope: str = "",
+                reinforce: bool = True) -> str:
     """Read a topic node — the leaf step of the navigation walk. Returns
     **addresses, not contents**, so you spend tokens only on what you choose
     to open:
@@ -241,6 +244,10 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "") -> str:
         node_id: The topic node to read (its subtree's memories are listed).
         top_k: Max memory titles to list (default 10, capped at 50).
         scope: Optional repo scope filter like "repo:regin".
+        reinforce: Whether this fetch counts as wiki usage. A genuine
+            navigation pull (default) bumps the wiki's exposure counter;
+            pass False for AUDIT / curation / eval sweeps so surveying the
+            tree never inflates the signal (mirrors `recall`'s reinforce).
 
     Returns:
         `## wiki`, `## source refs`, `## memories` sections of pointers.
@@ -257,7 +264,10 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "") -> str:
     ids = store.memories_for_topic_subtree(subtree_ids(graph, node_id),
                                            scope=scope or None)
     label = node.get("label") or node_id
-    sections = [_wiki_section(node_id), _refs_section(node),
+    wiki_text, wiki_exists = _wiki_section(node_id)
+    if wiki_exists and reinforce:
+        store.bump_wiki_recall(node_id, signal="exposure")
+    sections = [wiki_text, _refs_section(node),
                 _memories_section(store, ids, top_k)]
     return f"{node_id} · {label}\n\n" + "\n\n".join(sections)
 

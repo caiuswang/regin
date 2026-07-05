@@ -610,6 +610,63 @@ def cmd_topics_wiki_debt(
         print(f"{row['status']:8} {row['topic_id']}{detail}{queued}")
 
 
+def _wiki_stat_row(row, topics: dict, wdir: Path) -> dict:
+    node = topics.get(row.topic_id) or {}
+    return {
+        "topic_id": row.topic_id,
+        "label": node.get("label") or row.topic_id,
+        "signal": row.signal,
+        "recall_count": row.recall_count,
+        "last_recalled": row.last_recalled,
+        "wiki_present": (wdir / f"{row.topic_id}.md").exists(),
+    }
+
+
+def _format_wiki_stat_line(e: dict) -> str:
+    stale = "" if e["wiki_present"] else "  ⚠ wiki missing"
+    last = (e["last_recalled"] or "")[:19]
+    return (f"{e['recall_count']:>5}  {e['signal']:8}  {e['topic_id']}"
+            f"  ({e['label']}){stale}  {last}")
+
+
+@topics_app.command(
+    "wiki-stats",
+    help="Report per-topic wiki recall counts (how often index_fetch surfaced "
+         "each wiki). A high count whose wiki file is gone, or exposure with "
+         "no reads, is a prune/refresh signal.")
+def cmd_topics_wiki_stats(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    signal: str | None = typer.Option(
+        None, "--signal",
+        help="Filter to one signal: 'exposure' (index_fetch surfaced the "
+             "path) or 'read' (agent Read the file). Omit for all."),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    import lib.memory as memory
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.wiki import wiki_dir
+
+    if not memory.enabled():
+        print("agent memory is disabled (settings.agent_memory.enabled)")
+        raise typer.Exit(1)
+
+    rp = _repo_path(repo)
+    topics = load_authoritative_graph(str(rp)).get("topics") or {}
+    wdir = wiki_dir(rp)
+    enriched = [_wiki_stat_row(r, topics, wdir)
+                for r in memory.get_store().wiki_recall_stats(signal=signal)]
+
+    if as_json:
+        print(json.dumps(enriched, indent=2))
+        return
+    if not enriched:
+        scope = f" for signal={signal}" if signal else ""
+        print(f"No wiki recalls recorded yet{scope}.")
+        return
+    for e in enriched:
+        print(_format_wiki_stat_line(e))
+
+
 @topics_app.command(
     "backfill-tiers",
     help="Tag refs a topic's wiki never mentions as tier=reference so they stop "

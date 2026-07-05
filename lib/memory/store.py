@@ -36,7 +36,7 @@ from lib.memory.models import (
     InjectionEvent, Memory, MemoryAuthoritativeTopic, MemoryEdge,
     MemoryEmbedding, MemoryHit, MemoryInput, MemoryTopic,
     MemoryTopicMember, MemoryValidation, TopicExemplar, TopicInjection,
-    TopicRouteDecision,
+    TopicRouteDecision, TopicWikiRecall,
 )
 
 log = get_activity_logger("memory")
@@ -939,6 +939,34 @@ class SqliteMemoryStore:
                 stmt = stmt.where(Memory.scope == scope)
             rows = session.exec(stmt).all()
         return list(dict.fromkeys(rows))
+
+    def bump_wiki_recall(self, topic_id: str, *,
+                         signal: str = "exposure") -> None:
+        """Increment a topic wiki's usage counter. `signal='exposure'` (an
+        index_fetch surfaced the path) is the v0 event; `'read'` is reserved
+        for trace-derived confirmation the file was actually Read. Upsert:
+        first touch creates the row."""
+        now = _now()
+        with MemorySessionLocal() as session:
+            row = session.get(TopicWikiRecall, (topic_id, signal))
+            if row is None:
+                row = TopicWikiRecall(topic_id=topic_id, signal=signal,
+                                      recall_count=0)
+            row.recall_count = (row.recall_count or 0) + 1
+            row.last_recalled = now
+            session.add(row)
+            session.commit()
+
+    def wiki_recall_stats(self, *, signal: Optional[str] = None
+                          ) -> list[TopicWikiRecall]:
+        """All wiki counters, most-recalled first — backs a `regin topics
+        wiki-stats` readout and 'high-exposure, never-read → prune' triage."""
+        with MemorySessionLocal() as session:
+            stmt = select(TopicWikiRecall).order_by(
+                TopicWikiRecall.recall_count.desc())
+            if signal is not None:
+                stmt = stmt.where(TopicWikiRecall.signal == signal)
+            return list(session.exec(stmt).all())
 
     def orphaned_memory_ids(self, *,
                             scope: Optional[str] = None) -> list[str]:

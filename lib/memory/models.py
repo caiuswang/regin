@@ -381,6 +381,32 @@ class MemoryAuthoritativeTopic(MemoryBase, table=True):
         sa_column=Column("added_at", Text, nullable=False))
 
 
+class TopicWikiRecall(MemoryBase, table=True):
+    """Usage counter for a per-topic wiki (`.regin/topics/wiki/<id>.md`),
+    keyed by the authoritative topic node's string id — the wiki analog of
+    `Memory.recall_count`. Lives in the memory DB (not `topic.json`, which
+    proposals rewrite wholesale) and bridges to the topics graph by string
+    id, like `MemoryAuthoritativeTopic`.
+
+    `signal` keeps the two non-interchangeable events orthogonal:
+    ``'exposure'`` (index_fetch surfaced the path) vs ``'read'`` (the agent
+    actually Read the file, reconstructed from the trace). v0 writes only
+    ``'exposure'`` — honestly labeled, since a fetch is not a read."""
+
+    __tablename__ = "topic_wiki_recalls"
+
+    topic_id: str = Field(
+        sa_column=Column("topic_id", String, primary_key=True))
+    signal: str = Field(
+        sa_column=Column("signal", String, primary_key=True,
+                         server_default=text("'exposure'")))
+    recall_count: int = Field(
+        sa_column=Column("recall_count", Integer, nullable=False,
+                         server_default=text("0")))
+    last_recalled: Optional[str] = Field(
+        default=None, sa_column=Column("last_recalled", Text))
+
+
 class ReferentSessionDF(MemoryBase, table=True):
     """Cached session-span document frequency for one memory referent: how
     many distinct sessions have at least one tool span whose text contains
