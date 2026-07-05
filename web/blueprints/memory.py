@@ -156,6 +156,20 @@ def api_memory_reflect():
     })
 
 
+@memory_bp.route("/api/memory/wiki-recalls")
+def api_memory_wiki_recalls():
+    """Per-topic wiki recall stats for the Wikis panel: `exposure` (index_fetch
+    surfaced the path) + distinct-session `read` counts, `last_read`, label, and
+    whether the wiki file still exists. Pass `?sync=1` to recompute the read
+    signal from the trace first (the panel's manual refresh); it auto-refreshes
+    at SessionEnd otherwise."""
+    from lib.settings import settings
+    from lib.memory.wiki_reads import sync_wiki_reads, wiki_recall_rows
+    if _bool_arg("sync"):
+        sync_wiki_reads()
+    return jsonify({"rows": wiki_recall_rows(str(settings.project_root))})
+
+
 @memory_bp.route("/api/memory/topics")
 def api_memory_topics():
     """Named topic nodes (synthesis clusters), most-recent first, with their

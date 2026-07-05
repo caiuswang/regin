@@ -76,6 +76,37 @@ def compute_wiki_reads() -> dict[str, dict]:
             for topic_id, traces in sessions_by_topic.items()}
 
 
+def wiki_recall_rows(repo_path) -> list[dict]:
+    """Per-topic wiki recall rows for the UI panel: `exposure` + `read` counts,
+    `last_read`, the topic `label`, and whether the wiki file still exists.
+    Sorted read-desc then exposure-desc (most-consulted first). Empty when
+    memory is off. A row whose `wiki_present` is False is a counter that
+    outlived its file — a prune/refresh signal."""
+    import lib.memory as memory
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.wiki import wiki_dir
+
+    if not memory.enabled():
+        return []
+    topics = load_authoritative_graph(str(repo_path)).get("topics") or {}
+    wdir = wiki_dir(repo_path)
+    by_topic: dict[str, dict] = {}
+    for stat in memory.get_store().wiki_recall_stats():
+        agg = by_topic.setdefault(stat.topic_id,
+                                  {"exposure": 0, "read": 0, "last_read": None})
+        if stat.signal == "read":
+            agg["read"] = stat.recall_count
+            agg["last_read"] = stat.last_recalled
+        elif stat.signal == "exposure":
+            agg["exposure"] = stat.recall_count
+    rows = [{"topic_id": topic_id,
+             "label": (topics.get(topic_id) or {}).get("label") or topic_id,
+             "wiki_present": (wdir / f"{topic_id}.md").exists(), **agg}
+            for topic_id, agg in by_topic.items()]
+    rows.sort(key=lambda r: (r["read"], r["exposure"]), reverse=True)
+    return rows
+
+
 def sync_wiki_reads() -> list[dict]:
     """Recompute all ``signal='read'`` wiki counters from the trace and persist
     them. Returns the derived rows, most-read first. Idempotent."""

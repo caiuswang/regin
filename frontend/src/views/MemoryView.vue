@@ -16,6 +16,7 @@ import MemoryTopics from '../components/memory/MemoryTopics.vue'
 import MemoryTopicFeedback from '../components/memory/MemoryTopicFeedback.vue'
 import TopicRoutePlayground from '../components/memory/TopicRoutePlayground.vue'
 import MemoryTaxonomy from '../components/memory/MemoryTaxonomy.vue'
+import MemoryWikiRecalls from '../components/memory/MemoryWikiRecalls.vue'
 import MemoryDoctor from '../components/memory/MemoryDoctor.vue'
 
 const { confirm } = useConfirm()
@@ -31,11 +32,12 @@ const selectedId = ref(null)
 
 // Three domain-coherent tabs replace the single long scroll: browse/manage,
 // topic clustering + routing, and recall-ranking tuning.
-const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'tree', 'recall'] })
+const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'tree', 'wikis', 'recall'] })
 const TABS = [
   { value: 'memories', label: 'Memories' },
   { value: 'topics', label: 'Topics' },
   { value: 'tree', label: 'Tree' },
+  { value: 'wikis', label: 'Wikis' },
   { value: 'recall', label: 'Recall' },
 ]
 
@@ -353,6 +355,12 @@ onBeforeUnmount(() => headerObserver?.disconnect())
          node's wiki, source refs, and the memories filed under it. -->
     <div v-show="activeTab === 'tree'" class="pt-4">
       <MemoryTaxonomy ref="taxonomyRef" :scopes="stats.by_scope || {}" @select="selectMemory" />
+    </div>
+
+    <!-- Wikis: how often each topic's curated wiki has been consulted
+         (distinct-session reads + index_fetch exposure). -->
+    <div v-show="activeTab === 'wikis'" class="pt-4">
+      <MemoryWikiRecalls />
     </div>
 
     <!-- Recall: probe what a query surfaces. -->

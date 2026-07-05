@@ -981,6 +981,22 @@ class SqliteMemoryStore:
                 .where(TopicWikiRecall.signal == "read")).all()
         return {topic_id: (count or 0) for topic_id, count in rows}
 
+    def wiki_recall_for_topic(self, topic_id: str) -> dict:
+        """One topic's wiki counters as ``{exposure, read, last_read}`` — the
+        per-topic readout for the topic wiki page. `last_read` is the read
+        signal's timestamp (None when never read)."""
+        out = {"exposure": 0, "read": 0, "last_read": None}
+        with MemorySessionLocal() as session:
+            rows = session.exec(select(TopicWikiRecall).where(
+                TopicWikiRecall.topic_id == topic_id)).all()
+        for row in rows:
+            if row.signal == "read":
+                out["read"] = row.recall_count
+                out["last_read"] = row.last_recalled
+            elif row.signal == "exposure":
+                out["exposure"] = row.recall_count
+        return out
+
     def replace_wiki_read_counts(self, counts: dict[str, dict]) -> None:
         """Replace every `signal='read'` row with a freshly-derived set —
         SET, not increment. The read signal is recomputed from the append-only

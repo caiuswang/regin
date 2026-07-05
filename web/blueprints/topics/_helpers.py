@@ -254,10 +254,7 @@ def _wiki_workspace_payload(repo_path: str, selected_topic_id: str | None) -> di
         selected_topic_id = None
     if not selected_topic_id and topic_rows:
         selected_topic_id = topic_rows[0]["id"]
-    try:
-        selected_topic = topic_detail(repo_path, selected_topic_id) if selected_topic_id else None
-    except TopicGraphError:
-        selected_topic = None
+    selected_topic = _selected_topic_with_recall(repo_path, selected_topic_id)
 
     return {
         "repo": Path(repo_path).name,
@@ -267,6 +264,30 @@ def _wiki_workspace_payload(repo_path: str, selected_topic_id: str | None) -> di
         "selected_topic": selected_topic,
         "validation": summary["validation"],
     }
+
+
+def _selected_topic_with_recall(repo_path: str, topic_id: str | None) -> dict | None:
+    """The selected topic's detail with its wiki `recall` counts attached
+    (exposure + distinct-session read + last_read). Falls back to None on a
+    graph fault so the workspace still renders the rest."""
+    if not topic_id:
+        return None
+    try:
+        detail = topic_detail(repo_path, topic_id)
+    except TopicGraphError:
+        return None
+    if detail is not None:
+        detail["recall"] = _wiki_recall(topic_id)
+    return detail
+
+
+def _wiki_recall(topic_id: str) -> dict:
+    """One topic's wiki recall counters for the wiki page, or zeros when memory
+    is disabled (the counter lives in the memory DB)."""
+    import lib.memory as memory
+    if not memory.enabled():
+        return {"exposure": 0, "read": 0, "last_read": None}
+    return memory.get_store().wiki_recall_for_topic(topic_id)
 
 
 def _resolve_selected_proposal(

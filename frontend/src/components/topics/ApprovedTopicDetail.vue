@@ -143,6 +143,11 @@ function roleColor(role) {
             <code class="text-xs text-slate-500">{{ selectedTopic.id }}</code>
             <Badge :color="selectedTopic.broken_ref_count ? 'red' : 'green'" :label="selectedTopic.status || 'active'" />
             <span class="text-xs text-slate-500">{{ selectedTopic.ref_count || 0 }} ref{{ (selectedTopic.ref_count || 0) === 1 ? '' : 's' }} · {{ selectedTopic.edge_count || 0 }} edge{{ (selectedTopic.edge_count || 0) === 1 ? '' : 's' }}<span v-if="selectedTopic.broken_ref_count"> · {{ selectedTopic.broken_ref_count }} broken</span></span>
+            <span
+              v-if="selectedTopic.recall"
+              class="text-xs text-slate-500"
+              title="Distinct sessions that read this wiki · index_fetch exposures"
+            >· read {{ selectedTopic.recall.read }} · exposure {{ selectedTopic.recall.exposure }}</span>
           </div>
         </div>
         <div class="topics-run-header-actions btn-row">
