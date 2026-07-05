@@ -7,6 +7,7 @@ import { onMounted, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import Badge from '../Badge.vue'
 
 const rows = ref([])
 const repo = ref('')
@@ -48,7 +49,8 @@ onMounted(() => load(false))
       >{{ loading ? 'Syncing…' : 'Sync reads' }}</Button>
     </div>
 
-    <p v-if="!rows.length && !loading" class="text-[11px] text-fg-faint">
+    <p v-if="loading && !rows.length" class="text-[11px] text-fg-faint">Loading…</p>
+    <p v-else-if="!rows.length" class="text-[11px] text-fg-faint">
       No wiki has been consulted yet. Reads are reconstructed from Read spans in
       the session trace.
     </p>
@@ -76,11 +78,13 @@ onMounted(() => load(false))
               title="Open this topic's wiki page"
             >{{ r.label }}<Icon name="arrow-up-right" :size="12" class="opacity-60" /></router-link>
             <span v-else class="text-fg">{{ r.label }}</span>
-            <span
+            <Badge
               v-if="!r.wiki_present"
-              class="ml-1 text-[10px] text-amber-700"
+              color="yellow"
+              label="missing"
+              class="ml-1.5 align-middle"
               title="Counter outlived its wiki file — prune or refresh"
-            >⚠ missing</span>
+            />
           </td>
           <td class="py-1 px-2 text-right font-mono tabular-nums text-fg">{{ r.read }}</td>
           <td class="py-1 px-2 text-right font-mono tabular-nums text-fg-subtle">{{ r.exposure }}</td>
