@@ -6,7 +6,7 @@
 #   1. Creates Python venv and installs dependencies
 #   2. Installs frontend dependencies and builds the SPA
 #   3. Initializes SQLite (local cache) from git-tracked files
-#   4. Configures local settings (scan_paths, mode, database_url)
+#   4. Configures local settings (mode, database_url) and registers source repos
 #   5. Initializes auth/audit tables and creates first user if needed
 #
 # After setup, start with:  .venv/bin/python cli/regin.py serve
@@ -56,14 +56,8 @@ echo "[3/6] Initializing local database cache..."
 echo "  SQLite ready"
 
 # --- 4. Local settings ---
-SCAN_PATH="${1:-}"
-if [ -z "$SCAN_PATH" ]; then
-  SCAN_PATH="$(dirname "$ROOT")"
-  echo "[4/6] Using default scan path: $SCAN_PATH"
-  echo "  Override with: ./scripts/setup.sh /path/to/your/source-repos"
-else
-  echo "[4/6] Using scan path: $SCAN_PATH"
-fi
+REPO_ARG="${1:-}"
+echo "[4/6] Configuring local settings..."
 
 # Check if settings.local.json already exists
 if [ -f config/settings.local.json ]; then
@@ -79,7 +73,6 @@ else
   if [ "$MODE" = "standalone" ]; then
     cat > config/settings.local.json <<EOF
 {
-  "scan_paths": ["$SCAN_PATH"],
   "mode": "standalone"
 }
 EOF
@@ -92,7 +85,6 @@ EOF
     if [ -n "$DB_URL" ]; then
       cat > config/settings.local.json <<EOF
 {
-  "scan_paths": ["$SCAN_PATH"],
   "mode": "shared",
   "database_url": "$DB_URL"
 }
@@ -100,7 +92,6 @@ EOF
     else
       cat > config/settings.local.json <<EOF
 {
-  "scan_paths": ["$SCAN_PATH"],
   "mode": "shared"
 }
 EOF
@@ -130,8 +121,38 @@ PY
   fi
 fi
 
-# Discover repos
-.venv/bin/python cli/regin.py discover
+# --- 4c. Register source repos ---
+# `repo_paths` holds explicit git working trees. Register the given path if it
+# is itself a repo, else each immediate child that is one (the documented
+# "folder of your source repos"). Without an arg, register nothing — repos are
+# added later via `regin add-repo` or the /repos page.
+if [ -n "$REPO_ARG" ]; then
+  register_repo() {
+    if ! .venv/bin/python cli/regin.py add-repo "$1"; then
+      echo "  warning: could not register $1"
+    fi
+  }
+  if [ -e "$REPO_ARG/.git" ]; then
+    echo "  Registering repo: $REPO_ARG"
+    register_repo "$REPO_ARG"
+  else
+    echo "  Scanning $REPO_ARG for git repos to register..."
+    FOUND_REPO=0
+    for child in "$REPO_ARG"/*/; do
+      child="${child%/}"
+      if [ -e "$child/.git" ]; then
+        register_repo "$child"
+        FOUND_REPO=1
+      fi
+    done
+    [ "$FOUND_REPO" -eq 0 ] && echo "  No git repos found directly under $REPO_ARG"
+  fi
+  .venv/bin/python cli/regin.py discover
+else
+  echo "  No source path given — register repos later with:"
+  echo "    .venv/bin/python cli/regin.py add-repo /path/to/your/source-repo"
+  echo "    (or the /repos page in the web UI)"
+fi
 
 # --- 5. Auth/audit tables ---
 echo "[5/6] Initializing auth/audit tables..."
