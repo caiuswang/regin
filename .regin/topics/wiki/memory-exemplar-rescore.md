@@ -1,21 +1,58 @@
-# Agent Memory System — Design Topics
+# Signed query exemplars — topic-route suppression & protection
 
-regin's agent memory (`lib/memory/`) is a cross-session experience store: it learns from finished sessions and surfaces that experience into future ones along the lifecycle **capture → consolidate (reflect) → recall → reinforce**. These nine topics carve that subsystem along its real module and table boundaries — each maps to a distinct concern and (for the engine modules) its own test file under `tests/memory/`.
+The signed query-exemplar mechanism as it operates over authoritative-topic
+routing — the contextual, query-local complement to the global, slow
+`importance` decay. Implemented in `lib/memory/store.py` over the
+`topic_exemplars` table; design note at `docs/agent-memory-exemplars.md`.
 
-> **Grounding note.** The GitNexus index for `regin` is 131 commits behind HEAD, so its query/context tools would resolve against a stale graph; per the fallback instruction these topics are grounded on direct file evidence read this session (every `lib/memory/*.py`, the `models.py` `__tablename__` declarations, `engine.py`'s self-init/migration path, the hook handlers, `web/blueprints/memory.py`, `cli/commands/memory.py`, `lib/grader/service.py`, and `docs/agent-memory-exemplars.md`). No call edges were fabricated; the `notes` field records which GitNexus steps were skipped and why.
+## What an exemplar is
 
-## Topic map
+An exemplar is the embedding of a prompt a topic banner was injected on, tagged
+`polarity` +1 (protect — a `pass`/curated route) or -1 (suppress — a `fail`
+route) and `source` `auto` (feedback-captured) or `manual` (human-curated). Rows
+live per (topic, polarity), each polarity trimmed to
+`negative_max_per_memory` (`_trim_topic_exemplars`). `add_topic_exemplars`
+embeds each distinct query once (preferring the embedder's `embed_queries`
+extension), writes one `TopicExemplar` per (topic, query), and is a no-op without
+an embedder. `add_topic_negatives` / `add_topic_positives` are the polarity-named
+wrappers.
 
-1. **agent-memory-architecture** — the entry point. The module-verb facade (`__init__.py`), the ports/adapters seam (`ports.py`: `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`, all gracefully degrading; `adapters.py` at the edge), the scoping policy layer (`scoping.py`), and the self-initializing third-engine DB (`engine.py`, reusing `lib/orm/engine._build_engine`, on `db/regin_memory.db`). The single mutable `memories` table carries both `working`/`episodic` tiers via a `tier` column, and its side tables — `memory_embeddings`, `memory_validations`, `injection_events`, `topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`, `memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`, `topic_exemplars` — carry their own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch them (`models.py`). `mcp_server.py` is the long-lived MCP entrypoint. Read this before any other memory topic.
-2. **memory-recall-pipeline** — the read-side ranking stack in `store.py`: `_lexical_ids` (FTS5/BM25) + `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) + `_rrf` fusion, then `_eligible_rows`, the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), `_order_candidates` cross-encoder rerank (sigmoid confidence, `rerank_cap`), the bounded `_quality_factor`, `_apply_topic_boost`, optional `_mmr_select` and `_expand_via_edges`, `_bump_recall` on deliberate recall, the `expand.py` LLM query rewrite, and the `evaluate.py` FTS-only regression harness.
-3. **memory-auto-injection** — how recall *reaches* an agent: the `UserPromptSubmit` hook (`memory_recall.py`) borrowing the warm `regin serve` embedder over loopback (`/api/memory/recall`) with FTS fallback, routing a `<topic_context>` banner, recording `injection_events`, speculative-inject-without-reinforcement, and the `memory.recall` trace span. The long-lived `recall` MCP server (`mcp_server.py`) is the deliberate deeper-pull path, exposing `recall`, the coarse-to-fine tree-nav tools `index_root`/`index_expand`/`index_fetch` (address-only, so navigation stays cheap), and a `gate` tool for trace-derived span gates.
-4. **memory-consolidation-reflect** — `reflect()`: dedup → contradiction → promote (working→episodic) → pre-decay engagement sweep → decay → synthesize → embed → forget-stale, plus the `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved topic graph.
-5. **memory-distillation-capture** — the two birth paths: the explicit `send_to_user(type=lesson)` tee (`post_tool_trace._remember_lesson`) and the agentic post-session distiller (`distill.py::distill_session`) that self-fetches spans and self-scores importance into a drop/auto-approve/queue band.
-6. **memory-engagement-feedback** — `feedback.py` closes the loop: did an injected memory's referents show up in a *later* span? idf-weighted by precomputed session document-frequency (`referent_session_df`), with `engaged`/`matched` bits on each `injection_events` row feeding reflect's decay gate (soft vs hard ignore).
-7. **memory-exemplar-rescore** — the signed query-exemplar primitive as it operates over topic routing: `topic_exemplars` rows (polarity ±1, source auto|manual) and `store.topic_route_suppressed`'s query-local suppress/protect, written automatically by feedback and by hand from the curate API/CLI. Design note: `docs/agent-memory-exemplars.md`.
-8. **memory-topic-route-feedback** — the relevance loop around authoritative-topic routing: `TopicInjection` records the banner, the grader's `InjectedRelated` aspect stamps `satisfied|needs_revision|fail` (`store.apply_topic_relevance`), a recurring fail rate *proposes* suppression, a human `TopicRouteDecision` (`suppressed`/`allowed`/auto) gates `_route_topic`, topic exemplars give query-local suppression/protection, and the route playground (`topic_query_signals` → `/api/memory/topic-route-preview`) probes a query.
-9. **memory-curation-surfaces** — the human controls: `/api/memory/*` (approve/retire/forget/recall-probe/run-reflect/taxonomy/graph/exemplars/topic-feedback/tree export-import), `MemoryView.vue` with its `frontend/src/components/memory/*` panels (including the taxonomy tree/graph/detail views), and the `regin memory` CLI mirror. Curation is the point of memory being mutable.
+## Route-time suppression (`topic_route_suppressed`)
 
-## How they connect
+At route time `store.topic_route_suppressed(topic_id, query)` withholds a topic
+banner query-locally when the incoming prompt's cosine to that topic's
+**negatives** clears `topic_negative_suppress_sim` — *unless* a positive
+exemplar is at least as close (`pos < neg` protects) or a standing human
+`allowed` decision pins the route on. `topic_exemplar_max_sim` (and its
+back-compat `topic_negative_max_sim`) compute the max cosine in [0,1] to a
+topic's exemplars of a given polarity under the current model. The effect: a
+banner routed-then-judged-irrelevant on similar prompts sinks for *those* queries
+only, and one proven relevant is protected — both fading once the exemplars stop
+resembling the incoming query, with nothing written to any topic row. Needs the
+warm embedder, so it is computed in `/api/memory/recall`, not the model-free
+hook.
 
-Architecture (1) is the hub. Capture (5) feeds rows that consolidation (4) curates and recall (2) ranks; injection (3) delivers them, and the two feedback halves measure whether delivery helped — engagement feedback (6) supplies the soft/hard signal reflect's decay reads. Signed exemplars (7) apply the same +1/-1 primitive to the routed `<topic_context>` banner, giving query-local suppression/protection that topic-route feedback (8) writes from its `InjectedRelated` verdict and gates behind a human suppression decision. Surfaces (9) are where a human gates proposals from (5), (4), and (8) and hand-curates exemplars for (7). Cross-subsystem links point out to `session-trace-design` (distill reads `session_spans`; injection writes a span), `topic-routing` (the routing mechanism (8) wraps with feedback), and `topic-proposal-pipeline` (`topic_attach` lands synthesis proposals in the same review queue), rather than re-describing those approved topics.
+## Write paths
+
+- **Auto**: `store.apply_topic_relevance` → `_record_topic_exemplars` turns a
+  graded `fail` into a -1 negative and a `pass` into a +1 positive (gated on the
+  suppression feature being on; best-effort so a write can't fail the grade).
+- **Manual**: `POST /api/memory/exemplars` (`web/blueprints/memory.py`) records a
+  hand-curated case with `source='manual'`; `frontend/src/components/memory/ExemplarCaseList.vue`
+  and the `regin memory exemplar-*` CLI drive it. `remove_topic_exemplars` drops
+  a whole polarity; `delete_exemplar` reverts a single mislabeled row;
+  `list_topic_exemplars` (via `_exemplar_dict`) is the case list behind the
+  drill-down.
+
+## Probe surfaces
+
+`topic_query_signals` / `_topic_query_signal` compute, for a probe query, each
+topic's pos/neg max cosine, counts, human `decision`, and the derived
+`suppressed` verdict — mirroring `topic_route_suppressed` so the playground shows
+exactly what the route hook would do. `_topic_exemplar_counts` reads the
+per-polarity counts without loading vectors. `has_embedder` gates whether a
+curated case can be stored at all, so the UI can warn before a no-op.
+
+The route-decision half of the same loop (the `InjectedRelated` verdict, the
+fail-rate proposal, and the human suppression gate) is
+**memory-topic-route-feedback**.

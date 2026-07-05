@@ -36,7 +36,8 @@ thread. `lib/topics/proposals/external_jobs.py:start_external_proposal_run`:
 
 The job runs `_draft_proposal → _write_proposal_artifacts` and, unless the agent
 already ingested via the finish signal, persists the draft and stamps the run
-`completed`. Any exception inside the thread is captured into the run's status
+`completed`, then fires the gated review note (`_maybe_review_note`). Any
+exception inside the thread is captured into the run's status
 (`_record_thread_failure`) so the failure surfaces in the UI instead of tearing
 down the worker; `run_control.release(proposal_id)` always runs in `finally`.
 The web entrypoint is `POST /api/repos/<name>/topics/proposals`
@@ -183,8 +184,48 @@ Revisions come in four `kind`s, all in `lib/topics/proposal_orm/revisions.py`:
 - **Feedback threads** — anchored comment threads drive the regenerate prompt;
   the full CRUD surface lives in `proposals.py` (`.../feedback-threads...`).
   (Thread internals are out of scope here — see the feedback-threads topic.)
-- **Review note** — `_maybe_review_note` runs a gated, best-effort LLM review
-  after a run completes; `POST .../review-note` generates one on demand.
+
+## Agentic review note
+
+`lib/topics/proposal_review.py` generates a single LLM-written **review note**
+for a completed proposal run. The reviewer is *agentic*: `resolve_proposal_reviewer`
+(`lib/memory/adapters.py:148`) returns an `ExternalAgentLLM` launched with
+`--allowedTools Read,Glob,Grep`, so it opens the drafted topics' ref files as
+they exist NOW and judges the draft against the live code itself rather than a
+pre-baked evidence pack. The task prompt is the editable `topic-proposal-review`
+prompt surface (`lib/prompts/surfaces/review.py`); `_build_prompt` only
+assembles the runtime context it interpolates — a `<draft_topics>` block
+(`_topic_lines`, one bullet per drafted topic with its intent + ref paths) and
+an optional `<prior_open_feedback>` block (`_feedback_block`) replaying
+still-open human threads so the reviewer doesn't re-raise issues the user
+already flagged. A broken user edit of the surface degrades to the built-in
+default inside `render_surface`, so the prompt is never left unbuildable.
+
+The reviewer ends its answer with one line, `RECOMMENDATION: ACCEPT |
+REGENERATE | DISMISS`. `_parse_recommendation` pulls that token — preferring the
+explicit `RECOMMENDATION:` line, else the first recognised token, else the
+neutral `ACCEPT` default — and never raises, so a malformed answer still yields
+a usable note. The note is persisted through the *existing* feedback-thread
+machinery as a `review_note` thread (`created_by='agent'`,
+`anchor_kind='general'`) with the recommendation copied into thread metadata so
+the UI badge reads a field instead of regexing the prose body. Because it is an
+ordinary feedback thread, it renders in the review sidebar like a human comment
+and — while still open — is carried into the next regenerate's drafting prompt
+by `format_review_feedback_for_prompt`.
+
+Two entry points:
+
+- `maybe_generate_review_note` — the **gated, best-effort** trigger wired into
+  the run-completion paths (`external_jobs._maybe_review_note` after a draft or
+  regenerate lands, and `core_io.save_proposal`). It is a no-op unless
+  `settings.topic_evolution.auto_review_notes` is set, and it swallows its own
+  exceptions so a review-note failure can never fail the proposal run.
+- `generate_review_note` — the **ungated, manual** entry point for an explicit
+  user action, exposed at `POST .../review-note`
+  (`web/blueprints/topics/proposals.py:152`) and `regin topics review-note`
+  (`cli/commands/topics.py:299`). It returns `None` (writing no note) when the
+  proposal has no drafted topics or no external agent is configured
+  (`complete` → `None`).
 
 ## Cancel (Stop) and reaping
 
@@ -276,9 +317,11 @@ that actually authored the draft.
    prompt (`_instructions`), the two-axis `write_status`, and the validation
    guards.
 5. `lib/topics/proposals/finish.py` — notify-on-finish ingest.
-6. `lib/topics/proposals/run_control.py` + `core_io.py:stop_proposal_run` +
+6. `lib/topics/proposal_review.py` + `lib/prompts/surfaces/review.py` — the
+   agentic review-note reviewer and its editable prompt surface.
+7. `lib/topics/proposals/run_control.py` + `core_io.py:stop_proposal_run` +
    `reap.py` — cancel + strand-reaping.
-7. `lib/topics/proposals/core_io.py` — load/save/list + review-state + restore.
-8. `lib/topics/proposals/topic_actions.py` + `web/blueprints/topics/apply.py` —
+8. `lib/topics/proposals/core_io.py` — load/save/list + review-state + restore.
+9. `lib/topics/proposals/topic_actions.py` + `web/blueprints/topics/apply.py` —
    the promote-to-graph layers (legacy actions + modern `/diff` + `/apply`).
-9. `lib/topics/proposals/downgrade.py` — the reverse path.
+10. `lib/topics/proposals/downgrade.py` — the reverse path.

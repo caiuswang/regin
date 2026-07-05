@@ -1,21 +1,66 @@
-# Agent Memory System — Design Topics
+# Memory recall pipeline
 
-regin's agent memory (`lib/memory/`) is a cross-session experience store: it learns from finished sessions and surfaces that experience into future ones along the lifecycle **capture → consolidate (reflect) → recall → reinforce**. These nine topics carve that subsystem along its real module and table boundaries — each maps to a distinct concern and (for the engine modules) its own test file under `tests/memory/`.
+The read-side ranking stack in `lib/memory/store.py` — everything a `recall()`
+request flows through, so an agent tuning or debugging why a memory ranks where
+it does knows which knob moves which result. Recall mirrors `pattern_router`'s
+hybrid shape and degrades gracefully at every outer stage when the injected
+`EmbeddingProvider` is absent.
 
-> **Grounding note.** The GitNexus index for `regin` is 131 commits behind HEAD, so its query/context tools would resolve against a stale graph; per the fallback instruction these topics are grounded on direct file evidence read this session (every `lib/memory/*.py`, the `models.py` `__tablename__` declarations, `engine.py`'s self-init/migration path, the hook handlers, `web/blueprints/memory.py`, `cli/commands/memory.py`, `lib/grader/service.py`, and `docs/agent-memory-exemplars.md`). No call edges were fabricated; the `notes` field records which GitNexus steps were skipped and why.
+## The ordered stack (`SqliteMemoryStore.recall`)
 
-## Topic map
+1. **Retrieve wide, embed once.** `retrieval_k = max(top_k * 4, 20)`. On the
+   dense path the query is embedded a single time (`_embed_query`, which prefers
+   the embedder's `embed_queries` extension) and reused across the leg.
+2. **Two legs + RRF.** `_lexical_ids` runs FTS5/BM25 over `memories_fts`;
+   `_dense_ids` does brute-force cosine over `memory_embeddings` (preceded by
+   `_lazy_backfill`, which embeds up to 32 stale active rows in-process so the
+   dense leg can see freshly written rows). `_rrf` fuses the two rankings —
+   robust to the incomparable per-leg score scales. `mode='fts'` skips the dense
+   leg entirely, so an FTS-only path always works; `mode='auto'`/`'hybrid'` uses
+   dense + rerank when the embedder can deliver.
+3. **Eligibility.** `_eligible_rows` narrows to `active`, non-`digest`,
+   scope-filtered (`["global", scope]`) rows whose `valid_until` has not passed,
+   tests excluded unless asked.
+4. **Precision gate.** `_gate_lexical_overlap` applies the `min_overlap` gate to
+   *lexical-only* candidates: it drops those sharing fewer than `needed`
+   *informative* tokens with the query. Corpus-saturated tokens are filtered out
+   via `_common_overlap_tokens` (document-frequency over active rows, gated by
+   `overlap_idf_max_df`, and only once the corpus clears `_IDF_MIN_CORPUS = 20`).
+   Dense hits pass untouched — a semantic match legitimately has zero token
+   overlap, and its precision is guarded by the rerank confidence downstream.
+5. **Rerank.** `_order_candidates` sends the RRF head (capped at `rerank_cap`)
+   through the cross-encoder when the embedder offers `rerank` and the dense leg
+   ran, mapping raw logit diffs through a sigmoid to a calibrated (0,1)
+   confidence. It returns a `score_kind` of `rerank`, `rrf`, or `fts`. The cap
+   exists because cross-encoder cost is linear (~25ms/candidate warm) and the
+   auto-inject hook has a sub-second budget.
+6. **Quality weighting.** `_apply_quality` multiplies each score by the bounded
+   `_quality_factor` (`[0.9, 1.3]`) folding in importance, veracity, deliberate-
+   recall count, and recency (`recall_recency_half_life_days`) — rewarding
+   proven/recent/important rows without letting quality override relevance.
+   Gated by `recall_quality_weighting`.
+7. **Topic boost.** `_apply_topic_boost` softly lifts (`× (1 + topic_boost_weight)`)
+   candidates linked to a routed authoritative topic node (`boost_topic_node_id`).
+   It reorders, never filters.
+8. **Diversity.** `_mmr_select` applies optional maximal-marginal-relevance
+   diversity (`inject_mmr_lambda`) over the scored pool; candidates lacking an
+   embedding compete on relevance alone, so the lexical tail is never dropped.
+9. **Edge expansion.** `_expand_via_edges` optionally appends the strongest
+   1-hop `related` neighbours of the selected hits (`recall_expand_*`, off by
+   default, each scored below its seed).
+10. **Reinforce.** `_bump_recall` increments `recall_count` and stamps
+    `last_recalled` — but only on deliberate recall (`reinforce=True`);
+    speculative auto-inject passes `reinforce=False`.
 
-1. **agent-memory-architecture** — the entry point. The module-verb facade (`__init__.py`), the ports/adapters seam (`ports.py`: `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`, all gracefully degrading; `adapters.py` at the edge), the scoping policy layer (`scoping.py`), and the self-initializing third-engine DB (`engine.py`, reusing `lib/orm/engine._build_engine`, on `db/regin_memory.db`). The single mutable `memories` table carries both `working`/`episodic` tiers via a `tier` column, and its side tables — `memory_embeddings`, `memory_validations`, `injection_events`, `topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`, `memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`, `topic_exemplars` — carry their own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch them (`models.py`). `mcp_server.py` is the long-lived MCP entrypoint. Read this before any other memory topic.
-2. **memory-recall-pipeline** — the read-side ranking stack in `store.py`: `_lexical_ids` (FTS5/BM25) + `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) + `_rrf` fusion, then `_eligible_rows`, the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), `_order_candidates` cross-encoder rerank (sigmoid confidence, `rerank_cap`), the bounded `_quality_factor`, `_apply_topic_boost`, optional `_mmr_select` and `_expand_via_edges`, `_bump_recall` on deliberate recall, the `expand.py` LLM query rewrite, and the `evaluate.py` FTS-only regression harness.
-3. **memory-auto-injection** — how recall *reaches* an agent: the `UserPromptSubmit` hook (`memory_recall.py`) borrowing the warm `regin serve` embedder over loopback (`/api/memory/recall`) with FTS fallback, routing a `<topic_context>` banner, recording `injection_events`, speculative-inject-without-reinforcement, and the `memory.recall` trace span. The long-lived `recall` MCP server (`mcp_server.py`) is the deliberate deeper-pull path, exposing `recall`, the coarse-to-fine tree-nav tools `index_root`/`index_expand`/`index_fetch` (address-only, so navigation stays cheap), and a `gate` tool for trace-derived span gates.
-4. **memory-consolidation-reflect** — `reflect()`: dedup → contradiction → promote (working→episodic) → pre-decay engagement sweep → decay → synthesize → embed → forget-stale, plus the `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved topic graph.
-5. **memory-distillation-capture** — the two birth paths: the explicit `send_to_user(type=lesson)` tee (`post_tool_trace._remember_lesson`) and the agentic post-session distiller (`distill.py::distill_session`) that self-fetches spans and self-scores importance into a drop/auto-approve/queue band.
-6. **memory-engagement-feedback** — `feedback.py` closes the loop: did an injected memory's referents show up in a *later* span? idf-weighted by precomputed session document-frequency (`referent_session_df`), with `engaged`/`matched` bits on each `injection_events` row feeding reflect's decay gate (soft vs hard ignore).
-7. **memory-exemplar-rescore** — the signed query-exemplar primitive as it operates over topic routing: `topic_exemplars` rows (polarity ±1, source auto|manual) and `store.topic_route_suppressed`'s query-local suppress/protect, written automatically by feedback and by hand from the curate API/CLI. Design note: `docs/agent-memory-exemplars.md`.
-8. **memory-topic-route-feedback** — the relevance loop around authoritative-topic routing: `TopicInjection` records the banner, the grader's `InjectedRelated` aspect stamps `satisfied|needs_revision|fail` (`store.apply_topic_relevance`), a recurring fail rate *proposes* suppression, a human `TopicRouteDecision` (`suppressed`/`allowed`/auto) gates `_route_topic`, topic exemplars give query-local suppression/protection, and the route playground (`topic_query_signals` → `/api/memory/topic-route-preview`) probes a query.
-9. **memory-curation-surfaces** — the human controls: `/api/memory/*` (approve/retire/forget/recall-probe/run-reflect/taxonomy/graph/exemplars/topic-feedback/tree export-import), `MemoryView.vue` with its `frontend/src/components/memory/*` panels (including the taxonomy tree/graph/detail views), and the `regin memory` CLI mirror. Curation is the point of memory being mutable.
+## Supporting modules
 
-## How they connect
+- `expand.py` — the LLM query-rewrite front-end for terse prompts, turning a
+  two-word ask into a fuller recall query.
+- `evaluate.py` — an FTS-only regression harness for recall quality (its own
+  `tests/memory/test_evaluate.py`).
 
-Architecture (1) is the hub. Capture (5) feeds rows that consolidation (4) curates and recall (2) ranks; injection (3) delivers them, and the two feedback halves measure whether delivery helped — engagement feedback (6) supplies the soft/hard signal reflect's decay reads. Signed exemplars (7) apply the same +1/-1 primitive to the routed `<topic_context>` banner, giving query-local suppression/protection that topic-route feedback (8) writes from its `InjectedRelated` verdict and gates behind a human suppression decision. Surfaces (9) are where a human gates proposals from (5), (4), and (8) and hand-curates exemplars for (7). Cross-subsystem links point out to `session-trace-design` (distill reads `session_spans`; injection writes a span), `topic-routing` (the routing mechanism (8) wraps with feedback), and `topic-proposal-pipeline` (`topic_attach` lands synthesis proposals in the same review queue), rather than re-describing those approved topics.
+Embeddings are written by `reflect()` (working-tier rows are raw on purpose,
+with `_lazy_backfill` covering the gap), so a store that has never reflected
+simply recalls FTS-only. Delivery of these hits to a prompt is
+**memory-auto-injection**; whether a delivered hit helped is
+**memory-engagement-feedback**.

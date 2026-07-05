@@ -286,7 +286,7 @@
       ],
       "intent": "LLM-judge session grading (rubric / correctness / coverage / grounding / agentic), recall-quality eval, pattern-conceal experiments, goal verification \u2014 enter for anything that measures quality or judges good/bad. Code: lib/grader/, lib/memory/evaluate.py, lib/experiments.py, lib/goal_feedback.py",
       "label": "Evaluation & grading",
-      "parent_id": null,
+      "parent_id": "evaluation-grading",
       "refs": [
         {
           "path": "lib/grader/__init__.py",
@@ -377,6 +377,20 @@
           "path": "lib/grader/topic_notify.py"
         }
       ],
+      "status": "active"
+    },
+    "evaluation-grading": {
+      "aliases": [],
+      "blurb": "Drill in here when you need to measure output quality or judge whether a session, memory, or goal outcome is good or bad.",
+      "commands": [],
+      "edges": [],
+      "exclude_globs": [],
+      "include_globs": [],
+      "intent": "Drill in here when you need to measure output quality or judge whether a session, memory, or goal outcome is good or bad.",
+      "kind": "bucket",
+      "label": "Evaluation & Grading",
+      "parent_id": null,
+      "refs": [],
       "status": "active"
     },
     "goal-verified-loop": {

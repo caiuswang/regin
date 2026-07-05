@@ -1,21 +1,58 @@
-# Agent Memory System — Design Topics
+# Memory auto-injection & on-demand recall
 
-regin's agent memory (`lib/memory/`) is a cross-session experience store: it learns from finished sessions and surfaces that experience into future ones along the lifecycle **capture → consolidate (reflect) → recall → reinforce**. These nine topics carve that subsystem along its real module and table boundaries — each maps to a distinct concern and (for the engine modules) its own test file under `tests/memory/`.
+How recalled memories actually reach an agent, and why the delivery path is
+shaped the way it is. Two surfaces: the automatic `UserPromptSubmit` hook and
+the deliberate `recall` MCP server, joined by one HTTP endpoint.
 
-> **Grounding note.** The GitNexus index for `regin` is 131 commits behind HEAD, so its query/context tools would resolve against a stale graph; per the fallback instruction these topics are grounded on direct file evidence read this session (every `lib/memory/*.py`, the `models.py` `__tablename__` declarations, `engine.py`'s self-init/migration path, the hook handlers, `web/blueprints/memory.py`, `cli/commands/memory.py`, `lib/grader/service.py`, and `docs/agent-memory-exemplars.md`). No call edges were fabricated; the `notes` field records which GitNexus steps were skipped and why.
+## The auto-inject hook
 
-## Topic map
+`hook_manager/handlers/memory_recall.py` runs as a fresh short-lived process per
+prompt, so it cannot load the embedder. Instead it **borrows the warm
+`regin serve` embedder** via a loopback-auth-exempt POST to `/api/memory/recall`
+(`_recall_via_server`), and cleanly falls back to in-process FTS-only
+(`_recall_fts`) when the server is down. It routes the prompt to an
+authoritative topic (`_route_topic`) and can withhold a `<topic_context>` banner
+it deems suppressed.
 
-1. **agent-memory-architecture** — the entry point. The module-verb facade (`__init__.py`), the ports/adapters seam (`ports.py`: `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`, all gracefully degrading; `adapters.py` at the edge), the scoping policy layer (`scoping.py`), and the self-initializing third-engine DB (`engine.py`, reusing `lib/orm/engine._build_engine`, on `db/regin_memory.db`). The single mutable `memories` table carries both `working`/`episodic` tiers via a `tier` column, and its side tables — `memory_embeddings`, `memory_validations`, `injection_events`, `topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`, `memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`, `topic_exemplars` — carry their own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch them (`models.py`). `mcp_server.py` is the long-lived MCP entrypoint. Read this before any other memory topic.
-2. **memory-recall-pipeline** — the read-side ranking stack in `store.py`: `_lexical_ids` (FTS5/BM25) + `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) + `_rrf` fusion, then `_eligible_rows`, the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), `_order_candidates` cross-encoder rerank (sigmoid confidence, `rerank_cap`), the bounded `_quality_factor`, `_apply_topic_boost`, optional `_mmr_select` and `_expand_via_edges`, `_bump_recall` on deliberate recall, the `expand.py` LLM query rewrite, and the `evaluate.py` FTS-only regression harness.
-3. **memory-auto-injection** — how recall *reaches* an agent: the `UserPromptSubmit` hook (`memory_recall.py`) borrowing the warm `regin serve` embedder over loopback (`/api/memory/recall`) with FTS fallback, routing a `<topic_context>` banner, recording `injection_events`, speculative-inject-without-reinforcement, and the `memory.recall` trace span. The long-lived `recall` MCP server (`mcp_server.py`) is the deliberate deeper-pull path, exposing `recall`, the coarse-to-fine tree-nav tools `index_root`/`index_expand`/`index_fetch` (address-only, so navigation stays cheap), and a `gate` tool for trace-derived span gates.
-4. **memory-consolidation-reflect** — `reflect()`: dedup → contradiction → promote (working→episodic) → pre-decay engagement sweep → decay → synthesize → embed → forget-stale, plus the `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved topic graph.
-5. **memory-distillation-capture** — the two birth paths: the explicit `send_to_user(type=lesson)` tee (`post_tool_trace._remember_lesson`) and the agentic post-session distiller (`distill.py::distill_session`) that self-fetches spans and self-scores importance into a drop/auto-approve/queue band.
-6. **memory-engagement-feedback** — `feedback.py` closes the loop: did an injected memory's referents show up in a *later* span? idf-weighted by precomputed session document-frequency (`referent_session_df`), with `engaged`/`matched` bits on each `injection_events` row feeding reflect's decay gate (soft vs hard ignore).
-7. **memory-exemplar-rescore** — the signed query-exemplar primitive as it operates over topic routing: `topic_exemplars` rows (polarity ±1, source auto|manual) and `store.topic_route_suppressed`'s query-local suppress/protect, written automatically by feedback and by hand from the curate API/CLI. Design note: `docs/agent-memory-exemplars.md`.
-8. **memory-topic-route-feedback** — the relevance loop around authoritative-topic routing: `TopicInjection` records the banner, the grader's `InjectedRelated` aspect stamps `satisfied|needs_revision|fail` (`store.apply_topic_relevance`), a recurring fail rate *proposes* suppression, a human `TopicRouteDecision` (`suppressed`/`allowed`/auto) gates `_route_topic`, topic exemplars give query-local suppression/protection, and the route playground (`topic_query_signals` → `/api/memory/topic-route-preview`) probes a query.
-9. **memory-curation-surfaces** — the human controls: `/api/memory/*` (approve/retire/forget/recall-probe/run-reflect/taxonomy/graph/exemplars/topic-feedback/tree export-import), `MemoryView.vue` with its `frontend/src/components/memory/*` panels (including the taxonomy tree/graph/detail views), and the `regin memory` CLI mirror. Curation is the point of memory being mutable.
+Speculative injection never reinforces — it is overlap-gated,
+uncalibrated-capped (`_cap_uncalibrated`), and same-session deduped via
+`injection_events` (`record_injections`) — except for the earned
+`reinforce_resurfaced`, which bumps a memory that keeps mattering exactly once.
+Each inject and each routed banner (`record_topic_injection`) is recorded so the
+feedback loops can later judge it, and `_emit_recall_span` writes a
+`memory.recall` span into the trace so a reviewer sees exactly what was fed to
+each prompt.
 
-## How they connect
+## The `/api/memory/recall` endpoint
 
-Architecture (1) is the hub. Capture (5) feeds rows that consolidation (4) curates and recall (2) ranks; injection (3) delivers them, and the two feedback halves measure whether delivery helped — engagement feedback (6) supplies the soft/hard signal reflect's decay reads. Signed exemplars (7) apply the same +1/-1 primitive to the routed `<topic_context>` banner, giving query-local suppression/protection that topic-route feedback (8) writes from its `InjectedRelated` verdict and gates behind a human suppression decision. Surfaces (9) are where a human gates proposals from (5), (4), and (8) and hand-curates exemplars for (7). Cross-subsystem links point out to `session-trace-design` (distill reads `session_spans`; injection writes a span), `topic-routing` (the routing mechanism (8) wraps with feedback), and `topic-proposal-pipeline` (`topic_attach` lands synthesis proposals in the same review queue), rather than re-describing those approved topics.
+`web/blueprints/memory.py::api_memory_recall` is both the curate-UI recall probe
+and the hook's dense path. Its body accepts `query`, `top_k`, `scope`, `mode`,
+`min_overlap`, `boost_topic_node_id`, and `route_topic_id`; `_recall_kwargs`
+maps those onto `memory.recall`, applying each default. It calls recall with
+`reinforce=False` (a probe/speculative surface must not reinforce), then
+computes route-time topic suppression **here** — `topic_route_suppressed` needs
+the warm embedder, which the model-free hook lacks — and returns
+`{hits: [...], topic_suppress}`. Each hit carries its `score` and `score_kind`.
+The hook passes the topic it keyword-routed to as `route_topic_id` and withholds
+the banner when the server says so.
+
+The endpoint sits behind the global auth gate — memory content is distilled
+session experience, so nothing here belongs on the public allowlist; the hook
+capture path writes through `lib.memory` directly, not HTTP.
+
+## The recall MCP server
+
+`lib/memory/mcp_server.py` is the long-lived, deliberate deeper-pull path:
+
+- `recall` — mid-task pulls (reinforcing, unlike the speculative hook).
+- `index_root` / `index_expand` / `index_fetch` — coarse-to-fine topic-tree
+  navigation that returns **addresses** (wiki path, source refs, importance-
+  ranked memory titles), not bodies, so navigation stays cheap.
+- `gate` — PASS/FAILs a trace-derived span gate (e.g. `recall-ran`) for a
+  caller-supplied session id.
+
+Regin imports stay lazy inside each tool call, so server startup and tool
+listing survive a DB hiccup. The ranking stack behind every hit is
+**memory-recall-pipeline**; the two loops that judge whether a delivered hit or
+banner helped are **memory-engagement-feedback** and
+**memory-topic-route-feedback**.

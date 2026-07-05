@@ -1,21 +1,84 @@
-# Agent Memory System — Design Topics
+# Memory consolidation (reflect)
 
-regin's agent memory (`lib/memory/`) is a cross-session experience store: it learns from finished sessions and surfaces that experience into future ones along the lifecycle **capture → consolidate (reflect) → recall → reinforce**. These nine topics carve that subsystem along its real module and table boundaries — each maps to a distinct concern and (for the engine modules) its own test file under `tests/memory/`.
+`reflect()` in `lib/memory/reflect.py` is the offline "sleep cycle" that turns
+raw `working` rows into curated `episodic` knowledge and keeps the store from
+drifting. It is idempotent — a second pass over an already-consolidated store
+finds nothing to do — and `dry_run=True` reports what would happen without
+writing. It never *requires* a model: an embedder sharpens each stage, an LLM
+unlocks the generative ones, and both absent it still dedups and promotes.
 
-> **Grounding note.** The GitNexus index for `regin` is 131 commits behind HEAD, so its query/context tools would resolve against a stale graph; per the fallback instruction these topics are grounded on direct file evidence read this session (every `lib/memory/*.py`, the `models.py` `__tablename__` declarations, `engine.py`'s self-init/migration path, the hook handlers, `web/blueprints/memory.py`, `cli/commands/memory.py`, `lib/grader/service.py`, and `docs/agent-memory-exemplars.md`). No call edges were fabricated; the `notes` field records which GitNexus steps were skipped and why.
+## The ordered cycle (`reflect`)
 
-## Topic map
+1. **Dedup** (`_dedup_and_judge` → `_merge_pair`). `_pair_similarities` compares
+   every working row against the working+episodic pool (embedding cosine when an
+   embedder is injected, else a deterministic `difflib` text ratio). Pairs at or
+   above the threshold (`dedup_cosine_threshold` / `dedup_text_threshold`)
+   collapse: `_keeper_of` keeps the episodic row, then the more-recalled, then
+   the older; the loser is retired with `superseded_by` pointing at the keeper.
+2. **Contradiction** (`_resolve_contradiction`). Pairs in the gray zone
+   `[_GRAY_ZONE_FLOOR = 0.75, threshold)` are put to the LLM
+   (`_llm_says_contradiction`, via the editable `memory-contradiction` surface);
+   a judged contradiction retires the older row with `veracity='false'`. No LLM
+   → the pair is left alone (veracity stays `unknown` rather than guessed).
+3. **Promote** (`_promote`). Surviving working rows become `episodic`, stamped
+   `consolidated_at`, importance nudged by the reinforcement signal
+   (`_reinforced_importance`, a `log1p(recall_count)` boost).
+4. **Forget-stale** (`_forget_stale`). Episodic rows aged past
+   `forget_after_days` that were never *deliberately* recalled
+   (`recall_count == 0`) are retired — the negative half of the usefulness loop
+   (speculative auto-inject doesn't reinforce). `0` disables; fresh rows can't
+   be stale, keeping reflect idempotent on a young store.
+5. **Pre-decay engagement sweep** (`_score_pending`). Before decay reads the
+   signal, densify it: `rebuild_session_referent_df` + `score_pending_sessions`
+   stamp engagement verdicts on finished, unscored injects, and
+   `_refresh_query_df` rebuilds the topic router's query term-frequency cache.
+   A write, so skipped on dry-run and gated by `score_pending_on_reflect`.
+6. **Decay** (`_decay_chronically_ignored`). A memory that earned no positive
+   signal loses `_IGNORED_DECAY_STEP` importance (floored at
+   `_IGNORED_DECAY_FLOOR`, never retired). `_decay_reason` gates it in order:
+   hard spares (`_decay_spared`: a deliberate recall, a `_POSITIVE_ACTIONS`
+   validation, or already at the floor); the dense engagement *rate*
+   (`_engagement_spare`, reading the engaged / soft-ignored / hard-ignored split
+   — soft ignores get benefit of the doubt); then the pre-rate count thresholds
+   `ignored` / `injected` (`_threshold_decay_reason`), each self-limiting or
+   gated once per memory.
+7. **Stale references** (`_flag_stale_references`, opt-in `verify_stale_refs`).
+   `_referenced_paths` regex-extracts concrete repo file paths a memory names;
+   `_missing_refs` checks them against the scope's repo root. A path git history
+   shows was *renamed* is rewritten in place first (`_rename_follow`, gated by
+   `topic_evolution.mechanical_autoapply`, via `lib.topics.drift`); only the
+   genuinely-deleted residual is flagged with a `stale_ref` validation and a
+   `veracity` demote true→unknown (never retired — a regex is a heuristic).
+8. **Synthesize** (`_synthesize`). Generative-Agents-style reflection: greedy
+   clusters of related-but-distinct episodic rows (cosine band
+   `[_SYNTHESIS_FLOOR = 0.55, dedup_threshold)`, min 3 members, up to 3 clusters)
+   are handed to the LLM (`_llm_synthesis`, `memory-reflect-synthesis` surface)
+   to abstract one higher-order rule. `_write_synthesis` writes it as a new
+   episodic row and stamps each source `synthesized` (the idempotency marker);
+   `_record_synthesis_topic` either feeds it into the authoritative topic-
+   proposal queue (`topic_attach.maybe_propose_authoritative` when
+   `reflect_proposes_authoritative_topics`) or mints an orphan `memory_topic`
+   (`create_topic`, gated by `topics_enabled`). Needs both an embedder and an
+   LLM.
+9. **Digest** (`_synthesize_digest`, opt-in `digest_enabled`). Rolls each
+   scope's most important episodic rows into ONE maintained briefing, refreshed
+   in place via `supersede`. Standing context read by scope, excluded from
+   similarity recall and the lifecycle. Needs only an LLM; runs after synthesis
+   so a fresh card can feed it the same pass.
+10. **Embed** (`_embed_episodic`). Active rows of both tiers get vectors
+    (content-hash-skipped when unchanged) so the dense recall leg can see them —
+    a fresh working-tier lesson is dense-visible without waiting for promotion.
+11. **Harvest edges** (`_harvest_edges`, `edges_enabled`). Rebuilds the whole
+    `related` edge set from `cosine_pairs` in `[edge_floor, dedup_threshold)`
+    (near-identical pairs are merged, not linked), capped per node
+    (`_cap_edges_per_node` / `edge_max_per_node`). Runs after embed so freshly
+    written rows are linkable.
 
-1. **agent-memory-architecture** — the entry point. The module-verb facade (`__init__.py`), the ports/adapters seam (`ports.py`: `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`, all gracefully degrading; `adapters.py` at the edge), the scoping policy layer (`scoping.py`), and the self-initializing third-engine DB (`engine.py`, reusing `lib/orm/engine._build_engine`, on `db/regin_memory.db`). The single mutable `memories` table carries both `working`/`episodic` tiers via a `tier` column, and its side tables — `memory_embeddings`, `memory_validations`, `injection_events`, `topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`, `memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`, `topic_exemplars` — carry their own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch them (`models.py`). `mcp_server.py` is the long-lived MCP entrypoint. Read this before any other memory topic.
-2. **memory-recall-pipeline** — the read-side ranking stack in `store.py`: `_lexical_ids` (FTS5/BM25) + `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) + `_rrf` fusion, then `_eligible_rows`, the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), `_order_candidates` cross-encoder rerank (sigmoid confidence, `rerank_cap`), the bounded `_quality_factor`, `_apply_topic_boost`, optional `_mmr_select` and `_expand_via_edges`, `_bump_recall` on deliberate recall, the `expand.py` LLM query rewrite, and the `evaluate.py` FTS-only regression harness.
-3. **memory-auto-injection** — how recall *reaches* an agent: the `UserPromptSubmit` hook (`memory_recall.py`) borrowing the warm `regin serve` embedder over loopback (`/api/memory/recall`) with FTS fallback, routing a `<topic_context>` banner, recording `injection_events`, speculative-inject-without-reinforcement, and the `memory.recall` trace span. The long-lived `recall` MCP server (`mcp_server.py`) is the deliberate deeper-pull path, exposing `recall`, the coarse-to-fine tree-nav tools `index_root`/`index_expand`/`index_fetch` (address-only, so navigation stays cheap), and a `gate` tool for trace-derived span gates.
-4. **memory-consolidation-reflect** — `reflect()`: dedup → contradiction → promote (working→episodic) → pre-decay engagement sweep → decay → synthesize → embed → forget-stale, plus the `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved topic graph.
-5. **memory-distillation-capture** — the two birth paths: the explicit `send_to_user(type=lesson)` tee (`post_tool_trace._remember_lesson`) and the agentic post-session distiller (`distill.py::distill_session`) that self-fetches spans and self-scores importance into a drop/auto-approve/queue band.
-6. **memory-engagement-feedback** — `feedback.py` closes the loop: did an injected memory's referents show up in a *later* span? idf-weighted by precomputed session document-frequency (`referent_session_df`), with `engaged`/`matched` bits on each `injection_events` row feeding reflect's decay gate (soft vs hard ignore).
-7. **memory-exemplar-rescore** — the signed query-exemplar primitive as it operates over topic routing: `topic_exemplars` rows (polarity ±1, source auto|manual) and `store.topic_route_suppressed`'s query-local suppress/protect, written automatically by feedback and by hand from the curate API/CLI. Design note: `docs/agent-memory-exemplars.md`.
-8. **memory-topic-route-feedback** — the relevance loop around authoritative-topic routing: `TopicInjection` records the banner, the grader's `InjectedRelated` aspect stamps `satisfied|needs_revision|fail` (`store.apply_topic_relevance`), a recurring fail rate *proposes* suppression, a human `TopicRouteDecision` (`suppressed`/`allowed`/auto) gates `_route_topic`, topic exemplars give query-local suppression/protection, and the route playground (`topic_query_signals` → `/api/memory/topic-route-preview`) probes a query.
-9. **memory-curation-surfaces** — the human controls: `/api/memory/*` (approve/retire/forget/recall-probe/run-reflect/taxonomy/graph/exemplars/topic-feedback/tree export-import), `MemoryView.vue` with its `frontend/src/components/memory/*` panels (including the taxonomy tree/graph/detail views), and the `regin memory` CLI mirror. Curation is the point of memory being mutable.
+## By-products
 
-## How they connect
-
-Architecture (1) is the hub. Capture (5) feeds rows that consolidation (4) curates and recall (2) ranks; injection (3) delivers them, and the two feedback halves measure whether delivery helped — engagement feedback (6) supplies the soft/hard signal reflect's decay reads. Signed exemplars (7) apply the same +1/-1 primitive to the routed `<topic_context>` banner, giving query-local suppression/protection that topic-route feedback (8) writes from its `InjectedRelated` verdict and gates behind a human suppression decision. Surfaces (9) are where a human gates proposals from (5), (4), and (8) and hand-curates exemplars for (7). Cross-subsystem links point out to `session-trace-design` (distill reads `session_spans`; injection writes a span), `topic-routing` (the routing mechanism (8) wraps with feedback), and `topic-proposal-pipeline` (`topic_attach` lands synthesis proposals in the same review queue), rather than re-describing those approved topics.
+The `related`-edge graph and emergent `memory_topics` feed the curate UI's
+relationship views and recall's edge expansion; `topic_attach.py` lands
+synthesis proposals in the same human review queue as topic proposals. The
+positive counterpart to this cycle's decay half is
+**memory-engagement-feedback**; the rows it consolidates are born in
+**memory-distillation-capture**.

@@ -1,21 +1,95 @@
-# Agent Memory System — Design Topics
+# Agent memory architecture
 
-regin's agent memory (`lib/memory/`) is a cross-session experience store: it learns from finished sessions and surfaces that experience into future ones along the lifecycle **capture → consolidate (reflect) → recall → reinforce**. These nine topics carve that subsystem along its real module and table boundaries — each maps to a distinct concern and (for the engine modules) its own test file under `tests/memory/`.
+The entry point to regin's cross-session memory subsystem (`lib/memory/`). Read
+this before touching any other memory topic: it fixes the seam every other
+module plugs into, the DB the store lives on, and the tier/lifecycle vocabulary
+the rest of the subsystem speaks.
 
-> **Grounding note.** The GitNexus index for `regin` is 131 commits behind HEAD, so its query/context tools would resolve against a stale graph; per the fallback instruction these topics are grounded on direct file evidence read this session (every `lib/memory/*.py`, the `models.py` `__tablename__` declarations, `engine.py`'s self-init/migration path, the hook handlers, `web/blueprints/memory.py`, `cli/commands/memory.py`, `lib/grader/service.py`, and `docs/agent-memory-exemplars.md`). No call edges were fabricated; the `notes` field records which GitNexus steps were skipped and why.
+## The facade
 
-## Topic map
+`lib/memory/__init__.py` is a thin module-verb facade — `remember` / `recall` /
+`reflect` / `get` / `update` / `forget` / `supersede` / `restore` / `stats`,
+plus the tree export/import helpers. It builds one process-wide
+`SqliteMemoryStore` wired with a `SkillRouterEmbedding`, and every caller (hooks,
+web blueprint, CLI) goes through it rather than constructing a store.
 
-1. **agent-memory-architecture** — the entry point. The module-verb facade (`__init__.py`), the ports/adapters seam (`ports.py`: `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`, all gracefully degrading; `adapters.py` at the edge), the scoping policy layer (`scoping.py`), and the self-initializing third-engine DB (`engine.py`, reusing `lib/orm/engine._build_engine`, on `db/regin_memory.db`). The single mutable `memories` table carries both `working`/`episodic` tiers via a `tier` column, and its side tables — `memory_embeddings`, `memory_validations`, `injection_events`, `topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`, `memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`, `topic_exemplars` — carry their own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch them (`models.py`). `mcp_server.py` is the long-lived MCP entrypoint. Read this before any other memory topic.
-2. **memory-recall-pipeline** — the read-side ranking stack in `store.py`: `_lexical_ids` (FTS5/BM25) + `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) + `_rrf` fusion, then `_eligible_rows`, the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), `_order_candidates` cross-encoder rerank (sigmoid confidence, `rerank_cap`), the bounded `_quality_factor`, `_apply_topic_boost`, optional `_mmr_select` and `_expand_via_edges`, `_bump_recall` on deliberate recall, the `expand.py` LLM query rewrite, and the `evaluate.py` FTS-only regression harness.
-3. **memory-auto-injection** — how recall *reaches* an agent: the `UserPromptSubmit` hook (`memory_recall.py`) borrowing the warm `regin serve` embedder over loopback (`/api/memory/recall`) with FTS fallback, routing a `<topic_context>` banner, recording `injection_events`, speculative-inject-without-reinforcement, and the `memory.recall` trace span. The long-lived `recall` MCP server (`mcp_server.py`) is the deliberate deeper-pull path, exposing `recall`, the coarse-to-fine tree-nav tools `index_root`/`index_expand`/`index_fetch` (address-only, so navigation stays cheap), and a `gate` tool for trace-derived span gates.
-4. **memory-consolidation-reflect** — `reflect()`: dedup → contradiction → promote (working→episodic) → pre-decay engagement sweep → decay → synthesize → embed → forget-stale, plus the `related`-edge graph (`_harvest_edges`), emergent `memory_topics`, and `topic_attach.py` proposing merge/create onto the human-approved topic graph.
-5. **memory-distillation-capture** — the two birth paths: the explicit `send_to_user(type=lesson)` tee (`post_tool_trace._remember_lesson`) and the agentic post-session distiller (`distill.py::distill_session`) that self-fetches spans and self-scores importance into a drop/auto-approve/queue band.
-6. **memory-engagement-feedback** — `feedback.py` closes the loop: did an injected memory's referents show up in a *later* span? idf-weighted by precomputed session document-frequency (`referent_session_df`), with `engaged`/`matched` bits on each `injection_events` row feeding reflect's decay gate (soft vs hard ignore).
-7. **memory-exemplar-rescore** — the signed query-exemplar primitive as it operates over topic routing: `topic_exemplars` rows (polarity ±1, source auto|manual) and `store.topic_route_suppressed`'s query-local suppress/protect, written automatically by feedback and by hand from the curate API/CLI. Design note: `docs/agent-memory-exemplars.md`.
-8. **memory-topic-route-feedback** — the relevance loop around authoritative-topic routing: `TopicInjection` records the banner, the grader's `InjectedRelated` aspect stamps `satisfied|needs_revision|fail` (`store.apply_topic_relevance`), a recurring fail rate *proposes* suppression, a human `TopicRouteDecision` (`suppressed`/`allowed`/auto) gates `_route_topic`, topic exemplars give query-local suppression/protection, and the route playground (`topic_query_signals` → `/api/memory/topic-route-preview`) probes a query.
-9. **memory-curation-surfaces** — the human controls: `/api/memory/*` (approve/retire/forget/recall-probe/run-reflect/taxonomy/graph/exemplars/topic-feedback/tree export-import), `MemoryView.vue` with its `frontend/src/components/memory/*` panels (including the taxonomy tree/graph/detail views), and the `regin memory` CLI mirror. Curation is the point of memory being mutable.
+## Ports & adapters seam
 
-## How they connect
+`ports.py` declares the four decoupling interfaces the engine depends on and
+nothing else — `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink` —
+each documented to degrade gracefully: no embedder → FTS-only recall; no LLM →
+deterministic reflect/distill heuristics (in practice distill proposes nothing
+without an LLM); no sink → no export. The engine modules (`store`, `reflect`,
+`distill`) accept these ports by constructor injection and never import concrete
+providers.
 
-Architecture (1) is the hub. Capture (5) feeds rows that consolidation (4) curates and recall (2) ranks; injection (3) delivers them, and the two feedback halves measure whether delivery helped — engagement feedback (6) supplies the soft/hard signal reflect's decay reads. Signed exemplars (7) apply the same +1/-1 primitive to the routed `<topic_context>` banner, giving query-local suppression/protection that topic-route feedback (8) writes from its `InjectedRelated` verdict and gates behind a human suppression decision. Surfaces (9) are where a human gates proposals from (5), (4), and (8) and hand-curates exemplars for (7). Cross-subsystem links point out to `session-trace-design` (distill reads `session_spans`; injection writes a span), `topic-routing` (the routing mechanism (8) wraps with feedback), and `topic-proposal-pipeline` (`topic_attach` lands synthesis proposals in the same review queue), rather than re-describing those approved topics.
+`adapters.py` is the **edge** — the one place under `lib/memory/` allowed to
+import concrete providers (`lib.skills.skill_router`, subprocess commands).
+Swapping or removing an adapter is a zero-diff change to the engine. It ships:
+
+- `SkillRouterEmbedding` — an `EmbeddingProvider` over the same SkillRouter
+  models that power `pattern_router` / `skill_router`. It exposes the bare
+  `embed`, plus two optional extensions the store discovers via `getattr`:
+  `embed_queries` (SkillRouter is an asymmetric bi-encoder, so queries get an
+  instruction prefix via `skill_router.format_query` that documents don't) and
+  `rerank` (the cross-encoder returning raw logit differences over
+  `{name, description, body}` candidates). A minimal symmetric embedder that
+  offers only `embed` still satisfies the port. The adapter degrades to
+  disabled (`model_id` is `None`, `embed` returns `None`) when torch/transformers
+  are missing or `settings.agent_memory.dense_enabled` is off.
+- `ExternalAgentLLM` — an `LLMProvider` over a configured external command,
+  mirroring the topic-proposal external-agent harness: the prompt goes to
+  stdin, stdout comes back. It resolves an agent from
+  `settings.topic_proposal_external_agents`, honoring a per-surface binding via
+  `lib.prompts.surface_agent`; with none configured `complete` returns `None`
+  and callers fall back to heuristics. `extra_args` are appended to the agent's
+  argv — the hook for granting an agentic caller its read-only tools
+  (`--allowedTools …`).
+- Three resolvers bind a surface to that LLM: `resolve_distiller` grants the
+  read-only `trace dump` / `trace span` tools (`distill_allowed_tools`) so the
+  distiller can self-fetch a session's spans; `resolve_topic_classifier` grants
+  no tools (plain-text-in, JSON-out taxonomy reasoning for
+  `memory link-topics`); `resolve_proposal_reviewer` grants `Read,Glob,Grep` so
+  the review LLM verifies a draft against the current refs itself.
+
+## Scoping
+
+`scoping.py` stamps `global` or `repo:<name>` onto writes and recall — a value
+the engine only equality-filters. Distill resolves a session's own repo scope
+through `session_repos`; recall widens a `repo:<name>` query to
+`["global", scope]` so shared lessons still surface.
+
+## The self-initializing DB
+
+`models.py` declares its own `memory_metadata`, so `regin init` / `rebuild` and
+Alembic never see the memory tables. `engine.py` is a self-initializing third
+engine (reusing `lib/orm/engine._build_engine`) on `db/regin_memory.db` that runs
+`create_all` plus the FTS5 + index DDL and idempotent migrations on first
+checkout. The single mutable `memories` table carries both tiers via a `tier`
+column (`working` / `episodic`, default `working`) alongside importance,
+veracity, `recall_count`, provenance (`source_trace_id` / `source_span_id` /
+`source_agent_id`), and lifecycle stamps. Its side tables are
+`memory_embeddings`, `memory_validations`, `injection_events`,
+`topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`,
+`memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`,
+and `topic_exemplars`.
+
+Unlike the append-only `session_spans` store, memory is **mutable by design** —
+rows are updated, superseded, retired, and deleted in place, because that
+lifecycle is the whole point of curation.
+
+## MCP entrypoint
+
+`mcp_server.py` is the long-lived MCP entrypoint exposing the deliberate
+deeper-pull surface: `recall`, the coarse-to-fine tree-nav tools
+`index_root` / `index_expand` / `index_fetch`, and a `gate` tool. See
+**memory-auto-injection** for how it is used.
+
+## How it connects
+
+This is the hub. Capture (**memory-distillation-capture**) writes rows the
+consolidation cycle (**memory-consolidation-reflect**) curates and the read
+stack (**memory-recall-pipeline**) ranks; injection (**memory-auto-injection**)
+delivers them. The store also holds the signed-exemplar
+(**memory-exemplar-rescore**) and topic-route feedback
+(**memory-topic-route-feedback**) machinery.
