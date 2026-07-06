@@ -1198,6 +1198,83 @@ test.describe('Idle state + bridge composer (v5)', () => {
   })
 })
 
+// Stub the read-only screen-peek proxy; returns the collected request count.
+async function stubBridgeScreen(page, traceId, result) {
+  let calls = 0
+  await page.route(`**/api/sessions/${traceId}/bridge-screen*`, async (route) => {
+    calls++
+    await route.fulfill({ json: result })
+  })
+  return () => calls
+}
+
+test.describe('Terminal peek sheet', () => {
+  test('bridge not reachable → no terminal button in the header', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-terminal-btn"]')).toHaveCount(0)
+  })
+
+  test('bridge reachable → button opens a one-shot snapshot with pane label', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId, { pane: '%9' })
+    const callCount = await stubBridgeScreen(page, traceId,
+      { ok: true, html: '<span style="color:#87d787">hello</span>', detail: 'captured %9' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await page.locator('[data-testid="live-terminal-btn"]').click()
+
+    const sheet = page.locator('[data-testid="live-terminal-sheet"]')
+    await expect(sheet).toBeVisible()
+    await expect(page.locator('[data-testid="live-terminal-body"]')).toContainText('hello')
+    await expect(sheet).toContainText('%9')
+    await expect(sheet).toContainText('one-shot snapshot')
+    expect(callCount()).toBe(1)
+
+    // Manual refresh re-fetches — no auto-polling.
+    await page.locator('[data-testid="live-terminal-refresh"]').click()
+    await expect.poll(callCount).toBe(2)
+  })
+
+  test('capture refusal renders the detail, not a blank/broken pane', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId)
+    await stubBridgeScreen(page, traceId, { ok: false, html: '', detail: 'no reachable session' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await page.locator('[data-testid="live-terminal-btn"]').click()
+    await expect(page.locator('[data-testid="live-terminal-error"]'))
+      .toContainText('no reachable session')
+    await expect(page.locator('[data-testid="live-terminal-body"]')).toHaveCount(0)
+  })
+
+  test('overflowing content opens scrolled to the BOTTOM — the live status line', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId)
+    const lines = Array.from({ length: 80 }, (_, i) => `line ${i}`)
+    lines.push('-- INSERT -- ⏵⏵ bypass permissions on')
+    await stubBridgeScreen(page, traceId,
+      { ok: true, html: lines.join('\n'), detail: 'captured %3' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await page.locator('[data-testid="live-terminal-btn"]').click()
+
+    const body = page.locator('[data-testid="live-terminal-body"]')
+    await expect(body).toContainText('-- INSERT --')
+    // The bottom line (the live status) must be scrolled into view without
+    // any manual scrolling — never left stranded below the fold.
+    await expect(body.locator('text=-- INSERT --')).toBeInViewport()
+    const [scrollTop, maxScroll] = await body.evaluate(
+      (el) => [el.scrollTop, el.scrollHeight - el.clientHeight])
+    expect(maxScroll).toBeGreaterThan(0) // sanity: content actually overflows
+    expect(scrollTop).toBeGreaterThanOrEqual(maxScroll - 1) // opened at the bottom
+  })
+})
+
 test.describe('Bridge send lifecycle (v5)', () => {
   test('delivered path: delivering → ✓ detail, textarea clears + re-enables, state and rows unchanged', async ({ page }) => {
     const { traceId } = await postActiveSession(page)

@@ -54,6 +54,12 @@ class DeliveryResult(NamedTuple):
     detail: str
 
 
+class CaptureResult(NamedTuple):
+    ok: bool
+    text: str
+    detail: str
+
+
 def _tmux(socket: str | None, *args: str):
     """Run a tmux command, threading `-S <socket>` when non-NULL.
 
@@ -328,3 +334,39 @@ def deliver(trace_id: str, text: str) -> DeliveryResult:
     log.write("bridge_delivery_outcome", trace_id=trace_id,
               delivered=result.delivered, detail=result.detail)
     return result
+
+
+def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:
+    """Read-only `capture-pane` snapshot of `trace_id`'s reachable pane.
+
+    Default (`lines=None`) captures just the pane's CURRENT visible screen —
+    omitting `-S` entirely, not `-S -<large N>` — since that's what a "peek
+    at the real terminal" question actually wants; scrollback is opt-in via
+    an explicit `lines` depth. Same reachability/identity guards as
+    `deliver()` — refuses a stale or non-claude pane rather than silently
+    reading whatever now occupies a recycled pane id — but never types or
+    sends Enter. `text` carries the raw SGR/256-color escape codes (`-e`);
+    callers convert to HTML for display. Structured refusal (never an
+    exception) on every expected failure; audited like every other bridge
+    outcome.
+    """
+    if not settings.agent_bridge.enabled:
+        return CaptureResult(False, "", "bridge disabled")
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return CaptureResult(False, "", "no reachable session")
+    identity = _verify_identity(row)
+    if not identity["ok"]:
+        return CaptureResult(False, "", identity["detail"])
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    args = ["capture-pane", "-t", pane, "-p", "-e"]
+    if lines:
+        args += ["-S", f"-{lines}"]
+    r = _tmux(socket, *args)
+    if r.returncode != 0:
+        detail = f"capture-pane failed: {r.stderr.strip()}"
+        log.write("bridge_capture_outcome", trace_id=trace_id, ok=False, detail=detail)
+        return CaptureResult(False, "", detail)
+    log.write("bridge_capture_outcome", trace_id=trace_id, ok=True,
+              detail=f"captured {pane}")
+    return CaptureResult(True, r.stdout, f"captured {pane}")

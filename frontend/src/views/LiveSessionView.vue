@@ -20,6 +20,7 @@ import LiveQaSheet from '../components/live/LiveQaSheet.vue'
 import LiveAgentSheet from '../components/live/LiveAgentSheet.vue'
 import LiveAgentDetail from '../components/live/LiveAgentDetail.vue'
 import LiveTaskSheet from '../components/live/LiveTaskSheet.vue'
+import LiveTerminalSheet from '../components/live/LiveTerminalSheet.vue'
 import LiveCtxMeter from '../components/live/LiveCtxMeter.vue'
 import LiveScopeBar from '../components/live/LiveScopeBar.vue'
 import { useLiveTail } from '../composables/useLiveTail.js'
@@ -314,6 +315,7 @@ const sheetTitle = computed(() => {
     sessions: 'Switch session',
     agents: 'Agents',
     tasks: 'Tasks',
+    terminal: 'Raw terminal',
   }[sheetKind.value]
   if (fixed) return fixed
   if (sheetKind.value === 'agent') {
@@ -485,6 +487,17 @@ onUnmounted(() => {
               class="live-agent-badge live-tabnum"
               data-testid="live-agents-badge"
             >{{ liveAgents.runningCount }}</span>
+          </Button>
+          <Button
+            v-if="meta.bridge_reachable"
+            variant="ghost"
+            size="icon"
+            class="live-hd-btn"
+            data-testid="live-terminal-btn"
+            aria-label="Peek raw terminal"
+            @click="openSheet('terminal')"
+          >
+            <Icon name="terminal" :size="14" />
           </Button>
           <Button
             variant="ghost"
@@ -682,6 +695,13 @@ onUnmounted(() => {
 
         <template v-else-if="sheetKind === 'sessions'">
           <LiveSessionPicker :current-id="sessionId" @select="onPickSession" />
+        </template>
+
+        <template v-else-if="sheetKind === 'terminal'">
+          <LiveTerminalSheet
+            :session-id="sessionId || ''"
+            :bridge-pane="meta.bridge_pane || ''"
+          />
         </template>
 
         <template v-else-if="sheetKind === 'filter'">

@@ -35,7 +35,7 @@ from flask import Blueprint, request, jsonify
 
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
-from lib.agent_bridge import store, delivery, commands
+from lib.agent_bridge import store, delivery, commands, ansi_html
 
 bridge_bp = Blueprint('bridge', __name__)
 
@@ -229,6 +229,35 @@ def api_session_bridge_commands(trace_id):
     except Exception:  # noqa: BLE001 — read-only convenience list, never 500
         rows = []
     return jsonify({"commands": rows})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-screen', methods=['GET'])
+@require_editor
+def api_session_bridge_screen(trace_id):
+    """One-shot raw terminal snapshot for the /live card's terminal-peek
+    panel (editor+ only). Read-only: `capture_screen()` reuses the same
+    reachability/identity guards as `deliver()` but never types or sends
+    Enter. Gated editor+ like every other bridge-* route, not just viewer,
+    because a raw screen can show things the parsed trace already redacts
+    or never surfaced. Default is a recent PAGE of scrollback (200 lines,
+    same idiom as `_await_pane_text`'s capture window) — not just the
+    pane's bare current screen, which turned out to cut off too much
+    useful recent history. The panel opens scrolled to the BOTTOM of
+    whatever comes back (`LiveTerminalSheet.vue`), so the live status line
+    is still what you see first; scrolling up reveals the rest. `?lines=N`
+    overrides the depth (capped at 2000); a bad/missing value falls back
+    to the 200-line default. `html` is `text` run through
+    `ansi_html.convert()` so the panel can render it directly with no
+    client-side escape parsing.
+    """
+    try:
+        lines = max(1, min(int(request.args.get("lines", 200)), 2000))
+    except (TypeError, ValueError):
+        lines = 200
+    result = delivery.capture_screen(trace_id, lines=lines)
+    return jsonify({"ok": result.ok,
+                    "html": ansi_html.convert(result.text) if result.ok else "",
+                    "detail": result.detail})
 
 
 @bridge_bp.route('/api/bridge/sessions', methods=['GET'])

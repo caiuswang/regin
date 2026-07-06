@@ -383,3 +383,65 @@ def test_answer_stale_identity_refuses(monkeypatch):
     assert res.delivered is False
     assert "stale" in res.detail
     assert _downs(calls) == [] and _enters(calls) == []  # never drove the TUI
+
+
+# ── capture_screen: read-only snapshot, screen-only by default ──
+
+
+def _capture_argv(calls):
+    return next(c for c in calls if "capture-pane" in c)
+
+
+def test_capture_screen_default_omits_scrollback_flag(monkeypatch):
+    """No `lines` → just the current screen: no `-S` at all, not `-S -N`
+    for some large default N."""
+    calls = _install_tmux(monkeypatch, capture="the screen\n")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.capture_screen("t1")
+
+    assert res.ok is True and res.text == "the screen\n"
+    argv = _capture_argv(calls)
+    assert "-S" not in argv
+
+
+def test_capture_screen_with_lines_requests_scrollback(monkeypatch):
+    calls = _install_tmux(monkeypatch, capture="history\n")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.capture_screen("t1", lines=40)
+
+    assert res.ok is True
+    argv = _capture_argv(calls)
+    assert argv[argv.index("-S") + 1] == "-40"
+
+
+def test_capture_screen_never_types_or_sends_enter(monkeypatch):
+    calls = _install_tmux(monkeypatch, capture="ok\n")
+    _set_row(monkeypatch, _pane_row())
+
+    delivery.capture_screen("t1")
+
+    assert not _literal_sends(calls)
+    assert not _enter_sent(calls)
+
+
+def test_capture_screen_disabled_refuses_without_tmux(monkeypatch):
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    calls = _install_tmux(monkeypatch)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.capture_screen("t1")
+
+    assert res.ok is False and "disabled" in res.detail
+    assert calls == []
+
+
+def test_capture_screen_stale_identity_refuses(monkeypatch):
+    calls = _install_tmux(monkeypatch, server_pid=999)  # live 999 != row 111
+    _set_row(monkeypatch, _pane_row(tmux_server_pid=111))
+
+    res = delivery.capture_screen("t1")
+
+    assert res.ok is False and "stale" in res.detail
+    assert not any("capture-pane" in c for c in calls)

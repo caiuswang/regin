@@ -346,3 +346,89 @@ def test_bridge_commands_fail_closed_to_empty(flask_client, monkeypatch):
     resp = flask_client.get("/api/sessions/T-9/bridge-commands")
     assert resp.status_code == 200
     assert resp.get_json() == {"commands": []}
+
+
+# ── terminal peek: one-shot raw screen snapshot (editor-gated) ──
+
+
+def _mock_capture(monkeypatch, *, ok=True, text="", detail="captured %7"):
+    calls: list[tuple[str, int | None]] = []
+
+    def _fake(trace_id, lines=None):
+        calls.append((trace_id, lines))
+        return delivery.CaptureResult(ok, text, detail)
+
+    monkeypatch.setattr(delivery, "capture_screen", _fake)
+    return calls
+
+
+def test_bridge_screen_anonymous_401(anon_client):
+    resp = anon_client.get("/api/sessions/T-1/bridge-screen")
+    assert resp.status_code == 401
+
+
+def test_bridge_screen_viewer_403(flask_client, monkeypatch):
+    from lib.auth import create_token
+    calls = _mock_capture(monkeypatch)
+    viewer = {"Authorization":
+              f"Bearer {create_token(2, 'viewer-tester', 'viewer')}"}
+    resp = flask_client.get("/api/sessions/T-1/bridge-screen", headers=viewer)
+    assert resp.status_code == 403
+    assert calls == []
+
+
+def test_bridge_screen_no_reachable_pane_structured_refusal(flask_client):
+    """No mock: capture_screen runs for real and finds no registered pane."""
+    resp = flask_client.get("/api/sessions/T-none/bridge-screen")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body == {"ok": False, "html": "", "detail": "no reachable session"}
+
+
+def test_bridge_screen_returns_converted_html(flask_client, monkeypatch):
+    raw = "plain \x1b[1;38;5;114mgreen bold\x1b[0m tail"
+    _mock_capture(monkeypatch, ok=True, text=raw, detail="captured %7")
+    resp = flask_client.get("/api/sessions/T-9/bridge-screen")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["detail"] == "captured %7"
+    assert "color:#87d787" in body["html"]  # SGR 114 → xterm green
+    assert "font-weight:600" in body["html"]
+    assert "green bold" in body["html"]
+
+
+def test_bridge_screen_capture_failure_returns_empty_html(flask_client, monkeypatch):
+    """ok=False must not run the (possibly garbage) text through the
+    converter — html stays empty rather than rendering a stale/failed read."""
+    _mock_capture(monkeypatch, ok=False, text="should not be rendered",
+                 detail="stale: pane pid mismatch")
+    resp = flask_client.get("/api/sessions/T-9/bridge-screen")
+    body = resp.get_json()
+    assert body == {"ok": False, "html": "", "detail": "stale: pane pid mismatch"}
+
+
+def test_bridge_screen_default_is_a_recent_page_not_bare_screen(flask_client, monkeypatch):
+    """No `?lines=` still requests a 200-line page of scrollback — a bare
+    current-screen-only capture cut off too much recent history."""
+    calls = _mock_capture(monkeypatch)
+    flask_client.get("/api/sessions/T-9/bridge-screen")
+    assert calls == [("T-9", 200)]
+
+
+def test_bridge_screen_lines_param_overrides_default(flask_client, monkeypatch):
+    calls = _mock_capture(monkeypatch)
+    flask_client.get("/api/sessions/T-9/bridge-screen?lines=40")
+    assert calls == [("T-9", 40)]
+
+
+def test_bridge_screen_lines_param_capped(flask_client, monkeypatch):
+    calls = _mock_capture(monkeypatch)
+    flask_client.get("/api/sessions/T-9/bridge-screen?lines=999999")
+    assert calls == [("T-9", 2000)]
+
+
+def test_bridge_screen_lines_param_invalid_falls_back_to_default(flask_client, monkeypatch):
+    calls = _mock_capture(monkeypatch)
+    flask_client.get("/api/sessions/T-9/bridge-screen?lines=nonsense")
+    assert calls == [("T-9", 200)]

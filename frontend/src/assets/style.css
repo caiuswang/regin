@@ -88,6 +88,12 @@
   --code-bg: #0f172a;
   --code-fg: #e2e8f0;
 
+  /* Terminal-peek sheet: the captured colors are xterm's 256-color palette,
+     calibrated for a dark terminal background — fixed in both themes like
+     the code-block tokens above, not the invertible slate ramp. */
+  --term-bg: #0a0a0c;
+  --term-fg: #d4d6de;
+
   /* Elevation + stacking foundation (plain props for CSS use). */
   --ds-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.03);
   --ds-shadow-md: 0 4px 12px rgba(30, 64, 175, 0.12);
@@ -2678,6 +2684,58 @@ button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
     color: var(--color-fg-muted);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
+}
+
+/* terminal-peek sheet */
+.live-term-sheet { margin: -4px -2px -8px; }
+.live-term-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px 8px;
+}
+.live-term-hint {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--color-fg-faint);
+}
+.live-term-refresh {
+    flex-shrink: 0;
+    height: auto;
+    padding: 4px 9px;
+    gap: 5px;
+    border: 1px solid var(--color-border);
+    border-radius: 99px;
+    background: var(--color-surface);
+    color: var(--color-fg-subtle);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+.live-term-refresh:hover { background: var(--color-surface-2); }
+.live-term-body {
+    margin: 0 -2px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--term-bg);
+    color: var(--term-fg);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    /* its own bounded scroll region — the pane's BOTTOM (prompt, spinner,
+       insert-mode hint) is the live status, so this is what auto-scrolls to
+       its end on load rather than leaving that to the outer sheet body */
+    max-height: 60dvh;
+    overflow-y: auto;
+    overflow-x: auto;
+}
+.live-term-body a { color: inherit; }
+.live-term-foot {
+    margin: 8px 2px 0;
+    font-size: 10.5px;
+    color: var(--color-fg-faint);
 }
 
 /* session picker sheet */
