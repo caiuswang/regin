@@ -930,6 +930,17 @@ def _combined_proposal_wiki(payload: dict[str, Any], topics: list[dict[str, Any]
     return "\n\n".join(parts).strip()
 
 
+def _strip_review_markers(topics: list[Any]) -> None:
+    """Review markers are server-owned bookkeeping; an agent echoing them
+    from the prior-draft reference could smuggle a stale 'accepted' onto
+    redrafted content that then survives the splice/reset."""
+    from lib.topics.proposals._common import _REGENERATE_RESET_TOPIC_FIELDS
+    for topic in topics:
+        if isinstance(topic, dict):
+            for field in _REGENERATE_RESET_TOPIC_FIELDS:
+                topic.pop(field, None)
+
+
 def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
     from lib.topics.proposal_drafting import PROPOSAL_VERSION, validate_proposal
 
@@ -945,6 +956,7 @@ def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[
             "topics": payload.get("topics") or [],
             "notes": payload.get("notes") or [],
         }
+    _strip_review_markers(proposal.get("topics") or [])
     wiki = _combined_proposal_wiki(payload, proposal.get("topics") or [])
     errors = validate_proposal(proposal)
     if errors:

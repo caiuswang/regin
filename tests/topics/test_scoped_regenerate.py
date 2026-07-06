@@ -23,6 +23,7 @@ from lib.topics.proposal_orm.feedback import _wiki_range_changed
 from lib.topics.proposal_orm.runs import orm_save_proposal
 from lib.topics.proposals.core_io import load_proposal
 from lib.topics.proposals.external_jobs import (
+    _reset_review_markers_for_regenerate,
     _resolve_drift_scope,
     _resolve_regenerate_inputs,
     _scope_for_regenerate,
@@ -85,6 +86,57 @@ def test_pick_topic_prefers_drafted_only_for_scoped_ids():
     assert _pick_topic({"id": "beta", "wiki": "old"}, scope, drafted_by_id)["wiki"] == "new"
     # scoped but absent from drafted → prior verbatim
     assert _pick_topic({"id": "delta", "wiki": "old"}, {"delta"}, {})["wiki"] == "old"
+
+
+# ── regenerate marker reset ───────────────────────────────────────────────
+
+def _accepted(topic_id: str) -> dict:
+    return {"id": topic_id, "label": topic_id.title(), "wiki": f"## {topic_id}",
+            "review_status": "accepted", "accepted_topic": topic_id,
+            "accepted_at": "2020-01-02T00:00:00Z"}
+
+
+def test_scoped_reset_keeps_markers_on_splice_preserved_topics():
+    proposals = {"topics": [_accepted("alpha"), _accepted("beta")]}
+
+    _reset_review_markers_for_regenerate(proposals, scope_topic_ids=["beta"])
+
+    by_id = {t["id"]: t for t in proposals["topics"]}
+    # alpha was preserved byte-identical by the splice → still applied
+    assert by_id["alpha"]["review_status"] == "accepted"
+    assert by_id["alpha"]["accepted_at"] == "2020-01-02T00:00:00Z"
+    # beta was redrafted → markers cleared, needs review
+    assert "review_status" not in by_id["beta"]
+    assert "accepted_at" not in by_id["beta"]
+
+
+def test_full_regenerate_reset_still_clears_all_markers():
+    proposals = {"topics": [_accepted("alpha"), _accepted("beta")]}
+
+    # empty scope is how a full re-draft arrives (drift resolved to nothing)
+    _reset_review_markers_for_regenerate(proposals, scope_topic_ids=[])
+
+    for topic in proposals["topics"]:
+        assert "review_status" not in topic
+        assert "accepted_at" not in topic
+
+
+def test_normalise_strips_agent_echoed_review_markers(fake_git_repo):
+    from lib.topics.proposal_external import _normalise_agent_payload
+
+    payload = {"version": 1, "notes": [], "topics": [{
+        "id": "alpha", "label": "Alpha", "intent": "i", "status": "active",
+        "wiki": "## Alpha\nbody",
+        "review_status": "accepted", "accepted_topic": "alpha",
+        "accepted_at": "2020-01-02T00:00:00Z",
+    }]}
+
+    proposal, _wiki = _normalise_agent_payload(fake_git_repo, payload)
+
+    topic = proposal["topics"][0]
+    assert "review_status" not in topic
+    assert "accepted_topic" not in topic
+    assert "accepted_at" not in topic
 
 
 # ── scoped prompt directive ────────────────────────────────────────────────

@@ -46,7 +46,9 @@ def _guard_regenerate_not_in_flight(repo_path: str | Path, proposal_id: str) -> 
         )
 
 
-def _reset_review_markers_for_regenerate(proposals: dict[str, Any]) -> None:
+def _reset_review_markers_for_regenerate(
+    proposals: dict[str, Any], scope_topic_ids: list[str] | None = None,
+) -> None:
     """Clear per-topic accept/merge/ignore markers on a freshly regenerated draft.
 
     A regenerate replaces the topic content; any prior accept marker on a
@@ -54,9 +56,18 @@ def _reset_review_markers_for_regenerate(proposals: dict[str, Any]) -> None:
     was accepted). Leaving review_status='accepted' on the new revision
     hid Edit/Apply/Ignore in the UI, stranding the user on a draft they
     couldn't act on.
+
+    A scoped regenerate replaces only `scope_topic_ids`; the splice keeps
+    every other topic byte-identical, so those markers are still accurate
+    and clearing them would demand a review round for content that never
+    changed. Pass the scope to reset just the redrafted topics; omit it
+    (full regenerate) to reset all.
     """
+    scoped = set(scope_topic_ids or ())
     for topic in proposals.get("topics") or []:
         if not isinstance(topic, dict):
+            continue
+        if scoped and topic.get("id") not in scoped:
             continue
         for field in _REGENERATE_RESET_TOPIC_FIELDS:
             topic.pop(field, None)

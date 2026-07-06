@@ -453,7 +453,9 @@ def _external_regenerate_job(
             prompt_templates=templates,
         )
         proposals["status"] = "pending_review"
-        _reset_review_markers_for_regenerate(proposals)
+        _reset_review_markers_for_regenerate(
+            proposals, scope_topic_ids=(scope or {}).get("topic_ids"),
+        )
         # The agent may have already ingested via `proposal-finish`
         # (notify-on-finish), which appends the `regenerated` revision
         # itself — don't append a second, duplicate one here.
