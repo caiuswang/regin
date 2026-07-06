@@ -356,6 +356,98 @@ def _patch_settings_path(monkeypatch, settings_file):
     monkeypatch.setattr("os.path.expanduser", _redir)
 
 
+# ── _topics_pending_promote_items ────────────────────────────
+
+def test_topics_pending_items_empty_when_no_repos(fake_git_repo):
+    assert doctor._topics_pending_promote_items() == []
+
+
+def test_topics_pending_items_clean_when_no_overlay(fake_git_repo):
+    from lib.topics.snapshots import resolve_or_create_repo
+
+    resolve_or_create_repo(str(fake_git_repo))
+    items = doctor._topics_pending_promote_items()
+    assert len(items) == 1
+    assert items[0]["present"] is True
+    assert items[0]["version"] == "nothing pending"
+
+
+def test_topics_pending_items_warn_with_count_and_hint(fake_git_repo):
+    """Two overlay-added topics plus one tombstone → count 3 and a
+    `topics promote --all` hint."""
+    from lib.topics.core import save_local_graph
+    from lib.topics.snapshots import resolve_or_create_repo
+
+    resolve_or_create_repo(str(fake_git_repo))
+    save_local_graph(fake_git_repo, {
+        "topics": {"x": {"label": "X"}, "y": {"label": "Y"}},
+        "deleted_topics": ["gone"],
+    })
+
+    items = doctor._topics_pending_promote_items()
+    assert len(items) == 1
+    item = items[0]
+    assert item["present"] is False
+    assert item["optional"] is True
+    assert "3 local topic change(s)" in item["install_hint"]
+    assert "regin topics promote --all" in item["install_hint"]
+
+
+def test_topics_pending_items_warn_on_unreadable_overlay(fake_git_repo):
+    from lib.topics.core import topic_local_path
+    from lib.topics.snapshots import resolve_or_create_repo
+
+    resolve_or_create_repo(str(fake_git_repo))
+    path = topic_local_path(fake_git_repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not valid json")
+
+    items = doctor._topics_pending_promote_items()
+    assert len(items) == 1
+    assert items[0]["present"] is False
+    assert "overlay read failed" in items[0]["install_hint"]
+
+
+# ── _stale_skeleton_items ────────────────────────────────────
+
+def _fake_surface(surface_id, body):
+    from types import SimpleNamespace
+    return SimpleNamespace(id=surface_id, default_body=lambda: body)
+
+
+def test_stale_skeleton_items_ok_when_seed_matches_default(monkeypatch):
+    from lib.prompt_templates import create_template
+
+    create_template({"slug": "surf-a", "label": "Surf A", "body": "hello"})
+    monkeypatch.setattr("lib.prompts.registry.list_surfaces",
+                        lambda: [_fake_surface("surf-a", "hello")])
+
+    items = doctor._stale_skeleton_items()
+    assert len(items) == 1
+    assert items[0]["present"] is True
+    assert items[0]["version"] == "1 match built-in defaults"
+
+
+def test_stale_skeleton_items_warn_on_diverged_seed(monkeypatch):
+    """A seeded row whose body drifted from the registered default fires;
+    a surface with no row yet (never seeded) is skipped, not reported."""
+    from lib.prompt_templates import create_template
+
+    create_template({"slug": "surf-a", "label": "Surf A", "body": "old seed"})
+    monkeypatch.setattr("lib.prompts.registry.list_surfaces",
+                        lambda: [_fake_surface("surf-a", "new default"),
+                                 _fake_surface("unseeded", "x")])
+
+    items = doctor._stale_skeleton_items()
+    assert len(items) == 1
+    item = items[0]
+    assert item["label"] == "surf-a"
+    assert item["present"] is False
+    assert item["optional"] is True
+    assert "stale seed or intentional edit" in item["install_hint"]
+    assert "reset_skeleton_to_default('surf-a')" in item["install_hint"]
+
+
 # ── _agent_bridge_items ──────────────────────────────────────
 
 def test_agent_bridge_items_disabled_single_optional_row(monkeypatch):

@@ -352,6 +352,84 @@ def _topic_sync_items() -> list[dict]:
     return items
 
 
+def _topics_pending_promote_items() -> list[dict]:
+    """One item per registered repo counting local-overlay changes
+    (added/overridden topics + deletion tombstones) that `regin topics
+    promote` has not yet folded into the git-tracked topic.json —
+    invisible to teammates until promoted."""
+    from sqlmodel import select
+
+    from lib.orm import SessionLocal
+    from lib.orm.models import Repo
+    from lib.topics.core import load_local_graph
+
+    with SessionLocal() as s:
+        repos = list(s.exec(select(Repo).where(Repo.is_active == 1)))
+    items: list[dict] = []
+    for repo in repos:
+        base = {"id": f"topics_pending_{repo.id}", "label": repo.name}
+        try:
+            overlay = load_local_graph(repo.path)
+        except Exception as exc:  # noqa: BLE001 — doctor must never crash a row
+            items.append({**base, "present": False, "optional": True,
+                          "install_hint": f"overlay read failed: {exc}"})
+            continue
+        count = len(overlay.get("topics") or {}) + len(overlay.get("deleted_topics") or [])
+        if count == 0:
+            items.append({**base, "present": True, "version": "nothing pending"})
+        else:
+            items.append({
+                **base, "present": False, "optional": True,
+                "install_hint": f"{count} local topic change(s) pending promote — "
+                                "run `regin topics promote --all`",
+            })
+    return items
+
+
+def _stale_skeleton_items() -> list[dict]:
+    """One WARN row per seeded prompt skeleton whose stored body no longer
+    matches the registered default. Seeding is INSERT-OR-IGNORE by slug, so
+    when a Python default evolves, existing installs keep serving the old
+    seed — but a difference may also be a deliberate user edit; doctor
+    can't tell which, hence WARN rather than FAIL."""
+    from sqlalchemy.exc import OperationalError
+    from sqlmodel import select
+
+    from lib.orm import SessionLocal
+    from lib.orm.models import PromptTemplate
+    from lib.prompts.registry import list_surfaces
+
+    try:
+        with SessionLocal() as s:
+            rows = s.exec(select(PromptTemplate.slug, PromptTemplate.body)).all()
+    except OperationalError:
+        return [{"id": "prompt_skeletons_no_table", "label": "prompt_templates table",
+                 "present": False, "optional": True,
+                 "install_hint": "run `regin init` (or `regin rebuild`) to create it"}]
+    bodies = dict(rows)
+    items: list[dict] = []
+    seeded = 0
+    for surface in list_surfaces():
+        stored = bodies.get(surface.id)
+        if stored is None:
+            continue
+        seeded += 1
+        if stored != surface.default_body():
+            items.append({
+                "id": f"prompt_stale_{surface.id}",
+                "label": surface.id,
+                "present": False,
+                "optional": True,
+                "install_hint": "differs from the built-in default (stale seed or "
+                                "intentional edit) — restore via lib.prompt_templates."
+                                f"reset_skeleton_to_default({surface.id!r})",
+            })
+    if items:
+        return items
+    return [{"id": "prompt_skeletons_ok", "label": "seeded skeletons",
+             "present": True, "version": f"{seeded} match built-in defaults"}]
+
+
 def run_checks() -> dict:
     """Return structured doctor check results."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -414,6 +492,13 @@ def run_checks() -> dict:
     topic_sync = _topic_sync_items()
     if topic_sync:
         groups.append({'name': 'Topic graph sync (per repo)', 'items': topic_sync})
+    topics_pending = _topics_pending_promote_items()
+    if topics_pending:
+        groups.append({'name': 'Topics pending promote (per repo)',
+                       'items': topics_pending})
+
+    groups.append({'name': 'Prompt skeletons (seed vs built-in default)',
+                   'items': _stale_skeleton_items()})
 
     groups.append({'name': 'Agent bridge (web steering)',
                    'items': _agent_bridge_items(_check_tool)})
