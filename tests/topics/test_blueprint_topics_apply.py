@@ -607,7 +607,7 @@ def _proposal_with_forward_edge() -> dict:
 
 
 def test_stage_forward_sibling_edges_records_dropped_forward_ref(monkeypatch):
-    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import apply_service as apply_mod
 
     # Live graph holds only doc1 (just applied); doc3 not yet present.
     monkeypatch.setattr(
@@ -629,7 +629,7 @@ def test_stage_forward_sibling_edges_records_dropped_forward_ref(monkeypatch):
 
 
 def test_stage_forward_sibling_edges_skips_already_present_target(monkeypatch):
-    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import apply_service as apply_mod
 
     # doc3 is ALREADY in the graph, so the edge survives the normal apply
     # and must NOT be staged (it would double-restore).
@@ -645,7 +645,7 @@ def test_stage_forward_sibling_edges_skips_already_present_target(monkeypatch):
 
 
 def test_stage_forward_sibling_edges_ignores_non_sibling_and_merge(monkeypatch):
-    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import apply_service as apply_mod
 
     monkeypatch.setattr(
         apply_mod, "load_authoritative_graph", lambda _p: {"topics": {}},
@@ -670,7 +670,7 @@ def test_stage_forward_sibling_edges_ignores_non_sibling_and_merge(monkeypatch):
 def test_forward_edge_survives_stage_then_restore_round_trip(monkeypatch):
     """End-to-end: stage the edge when doc1 is applied first, then prove the
     existing restore helper re-attaches it once doc3 lands."""
-    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import apply_service as apply_mod
     from lib.topics.proposals import _restore_pruned_edges
 
     monkeypatch.setattr(
@@ -729,7 +729,7 @@ def test_advance_baseline_resolves_redetected_drift(fake_git_repo, monkeypatch):
     from lib.topics.content_drift import detect_drifted_topics
     from lib.topics.ref_digest import capture_ref_digests
     from lib.topics.snapshots import resolve_or_create_repo
-    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import apply_service as apply_mod
 
     monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
     repo = fake_git_repo
@@ -756,7 +756,7 @@ def test_advance_baseline_is_noop_when_evolution_disabled(fake_git_repo, monkeyp
     from lib.topics.content_drift import detect_drifted_topics
     from lib.topics.ref_digest import capture_ref_digests
     from lib.topics.snapshots import resolve_or_create_repo
-    from web.blueprints.topics import apply as apply_mod
+    from lib.topics.proposals import apply_service as apply_mod
 
     monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", False)
     repo = fake_git_repo

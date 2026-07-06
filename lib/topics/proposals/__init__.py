@@ -25,6 +25,10 @@ from ._common import (
     _find_proposed_topic,
     proposal_review_state,
 )
+from .apply_service import (
+    apply_proposal_topic,
+    diff_proposal_topic,
+)
 from .core_io import (
     backfill_disk_proposals_to_orm,
     create_proposal_run,
@@ -87,6 +91,9 @@ __all__ = [
     "delete_proposal_run",
     "stop_proposal_run",
     "proposal_review_state",
+    # public API — diff/apply
+    "diff_proposal_topic",
+    "apply_proposal_topic",
     # public API — topic actions
     "update_proposed_topic",
     "accept_proposed_topic",
