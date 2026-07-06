@@ -124,12 +124,13 @@ def _seed_session(conn, trace_id, *, status='active', last_seen):
 
 
 def _seed_span(conn, trace_id, span_id, name, *, start, status='OK',
-               attrs=None, agent_id_col=None):
+               attrs=None, agent_id_col=None, end=None):
     conn.execute(
         "INSERT INTO session_spans "
-        "(trace_id, span_id, name, kind, start_time, status_code, attributes, agent_id) "
-        "VALUES (?, ?, ?, 'internal', ?, ?, ?, ?)",
-        (trace_id, span_id, name, start, status,
+        "(trace_id, span_id, name, kind, start_time, end_time, status_code, "
+        " attributes, agent_id) "
+        "VALUES (?, ?, ?, 'internal', ?, ?, ?, ?, ?)",
+        (trace_id, span_id, name, start, end, status,
          json.dumps(attrs or {}), agent_id_col))
 
 
@@ -203,3 +204,203 @@ def test_summary_main_idle_while_subagent_streams(trace_db):
     assert summary['agent_phase']['main'] == 'idle'
     assert summary['agent_phase']['a1'] == 'working'
     assert summary['phase'] == 'working'
+
+
+# ── Roster: implicit stop from a resolved launch (lost subagent.stop) ─
+
+def _roster_by_id(trace_id):
+    roster, _activity, _ended = S._roster_with_activity(trace_id)
+    return {e['agent_id']: e for e in roster}
+
+
+def test_roster_resolved_launch_demotes_running_to_finished(trace_db):
+    """Start marker + NO subagent.stop + its own tool.Agent launch already
+    resolved (OK, end_time set) → 'finished', duration from the launch's
+    end_time. This is the lost-subagent.stop repro (a93463845805c1d29)."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR1', last_seen=now.isoformat())
+        launch_start = (now - timedelta(seconds=120)).isoformat()
+        launch_end = (now - timedelta(seconds=90)).isoformat()
+        start_ts = (now - timedelta(seconds=115)).isoformat()
+        _seed_span(conn, 'tR1', 'launch1', 'tool.Agent',
+                   start=launch_start, end=launch_end, status='OK',
+                   attrs={'subagent_type': 'general-purpose'})
+        _seed_span(conn, 'tR1', 'sa-start-a1', 'subagent.start',
+                   start=start_ts,
+                   attrs={'agent_id': 'a1', 'agent_type': 'general-purpose'},
+                   agent_id_col='a1')
+        conn.commit()
+    finally:
+        conn.close()
+    entry = _roster_by_id('tR1')['a1']
+    assert entry['status'] == 'finished'
+    expected_ms = int((now - timedelta(seconds=90) -
+                       (now - timedelta(seconds=115))).total_seconds() * 1000)
+    assert entry['duration_ms'] == expected_ms
+
+
+def test_roster_pending_launch_stays_running(trace_db):
+    """Start marker + NO subagent.stop + its own tool.Agent launch still
+    PENDING (subagent genuinely still running) → status stays 'running', no
+    false demotion."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR2', last_seen=now.isoformat())
+        launch_start = (now - timedelta(seconds=30)).isoformat()
+        start_ts = (now - timedelta(seconds=25)).isoformat()
+        _seed_span(conn, 'tR2', 'launch2', 'tool.Agent',
+                   start=launch_start, status='PENDING',
+                   attrs={'subagent_type': 'general-purpose'})
+        _seed_span(conn, 'tR2', 'sa-start-a2', 'subagent.start',
+                   start=start_ts,
+                   attrs={'agent_id': 'a2', 'agent_type': 'general-purpose'},
+                   agent_id_col='a2')
+        _seed_span(conn, 'tR2', 'sa-tool2', 'tool.Read',
+                   start=(now - timedelta(seconds=2)).isoformat(),
+                   attrs={'agent_id': 'a2'}, agent_id_col='a2')
+        conn.commit()
+    finally:
+        conn.close()
+    entry = _roster_by_id('tR2')['a2']
+    assert entry['status'] == 'running'
+    assert entry['duration_ms'] is None
+
+
+def test_roster_real_stop_marker_unchanged_by_resolved_launch(trace_db):
+    """An agent with a REAL subagent.stop is unchanged — same 'finished'
+    status and its duration is still derived from the real stop marker, not
+    from a resolved launch's end_time, even when one is present."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR3', last_seen=now.isoformat())
+        launch_start = (now - timedelta(seconds=200)).isoformat()
+        launch_end = (now - timedelta(seconds=1)).isoformat()   # far off
+        start_ts = (now - timedelta(seconds=100)).isoformat()
+        stop_ts = (now - timedelta(seconds=40)).isoformat()
+        _seed_span(conn, 'tR3', 'launch3', 'tool.Agent',
+                   start=launch_start, end=launch_end, status='OK',
+                   attrs={'subagent_type': 'general-purpose'})
+        _seed_span(conn, 'tR3', 'sa-start-a3', 'subagent.start',
+                   start=start_ts,
+                   attrs={'agent_id': 'a3', 'agent_type': 'general-purpose'},
+                   agent_id_col='a3')
+        _seed_span(conn, 'tR3', 'sa-stop-a3', 'subagent.stop',
+                   start=stop_ts,
+                   attrs={'agent_id': 'a3', 'agent_type': 'general-purpose'},
+                   agent_id_col='a3')
+        conn.commit()
+    finally:
+        conn.close()
+    entry = _roster_by_id('tR3')['a3']
+    assert entry['status'] == 'finished'
+    expected_ms = int((now - timedelta(seconds=40) -
+                       (now - timedelta(seconds=100))).total_seconds() * 1000)
+    assert entry['duration_ms'] == expected_ms
+
+
+def test_roster_parallel_same_type_pending_sibling_no_misattribution(trace_db):
+    """Two concurrent same-type launches — launch1 RESOLVED (its agent
+    finished), launch2 still PENDING (its agent running) — with the
+    subagent.start markers arriving in INVERTED order vs the launch ids
+    (the running agent boots NEAREST to launch1's timestamp). Proximity
+    alone would bind the sole resolved launch1 to the running agent and
+    demote it; the refuse-under-ambiguity rule must leave BOTH running (no
+    resolved launch is applied while a same-type sibling is still PENDING),
+    so the genuinely-running agent is never shown finished."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR4', last_seen=now.isoformat())
+        _seed_span(conn, 'tR4', 'launch1', 'tool.Agent',
+                   start=(now - timedelta(seconds=120)).isoformat(),
+                   end=(now - timedelta(seconds=30)).isoformat(), status='OK',
+                   attrs={'subagent_type': 'general-purpose'})
+        _seed_span(conn, 'tR4', 'launch2', 'tool.Agent',
+                   start=(now - timedelta(seconds=119.9)).isoformat(),
+                   status='PENDING',
+                   attrs={'subagent_type': 'general-purpose'})
+        # Running agent (a2) boots FIRST — nearest to launch1's ts.
+        _seed_span(conn, 'tR4', 'sa-start-a2', 'subagent.start',
+                   start=(now - timedelta(seconds=118)).isoformat(),
+                   attrs={'agent_id': 'a2', 'agent_type': 'general-purpose'},
+                   agent_id_col='a2')
+        _seed_span(conn, 'tR4', 'sa-start-a1', 'subagent.start',
+                   start=(now - timedelta(seconds=116)).isoformat(),
+                   attrs={'agent_id': 'a1', 'agent_type': 'general-purpose'},
+                   agent_id_col='a1')
+        _seed_span(conn, 'tR4', 'sa-tool-a2', 'tool.Read',
+                   start=(now - timedelta(seconds=1)).isoformat(),
+                   attrs={'agent_id': 'a2'}, agent_id_col='a2')
+        conn.commit()
+    finally:
+        conn.close()
+    r = _roster_by_id('tR4')
+    # The genuinely-running agent is never demoted.
+    assert r['a2']['status'] == 'running'
+    assert r['a2']['duration_ms'] is None
+    # And under ambiguity the finished sibling is NOT force-demoted either —
+    # it stays running (until a real stop or stale), the safe trade-off.
+    assert r['a1']['status'] == 'running'
+
+
+def test_roster_all_resolved_same_type_both_finished(trace_db):
+    """Two concurrent same-type launches BOTH resolved (no PENDING sibling) →
+    the mapping is unambiguous, so both open agents are demoted to 'finished',
+    each with a duration from a resolved launch's end_time."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR5', last_seen=now.isoformat())
+        _seed_span(conn, 'tR5', 'launch1', 'tool.Agent',
+                   start=(now - timedelta(seconds=120)).isoformat(),
+                   end=(now - timedelta(seconds=40)).isoformat(), status='OK',
+                   attrs={'subagent_type': 'general-purpose'})
+        _seed_span(conn, 'tR5', 'launch2', 'tool.Agent',
+                   start=(now - timedelta(seconds=119)).isoformat(),
+                   end=(now - timedelta(seconds=30)).isoformat(), status='OK',
+                   attrs={'subagent_type': 'general-purpose'})
+        _seed_span(conn, 'tR5', 'sa-start-a1', 'subagent.start',
+                   start=(now - timedelta(seconds=118)).isoformat(),
+                   attrs={'agent_id': 'a1', 'agent_type': 'general-purpose'},
+                   agent_id_col='a1')
+        _seed_span(conn, 'tR5', 'sa-start-a2', 'subagent.start',
+                   start=(now - timedelta(seconds=116)).isoformat(),
+                   attrs={'agent_id': 'a2', 'agent_type': 'general-purpose'},
+                   agent_id_col='a2')
+        conn.commit()
+    finally:
+        conn.close()
+    r = _roster_by_id('tR5')
+    assert r['a1']['status'] == 'finished'
+    assert r['a2']['status'] == 'finished'
+    assert r['a1']['duration_ms'] is not None
+    assert r['a2']['duration_ms'] is not None
+
+
+def test_roster_denied_launch_not_treated_as_resolved(trace_db):
+    """A denied `tool.Agent` launch recorded status OK with an end_time must
+    NOT count as a clean completion for implicit-stop — its type is ambiguous
+    (unresolved), so a same-type open agent is left running, not demoted."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR6', last_seen=now.isoformat())
+        _seed_span(conn, 'tR6', 'launch1', 'tool.Agent',
+                   start=(now - timedelta(seconds=120)).isoformat(),
+                   end=(now - timedelta(seconds=30)).isoformat(), status='OK',
+                   attrs={'subagent_type': 'general-purpose', 'denied': True})
+        _seed_span(conn, 'tR6', 'sa-start-a1', 'subagent.start',
+                   start=(now - timedelta(seconds=118)).isoformat(),
+                   attrs={'agent_id': 'a1', 'agent_type': 'general-purpose'},
+                   agent_id_col='a1')
+        _seed_span(conn, 'tR6', 'sa-tool-a1', 'tool.Read',
+                   start=(now - timedelta(seconds=1)).isoformat(),
+                   attrs={'agent_id': 'a1'}, agent_id_col='a1')
+        conn.commit()
+    finally:
+        conn.close()
+    assert _roster_by_id('tR6')['a1']['status'] == 'running'

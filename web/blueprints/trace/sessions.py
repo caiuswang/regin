@@ -633,7 +633,7 @@ def _roster_rows(trace_id: str):
             " ORDER BY id ASC",
             (trace_id, *_AGENT_MARKER_NAMES)).fetchall()
         launches = conn.execute(
-            "SELECT id, span_id, status_code, start_time, attributes "
+            "SELECT id, span_id, status_code, start_time, end_time, attributes "
             "  FROM session_spans WHERE trace_id = ? AND name = 'tool.Agent' "
             " ORDER BY id ASC",
             (trace_id,)).fetchall()
@@ -644,7 +644,8 @@ def _roster_rows(trace_id: str):
         conn.close()
     parsed_launches = [
         {'span_id': r['span_id'], 'status_code': r['status_code'],
-         'ts': _roster_ts(r['start_time']), 'attrs': _row_attrs(r['attributes'])}
+         'ts': _roster_ts(r['start_time']), 'end': r['end_time'],
+         'attrs': _row_attrs(r['attributes'])}
         for r in launches
     ]
     ended = bool(sess and sess['status'] == 'ended')
@@ -709,6 +710,18 @@ def _launch_type(attrs) -> str | None:
         ti.get('subagent_type') if isinstance(ti, dict) else None)
 
 
+def _launch_resolved(launch) -> bool:
+    """True when a `tool.Agent` launch cleanly completed: `OK` (never
+    `PENDING`/`ERROR`), not `denied`, and carrying an `end_time` — the Task
+    call it represents only resolves once the subagent it spawned finished, so
+    this is proof of completion even when that agent's own `subagent.stop`
+    marker was lost. A denied/`ERROR` launch is the interrupted signal
+    (`_roster_interrupted`), not this one."""
+    if launch['attrs'].get('denied'):
+        return False
+    return launch['status_code'] == 'OK' and bool(launch.get('end'))
+
+
 def _launch_for_tu(launches, tu):
     """The non-error launch (the PENDING placeholder) sharing a deny's
     tool_use_id — the deny's only trustworthy anchor."""
@@ -758,6 +771,56 @@ def _roster_interrupted(launches, open_entries) -> set[str]:
         if best:
             out.add(best['agent_id'])
     return out
+
+
+def _ambiguous_launch_types(launches) -> set:
+    """agent_types whose implicit-stop attribution is unsafe: any type with a
+    `tool.Agent` launch that has NOT cleanly resolved (still PENDING, or
+    ERROR/denied). Only when EVERY same-type launch resolved is the launch↔agent
+    mapping unambiguous — see `_apply_implicit_stops`."""
+    resolved_by_type: dict = {}
+    for r in launches:
+        typ = _launch_type(r['attrs'])
+        if not typ:
+            continue
+        resolved_by_type[typ] = (
+            resolved_by_type.get(typ, True) and _launch_resolved(r))
+    return {t for t, ok in resolved_by_type.items() if not ok}
+
+
+def _apply_implicit_stops(launches, open_entries, interrupted_ids) -> None:
+    """Give a still-open agent (start marker, no `subagent.stop`) an implicit
+    stop derived from its resolved `tool.Agent` launch's `end_time`, so a lost
+    `subagent.stop` doesn't strand a finished agent showing 'running'.
+
+    No launch→agent_id identity link exists — the launch span carries the
+    Task's `tool_use_id` but not the resulting `agent_id`; the `subagent.start`
+    marker carries `agent_id` but not that `tool_use_id` — so a launch can only
+    be tied to an entry by same-type proximity, which is ambiguous while a
+    same-type sibling is still running (nearest-start can convict the wrong,
+    genuinely-running agent). We therefore REFUSE under ambiguity: no open entry
+    of a type with any unresolved same-type launch is demoted (it stays running
+    until a real stop lands or it goes stale). Only when every same-type launch
+    has resolved is each open entry provably some resolved launch's agent, and we
+    stamp each from its nearest resolved launch. Trade-off: a finished agent may
+    show 'running' longer, but a running agent is never shown 'finished' — the
+    far milder error. An `interrupted` agent is also skipped (`_roster_status`
+    checks `stop` before `interrupted`, so this must not stomp that verdict)."""
+    ambiguous = _ambiguous_launch_types(launches)
+    eligible = [
+        e for e in open_entries
+        if e['agent_id'] not in interrupted_ids
+        and e['agent_type'] not in ambiguous
+    ]
+    taken: set[str] = set()
+    for r in launches:
+        if not _launch_resolved(r):
+            continue
+        best = _anchored_start(eligible, r, taken)
+        if best is None:
+            continue
+        taken.add(best['agent_id'])
+        best['stop'] = {'span_id': None, 'start_time': r['end'], 'attrs': {}}
 
 
 def _launch_description(attrs) -> str:
@@ -899,6 +962,7 @@ def _build_roster(act_rows, marks, launches, ended) -> list[dict]:
     entries.sort(key=lambda e: e['started_at'] or '')
     open_entries = [e for e in entries if not e['stop']]
     interrupted = _roster_interrupted(launches, open_entries)
+    _apply_implicit_stops(launches, open_entries, interrupted)
     now = datetime.now()
     claimed: set[str] = set()
     return [
