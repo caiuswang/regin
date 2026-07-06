@@ -21,7 +21,7 @@ _DEFAULT_BODY = """You are reviewing a proposed topic-graph draft for this repos
 </draft_topics>
 
 {{feedback_block}}<task>
-Assess coverage, accuracy against the current code, and whether any prior open feedback is addressed. Be precise — only raise real problems, not stylistic nitpicks. End with exactly one line:
+Assess coverage, accuracy against the current code, and whether any prior open feedback is addressed. Be precise — only raise real problems, not stylistic nitpicks. Also check each ref's `tier`: `"reference"` means pointer-only/context (excluded from content-drift, needs no wiki prose); `"primary"`/absent means the wiki should describe it. Flag mis-tiered refs — a central implementation file marked `reference`, or a pointer-only/example file left `primary` (which nags for drift refreshes). End with exactly one line:
 RECOMMENDATION: ACCEPT|REGENERATE|DISMISS
   ACCEPT   — the draft is sound; apply it as is.
   REGENERATE — there are fixable gaps; re-draft addressing them.

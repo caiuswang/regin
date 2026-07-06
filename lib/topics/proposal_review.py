@@ -63,11 +63,19 @@ def _topic_lines(proposal: dict[str, Any]) -> str:
     lines: list[str] = []
     for topic in proposal.get("topics") or []:
         tid = topic.get("id", "?")
-        refs = ", ".join(
-            r.get("path", "") for r in topic.get("refs", []) if isinstance(r, dict)
-        )
+        refs = ", ".join(_format_ref(r) for r in topic.get("refs", []) if isinstance(r, dict))
         lines.append(f"- {tid}: {topic.get('intent', '')}\n  refs: {refs}")
     return "\n".join(lines)
+
+
+def _format_ref(ref: dict[str, Any]) -> str:
+    """`path`, annotated with `(tier=…)` for non-primary refs so the reviewer
+    can judge whether each ref's tier matches how central the file actually is."""
+    path = ref.get("path", "")
+    tier = ref.get("tier")
+    if tier and tier != "primary":
+        return f"{path} (tier={tier})"
+    return path
 
 
 def _feedback_block(open_feedback: str) -> str:

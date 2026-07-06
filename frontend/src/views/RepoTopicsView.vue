@@ -259,15 +259,7 @@ async function refreshSummaryWikiProposals() {
 }
 
 function applyTemplateDefaultsForProvider() {
-  const provider = selectedProvider.value
-  if (!provider) {
-    selectedTemplateSlugs.value = []
-    return
-  }
-  const defaults = (proposalData.value?.prompt_templates || [])
-    .filter((t) => (t.default_for_providers || []).includes(provider))
-    .map((t) => t.slug)
-  selectedTemplateSlugs.value = defaults
+  selectedTemplateSlugs.value = []
 }
 
 function toggleTemplate(slug) {

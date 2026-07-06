@@ -213,14 +213,15 @@ function roleColor(role) {
           <h3 class="topics-subsection-title">References</h3>
           <div class="overflow-x-auto">
             <table class="tbl">
-              <thead><tr><th>Role</th><th>Path</th></tr></thead>
+              <thead><tr><th>Role</th><th>Tier</th><th>Path</th></tr></thead>
               <tbody>
                 <tr v-for="ref in (selectedTopic.refs || [])" :key="`${ref.role}:${ref.path}`">
                   <td><Badge :color="roleColor(ref.role)" :label="ref.role" /></td>
+                  <td><Badge :color="(ref.tier || 'primary') === 'primary' ? 'blue' : 'gray'" :label="ref.tier || 'primary'" /></td>
                   <td><code class="text-xs">{{ ref.path }}</code></td>
                 </tr>
                 <tr v-if="!(selectedTopic.refs || []).length">
-                  <td colspan="2" class="text-gray-500">No references recorded.</td>
+                  <td colspan="3" class="text-gray-500">No references recorded.</td>
                 </tr>
               </tbody>
             </table>

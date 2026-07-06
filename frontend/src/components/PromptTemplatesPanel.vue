@@ -104,7 +104,7 @@ onMounted(load)
     <div class="panel-toolbar">
       <p class="panel-intro">
         Reusable prompt fragments injected into topic-proposal LLM/agent flows.
-        Toggle <em>default for provider</em> to auto-select a template when that provider is picked.
+        Pick the ones you want on the drafting page each run — none are pre-selected.
       </p>
       <Button variant="primary" :disabled="editing === '__new__'" @click="startNew">
         New template
@@ -120,13 +120,12 @@ onMounted(load)
           <tr>
             <th>Template</th>
             <th>Applies to</th>
-            <th>Default for</th>
             <th class="text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="editing === '__new__'" class="editor-row">
-            <td colspan="4">
+            <td colspan="3">
               <PromptFragmentEditor
                 :template="null"
                 :busy="busy"
@@ -152,12 +151,6 @@ onMounted(load)
                   <Badge v-for="p in t.applies_to" :key="p" color="gray" :label="p" />
                 </span>
               </td>
-              <td>
-                <span v-if="!(t.default_for_providers || []).length" class="text-slate-400">—</span>
-                <span v-else class="flex flex-wrap gap-1">
-                  <Badge v-for="p in t.default_for_providers" :key="p" color="blue" :label="p" />
-                </span>
-              </td>
               <td class="text-right actions-cell">
                 <Button variant="secondary" size="sm" class="mr-1" @click="startEdit(t)">
                   {{ editing === t.slug ? 'Close' : 'Edit' }}
@@ -174,7 +167,7 @@ onMounted(load)
               </td>
             </tr>
             <tr v-if="editing === t.slug" class="editor-row">
-              <td colspan="4">
+              <td colspan="3">
                 <PromptFragmentEditor
                   :template="t"
                   :busy="busy"
@@ -186,7 +179,7 @@ onMounted(load)
             </tr>
           </template>
           <tr v-if="!sortedTemplates.length && editing !== '__new__'">
-            <td colspan="4" class="empty-row">No prompt templates yet. Click <em>New template</em> to create one.</td>
+            <td colspan="3" class="empty-row">No prompt templates yet. Click <em>New template</em> to create one.</td>
           </tr>
         </tbody>
       </table>

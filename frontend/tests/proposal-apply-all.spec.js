@@ -16,11 +16,11 @@ function draftTopic(id, label, review_status = 'pending') {
   }
 }
 
-function mockProposals(reviewState) {
+function mockProposals(reviewState, runState = 'completed') {
   return {
-    runs: [{ id: 'mock-run', state: 'completed', review_state: reviewState }],
+    runs: [{ id: 'mock-run', state: runState, review_state: reviewState }],
     selected_proposal_id: 'mock-run',
-    selected_run: { id: 'mock-run', state: 'completed', review_state: reviewState },
+    selected_run: { id: 'mock-run', state: runState, review_state: reviewState },
     draft_topics: [
       draftTopic('doc-a', 'Doc A'),
       draftTopic('doc-b', 'Doc B'),
@@ -35,9 +35,9 @@ function mockProposals(reviewState) {
   }
 }
 
-async function openProposalDetail(page, reviewState) {
+async function openProposalDetail(page, reviewState, runState = 'completed') {
   await page.route('**/topics/workspace/proposals**', async (route) => {
-    await route.fulfill({ json: mockProposals(reviewState) })
+    await route.fulfill({ json: mockProposals(reviewState, runState) })
   })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto('/repos')
@@ -100,6 +100,15 @@ test.describe('Proposal Apply All', () => {
     await openProposalDetail(page, 'pending_review')
     await expect(page.locator('[data-testid="apply-all-topics"]')).toHaveCount(0)
     // The draft topics table still renders (3 rows), just without the button.
+    await expect(page.getByRole('heading', { name: 'Draft Topics' })).toBeVisible()
+  })
+
+  test('hides Apply All while the run is still active', async ({ page }) => {
+    // Even a ready-to-apply proposal must not offer Apply All while its run is
+    // in flight — clicking against a not-yet-refetched revision no-ops. The
+    // button only appears once the run has settled.
+    await openProposalDetail(page, 'ready_to_apply', 'running')
+    await expect(page.locator('[data-testid="apply-all-topics"]')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Draft Topics' })).toBeVisible()
   })
 })

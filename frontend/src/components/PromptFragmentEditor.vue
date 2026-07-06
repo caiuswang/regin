@@ -42,20 +42,6 @@ function toggleAppliesTo(providerId) {
   draft.value.applies_to = Array.from(set)
 }
 
-function toggleDefault(providerId) {
-  const set = new Set(draft.value.default_for_providers)
-  if (set.has(providerId)) {
-    set.delete(providerId)
-  } else {
-    set.add(providerId)
-    // Ensure applies_to covers any default.
-    if (!draft.value.applies_to.includes(providerId)) {
-      draft.value.applies_to = [...draft.value.applies_to, providerId]
-    }
-  }
-  draft.value.default_for_providers = Array.from(set)
-}
-
 function onSave() {
   validationError.value = ''
   if (!draft.value.label.trim()) {
@@ -108,21 +94,6 @@ function onSave() {
             class="topics-template-chip focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
             :class="{ 'topics-template-chip-active': draft.applies_to.includes(opt.id) }"
             @click="toggleAppliesTo(opt.id)"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-      </div>
-      <div class="block md:col-span-2">
-        <span class="form-label">Default-on for providers</span>
-        <div class="flex flex-wrap gap-2 mt-1">
-          <button
-            v-for="opt in PROVIDER_OPTIONS"
-            :key="opt.id"
-            type="button"
-            class="topics-template-chip focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :class="{ 'topics-template-chip-active': draft.default_for_providers.includes(opt.id) }"
-            @click="toggleDefault(opt.id)"
           >
             {{ opt.label }}
           </button>
