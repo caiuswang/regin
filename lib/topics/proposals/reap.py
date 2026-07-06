@@ -96,6 +96,11 @@ def reap_stranded_proposal_runs(repo_path: str | Path) -> int:
             state="failed",
             error="agent session ended without emitting the completion signal",
             completed_at=utc_now(),
+            # A stranded run is not a fixable-output failure; a stale
+            # validation marker from an earlier attempt must not re-open
+            # the proposal-finish retry gate.
+            failed_validation=False,
+            validation_errors=None,
         )
         write_status(out_dir, status)
         log.write("proposal_run_reaped", proposal_id=proposal_id)

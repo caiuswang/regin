@@ -563,3 +563,65 @@ def test_reaper_skips_freshly_restarted_regenerate(fake_git_repo, tmp_db):
 
     assert reaped == 0
     assert load_proposal_status(fake_git_repo, "run1")["state"] == "running"
+
+
+def test_stale_validation_marker_does_not_reopen_retry_gate(fake_git_repo, tmp_db):
+    """The proven attack sequence: validation-fail (marker set) → a LATER
+    non-validation failure of a fresh attempt (crash-style _fail, or reap)
+    must close the gate — the additive metadata merge would otherwise carry
+    the stale marker and let a late finish re-ingest stale output."""
+    from lib.topics.proposal_external import _fail, external_trace_id
+
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    # Attempt 1: validation failure sets the marker.
+    _write_temp_output(out_dir, payload={"version": 1, "topics": [], "notes": []})
+    with pytest.raises(TopicGraphError):
+        finish_proposal_run(fake_git_repo, "run1")
+    assert load_proposal_status(fake_git_repo, "run1").get("failed_validation") is True
+
+    # Attempt 2 crashes for a non-validation reason.
+    status = load_status(out_dir)
+    status.update(state="running", error=None, agent_signaled=False)
+    write_status(out_dir, status)
+    with pytest.raises(TopicGraphError):
+        _fail(out_dir, external_trace_id("run1"), load_status(out_dir),
+              "failed", "external agent exited with code 2")
+
+    _write_temp_output(out_dir)
+    result = finish_proposal_run(fake_git_repo, "run1")
+    assert result["ingested"] is False
+    assert load_proposal_status(fake_git_repo, "run1")["state"] == "failed"
+
+
+def test_reap_clears_stale_validation_marker(fake_git_repo, tmp_db):
+    from lib.topics.proposals.reap import reap_stranded_proposal_runs
+
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir, payload={"version": 1, "topics": [], "notes": []})
+    with pytest.raises(TopicGraphError):
+        finish_proposal_run(fake_git_repo, "run1")
+
+    # Simulate a stranded restart with direct column edits (write_status's
+    # write-time invariant re-promotes running→completed while the stale
+    # completed_at rides in the dict, and read-time normalization does the
+    # same — the columns are what the reaper predicate sees). The stale
+    # failed_validation marker stays in the metadata bag: that is the
+    # subject under test.
+    from lib.orm import SessionLocal
+    from lib.orm.models import ProposalRun
+    with SessionLocal() as s:
+        run = s.get(ProposalRun, "run1")
+        run.state = "running"
+        run.error = None
+        run.error_detail = None
+        run.completed_at = None
+        s.commit()
+    _backdate_run("run1")
+    assert reap_stranded_proposal_runs(fake_git_repo) == 1
+
+    _write_temp_output(out_dir)
+    result = finish_proposal_run(fake_git_repo, "run1")
+    assert result["ingested"] is False
+    assert load_proposal_status(fake_git_repo, "run1")["state"] == "failed"

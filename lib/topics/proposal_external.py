@@ -19,7 +19,7 @@ from lib.trace import trace_service
 from lib.settings import settings
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.proposal_drafting import format_review_feedback_for_prompt
-from lib.topics import TopicGraphError, topic_path, utc_now
+from lib.topics import TopicGraphError, utc_now
 
 
 STATUS_FILE = "status.json"
@@ -325,6 +325,12 @@ def run_external_agent_proposal(
         "error": None,
         "pid": None,
         "prompt_template_ids": _template_slugs(prompt_templates),
+        # The ORM metadata merge is additive, so a prior attempt's
+        # validation-failure marker survives a fresh start unless it is
+        # explicitly overwritten — and a stale marker re-opens the finish
+        # retry gate for failures that are NOT fixable agent output.
+        "failed_validation": False,
+        "validation_errors": None,
     }
     write_status(out_dir, status)
     _emit_session_start(trace_id, proposal_id=proposal_id, repo=repo, agent=agent)
@@ -632,6 +638,11 @@ def _fail(
         # `proposal-finish` re-signal is allowed to retry the ingest.
         status["validation_errors"] = validation_errors
         status["failed_validation"] = True
+    else:
+        # Attempt-scoped: a non-validation failure must close the retry
+        # gate even when an earlier attempt's marker is in the merged bag.
+        status["validation_errors"] = None
+        status["failed_validation"] = False
     status["state"] = state
     status["error"] = message
     status["error_detail"] = diagnostics.detail or None
