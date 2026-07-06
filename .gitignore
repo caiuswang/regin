@@ -18,8 +18,9 @@ CLAUDE.local.md
 .kimi-code/
 
 # regin's per-project topic state. The dir is machine-local EXCEPT the
-# git-tracked approved graph (topic.json) and its per-topic wiki
-# narratives, which travel with the repo. The topic.local.json overlay
+# git-tracked approved graph (topic.json), its per-topic wiki
+# narratives, and exported proposal bundles (topics/bundles/*.json),
+# which travel with the repo. The topic.local.json overlay
 # (proposal approvals / scans) plus candidates/ and proposals/ stay local.
 .regin/*
 !.regin/topics/
@@ -28,6 +29,9 @@ CLAUDE.local.md
 !.regin/topics/wiki/
 .regin/topics/wiki/*
 !.regin/topics/wiki/*.md
+!.regin/topics/bundles/
+.regin/topics/bundles/*
+!.regin/topics/bundles/*.json
 
 # User-generated procedure guides live outside the repo in the XDG data dir
 # (~/.local/share/regin/patterns by default). Override with REGIN_PATTERNS_DIR

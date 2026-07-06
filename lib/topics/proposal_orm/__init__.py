@@ -27,10 +27,15 @@ working unchanged:
   * revisions.py   — revision chain + restore/downgrade revision appends
   * runs.py        — ProposalRun CRUD + orm_save_proposal write path
   * feedback.py    — feedback thread/comment CRUD + addressed sweep
+  * bundle.py      — portable-bundle export parts + import ingest
 """
 
 from __future__ import annotations
 
+from .bundle import (
+    orm_export_proposal_bundle_parts,
+    orm_import_proposal_bundle,
+)
 from .feedback import (
     MANUAL_RESOLUTION_STATES,
     orm_add_feedback_comment,
@@ -83,4 +88,6 @@ __all__ = [
     "orm_update_proposal_status",
     "orm_unaccept_topic_across_proposals",
     "orm_delete_proposal_run",
+    "orm_export_proposal_bundle_parts",
+    "orm_import_proposal_bundle",
 ]

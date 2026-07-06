@@ -206,6 +206,10 @@ comment on, regenerate, then accept, merge, ignore, or delete each proposed
 topic. Accepting or merging is the only path that writes the approved
 `topic.json`, and it is gated by a pre/post graph audit.
 
+To hand an in-flight proposal to a teammate for review without a shared
+server, see "Sharing an in-flight proposal" in
+[`docs/topics/multi-user.md`](multi-user.md).
+
 ## MCP Tools
 
 `lib/topics/mcp_server.py` exposes the same review loop to in-session agents

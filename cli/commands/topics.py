@@ -724,6 +724,57 @@ def cmd_topics_proposal_feedback(
     )
 
 
+@topics_app.command(
+    "proposal-export",
+    help="Export an in-flight proposal run to a portable bundle "
+         "(commit the JSON to share it — no server needed)")
+def cmd_topics_proposal_export(
+    proposal_id: str = typer.Argument(..., help="Proposal run id"),
+    out: str | None = typer.Option(
+        None, "--out",
+        help="Output path (default: .regin/topics/bundles/<id>.json)"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.proposals import export_proposal_bundle
+
+    try:
+        path = export_proposal_bundle(_repo_path(repo), proposal_id, out_path=out)
+    except TopicGraphError as exc:
+        print(f"Proposal export failed: {exc}")
+        raise typer.Exit(1)
+    print(f"Exported proposal {proposal_id} to {path}")
+    print("Commit the bundle to share it; teammates run "
+          "`regin topics proposal-import <path>`.")
+
+
+@topics_app.command(
+    "proposal-import",
+    help="Import a teammate's proposal bundle into the local DB "
+         "(review continues locally in the WebUI/CLI)")
+def cmd_topics_proposal_import(
+    bundle_path: str = typer.Argument(..., help="Path to a proposal bundle JSON"),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Replace an existing local run (+ revisions + feedback) wholesale"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.proposals import import_proposal_bundle
+
+    try:
+        result = import_proposal_bundle(_repo_path(repo), bundle_path, force=force)
+    except TopicGraphError as exc:
+        print(f"Proposal import failed: {exc}")
+        raise typer.Exit(1)
+    if result["action"] == "refused":
+        print(f"Proposal import refused: {result['message']}")
+        print("Re-run with --force to replace the local run wholesale.")
+        raise typer.Exit(1)
+    verb = "Replaced local" if result["action"] == "replaced" else "Imported"
+    print(f"{verb} proposal {result['proposal_id']}: "
+          f"{result['revisions']} revision(s), "
+          f"{result['threads']} feedback thread(s)")
+
+
 @topics_app.command("check", help="Validate topic graph schema and approved refs")
 def cmd_topics_check(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),

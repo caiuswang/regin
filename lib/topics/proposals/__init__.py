@@ -16,6 +16,7 @@ sites (`from lib.topics.proposals import X`) keep working unchanged:
   * external_jobs.py  — background-thread proposal + regenerate runs
   * downgrade.py      — lift approved topic back into a proposal draft
   * feedback.py       — feedback thread + comment CRUD
+  * bundle.py         — portable bundle export/import (share via git)
 """
 
 from __future__ import annotations
@@ -28,6 +29,10 @@ from ._common import (
 from .apply_service import (
     apply_proposal_topic,
     diff_proposal_topic,
+)
+from .bundle import (
+    export_proposal_bundle,
+    import_proposal_bundle,
 )
 from .core_io import (
     backfill_disk_proposals_to_orm,
@@ -94,6 +99,9 @@ __all__ = [
     # public API — diff/apply
     "diff_proposal_topic",
     "apply_proposal_topic",
+    # public API — portable bundles
+    "export_proposal_bundle",
+    "import_proposal_bundle",
     # public API — topic actions
     "update_proposed_topic",
     "accept_proposed_topic",

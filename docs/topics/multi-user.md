@@ -17,14 +17,45 @@ the implementation level.
 | --- | --- | --- |
 | Approved graph | `.regin/topics/topic.json` | yes (force-added by `pre-commit`) |
 | Per-topic wiki | `.regin/topics/wiki/<topic_id>.md` | yes (normal tracked file) |
-| In-flight proposals (drafts, revisions, feedback threads) | — | no, local SQLite only |
+| In-flight proposals (drafts, revisions, feedback threads) | `.regin/topics/bundles/<id>.json` | opt-in, via `proposal-export` |
 | Per-run artefact dirs `.regin/topics/proposals/<id>/` | — | no, `.regin/` is gitignored |
 | `GraphSnapshot`, `ProposalRun`, `ProposalRevisionTopic`, audit log | — | no, local SQLite only |
 
-The contract: **approved knowledge** flows between users; **in-flight
-work** does not. Cross-user collaborative review of a single proposal
-draft is out of scope for this design — that requires the shared-server
-model.
+The contract: **approved knowledge** flows between users automatically;
+**in-flight work** flows only when a producer explicitly exports a
+proposal bundle. Live co-editing of a single proposal draft still
+requires the shared-server model.
+
+## Sharing an in-flight proposal
+
+A proposal bundle is one JSON file carrying a run's full review state:
+run status/metadata, every revision (kind, stamps, topic snapshots
+including accept/ignore markers), the combined wiki, and all feedback
+threads with their comments, anchors, and resolution states. Numeric
+SQLite ids never cross machines — revisions travel by
+`revision_number` and every FK is rebuilt at import.
+
+Producer:
+
+```bash
+regin topics proposal-export 20260519T173635Z
+git add .regin/topics/bundles/20260519T173635Z.json
+git commit -m "share proposal for review"
+```
+
+Consumer (after `git pull`):
+
+```bash
+regin topics proposal-import .regin/topics/bundles/20260519T173635Z.json
+```
+
+The import seeds the run into the consumer's local SQLite; review then
+continues locally in the WebUI or via `proposal-show` /
+`proposal-feedback` / `proposal-apply`. Importing never touches the
+approved graph and marks nothing applied. If a run with the same id
+already exists locally, the import refuses; `--force` replaces the
+local run (revisions + feedback included) wholesale — use it to pick up
+a re-exported bundle after another round of edits.
 
 ## Data flow on a `git pull`
 
@@ -115,7 +146,9 @@ surface shrinks to "did someone else touch the same topic id".
 Standalone-with-git-shared-state covers "everyone benefits from my
 approvals" but doesn't extend to:
 
-- Cross-user proposal review (reviewer B looking at A's mid-draft work).
+- Cross-user proposal review **in real time**. Async review is covered
+  by proposal bundles (see "Sharing an in-flight proposal" above);
+  live co-editing of the same draft is not.
 - A live audit log of who approved what across the whole team.
 - Concurrent editing of the same proposal.
 
