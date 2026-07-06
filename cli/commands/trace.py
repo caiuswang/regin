@@ -653,6 +653,71 @@ def cmd_reap_pending(
           f"scanned trace(s).")
 
 
+def _print_prune_result(result: dict, dry_run: bool) -> None:
+    """Render the per-table tally and the one-line summary."""
+    if not result["enabled"]:
+        print("Nothing to do. Enable at least one mode: --purge-test, "
+              "--orphans, or --days N (e.g. --days 60).")
+        return
+    verb = "Would delete" if dry_run else "Deleted"
+    for table, n in sorted(result["by_table"].items(),
+                           key=lambda kv: kv[1], reverse=True):
+        print(f"  {verb.lower():13} {n:>9,}  {table}")
+    print(f"{verb} {result['rows']:,} row(s) across "
+          f"{len(result['by_table'])} table(s) [{', '.join(result['enabled'])}].")
+    if not dry_run:
+        print("Space reclaimed to OS." if result["vacuumed"]
+              else "VACUUM skipped (DB busy or --no-vacuum); "
+                   "run again with --vacuum when idle to shrink the file.")
+
+
+@trace_app.command(
+    "prune",
+    help="Delete whole sessions' trace data — test fixtures, orphans, and an "
+         "age cutoff — then VACUUM (the retention path for the trace store)")
+def cmd_prune(
+    purge_test: bool = typer.Option(
+        False, "--purge-test",
+        help="Remove is_test=1 fixture sessions entirely (test-run leakage)"),
+    orphans: bool = typer.Option(
+        False, "--orphans",
+        help="Remove child rows whose trace_id has no sessions row"),
+    days: int = typer.Option(
+        0, "--days",
+        help="Retention cutoff: drop heavy detail of real sessions older than "
+             "N days, keeping the aggregate row (0 = off; 60 recommended)"),
+    drop_sessions: bool = typer.Option(
+        False, "--drop-sessions",
+        help="With --days, also delete the aggregate `sessions` row, not just "
+             "its detail"),
+    vacuum: bool = typer.Option(
+        True, "--vacuum/--no-vacuum",
+        help="After a real delete, VACUUM to return freed pages to the OS"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report what would be deleted without writing"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Confirm a real (non-dry-run) deletion; required to actually write"),
+) -> None:
+    """Prune whole sessions from the append-only trace store.
+
+    Mirrors `reap-pending`'s safety: a real deletion requires `--yes`; without
+    it the run is forced to `--dry-run` (report-only), because the delete is
+    irreversible and hits the live DB by default. Enable one or more modes;
+    with none enabled it reports guidance and writes nothing."""
+    from lib.trace.prune import prune_trace_data
+
+    if not dry_run and not yes:
+        print("Refusing to delete without confirmation. Re-run with --dry-run "
+              "to preview, or add --yes to commit the deletion.")
+        dry_run = True
+
+    result = prune_trace_data(
+        purge_test=purge_test, orphans=orphans, days=days,
+        drop_sessions=drop_sessions, dry_run=dry_run, vacuum=vacuum)
+    _print_prune_result(result, dry_run)
+
+
 def register_trace(app: typer.Typer) -> None:
     """Hook point called from cli/app.py to attach the `trace` subapp."""
     app.add_typer(trace_app)

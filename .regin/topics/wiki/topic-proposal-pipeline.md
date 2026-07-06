@@ -3,66 +3,75 @@
 The proposal pipeline is the funnel that turns a user's topic request into
 reviewable draft topics and — on human approval — into rows of the approved
 topic graph (`.regin/topics/topic.json` + its overlay). A draft is authored by
-an external tool-using agent, validated and persisted through the proposal ORM,
-iterated by a reviewer (regenerate / restore / feedback / stop), and finally
-promoted one topic at a time through a single server-side `/diff` + `/apply`
-path. Everything in this topic deliberately writes *proposal* artifacts, never
-approved topics directly (`lib/topics/proposals/__init__.py`).
+an external tool-using agent, validated and persisted ORM-first through the
+proposal ORM, iterated by a reviewer (regenerate / restore / feedback / stop),
+and finally promoted one topic at a time through a single server-side `/diff` +
+`/apply` path. Everything in this topic deliberately writes *proposal*
+artifacts, never approved topics directly (`lib/topics/proposals/__init__.py`).
 
 ## Provider model
 
-There is one proposal provider: the external tool-using agent. `lib/topics/proposal_providers.py:list_proposal_providers`
-reports a single `external-agent` entry whose configured agents come from
+There is one proposal provider: the external tool-using agent.
+`lib/topics/proposal_providers.py:list_proposal_providers` reports a single
+`external-agent` entry whose configured agents come from
 `settings.topic_proposal_external_agents` (set in `settings.local.json`). The
 runner lives in `lib/topics/proposal_external.py`. `external_agent_configured()`
 and `default_external_agent_id()` (`proposal_external.py:43`, `:47`) gate and
 pick the agent — `claude` is preferred, then `codex`, then the first configured
-key. The agent explores the repo with its own Read/Glob/Grep tools; regin
-pre-derives **no** evidence pack — the only pre-built context is the existing
-approved-topic list and the bucket list (`_existing_topics_summary`,
-`_bucket_summary` in `proposal_external.py:154`/`:171`).
+key. `_resolve_agent_config` (`:262`) layers a per-run override on top: an
+explicit request-picker id wins, else the `topic-proposal-drafting` surface's
+bound agent, else the global default. The agent explores the repo with its own
+Read/Glob/Grep tools; regin pre-derives **no** evidence pack — the only
+pre-built context is the existing approved-topic list and the bucket list
+(`_existing_topics_summary`, `_bucket_summary` in `proposal_external.py:205`/`:222`).
 
 ## Starting a run (async)
 
 The web worker must return immediately, so a proposal kicks off on a daemon
-thread. `lib/topics/proposals/external_jobs.py:start_external_proposal_run`:
+thread. `lib/topics/proposals/external_jobs.py:start_external_proposal_run`
+(`external_jobs.py:154`):
 
 1. Allocates a `proposal_id` (a UTC timestamp stamp like `20260523T160359Z`)
    and the out-dir `<repo>/.regin/topics/proposals/<id>`.
 2. Writes a `queued` status row (resetting `agent_signaled`/`signaled_by` so a
    reused id can't inherit a prior run's finish marker).
 3. Clears any stale cancel flag via `run_control.reset(proposal_id)`.
-4. Spawns `_external_proposal_job` on a daemon thread.
+4. Spawns `_external_proposal_job` (`external_jobs.py:259`) on a daemon thread.
 
 The job runs `_draft_proposal → _write_proposal_artifacts` and, unless the agent
-already ingested via the finish signal, persists the draft and stamps the run
-`completed`, then fires the gated review note (`_maybe_review_note`). Any
-exception inside the thread is captured into the run's status
-(`_record_thread_failure`) so the failure surfaces in the UI instead of tearing
-down the worker; `run_control.release(proposal_id)` always runs in `finally`.
-The web entrypoint is `POST /api/repos/<name>/topics/proposals`
-(`web/blueprints/topics/proposals.py:54`), which resolves prompt-template slugs
+already ingested via the finish signal (`_already_ingested_by_agent`), persists
+the draft and stamps the run `completed`, then fires the gated review note
+(`_maybe_review_note`, `external_jobs.py:293`). Any exception inside the thread
+is captured into the run's status (`_record_thread_failure`) so the failure
+surfaces in the UI instead of tearing down the worker;
+`run_control.release(proposal_id)` always runs in `finally`. The web entrypoint
+is `POST /api/repos/<name>/topics/proposals`
+(`web/blueprints/topics/proposals.py`), which resolves prompt-template slugs
 (provider defaults when the body omits them) and returns the new run's id +
 status. A synchronous variant, `core_io.create_proposal_run`, exists for
 direct/programmatic callers.
 
 ## The runner and the drafting prompt
 
-`run_external_agent_proposal` (`proposal_external.py:247`) is the heart of the
+`run_external_agent_proposal` (`proposal_external.py:306`) is the heart of the
 draft step:
 
 - Resolves the agent + its launch spec (`_resolve_agent_config`), stamps a
   `running` status, and emits a `session.start` / `session.title` pair so the
   run shows up as its own trace under id `topic-proposal-<id>`.
-- Builds the instruction prompt with `_instructions` (`:681`) and writes it to
-  `instructions.md`. The prompt carries: the user's topic request; an optional
-  `## Custom Instructions` block from injected prompt templates
-  (`_format_template_section`); a "Prior draft reference" block for regenerate
-  runs (the previous proposal JSON + wiki + formatted review feedback, with the
-  agent told to re-derive from the repo and **not** write changelog/diff prose);
-  a "Sibling topics being refreshed" block for content-drift refresh batches
-  (`_sibling_refresh_section`); the Rules; the exact finish command; the output
-  JSON shape; and the existing-topics + bucket lists.
+- Builds the instruction prompt with `_instructions` (`:819`) — whose body is
+  the editable `topic-proposal-drafting` surface (`lib/prompts/surfaces/`); the
+  function only assembles the runtime context that surface interpolates, and a
+  broken user edit degrades to the built-in default inside `render_surface`. The
+  context carries: the user's topic request; an optional `## Custom Instructions`
+  block from injected prompt templates (`_format_template_section`, `:238`); a
+  "Prior draft reference" block for regenerate runs (`_prior_reference_block`,
+  `:783` — the previous proposal JSON + wiki + formatted review feedback + an
+  optional scoped refresh directive, with the agent told to re-derive from the
+  repo and **not** write changelog/diff prose); a "Sibling topics being
+  refreshed" block for content-drift refresh batches (`_sibling_refresh_section`,
+  `:732`); the existing-topics and bucket lists; and the finish command. The
+  prompt is written to `instructions.md`.
 - Exports a set of `REGIN_TOPIC_PROPOSAL_*` env vars (out-dir, temp + canonical
   output paths, trace id, proposal id, and the finish command) so the agent
   writes its JSON to `.tmp/agent-output.json` and knows how to signal
@@ -75,31 +84,77 @@ draft step:
 interpreter + the regin CLI path + an explicit `--repo`, so it works regardless
 of the target repo or whether `regin` is on the agent's PATH.
 
+## Per-topic wiki is the source of truth
+
+The agent returns one `wiki` page per proposed topic; each topic's page later
+becomes its own `.regin/topics/wiki/<id>.md`. `_normalise_agent_payload`
+(`proposal_external.py:933`) stitches those into a single revision-level
+document via `_combined_proposal_wiki` (`:917`) — an `overview` intro plus one
+`## label` section per topic (`_topic_wiki_section`, `:901`, normalizes each
+body to a level-2 heading). A legacy top-level `wiki` string is the fallback
+when no topic carries its own page. `validate_proposal` enforces the schema and
+a non-empty wiki is required.
+
 ## Notify-on-finish
 
 Rather than the server racing a fixed timeout (which would kill a long draft
 mid-flight), the agent signals completion itself by running
 `regin topics proposal-finish <id>` as its final step. `_proposal_wait_timeout`
-(`:369`) returns `None` by default (no ceiling); a configured
+(`:433`) returns `None` by default (no ceiling); a configured
 `topic_evolution.proposal_run_timeout_seconds > 0` is only a backstop — a
 process that already signalled is still treated as success at the ceiling.
 
 `finish_proposal_run` (`lib/topics/proposals/finish.py`) runs **in the agent's
-own process** and is the authoritative ingest: it loads the agent's output JSON
-(temp first, then canonical), re-runs the same contract the runner's exit path
-uses (`_load_agent_payload → _normalise_agent_payload → _validate_paths`),
-persists the proposal + wiki via `_write_proposal_artifacts`, and stamps the run
-`completed` with `agent_signaled=True`. It is idempotent: a call after a
-terminal state, or a second call, is a no-op. It appends a `regenerated`
-revision when the run already has revisions, else writes a fresh `generated`
-one.
+own process** and is the authoritative ingest:
+
+- It loads the agent's output JSON (temp first, then canonical) and re-runs the
+  same contract the runner's exit path uses — `_load_agent_payload →
+  _normalise_agent_payload → _validate_paths`, then `_apply_regenerate_scope`
+  (the content-drift splice, below) — inside `_parse_agent_output`.
+- It persists the proposal + wiki via `_write_proposal_artifacts`, stamping the
+  proposal `pending_review`, and marks the run `completed` with
+  `agent_signaled=True`. It appends a `regenerated` revision when the run
+  already has revisions, else writes a fresh `generated` one.
+- Because it runs in the drafting agent's own process, its
+  `$CLAUDE_CODE_SESSION_ID` *is* the real drafting session:
+  `_resolve_agent_trace_id` reads it via `lib.session_probe.resolve()` and
+  records it as the run's authoritative `agent_trace_id` / `agent_trace_url`.
+  This is more reliable than the runner path's title/time heuristic, and it only
+  trusts the env id on the `agent` source path (a server/test caller's session
+  would be a different one entirely).
+- It is idempotent: a call after a terminal state, or a second call, is a no-op
+  (`_noop_result`). On invalid output it stamps the run `failed` first, so the
+  failure is visible, then raises.
+- It fires the inbox `proposal.ready` event (`notify_proposal_ready`) here too —
+  see *Ready notification* below.
 
 Back on the server side, the runner and the background job both check
-`_load_signaled_result` / `_already_ingested_by_agent`: if the agent already
-ingested, they return its persisted result and **skip** a redundant re-ingest so
-the proposal is never double-persisted. The legacy stdout/exit-code parse path
-in `_handle_agent_output` (`proposal_external.py:391`) remains the fallback for
-agents that exit without signalling.
+`_load_signaled_result` (`proposal_external.py:441`) / `_already_ingested_by_agent`:
+if the agent already ingested, they return its persisted result and **skip** a
+redundant re-ingest so the proposal is never double-persisted. The legacy
+stdout/exit-code parse path in `_handle_agent_output` (`proposal_external.py:455`)
+remains the fallback for agents that exit without signalling.
+
+## Ready notification
+
+A finished run surfaces as an inbox card through `notify_proposal_ready`
+(`proposal_external.py:84`), which emits a `proposal.ready` event whose action
+link opens the specific proposal run in the Topics review workspace. It is
+emitted from exactly **one** completion path per run. When the agent signals via
+`proposal-finish` (`finish.py`, the authoritative completion in the
+notify-on-finish design), *that* path notifies and the server-runner exit
+deliberately does **not** re-notify on its signalled branch; only when the agent
+exits *without* signalling does the runner exit notify instead, via the
+`_notify_proposal_ready` ctx wrapper (`proposal_external.py:121`, which derives
+the repo from the out-dir and reads the stored `agent_trace_id`). Keeping it to
+one emit matters because `events.emit` supersedes on `(trace_id, key)` —
+collapsing the inbox *card* — but `record_message` pushes on every write,
+supersede included, so a second emit would double-notify Feishu/webhook even
+though only one card shows. The stored `agent_trace_id` is the event's
+`trace_id`, so the card's footer "session" link resolves to the real drafting
+session (falling back to the synthetic `topic-proposal-<id>` wrapper when
+unknown). The whole notify is best-effort and gated by `proposal.ready`'s
+enablement; a notify failure never breaks the ingest it announces.
 
 ## Output validation and integrity guards
 
@@ -107,25 +162,29 @@ agents that exit without signalling.
 
 1. **Cancellation first** — `run_control.is_cancelled` so a terminated
    subprocess (non-zero exit) is reported `cancelled`, never `failed`.
-2. **Signal result** — short-circuit on notify-on-finish.
-3. `_reject_bad_agent_result` (`:458`) raises via `_fail` on: a permission
-   prompt detected in the output (`_looks_like_permission_prompt` — v1 runs
-   non-interactively, status `waiting_for_permission`), a non-zero exit code, or
-   any mutation of the approved graph (a `_read_topic_signature` mismatch — a
-   structural fingerprint that ignores `updated_at`/whitespace).
-4. `_persist_agent_payload` parses + validates the JSON: schema (`validate_proposal`),
-   non-empty wiki, and `_validate_paths` — every `refs[].path` and
-   `evidence_paths[]` entry must exist inside the repo working tree (paths that
-   escape the repo or don't exist are rejected).
+2. **Signal result** — `_load_signaled_result` short-circuits on
+   notify-on-finish (and, on the signalled branch, skips re-notifying).
+3. `_reject_bad_agent_result` (`:528`) raises via `_fail` on: a permission
+   prompt detected in the output (`_looks_like_permission_prompt`, `:1077` — v1
+   runs non-interactively, status `waiting_for_permission`), a non-zero exit
+   code, or any mutation of the approved graph (a `_read_topic_signature`
+   mismatch, `:1060` — a structural fingerprint that ignores
+   `updated_at`/whitespace).
+4. `_persist_agent_payload` (`:554`) parses + validates the JSON: schema
+   (`validate_proposal`), non-empty wiki, `_validate_paths` — every `refs[].path`
+   and `evidence_paths[]` entry must exist inside the repo working tree (paths
+   that escape the repo or don't exist are rejected) — and then applies the
+   content-drift splice (`_apply_regenerate_scope`) before copying the payload to
+   the canonical path.
 
 The run is then linked to the real tool-using agent trace via
-`_find_agent_session_trace_id` (matches recent `sessions` rows by title), and
-stamped `completed`.
+`_find_agent_session_trace_id` (`:865` — a best-effort match of recent
+`sessions` rows by title + start window), and stamped `completed`.
 
 ## Two status axes
 
 A proposal carries two orthogonal status axes, and `write_status`
-(`proposal_external.py:84`) is careful to keep them apart:
+(`proposal_external.py:135`) is careful to keep them apart:
 
 - **Run lifecycle state** — `queued → running → completed | failed | cancelled |
   timed_out | waiting_for_permission`. Owned by the runner / job / stop / reap
@@ -139,25 +198,32 @@ A proposal carries two orthogonal status axes, and `write_status`
 `write_status` explicitly excludes `proposal_status` from its metadata patch:
 because `load_status` spreads the whole metadata bag back into the status dict,
 carrying it would let a run-lifecycle write re-stamp a stale review state over a
-fresh one (e.g. stranding a regenerated draft as un-appliable). The
-`_recompute_proposal_status` helper (`_common.py:65`) advances the review state
-from per-topic `review_status` counts only once topics have actually been
-reviewed.
+fresh one — a regenerate's finish ingest sets the new revision `pending_review`,
+then a later `write_status` re-stamping the prior `applied` would strand the
+draft as un-appliable. The `_recompute_proposal_status` helper (`_common.py:65`)
+advances the review state from per-topic `review_status` counts only once topics
+have actually been reviewed.
 
-## Persistence: ORM-first, disk-for-artifacts
+## Persistence: ORM as source of truth
 
-The proposal ORM (`lib/topics/proposal_orm/`) is the source of truth for
-proposal state (topics list, scope, metadata, revisions). `_write_proposal_artifacts`
-(`lib/topics/proposal_drafting.py:72`) writes `wiki.md` to disk and calls
+The proposal ORM (`lib/topics/proposal_orm/`) is the authoritative store for
+proposal state — topics list, scope, metadata, revisions, and run status.
+`write_status` writes through `orm_create_proposal_run` +
+`orm_update_proposal_status`; the disk `status.json` is not written, so
+`load_status` reads it disk-first only for legacy dirs and otherwise falls back
+to the ORM. This matters for the notify-on-finish boundary: the finish signal
+crosses from the agent subprocess back to the server through the shared SQLite
+DB (both resolve the same file), not through disk. `_write_proposal_artifacts`
+(`lib/topics/proposal_drafting.py`) writes `wiki.md` to disk and calls
 `orm_save_proposal`; it does **not** write `topics.json`. The disk side of a
-`proposals/<id>/` dir owns `wiki.md`, `instructions.md`, `agent-output.json`,
-`evidence.json`, `stdout.log`, and `stderr.log`. Reads go ORM-first with a disk
-fallback for repos not yet imported: `core_io.load_proposal`,
+`proposals/<id>/` dir owns `wiki.md`, `instructions.md`, `agent-output.json`
+(+ `.tmp/agent-output.json`), `stdout.log`, and `stderr.log`. Reads go ORM-first
+with a disk fallback for repos not yet imported: `core_io.load_proposal`,
 `load_proposal_status`, and `list_proposal_runs` all prefer the ORM and only
 scan disk when no row exists. `backfill_disk_proposals_to_orm` upserts legacy
 on-disk-only proposal dirs into the `proposal_runs` table (called by the
-git-sync / import button in `web/blueprints/topics/maintenance.py:72`) so
-feedback threads and status updates can find them.
+git-sync / import button in `web/blueprints/topics/maintenance.py`) so feedback
+threads and status updates can find them.
 
 Revisions come in four `kind`s, all in `lib/topics/proposal_orm/revisions.py`:
 `generated` (initial), `regenerated` (re-draft), `restored`
@@ -166,21 +232,42 @@ Revisions come in four `kind`s, all in `lib/topics/proposal_orm/revisions.py`:
 
 ## Review iteration
 
-- **Regenerate** — `start_external_regenerate_run` (`external_jobs.py:285`)
+- **Regenerate** — `start_external_regenerate_run` (`external_jobs.py:357`)
   guards against a concurrent in-flight regenerate, resolves the prior draft +
   its **open** feedback threads + the agent/templates/topic_request from the
-  prior run, and re-runs the drafting thread with `prior_draft` populated. After
-  the new revision lands, `_mark_addressed_feedback_after_regenerate`
+  prior run (dropping a now-unconfigured agent back to the fallback chain), and
+  re-runs the drafting thread with `prior_draft` populated. After the new
+  revision lands, `_mark_addressed_feedback_after_regenerate` (`external_jobs.py:122`)
   auto-resolves feedback threads whose anchored content changed. Web:
   `POST .../regenerate`.
+- **Scoped content-drift regenerate** — a regenerate can narrow the redraft to
+  only the topics whose refs actually drifted, keeping every other wiki page
+  byte-identical. `_scope_for_regenerate` (`external_jobs.py:334`) chooses the
+  scope: a caller-supplied `topic_ids` subset (validated against the run's own
+  topics) wins, else `_resolve_drift_scope` (`external_jobs.py:304`) derives it
+  from the run's open content-drift threads (`orm_open_content_drift_threads`);
+  an empty scope means a full re-draft. The scope is persisted on the run status
+  under `regenerate_drift_scope` so it survives into the agent's own process on
+  the notify-on-finish path. The drafting job passes `scope_topic_ids` /
+  `scope_drifted_paths` into `prior_draft`, and `_scoped_refresh_directive`
+  (`proposal_external.py:752`) turns them into the prompt's "Scoped refresh"
+  block naming the drifted files. On ingest, `_apply_regenerate_scope`
+  (`proposal_external.py:1016`, called from **both** the runner exit at
+  `_persist_agent_payload` and `proposal-finish` at `finish.py:54`) loads the
+  prior revision and `_splice_scoped_topics` (`:988`) merges: scoped topics take
+  the freshly drafted body, every other topic is copied verbatim, and the
+  combined wiki is rebuilt (`_rebuild_combined_wiki`, `:978`) from the prior
+  intro plus one `## ` section per merged topic. Correctness never depends on the
+  agent obeying the directive — the splice discards any non-scoped bodies
+  regardless, so untouched wikis stay byte-identical even if the agent redrafts
+  the whole set.
 - **Restore** — `core_io.restore_proposal_to_revision` appends a `restored`
   revision whose body is copied from a historical revision and rewrites
   `proposals/<id>/wiki.md` to match (the apply path reads the approved wiki from
   that file). Web: `POST .../restore`.
 - **Review state** — `set_proposal_review_state` flips the review axis between
   `pending_review` / `changes_requested` / `ready_to_apply`. Apply refuses to
-  run unless the proposal is marked ready (`_review_state_not_ready` in
-  `apply.py`). Web: `POST .../review-state`.
+  run unless the proposal is marked ready. Web: `POST .../review-state`.
 - **Feedback threads** — anchored comment threads drive the regenerate prompt;
   the full CRUD surface lives in `proposals.py` (`.../feedback-threads...`).
   (Thread internals are out of scope here — see the feedback-threads topic.)
@@ -189,24 +276,24 @@ Revisions come in four `kind`s, all in `lib/topics/proposal_orm/revisions.py`:
 
 `lib/topics/proposal_review.py` generates a single LLM-written **review note**
 for a completed proposal run. The reviewer is *agentic*: `resolve_proposal_reviewer`
-(`lib/memory/adapters.py:148`) returns an `ExternalAgentLLM` launched with
+(`lib/memory/adapters.py:156`) returns an `ExternalAgentLLM` launched with
 `--allowedTools Read,Glob,Grep`, so it opens the drafted topics' ref files as
 they exist NOW and judges the draft against the live code itself rather than a
 pre-baked evidence pack. The task prompt is the editable `topic-proposal-review`
-prompt surface (`lib/prompts/surfaces/review.py`); `_build_prompt` only
+prompt surface (`lib/prompts/surfaces/review.py`); `_build_prompt` (`:80`) only
 assembles the runtime context it interpolates — a `<draft_topics>` block
-(`_topic_lines`, one bullet per drafted topic with its intent + ref paths) and
-an optional `<prior_open_feedback>` block (`_feedback_block`) replaying
-still-open human threads so the reviewer doesn't re-raise issues the user
-already flagged. A broken user edit of the surface degrades to the built-in
+(`_topic_lines`, `:59` — one bullet per drafted topic with its intent + ref
+paths) and an optional `<prior_open_feedback>` block (`_feedback_block`, `:73`)
+replaying still-open human threads so the reviewer doesn't re-raise issues the
+user already flagged. A broken user edit of the surface degrades to the built-in
 default inside `render_surface`, so the prompt is never left unbuildable.
 
 The reviewer ends its answer with one line, `RECOMMENDATION: ACCEPT |
-REGENERATE | DISMISS`. `_parse_recommendation` pulls that token — preferring the
-explicit `RECOMMENDATION:` line, else the first recognised token, else the
-neutral `ACCEPT` default — and never raises, so a malformed answer still yields
-a usable note. The note is persisted through the *existing* feedback-thread
-machinery as a `review_note` thread (`created_by='agent'`,
+REGENERATE | DISMISS`. `_parse_recommendation` (`:98`) pulls that token —
+preferring the explicit `RECOMMENDATION:` line, else the first recognised token,
+else the neutral `ACCEPT` default — and never raises, so a malformed answer
+still yields a usable note. The note is persisted through the *existing*
+feedback-thread machinery as a `review_note` thread (`created_by='agent'`,
 `anchor_kind='general'`) with the recommendation copied into thread metadata so
 the UI badge reads a field instead of regexing the prose body. Because it is an
 ordinary feedback thread, it renders in the review sidebar like a human comment
@@ -215,17 +302,16 @@ by `format_review_feedback_for_prompt`.
 
 Two entry points:
 
-- `maybe_generate_review_note` — the **gated, best-effort** trigger wired into
-  the run-completion paths (`external_jobs._maybe_review_note` after a draft or
-  regenerate lands, and `core_io.save_proposal`). It is a no-op unless
-  `settings.topic_evolution.auto_review_notes` is set, and it swallows its own
-  exceptions so a review-note failure can never fail the proposal run.
-- `generate_review_note` — the **ungated, manual** entry point for an explicit
-  user action, exposed at `POST .../review-note`
-  (`web/blueprints/topics/proposals.py:152`) and `regin topics review-note`
-  (`cli/commands/topics.py:299`). It returns `None` (writing no note) when the
-  proposal has no drafted topics or no external agent is configured
-  (`complete` → `None`).
+- `maybe_generate_review_note` (`:165`) — the **gated, best-effort** trigger
+  wired into the run-completion paths (`external_jobs._maybe_review_note` after
+  a draft or regenerate lands, and `core_io.save_proposal`). It is a no-op
+  unless `settings.topic_evolution.auto_review_notes` is set, and it swallows
+  its own exceptions so a review-note failure can never fail the proposal run.
+- `generate_review_note` (`:112`) — the **ungated, manual** entry point for an
+  explicit user action, exposed at `POST .../review-note`
+  (`web/blueprints/topics/proposals.py:158`) and `regin topics review-note`
+  (`cli/commands/topics.py`). It writes no note when the proposal has no drafted
+  topics or no external agent is configured.
 
 ## Cancel (Stop) and reaping
 
@@ -234,12 +320,12 @@ that owns the subprocess, so `lib/topics/proposals/run_control.py` keeps the liv
 `Popen` handles reachable across threads in one process (the single-process
 `regin serve` assumption) plus a set of cancelled ids:
 
-- `stop_proposal_run` (`core_io.py:392`, web `POST .../stop`) no-ops on an
+- `stop_proposal_run` (`core_io.py`, web `POST .../stop`) no-ops on an
   already-terminal run, else calls `run_control.request_cancel` (SIGTERMs the
   live subprocess if any) and stamps the run `cancelled` for immediate UI
   feedback.
 - The worker thread independently notices the kill: `_handle_agent_output`'s
-  cancel-first check routes it to `_cancelled` (`proposal_external.py:500`),
+  cancel-first check routes it to `_cancelled` (`proposal_external.py:571`),
   which stamps the terminal `cancelled` state (no `error`, since a stop isn't a
   failure) and raises so the job's success path never runs.
   `_record_thread_failure` sees `cancelled` and leaves it alone.
@@ -261,17 +347,18 @@ Two layers exist side by side.
 recompute the diff server-side from the request's `(strategy, target_topic_id,
 options)` — the client never sends the diff, so a `/diff` at T0 followed by
 `/apply` at T1 can't commit a stale prospective graph. `/diff`
-(`apply.py:160`) is side-effect-free and returns the resolved diff plus the
-items that would be silently dropped under the chosen `ApplyOptions`
-(`prune_orphan_edges`, `drop_dead_refs`, `dedupe_aliases`). `/apply`
-(`apply.py:420`) checks idempotency (`_already_applied_noop_snapshot`), refuses
-unless the proposal is review-ready, returns `400 unresolvable_errors` when the
-resolved diff still has unresolved errors, and otherwise commits through
-`apply_diff`. After the commit it round-trips pruned inbound edges
-(`_restore_pruned_inbound_edges_after_apply`), stages forward sibling edges for
-multi-topic proposals (`_stage_forward_sibling_edges`), advances the
-content-drift baseline (`_advance_drift_baseline_after_apply`), persists the
-per-topic wiki, and marks the proposed topic applied.
+(`api_repo_topic_proposal_diff`, `apply.py:164`) is side-effect-free and returns
+the resolved diff plus the items that would be silently dropped under the chosen
+`ApplyOptions` (`prune_orphan_edges`, `drop_dead_refs`, `dedupe_aliases`).
+`/apply` (`api_repo_topic_proposal_apply`, `apply.py:432`) checks idempotency
+(`_already_applied_noop_snapshot`), refuses unless the proposal is
+review-ready, returns `400 unresolvable_errors` when the resolved diff still has
+unresolved errors, and otherwise commits through `apply_diff`. After the commit
+it round-trips pruned inbound edges (`_restore_pruned_inbound_edges_after_apply`),
+stages forward sibling edges for multi-topic proposals
+(`_stage_forward_sibling_edges`), advances the content-drift baseline
+(`_advance_drift_baseline_after_apply`), persists the per-topic wiki, and marks
+the proposed topic applied.
 
 **Legacy accept / replace / merge / ignore** (`lib/topics/proposals/topic_actions.py`,
 web routes in `proposals.py` and `maintenance.py`). Each composes a one-topic
@@ -284,8 +371,11 @@ re-uses an approved id), `merge` folds a draft's refs/aliases/globs/commands
 into an existing topic while keeping that topic's wiki, and `ignore` marks a
 proposed topic ignored without touching the graph. `_approved_topic_from_proposal`
 + `_approved_refs_from_proposal` + `_approved_edges_from_proposal` are the
-proposal→approved-graph converters (drop unknown ref roles, validate edge types,
-filter edges whose target isn't a real topic).
+proposal→approved-graph converters: a ref keeps a known `role` and carries an
+explicit non-default `tier` (the `reference` tier that excludes a file from
+content-drift detection), while edges are validated by type and dropped when
+their target isn't a real topic. Both apply paths converge here, so the tier tag
+rides through modern `/apply` and legacy `accept` alike.
 
 **Downgrade** (`lib/topics/proposals/downgrade.py`, web
 `POST .../topics/<id>/downgrade`) is the reverse: it lifts an approved topic back
@@ -298,7 +388,7 @@ persists the topic's wiki into the proposal dir for re-apply.
 
 ## Trace emission
 
-Every run emits OTel-style spans through `_emit` (`proposal_external.py:588`)
+Every run emits OTel-style spans through `_emit` (`proposal_external.py:659`)
 under trace id `topic-proposal-<id>`, tagged `agent_type=topic-proposal-agent`:
 `proposal.agent.start`, `.instructions`, `.stdout`/`.stderr`,
 `.permission_request`, `.complete` / `.failure` / `.cancelled`, bracketed by
@@ -312,11 +402,13 @@ that actually authored the draft.
 1. `lib/topics/proposals/__init__.py` — the package map + public API re-exports.
 2. `lib/topics/proposal_providers.py` — the single external-agent provider.
 3. `lib/topics/proposals/external_jobs.py` — `start_external_proposal_run` /
-   `start_external_regenerate_run` and their daemon-thread jobs.
+   `start_external_regenerate_run`, the drift-scope resolution, and their
+   daemon-thread jobs.
 4. `lib/topics/proposal_external.py` — the subprocess runner, the drafting
-   prompt (`_instructions`), the two-axis `write_status`, and the validation
-   guards.
-5. `lib/topics/proposals/finish.py` — notify-on-finish ingest.
+   prompt (`_instructions`), the two-axis `write_status`, the content-drift
+   splice (`_apply_regenerate_scope`), and the validation guards.
+5. `lib/topics/proposals/finish.py` — notify-on-finish ingest + drafting-session
+   trace capture + the `proposal.ready` notification.
 6. `lib/topics/proposal_review.py` + `lib/prompts/surfaces/review.py` — the
    agentic review-note reviewer and its editable prompt surface.
 7. `lib/topics/proposals/run_control.py` + `core_io.py:stop_proposal_run` +
