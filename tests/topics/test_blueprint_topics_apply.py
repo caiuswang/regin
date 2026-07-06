@@ -368,6 +368,111 @@ def test_apply_writes_regenerated_version_over_prior_apply(stub_proposal_provide
     assert graph["topics"][topic_id]["intent"] == new_intent
 
 
+def _post_apply(flask_client, name, proposal_id, topic_id, strategy):
+    return flask_client.post(
+        f"/api/repos/{name}/topics/proposals/{proposal_id}/topics/{topic_id}/apply",
+        json={"strategy": strategy},
+    )
+
+
+def _reset_topic_review_markers(repo_path, proposal_id, topic_id, status="ready_to_apply"):
+    """Simulate a byte-identical regenerate: accept markers cleared (the
+    same field set production resets), topic content unchanged."""
+    from lib.topics.proposals import save_proposal
+    from lib.topics.proposals._common import _REGENERATE_RESET_TOPIC_FIELDS
+    proposal = load_proposal(repo_path, proposal_id)
+    proposed = next(t for t in proposal["topics"] if t["id"] == topic_id)
+    for k in _REGENERATE_RESET_TOPIC_FIELDS:
+        proposed.pop(k, None)
+    proposal["status"] = status
+    save_proposal(repo_path, proposal_id, proposal)
+
+
+def _proposal_topic(repo_path, proposal_id, topic_id):
+    proposal = load_proposal(repo_path, proposal_id)
+    return proposal, next(t for t in proposal["topics"] if t["id"] == topic_id)
+
+
+def test_noop_reapply_after_regenerate_advances_review_status(stub_proposal_provider, flask_client, fake_git_repo):
+    """A regenerate whose redraft comes back byte-identical to the applied
+    version hits the no-op short-circuit — which must still advance the
+    topic's review_status, or the topic can never leave pending and the
+    run is wedged at partially_applied forever.
+    """
+    name = _seed_repo(fake_git_repo)
+    proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
+    assert _post_apply(flask_client, name, proposal_id, topic_id, "create").status_code == 200
+    _reset_topic_review_markers(str(fake_git_repo), proposal_id, topic_id)
+
+    r2 = _post_apply(flask_client, name, proposal_id, topic_id, "replace")
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    assert r2.get_json().get("already_applied") is True
+
+    proposal, proposed = _proposal_topic(str(fake_git_repo), proposal_id, topic_id)
+    assert proposed.get("review_status") == "accepted"
+    assert proposed.get("accepted_topic") == topic_id
+    assert proposed.get("replaced_existing") is True
+    assert proposal["status"] == "applied"
+
+
+def test_noop_reapply_skips_stamp_when_not_ready(stub_proposal_provider, flask_client, fake_git_repo):
+    """The no-op short-circuit must stay read-only for proposals a real
+    apply would refuse (pending_review / changes_requested) — stamping
+    there would bypass the mark-ready review gate."""
+    name = _seed_repo(fake_git_repo)
+    proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
+    assert _post_apply(flask_client, name, proposal_id, topic_id, "create").status_code == 200
+    _reset_topic_review_markers(str(fake_git_repo), proposal_id, topic_id, status="pending_review")
+
+    r2 = _post_apply(flask_client, name, proposal_id, topic_id, "replace")
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    assert r2.get_json().get("already_applied") is True
+
+    proposal, proposed = _proposal_topic(str(fake_git_repo), proposal_id, topic_id)
+    assert proposed.get("review_status") is None
+    assert proposal["status"] == "pending_review"
+
+
+def test_noop_reapply_stamps_downgrade_pending_marker(stub_proposal_provider, flask_client, fake_git_repo):
+    """Downgrade-created proposal topics carry the literal review_status
+    'pending' (lib/topics/proposals/downgrade.py); the no-op path must
+    treat that as un-reviewed, not as an already-stamped marker."""
+    from lib.topics.proposals import save_proposal
+    name = _seed_repo(fake_git_repo)
+    proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
+    assert _post_apply(flask_client, name, proposal_id, topic_id, "create").status_code == 200
+    _reset_topic_review_markers(str(fake_git_repo), proposal_id, topic_id)
+    proposal, proposed = _proposal_topic(str(fake_git_repo), proposal_id, topic_id)
+    proposed["review_status"] = "pending"
+    save_proposal(str(fake_git_repo), proposal_id, proposal)
+
+    r2 = _post_apply(flask_client, name, proposal_id, topic_id, "replace")
+    assert r2.status_code == 200, r2.get_data(as_text=True)
+    assert r2.get_json().get("already_applied") is True
+
+    _, proposed = _proposal_topic(str(fake_git_repo), proposal_id, topic_id)
+    assert proposed.get("review_status") == "accepted"
+
+
+def test_noop_reapply_does_not_restamp_existing_markers(stub_proposal_provider, flask_client, fake_git_repo):
+    """Once the no-op path has stamped a topic accepted, a further re-click
+    must not rewrite the markers (accepted_at stays put)."""
+    name = _seed_repo(fake_git_repo)
+    proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
+    assert _post_apply(flask_client, name, proposal_id, topic_id, "create").status_code == 200
+    _reset_topic_review_markers(str(fake_git_repo), proposal_id, topic_id)
+    assert _post_apply(flask_client, name, proposal_id, topic_id, "replace").status_code == 200
+
+    _, proposed = _proposal_topic(str(fake_git_repo), proposal_id, topic_id)
+    accepted_at = proposed["accepted_at"]
+
+    r3 = _post_apply(flask_client, name, proposal_id, topic_id, "replace")
+    assert r3.status_code == 200, r3.get_data(as_text=True)
+    assert r3.get_json().get("already_applied") is True
+    _, proposed = _proposal_topic(str(fake_git_repo), proposal_id, topic_id)
+    assert proposed["accepted_at"] == accepted_at
+
+
 # ── /audit ─────────────────────────────────────────────────────────
 
 

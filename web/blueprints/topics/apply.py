@@ -425,6 +425,40 @@ def _mark_proposal_topic_applied(
     )
 
 
+def _advance_noop_review_markers(
+    repo_path: str, proposal_id: str, proposal: dict, proposed: dict,
+    approved: dict, resolved, *, strategy: str, target: str | None,
+) -> None:
+    """A no-op re-apply leaves the graph untouched, but the proposal side
+    may still say pending — a regenerate whose redraft came back
+    byte-identical (or a crash between apply_diff and save_proposal)
+    re-enters the short-circuit on every click, wedging the run at
+    partially_applied. Advance the review markers and the drift baseline;
+    edge restore/staging stays with the real apply path.
+
+    Deliberately narrower than a real apply: create/replace only (a no-op
+    merge can match a SIBLING topic's provenance row via
+    _existing_apply_snapshot and would misattribute it as merged), only in
+    review states a real apply accepts, and never while a regenerate is in
+    flight — save_proposal rewrites the latest revision in place and would
+    clobber the incoming redraft."""
+    if proposed.get("review_status") not in (None, "", "pending"):
+        return
+    if strategy not in ("create", "replace") or _review_state_not_ready(proposal):
+        return
+    from lib.topics.proposals import save_proposal
+    from lib.topics.proposals._common import _guard_regenerate_not_in_flight
+    try:
+        _guard_regenerate_not_in_flight(repo_path, proposal_id)
+    except TopicGraphError:
+        return
+    _mark_proposal_topic_applied(
+        proposal, proposed, approved, resolved, strategy=strategy, target=target,
+    )
+    save_proposal(repo_path, proposal_id, proposal)
+    _advance_drift_baseline_after_apply(repo_path, resolved, strategy=strategy)
+
+
 @topics_bp.route(
     "/api/repos/<name>/topics/proposals/<proposal_id>/topics/<proposed_topic_id>/apply",
     methods=["POST"],
@@ -479,6 +513,10 @@ def api_repo_topic_proposal_apply(name, proposal_id, proposed_topic_id):
         strategy=strategy, target=target, approved=approved,
     )
     if prior_snap_id is not None:
+        _advance_noop_review_markers(
+            repo_path, proposal_id, proposal, proposed, approved, resolved,
+            strategy=strategy, target=target,
+        )
         return jsonify({
             "ok": True,
             "already_applied": True,
