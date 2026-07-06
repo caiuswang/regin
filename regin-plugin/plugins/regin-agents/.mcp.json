@@ -11,6 +11,12 @@
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/regin-mcp.sh",
       "args": ["lib/agent_messages/mcp_server.py"],
       "env": {}
+    },
+    "topics": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/regin-mcp.sh",
+      "args": ["lib/topics/mcp_server.py"],
+      "env": {}
     }
   }
 }
