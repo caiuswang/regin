@@ -133,17 +133,20 @@ const state = computed(() => {
 // must never contradict the header's "inactive".
 const showWorking = computed(() => state.value === 'response' && props.active)
 
-// idle → full composer; working states → compact steer; question /
-// permission / finished (and bridge unreachable/disabled) → none.
+// idle / inactive → full composer (no live turn to steer into); working
+// states → compact steer; question / permission / finished (and bridge
+// unreachable/disabled) → none. Staleness ('inactive') is a copy concern
+// only — delivery works fine on an inactive-but-bridged session, so the send
+// affordance is gated on bridgeReachable, never on the staleness verdict.
+const IDLE_LIKE = new Set(['idle', 'inactive'])
+const STEERABLE = new Set(['response', 'tool', 'prompt'])
 const composerMode = computed(() => {
   // Scoped to a subagent → no composer/steer: the bridge reaches only the
   // main agent, so a steer box here would mislead.
   if (props.scopeAgent) return null
   if (!props.bridgeReachable) return null
-  if (state.value === 'idle') return 'idle'
-  const steerable = state.value === 'response' || state.value === 'tool'
-    || state.value === 'prompt'
-  return steerable ? 'steer' : null
+  if (IDLE_LIKE.has(state.value)) return 'idle'
+  return STEERABLE.has(state.value) ? 'steer' : null
 })
 
 // The draft lives HERE (this footer never unmounts) so text typed

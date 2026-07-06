@@ -48,5 +48,13 @@ export function useQueuedPrompts(getQueued, getSpans) {
     return [...server, ...optimistic]
   })
 
-  return reactive({ items, noteSent })
+  // Session switch: the persistent host view reuses this composable across
+  // trace ids, so a leftover optimistic entry from the PREVIOUS session would
+  // render under the new one (server queued_prompts is already scoped by
+  // trace_id and needs no reset) — clear the client-only echo on every switch.
+  function reset() {
+    pendingSends.value = []
+  }
+
+  return reactive({ items, noteSent, reset })
 }

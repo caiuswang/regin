@@ -1164,6 +1164,38 @@ test.describe('Idle state + bridge composer (v5)', () => {
     await expect(composerTa(page)).toHaveAttribute('placeholder', /Steer the agent/)
     await expect(bridgeMeta(page)).toContainText('queues into the running turn')
   })
+
+  // Bug B: the send affordance is gated on bridgeReachable (a live tmux
+  // pane), NEVER on the staleness verdict — delivery works fine on an
+  // inactive-but-bridged session. Staleness may only change copy, never
+  // whether the composer exists.
+  test('inactive-stale + bridge reachable → the composer still renders (staleness is copy-only)', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await bridgeReachableMap(page, traceId, { phase: 'inactive-stale' })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'inactive', { timeout: 20_000 })
+    await expect(page.locator('[data-testid="live-header"]')).toContainText('inactive')
+    await expect(composerTa(page)).toBeVisible()
+    await expect(composerSend(page)).toBeDisabled()
+  })
+
+  test('inactive-stale + bridge NOT reachable → no composer', async ({ page }) => {
+    const { traceId } = await postActiveSession(page)
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: { ...json, ...phaseFields('inactive-stale') } })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'inactive', { timeout: 20_000 })
+    await expect(composer(page)).toHaveCount(0)
+  })
 })
 
 test.describe('Bridge send lifecycle (v5)', () => {

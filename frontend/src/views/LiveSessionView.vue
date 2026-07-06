@@ -401,6 +401,7 @@ function resetViewState() {
   sheet.value = null
   savedTailScroll = 0
   scope.exit()
+  queued.reset()
 }
 
 async function init() {

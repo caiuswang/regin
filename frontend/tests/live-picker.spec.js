@@ -266,3 +266,59 @@ test.describe('Review regressions (v9)', () => {
     await expect(sheet).toBeHidden()
   })
 })
+
+// ---- Bug C1: useQueuedPrompts' client-side optimistic echo must not leak
+// across a session switch — the persistent LiveSessionView instance reuses
+// the SAME composable across trace ids, so without an explicit reset() the
+// previous session's just-sent steer would render under the new one for up
+// to its 2-minute TTL.
+test.describe('Queued prompts: no cross-session leak (Bug C1)', () => {
+  test('an optimistic steer sent in session A does not ride into session B on switch', async ({ page }) => {
+    const { traceId: traceIdA, text: textA } = await postSession(page, 'A')
+    const { traceId: traceIdB, text: textB } = await postSession(page, 'B')
+    await mockPickerList(page, [
+      fakeRow(traceIdA, 'Fixture A', 'active'),
+      fakeRow(traceIdB, 'Fixture B', 'active'),
+    ])
+
+    // Make session A bridge-reachable + idle so the composer renders.
+    await page.route(`**/api/sessions/${traceIdA}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({
+        response: resp,
+        json: {
+          ...json,
+          bridge_reachable: true,
+          bridge_pane: '%3',
+          phase: 'idle',
+          agent_phase: { main: 'idle' },
+        },
+      })
+    })
+    await page.route(`**/api/sessions/${traceIdA}/bridge-send`, (route) =>
+      route.fulfill({ json: { id: 1, delivered: true, detail: 'delivered to %3' } }))
+
+    await page.goto(`/live/${traceIdA}`)
+    await settle(page)
+    await expect(page.getByText(textA).first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('[data-testid="live-now"]'))
+      .toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
+
+    const STEER = 'LEAK_GUARD_STEER_MARKER'
+    await page.locator('[data-testid="live-composer-ta"]').fill(STEER)
+    await page.locator('[data-testid="live-composer-send"]').click()
+    await expect(page.locator('[data-testid="live-queued"]')).toContainText(STEER, { timeout: 5_000 })
+
+    // Switch to session B — the optimistic entry must NOT ride along, even
+    // though its 2-minute client TTL hasn't lapsed.
+    await page.locator('[data-testid="live-switch"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible({ timeout: 5_000 })
+    await page.locator(`[data-testid="live-picker-row"][data-trace-id="${traceIdB}"]`).click()
+
+    await expect(page).toHaveURL(new RegExp('/live/' + traceIdB))
+    await expect(page.getByText(textB).first()).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('[data-testid="live-queued"]')).toHaveCount(0)
+  })
+})
