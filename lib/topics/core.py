@@ -185,6 +185,8 @@ def _load_split_graph(repo_path: str | Path) -> dict[str, Any]:
     topics from the per-id ``<topic_id>.json`` files."""
     meta_path = topic_meta_path(repo_path)
     graph = read_json(meta_path) if meta_path.exists() else {}
+    if not isinstance(graph, dict):
+        raise TopicGraphError(f"invalid topic meta sidecar (not an object): {meta_path}")
     graph.setdefault("version", SCHEMA_VERSION)
     graph.setdefault("repo", repo_name(repo_path))
     graph.setdefault("updated_at", utc_now())
@@ -295,6 +297,14 @@ def write_graph_to_disk(repo_path: str | Path, graph: dict[str, Any]) -> Path:
     return target
 
 
+def _split_topic_filename(tid: Any) -> str:
+    """Upstream id validation rejects these, but the writer must never
+    clobber the sidecar or escape the dir on an unvalidated caller."""
+    if f"{tid}.json" == TOPIC_META_FILE or "/" in str(tid) or str(tid).startswith("."):
+        raise TopicGraphError(f"invalid topic id for split layout: {tid!r}")
+    return f"{tid}.json"
+
+
 def write_split_graph(repo_path: str | Path, graph: dict[str, Any]) -> Path:
     """Write ``graph`` in the split layout: ``_meta.json`` carries every
     top-level field except ``topics``; each topic gets ``<topic_id>.json``;
@@ -305,7 +315,7 @@ def write_split_graph(repo_path: str | Path, graph: dict[str, Any]) -> Path:
                   _dumps({k: v for k, v in graph.items() if k != "topics"}))
     topics = graph.get("topics") or {}
     for tid, body in topics.items():
-        _atomic_write(split_dir / f"{tid}.json", _dumps(body))
+        _atomic_write(split_dir / _split_topic_filename(tid), _dumps(body))
     for stale in split_dir.glob("*.json"):
         if stale.name != TOPIC_META_FILE and stale.stem not in topics:
             stale.unlink()

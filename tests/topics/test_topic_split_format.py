@@ -284,3 +284,27 @@ def test_topic_signature_guard_covers_split_layout(tmp_path):
     (topic_split_dir(tmp_path) / "beta.json").write_text(
         json.dumps(_topic("Beta")))
     assert _read_topic_signature(tmp_path) != before
+
+
+def test_ensure_topic_graph_noops_on_split_repo(tmp_path):
+    from web.blueprints.topics._helpers import _ensure_topic_graph
+
+    _write_split_by_hand(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    _ensure_topic_graph(str(tmp_path))
+    assert set(load_graph(tmp_path)["topics"]) == {"alpha"}
+    assert not topic_path(tmp_path).exists()
+
+
+def test_non_dict_meta_sidecar_raises_topic_graph_error(tmp_path):
+    _write_split_by_hand(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    (topic_split_dir(tmp_path) / "_meta.json").write_text("[1]")
+    with pytest.raises(TopicGraphError, match="meta sidecar"):
+        load_graph(tmp_path)
+
+
+def test_split_writer_rejects_sidecar_and_traversal_ids(tmp_path):
+    from lib.topics.core import write_split_graph
+
+    for bad_id in ("_meta", "../escape", ".hidden"):
+        with pytest.raises(TopicGraphError, match="invalid topic id"):
+            write_split_graph(tmp_path, _graph({bad_id: _topic("Evil")}))

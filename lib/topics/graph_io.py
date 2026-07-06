@@ -15,8 +15,11 @@ own pace from `topic.json`-on-disk to `GraphSnapshot`-in-ORM:
   skill, pre-commit hook).
 
 Atomicity: writes go to a `.tmp` sibling, then fsync, then rename. On
-POSIX, the rename is atomic; readers either see the old file or the
-new one, never a partial. SQL commits LAST in the cross-store protocol,
+POSIX, the rename is atomic — per file. The legacy single-file layout
+therefore never exposes a partial graph; the split layout is atomic per
+topic file only, so a crash mid-write can leave a mixed old/new dir
+that the next read treats as disk truth. SQL commits LAST in the
+cross-store protocol,
 so a process crash after the file write but before the SQL commit
 leaves the next read with disk≠SQL — the reconciliation guard catches
 that and re-exports.

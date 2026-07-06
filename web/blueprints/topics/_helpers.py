@@ -30,7 +30,8 @@ def _error(exc: Exception, status: int = 400):
 
 
 def _ensure_topic_graph(repo_path: str):
-    if not topic_path(repo_path).exists():
+    from lib.topics.core import graph_exists
+    if not graph_exists(repo_path):
         bootstrap(repo_path)
 
 
