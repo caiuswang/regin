@@ -18,6 +18,7 @@ import LiveSheet from '../components/live/LiveSheet.vue'
 import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
 import LiveQaSheet from '../components/live/LiveQaSheet.vue'
 import LiveAgentSheet from '../components/live/LiveAgentSheet.vue'
+import LiveAgentDetail from '../components/live/LiveAgentDetail.vue'
 import LiveTaskSheet from '../components/live/LiveTaskSheet.vue'
 import LiveCtxMeter from '../components/live/LiveCtxMeter.vue'
 import LiveScopeBar from '../components/live/LiveScopeBar.vue'
@@ -58,7 +59,10 @@ const liveAgents = useLiveAgents(() => spans.value, () => meta.value.agent_roste
 // Per-agent span scoping: scopeId re-partitions the tail to one subagent;
 // the header keeps showing MAIN-session truth. Scroll save/restore on
 // enter/exit stays here (this view owns the tail element) via a watch.
-const scope = useLiveScope(() => spans.value, () => liveAgents.agents)
+// loadOlder/hasMoreOlder are threaded in so the scope can auto-page an old
+// subagent's spans into view on first entry — no manual fold-row tap.
+const scope = useLiveScope(
+  () => spans.value, () => liveAgents.agents, loadOlder, () => hasMoreOlder.value)
 
 // ── Filters (signal tier + category + search, all in the filter sheet) ──
 const showSystem = ref(false)
@@ -260,7 +264,7 @@ async function unfold() {
 }
 
 // ── Bottom sheets (message / detail / filter) ──
-const sheet = ref(null) // { kind: 'message'|'detail'|'filter', spanId? }
+const sheet = ref(null) // { kind: 'message'|'detail'|'filter'|'agent', spanId?, agentId? }
 let savedTailScroll = 0
 const sheetOpen = computed({
   get: () => !!sheet.value,
@@ -279,9 +283,14 @@ watch(sheetSpan, (s) => {
   if (sheet.value?.spanId && !s) closeSheet()
 })
 
-function openSheet(kind, span) {
+// `payload` doubles as a span (message/detail/qa) or a roster agent entry
+// (agent kind, keyed by agentId) — one function for both keeps the sheet's
+// surface area from growing per kind. The agent sheet re-resolves its entry
+// live off the roster (sheetTitle/sheetCopy/template), so a status change
+// while open still reflects — unlike a span, an agentId never ages out.
+function openSheet(kind, payload) {
   savedTailScroll = tailEl.value ? tailEl.value.scrollTop : 0
-  sheet.value = { kind, spanId: span?.span_id }
+  sheet.value = { kind, spanId: payload?.span_id, agentId: payload?.agentId }
 }
 
 function closeSheet() {
@@ -307,6 +316,10 @@ const sheetTitle = computed(() => {
     tasks: 'Tasks',
   }[sheetKind.value]
   if (fixed) return fixed
+  if (sheetKind.value === 'agent') {
+    const ag = liveAgents.agents.find(a => a.agentId === sheet.value?.agentId)
+    return ag ? `${ag.agentType}${ag.startClock ? ' · ' + ag.startClock : ''}` : 'Agent'
+  }
   const s = sheetSpan.value
   if (!s) return ''
   if (sheetKind.value === 'qa') {
@@ -330,6 +343,8 @@ const sheetCopy = computed(() => {
     qa: () => (s?.name === 'tool.AskUserQuestion'
       ? JSON.stringify({ questions: a.questions || [], answers: a.answers || null }, null, 2)
       : (a.command_preview || a.requested_permission || null)),
+    agent: () => (liveAgents.agents.find(x => x.agentId === sheet.value?.agentId)
+      ?.promptPreview || null),
   }[sheetKind.value]
   return byKind ? byKind() : null
 })
@@ -533,10 +548,20 @@ onUnmounted(() => {
         <div v-if="error" class="live-empty">{{ error }}</div>
         <div v-else-if="loading && !spans.length" class="live-empty">loading…</div>
         <div v-else-if="!spans.length" class="live-empty">no spans yet</div>
+        <!-- Auto-paging (scope entry looking for the agent's spans in older
+             windows) is a LOADING state, not the terminal empty one below —
+             conflating them would flash "no spans captured" for an agent
+             whose spans just haven't paged in yet. -->
+        <div
+          v-else-if="scope.scopeId && scope.autoPaging && !visibleRows.length"
+          class="live-empty"
+          data-testid="live-scope-loading"
+        >loading…</div>
         <!-- Scoped-empty is TERMINAL, not a spinner; the hint distinguishes
              "not loaded" (the roster says spans exist) from "never
              captured". The fold row stays hidden in scope, so the
-             not-loaded state carries its own load action. -->
+             not-loaded state carries its own load action as a fallback —
+             auto-paging normally resolves this on scope entry already. -->
         <div
           v-else-if="scope.scopeId && !visibleRows.length"
           class="live-empty"
@@ -637,8 +662,16 @@ onUnmounted(() => {
             :finished-agents="liveAgents.finishedAgents"
             :server-now="meta.server_now || ''"
             :server-now-at="meta.server_now_at || 0"
-            @select-span="onRowSelect"
+            @view-agent="a => openSheet('agent', a)"
             @scope="a => { scope.enter(a.agentId); closeSheet() }"
+          />
+        </template>
+
+        <template v-else-if="sheetKind === 'agent'">
+          <LiveAgentDetail
+            :agent="liveAgents.agents.find(a => a.agentId === sheet?.agentId) || null"
+            :server-now="meta.server_now || ''"
+            :server-now-at="meta.server_now_at || 0"
           />
         </template>
 

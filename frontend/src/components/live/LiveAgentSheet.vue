@@ -8,7 +8,9 @@
 // no subagent.stop ever coming) render in the same group with a muted-amber
 // status instead of a duration — still scopeable, never counted as running.
 // Primary tap on a card SCOPES the tail to that agent's spans; the chevron
-// (its own ≥32px target) opens the span-detail sheet.
+// (its own ≥32px target) opens a curated agent-detail sheet built from the
+// ROSTER entry alone (prompt/time/status) — every row gets one, since the
+// roster is window-independent and the start span may not be loaded yet.
 import { computed, ref, watch, onUnmounted } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -25,7 +27,7 @@ const props = defineProps({
   serverNow: { type: String, default: '' },
   serverNowAt: { type: Number, default: 0 },
 })
-const emit = defineEmits(['select-span', 'scope'])
+const emit = defineEmits(['view-agent', 'scope'])
 
 const finishedOpen = ref(false)
 const isEmpty = computed(() =>
@@ -56,7 +58,7 @@ function elapsedOf(agent) {
     </div>
 
     <template v-else>
-      <p class="live-sheet-hint">Tap an agent to scope the tail to its spans · › opens span detail</p>
+      <p class="live-sheet-hint">Tap an agent to scope the tail to its spans · › opens agent detail</p>
       <div v-if="!runningAgents.length" class="live-sheet-empty">no agents running</div>
       <div v-for="a in runningAgents" :key="a.spanId" class="live-agent-row">
         <Button
@@ -72,7 +74,7 @@ function elapsedOf(agent) {
             aria-hidden="true"
           ></span>
           <span class="live-agent-main">
-            <span class="live-agent-eyebrow">{{ a.agentType }}</span>
+            <span class="live-agent-eyebrow">{{ a.agentType }} · {{ a.startClock }}</span>
             <span class="live-agent-desc">{{ a.description }}</span>
           </span>
           <span
@@ -82,16 +84,15 @@ function elapsedOf(agent) {
           >{{ agentStatusLabel(a, '', { compact: true }) }}</span>
           <span v-else class="live-agent-time">{{ agentStatusLabel(a, elapsedOf(a)) }}</span>
         </Button>
-        <!-- The detail sheet resolves against the LOADED tail — no chevron
-             when the roster row's start marker isn't in the window. -->
+        <!-- Roster-sourced detail: works even when the row's start marker
+             isn't in the loaded tail window — every row gets the affordance. -->
         <Button
-          v-if="a.startSpan"
           variant="ghost"
           size="icon"
           class="live-agent-info"
           data-testid="live-agent-info"
-          :aria-label="`Span details for ${a.agentType}`"
-          @click="emit('select-span', a.startSpan)"
+          :aria-label="`Agent details for ${a.agentType}`"
+          @click="emit('view-agent', a)"
         >
           <Icon name="chevron-right" :size="16" />
         </Button>
@@ -119,7 +120,7 @@ function elapsedOf(agent) {
             >
               <span class="live-agent-dot" aria-hidden="true"></span>
               <span class="live-agent-main">
-                <span class="live-agent-eyebrow">{{ a.agentType }}</span>
+                <span class="live-agent-eyebrow">{{ a.agentType }} · {{ a.startClock }}</span>
                 <span class="live-agent-desc">{{ a.resultPreview || a.description }}</span>
               </span>
               <!-- compact: the verbose "stale · last seen HH:MM" squeezes
@@ -137,13 +138,12 @@ function elapsedOf(agent) {
               </span>
             </Button>
             <Button
-              v-if="a.startSpan"
               variant="ghost"
               size="icon"
               class="live-agent-info"
               data-testid="live-agent-info"
-              :aria-label="`Span details for ${a.agentType}`"
-              @click="emit('select-span', a.startSpan)"
+              :aria-label="`Agent details for ${a.agentType}`"
+              @click="emit('view-agent', a)"
             >
               <Icon name="chevron-right" :size="16" />
             </Button>

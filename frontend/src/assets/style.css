@@ -2968,6 +2968,15 @@ button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
 }
 /* interrupted / stale outcome — muted amber, quieter than an error */
 .live-agent-time-warn { color: var(--color-warning); opacity: 0.85; }
+.live-agent-detail-prompt {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--color-fg);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+.live-agent-detail-empty { color: var(--color-fg-faint); font-style: italic; }
 .live-disclosure {
     width: 100%;
     height: auto;

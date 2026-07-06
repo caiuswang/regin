@@ -2067,7 +2067,7 @@ test.describe('Per-agent span scoping', () => {
     await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeHidden()
   })
 
-  test('the chevron opens span detail instead of scoping', async ({ page }) => {
+  test('the chevron opens the agent detail sheet, not the raw span detail, and does not scope', async ({ page }) => {
     const { traceId } = await seedScoped(page)
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -2075,8 +2075,12 @@ test.describe('Per-agent span scoping', () => {
 
     await openAgents(page)
     await page.locator('[data-testid="live-agent-info"]').first().click()
-    // The span-detail sheet opens; the scope bar must NOT appear.
-    await expect(page.locator('[data-testid="live-sheet"]')).toBeVisible()
+    // The AGENT detail sheet (roster-sourced) opens — distinct from tapping
+    // the card body (which scopes) and from a raw span-detail sheet.
+    const detail = page.locator('[data-testid="live-agent-detail"]')
+    await expect(detail).toBeVisible()
+    await expect(detail).toContainText('explorer')
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeHidden()
     await expect(scopeBar(page)).toHaveCount(0)
   })
 
@@ -2835,5 +2839,196 @@ test.describe('Scoped tail opens with the agent prompt (Slice C)', () => {
     const first = rows(page).first()
     await expect(first).toContainText('SYNTH_DESC_MARKER')
     await expect(first).toHaveAttribute('data-kind', 'msg')
+  })
+})
+
+// ---- auto-page on scope entry (useLiveScope.autoPageScope) -----------------
+//
+// Roster span_count > 0 for an agent whose spans sit several older turn-pages
+// back must not force a manual "load earlier history" tap: entering scope
+// auto-pages via loadOlder() until the spans surface or history/the
+// MAX_AUTO_PAGE_ITERS=20 backstop gives out (useLiveScope.js).
+
+test.describe('Auto-page on scope entry (per-agent)', () => {
+  // Only 'prompt' spans page the tail (lib/trace/trace_service/queries.py
+  // _TURN_ANCHOR_NAMES), 5 anchors/page (useLiveTail's PAGE_SIZE) — 15 turns
+  // spaced 30s apart puts the target agent's internal span in turn 0's
+  // window, exactly 2 older pages (turns 10-14 -> 5-9 -> 0-4) behind the
+  // initial mount, while keeping the whole span under the 10-min
+  // agent-staleness threshold so the roster still reports it as running.
+  async function seedFarAgent(page, { turnCount = 15, spacingMs = 30_000 } = {}) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const agId = `ag-far-${sfx}`
+    const baseMs = Date.now() - (turnCount - 1) * spacingMs
+    const spans = []
+    for (let i = 0; i < turnCount; i++) {
+      spans.push({ trace_id: traceId, span_id: `prompt-${sfx}-${i}`, parent_id: null, name: 'prompt',
+        start_time: new Date(baseMs + i * spacingMs).toISOString(),
+        attributes: { text: `turn ${i} filler`, is_test: true } })
+    }
+    spans.push({ trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+      start_time: new Date(baseMs + 5_000).toISOString(),
+      attributes: { agent_type: 'digger', agent_id: agId, is_test: true } })
+    spans.push({ trace_id: traceId, span_id: `int-read-${sfx}`, parent_id: null, name: 'tool.Read',
+      start_time: new Date(baseMs + 10_000).toISOString(),
+      attributes: { file_path: 'src/AUTOPAGE_INTERNAL_MARKER.js', agent_id: agId, is_test: true } })
+    await post(page, spans)
+    return { traceId, sfx, agId }
+  }
+
+  async function openAgents(page) {
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible({ timeout: 5_000 })
+  }
+
+  test('arrives at the agent\'s spans after a few loadOlder fetches, with no manual load tap', async ({ page }) => {
+    const { traceId } = await seedFarAgent(page, { turnCount: 15, spacingMs: 30_000 })
+
+    let beforeIdHits = 0
+    // Delay each before_id (loadOlder) round trip so the transient
+    // "live-scope-loading" state is observable instead of racing past it —
+    // same delay-the-route convention as stubBridgeSend's delayMs above.
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      if (route.request().url().includes('before_id=')) {
+        beforeIdHits += 1
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      const resp = await route.fetch()
+      await route.fulfill({ response: resp })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    await expect(page.locator('[data-testid="live-scope-bar"]')).toBeVisible({ timeout: 5_000 })
+
+    // Auto-paging surfaces a loading state while it hunts for the spans...
+    await expect(page.locator('[data-testid="live-scope-loading"]')).toBeVisible({ timeout: 5_000 })
+
+    // ...and resolves to the real rows — no manual "load earlier history" tap,
+    // and never the terminal empty state.
+    await expect(page.locator('[data-testid="live-scope-load"]')).toHaveCount(0)
+    await expect(rows(page).first()).toContainText('AUTOPAGE_INTERNAL_MARKER', { timeout: 10_000 })
+    await expect(page.locator('[data-testid="live-scope-loading"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="live-scope-empty"]')).toHaveCount(0)
+
+    expect(beforeIdHits, 'must exit as soon as the spans arrive, nowhere near the 20-iter cap')
+      .toBeLessThan(20)
+    expect(beforeIdHits, 'exactly 2 older turn-pages should reach turn 0 (5 anchors/page, 15 turns)')
+      .toBe(2)
+  })
+
+  test('an over-claiming roster whose spans never arrive stops at the 20-iter cap, not indefinitely', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const ghostAgentId = `ag-ghost-${sfx}`
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'auto-page storm fixture', is_test: true } },
+    ])
+
+    let beforeIdHits = 0
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      if (route.request().url().includes('before_id=')) beforeIdHits += 1
+      await route.fulfill({ response: resp, json: {
+        ...json,
+        // Over-claims forever: has_more_older never goes false, and the
+        // ghost agent's spans never actually land in any page — the roster
+        // knowing about spans that never arrive must not spin the loop.
+        has_more_older: true,
+        agent_roster: [{
+          agent_id: ghostAgentId, agent_type: 'ghost', description: 'Never captured',
+          status: 'stale', started_at: now, last_seen: now, duration_ms: null,
+          result_preview: '', start_span_id: null, span_count: 10,
+        }],
+      } })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-finished-toggle"]').click()
+    await page.locator('[data-testid="live-agent-finished"] [data-testid="live-agent-card"]')
+      .first().click()
+
+    const empty = page.locator('[data-testid="live-scope-empty"]')
+    await expect(empty).toBeVisible({ timeout: 20_000 })
+    await expect(empty).toContainText('spans not loaded — load earlier history to view')
+    await expect(page.locator('[data-testid="live-scope-loading"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="live-scope-load"]')).toBeVisible()
+
+    expect(beforeIdHits, 'the 20-iter cap must stop the loop, not spin forever').toBe(20)
+  })
+})
+
+// ---- LiveAgentDetail sheet via the chevron ----------------------------------
+
+test.describe('LiveAgentDetail sheet via chevron', () => {
+  async function openAgents(page) {
+    await page.locator('[data-testid="live-agents-btn"]').click()
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible({ timeout: 5_000 })
+  }
+
+  test('shows the roster prompt preview and start clock, sourced off the roster (not a loaded span)', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'agent-detail fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'explorer', agent_id: `ag-${sfx}`,
+          prompt_preview: 'KNOWN_PROMPT_PREVIEW_MARKER — map the breakpoints', is_test: true } },
+      { trace_id: traceId, span_id: `int-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: now, attributes: { file_path: 'src/x.js', agent_id: `ag-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    await page.locator('[data-testid="live-agent-info"]').first().click()
+
+    const detail = page.locator('[data-testid="live-agent-detail"]')
+    await expect(detail).toBeVisible({ timeout: 5_000 })
+    await expect(detail).toContainText('KNOWN_PROMPT_PREVIEW_MARKER')
+    await expect(detail).toContainText(/\d{2}:\d{2}/) // startClock — not the '—' placeholder
+  })
+
+  test('an empty prompt_preview falls back to "no prompt captured"; the chevron stays present', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'agent-detail empty-prompt fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now, attributes: { agent_type: 'builder', agent_id: `ag-${sfx}`, is_test: true } },
+      { trace_id: traceId, span_id: `int-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: now, attributes: { file_path: 'src/y.js', agent_id: `ag-${sfx}`, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    const chevron = page.locator('[data-testid="live-agent-info"]').first()
+    await expect(chevron).toBeVisible()
+    await chevron.click()
+
+    const detail = page.locator('[data-testid="live-agent-detail"]')
+    await expect(detail).toBeVisible({ timeout: 5_000 })
+    await expect(detail).toContainText('no prompt captured')
   })
 })

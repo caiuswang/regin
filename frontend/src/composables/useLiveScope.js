@@ -1,5 +1,13 @@
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { partitionScope } from '../utils/liveRows.js'
+
+// A scope entry must not require a manual "load earlier history" tap: an
+// old subagent's spans usually sit before the tail's paginated window
+// (PAGE_SIZE turn anchors in useLiveTail), so entering its scope auto-pages
+// older windows until either its spans surface or history runs out. The cap
+// is a backstop against a pathological loop (e.g. a server that always
+// reports has_more_older true); real sessions settle in a handful of pages.
+const MAX_AUTO_PAGE_ITERS = 20
 
 // Per-agent span scoping for the /live card. scopeId = an agent_id → the
 // tail shows only that subagent's internal spans; null = the main timeline
@@ -26,7 +34,10 @@ function withLeadingPrompt(base, scopeId, agent) {
   }, ...base]
 }
 
-export function useLiveScope(getSpans, getAgents) {
+// `loadOlder` / `getHasMoreOlder` come from useLiveTail — this composable
+// drives the paging loop but never owns the pages themselves (append-only
+// store stays a single source of truth in the tail).
+export function useLiveScope(getSpans, getAgents, loadOlder, getHasMoreOlder) {
   const scopeId = ref(null)
   const scopedAgent = computed(() => (scopeId.value
     ? getAgents().find(a => a.agentId === scopeId.value) || null
@@ -47,11 +58,50 @@ export function useLiveScope(getSpans, getAgents) {
     ? 'spans not loaded — load earlier history to view'
     : 'no spans captured for this agent'))
 
+  // True while a scope entry is auto-paging older windows looking for its
+  // spans — distinct from the terminal empty states above, so the view can
+  // render "loading…" instead of prematurely flashing scopedEmptyHint.
+  const autoPaging = ref(false)
+  // Settles once per agent so re-entering an already-paged scope (switching
+  // back to a prior agent) is a no-op, not a re-fetch.
+  let settledFor = null
+  // Generation guard: a fast A→B switch must not let A's in-flight loop
+  // (waking from its last await) clear B's autoPaging/settledFor state.
+  let pagingGen = 0
+
+  async function autoPageScope(id) {
+    const gen = ++pagingGen
+    autoPaging.value = true
+    let iters = 0
+    while (
+      pagingGen === gen
+      && scopeId.value === id
+      && scopedSpansExist.value
+      && scopedSpans.value.length === 0
+      && getHasMoreOlder()
+      && iters < MAX_AUTO_PAGE_ITERS
+    ) {
+      // eslint-disable-next-line no-await-in-loop -- each page's before_id
+      // cursor depends on the previous page having merged; must be serial.
+      await loadOlder()
+      iters += 1
+    }
+    if (pagingGen !== gen) return
+    settledFor = id
+    autoPaging.value = false
+  }
+
+  watch(scopeId, (id) => {
+    if (!id) return
+    if (settledFor === id) return
+    autoPageScope(id)
+  })
+
   function enter(agentId) { if (agentId) scopeId.value = agentId }
   function exit() { scopeId.value = null }
 
   return reactive({
     scopeId, scopedSpans, mainSpans, scopedAgent,
-    scopedSpansExist, scopedEmptyHint, enter, exit,
+    scopedSpansExist, scopedEmptyHint, autoPaging, enter, exit,
   })
 }

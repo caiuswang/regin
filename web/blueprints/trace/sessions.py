@@ -799,6 +799,7 @@ def _entry_marker_facts(latest, stop) -> dict:
     return {
         'start_span_id': latest['span_id'] if latest else None,
         'description': attrs.get('description') or attrs.get('label') or '',
+        'prompt_preview': attrs.get('prompt_preview') or '',
         'marker_seen': (stop or latest or {}).get('start_time'),
     }
 
@@ -825,6 +826,7 @@ def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
         'last_seen': last_seen,
         'span_count': int(act.get('internal_count') or 0),
         'description': facts['description'],
+        'prompt_preview': facts['prompt_preview'],
         'waiting': bool(ask_ts and seen_ts and ask_ts >= seen_ts),
     }
 
@@ -868,6 +870,7 @@ def _roster_output_entry(e, status, launches, claimed) -> dict:
         'result_preview': result_preview or '',
         'start_span_id': e['start_span_id'],
         'span_count': e['span_count'],
+        'prompt_preview': e['prompt_preview'],
     }
 
 
