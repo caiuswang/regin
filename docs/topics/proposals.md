@@ -67,6 +67,13 @@ Proposals are created and reviewed from the WebUI:
 The topic/focus text is embedded directly in the agent's `instructions.md`
 (as `topic_request`) and retained on the proposal output for review.
 
+The same lifecycle is scriptable from the CLI (every command takes `--repo`,
+and the read/diff/apply commands take `--json`): `regin topics propose`
+drafts synchronously, then `proposal-list`, `proposal-show`,
+`proposal-feedback`, `proposal-review-state`, `proposal-diff`, and
+`proposal-apply` cover review through apply. See `regin topics --help` for
+arguments.
+
 ## Proposal Artifacts
 
 Each run writes under:
@@ -198,3 +205,16 @@ After a proposal completes, review it from the Topics page in the WebUI: edit,
 comment on, regenerate, then accept, merge, ignore, or delete each proposed
 topic. Accepting or merging is the only path that writes the approved
 `topic.json`, and it is gated by a pre/post graph audit.
+
+## MCP Tools
+
+`lib/topics/mcp_server.py` exposes the same review loop to in-session agents
+as a stdio MCP server named `topics`: `proposal_list`, `proposal_show`,
+`proposal_diff`, `proposal_apply`, `proposal_review_state`,
+`proposal_feedback_add`, and `proposal_feedback_list`. Each tool takes a
+registered repo name or repo path and returns a plain-text summary; only
+`proposal_apply` writes the approved graph, and drafting is deliberately not
+exposed (start runs from the CLI or WebUI). It is registered the same way as
+the memory server — via the regin-agents plugin's `.mcp.json`
+(`regin-plugin/plugins/regin-agents/.mcp.json`), which launches it through
+`bin/regin-mcp.sh` on the checkout's venv.
