@@ -18,13 +18,18 @@ CLAUDE.local.md
 .kimi-code/
 
 # regin's per-project topic state. The dir is machine-local EXCEPT the
-# git-tracked approved graph (topic.json), its per-topic wiki
+# git-tracked approved graph (topic.json, or the split per-topic
+# topics/*.json after `regin topics migrate-split`), its per-topic wiki
 # narratives, and exported proposal bundles (topics/bundles/*.json),
 # which travel with the repo. The topic.local.json overlay
 # (proposal approvals / scans) plus candidates/ and proposals/ stay local.
 .regin/*
 !.regin/topics/
 .regin/topics/*
+!.regin/topics/topics/
+.regin/topics/topics/*
+!.regin/topics/topics/*.json
+!.regin/topics/topics/_meta.json
 !.regin/topics/topic.json
 !.regin/topics/wiki/
 .regin/topics/wiki/*

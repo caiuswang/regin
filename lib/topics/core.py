@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +21,8 @@ from typing import Any
 TOPICS_DIR = ".regin/topics"
 TOPIC_FILE = "topic.json"
 TOPIC_LOCAL_FILE = "topic.local.json"
+TOPIC_SPLIT_DIR = "topics"
+TOPIC_META_FILE = "_meta.json"
 SCHEMA_VERSION = 1
 
 REF_ROLES = {
@@ -95,6 +99,27 @@ def topic_local_path(repo_path: str | Path) -> Path:
     return topic_dir(repo_path) / TOPIC_LOCAL_FILE
 
 
+def topic_split_dir(repo_path: str | Path) -> Path:
+    return topic_dir(repo_path) / TOPIC_SPLIT_DIR
+
+
+def topic_meta_path(repo_path: str | Path) -> Path:
+    return topic_split_dir(repo_path) / TOPIC_META_FILE
+
+
+def split_layout_active(repo_path: str | Path) -> bool:
+    """True when the repo carries the split per-topic layout
+    (``.regin/topics/topics/`` with at least one ``*.json``). The split
+    layout wins over a stray legacy ``topic.json`` when both exist."""
+    d = topic_split_dir(repo_path)
+    return d.is_dir() and any(d.glob("*.json"))
+
+
+def graph_exists(repo_path: str | Path) -> bool:
+    """True when an approved graph is on disk in either layout."""
+    return split_layout_active(repo_path) or topic_path(repo_path).exists()
+
+
 def empty_graph(repo_path: str | Path) -> dict[str, Any]:
     return {
         "version": SCHEMA_VERSION,
@@ -107,15 +132,14 @@ def empty_graph(repo_path: str | Path) -> dict[str, Any]:
 def bootstrap(repo_path: str | Path, *, force: bool = False, seeds: bool = False) -> dict[str, Path]:
     repo = Path(repo_path)
     topic_dir(repo).mkdir(parents=True, exist_ok=True)
-    graph_path = topic_path(repo)
-    if graph_path.exists() and not force:
-        raise TopicGraphError(f"{graph_path} already exists")
+    existing = topic_split_dir(repo) if split_layout_active(repo) else topic_path(repo)
+    if existing.exists() and not force:
+        raise TopicGraphError(f"{existing} already exists")
 
     graph = empty_graph(repo)
     if seeds:
         graph["topics"] = seed_topics(repo)
-    write_json(graph_path, graph)
-    return {"topic": graph_path}
+    return {"topic": write_graph_to_disk(repo, graph)}
 
 
 def seed_topics(repo_path: str | Path) -> dict[str, Any]:
@@ -147,15 +171,34 @@ def seed_topics(repo_path: str | Path) -> dict[str, Any]:
 
 
 def load_graph(repo_path: str | Path) -> dict[str, Any]:
+    if split_layout_active(repo_path):
+        return _load_split_graph(repo_path)
     path = topic_path(repo_path)
     if not path.exists():
         raise TopicGraphError(f"missing topic graph: {path}")
     return read_json(path)
 
 
+def _load_split_graph(repo_path: str | Path) -> dict[str, Any]:
+    """Assemble the graph dict from the split layout: top-level fields from
+    the ``_meta.json`` sidecar (defaults synthesized when it's missing),
+    topics from the per-id ``<topic_id>.json`` files."""
+    meta_path = topic_meta_path(repo_path)
+    graph = read_json(meta_path) if meta_path.exists() else {}
+    graph.setdefault("version", SCHEMA_VERSION)
+    graph.setdefault("repo", repo_name(repo_path))
+    graph.setdefault("updated_at", utc_now())
+    graph["topics"] = {
+        f.stem: read_json(f)
+        for f in sorted(topic_split_dir(repo_path).glob("*.json"))
+        if f.name != TOPIC_META_FILE
+    }
+    return graph
+
+
 def save_graph(repo_path: str | Path, graph: dict[str, Any]) -> None:
     graph["updated_at"] = utc_now()
-    write_json(topic_path(repo_path), graph)
+    write_graph_to_disk(repo_path, graph)
 
 
 def load_local_graph(repo_path: str | Path) -> dict[str, Any]:
@@ -210,7 +253,63 @@ def read_json(path: str | Path) -> dict[str, Any]:
 
 def write_json(path: str | Path, data: dict[str, Any]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    Path(path).write_text(_dumps(data))
+
+
+def _dumps(data: dict[str, Any]) -> str:
+    return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+
+def _atomic_write(path: Path, data: str) -> None:
+    """Write-tmp + fsync + rename. POSIX-atomic on the target path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        # Best-effort cleanup of orphaned tmp file.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_graph_to_disk(repo_path: str | Path, graph: dict[str, Any]) -> Path:
+    """The one approved-graph serializer. Format follows the disk: a repo
+    already on the split layout gets per-topic files, anything else keeps
+    the legacy single ``topic.json``. Returns the path written (the split
+    dir or the legacy file)."""
+    if split_layout_active(repo_path):
+        return write_split_graph(repo_path, graph)
+    target = topic_path(repo_path)
+    _atomic_write(target, _dumps(graph))
+    return target
+
+
+def write_split_graph(repo_path: str | Path, graph: dict[str, Any]) -> Path:
+    """Write ``graph`` in the split layout: ``_meta.json`` carries every
+    top-level field except ``topics``; each topic gets ``<topic_id>.json``;
+    files for topics no longer in the graph are deleted."""
+    split_dir = topic_split_dir(repo_path)
+    split_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write(topic_meta_path(repo_path),
+                  _dumps({k: v for k, v in graph.items() if k != "topics"}))
+    topics = graph.get("topics") or {}
+    for tid, body in topics.items():
+        _atomic_write(split_dir / f"{tid}.json", _dumps(body))
+    for stale in split_dir.glob("*.json"):
+        if stale.name != TOPIC_META_FILE and stale.stem not in topics:
+            stale.unlink()
+    return split_dir
 
 
 def match_glob(path: str, pattern: str) -> bool:

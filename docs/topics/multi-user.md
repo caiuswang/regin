@@ -15,7 +15,7 @@ the implementation level.
 
 | Artifact | Wire format | Shared via git? |
 | --- | --- | --- |
-| Approved graph | `.regin/topics/topic.json` | yes (force-added by `pre-commit`) |
+| Approved graph | `.regin/topics/topic.json`, or `.regin/topics/topics/<topic_id>.json` + `_meta.json` after `migrate-split` | yes (force-added by `pre-commit`) |
 | Per-topic wiki | `.regin/topics/wiki/<topic_id>.md` | yes (normal tracked file) |
 | In-flight proposals (drafts, revisions, feedback threads) | `.regin/topics/bundles/<id>.json` | opt-in, via `proposal-export` |
 | Per-run artefact dirs `.regin/topics/proposals/<id>/` | — | no, `.regin/` is gitignored |
@@ -131,15 +131,31 @@ apply path goes through the normal `audit_graph` diff check so the
 proposed change is validated against the *current* live graph — not
 the graph at the time the proposal was first drafted.
 
-## Known limitation: merge conflicts on `topic.json`
+## Shrinking merge conflicts: the split per-topic layout
 
-`topic.json` is one JSON file containing every approved topic. Two
-users approving topics on parallel branches will see git merge
-conflicts when they merge. The file is structured so conflicts are
-resolvable, but at larger team sizes this gets annoying. The natural
-future escape hatch — not built — is to split the graph into one file
-per topic under `.regin/topics/topics/<topic_id>.json` so the merge
-surface shrinks to "did someone else touch the same topic id".
+By default `topic.json` is one JSON file containing every approved
+topic, so two users approving topics on parallel branches merge-conflict
+on the same file. The split layout stores one file per topic instead —
+`.regin/topics/topics/<topic_id>.json` plus a `_meta.json` sidecar for
+the top-level fields (`repo`, `version`, `updated_at`) — shrinking the
+merge surface to "did someone else touch the same topic id".
+
+Convert a repo once:
+
+```bash
+regin topics migrate-split --repo <path>
+```
+
+This writes the split dir, deletes the legacy `topic.json`, patches the
+repo's `.gitignore` re-include block (idempotently) so the per-topic
+files travel via git, and re-installs the git hooks so `pre-commit`
+stages the split dir. Commit the result.
+
+Reads are dual-format: regin auto-detects the layout (split wins if both
+exist) and every writer follows whatever layout the repo is on — there
+is no setting to flip. **Order matters on teams**: teammates must
+upgrade to a dual-read regin *before* the migration commit reaches
+them; an older regin cannot read the split layout.
 
 ## When you do want a shared database
 

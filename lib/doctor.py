@@ -316,7 +316,7 @@ def _topic_sync_item(repo, result: dict) -> dict:
     if state == "in_sync":
         return {**base, "present": True, "version": "in sync"}
     if state == "no_disk_file":
-        return {**base, "present": True, "version": "no topic.json (skip)", "optional": True}
+        return {**base, "present": True, "version": "no topic graph (skip)", "optional": True}
     hint = _TOPIC_SYNC_HINTS.get(state, f"unknown state: {state}")
     if state == "disk_unreadable" and result.get("error"):
         hint = f"{hint} (error: {result['error']})"

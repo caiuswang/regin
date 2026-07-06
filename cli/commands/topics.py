@@ -907,14 +907,14 @@ def cmd_topics_import(
     so a teammate's approved topics become routable locally — multi-user
     sharing without a shared database.
     """
-    from lib.topics.core import topic_path
+    from lib.topics.core import graph_exists, topic_path
     from lib.topics.graph_io import load_authoritative_graph, sync_snapshot_from_disk
 
     repo_path = _repo_path(repo)
     target = topic_path(repo_path)
-    if not target.exists():
+    if not graph_exists(repo_path):
         if not quiet:
-            print(f"No topic.json at {target} — nothing to import")
+            print(f"No topic graph under {target.parent} — nothing to import")
         return
 
     repo_id = _resolve_repo_id_for_import(repo_path)
@@ -945,6 +945,45 @@ def cmd_topics_import(
         f"Imported snapshot id={snap_id} (reason={reason}, "
         f"{topic_count} topics, {len(disk_wikis)} wikis)"
     )
+
+
+_GITIGNORE_RESULT_LINES = {
+    "patched": "Patched .gitignore: split-dir re-include lines added",
+    "already_patched": ".gitignore already re-includes the split dir",
+    "no_block": "No .regin re-include block in .gitignore — add the "
+                "!.regin/topics/topics/ lines manually (see docs/topics/multi-user.md)",
+}
+
+
+@topics_app.command(
+    "migrate-split",
+    help="Convert topic.json to one file per topic under .regin/topics/topics/ "
+         "(smaller team merge surface)",
+)
+def cmd_topics_migrate_split(
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    """One-way layout migration for the git-carried approved graph. Reads
+    are dual-format, so migrated repos keep working locally — but only on
+    regin versions that understand the split dir, hence the warning."""
+    from lib.topics.split_migrate import migrate_to_split
+
+    try:
+        result = migrate_to_split(_repo_path(repo))
+    except TopicGraphError as exc:
+        print(f"Migrate failed: {exc}")
+        raise typer.Exit(1)
+    print(f"Wrote {result['topic_count']} topic file(s) + _meta.json under "
+          f"{result['split_dir']}")
+    print(f"Removed legacy {result['removed_legacy']}")
+    print(_GITIGNORE_RESULT_LINES[result["gitignore"]])
+    if result["hooks"]:
+        print(f"Re-installed git hooks: {', '.join(sorted(result['hooks']))}")
+    else:
+        print("Skipped git hook install (no .git directory)")
+    print("\nWARNING: teammates must upgrade to a dual-read regin BEFORE this "
+          "commit reaches them — older versions cannot read the split layout.")
+    print("Commit .gitignore + .regin/topics/topics/ to share the new layout.")
 
 
 @topics_app.command(

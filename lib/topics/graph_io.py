@@ -27,8 +27,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
@@ -37,7 +35,14 @@ from sqlmodel import Session, select
 
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo
-from lib.topics.core import TopicGraphError, load_graph_merged, topic_path
+from lib.topics.core import (
+    TopicGraphError,
+    _atomic_write,
+    graph_exists,
+    load_graph_merged,
+    topic_path,
+    write_graph_to_disk,
+)
 from lib.topics.snapshots import graph_from_snapshot, latest_snapshot, wiki_pages_from_snapshot
 
 
@@ -86,8 +91,7 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
 
     if snap is not None:
         snap_graph = graph_from_snapshot(snap)
-        target = topic_path(repo_path)
-        if target.exists():
+        if graph_exists(repo_path):
             # Compare the MERGED disk graph (topic.json + topic.local.json)
             # against the snapshot so the overlay is never invisible to the
             # drift detector — otherwise an overlay-only write would look
@@ -100,7 +104,7 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
                 # Disk diverged — re-seed snapshot from disk so legacy
                 # paths' writes propagate to the source of truth.
                 try:
-                    _auto_seed_snapshot(repo.id, disk_graph, target)
+                    _auto_seed_snapshot(repo.id, disk_graph, topic_path(repo_path))
                     log.info("re-seeded snapshot for repo=%s from drifted disk", repo.name)
                 except IntegrityError:
                     pass
@@ -166,29 +170,6 @@ def _auto_seed_snapshot(repo_id: int, graph: dict[str, Any], target: Path) -> in
         return snap.id
 
 
-def _atomic_write(path: Path, data: str) -> None:
-    """Write-tmp + fsync + rename. POSIX-atomic on the target path."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        dir=str(path.parent),
-    )
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        # Best-effort cleanup of orphaned tmp file.
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
 def _graph_hash(graph: dict[str, Any]) -> str:
     """Stable hash for drift detection. Uses sorted-keys + no indent."""
     return hashlib.sha256(
@@ -234,19 +215,18 @@ def export_graph_to_disk(
     graph: dict[str, Any],
     wiki_pages: Optional[dict[str, str]] = None,
 ) -> Path:
-    """Write `graph` to `<repo>/.regin/topics/topic.json` atomically.
+    """Write `graph` to disk atomically, in whichever layout the repo is on
+    (legacy single `topic.json`, or one file per topic under `topics/`).
 
     `wiki_pages` is the `{topic_id: markdown}` shape from `GraphSnapshot.wiki_pages_json`.
     Phase A always passes `{}` because the per-topic wiki generator is
     Phase C work — this signature is in place now so the disk-writer
     contract doesn't change later.
 
-    Returns the path that was written, for logging.
+    Returns the path that was written (file or split dir), for logging.
     """
-    target = topic_path(repo_path)
-    serialized = json.dumps(graph, indent=2, sort_keys=True) + "\n"
-    _atomic_write(target, serialized)
-    _write_wiki_pages(target, wiki_pages)
+    target = write_graph_to_disk(repo_path, graph)
+    _write_wiki_pages(topic_path(repo_path), wiki_pages)
     log.debug("exported graph for %s (%d topics)", target, len(graph.get("topics", {})))
     return target
 
@@ -331,8 +311,7 @@ def reconcile_if_drifted(  # unused until Phase D readers switch to snapshots
     if snap is None:
         return False
     snap_graph = graph_from_snapshot(snap)
-    target = topic_path(repo_path)
-    if not target.exists():
+    if not graph_exists(repo_path):
         export_graph_to_disk(
             repo_path, snap_graph,
             wiki_pages=wiki_pages_from_snapshot(snap),
@@ -348,8 +327,8 @@ def reconcile_if_drifted(  # unused until Phase D readers switch to snapshots
         return True
     if _graph_hash(disk_graph) != _graph_hash(snap_graph):
         log.warning(
-            "topic.json (%s) diverged from latest snapshot id=%s — re-exporting",
-            target, snap.id,
+            "on-disk graph (%s) diverged from latest snapshot id=%s — re-exporting",
+            repo_path, snap.id,
         )
         export_graph_to_disk(
             repo_path, snap_graph,
@@ -390,7 +369,7 @@ def sync_snapshot_from_disk(
     """
     p = str(Path(repo_path).resolve())
     target = topic_path(repo_path)
-    if not target.exists():
+    if not graph_exists(repo_path):
         return None
 
     def _run(s: Session) -> Optional[int]:
@@ -458,7 +437,8 @@ def check_graph_sync(repo_path: str | Path) -> dict:
 
     States:
     - `unregistered` — no Repo row for this path
-    - `no_disk_file` — Repo registered, `topic.json` missing
+    - `no_disk_file` — Repo registered, no on-disk graph in either
+      layout (no `topic.json` and no split `topics/` dir with files)
     - `no_snapshot` — Repo registered, disk present, no snapshot yet
       (first read will auto-seed; running `regin topics import` makes
       it explicit and tagged with `reason=manual`/`git_pull`)
@@ -476,7 +456,7 @@ def check_graph_sync(repo_path: str | Path) -> dict:
         repo = s.exec(select(Repo).where(Repo.path == p)).first()
         if repo is None or repo.id is None:
             return {"state": "unregistered"}
-        if not target.exists():
+        if not graph_exists(repo_path):
             return {"state": "no_disk_file", "repo_id": repo.id}
         snap = s.exec(
             select(GraphSnapshot)

@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from lib.activity_log import get_activity_logger
 from lib.topics.split_gate import (
@@ -214,28 +213,28 @@ def apply_split(store, repo_path, plan: SplitPlan, graph: dict, *,
 
 
 def _write_nodes(repo_path, graph: dict, plan: SplitPlan) -> None:
-    """Add the new nodes to topic.json (canonical write) and sync the snapshot."""
+    """Add the new nodes to the base graph (canonical write) and sync the snapshot."""
+    from lib.topics.core import load_graph, write_graph_to_disk
     from lib.topics.graph_io import import_from_disk
 
-    topic_json = Path(repo_path) / ".regin" / "topics" / "topic.json"
-    disk = json.loads(topic_json.read_text())
+    disk = load_graph(repo_path)
     disk["topics"].update(plan.new_topics)
-    topic_json.write_text(json.dumps(disk, indent=2, sort_keys=True) + "\n")
+    write_graph_to_disk(repo_path, disk)
     graph["topics"].update(plan.new_topics)   # keep caller's view consistent
     import_from_disk(repo_path, reason="split-leaf")
 
 
 def _remove_nodes(repo_path, graph: dict, plan: SplitPlan) -> None:
-    """Undo `_write_nodes`: drop the plan's new nodes from topic.json + the
+    """Undo `_write_nodes`: drop the plan's new nodes from the base graph + the
     caller's graph and re-sync, so a failed apply leaves no orphan sub-topics."""
+    from lib.topics.core import load_graph, write_graph_to_disk
     from lib.topics.graph_io import import_from_disk
 
-    topic_json = Path(repo_path) / ".regin" / "topics" / "topic.json"
-    disk = json.loads(topic_json.read_text())
+    disk = load_graph(repo_path)
     for tid in plan.new_topics:
         disk["topics"].pop(tid, None)
         graph["topics"].pop(tid, None)
-    topic_json.write_text(json.dumps(disk, indent=2, sort_keys=True) + "\n")
+    write_graph_to_disk(repo_path, disk)
     import_from_disk(repo_path, reason="split-leaf-rollback")
 
 

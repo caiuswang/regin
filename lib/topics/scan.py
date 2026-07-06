@@ -35,8 +35,7 @@ from lib.topics.core import (
     save_local_graph,
     slugify,
     topic_dir,
-    topic_path,
-    write_json,
+    write_graph_to_disk,
 )
 from lib.topics.graph_io import load_authoritative_graph, sync_snapshot_from_disk
 from lib.topics.ignores import load_ignore_rules
@@ -379,7 +378,7 @@ def promote_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
 
     # Preserve base top-level fields (no re-stamp) so the merged disk stays
     # hash-equal to the snapshot; promotion never changes the live graph.
-    write_json(topic_path(repo_path), base)
+    write_graph_to_disk(repo_path, base)
     save_local_graph(repo_path, overlay)
     _topics_log().write(
         "topic_promoted",
@@ -420,7 +419,7 @@ def promote_all_topics(repo_path: str | Path) -> dict[str, Any]:
 
     # Preserve base top-level fields (no re-stamp) so the merged disk stays
     # hash-equal to the snapshot; promotion never changes the live graph.
-    write_json(topic_path(repo_path), base)
+    write_graph_to_disk(repo_path, base)
     save_local_graph(repo_path, overlay)
     _topics_log().write(
         "topics_promoted_all",
@@ -484,9 +483,9 @@ def delete_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     base_changed = base_changed or base_pruned > 0
 
     # Only touch the git-tracked base when it actually changed — an
-    # overlay-only delete must not reformat or create topic.json.
+    # overlay-only delete must not reformat or create the base graph files.
     if base_changed:
-        write_json(topic_path(repo_path), base)
+        write_graph_to_disk(repo_path, base)
     save_local_graph(repo_path, overlay)
 
     wiki_file = topic_dir(repo_path) / "wiki" / f"{slugify(topic_id)}.md"
@@ -531,9 +530,11 @@ _PRE_COMMIT_BODY = """
 "$PY" "$ROOT/cli/regin.py" topics check --repo "$ROOT"
 "$PY" "$ROOT/cli/regin.py" topics scan --repo "$ROOT" --staged
 # Stage the approved graph + per-topic wiki narratives so they travel
-# with this commit. .gitignore un-ignores exactly these (topic.json and
-# wiki/*.md); the local topic.local.json overlay is never staged.
+# with this commit. .gitignore un-ignores exactly these (topic.json or
+# the split topics/*.json, and wiki/*.md); the local topic.local.json
+# overlay is never staged.
 [ -f "$ROOT/.regin/topics/topic.json" ] && git add "$ROOT/.regin/topics/topic.json"
+[ -d "$ROOT/.regin/topics/topics" ] && git add "$ROOT/.regin/topics/topics"
 [ -d "$ROOT/.regin/topics/wiki" ] && git add "$ROOT/.regin/topics/wiki"
 """
 

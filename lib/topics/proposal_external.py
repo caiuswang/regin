@@ -1104,12 +1104,12 @@ def _read_topic_signature(repo: Path) -> str | None:
     # `updated_at` field (rewritten on every save_graph) and any whitespace
     # / key-order changes. Only flips when a topic, edge, or alias actually
     # changed — so a concurrent no-op save no longer trips the integrity check.
-    path = topic_path(repo)
-    if not path.exists():
-        return None
+    # Reads through load_graph so both disk layouts (legacy topic.json and
+    # the per-topic split dir) are fingerprinted.
+    from lib.topics.core import load_graph
     try:
-        graph = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        graph = load_graph(repo)
+    except (TopicGraphError, OSError, json.JSONDecodeError):
         return None
     if isinstance(graph, dict):
         graph = {k: v for k, v in graph.items() if k != "updated_at"}

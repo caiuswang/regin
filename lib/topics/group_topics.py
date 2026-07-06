@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from lib.activity_log import get_activity_logger
 from lib.topics.split_leaf import ClusterProposerUnavailable, _slug, _unique_id
@@ -437,14 +436,14 @@ def apply_group(repo_path, plan: GroupPlan, graph: dict) -> dict:
 
 
 def _write_group(repo_path, graph: dict, plan: GroupPlan) -> None:
-    """Add the new bucket nodes to topic.json and set each grouped topic's
+    """Add the new bucket nodes to the base graph and set each grouped topic's
     `parent_id` (canonical write), then sync the snapshot. On any failure while
     syncing, roll back both the new buckets and the parent_id changes so a
     failed apply leaves no orphan buckets or half-reparented topics."""
+    from lib.topics.core import load_graph, write_graph_to_disk
     from lib.topics.graph_io import import_from_disk
 
-    topic_json = Path(repo_path) / ".regin" / "topics" / "topic.json"
-    disk = json.loads(topic_json.read_text())
+    disk = load_graph(repo_path)
     original_parents = {
         tid: (disk["topics"].get(tid) or {}).get("parent_id")
         for tid in plan.assignment if tid in disk["topics"]}
@@ -453,7 +452,7 @@ def _write_group(repo_path, graph: dict, plan: GroupPlan) -> None:
     for tid, bid in plan.assignment.items():
         if tid in disk["topics"]:
             disk["topics"][tid]["parent_id"] = bid
-    topic_json.write_text(json.dumps(disk, indent=2, sort_keys=True) + "\n")
+    write_graph_to_disk(repo_path, disk)
 
     # keep the caller's graph view consistent (copy bodies so a later rollback
     # can't leave a shared-mutable node half-updated in the caller's dict)
@@ -473,10 +472,10 @@ def _rollback_group(repo_path, graph: dict, plan: GroupPlan,
                     original_parents: dict[str, str | None]) -> None:
     """Undo `_write_group`: drop the new buckets and restore each grouped
     topic's original `parent_id`, on disk + in the caller's graph, then re-sync."""
+    from lib.topics.core import load_graph, write_graph_to_disk
     from lib.topics.graph_io import import_from_disk
 
-    topic_json = Path(repo_path) / ".regin" / "topics" / "topic.json"
-    disk = json.loads(topic_json.read_text())
+    disk = load_graph(repo_path)
     for bid in plan.new_buckets:
         disk["topics"].pop(bid, None)
         graph["topics"].pop(bid, None)
@@ -485,5 +484,5 @@ def _rollback_group(repo_path, graph: dict, plan: GroupPlan,
             disk["topics"][tid]["parent_id"] = parent
         if tid in graph["topics"]:
             graph["topics"][tid]["parent_id"] = parent
-    topic_json.write_text(json.dumps(disk, indent=2, sort_keys=True) + "\n")
+    write_graph_to_disk(repo_path, disk)
     import_from_disk(repo_path, reason="group-topics-rollback")
