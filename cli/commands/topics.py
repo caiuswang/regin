@@ -735,14 +735,24 @@ def cmd_topics_proposal_export(
         help="Output path (default: .regin/topics/bundles/<id>.json)"),
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
 ) -> None:
+    import subprocess
+
     from lib.topics.proposals import export_proposal_bundle
 
+    rp = _repo_path(repo)
     try:
-        path = export_proposal_bundle(_repo_path(repo), proposal_id, out_path=out)
+        path = export_proposal_bundle(rp, proposal_id, out_path=out)
     except TopicGraphError as exc:
         print(f"Proposal export failed: {exc}")
         raise typer.Exit(1)
     print(f"Exported proposal {proposal_id} to {path}")
+    ignored = subprocess.run(
+        ["git", "-C", str(rp), "check-ignore", "-q", str(path)],
+        capture_output=True,
+    ).returncode == 0
+    if ignored:
+        print("NOTE: this repo's .gitignore still ignores the bundle "
+              f"(no re-include block to patch) — stage it with: git add -f {path}")
     print("Commit the bundle to share it; teammates run "
           "`regin topics proposal-import <path>`.")
 

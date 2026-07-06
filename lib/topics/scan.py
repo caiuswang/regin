@@ -529,13 +529,16 @@ fi
 _PRE_COMMIT_BODY = """
 "$PY" "$ROOT/cli/regin.py" topics check --repo "$ROOT"
 "$PY" "$ROOT/cli/regin.py" topics scan --repo "$ROOT" --staged
-# Stage the approved graph + per-topic wiki narratives so they travel
-# with this commit. .gitignore un-ignores exactly these (topic.json or
-# the split topics/*.json, and wiki/*.md); the local topic.local.json
-# overlay is never staged.
-[ -f "$ROOT/.regin/topics/topic.json" ] && git add "$ROOT/.regin/topics/topic.json"
-[ -d "$ROOT/.regin/topics/topics" ] && git add "$ROOT/.regin/topics/topics"
-[ -d "$ROOT/.regin/topics/wiki" ] && git add "$ROOT/.regin/topics/wiki"
+# Stage the approved graph, per-topic wiki narratives, and proposal
+# bundles so they travel with this commit. -f overrides the .regin
+# ignore in repos whose .gitignore has no re-include block; the local
+# topic.local.json overlay is never staged. `|| true` keeps a missing
+# path (and `set -eu`) from failing the whole hook — notably on the
+# last line, whose status is the script's exit code.
+[ -f "$ROOT/.regin/topics/topic.json" ] && git add -f "$ROOT/.regin/topics/topic.json" || true
+[ -d "$ROOT/.regin/topics/topics" ] && git add -f "$ROOT/.regin/topics/topics" || true
+[ -d "$ROOT/.regin/topics/wiki" ] && git add -f "$ROOT/.regin/topics/wiki" || true
+[ -d "$ROOT/.regin/topics/bundles" ] && git add -f "$ROOT/.regin/topics/bundles" || true
 """
 
 # After git pull / merge, mirror upstream's approved topics into the

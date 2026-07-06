@@ -43,6 +43,16 @@ git add .regin/topics/bundles/20260519T173635Z.json
 git commit -m "share proposal for review"
 ```
 
+Only terminal runs export — an in-flight run would import as one no
+consumer-side worker ever finishes; wait for it or stop it first.
+
+In repos other than regin itself, `.regin/*` is typically ignored:
+the export patches the repo's `.gitignore` re-include block so the
+bundle travels (and the regin pre-commit hook force-stages the
+bundles dir anyway). When the repo has no re-include block to patch,
+the export prints the `git add -f` command to stage the bundle
+manually.
+
 Consumer (after `git pull`):
 
 ```bash

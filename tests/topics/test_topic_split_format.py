@@ -200,8 +200,9 @@ def test_migrate_split_patches_gitignore(migrated_repo):
 def test_migrate_split_hook_stages_both_layouts(migrated_repo):
     repo, _ = migrated_repo
     hook_body = (repo / ".git" / "hooks" / "pre-commit").read_text()
-    assert 'git add "$ROOT/.regin/topics/topics"' in hook_body
-    assert 'git add "$ROOT/.regin/topics/topic.json"' in hook_body
+    assert 'git add -f "$ROOT/.regin/topics/topics"' in hook_body
+    assert 'git add -f "$ROOT/.regin/topics/topic.json"' in hook_body
+    assert 'git add -f "$ROOT/.regin/topics/bundles"' in hook_body
 
 
 def test_migrate_split_files_travel_via_git(migrated_repo):

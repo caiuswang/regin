@@ -22,15 +22,39 @@ from ._common import _topics_log
 
 BUNDLE_VERSION = 1
 
+# Appended to a target repo's `.regin` re-include block so exported
+# bundles travel via ordinary commits in ANY managed repo, not just
+# regin's own (which ships the lines pre-added).
+BUNDLE_GITIGNORE_LINES = (
+    "!.regin/topics/bundles/",
+    ".regin/topics/bundles/*",
+    "!.regin/topics/bundles/*.json",
+)
+
+# A non-terminal run is still owned by a live worker; its bundle would
+# import as a permanently in-flight run no consumer-side worker will
+# ever finish.
+_EXPORTABLE_STATES = {"completed", "failed", "cancelled", "timed_out"}
+
 
 def _default_bundle_path(repo_path: str | Path, proposal_id: str) -> Path:
     return topic_dir(repo_path) / "bundles" / f"{proposal_id}.json"
 
 
 def _validate_proposal_id(proposal_id: str) -> None:
-    if (not proposal_id or "/" in proposal_id or "\\" in proposal_id
-            or proposal_id in {".", ".."}):
-        raise TopicGraphError(f"invalid proposal id: {proposal_id}")
+    bad = (not proposal_id or "/" in proposal_id or "\\" in proposal_id
+           or proposal_id in {".", ".."} or len(proposal_id) > 180
+           or any(ord(c) < 32 or ord(c) == 127 for c in proposal_id))
+    if bad:
+        raise TopicGraphError(f"invalid proposal id: {proposal_id!r}")
+
+
+def ensure_bundles_travel(repo_path: str | Path) -> str:
+    """Best-effort: patch the target repo's `.gitignore` re-include block
+    so bundle JSONs aren't ignored. Returns the patch action
+    (patched | already_patched | no_block)."""
+    from lib.topics.split_migrate import patch_gitignore_lines
+    return patch_gitignore_lines(repo_path, BUNDLE_GITIGNORE_LINES)
 
 
 def export_proposal_bundle(
@@ -63,6 +87,11 @@ def export_proposal_bundle(
         raise TopicGraphError(
             f"proposal not found in the local DB: {proposal_id} "
             "(a disk-only legacy run needs backfill_disk_proposals_to_orm first)")
+    state = (parts["run"] or {}).get("state")
+    if state not in _EXPORTABLE_STATES:
+        raise TopicGraphError(
+            f"proposal run is still in flight (state={state}); wait for it "
+            "to finish — or stop it — before exporting")
     wiki_path = topic_dir(repo) / "proposals" / proposal_id / "wiki.md"
     bundle = {
         "bundle_version": BUNDLE_VERSION,
@@ -74,8 +103,11 @@ def export_proposal_bundle(
         "revisions": parts["revisions"],
         "feedback_threads": parts["feedback_threads"],
     }
-    path = (Path(out_path) if out_path is not None
-            else _default_bundle_path(repo, proposal_id))
+    if out_path is not None:
+        path = Path(out_path)
+    else:
+        path = _default_bundle_path(repo, proposal_id)
+        ensure_bundles_travel(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(bundle, indent=2))
     _topics_log().write(
@@ -129,9 +161,15 @@ def import_proposal_bundle(
         return result
     wiki = bundle.get("wiki")
     if wiki:
-        out_dir = topic_dir(repo) / "proposals" / result["proposal_id"]
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "wiki.md").write_text(wiki)
+        try:
+            out_dir = topic_dir(repo) / "proposals" / result["proposal_id"]
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "wiki.md").write_text(wiki)
+        except (OSError, ValueError) as exc:
+            # The ORM rows are already committed; surface the partial
+            # import instead of masking it as success.
+            raise TopicGraphError(
+                f"proposal rows imported but wiki.md write failed: {exc}")
     _topics_log().write(
         "proposal_bundle_imported",
         proposal_id=result["proposal_id"], action=result["action"],

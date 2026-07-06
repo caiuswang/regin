@@ -245,3 +245,90 @@ def test_gitignore_reincludes_bundle_json(fake_git_repo):
     assert ignored(".regin/topics/bundles/notes.txt")
     assert ignored(".regin/topics/proposals/run1/topics.json")
     assert not ignored(".regin/topics/topic.json")
+
+
+def test_export_refuses_invalid_ids(fake_git_repo):
+    import pytest
+    from lib.topics import TopicGraphError
+
+    for bad in ("run\x00x", "a" * 200, "run\nx"):
+        with pytest.raises(TopicGraphError, match="invalid proposal id"):
+            export_proposal_bundle(fake_git_repo, bad)
+
+
+def test_export_refuses_in_flight_run(stub_proposal_provider, fake_git_repo):
+    import pytest
+    from lib.orm import SessionLocal
+    from lib.orm.models import ProposalRun
+    from lib.topics import TopicGraphError
+
+    _prepare_repo(fake_git_repo)
+    create_proposal_run(fake_git_repo, run_id="run1")
+    with SessionLocal() as s:
+        run = s.get(ProposalRun, "run1")
+        run.state = "running"
+        run.completed_at = None
+        s.commit()
+
+    with pytest.raises(TopicGraphError, match="still in flight"):
+        export_proposal_bundle(fake_git_repo, "run1")
+
+
+def test_export_patches_target_repo_gitignore(stub_proposal_provider, fake_git_repo):
+    """A managed repo that ignores `.regin/*` (the normal case outside
+    regin itself) gets the bundle re-include patched in at export time,
+    so the documented plain `git add` flow works."""
+    _prepare_repo(fake_git_repo)
+    (fake_git_repo / ".gitignore").write_text(
+        ".regin/*\n!.regin/topics/\n.regin/topics/*\n"
+        "!.regin/topics/topic.json\n")
+    create_proposal_run(fake_git_repo, run_id="run1")
+
+    path = export_proposal_bundle(fake_git_repo, "run1")
+
+    assert "!.regin/topics/bundles/*.json" in (fake_git_repo / ".gitignore").read_text()
+    ignored = subprocess.run(
+        ["git", "-C", str(fake_git_repo), "check-ignore", "-q",
+         str(path.relative_to(fake_git_repo))],
+        capture_output=True).returncode == 0
+    assert not ignored
+
+
+def test_import_rejects_duplicate_revision_numbers(stub_proposal_provider, fake_git_repo):
+    import pytest
+    from lib.topics import TopicGraphError
+    from lib.topics.proposals.core_io import load_proposal_status
+
+    _prepare_repo(fake_git_repo)
+    _seed_reviewed_proposal(fake_git_repo)
+    path = export_proposal_bundle(fake_git_repo, "run1")
+    delete_proposal_run(fake_git_repo, "run1")
+
+    bundle = json.loads(path.read_text())
+    for r in bundle["revisions"]:
+        r["revision_number"] = 1
+    path.write_text(json.dumps(bundle))
+
+    with pytest.raises(TopicGraphError, match="revision numbers"):
+        import_proposal_bundle(fake_git_repo, path)
+    # Refusal is transactional — no partial run row survives.
+    with pytest.raises(TopicGraphError):
+        load_proposal_status(fake_git_repo, "run1")
+
+
+def test_import_collapses_multiple_is_latest(stub_proposal_provider, fake_git_repo):
+    _prepare_repo(fake_git_repo)
+    _seed_reviewed_proposal(fake_git_repo)
+    path = export_proposal_bundle(fake_git_repo, "run1")
+    delete_proposal_run(fake_git_repo, "run1")
+
+    bundle = json.loads(path.read_text())
+    for r in bundle["revisions"]:
+        r["is_latest"] = True
+    path.write_text(json.dumps(bundle))
+
+    import_proposal_bundle(fake_git_repo, path)
+    revisions = list_proposal_revisions(fake_git_repo, "run1")
+    assert sum(1 for r in revisions if r.get("is_latest")) == 1
+    latest = max(revisions, key=lambda r: r["revision_number"])
+    assert latest["is_latest"]

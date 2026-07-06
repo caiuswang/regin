@@ -13,9 +13,11 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from lib.orm import SessionLocal
+from lib.topics import TopicGraphError
 from lib.orm.models import (
     ProposalFeedbackComment,
     ProposalFeedbackThread,
@@ -206,13 +208,15 @@ def _insert_bundle_run(
 def _revisions_with_latest_marked(
     revisions: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Bundle revisions ascending by number, with a fallback `is_latest`
-    on the newest one when a hand-edited bundle flags none — readers
-    treat is_latest=1 as the run's current content."""
-    ordered = sorted(revisions, key=lambda r: r.get("revision_number") or 0)
-    if ordered and not any(r.get("is_latest") for r in ordered):
-        ordered = [dict(r) for r in ordered]
-        ordered[-1]["is_latest"] = True
+    """Bundle revisions ascending by number, normalized so exactly one is
+    flagged `is_latest` — a hand-edited bundle can flag none or several,
+    and readers treat is_latest=1 as the run's current content."""
+    ordered = [dict(r) for r in
+               sorted(revisions, key=lambda r: r.get("revision_number") or 0)]
+    flagged = [r for r in ordered if r.get("is_latest")]
+    winner = flagged[-1] if flagged else (ordered[-1] if ordered else None)
+    for r in ordered:
+        r["is_latest"] = r is winner
     return ordered
 
 
@@ -341,12 +345,18 @@ def orm_import_proposal_bundle(
                 "proposal_id": proposal_id, "revisions": 0, "threads": 0,
                 "action": "refused", "message": refusal,
             }
-        _insert_bundle_run(s, repo.id, proposal_id, bundle.get("run") or {})
-        id_by_number = _insert_bundle_revisions(
-            s, proposal_id, bundle.get("revisions") or [])
-        thread_count = _insert_bundle_threads(
-            s, proposal_id, bundle.get("feedback_threads") or [], id_by_number)
-        s.commit()
+        try:
+            _insert_bundle_run(s, repo.id, proposal_id, bundle.get("run") or {})
+            id_by_number = _insert_bundle_revisions(
+                s, proposal_id, bundle.get("revisions") or [])
+            thread_count = _insert_bundle_threads(
+                s, proposal_id, bundle.get("feedback_threads") or [], id_by_number)
+            s.commit()
+        except IntegrityError as exc:
+            s.rollback()
+            raise TopicGraphError(
+                "bundle rejected: conflicting or duplicate revision numbers "
+                f"({exc.orig})")
     return {
         "proposal_id": proposal_id,
         "revisions": len(id_by_number),

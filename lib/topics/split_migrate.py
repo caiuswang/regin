@@ -36,9 +36,9 @@ SPLIT_GITIGNORE_LINES = (
 _GITIGNORE_ANCHOR = ".regin/topics/*"
 
 
-def patch_gitignore(repo_path: str | Path) -> str:
-    """Idempotently extend the repo's ``.regin`` re-include block so the
-    split dir's JSON files travel via git.
+def patch_gitignore_lines(repo_path: str | Path, lines_to_add: tuple[str, ...]) -> str:
+    """Idempotently insert re-include lines after the repo's
+    ``.regin/topics/*`` ignore anchor.
 
     Returns ``"patched"``, ``"already_patched"``, or ``"no_block"`` (no
     ``.gitignore`` or no wiki-style re-include block to extend — nothing
@@ -50,13 +50,19 @@ def patch_gitignore(repo_path: str | Path) -> str:
     lines = gitignore.read_text().splitlines()
     if _GITIGNORE_ANCHOR not in lines:
         return "no_block"
-    missing = [line for line in SPLIT_GITIGNORE_LINES if line not in lines]
+    missing = [line for line in lines_to_add if line not in lines]
     if not missing:
         return "already_patched"
     at = lines.index(_GITIGNORE_ANCHOR) + 1
     lines[at:at] = missing
     gitignore.write_text("\n".join(lines) + "\n")
     return "patched"
+
+
+def patch_gitignore(repo_path: str | Path) -> str:
+    """Idempotently extend the repo's ``.regin`` re-include block so the
+    split dir's JSON files travel via git."""
+    return patch_gitignore_lines(repo_path, SPLIT_GITIGNORE_LINES)
 
 
 def migrate_to_split(repo_path: str | Path) -> dict[str, Any]:
