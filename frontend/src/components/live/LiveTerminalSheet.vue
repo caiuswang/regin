@@ -37,6 +37,7 @@ async function fetchScreen() {
     html.value = res.html
     phase.value = 'ready'
   } else {
+    html.value = ''
     phase.value = 'failed'
     detail.value = res?.detail || 'capture failed'
   }
@@ -65,13 +66,24 @@ onMounted(fetchScreen)
       </Button>
     </div>
     <pre
-      v-if="phase !== 'failed'"
+      v-if="html"
       ref="termBodyEl"
       class="live-term-body"
       data-testid="live-terminal-body"
       v-html="html"
     ></pre>
-    <p v-else class="live-empty" data-testid="live-terminal-error">{{ detail }}</p>
+    <!-- A 200 with empty html is a live pane with nothing on it — the empty
+         state, not a blank <pre> that reads as a broken capture. -->
+    <p
+      v-else-if="phase === 'ready'"
+      class="live-empty"
+      data-testid="live-terminal-empty"
+    >no terminal output</p>
+    <p
+      v-else-if="phase === 'failed'"
+      class="live-empty"
+      data-testid="live-terminal-error"
+    >{{ detail }}</p>
     <p v-if="bridgePane" class="live-term-foot">
       pane {{ bridgePane }} · read-only, no keys sent
     </p>

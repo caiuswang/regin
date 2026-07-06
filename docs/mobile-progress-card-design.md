@@ -1,9 +1,13 @@
 # Design: mobile live session-tail card (`/live`)
 
+*This is a frozen v7.x design snapshot, predating the server-phase model. The
+current source of truth is
+[`.regin/topics/wiki/live-session-mobile-card.md`](../.regin/topics/wiki/live-session-mobile-card.md).*
+
 **Status:** v7.2 — BUILT on feat/live-mobile-card (goal-verified-treenav loop: dual
 builders → dual adversarial verifiers → fix loop → /code-review high → fix loop;
 final gates: vite build clean, live-card 24/24 + responsive sweep green, zero console
-errors). Deferred follow-ups: session-switcher; LiveSheet → Reka Dialog primitives
+errors). Deferred follow-ups: LiveSheet → Reka Dialog primitives
 (focus trap/scroll lock); copy-path consolidation into useCopy; bySpanTime extraction;
 visibleRows/subagentIds/NOW-scan memoization; 5.5rem + 92/96px constants → tokens;
 isStale guard wrapper.
@@ -221,8 +225,9 @@ the tail keeps the majority:
 
 ## Data + lifecycle (all verified against source)
 
-- No id → `GET /api/sessions?limit=1` → `.sessions[0].trace_id`; header session-switcher
-  lists recent 5.
+- No id → `GET /api/sessions?limit=1` → `.sessions[0].trace_id`; the header
+  session-switcher (`LiveSessionPicker.vue`, shipped) lists recent 20,
+  active-first.
 - **Window + fold + tail = the existing shallow map pagination**
   (`web/blueprints/trace/sessions.py::_shallow_map_response`, `?shallow=1`).
   **v7.2 correction (found by verification):** `limit` pages **turn anchors**
@@ -238,8 +243,6 @@ the tail keeps the majority:
     turn anchor lands, so mid-turn resolved `pending-*` placeholders would never be
     pruned — verified in `lib/trace/trace_service/queries.py`); the refetch also
     fire-and-forget triggers the server's background transcript rescan.
-  - **Deferred (v7.2):** the header "recent 5" session-switcher — the route accepts
-    `/live/<id>` directly; switcher is a follow-up, not part of the acceptance bar.
   - Time format: eyebrows use `HH:MM` (per the visual spec); activity-row times keep
     seconds (`HH:MM:SS`) — a live tail polling at 4s makes seconds meaningful there.
 - **Prune `retired_span_ids` every poll.** The client span list is append-only; the

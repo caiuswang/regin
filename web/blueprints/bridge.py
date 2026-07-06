@@ -222,8 +222,11 @@ def api_session_bridge_commands(trace_id):
     from its own project `.claude/` (resolved via the pane registry's cwd)
     plus `~/.claude/`. Same JWT + `require_editor` gate as `bridge-send`;
     read-only and fail-closed — any error collapses to `{"commands": []}` so
-    the composer just shows no menu, never an error.
+    the composer just shows no menu, never an error. A disabled bridge is the
+    same clean structured refusal the sibling routes return.
     """
+    if not settings.agent_bridge.enabled:
+        return jsonify({"commands": [], "detail": "bridge disabled"})
     try:
         rows = commands.list_session_commands(trace_id)
     except Exception:  # noqa: BLE001 — read-only convenience list, never 500

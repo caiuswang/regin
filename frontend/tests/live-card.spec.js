@@ -1004,6 +1004,21 @@ test.describe('NOW-zone elapsed rollover (duration fix)', () => {
       const json = await resp.json()
       await route.fulfill({ response: resp, json: { ...json, ...phaseFields('working') } })
     })
+    // The 10-min-old pending tool is reparented under the prompt anchor, so it
+    // arrives via the deep-children fetch — where the server demotes it to a
+    // resolved-interrupted rendering (_demote_stale_pending: inactive session +
+    // pending older than 60s), stripping the very 'tool' state under test.
+    // Re-assert its PENDING placeholder in the children response.
+    const pendingSpanId = `pending-tu-${sfx}`
+    await page.route(`**/api/sessions/${traceId}/spans/*/children*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      const spans = (json.spans || []).map((s) => (s.span_id === pendingSpanId
+        ? { ...s, status_code: 'PENDING',
+          attributes: { tool_name: 'Agent', tool_use_id: `tu-${sfx}`, is_test: true } }
+        : s))
+      await route.fulfill({ response: resp, json: { ...json, spans } })
+    })
 
     await page.goto(`/live/${traceId}`)
     await settle(page)

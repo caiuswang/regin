@@ -157,6 +157,15 @@ An authenticated sender fully controls the agent — that is the feature, not
 a flaw to mitigate. Sender identity is recorded on the inbox row so the
 trail shows what came from where.
 
+**Known limitation — no per-session ownership (IDOR).** The session-scoped
+routes (`/api/sessions/<sid>/bridge-*`) are gated by `@require_editor` *only*;
+there is no binding between a JWT and the sessions it may steer. In a
+multi-user deployment this means **any** editor can steer **any** reachable
+local agent session — equivalent to host shell access via that agent. This is
+why the bridge ships **off by default** and is intended for single-user
+localhost use. Multi-user use must first add per-session ownership (or
+admin-gate these routes); until then, treat editor role as full-host trust.
+
 ## Feasibility spike
 
 `scripts/bridge_mvp.py` (stdlib-only, no regin imports) is a working
@@ -240,13 +249,36 @@ bearer check against `settings.agent_bridge.token` (constant-time compare)
 separately revocable. Server binding stays the `cli/commands/server.py`
 default of 127.0.0.1.
 
+### Slice 5 — live-card surface (shipped)
+
+Beyond the headless `/api/bridge/*` pair, `web/blueprints/bridge.py` also
+serves the `/live` card's own composer and its steering affordances,
+web-JWT-authed (`require_editor`) rather than bridge-token-guarded — see
+*Security model* above for why that's a deliberate second credential path:
+
+- `POST /api/sessions/<id>/bridge-send` — the composer's send action.
+- `POST /api/sessions/<id>/bridge-key` — a single allowlisted control key
+  (e.g. Escape) for recovering from a swallowed-input overlay.
+- `POST /api/sessions/<id>/bridge-answer` — drives a pending
+  `AskUserQuestion`'s select TUI from the Q&A sheet.
+- `GET /api/sessions/<id>/bridge-commands` — the composer's `/`-autocomplete
+  list.
+- `GET /api/sessions/<id>/bridge-screen` — a read-only terminal-peek
+  snapshot.
+
+Detail (row semantics, sheets, autocomplete design) lives in
+`docs/bridge-slash-autocomplete-design.md` and
+`.regin/topics/wiki/live-session-mobile-card.md`, not duplicated here.
+
 ### Deferred beyond v1
 
 - Hook-injection fallback (PostToolUse `additionalContext` + Stop-block)
   for sessions not under tmux.
-- A send box in the web UI's live session view.
 - Multiline bodies via bracketed paste (v1 flattens newlines).
 
-When v1 lands, `scripts/bridge_mvp.py` retires: its guards live on in
-`lib/agent_bridge/delivery.py` and its selftest becomes the integration
-test.
+The web UI's live-card composer (once deferred here) has since shipped —
+see *Slice 5* above.
+
+`scripts/bridge_mvp.py` is kept alongside the shipped library code as a
+stdlib-only manual selftest harness (`--selftest`); it has not been
+deleted.

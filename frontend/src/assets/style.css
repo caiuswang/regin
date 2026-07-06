@@ -2181,6 +2181,14 @@ details summary {
     font-size: 12px;
     color: var(--color-fg-faint);
 }
+/* Inline "this turn's activity fetch was abandoned" marker under a root —
+   compact and left-aligned (it sits between tail rows, not as a full pane). */
+.live-degraded {
+    padding: 3px 12px 5px 22px;
+    text-align: left;
+    font-size: 11px;
+    font-style: italic;
+}
 
 /* "N new" chip */
 .live-newchip {
@@ -2297,11 +2305,24 @@ details summary {
     overflow-wrap: anywhere;
 }
 .live-now-more {
+    position: relative;
     display: inline;
     height: auto;
     padding: 0;
     font-size: 11.5px;
     font-weight: 600;
+}
+/* Grow the TOUCH target to the mobile ~44px minimum without changing the
+   visual footprint or shifting layout: a transparent hit-area overlay, biased
+   upward into the non-interactive clamp text above (the composer sits ~7px
+   below, so only a few px reach down and never overlap it). */
+.live-now-more::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -4px;
+    height: 44px;
 }
 /* Action row OUTSIDE the clamped text: a long question/response fills both
    clamp lines and would clip a button rendered inside .live-now-text. */

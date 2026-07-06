@@ -93,10 +93,38 @@ def _extract_osc8_links(text: str) -> tuple[str, list[str]]:
     return text, links
 
 
+_SAFE_SCHEMES = frozenset({'http', 'https', 'mailto'})
+_URL_INLINE_STRIP_RE = re.compile(r'[\t\n\r]')
+_URL_LEAD_STRIP_RE = re.compile(r'^[\x00-\x20]+')
+_URL_SCHEME_RE = re.compile(r'([a-zA-Z][a-zA-Z0-9+.\-]*):')
+
+
+def _safe_href(url: str) -> str | None:
+    """Escaped href value if `url` carries an allowlisted safe scheme
+    (http/https/mailto), else None.
+
+    Normalizes the way a browser does before it sniffs a scheme: tab/newline/
+    CR bytes are dropped from anywhere (so `java\\tscript:` collapses to
+    `javascript:`) and leading control/space is trimmed. Only an explicit
+    allowlisted scheme yields an href; anything relative, scheme-relative, or
+    otherwise unclassifiable returns None so no navigable `javascript:` /
+    `data:` / `vbscript:` URL can reach the DOM."""
+    cleaned = _URL_LEAD_STRIP_RE.sub('', _URL_INLINE_STRIP_RE.sub('', url))
+    m = _URL_SCHEME_RE.match(cleaned)
+    if not m or m.group(1).lower() not in _SAFE_SCHEMES:
+        return None
+    return html.escape(cleaned, quote=True)
+
+
 def _reinsert_links(html_text: str, links: list[str]) -> str:
     def open_tag(m: re.Match) -> str:
-        url = html.escape(links[int(m.group(1))], quote=True)
-        return (f'<a href="{url}" target="_blank" rel="noopener" '
+        idx = int(m.group(1))
+        if idx >= len(links):
+            return html.escape(m.group(0))
+        href = _safe_href(links[idx])
+        if href is None:
+            return ''
+        return (f'<a href="{href}" target="_blank" rel="noopener" '
                 'style="color:inherit;text-decoration:underline">')
 
     html_text = re.sub(r'\x00L(\d+)\x00', open_tag, html_text)

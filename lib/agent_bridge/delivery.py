@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from typing import NamedTuple
 
 from lib.activity_log import get_activity_logger
@@ -44,9 +44,12 @@ _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 # Per-trace_id delivery timestamps (monotonic seconds) behind a lock. The
 # lock is held ONLY for the in-memory check/record — never across a tmux
-# subprocess call or a sleep.
+# subprocess call or a sleep. Bounded two ways so an authed caller spraying
+# distinct trace_ids can't grow it without limit: a window that empties drops
+# its key, and the total tracked ids are LRU-capped.
 _LOCK = threading.Lock()
-_HISTORY: dict[str, deque] = defaultdict(deque)
+_HISTORY: "OrderedDict[str, deque]" = OrderedDict()
+_MAX_TRACKED_TRACES = 4096
 
 
 class DeliveryResult(NamedTuple):
@@ -99,13 +102,20 @@ def _rate_ok(trace_id: str) -> bool:
     now = time.monotonic()
     limit = settings.agent_bridge.rate_limit_per_minute
     with _LOCK:
-        hist = _HISTORY[trace_id]
+        hist = _HISTORY.get(trace_id) or deque()
         while hist and now - hist[0] >= 60.0:
             hist.popleft()
-        if len(hist) >= limit:
-            return False
-        hist.append(now)
-        return True
+        allowed = len(hist) < limit
+        if allowed:
+            hist.append(now)
+        if hist:
+            _HISTORY[trace_id] = hist
+            _HISTORY.move_to_end(trace_id)
+            while len(_HISTORY) > _MAX_TRACKED_TRACES:
+                _HISTORY.popitem(last=False)
+        else:
+            _HISTORY.pop(trace_id, None)
+        return allowed
 
 
 def _match_identity(row: dict, pid_s: str, pane_pid_s: str,

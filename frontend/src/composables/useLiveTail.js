@@ -135,6 +135,30 @@ export function useLiveTail(getRouteId) {
   const pollFailCount = ref(0)
   const connectionLost = computed(() => pollFailCount.value >= 2)
 
+  // Roots whose `/children?deep=1` fetch failed past MAX_ROOT_RETRIES and are
+  // no longer retried by failedRootIds — their turn's activity spans are
+  // absent for good (until a later refresh clears it). Reactive so the card
+  // can surface a muted "activity unavailable" marker under the affected root
+  // instead of silently rendering a healthy-looking but incomplete tail.
+  const degradedRootIds = ref(new Set())
+
+  function markDegraded(id) {
+    if (degradedRootIds.value.has(id)) return
+    const next = new Set(degradedRootIds.value)
+    next.add(id)
+    degradedRootIds.value = next
+  }
+
+  function clearDegraded(ids) {
+    if (!degradedRootIds.value.size) return
+    const next = new Set(degradedRootIds.value)
+    let changed = false
+    for (const id of ids) {
+      if (next.delete(id)) changed = true
+    }
+    if (changed) degradedRootIds.value = next
+  }
+
   // Fold-row remainder. `span_count_total` excludes PENDING placeholders
   // (append-only store keeps them), so the loaded count must too.
   const earlierCount = computed(() => {
@@ -167,6 +191,7 @@ export function useLiveTail(getRouteId) {
     spans.value = spans.value.filter(s => !ids.has(s.span_id))
     roots = roots.filter(r => !ids.has(r.span_id))
     rootIds = new Set(roots.map(r => r.span_id))
+    clearDegraded(ids)
   }
 
   function pruneRetired(retiredIds) {
@@ -175,6 +200,7 @@ export function useLiveTail(getRouteId) {
     const retired = new Set(retiredIds)
     roots = roots.filter(r => !retired.has(r.span_id))
     rootIds = new Set(roots.map(r => r.span_id))
+    clearDegraded(retired)
   }
 
   // Invariant: a PENDING placeholder must not outlive the poll window. The
@@ -275,10 +301,11 @@ export function useLiveTail(getRouteId) {
           const n = (rootFailCounts.get(id) || 0) + 1
           rootFailCounts.set(id, n)
           if (n <= MAX_ROOT_RETRIES) failedRootIds.add(id)
-          else failedRootIds.delete(id)
+          else { failedRootIds.delete(id); markDegraded(id) }
         } else {
           failedRootIds.delete(id)
           rootFailCounts.delete(id)
+          clearDegraded([id])
           collected.push(...list)
         }
       }
@@ -354,22 +381,31 @@ export function useLiveTail(getRouteId) {
     // id yet sort mid-list by start_time, and must not feed the "N new"
     // chip (which scrolls to the bottom).
     const prevLast = spans.value[spans.value.length - 1] || null
+    let data = null
+    // Only the network fetch drives pollFailCount/connectionLost: a miss here
+    // means the data is genuinely no longer live. Keep the cadence, but count
+    // the miss — consecutive failures flip `connectionLost`.
     try {
-      const data = await api.get(mapUrl())
-      if (isStale(gen)) return
-      const fresh = applyWindow(data) // span_ids of roots new to this client
-      // EVERY poll prunes what the serve-time merge dropped from the window
-      // (promptlive- promoted to its anchor, pending-/permreq- resolved).
-      pruneRetired(data.retired_span_ids)
-      await refreshSubtrees(data, fresh, gen)
-      if (isStale(gen)) return
-      pollFailCount.value = 0
+      data = await api.get(mapUrl())
+      if (!isStale(gen)) pollFailCount.value = 0
     } catch {
-      // Keep the cadence, but count the miss — consecutive failures flip
-      // `connectionLost` so the header can say the data is no longer live.
       if (!isStale(gen)) pollFailCount.value += 1
     }
-    finally { pollBusy = false }
+    // Render/merge is a SEPARATE concern: an exception here is an internal bug,
+    // not a dead connection, and must never fake "connection lost". Log it and
+    // move on (per-root network errors are already absorbed in loadChildrenFor).
+    if (data && !isStale(gen)) {
+      try {
+        const fresh = applyWindow(data) // span_ids of roots new to this client
+        // EVERY poll prunes what the serve-time merge dropped from the window
+        // (promptlive- promoted to its anchor, pending-/permreq- resolved).
+        pruneRetired(data.retired_span_ids)
+        await refreshSubtrees(data, fresh, gen)
+      } catch (e) {
+        console.error('[live] poll render/merge failed', e)
+      }
+    }
+    pollBusy = false
     if (isStale(gen)) return
     const appended = prevLast
       ? spans.value.filter(s => bySpanTime(s, prevLast) > 0)
@@ -402,6 +438,7 @@ export function useLiveTail(getRouteId) {
     failedRootIds = new Set()
     rootFailCounts = new Map()
     pollFailCount.value = 0
+    degradedRootIds.value = new Set()
   }
 
   async function start() {
@@ -469,7 +506,7 @@ export function useLiveTail(getRouteId) {
   return {
     sessionId, meta, spans, spanCountTotal, hasMoreOlder, earlierCount,
     loading, loadingOlder, error, ended, active, stale, lastSeenAgeMs,
-    connectionLost, appendedSpans,
+    connectionLost, appendedSpans, degradedRootIds,
     start, stop, loadOlder, mergeSpans,
   }
 }

@@ -449,6 +449,18 @@ A message of type `lesson` is additionally teed into the agent-memory store (nex
 
 **Interaction-event pushes (opt-in).** Beyond agent-authored `send_to_user`, regin can surface the moments the agent *halts waiting on you* — a pending **permission** prompt / `AskUserQuestion` (`blocker`), or a **plan** ready for review on `ExitPlanMode` (`warning`). `lib/agent_messages/event_notify.py` routes these through `record_message`, so each lands as an inbox card *and* fans out through the push channels, reusing one path. The hook handlers (`permission_events.py`, `plan_trace.py`) call it best-effort — a notify failure never disturbs the trace span or the prompt itself. Each class is gated by a dedicated toggle (`settings.agent_messages.push_{permission,plan}_events`, off by default) and uses a stable per-session `msg_key`, so the inbox shows one advancing "pending" card while each distinct prompt still pushes once (DB-level de-dup, since hooks run as separate processes). A resolved prompt (deny/answer) dismisses its card via `resolve_permission`.
 
+## Agent Bridge (human/system → live agent)
+
+The inverse channel of Agent Messages above: instead of the agent pushing to a human, an external sender (a phone, `curl`, another agent) pushes a message *into* a live `claude` session as if typed at its prompt. See `docs/agent-bridge-design.md` for the full design and `.regin/topics/wiki/live-session-mobile-card.md` for how the `/live` card consumes it.
+
+**Transport is guarded tmux keystroke injection**, not a hook — hooks are session-blind while the agent idles at its prompt, exactly when delivery matters most. `lib/agent_bridge/delivery.py` types into the session's registered tmux pane (`send-keys -l --`) behind several fail-closed guards: pane-identity re-verification (server pid + pane pid must match the SessionStart-registered triple), a target-process allowlist (refuses a pane that fell back to a shell, closing the injection→shell-execution escalation), copy-mode cancel, control-byte/newline sanitization, and a capture-pane ack before Enter.
+
+**Storage:** `bridge_panes` (the session → pane registry, written by a SessionStart hook) and `bridge_messages` (append-only inbox: sender, body, delivery outcome), both in `db/schema.sql`; `lib/agent_bridge/store.py` is the sole writer, mirroring `lib/agent_messages/store.py`.
+
+**HTTP surface** (`web/blueprints/bridge.py`) is two credential tiers: `POST /api/bridge/messages` + `GET /api/bridge/{sessions,messages}` are bearer-token-guarded (`settings.agent_bridge.token`, a credential separate from the web-UI JWT) for headless/external callers; the session-scoped `/api/sessions/<id>/bridge-{send,key,answer,commands,screen}` routes instead ride the app's JWT gate plus `require_editor`, backing the `/live` card's composer, Q&A answer flow, slash autocomplete, and terminal peek — the bridge token itself never reaches the browser.
+
+Gated off by default (`settings.agent_bridge.enabled = False`); per-session delivery additionally requires the pane's registration to opt in.
+
 ## Agent Memory (cross-session experience)
 
 `lib/memory/` learns from past sessions and surfaces that experience into future ones. The lifecycle is **capture → consolidate (`reflect`) → recall → reinforce**; `send_to_user(type=lesson)` is one capture endpoint into the system (see *Agent Messages* above), not the system itself.

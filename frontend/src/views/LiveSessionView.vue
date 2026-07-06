@@ -40,7 +40,7 @@ const router = useRouter()
 const {
   sessionId, meta, spans, hasMoreOlder, earlierCount,
   loading, loadingOlder, error, ended, active, stale,
-  connectionLost, appendedSpans,
+  connectionLost, appendedSpans, degradedRootIds,
   start, stop, loadOlder, mergeSpans,
 } = useLiveTail(() => route.params.id)
 
@@ -215,16 +215,21 @@ function onNowZoneResize(el) {
   if (pinnedBeforeResize) nextTick(() => scrollToBottom(false))
 }
 
+// Outstanding entrance-animation timers, cleared on unmount so a late poll's
+// 600ms callback can't fire against a torn-down view.
+const enterTimers = new Set()
 function markEntering(rows) {
   if (!rows.length) return
   const next = new Set(enteringIds.value)
   for (const s of rows) next.add(s.span_id)
   enteringIds.value = next
-  setTimeout(() => {
+  const t = setTimeout(() => {
+    enterTimers.delete(t)
     const cleared = new Set(enteringIds.value)
     for (const s of rows) cleared.delete(s.span_id)
     enteringIds.value = cleared
   }, 600)
+  enterTimers.add(t)
 }
 
 // Poll appends drive follow-tail + the chip; the chip counts only spans the
@@ -432,6 +437,8 @@ onMounted(() => {
 onUnmounted(() => {
   tailEl.value?.removeEventListener('scroll', onTailScroll)
   nowRo?.disconnect()
+  for (const t of enterTimers) clearTimeout(t)
+  enterTimers.clear()
   stop()
 })
 </script>
@@ -596,15 +603,24 @@ onUnmounted(() => {
           no spans match the current filter
         </div>
 
-        <LiveTailRow
-          v-for="row in visibleRows"
-          :key="row.span_id"
-          :span="row"
-          :sub="subagentIds.has(row.parent_id)"
-          :caret="row.span_id === caretSpanId"
-          :entering="enteringIds.has(row.span_id)"
-          @select="onRowSelect"
-        />
+        <template v-for="row in visibleRows" :key="row.span_id">
+          <LiveTailRow
+            :span="row"
+            :sub="subagentIds.has(row.parent_id)"
+            :caret="row.span_id === caretSpanId"
+            :entering="enteringIds.has(row.span_id)"
+            @select="onRowSelect"
+          />
+          <!-- This turn's activity fetch failed past the retry cap; the tail
+               below it is incomplete. A muted marker keeps the card honest
+               instead of rendering a healthy-looking hole. Clears itself when
+               a later refresh succeeds for the root. -->
+          <div
+            v-if="degradedRootIds.has(row.span_id)"
+            class="live-empty live-degraded"
+            data-testid="live-degraded"
+          >activity unavailable</div>
+        </template>
       </div>
 
       <Button
