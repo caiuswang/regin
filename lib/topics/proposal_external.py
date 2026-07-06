@@ -503,7 +503,11 @@ def _handle_agent_output(
     try:
         proposal, wiki = _persist_agent_payload(ctx, stdout)
     except Exception as exc:
-        return _fail(ctx.out_dir, ctx.trace_id, status, "failed", f"external agent output invalid: {exc}", exc)
+        return _fail(
+            ctx.out_dir, ctx.trace_id, status, "failed",
+            f"external agent output invalid: {exc}", exc,
+            validation_errors=_validation_error_list(exc),
+        )
 
     proposal["provider"] = "external-agent"
     proposal["metadata"] = {
@@ -518,6 +522,10 @@ def _handle_agent_output(
     }
     status["state"] = "completed"
     status["completed_at"] = utc_now()
+    # A regenerate reuses the run id, so a prior cycle's validation failure
+    # would otherwise linger in the ORM metadata bag across this success.
+    status["failed_validation"] = False
+    status["validation_errors"] = None
     write_status(ctx.out_dir, status)
     _emit(ctx.trace_id, "proposal.agent.complete", {"proposal_id": ctx.proposal_id, "agent": ctx.agent, "duration_ms": duration_ms}, status_code="OK")
     _emit_session_end(ctx.trace_id, reason="completed")
@@ -597,6 +605,13 @@ def _cancelled(
     raise TopicGraphError("Proposal run stopped by user")
 
 
+def _validation_error_list(exc: Exception) -> list[str]:
+    """The machine-readable error list for an invalid-output failure:
+    the per-field errors when the exception carries them
+    (`ProposalValidationError`), else the exception text itself."""
+    return list(getattr(exc, "errors", None) or [str(exc)])
+
+
 def _fail(
     out_dir: Path,
     trace_id: str,
@@ -607,10 +622,16 @@ def _fail(
     *,
     stdout: str | None = None,
     stderr: str | None = None,
+    validation_errors: list[str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     diagnostics = _failure_diagnostics(stdout=stdout, stderr=stderr)
     if diagnostics.summary:
         message = f"{message}: {diagnostics.summary}"
+    if validation_errors is not None:
+        # Marks the failure as a fixable agent-output problem: a later
+        # `proposal-finish` re-signal is allowed to retry the ingest.
+        status["validation_errors"] = validation_errors
+        status["failed_validation"] = True
     status["state"] = state
     status["error"] = message
     status["error_detail"] = diagnostics.detail or None
@@ -942,7 +963,9 @@ def _strip_review_markers(topics: list[Any]) -> None:
 
 
 def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    from lib.topics.proposal_drafting import PROPOSAL_VERSION, validate_proposal
+    from lib.topics.proposal_drafting import (
+        PROPOSAL_VERSION, ProposalValidationError, validate_proposal,
+    )
 
     if payload.get("version") == PROPOSAL_VERSION and isinstance(payload.get("topics"), list):
         proposal = payload
@@ -956,13 +979,16 @@ def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[
             "topics": payload.get("topics") or [],
             "notes": payload.get("notes") or [],
         }
+        # Carry the legacy top-level wiki through the wrap so the
+        # require_wiki check sees the same fallback _combined_proposal_wiki
+        # reads (pass-through payloads keep the key naturally).
+        if "wiki" in payload:
+            proposal["wiki"] = payload["wiki"]
     _strip_review_markers(proposal.get("topics") or [])
     wiki = _combined_proposal_wiki(payload, proposal.get("topics") or [])
-    errors = validate_proposal(proposal)
+    errors = validate_proposal(proposal, require_wiki=True)
     if errors:
-        raise ValueError("; ".join(errors))
-    if not wiki.strip():
-        raise ValueError("external agent returned an empty wiki")
+        raise ProposalValidationError(errors)
     return proposal, wiki
 
 
@@ -1052,16 +1078,20 @@ def _apply_regenerate_scope(
     return _splice_scoped_topics(prior, proposal, prior_wiki, scope_topic_ids)
 
 
+def _topic_claimed_paths(topic: dict[str, Any]) -> set[str]:
+    paths = set(path for path in topic.get("evidence_paths", []) if isinstance(path, str))
+    for ref in topic.get("refs", []):
+        if isinstance(ref, dict) and isinstance(ref.get("path"), str):
+            paths.add(ref["path"])
+    return paths
+
+
 def _validate_paths(repo: Path, proposal: dict[str, Any]) -> None:
     # No evidence pack: every proposed path must exist in the working tree
     # and stay inside the repo. Stricter than the old evidence-or-repo check.
     repo_root = repo.resolve()
     for topic in proposal.get("topics", []):
-        paths = set(path for path in topic.get("evidence_paths", []) if isinstance(path, str))
-        for ref in topic.get("refs", []):
-            if isinstance(ref, dict) and isinstance(ref.get("path"), str):
-                paths.add(ref["path"])
-        for path in paths:
+        for path in _topic_claimed_paths(topic):
             resolved = (repo / path).resolve()
             if repo_root not in resolved.parents and resolved != repo_root:
                 raise ValueError(f"path escapes repository: {path}")

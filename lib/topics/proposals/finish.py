@@ -10,7 +10,11 @@ persists the proposal + wiki, and stamps the run `completed` with an
 a redundant re-ingest.
 
 Idempotent: a call after the run already reached a terminal state (or a
-second call) is a no-op. A run whose agent session ends *without* ever
+second call) is a no-op — with one deliberate exception. A run that failed
+*validation of the agent's own output* (`failed_validation` in the status)
+may be re-signalled: the drafting agent is still alive when its finish
+command fails, so it can fix the output file and run the same command
+again to retry the ingest. A run whose agent session ends *without* ever
 calling this is reaped as `failed` (see `reap.py`) — the explicit failure
 the old silent-timeout path never produced.
 """
@@ -28,6 +32,26 @@ _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
 
 def _noop_result(proposal_id: str, state: str | None) -> dict[str, Any]:
     return {"proposal_id": proposal_id, "state": state, "ingested": False}
+
+
+def _is_retryable_validation_failure(status: dict[str, Any]) -> bool:
+    """True when the run's only terminal condition is a validation failure
+    of the agent's own output — the one terminal state a re-signal may
+    retry. Cancelled runs and already-signalled successes stay no-ops."""
+    return status.get("state") == "failed" and bool(status.get("failed_validation"))
+
+
+def _invalid_output_message(errors: list[str]) -> str:
+    """The error the failing finish command surfaces to the drafting agent.
+    It doubles as the retry prompt: the agent fixes its output file and
+    re-runs the same command."""
+    listed = "\n".join(f"  - {error}" for error in errors)
+    return (
+        "proposal-finish: invalid agent output:\n"
+        f"{listed}\n"
+        "Fix the output JSON file (the path in $REGIN_TOPIC_PROPOSAL_OUTPUT), "
+        "then re-run this same proposal-finish command to retry the ingest."
+    )
 
 
 def _parse_agent_output(repo: Path, out_dir: Path) -> tuple[dict[str, Any], str]:
@@ -70,12 +94,17 @@ def finish_proposal_run(
     out_dir = topic_dir(repo) / "proposals" / proposal_id
     log = get_activity_logger("topics")
 
-    from lib.topics.proposal_external import load_status, write_status
+    from lib.topics.proposal_external import (
+        _validation_error_list, load_status, write_status,
+    )
 
     status = load_status(out_dir)
     if status is None:
         raise TopicGraphError(f"no proposal run to finish: {proposal_id}")
-    if status.get("agent_signaled") or status.get("state") in _TERMINAL_STATES:
+    retrying = _is_retryable_validation_failure(status)
+    if status.get("agent_signaled") or (
+        status.get("state") in _TERMINAL_STATES and not retrying
+    ):
         log.read(
             "proposal_finish_noop",
             proposal_id=proposal_id, state=status.get("state"),
@@ -85,16 +114,17 @@ def finish_proposal_run(
     try:
         proposal, wiki = _parse_agent_output(repo, out_dir)
     except Exception as exc:
+        errors = _validation_error_list(exc)
         status.update(
             state="failed",
             error=f"proposal-finish: invalid agent output: {exc}",
+            failed_validation=True,
+            validation_errors=errors,
             completed_at=utc_now(),
         )
         write_status(out_dir, status)
         log.error("proposal_finish_invalid", proposal_id=proposal_id, exc_info=True)
-        raise TopicGraphError(
-            f"proposal-finish: invalid agent output: {exc}"
-        ) from exc
+        raise TopicGraphError(_invalid_output_message(errors)) from exc
 
     from lib.topics.proposal_drafting import _write_proposal_artifacts
     from .core_io import list_proposal_revisions
@@ -124,12 +154,21 @@ def finish_proposal_run(
         signaled_by=source,
         completed_at=utc_now(),
         error=None,
+        # Explicit falsy writes (not pops): the ORM metadata merge is
+        # additive, so a popped key would leave the prior failure's
+        # validation state visible forever.
+        failed_validation=False,
+        validation_errors=None,
     )
     if agent_trace_id:
         status["agent_trace_id"] = agent_trace_id
         status["agent_trace_url"] = f"/trace/sessions/{agent_trace_id}"
     write_status(out_dir, status)
-    log.write("proposal_finish_ingested", proposal_id=proposal_id, source=source)
+    log.write(
+        "proposal_finish_ingested",
+        proposal_id=proposal_id, source=source,
+        retried_after_validation_failure=retrying,
+    )
     # This self-ingest is the authoritative completion in the notify-on-finish
     # design — the server-runner exit may never observe it — so the inbox
     # `proposal.ready` event must fire here, not only on the runner path.

@@ -17,6 +17,18 @@ from lib.topics import TopicGraphError
 PROPOSAL_VERSION = 1
 
 
+class ProposalValidationError(ValueError):
+    """Invalid agent-produced proposal output.
+
+    Keeps the individual error strings on `.errors` so ingest paths can
+    persist them machine-readably alongside the joined human message.
+    """
+
+    def __init__(self, errors: list[str]):
+        super().__init__("; ".join(errors))
+        self.errors = list(errors)
+
+
 def _proposal_prior_draft(proposal_path: Path, wiki_path: Path) -> dict[str, Any]:
     return {
         "proposal": json.loads(proposal_path.read_text()),
@@ -139,7 +151,70 @@ def _draft_proposal(
     return proposals, wiki
 
 
-def validate_proposal(proposal: dict[str, Any]) -> list[str]:
+_TOPIC_LIST_FIELDS = (
+    "aliases", "refs", "edges", "commands",
+    "include_globs", "exclude_globs", "evidence_paths",
+)
+
+
+def _validate_ref_entry(ref: Any, prefix: str) -> list[str]:
+    if not isinstance(ref, dict):
+        return [f"{prefix} must be an object with a string `path`"]
+    errors: list[str] = []
+    if not isinstance(ref.get("path"), str):
+        errors.append(f"{prefix}.path must be a string")
+    for field in ("role", "tier"):
+        value = ref.get(field)
+        if value is not None and not isinstance(value, str):
+            errors.append(f"{prefix}.{field} must be a string when present")
+    return errors
+
+
+def _validate_topic_id(topic: dict[str, Any], prefix: str, seen: set[str]) -> list[str]:
+    topic_id = topic.get("id")
+    if not topic_id:
+        return [f"{prefix}.id is required"]
+    if topic_id in seen:
+        return [f"duplicate proposed topic id: {topic_id}"]
+    seen.add(topic_id)
+    return []
+
+
+def _validate_topic_fields(topic: dict[str, Any], prefix: str) -> list[str]:
+    errors: list[str] = []
+    for field in ("label", "intent", "status"):
+        if field not in topic:
+            errors.append(f"{prefix}.{field} is required")
+    for field in ("parent_id", "blurb"):
+        value = topic.get(field)
+        if value is not None and not isinstance(value, str):
+            errors.append(f"{prefix}.{field} must be a string when present")
+    for field in _TOPIC_LIST_FIELDS:
+        if not isinstance(topic.get(field, []), list):
+            errors.append(f"{prefix}.{field} must be a list")
+    refs = topic.get("refs", [])
+    if isinstance(refs, list):
+        for index, ref in enumerate(refs):
+            errors.extend(_validate_ref_entry(ref, f"{prefix}.refs[{index}]"))
+    return errors
+
+
+def _proposal_has_wiki(proposal: dict[str, Any]) -> bool:
+    """Mirror `_combined_proposal_wiki`: non-empty iff any per-topic `wiki`
+    page is non-blank, falling back to the legacy top-level `wiki` string."""
+    for topic in proposal.get("topics") or []:
+        if isinstance(topic, dict) and str(topic.get("wiki") or "").strip():
+            return True
+    return bool(str(proposal.get("wiki") or "").strip())
+
+
+def validate_proposal(proposal: dict[str, Any], *, require_wiki: bool = False) -> list[str]:
+    """Single validation layer for proposal payloads.
+
+    `require_wiki` is opt-in for the agent-output ingest paths; review-time
+    callers (accept/merge/update/downgrade) validate structure only, so a
+    wiki-less draft they already handle stays editable.
+    """
     errors: list[str] = []
     if proposal.get("version") != PROPOSAL_VERSION:
         errors.append("proposal version must be 1")
@@ -149,17 +224,14 @@ def validate_proposal(proposal: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
     for index, topic in enumerate(proposal["topics"]):
         prefix = f"topics[{index}]"
-        topic_id = topic.get("id")
-        if not topic_id:
-            errors.append(f"{prefix}.id is required")
-        elif topic_id in seen:
-            errors.append(f"duplicate proposed topic id: {topic_id}")
-        else:
-            seen.add(topic_id)
-        for field in ("label", "intent", "status"):
-            if field not in topic:
-                errors.append(f"{prefix}.{field} is required")
-        for field in ("aliases", "refs", "edges", "commands", "include_globs", "exclude_globs", "evidence_paths"):
-            if not isinstance(topic.get(field, []), list):
-                errors.append(f"{prefix}.{field} must be a list")
+        if not isinstance(topic, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        errors.extend(_validate_topic_id(topic, prefix, seen))
+        errors.extend(_validate_topic_fields(topic, prefix))
+    if require_wiki and not _proposal_has_wiki(proposal):
+        errors.append(
+            "proposal has an empty wiki: add a non-blank per-topic `wiki` page "
+            "(topics[].wiki) or a top-level `wiki` string"
+        )
     return errors

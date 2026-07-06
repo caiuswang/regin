@@ -364,6 +364,133 @@ def test_finish_with_invalid_output_fails_run(fake_git_repo, tmp_db):
     assert status["error"]
 
 
+def test_finish_invalid_output_persists_structured_validation_errors(fake_git_repo, tmp_db):
+    """The failed run carries machine-readable `validation_errors` (plus the
+    `failed_validation` retry marker) alongside the human `error` string, and
+    the raised message doubles as the agent's retry prompt."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir, {"topics": [{"id": "svc"}], "wiki": ""})
+
+    with pytest.raises(TopicGraphError, match="invalid agent output") as excinfo:
+        finish_proposal_run(fake_git_repo, "run1")
+
+    message = str(excinfo.value)
+    assert "topics[0].label is required" in message
+    assert "re-run" in message and "retry" in message
+    status = load_proposal_status(fake_git_repo, "run1")
+    assert status["state"] == "failed"
+    assert status["failed_validation"] is True
+    assert "topics[0].label is required" in status["validation_errors"]
+    assert any("empty wiki" in error for error in status["validation_errors"])
+
+
+def test_finish_retry_after_validation_failure_completes_and_clears(fake_git_repo, tmp_db):
+    """finish → invalid (failed + flag) → agent fixes the output file →
+    finish again → completed, with the flag and structured errors cleared."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir, {"topics": [], "wiki": ""})
+    with pytest.raises(TopicGraphError):
+        finish_proposal_run(fake_git_repo, "run1")
+    assert load_proposal_status(fake_git_repo, "run1")["failed_validation"] is True
+
+    _write_temp_output(out_dir)  # the agent fixes its output, then re-signals
+    result = finish_proposal_run(fake_git_repo, "run1")
+
+    assert result == {"proposal_id": "run1", "state": "completed", "ingested": True}
+    status = load_proposal_status(fake_git_repo, "run1")
+    assert status["state"] == "completed"
+    assert status["agent_signaled"] is True
+    assert not status.get("failed_validation")
+    assert not status.get("validation_errors")
+    assert not status.get("error")
+    assert load_proposal(fake_git_repo, "run1")["topics"][0]["id"] == "service"
+    assert len(list_proposal_revisions(fake_git_repo, "run1")) == 1
+
+
+def test_finish_no_retry_for_cancelled_run(fake_git_repo, tmp_db):
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo, state="cancelled")
+    _write_temp_output(out_dir)  # valid output must not matter
+
+    result = finish_proposal_run(fake_git_repo, "run1")
+
+    assert result["ingested"] is False
+    assert load_proposal_status(fake_git_repo, "run1")["state"] == "cancelled"
+
+
+def test_finish_no_retry_for_plain_failed_run(fake_git_repo, tmp_db):
+    """A run failed for a non-validation reason (reaped, non-zero exit) has no
+    `failed_validation` marker — a late finish signal stays a no-op."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    status = load_status(out_dir)
+    status.update(state="failed", error="external agent exited with code 2")
+    write_status(out_dir, status)
+    _write_temp_output(out_dir)
+
+    result = finish_proposal_run(fake_git_repo, "run1")
+
+    assert result["ingested"] is False
+    assert load_proposal_status(fake_git_repo, "run1")["state"] == "failed"
+
+
+def test_finish_no_retry_after_signaled_success(fake_git_repo, tmp_db):
+    """A stale `failed_validation` marker never overrides the signaled guard:
+    once a run ingested successfully, a re-signal stays a no-op."""
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir)
+    finish_proposal_run(fake_git_repo, "run1")
+
+    result = finish_proposal_run(fake_git_repo, "run1")
+
+    assert result["ingested"] is False
+    assert len(list_proposal_revisions(fake_git_repo, "run1")) == 1
+
+
+def test_runner_invalid_output_persists_validation_errors_and_allows_retry(
+    fake_git_repo, tmp_db, monkeypatch,
+):
+    """The server-runner ingest path (`_handle_agent_output` → `_fail`) writes
+    the same structured `validation_errors` + `failed_validation` marker, so
+    an agent that outlives the runner can still fix its file and re-signal."""
+    from lib.topics import proposal_external as pe
+
+    class _FakePopen:
+        returncode = 0
+
+        def poll(self):
+            return 0
+
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo)
+    _write_temp_output(out_dir, {"topics": [{"id": "svc"}], "wiki": ""})
+    monkeypatch.setattr(pe, "_emit", lambda *a, **k: None)
+    monkeypatch.setattr(pe, "_emit_session_end", lambda *a, **k: None)
+    ctx = pe._AgentRunContext(
+        repo=fake_git_repo, out_dir=out_dir,
+        trace_id="topic-proposal-run1", proposal_id="run1", agent="fake",
+        before_topic=pe._read_topic_signature(fake_git_repo),
+        temp_output_path=out_dir / ".tmp" / "agent-output.json",
+        output_path=out_dir / "agent-output.json",
+        stdout_path=out_dir / "stdout.log", stderr_path=out_dir / "stderr.log",
+        started=0.0, prompt_templates=None)
+
+    with pytest.raises(TopicGraphError, match="output invalid"):
+        pe._handle_agent_output(ctx, _FakePopen(), "done", "", load_status(out_dir))
+
+    status = load_proposal_status(fake_git_repo, "run1")
+    assert status["state"] == "failed"
+    assert status["failed_validation"] is True
+    assert "topics[0].label is required" in status["validation_errors"]
+
+    _write_temp_output(out_dir)
+    assert finish_proposal_run(fake_git_repo, "run1")["ingested"] is True
+    assert not load_proposal_status(fake_git_repo, "run1").get("validation_errors")
+
+
 def test_finish_unknown_run_raises(fake_git_repo, tmp_db):
     _commit_service(fake_git_repo)
     with pytest.raises(TopicGraphError, match="no proposal run to finish"):
