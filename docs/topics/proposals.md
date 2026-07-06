@@ -40,11 +40,17 @@ agent:
 | `REGIN_TOPIC_PROPOSAL_OUTPUT` | Temp JSON output file the agent should write. |
 | `REGIN_TOPIC_PROPOSAL_CANONICAL_OUTPUT` | Final artifact path; agents should not write it directly. |
 | `REGIN_TOPIC_PROPOSAL_TRACE_ID` | Trace id for monitoring. |
+| `REGIN_TOPIC_PROPOSAL_ID` | The run's proposal id. |
+| `REGIN_TOPIC_PROPOSAL_FINISH_CMD` | Completion command the agent runs verbatim as its final step. |
 
 The agent receives the generated `instructions.md` on stdin. It should write
-final JSON to `REGIN_TOPIC_PROPOSAL_OUTPUT`. regin validates that temp output
-and then copies it to the canonical `agent-output.json` in the proposal run
-directory.
+final JSON to `REGIN_TOPIC_PROPOSAL_OUTPUT`, then signal completion by running
+the `REGIN_TOPIC_PROPOSAL_FINISH_CMD` command (`regin topics proposal-finish
+<id>`) exactly once as its last step. There is no fixed run timeout by default
+— the finish signal is authoritative, and the
+`topic_evolution.proposal_run_timeout_seconds` setting is only an optional
+backstop. regin validates the temp output and then copies it to the canonical
+`agent-output.json` in the proposal run directory.
 
 ## Start A Proposal
 
@@ -71,16 +77,17 @@ Each run writes under:
 
 | File | Meaning |
 | --- | --- |
-| `status.json` | Run lifecycle state, error, pid, agent id, and trace id. |
 | `instructions.md` | Exact instructions sent to the agent. |
 | `.tmp/agent-output.json` | Raw temp output written by the external agent. |
 | `agent-output.json` | Validated copy of the temp output retained for review. |
 | `wiki.md` | Draft wiki text generated from the proposal. |
 | `stdout.log` / `stderr.log` | Capped command logs for debugging. |
 
-The reviewable proposal itself (topics, revisions, feedback) lives in the
-local SQLite database, not in an on-disk `topics.json` — the ORM is the
-source of truth and the WebUI reads from it.
+The reviewable proposal itself (topics, revisions, feedback) and the run's
+lifecycle state both live in the local SQLite database — the proposal ORM is
+the source of truth and the WebUI reads from it. No `status.json` or
+`topics.json` is written; a `status.json` found in an old run directory is
+read only as a legacy fallback.
 
 Proposal run states are:
 
@@ -107,15 +114,18 @@ External agents should produce JSON shaped like:
       "commands": [],
       "include_globs": ["service/**"],
       "exclude_globs": [],
-      "evidence_paths": ["service/api.py"]
+      "evidence_paths": ["service/api.py"],
+      "wiki": "## Service\n\nThis topic's own wiki page."
     }
   ],
-  "notes": [],
-  "wiki": "# Service\n\nDraft wiki text."
+  "notes": []
 }
 ```
 
-regin validates this output before writing `topics.json`.
+Each topic carries its own `wiki` page — it becomes that topic's
+`.regin/topics/wiki/<id>.md` on accept. A top-level `wiki` string is accepted
+as a legacy fallback when no topic carries its own page. regin validates this
+output before persisting the proposal.
 
 ## Architecture
 
@@ -133,8 +143,8 @@ The proposal pipeline has these layers:
    load/save, listing, deletion, feedback threads, and review actions.
 
 External-agent runs are asynchronous. The API creates the run directory,
-writes `status.json`, starts a background thread, and returns immediately. The
-frontend polls:
+writes a `queued` status row to the database, starts a background thread, and
+returns immediately. The frontend polls:
 
 ```text
 GET /api/repos/<repo>/topics/proposals/<run_id>/status
@@ -178,7 +188,7 @@ External agents are treated as draft generators only:
   permission, the run becomes `waiting_for_permission` and shows the error in
   the Proposal Runs panel.
 - Agents write to `.tmp/agent-output.json`; regin validates and copies only the
-  accepted JSON into `agent-output.json`, `topics.json`, and `wiki.md`.
+  accepted JSON into `agent-output.json` (and renders `wiki.md` from it).
 - Generated proposals never auto-promote. A user must accept or merge topics
   explicitly through the WebUI.
 
