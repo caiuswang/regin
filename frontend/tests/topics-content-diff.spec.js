@@ -113,36 +113,82 @@ test.describe('Apply panel wiki-content diff', () => {
   })
 })
 
-test.describe('Revision compare page', () => {
-  test('diffs two revisions and switches sides', async ({ page }) => {
-    await page.route('**/topics/workspace/proposals**', (route) => {
-      const url = new URL(route.request().url())
-      const rev = url.searchParams.get('revision_id')
-      const payload = workspaceWithSelectedTopic()
-      const wikiByRev = { 1: '# Doc A\nRevision one body\n', 2: '# Doc A\nRevision two body\n' }
-      payload.proposal = { status: 'ready_to_apply', wiki: rev ? wikiByRev[rev] : wikiByRev['2'], topics: [] }
-      route.fulfill({ json: payload })
+// Per-revision topic bodies: r3 (id 1) → r4 (id 2) changes the wiki AND adds
+// a reference file + an alias, so the compare card exercises all three panes.
+function topicForRevision(rev) {
+  const byRev = {
+    1: {
+      id: 'webui-surface', label: 'WebUI surface',
+      wiki: '# WebUI\nOld overview line\n',
+      refs: [{ path: 'frontend/src/router.js', role: 'entrypoint' }],
+      edges: [], aliases: ['webui'], intent: 'map the SPA',
+    },
+    2: {
+      id: 'webui-surface', label: 'WebUI surface',
+      wiki: '# WebUI\nNew overview line\nExtra detail\n',
+      refs: [
+        { path: 'frontend/src/router.js', role: 'entrypoint' },
+        { path: 'web/app.py', role: 'api' },
+      ],
+      edges: [], aliases: ['webui', 'spa'], intent: 'map the SPA',
+    },
+  }
+  return byRev[rev || '2']
+}
+
+function compareWorkspace(revisions) {
+  return (route) => {
+    const rev = new URL(route.request().url()).searchParams.get('revision_id')
+    const topic = topicForRevision(rev)
+    route.fulfill({
+      json: {
+        selected_run: { id: 'mock-run', title: 'webui-surface refresh', state: 'completed', provider: 'external' },
+        revisions,
+        proposal: { status: 'ready_to_apply', wiki: topic.wiki, topics: [topic] },
+      },
     })
+  }
+}
 
+const TWO_REVISIONS = [
+  { id: 2, revision_number: 4, kind: 'regenerated', is_latest: true, created_at: '2026-06-19T14:39:15Z' },
+  { id: 1, revision_number: 3, kind: 'regenerated', is_latest: false, created_at: '2026-06-18T10:00:00Z' },
+]
+
+test.describe('Revision compare page', () => {
+  test('shows proposal context and diffs wiki + reference files per topic', async ({ page }) => {
+    await page.route('**/topics/workspace/proposals**', compareWorkspace(TWO_REVISIONS))
     await page.goto('/repos/regin/topics/compare?proposal=mock-run')
-    const wikiDiff = page.locator('[data-testid="wiki-content-diff"]')
-    await expect(wikiDiff).toBeVisible()
-    await expect(wikiDiff.locator('.wikidiff__row--remove')).toContainText('Revision one body')
-    await expect(wikiDiff.locator('.wikidiff__row--add')).toContainText('Revision two body')
 
-    // Default header is r1 → r2. Change the Base dropdown — the native
-    // <select> emits a string, so the header label must still resolve to a
-    // revision (not collapse to "—") after coercion.
+    // Proposal context is present (the earlier gap: only the id showed).
+    await expect(page.getByRole('heading', { name: 'webui-surface refresh' })).toBeVisible()
+
+    const card = page.locator('[data-testid="topic-comparison-card"]')
+    await expect(card).toBeVisible()
+    // Wiki content diff (r3 → r4).
+    await expect(card.locator('.wikidiff__row--remove').first()).toContainText('Old overview line')
+    await expect(card.locator('.wikidiff__row--add').first()).toContainText('New overview line')
+    // Reference files: web/app.py was added.
+    await expect(card).toContainText('web/app.py')
+    // Graph metadata: alias "spa" was added.
+    await expect(card).toContainText('spa')
+  })
+
+  test('coerces the native-select value so switching sides stays type-correct', async ({ page }) => {
+    await page.route('**/topics/workspace/proposals**', compareWorkspace(TWO_REVISIONS))
+    await page.goto('/repos/regin/topics/compare?proposal=mock-run')
+    const card = page.locator('[data-testid="topic-comparison-card"]')
+    await expect(card).toBeVisible()
+    // Set Base to r4 (id 2) too — identical sides → "No content changes"
+    // (proves the string→int coercion; a string id would break the match).
     await page.locator('[data-testid="revcompare-left"]').selectOption('2')
-    await expect(wikiDiff.locator('.wikidiff__title')).toHaveText('r2 → r2')
+    await expect(card.locator('[data-testid="wiki-diff-identical"]')).toBeVisible()
   })
 
   test('shows a too-few-revisions notice with a single revision', async ({ page }) => {
-    await page.route('**/topics/workspace/proposals**', (route) => {
-      const payload = workspaceWithSelectedTopic()
-      payload.revisions = [{ id: 1, revision_number: 1, kind: 'generate', is_latest: true }]
-      route.fulfill({ json: payload })
-    })
+    await page.route('**/topics/workspace/proposals**', compareWorkspace([
+      { id: 1, revision_number: 1, kind: 'generate', is_latest: true },
+    ]))
     await page.goto('/repos/regin/topics/compare?proposal=mock-run')
     await expect(page.locator('[data-testid="revcompare-too-few"]')).toBeVisible()
   })
