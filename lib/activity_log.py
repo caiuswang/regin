@@ -26,11 +26,13 @@ not a positional arg.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import threading
 import time
 import warnings
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +67,81 @@ class FeatureFileInfo:
     event_count: int
     error_count: int
     last_seen: float | None
+
+
+class _RotatingSink:
+    """Loguru sink that rotates + prunes archives under a cross-process
+    `flock`, instead of loguru's own `rotation=`/`retention=`.
+
+    Every regin process (the long-lived web server, each short-lived CLI
+    invocation, each per-hook-event `hook_manager` subprocess) calls
+    `configure_activity_log()` and adds its own sink to the same
+    `regin.log` path. loguru's built-in file rotation has no cross-process
+    coordination: two processes' sinks can both decide to rotate around
+    the same size threshold, and the loser's `_terminate_file` call stats
+    a path the winner already renamed away, raising `FileNotFoundError`
+    from loguru's internal `get_ctime`. Doing the rename + prune ourselves
+    inside a `flock`-held critical section serializes that race across
+    processes, not just threads.
+    """
+
+    __slots__ = ("_path", "_lock_path", "_max_bytes", "_retention_days")
+
+    def __init__(self, path: Path, max_bytes: int, retention_days: int) -> None:
+        self._path = path
+        self._lock_path = path.with_suffix(path.suffix + ".lock")
+        self._max_bytes = max_bytes
+        self._retention_days = retention_days
+        # loguru's own FileSink creates the destination file synchronously
+        # in __init__. Match that eagerly: under `enqueue=True` (the
+        # production default), write() runs on a background thread, so
+        # without this touch, `regin.log` wouldn't exist until that thread
+        # first drains the queue -- a real window where a CLI command
+        # invoked immediately after (e.g. `regin logs tail` as the very
+        # first command) sees no file at all.
+        self._path.touch(exist_ok=True)
+
+    def write(self, message: str) -> None:
+        fd = os.open(str(self._lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                self._rotate_if_needed()
+                with open(self._path, "a", encoding="utf-8") as f:
+                    f.write(message)
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    def _rotate_if_needed(self) -> None:
+        try:
+            size = self._path.stat().st_size
+        except FileNotFoundError:
+            return
+        if size < self._max_bytes:
+            return
+        root, ext = os.path.splitext(str(self._path))
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
+        archive = Path(f"{root}.{stamp}{ext}")
+        counter = 1
+        while archive.exists():
+            counter += 1
+            archive = Path(f"{root}.{stamp}.{counter}{ext}")
+        self._path.rename(archive)
+        self._prune_archives()
+
+    def _prune_archives(self) -> None:
+        cutoff = time.time() - self._retention_days * 86400
+        root, ext = os.path.splitext(self._path.name)
+        for entry in self._path.parent.glob(f"{root}.*{ext}"):
+            if entry == self._path:
+                continue
+            try:
+                if entry.stat().st_mtime < cutoff:
+                    entry.unlink()
+            except OSError:
+                continue
 
 
 def _redact_patcher(record: dict[str, Any]) -> None:
@@ -146,15 +223,15 @@ def configure_activity_log(
         _LOG_DIR = log_dir_resolved
 
         level = _log_level()
-        rotation_bytes = int(settings.log_max_bytes_per_file)
-        retention = f"{int(settings.log_retention_days)} days"
-
         sink_path = log_dir_resolved / _LOG_FILENAME
+        sink = _RotatingSink(
+            sink_path,
+            max_bytes=int(settings.log_max_bytes_per_file),
+            retention_days=int(settings.log_retention_days),
+        )
         _HANDLER_ID = _loguru.add(
-            str(sink_path),
+            sink,
             level=level,
-            rotation=rotation_bytes,
-            retention=retention,
             enqueue=enqueue,
             serialize=True,
             backtrace=False,
@@ -282,15 +359,17 @@ def prune(
     """Delete rotated archives of `regin.log` older than the cutoff.
     The active `regin.log` is never touched.
 
-    loguru's own `retention=` handles the steady-state case. This
-    command exists for forced cleanup or non-default cutoffs."""
+    `_RotatingSink._prune_archives` handles the steady-state case
+    (run right after each rotation). This command exists for forced
+    cleanup or non-default cutoffs."""
     if _LOG_DIR is None or not _LOG_DIR.exists():
         return []
     cutoff = time.time() - older_than_days * 86400
     active = _LOG_DIR / _LOG_FILENAME
+    lock = active.with_suffix(active.suffix + ".lock")
     deleted: list[Path] = []
     for entry in _LOG_DIR.glob("regin.*"):
-        if entry == active or not entry.is_file():
+        if entry in (active, lock) or not entry.is_file():
             continue
         try:
             mtime = entry.stat().st_mtime
