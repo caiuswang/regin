@@ -254,6 +254,12 @@ CREATE TABLE IF NOT EXISTS session_spans (
     -- json_extract-scanning every row. Stamped at ingest; the kimi subagent
     -- pass (lib/trace/kimi_subagents.py) also sets it when it tags tool spans.
     agent_id        TEXT,
+    -- Issuing prompt submission: the hook envelope's `prompt_id` (Claude Code
+    -- 2.1.195+), stamped by post_tool_trace onto attributes.source_prompt_id
+    -- and promoted here at insert time so the serve-time ladder can value-join
+    -- a tool span to its `prompt-<uuid>` anchor. The value stays in attributes
+    -- too; readers fall back to it for rows written before this promotion.
+    source_prompt_id TEXT,
     -- Which capture source wrote this row: 'hook' (live hook events —
     -- tool timing, permissions, skill reads, the in-flight prompt
     -- placeholder) or 'transcript' (the transcript scan — prompt anchors,

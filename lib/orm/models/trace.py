@@ -123,6 +123,16 @@ class SessionSpan(Base, table=True):
         default=None,
         sa_column=Column("agent_id", String),
     )
+    # Issuing prompt submission: the hook envelope's `prompt_id` (Claude Code
+    # 2.1.195+), stamped by post_tool_trace onto `attributes.source_prompt_id`
+    # and promoted here at insert time so the serve-time ladder can value-join
+    # a tool span to its `prompt-<uuid>` anchor without json_extract-scanning.
+    # The value stays in attributes too; readers fall back to it for rows
+    # inserted before this promotion. Mirrors db/schema.sql + web/startup.py.
+    source_prompt_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("source_prompt_id", String),
+    )
     # Capture source: 'hook' (live hook events) or 'transcript' (the
     # transcript scan). The append-only store keeps both; lib/trace/merge.py
     # selects winners at read time. Mirrors db/schema.sql + web/startup.py.

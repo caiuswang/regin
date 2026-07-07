@@ -162,7 +162,7 @@ def _post_transcript_usage(
     _post_permission_denial_spans(trace_id, usage.permission_denials)
     _post_prompt_anchor_spans(trace_id, usage.turns, usage.prompt_texts,
                               usage.prompt_timestamps, usage.prompt_image_parts,
-                              seen)
+                              seen, usage.prompt_ids)
     # `/rewind` markers last: their attributes reference the abandoned spans
     # the posters above just emitted (the projection collapses them at read).
     _post_rewind_spans(trace_id, usage.rewinds, seen)

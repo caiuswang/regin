@@ -117,6 +117,143 @@ def _agent_totals(usage) -> tuple[float, int, int]:
     return total_cost, total_in, total_out
 
 
+def _read_agent_meta(jsonl_path: str) -> dict:
+    """Read the sibling ``agent-<id>.meta.json`` — carries ``toolUseId``,
+    ``spawnDepth``, ``agentType`` (camelCase, not run through the transcript
+    snake-caser). Empty dict when absent/unreadable."""
+    meta_path = Path(jsonl_path).with_suffix('.meta.json')
+    try:
+        return json.loads(meta_path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _entry_tool_use_ids(entry: dict) -> set[str]:
+    """The ``tool_use`` block ids carried by one transcript entry's message."""
+    content = (entry.get('message') or {}).get('content')
+    if not isinstance(content, list):
+        return set()
+    return {
+        block['id']
+        for block in content
+        if isinstance(block, dict) and block.get('type') == 'tool_use'
+        and isinstance(block.get('id'), str) and block.get('id')
+    }
+
+
+def _agent_tool_use_ids(jsonl_path: str) -> set[str]:
+    """The ``tool_use`` block ids appearing in one agent's transcript — the
+    ids by which THIS agent launched its own children. A nested agent's
+    ``meta.json.toolUseId`` resolves against the spawning agent's set."""
+    ids: set[str] = set()
+    try:
+        text = Path(jsonl_path).read_text()
+    except OSError:
+        return ids
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entry = json.loads(stripped)
+        except ValueError:
+            continue
+        ids |= _entry_tool_use_ids(entry)
+    return ids
+
+
+def _tool_use_owners(agents: list[tuple[str, str]]) -> tuple[dict[str, str], set[str]]:
+    """`(owner_by_tool_use, ambiguous_tool_use_ids)`: the first agent whose
+    transcript contains each ``tool_use`` block id, plus the set of ids that
+    turned up in MORE than one agent's transcript (a duplicate id across
+    sibling transcripts — resolving from it would be a guess, not ground
+    truth)."""
+    owner_by_tool_use: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for agent_id, path in agents:
+        for tid in _agent_tool_use_ids(path):
+            owner = owner_by_tool_use.get(tid)
+            if owner is None:
+                owner_by_tool_use[tid] = agent_id
+            elif owner != agent_id:
+                ambiguous.add(tid)
+    return owner_by_tool_use, ambiguous
+
+
+def _drop_cyclic_parents(parents: dict[str, str]) -> dict[str, str]:
+    """Drop any child→parent edge whose parent chain walks back to the child
+    itself (a mutual/2-cycle, a longer cycle, or a self-reference). Precision
+    over recall: a cyclic parent map feeds `_build_span_tree` a subtree with
+    no reachable root (both ends have a "valid" parent), silently dropping the
+    whole segment — a wrong/ambiguous link is worse than none."""
+    dropped: set[str] = set()
+    for child in parents:
+        visited = {child}
+        cur = parents.get(child)
+        while cur is not None:
+            if cur in visited:
+                dropped.add(child)
+                break
+            visited.add(cur)
+            cur = parents.get(cur)
+    return {c: p for c, p in parents.items() if c not in dropped}
+
+
+def _resolve_parent_agents(agents: list[tuple[str, str]]) -> dict[str, str]:
+    """child agent_id → spawning parent agent_id, for depth>=2 agents only.
+
+    ``subagents/`` is a flat namespace even for nested spawns; the true
+    agent→agent edge is a child's ``meta.json.toolUseId`` matched against the
+    ``tool_use`` block ids of a sibling agent's transcript. Depth-1 agents (and
+    any whose ``toolUseId`` resolves to no sibling) are omitted — they keep the
+    flat 'under main' behavior. A ``toolUseId`` appearing in more than one
+    sibling transcript resolves to no one (ambiguous owner), and any
+    self-reference or cycle among the resolved edges is dropped — precision
+    over recall throughout."""
+    metas: dict[str, dict] = {agent_id: _read_agent_meta(path) for agent_id, path in agents}
+    owner_by_tool_use, ambiguous = _tool_use_owners(agents)
+    parents: dict[str, str] = {}
+    for agent_id, _path in agents:
+        meta = metas.get(agent_id) or {}
+        depth = meta.get('spawnDepth')
+        tool_use_id = meta.get('toolUseId')
+        if not isinstance(depth, int) or depth < 2 or not isinstance(tool_use_id, str):
+            continue
+        if tool_use_id in ambiguous:
+            continue
+        parent = owner_by_tool_use.get(tool_use_id)
+        if parent and parent != agent_id:
+            parents[agent_id] = parent
+    return _drop_cyclic_parents(parents)
+
+
+def _stamp_parent_agent(conn, trace_id: str, agent_id: str,
+                        parent_agent_id: str) -> int:
+    """Stamp ``attributes.parent_agent_id`` on every span owned by ``agent_id``
+    (matched by the ``agent_id`` attribute the hook stamps on each subagent
+    span). Attributes-only — no column, no schema change (design Move 3);
+    value-stable ``json_set`` so re-runs are idempotent. Returns rows updated."""
+    cur = conn.execute(
+        "UPDATE session_spans "
+        "   SET attributes = json_set(attributes, '$.parent_agent_id', ?) "
+        " WHERE trace_id = ? "
+        "   AND json_extract(attributes, '$.agent_id') = ?",
+        (parent_agent_id, trace_id, agent_id),
+    )
+    return cur.rowcount or 0
+
+
+def _reparent_nested_agents(conn, trace_id: str,
+                            agents: list[tuple[str, str]]) -> int:
+    """Stamp ``parent_agent_id`` for every depth>=2 agent whose spawning agent
+    resolves. Returns the count of agents stamped (>=1 span updated)."""
+    stamped = 0
+    for agent_id, parent_agent_id in _resolve_parent_agents(agents).items():
+        if _stamp_parent_agent(conn, trace_id, agent_id, parent_agent_id) > 0:
+            stamped += 1
+    return stamped
+
+
 def _stamp_stop_marker(conn, trace_id: str, agent_id: str,
                        cost: float, in_tok: int, out_tok: int) -> bool:
     """Write a subagent's totals onto its ``subagent.stop`` span. Returns True
@@ -162,6 +299,7 @@ def reconcile_claude_subagents(trace_id: str) -> dict:
             if _stamp_stop_marker(conn, trace_id, agent_id, cost, in_tok, out_tok):
                 stamped += 1
                 total_cost += cost
+        nested_parented = _reparent_nested_agents(conn, trace_id, agents)
         conn.commit()
     except Exception:
         try:
@@ -172,6 +310,7 @@ def reconcile_claude_subagents(trace_id: str) -> dict:
     finally:
         conn.close()
 
-    result = {"subagents": len(agents), "stamped": stamped, "cost_usd": total_cost}
+    result = {"subagents": len(agents), "stamped": stamped,
+              "cost_usd": total_cost, "nested_parented": nested_parented}
     _log.write("claude_subagents_reconciled", trace_id=trace_id, **result)
     return result

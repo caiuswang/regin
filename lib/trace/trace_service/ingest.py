@@ -1046,12 +1046,13 @@ def _insert_span_row(conn, span, attrs) -> None:
         if isinstance(raw, (int, float)):
             out_tok = int(raw)
     agent_id = attrs.get('agent_id')
+    source_prompt_id = attrs.get('source_prompt_id')
     conn.execute(
         """INSERT INTO session_spans
            (trace_id, span_id, parent_id, name, kind, start_time,
             end_time, duration_ms, attributes, status_code, status_message,
-            output_tokens, agent_id, source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            output_tokens, agent_id, source_prompt_id, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(trace_id, span_id) DO UPDATE SET
              parent_id = excluded.parent_id,
              name = excluded.name,
@@ -1064,6 +1065,7 @@ def _insert_span_row(conn, span, attrs) -> None:
              status_message = excluded.status_message,
              output_tokens = COALESCE(excluded.output_tokens, session_spans.output_tokens),
              agent_id = COALESCE(excluded.agent_id, session_spans.agent_id),
+             source_prompt_id = COALESCE(excluded.source_prompt_id, session_spans.source_prompt_id),
              source = excluded.source""",
         (span.get('trace_id'), span.get('span_id'),
          span.get('parent_id'), span.get('name'),
@@ -1073,6 +1075,7 @@ def _insert_span_row(conn, span, attrs) -> None:
          span.get('status_code', 'UNSET'), span.get('status_message'),
          out_tok,
          agent_id if isinstance(agent_id, str) and agent_id else None,
+         source_prompt_id if isinstance(source_prompt_id, str) and source_prompt_id else None,
          _infer_source(span.get('span_id'))),
     )
     # Dual-write structural data to session_trace_map so the frontend can load

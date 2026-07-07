@@ -118,9 +118,45 @@ def _emit_away_summary_span(trace_id: str, ev) -> bool:
     )
 
 
+def _emit_model_refusal_span(trace_id: str, ev) -> bool:
+    """Emit a `harness.model_refusal` span for a `system: model_refusal_fallback`
+    entry — the CLI's record that it walked a response back after a refusal and
+    silently retried on a fallback model. Observability only: no reparenting,
+    no token/rewind accounting (a retracted message never appears as its own
+    transcript entry, so there is nothing to suppress or double-count). The
+    original/fallback models, refusal category, and retracted uuids ride the
+    entry payload verbatim; surface them as flat attrs. Same `sys-<uuid[:13]>`
+    id convention as the sibling stop_summary / recap spans."""
+    from lib.hook_plugin import post_span  # type: ignore
+    payload = ev.payload or {}
+    retracted = (
+        payload.get('retracted_message_uuids')
+        or payload.get('retractedMessageUuids') or []
+    )
+    attrs = {
+        'subtype': 'model_refusal_fallback',
+        'turn_uuid': ev.turn_uuid,
+        'original_model': payload.get('original_model') or payload.get('originalModel'),
+        'fallback_model': payload.get('fallback_model') or payload.get('fallbackModel'),
+        'api_refusal_category': (
+            payload.get('api_refusal_category') or payload.get('apiRefusalCategory')
+        ),
+        'retracted_message_uuids': list(retracted) if isinstance(retracted, list) else [],
+    }
+    ts = _normalise_attachment_ts(ev.timestamp)
+    return post_span(
+        trace_id=trace_id,
+        span_id=f'sys-{ev.uuid[:13]}',
+        name='harness.model_refusal',
+        start_time=ts, end_time=ts, duration_ms=0,
+        attributes=attrs,
+    )
+
+
 _SYSTEM_EVENT_EMITTERS = {
     'stop_hook_summary': _emit_stop_summary_span,
     'away_summary': _emit_away_summary_span,
+    'model_refusal_fallback': _emit_model_refusal_span,
 }
 
 
@@ -472,6 +508,7 @@ def _post_prompt_anchor_spans(
     prompt_timestamps: dict[str, str],
     prompt_image_parts: dict[str, list],
     seen: set[str],
+    prompt_ids: dict[str, str] | None = None,
 ) -> None:
     """Emit the turn-anchor `prompt-<prompt_uuid[:13]>` span (and its
     `prompt_images`) for each turn.
@@ -494,6 +531,7 @@ def _post_prompt_anchor_spans(
     Idempotent via the span_id; throttled by the seen-cache keyed on the
     prompt entry uuid (a prompt's text never changes once submitted).
     """
+    prompt_ids = prompt_ids or {}
     new_uuids: list[str] = []
     posted: set[str] = set()
     for turn in turns:
@@ -507,6 +545,7 @@ def _post_prompt_anchor_spans(
         if _emit_one_prompt_anchor(
             trace_id, pu, text,
             prompt_timestamps.get(pu), prompt_image_parts.get(pu),
+            prompt_ids.get(pu),
         ):
             new_uuids.append(pu)
     _mark_seen(trace_id, new_uuids)
@@ -518,6 +557,7 @@ def _emit_one_prompt_anchor(
     text: str,
     ts_raw: str | None,
     inline_parts: list | None,
+    prompt_id: str | None = None,
 ) -> bool:
     """Post one `prompt-<uuid>` anchor span plus its `prompt_images`.
     Returns True iff the span persisted (so the caller caches the uuid)."""
@@ -525,7 +565,7 @@ def _emit_one_prompt_anchor(
 
     span_id = f'prompt-{prompt_uuid[:13]}'
     images, kept = _resolve_capped_anchor_images(trace_id, text, inline_parts)
-    attrs = _anchor_attrs(text, images, kept)
+    attrs = _anchor_attrs(text, images, kept, prompt_id)
     ts = _normalise_attachment_ts(ts_raw)
     if not post_span(
         trace_id=trace_id, span_id=span_id, name='prompt',
@@ -553,8 +593,16 @@ def _post_prompt_images(trace_id: str, span_id: str, kept: list) -> None:
     ])
 
 
-def _anchor_attrs(text: str, images: list, kept: list) -> dict:
-    """Build the `prompt` span attributes, including image metadata."""
+def _anchor_attrs(
+    text: str, images: list, kept: list, prompt_id: str | None = None,
+) -> dict:
+    """Build the `prompt` span attributes, including image metadata.
+
+    `prompt_id` (Claude Code's `promptId` for this entry) is stamped when
+    present so the serve-time ladder can value-join tool spans carrying the
+    same value as `source_prompt_id` onto this anchor. Anchors emitted before
+    this change (or without a captured id, e.g. queued commands) carry no
+    `prompt_id` and fall through to the existing ladder unchanged."""
     capped, truncated = _truncate_utf8_with_marker(
         text, _PROMPT_ANCHOR_TEXT_MAX_BYTES,
     )
@@ -563,6 +611,8 @@ def _anchor_attrs(text: str, images: list, kept: list) -> dict:
         'chars': len(text),
         'slash_command': text.split()[0] if text.startswith('/') else None,
     }
+    if prompt_id:
+        attrs['prompt_id'] = prompt_id
     if truncated:
         attrs['text_truncated'] = True
     if images:

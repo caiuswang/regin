@@ -257,6 +257,12 @@ class TranscriptUsage:
     # anchor when Claude Code's per-session image cache is already gone
     # (e.g. post-session repair). Same anchor-only keying as prompt_texts.
     prompt_image_parts: dict[str, list] = field(default_factory=dict)
+    # uuid → Claude Code `promptId` for the same anchored prompt entries. This
+    # is the value the hook envelope mirrors onto tool spans as
+    # `source_prompt_id`; stamping it onto the `prompt-<uuid>` anchor lets the
+    # serve-time ladder value-join a tool span to its issuing prompt. NOT the
+    # anchor's own `uuid`. Same anchor-only keying as prompt_texts.
+    prompt_ids: dict[str, str] = field(default_factory=dict)
     # uuid → expanded prompt text for slash-command anchors (e.g. /review
     # expands to a full system prompt). The full expansion is captured from
     # the isMeta child entry; keyed by command uuid so multiple slash commands

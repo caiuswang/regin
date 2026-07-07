@@ -51,7 +51,7 @@ def _fetch_spans(conn, trace_id: str) -> list[dict]:
                start_time, end_time, duration_ms, attributes,
                status_code, status_message,
                output_tokens, input_tokens, image_tokens, cost_usd,
-               tool_use_id, turn_uuid, source
+               tool_use_id, turn_uuid, source_prompt_id, source
         FROM session_spans
         WHERE trace_id = ?
         ORDER BY start_time ASC, id ASC
@@ -103,6 +103,14 @@ def _turn_uuid_of(span: dict) -> str | None:
     return span.get('turn_uuid') or (span.get('attributes') or {}).get('turn_uuid')
 
 
+def _source_prompt_id_of(span: dict) -> str | None:
+    """Issuing-prompt id from the promoted column, falling back to the
+    attribute the hook stamped (`attributes.source_prompt_id`) for rows
+    written before the column was promoted. Same column-then-attribute
+    shape as `_turn_uuid_of`."""
+    return span.get('source_prompt_id') or (span.get('attributes') or {}).get('source_prompt_id')
+
+
 def _build_prompt_by_turn(out: list[dict]) -> dict[str, str]:
     """turn_uuid → prompt anchor span_id, learned from the
     assistant_response / assistant.thinking spans that already carry a
@@ -120,42 +128,121 @@ def _build_prompt_by_turn(out: list[dict]) -> dict[str, str]:
     return by_turn
 
 
+def _build_prompt_by_source_id(out: list[dict]) -> dict[str, str]:
+    """prompt_id value → prompt anchor span_id, learned from the
+    `prompt` anchors that carry an `attributes.prompt_id` (stamped from the
+    transcript's `promptId` by the turn_trace poster). The join partner for a
+    tool span's `source_prompt_id`: the hook envelope mirrors the same
+    `promptId` value onto every tool span, so this lets a NULL-parent tool
+    nest under its issuing prompt by CLI ground truth. Legacy anchors emitted
+    before the stamp carry no `prompt_id` and never enter this map."""
+    by_pid: dict[str, str] = {}
+    for s in out:
+        if s['name'] != 'prompt':
+            continue
+        pid = (s.get('attributes') or {}).get('prompt_id')
+        if isinstance(pid, str) and pid:
+            by_pid[pid] = s['span_id']
+    return by_pid
+
+
+def _rung0_source_prompt_parent(
+    s: dict, prompt_by_source_id: dict[str, str], by_id: dict,
+) -> str | None:
+    """Rung 0 candidate: the prompt anchor a non-anchor orphan's
+    `source_prompt_id` names by value (CLI ground truth), or None. The
+    `resp-`/`think-` anchors are excluded — they are the turn's prompt-level
+    PEERS, so letting one take a prompt parent here would bypass the
+    no-2-cycle rule the turn_uuid rungs below enforce."""
+    if s['name'] in _RESP_THINK_ANCHOR_NAMES:
+        return None
+    spid = _source_prompt_id_of(s)
+    anchor = prompt_by_source_id.get(spid) if spid else None
+    if anchor and anchor in by_id and anchor != s['span_id']:
+        return anchor
+    return None
+
+
+def _anchor_orphan_parent(t: str | None, prompt_by_turn: dict, by_id: dict, span_id: str) -> str | None:
+    """Candidate parent for an orphan `resp-`/`think-` anchor: the turn's
+    prompt anchor only — never rung 0 (see `_rung0_source_prompt_parent`) and
+    never the OTHER turn-level anchor, which would form a 2-cycle."""
+    if not t:
+        return None
+    cand = prompt_by_turn.get(t)
+    return cand if cand and cand in by_id and cand != span_id else None
+
+
+def _turn_anchor_parent(t: str | None, by_id: dict, span_id: str) -> str | None:
+    """Candidate parent from the turn's own `resp-<turn>` / `think-<turn>`
+    anchors, in that order, or None when neither exists in the window."""
+    if not t:
+        return None
+    for cand in (f'resp-{t[:13]}', f'think-{t[:13]}'):
+        if cand in by_id and cand != span_id:
+            return cand
+    return None
+
+
+def _ladder_parent_for(
+    s: dict, t: str | None, prompt_by_turn: dict,
+    prompt_by_source_id: dict, by_id: dict,
+) -> str | None:
+    """Candidate parent for a non-anchor orphan, in precedence order:
+    `resp-<turn>` → `think-<turn>` → rung 0 `source_prompt_id` value-join →
+    the turn's prompt anchor. The turn-level anchors win first — they are the
+    finer-grained parent; rung 0 (CLI ground truth, the hook envelope's
+    issuing-prompt id) only fires when neither exists for the turn, but it
+    still beats the turn's own coarser prompt anchor. Also catches a tool
+    span whose `turn_uuid` never got attributed (which would otherwise skip
+    the turn_uuid gate and fall to the chronological fallback)."""
+    cand = _turn_anchor_parent(t, by_id, s['span_id'])
+    if cand:
+        return cand
+    rung0 = _rung0_source_prompt_parent(s, prompt_by_source_id, by_id)
+    if rung0:
+        return rung0
+    if not t:
+        return None
+    cand = prompt_by_turn.get(t)
+    return cand if cand and cand in by_id and cand != s['span_id'] else None
+
+
 def _ladder_orphans_by_turn(out: list[dict], by_id: dict) -> None:
-    """Deterministic parent ladder for NULL-parent, non-boundary spans
-    that carry a `turn_uuid`: `resp-<turn>` → `think-<turn>` → the turn's
-    prompt anchor, chosen purely by deterministic id existence (no
-    timestamps). This is the preference pass; spans it can't place (no
+    """Deterministic parent ladder for NULL-parent, non-boundary spans,
+    chosen purely by deterministic id existence / stamped value (no
+    timestamps) — see `_ladder_parent_for` for the precedence. This is the
+    preference pass; spans it can't place (no source_prompt_id, no
     turn_uuid, or none of the rungs exist) are left NULL for the
     chronological `_graft_orphans_under_prompt` fallback. Mutates in place.
 
+    The `resp-`/`think-` anchors of a turn are PEERS, not parent/child. An
+    orphan anchor (a turn with no write-time prompt parent — chiefly a
+    `task.notification`/background-completion turn that had no user-prompt
+    anchor) must skip the anchor rungs, or `think-<t>` and `resp-<t>` pick
+    each other and form a 2-cycle that `_build_span_tree` can't root,
+    silently dropping the whole turn (and its child tools) — `_anchor_orphan_
+    parent` takes the prompt rung only.
+
     Load-bearing for migration: an old session (parent_id NULL but
     turn_uuid populated, once repaired so the resp/think anchors carry
-    prompt parents) heals here at read time with zero re-emission."""
+    prompt parents) heals here at read time with zero re-emission. A span
+    whose anchor carries no stamped `prompt_id` falls straight through rung 0
+    to the turn's prompt anchor unchanged."""
     prompt_by_turn = _build_prompt_by_turn(out)
+    prompt_by_source_id = _build_prompt_by_source_id(out)
     for s in out:
         if s.get('parent_id') is not None:
             continue
         if s['name'] in _LADDER_SKIP_NAMES:
             continue
         t = _turn_uuid_of(s)
-        if not t:
-            continue
-        # The `resp-`/`think-` anchors of a turn are PEERS, not parent/child.
-        # An orphan anchor (a turn with no write-time prompt parent — chiefly a
-        # `task.notification`/background-completion turn that had no user-prompt
-        # anchor) must skip the anchor rungs, or `think-<t>` and `resp-<t>` pick
-        # each other and form a 2-cycle that `_build_span_tree` can't root,
-        # silently dropping the whole turn (and its child tools). Anchors take
-        # the prompt rung only; the chronological `_graft_orphans_under_prompt`
-        # fallback catches them when no prompt anchor exists for the turn.
         if s['name'] in _RESP_THINK_ANCHOR_NAMES:
-            cands = (prompt_by_turn.get(t),)
+            cand = _anchor_orphan_parent(t, prompt_by_turn, by_id, s['span_id'])
         else:
-            cands = (f'resp-{t[:13]}', f'think-{t[:13]}', prompt_by_turn.get(t))
-        for cand in cands:
-            if cand and cand in by_id and cand != s['span_id']:
-                s['parent_id'] = cand
-                break
+            cand = _ladder_parent_for(s, t, prompt_by_turn, prompt_by_source_id, by_id)
+        if cand:
+            s['parent_id'] = cand
 
 
 def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict) -> None:
@@ -276,6 +363,67 @@ def _owning_start_id(starts: list[dict], span: dict) -> str | None:
     return (owner or starts[0])['span_id']
 
 
+def _raw_parent_agent_edges(starts_by_agent: dict[str, list[dict]]) -> dict[str, str]:
+    """agent_id → parent_agent_id, one edge per agent, read straight off its
+    first start's `attributes.parent_agent_id` (self-references excluded).
+    May still contain cycles — `_drop_cyclic_agent_edges` filters those."""
+    edges: dict[str, str] = {}
+    for agent_id, starts in starts_by_agent.items():
+        for st in starts:
+            parent = (st.get('attributes') or {}).get('parent_agent_id')
+            if parent and parent != agent_id:
+                edges[agent_id] = parent
+                break
+    return edges
+
+
+def _drop_cyclic_agent_edges(edges: dict[str, str]) -> dict[str, str]:
+    """Drop any agent→parent edge whose parent chain walks back to the agent
+    itself (mutual/2-cycle or longer)."""
+    dropped: set[str] = set()
+    for child in edges:
+        visited = {child}
+        cur = edges.get(child)
+        while cur is not None:
+            if cur in visited:
+                dropped.add(child)
+                break
+            visited.add(cur)
+            cur = edges.get(cur)
+    return {c: p for c, p in edges.items() if c not in dropped}
+
+
+def _nested_parent_agent_edges(starts_by_agent: dict[str, list[dict]]) -> dict[str, str]:
+    """agent_id → parent_agent_id, one edge per agent, with any self-reference
+    or cycle dropped — the same precision-over-recall guard `claude_subagents.
+    _resolve_parent_agents` applies at write time, reapplied here so LEGACY
+    rows stamped before that guard existed (or any other bad data) can't feed
+    `_build_span_tree` a mutually-referencing pair that vanishes entirely
+    (neither end has a reachable root)."""
+    return _drop_cyclic_agent_edges(_raw_parent_agent_edges(starts_by_agent))
+
+
+def _reparent_nested_start(
+    start_span: dict, starts_by_agent: dict, safe_parent_edges: dict[str, str],
+) -> None:
+    """A depth>=2 subagent's `subagent.start` nests under its SPAWNING agent's
+    owning `subagent.start` segment (the latest such start ingested at/before
+    it) when `attributes.parent_agent_id` resolves — the nested-spawn edge
+    stamped by lib/trace/claude_subagents. Missing/legacy (no parent_agent_id,
+    the edge didn't survive `_nested_parent_agent_edges`'s cycle guard, or the
+    parent's start isn't in the window) → left as-is (flat under the main
+    thread), preserving prior behavior."""
+    parent_agent = (start_span.get('attributes') or {}).get('parent_agent_id')
+    if not parent_agent:
+        return
+    agent_id = (start_span.get('attributes') or {}).get('agent_id')
+    if safe_parent_edges.get(agent_id) != parent_agent:
+        return
+    target = _owning_start_id(starts_by_agent.get(parent_agent, []), start_span)
+    if target and target != start_span['span_id']:
+        start_span['parent_id'] = target
+
+
 def _reparent_subagents(out: list[dict]) -> None:
     """Nest subagent-owned spans under their `subagent.start`. Claude Code
     tags every hook payload fired inside a subagent with `agent_id`,
@@ -287,12 +435,18 @@ def _reparent_subagents(out: list[dict]) -> None:
     whole history (including the first segment's stop) under the resumed
     start, and the envelope widening would then drag that start's
     start_time back to the first segment — breaking every consumer that
-    anchors an elapsed to it."""
+    anchors an elapsed to it.
+
+    A `subagent.start` is not reparented by `agent_id` (that would nest it
+    under itself); instead, a nested (depth>=2) start reparents under its
+    SPAWNING agent's start via `parent_agent_id` — `_reparent_nested_start`."""
     starts_by_agent = _subagent_starts_by_agent(out)
     if not starts_by_agent:
         return
+    safe_parent_edges = _nested_parent_agent_edges(starts_by_agent)
     for s in out:
         if s['name'] == 'subagent.start':
+            _reparent_nested_start(s, starts_by_agent, safe_parent_edges)
             continue
         aid = (s.get('attributes') or {}).get('agent_id')
         target = _owning_start_id(starts_by_agent.get(aid, []), s) if aid else None

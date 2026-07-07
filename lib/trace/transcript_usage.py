@@ -123,10 +123,18 @@ _TRACED_ATTACHMENT_KINDS: frozenset[str] = frozenset({
 #                         the turn was doing, in the top-level
 #                         `content` string. Surfaced as a span so the
 #                         trace shows the recap inline.
+#   * model_refusal_fallback — the CLI's own record that a response was
+#                         refused and silently retried on a fallback
+#                         model (originalModel/fallbackModel/
+#                         apiRefusalCategory/retractedMessageUuids).
+#                         Observability only: surfaced as a marker span so
+#                         a resolved-model / token-shape discontinuity has
+#                         an explanation instead of appearing unexplained.
 _TRACED_SYSTEM_SUBTYPES: frozenset[str] = frozenset({
     'turn_duration',
     'stop_hook_summary',
     'away_summary',
+    'model_refusal_fallback',
 })
 
 
@@ -678,6 +686,12 @@ class _TranscriptScan:
     # uuid → inline base64 image parts for that prompt entry (durable
     # fallback for prompt_images when the live image cache is gone).
     prompt_image_parts: dict[str, list] = field(default_factory=dict)
+    # uuid → Claude Code `promptId` (snake-cased by _normalize_dict_keys) of
+    # that prompt entry. This is the *value* the hook envelope mirrors onto
+    # every tool span as `source_prompt_id`; stamping it onto the prompt
+    # anchor gives serve-time a shared value to join tool→prompt on. NOT the
+    # entry's own `uuid` — the anchor id `prompt-<uuid>` is keyed on uuid.
+    prompt_ids: dict[str, str] = field(default_factory=dict)
     # Slash-command echoes are excluded from `real_prompt_uuids` (they're
     # `harness.local_command` cards, not typed prompts). But a command that
     # *opens* a turn — `/review`, which expands into instructions an
@@ -843,9 +857,19 @@ class _TranscriptScan:
         self.real_prompt_uuids.add(euuid)
         if text:
             self.prompt_texts[euuid] = text
+        self._capture_prompt_side_tables(euuid, entry_n, content)
+
+    def _capture_prompt_side_tables(
+        self, euuid: str, entry_n: dict, content: object,
+    ) -> None:
+        """Capture the anchor side tables (timestamp / prompt_id / inline
+        image parts) for a real-prompt entry, keyed by uuid."""
         ts = entry_n.get('timestamp')
         if isinstance(ts, str) and ts:
             self.prompt_timestamps[euuid] = ts
+        pid = entry_n.get('prompt_id')
+        if isinstance(pid, str) and pid:
+            self.prompt_ids[euuid] = pid
         parts = extract_image_parts(content)
         if parts:
             self.prompt_image_parts[euuid] = parts
@@ -1467,6 +1491,11 @@ class _TranscriptScan:
         finalized = [_builder_to_turn_usage(b, max_text_bytes) for b in counted]
         anchor_texts = self._anchor_prompt_texts(finalized, promoted_texts)
         anchor_ts, anchor_images = self._anchor_side_tables(anchor_texts)
+        anchor_prompt_ids = {
+            u: self.prompt_ids[u]
+            for u in anchor_texts
+            if u in self.prompt_ids
+        }
         return TranscriptUsage(
             turns=finalized,
             model=self.latest_model,
@@ -1481,6 +1510,7 @@ class _TranscriptScan:
             prompt_texts=anchor_texts,
             prompt_timestamps=anchor_ts,
             prompt_image_parts=anchor_images,
+            prompt_ids=anchor_prompt_ids,
             prompt_expansions=command_expansions,
             tool_use_to_turn_uuid=self._tool_use_to_turn_uuid(),
             rewinds=self._compute_rewinds(),

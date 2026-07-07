@@ -1244,6 +1244,47 @@ def test_stop_hook_summary_emits_hook_span(captured_spans, tmp_path, monkeypatch
     ]
 
 
+def test_model_refusal_fallback_emits_marker_span(captured_spans, tmp_path, monkeypatch):
+    """`system: model_refusal_fallback` produces a `harness.model_refusal`
+    marker span carrying the original/fallback models, refusal category, and
+    retracted uuids (flat attrs), linked to the turn it followed. Observability
+    only — no reparenting, no token accounting."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        _assistant_with_usage(
+            msg_id='m-rf', uuid='asst-uuid-refusalxx', parent_uuid='u1',
+            text='reply', ts='2026-04-27T12:01:00Z',
+        ),
+        {'type': 'system', 'subtype': 'model_refusal_fallback',
+         'uuid': 'sys-refusal-aaa', 'parentUuid': 'asst-uuid-refusalxx',
+         'originalModel': 'claude-sonnet-4-5',
+         'fallbackModel': 'claude-opus-4-8',
+         'apiRefusalCategory': 'policy',
+         'retractedMessageUuids': ['msg-r1', 'msg-r2'],
+         'timestamp': '2026-04-27T12:01:05Z'},
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='rf-s1',
+                         transcript_path=str(transcript)))
+    spans = [s for s in captured_spans if s.get('name') == 'harness.model_refusal']
+    assert len(spans) == 1
+    s = spans[0]
+    assert s['span_id'] == 'sys-sys-refusal-a'  # sys-<uuid[:13]>
+    attrs = s['attributes']
+    kept = {k: attrs.get(k) for k in (
+        'subtype', 'turn_uuid', 'original_model', 'fallback_model',
+        'api_refusal_category', 'retracted_message_uuids')}
+    assert kept == {
+        'subtype': 'model_refusal_fallback',
+        'turn_uuid': 'asst-uuid-refusalxx',
+        'original_model': 'claude-sonnet-4-5',
+        'fallback_model': 'claude-opus-4-8',
+        'api_refusal_category': 'policy',
+        'retracted_message_uuids': ['msg-r1', 'msg-r2'],
+    }
+
+
 def test_emits_local_command_spans_for_user_and_system_entries(
     captured_spans, tmp_path, monkeypatch,
 ):
@@ -1517,6 +1558,32 @@ def test_prompt_anchor_uses_prompt_entry_timestamp_not_now(
     expected = _normalise_attachment_ts('2026-04-27T09:15:00Z')
     assert anchor['start_time'] == expected
     assert anchor['end_time'] == expected
+
+
+def test_prompt_anchor_carries_prompt_id_from_transcript(
+    captured_spans, tmp_path, monkeypatch,
+):
+    """The transcript's `promptId` on the user-prompt entry (normalized to
+    `prompt_id`, snake-cased by `_normalize_dict_keys`) rides through the real
+    scan+poster path onto the emitted `prompt-<uuid>` anchor's
+    `attributes.prompt_id` — the CLI ground truth `_rung0_source_prompt_parent`
+    (lib/trace/projection.py) value-joins a tool span's `source_prompt_id`
+    against (design Move 1b)."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    ua = 'user-pppp0000pppp'
+    pid = 'pr-live-submission-abc'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': ua, 'parentUuid': None, 'promptId': pid,
+         'timestamp': '2026-04-27T12:00:00Z',
+         'message': {'content': 'do the thing'}},
+        _assistant_with_usage(msg_id='m1', text='ok', uuid='asst-p0000000000',
+                              parent_uuid=ua),
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    anchor = _prompt_spans_by_uuid(captured_spans)[f'prompt-{ua[:13]}']
+    assert anchor['attributes']['prompt_id'] == pid
 
 
 def test_prompt_anchor_detects_slash_command(captured_spans, tmp_path, monkeypatch):

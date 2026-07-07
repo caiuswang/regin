@@ -56,6 +56,10 @@ def init_session_spans_schema(conn) -> None:
                 -- Owning agent: NULL = main agent, else subagent id. See
                 -- db/schema.sql; keep the two in step.
                 agent_id        TEXT,
+                -- Issuing prompt submission (hook envelope prompt_id), promoted
+                -- from attributes.source_prompt_id. See db/schema.sql; keep the
+                -- two in step.
+                source_prompt_id TEXT,
                 -- Capture source: 'hook' (live hook events) or 'transcript'
                 -- (the transcript scan). See lib/trace/merge.py. Mirrors
                 -- db/schema.sql; keep the two in step.
@@ -87,6 +91,14 @@ def init_session_spans_schema(conn) -> None:
             # Promote attributes.agent_id to a real column (migration 0007).
             # ADD COLUMN is O(1).
             conn.execute("ALTER TABLE session_spans ADD COLUMN agent_id TEXT")
+        if 'source_prompt_id' not in cols:
+            # Promote attributes.source_prompt_id to a real column
+            # (migration 0008). ADD COLUMN is O(1); serve-time readers fall
+            # back to the attribute for rows the write-time stamp predates,
+            # so no backfill is required here.
+            conn.execute(
+                "ALTER TABLE session_spans ADD COLUMN source_prompt_id TEXT"
+            )
         _heal_agent_id_column(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_session_spans_trace_agent "

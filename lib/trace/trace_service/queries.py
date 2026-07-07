@@ -384,7 +384,7 @@ def _fetch_window_rows(conn, trace_id, window_start, window_end):
                    start_time, end_time, duration_ms, attributes,
                    status_code, status_message, turn_uuid,
                    output_tokens, input_tokens, image_tokens, cost_usd,
-                   source
+                   source_prompt_id, source
             FROM session_spans
             WHERE trace_id = ?
               AND start_time >= ?
@@ -400,7 +400,7 @@ def _fetch_window_rows(conn, trace_id, window_start, window_end):
                    start_time, end_time, duration_ms, attributes,
                    status_code, status_message, turn_uuid,
                    output_tokens, input_tokens, image_tokens, cost_usd,
-                   source
+                   source_prompt_id, source
             FROM session_spans
             WHERE trace_id = ? AND start_time >= ?
             ORDER BY start_time ASC, id ASC

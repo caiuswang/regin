@@ -237,6 +237,65 @@ def test_ingest_second_post_of_same_span_is_counted_as_duplicate(client, trace_d
     assert _count_spans(trace_db) == 1  # UNIQUE constraint kept it a single row.
 
 
+# ── ingest: source_prompt_id column promotion (design Move 1a) ───────
+
+def _source_prompt_col(db_path, span_id, trace_id='t1'):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT source_prompt_id FROM session_spans "
+            "WHERE trace_id = ? AND span_id = ?",
+            (trace_id, span_id),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _attrs_source_prompt(db_path, span_id, trace_id='t1'):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT json_extract(attributes, '$.source_prompt_id') "
+            "FROM session_spans WHERE trace_id = ? AND span_id = ?",
+            (trace_id, span_id),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def test_ingest_promotes_source_prompt_id_to_column(client, trace_db):
+    """A span carrying attributes.source_prompt_id has the value derived onto
+    the promoted column at insert time — while KEEPING it in attributes
+    (mirrors the agent_id promotion)."""
+    span = _make_span(attributes={'source_prompt_id': 'pr-uuid-abc'})
+    r = client.post('/api/session-spans', json=span)
+    assert r.status_code == 200
+    assert _source_prompt_col(trace_db, 's1') == 'pr-uuid-abc'
+    # The value stays in the attributes JSON too (NOT moved out).
+    assert _attrs_source_prompt(trace_db, 's1') == 'pr-uuid-abc'
+
+
+def test_ingest_source_prompt_id_survives_reingest_without_value(client, trace_db):
+    """Re-ingesting the same span_id whose attrs no longer carry the value
+    must NOT null the column — the ON CONFLICT COALESCE preserves it (mirrors
+    the agent_id COALESCE)."""
+    client.post('/api/session-spans',
+                json=_make_span(attributes={'source_prompt_id': 'pr-uuid-abc'}))
+    assert _source_prompt_col(trace_db, 's1') == 'pr-uuid-abc'
+    # Second post of the same (trace_id, span_id) with no source_prompt_id.
+    client.post('/api/session-spans', json=_make_span(attributes={}))
+    assert _source_prompt_col(trace_db, 's1') == 'pr-uuid-abc'
+
+
+def test_ingest_source_prompt_id_absent_leaves_column_null(client, trace_db):
+    """A span with no source_prompt_id leaves the column NULL — the additive
+    column never fabricates a value (kimi_subagents / other callers safe)."""
+    client.post('/api/session-spans', json=_make_span(attributes={}))
+    assert _source_prompt_col(trace_db, 's1') is None
+
+
 # ── ingest: is_test normalisation ────────────────────────────────────
 
 @pytest.mark.parametrize('raw_is_test, expected_attr', [

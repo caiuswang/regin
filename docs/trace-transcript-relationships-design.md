@@ -285,8 +285,11 @@ add a sibling of `_build_prompt_by_turn` (`projection.py:106-120`) —
 `_ladder_orphans_by_turn` (`projection.py:123-158`), before the existing
 `resp-`/`think-`/turn_uuid cascade, check the orphan's `source_prompt_id` (the 1a
 column, falling back to `attributes.source_prompt_id` for pre-migration rows) against
-this dict and parent there directly on a hit. This is CLI ground truth, so it wins
-over every derived rung.
+this dict and parent there directly on a hit. This is CLI ground truth, so it beats
+the coarser prompt-level attribution (`prompt_by_turn`) and the chronological
+fallback — but the turn-level `resp-`/`think-` anchors, being the finer-grained
+parent, are still tried first and win over the join when they exist for the turn
+(see "Honest scope of the win" below).
 
 **Read-side prerequisite — without it rung 0 is a silent no-op:** `_fetch_spans`
 (`projection.py:48-62`) is the sole read path feeding `_graft_orphans` /
