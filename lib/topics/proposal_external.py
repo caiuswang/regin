@@ -202,21 +202,55 @@ def load_status(out_dir: Path) -> dict[str, Any] | None:
     return orm_load_proposal_status(repo_path, proposal_id)
 
 
-def _existing_topics_summary(repo: Path) -> list[dict[str, Any]]:
-    """Existing approved topics (id/label/aliases) so the agent avoids
-    proposing duplicates.
+def _wiki_section_headings(repo: Path, topic_id: str, *, limit: int = 14) -> list[str]:
+    """The `## ` headings of a topic's wiki page — the concrete territory it
+    already documents — so a drafting agent can steer a new topic *around* it
+    instead of restating it. Best effort: a missing/unreadable page yields []."""
+    from lib.topics.wiki import wiki_dir
+    try:
+        text = (wiki_dir(repo) / f"{topic_id}.md").read_text(encoding="utf-8")
+    except Exception:
+        return []
+    heads: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            heads.append(line[3:].strip())
+            if len(heads) >= limit:
+                break
+    return heads
 
-    The agent has Read/Glob/Grep tools and explores the repo itself, so
-    this is the only context we pre-derive — there is no evidence pack.
+
+def _existing_topics_summary(repo: Path) -> list[dict[str, Any]]:
+    """Existing approved topics, enriched enough that the agent can draft
+    *around* them rather than only avoiding an id/alias clash: id/label/aliases,
+    the topic's bucket (`parent_id`), a one-line `covers` (its blurb, or a
+    trimmed intent), and the `## ` section headings of its wiki (`wiki_sections`
+    — the territory already covered). The agent still explores the repo itself;
+    this is the boundary map, not an evidence pack.
     """
     try:
         graph = load_authoritative_graph(repo)
     except Exception:
         return []
-    return [
-        {"id": tid, "label": topic.get("label"), "aliases": topic.get("aliases", [])}
-        for tid, topic in sorted((graph.get("topics") or {}).items())
-    ]
+    out: list[dict[str, Any]] = []
+    for tid, topic in sorted((graph.get("topics") or {}).items()):
+        if not isinstance(topic, dict):
+            continue
+        covers = (topic.get("blurb") or topic.get("intent") or "").strip()
+        if len(covers) > 240:
+            covers = covers[:237] + "..."
+        entry: dict[str, Any] = {
+            "id": tid,
+            "label": topic.get("label"),
+            "aliases": topic.get("aliases", []),
+            "parent_id": topic.get("parent_id"),
+            "covers": covers,
+        }
+        sections = _wiki_section_headings(repo, tid)
+        if sections:
+            entry["wiki_sections"] = sections
+        out.append(entry)
+    return out
 
 
 def _bucket_summary(repo: Path) -> list[dict[str, Any]]:

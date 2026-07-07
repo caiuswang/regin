@@ -39,23 +39,28 @@
   "refs": [
     {
       "path": "lib/memory/store.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/memory_recall.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/grader/service.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/memory/models.py",
-      "role": "schema"
+      "role": "schema",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/memory.py",
-      "role": "api"
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/components/memory/TopicRoutePlayground.vue",

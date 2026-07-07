@@ -47,26 +47,32 @@
   "refs": [
     {
       "path": "lib/trace/repair.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/__init__.py"
+      "path": "hook_manager/handlers/turn_trace/__init__.py",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/turn_trace/entry.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/turn_trace/cache.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/turn_trace/span_posters.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/turn_trace/deny_detection.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/runner.py",
@@ -78,35 +84,43 @@
     },
     {
       "path": "lib/activity_log.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "cli/commands/logs.py",
-      "role": "entrypoint"
+      "role": "entrypoint",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/transcript_usage.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/projection.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/trace_service/ingest.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/providers/claude/__init__.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/providers/codex/__init__.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/providers/generic/__init__.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/orm/engine.py",
@@ -114,15 +128,18 @@
     },
     {
       "path": "web/app.py",
-      "role": "api"
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/trace/sessions.py",
-      "role": "api"
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/trace/ingest_errors.py",
-      "role": "api"
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "tests/trace/test_trace_repair.py",

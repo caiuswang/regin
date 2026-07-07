@@ -112,7 +112,8 @@
     },
     {
       "path": "lib/memory/adapters.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/prompts/surfaces/review.py",
@@ -123,7 +124,8 @@
     },
     {
       "path": "cli/commands/topics.py",
-      "role": "entrypoint"
+      "role": "entrypoint",
+      "tier": "reference"
     }
   ],
   "status": "active"

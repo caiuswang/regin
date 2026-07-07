@@ -31,7 +31,8 @@
   "refs": [
     {
       "path": "cli/commands/topics.py",
-      "role": "entrypoint"
+      "role": "entrypoint",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/route.py",
@@ -39,7 +40,8 @@
     },
     {
       "path": "lib/topics/core.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/scan.py",

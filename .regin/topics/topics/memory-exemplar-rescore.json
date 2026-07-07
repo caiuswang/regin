@@ -38,15 +38,18 @@
     },
     {
       "path": "lib/memory/store.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/memory/feedback.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/memory/models.py",
-      "role": "schema"
+      "role": "schema",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/components/memory/ExemplarCaseList.vue",

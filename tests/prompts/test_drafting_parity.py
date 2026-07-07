@@ -102,7 +102,7 @@ Output JSON shape:
   "overview": "Optional short markdown intro tying the proposed topics together"
 }}
 
-Existing approved topics (do not propose duplicates; explore the repo with your Read/Glob/Grep tools for everything else):
+Existing approved topics — each entry's `covers` and `wiki_sections` show the territory it already owns. Do NOT propose a topic that duplicates or substantially restates one of these; when your topic is adjacent, scope it to what they don't cover and cross-link the sibling with `[[id]]` instead of re-explaining it. Explore the repo with your Read/Glob/Grep tools for everything else:
 ```json
 {json.dumps(pe._existing_topics_summary(repo), indent=2, sort_keys=True)}
 ```

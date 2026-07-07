@@ -35,11 +35,13 @@
     },
     {
       "path": "lib/experiments.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/goal_feedback.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/grader/adapters.py",
@@ -59,7 +61,8 @@
     },
     {
       "path": "lib/memory/evaluate.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/grader/agentic.py"

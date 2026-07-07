@@ -22,22 +22,28 @@
       "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/__init__.py"
+      "path": "hook_manager/handlers/turn_trace/__init__.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/cache.py"
+      "path": "hook_manager/handlers/turn_trace/cache.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/entry.py"
+      "path": "hook_manager/handlers/turn_trace/entry.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/span_posters.py"
+      "path": "hook_manager/handlers/turn_trace/span_posters.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/timestamps.py"
+      "path": "hook_manager/handlers/turn_trace/timestamps.py",
+      "tier": "reference"
     }
   ],
   "status": "active"

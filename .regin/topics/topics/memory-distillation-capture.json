@@ -42,7 +42,8 @@
     },
     {
       "path": "hook_manager/handlers/post_tool_trace.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     }
   ],
   "status": "active"

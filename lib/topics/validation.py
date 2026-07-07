@@ -31,6 +31,7 @@ from typing import Any, Iterable, Optional
 
 from lib.topics.core import (
     EDGE_TYPES,
+    NON_DRIFTING_REF_TIERS,
     REF_ROLES,
     REF_TIERS,
     SCHEMA_VERSION,
@@ -370,6 +371,7 @@ def audit_graph(
             graph_context=ctx,
         ))
     issues.extend(_audit_taxonomy_placement(topics))
+    issues.extend(_audit_shared_primary_refs(topics))
     return issues
 
 
@@ -401,6 +403,58 @@ def _audit_taxonomy_placement(
                         f"bucket so it leaves the unclassified backlog",
                 topic_ids=(tid,),
             ))
+    return out
+
+
+def _collect_primary_ref_owners(
+    tid: str, topic: dict[str, Any], owners: dict[str, list[str]],
+) -> None:
+    """Record `tid` as an owner of each of its *primary* refs (tier absent or
+    `"primary"`), de-duped within the topic. Pointer-only (`reference`) refs are
+    skipped — a file may be cited as context by many topics without either
+    wiki claiming to explain it."""
+    seen: set[str] = set()
+    for ref in topic.get("refs", []) or []:
+        if not isinstance(ref, dict):
+            continue
+        path = ref.get("path")
+        if not isinstance(path, str) or not path or path in seen:
+            continue
+        seen.add(path)
+        if ref.get("tier") not in NON_DRIFTING_REF_TIERS:
+            owners.setdefault(path, []).append(tid)
+
+
+def _audit_shared_primary_refs(topics: dict[str, Any]) -> list[ValidationIssue]:
+    """Boundary check: a file should be the *primary* ref of exactly one topic —
+    the one whose wiki actually explains it. When two topics both list a file as
+    primary, their wikis tend to describe the same code and a content-drift edit
+    to that file nags both: the "two overlapping wikis" smell. Advisory
+    (warning), never a hard block — a transient overlap while a topic is
+    downgraded/replaced is legitimate, and the diff layer already surfaces only
+    the collisions a given apply *newly* introduces (pre-existing overlap stays
+    informational)."""
+    owners: dict[str, list[str]] = {}
+    for tid, topic in topics.items():
+        if isinstance(topic, dict):
+            _collect_primary_ref_owners(tid, topic, owners)
+    out: list[ValidationIssue] = []
+    for path, tids in sorted(owners.items()):
+        if len(tids) < 2:
+            continue
+        pair = tuple(sorted(tids))
+        out.append(ValidationIssue(
+            severity="warning",
+            code="graph.shared_primary_ref",
+            message=(
+                f"file {path} is a primary ref of {len(pair)} topics "
+                f"({', '.join(pair)}); make it primary in the one topic that "
+                f"explains it and tier:\"reference\" in the others so their "
+                f"wikis don't cover the same code"
+            ),
+            topic_ids=pair,
+            paths=(path,),
+        ))
     return out
 
 

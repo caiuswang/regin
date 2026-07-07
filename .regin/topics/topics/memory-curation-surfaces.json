@@ -84,11 +84,13 @@
     },
     {
       "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     }
   ],
   "status": "active"

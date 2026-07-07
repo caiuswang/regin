@@ -42,15 +42,18 @@
     },
     {
       "path": "frontend/src/views/SessionsView.vue",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/views/SessionTraceView.vue",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/views/LiveSessionView.vue",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/views/SettingsView.vue",

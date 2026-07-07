@@ -44,7 +44,8 @@
     },
     {
       "path": "lib/topics/proposal_orm/serializers.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/content_drift.py",
@@ -56,15 +57,18 @@
     },
     {
       "path": "web/blueprints/topics/proposals.py",
-      "role": "api"
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/proposals/external_jobs.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/proposal_drafting.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     }
   ],
   "status": "active"

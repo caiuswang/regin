@@ -85,7 +85,62 @@ def _feedback_block(open_feedback: str) -> str:
     return f"<prior_open_feedback>\n{open_feedback}\n</prior_open_feedback>\n\n"
 
 
-def _build_prompt(proposal: dict[str, Any], open_feedback: str) -> str:
+def _drafted_ids_and_buckets(proposal: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """The drafted topics' ids and the set of buckets (`parent_id`s) they target."""
+    drafted: set[str] = set()
+    buckets: set[str] = set()
+    for t in proposal.get("topics") or []:
+        if not isinstance(t, dict):
+            continue
+        drafted.add(t.get("id"))
+        if t.get("parent_id"):
+            buckets.add(t.get("parent_id"))
+    return drafted, buckets
+
+
+def _is_sibling(tid: str, topic: Any, drafted: set[str], buckets: set[str]) -> bool:
+    """A non-bucket approved topic that shares one of the draft's buckets and
+    isn't one of the drafted topics itself."""
+    return (
+        isinstance(topic, dict)
+        and topic.get("kind") != "bucket"
+        and tid not in drafted
+        and topic.get("parent_id") in buckets
+    )
+
+
+def _sibling_lines(proposal: dict[str, Any], graph: dict[str, Any]) -> str:
+    """One bullet per approved topic sharing a bucket with a drafted topic
+    (the drafted topics themselves excluded), each with a pointer to its wiki
+    page so the reviewer can open it and judge whether the draft restates it."""
+    drafted, buckets = _drafted_ids_and_buckets(proposal)
+    if not buckets:
+        return ""
+    lines: list[str] = []
+    for tid, topic in sorted((graph.get("topics") or {}).items()):
+        if not _is_sibling(tid, topic, drafted, buckets):
+            continue
+        intent = (topic.get("intent") or topic.get("blurb") or "").strip()
+        lines.append(f"- {tid}: {intent}\n  wiki: .regin/topics/wiki/{tid}.md")
+    return "\n".join(lines)
+
+
+def _sibling_block(sibling_lines: str) -> str:
+    """The `<sibling_topics>` block, or "" when the draft has no same-bucket
+    approved neighbours to check against."""
+    if not sibling_lines:
+        return ""
+    return (
+        "<sibling_topics>\n"
+        "Approved topics already under the same bucket(s) as this draft. The "
+        "draft must complement, not restate, these — open their wiki pages to "
+        f"check for overlap.\n{sibling_lines}\n"
+        "</sibling_topics>\n\n"
+    )
+
+
+def _build_prompt(proposal: dict[str, Any], open_feedback: str,
+                  sibling_block: str = "") -> str:
     """Build the reviewer's task prompt.
 
     The body is the editable ``topic-proposal-review`` surface
@@ -98,6 +153,7 @@ def _build_prompt(proposal: dict[str, Any], open_feedback: str) -> str:
 
     context = {
         "topic_lines": _topic_lines(proposal),
+        "sibling_block": sibling_block,
         "feedback_block": _feedback_block(open_feedback),
     }
     return render_surface(SURFACE_ID, context)
@@ -138,11 +194,18 @@ def generate_review_note(
     open_feedback = _open_feedback_lines(
         list_proposal_feedback_threads(repo_path, proposal_id)
     )
+    from lib.topics.graph_io import load_authoritative_graph
+    try:
+        graph = load_authoritative_graph(Path(repo_path))
+    except Exception:  # noqa: BLE001 - same-bucket siblings are best-effort context
+        graph = {}
+    sibling_block = _sibling_block(_sibling_lines(proposal, graph))
     if llm is None:
         from lib.memory.adapters import resolve_proposal_reviewer
         llm = resolve_proposal_reviewer()
     answer = llm.complete(
-        _build_prompt(proposal, open_feedback), max_tokens=1024, cwd=repo_path,
+        _build_prompt(proposal, open_feedback, sibling_block),
+        max_tokens=1024, cwd=repo_path,
     )
     if not answer or not str(answer).strip():
         log.write("proposal_review_note_skipped", proposal_id=proposal_id,

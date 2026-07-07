@@ -118,11 +118,13 @@
     },
     {
       "path": "frontend/src/utils/sessionActivity.js",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/trace/sessions.py",
-      "role": "api"
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/bridge.py",
@@ -130,7 +132,8 @@
     },
     {
       "path": "frontend/src/router.js",
-      "role": "config"
+      "role": "config",
+      "tier": "reference"
     },
     {
       "path": "frontend/tests/live-card.spec.js",

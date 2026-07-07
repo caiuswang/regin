@@ -16,7 +16,8 @@ from typing import Any
 import lib.topics.proposal_review as pr
 
 
-def _reference_build_prompt(proposal: dict[str, Any], open_feedback: str) -> str:
+def _reference_build_prompt(proposal: dict[str, Any], open_feedback: str,
+                            sibling_block: str = "") -> str:
     topics = proposal.get("topics") or []
     topic_lines = []
     for topic in topics:
@@ -34,7 +35,7 @@ def _reference_build_prompt(proposal: dict[str, Any], open_feedback: str) -> str
         "Use your Read/Glob/Grep tools to check the listed ref files as they "
         "exist NOW and judge whether the draft is accurate and worth applying.\n\n"
         "<draft_topics>\n" + "\n".join(topic_lines) + "\n</draft_topics>\n\n"
-        + feedback_block +
+        + sibling_block + feedback_block +
         "<task>\n"
         "Assess coverage, accuracy against the current code, and whether any "
         "prior open feedback is addressed. Be precise — only raise real "
@@ -43,7 +44,11 @@ def _reference_build_prompt(proposal: dict[str, Any], open_feedback: str) -> str
         "content-drift, needs no wiki prose); `\"primary\"`/absent means the "
         "wiki should describe it. Flag mis-tiered refs — a central "
         "implementation file marked `reference`, or a pointer-only/example "
-        "file left `primary` (which nags for drift refreshes). End with "
+        "file left `primary` (which nags for drift refreshes). If a "
+        "<sibling_topics> block is present, also verify the draft does not "
+        "duplicate a sibling's territory: open the siblings' wiki pages and "
+        "flag any drafted section that substantially restates one, naming "
+        "which topic should own the material. End with "
         "exactly one line:\n"
         "RECOMMENDATION: ACCEPT|REGENERATE|DISMISS\n"
         "  ACCEPT   — the draft is sound; apply it as is.\n"

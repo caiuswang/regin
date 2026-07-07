@@ -72,7 +72,8 @@
     },
     {
       "path": "hook_manager/handlers/post_tool_trace.py",
-      "role": "entrypoint"
+      "role": "entrypoint",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/trace/agent_messages.py",
@@ -88,11 +89,13 @@
     },
     {
       "path": "lib/topics/proposal_external.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/proposals/finish.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/topics/wiki_debt.py",
@@ -100,11 +103,13 @@
     },
     {
       "path": "lib/grader/service.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/grader/topic_notify.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/views/InboxView.vue",

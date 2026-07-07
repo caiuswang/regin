@@ -154,6 +154,40 @@ def test_audit_warns_on_unclassified_leaf():
     assert all(i.severity == "warning" for i in unclassified)
 
 
+def test_audit_warns_on_shared_primary_ref():
+    # `f.py` is primary in two topics and only referenced by a third → one
+    # warning naming the two primary owners; the reference citation is exempt.
+    g = {"version": 1, "repo": "r", "topics": {
+        "buck": {"label": "B", "intent": "x", "status": "active", "kind": "bucket"},
+        "owner-a": {"label": "A", "intent": "x", "status": "active",
+                    "parent_id": "buck", "refs": [{"path": "f.py"}]},
+        "owner-b": {"label": "B2", "intent": "x", "status": "active",
+                    "parent_id": "buck",
+                    "refs": [{"path": "f.py", "role": "implementation"}]},
+        "pointer": {"label": "P", "intent": "x", "status": "active",
+                    "parent_id": "buck",
+                    "refs": [{"path": "f.py", "tier": "reference"}]},
+    }}
+    shared = [i for i in audit_graph(g) if i.code == "graph.shared_primary_ref"]
+    assert len(shared) == 1
+    assert shared[0].severity == "warning"
+    assert shared[0].topic_ids == ("owner-a", "owner-b")  # sorted; pointer exempt
+    assert shared[0].paths == ("f.py",)
+
+
+def test_audit_no_shared_primary_ref_when_unique_or_reference():
+    # a file primary in exactly one topic, and a file only ever cited as
+    # reference by several, both produce no boundary warning.
+    g = {"version": 1, "repo": "r", "topics": {
+        "buck": {"label": "B", "intent": "x", "status": "active", "kind": "bucket"},
+        "a": {"label": "A", "intent": "x", "status": "active", "parent_id": "buck",
+              "refs": [{"path": "only-a.py"}, {"path": "ctx.py", "tier": "reference"}]},
+        "b": {"label": "B2", "intent": "x", "status": "active", "parent_id": "buck",
+              "refs": [{"path": "ctx.py", "tier": "reference"}]},
+    }}
+    assert not [i for i in audit_graph(g) if i.code == "graph.shared_primary_ref"]
+
+
 def test_proposal_shape_preserves_parent_id_and_blurb():
     prop = {"id": "t", "label": "T", "intent": "i",
             "parent_id": "root-a", "blurb": "drill here"}

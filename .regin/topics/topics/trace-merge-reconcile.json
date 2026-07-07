@@ -24,7 +24,8 @@
     },
     {
       "path": "lib/trace/repair.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/projection.py"

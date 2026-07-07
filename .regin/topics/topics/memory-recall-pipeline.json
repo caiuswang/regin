@@ -44,7 +44,8 @@
   "refs": [
     {
       "path": "lib/memory/store.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/memory/expand.py",
@@ -52,7 +53,8 @@
     },
     {
       "path": "lib/memory/evaluate.py",
-      "role": "test"
+      "role": "test",
+      "tier": "reference"
     }
   ],
   "status": "active"

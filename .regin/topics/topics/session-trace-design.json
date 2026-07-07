@@ -73,11 +73,13 @@
     },
     {
       "path": "hook_manager/handlers/post_tool_trace.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/prompt_trace.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/session_lifecycle.py",
@@ -85,7 +87,8 @@
     },
     {
       "path": "hook_manager/handlers/trace_payload.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/payload_validation.py",
@@ -93,7 +96,8 @@
     },
     {
       "path": "lib/trace/projection.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/repair.py",
@@ -113,32 +117,41 @@
     },
     {
       "path": "lib/trace/transcript_parsers.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/transcript_usage.py",
-      "role": "implementation"
+      "role": "implementation",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/plan_trace.py"
+      "path": "hook_manager/handlers/plan_trace.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/__init__.py"
+      "path": "hook_manager/handlers/turn_trace/__init__.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/cache.py"
+      "path": "hook_manager/handlers/turn_trace/cache.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/entry.py"
+      "path": "hook_manager/handlers/turn_trace/entry.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/span_posters.py"
+      "path": "hook_manager/handlers/turn_trace/span_posters.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/timestamps.py"
+      "path": "hook_manager/handlers/turn_trace/timestamps.py",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/__init__.py"
@@ -153,7 +166,8 @@
       "path": "lib/trace/payload_drift_store.py"
     },
     {
-      "path": "lib/trace/payload_schemas/README.md"
+      "path": "lib/trace/payload_schemas/README.md",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/plan_context.py"
