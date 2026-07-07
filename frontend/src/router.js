@@ -5,6 +5,7 @@ import DashboardView from './views/DashboardView.vue'
 import ReposView from './views/ReposView.vue'
 import RepoDetailView from './views/RepoDetailView.vue'
 import RepoTopicsView from './views/RepoTopicsView.vue'
+import RevisionCompareView from './views/RevisionCompareView.vue'
 import PatternsView from './views/PatternsView.vue'
 import PatternDetailView from './views/PatternDetailView.vue'
 import RulesView from './views/RulesView.vue'
@@ -42,6 +43,7 @@ const routes = [
   { path: '/repos', name: 'repos', component: ReposView },
   { path: '/repos/:name', name: 'repo-detail', component: RepoDetailView },
   { path: '/repos/:name/topics', name: 'repo-topics', component: RepoTopicsView },
+  { path: '/repos/:name/topics/compare', name: 'repo-topics-compare', component: RevisionCompareView },
   { path: '/patterns', name: 'patterns', component: PatternsView },
   { path: '/patterns/:slug(.*)', name: 'pattern-detail', component: PatternDetailView },
   { path: '/rules', name: 'rules', component: RulesView },

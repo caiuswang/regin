@@ -170,13 +170,47 @@ def diff_proposal_topic(
         repo_path, approved,
         strategy=strategy, target_topic_id=target_topic_id, options=opts,
     )
+    wiki_before, wiki_after = _wiki_bodies_for_diff(
+        repo_path, proposal_id, _proposed, resolved, strategy=strategy,
+    )
     return {
         "diff": serialize_diff(resolved),
         "dropped_items": dropped.to_json(),
         # Echo what we'd get without resolution so the UI can show
         # "here's what we silently filtered" diffs against the raw view.
         "raw_introduced_errors": [serialize_issue(e) for e in raw.introduced_errors],
+        # Wiki markdown the graph delta omits: the applied page's before/after body.
+        "wiki_before": wiki_before,
+        "wiki_after": wiki_after,
     }
+
+
+def _wiki_bodies_for_diff(
+    repo_path: str, proposal_id: str, proposed: dict[str, Any], resolved,
+    *, strategy: str,
+) -> tuple[str, str]:
+    """`(before, after)` wiki markdown for the resolved target topic.
+
+    `before` is the applied topic's current wiki page — empty on create,
+    since no prior page exists (the resolved delta's `before` is None).
+    `after` is exactly what apply would write (`_wiki_pages_for_apply` is
+    the single source of truth): when apply writes no page — merge keeps the
+    target's existing wiki, or there's no per-topic body — the page is
+    unchanged, so `after` mirrors `before` and the panel shows no change.
+    """
+    from lib.topics.core import slugify, topic_dir
+
+    delta = resolved.topic_deltas[0] if resolved.topic_deltas else None
+    before = ""
+    if delta is not None and delta.before is not None:
+        page = topic_dir(repo_path) / "wiki" / f"{slugify(delta.topic_id)}.md"
+        if page.exists():
+            before = page.read_text()
+
+    pages = _wiki_pages_for_apply(repo_path, proposal_id, strategy, resolved, proposed)
+    if pages and delta is not None and delta.topic_id in pages:
+        return before, pages[delta.topic_id]
+    return before, before
 
 
 # ── apply (commits) ─────────────────────────────────────────────────

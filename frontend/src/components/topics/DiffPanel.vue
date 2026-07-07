@@ -20,6 +20,7 @@ import { defaultApplyOptions, initialApplyStrategy, proposalTopicPath } from '..
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Select from '../ui/Select.vue'
+import WikiContentDiff from './WikiContentDiff.vue'
 
 const props = defineProps({
   repoName: { type: String, required: true },
@@ -39,6 +40,8 @@ const options = ref(defaultApplyOptions())
 const diff = ref(null)
 const droppedItems = ref(null)
 const rawIntroducedErrors = ref([])
+const wikiBefore = ref('')
+const wikiAfter = ref('')
 const loadingDiff = ref(false)
 const applying = ref(false)
 const error = ref('')
@@ -72,34 +75,40 @@ const topicDeltas = computed(() => diff.value?.topic_deltas || [])
 
 // ── Diff fetch ─────────────────────────────────────────────────────
 
+// Request body shared by /diff and /apply — same (strategy, target,
+// options) contract; the server recomputes the diff from it either way.
+function applyRequestBody() {
+  return {
+    strategy: strategy.value,
+    target_topic_id: strategy.value === 'merge' ? targetTopicId.value || null : null,
+    options: options.value,
+  }
+}
+
+function ingestDiffResult(res) {
+  diff.value = res.diff
+  droppedItems.value = res.dropped_items
+  rawIntroducedErrors.value = res.raw_introduced_errors || []
+  wikiBefore.value = res.wiki_before || ''
+  wikiAfter.value = res.wiki_after || ''
+  // If the strategy we just sent isn't valid for this topic (e.g. parent
+  // passed stale approvedTopicIds and we auto-picked 'replace' for a topic
+  // no longer in the approved graph), switch to the first backend-validated
+  // option; the watcher re-fires fetchDiff with the corrected strategy.
+  const validForTopic = (diff.value.valid_strategies_by_topic || {})[diff.value.proposed_topic_id] || []
+  if (validForTopic.length && !validForTopic.includes(strategy.value)) {
+    strategy.value = validForTopic[0]
+  }
+}
+
 async function fetchDiff() {
   loadingDiff.value = true
   error.value = ''
   try {
     const url = proposalTopicPath(props.repoName, props.proposalId, props.topic.id, 'diff')
-    const body = {
-      strategy: strategy.value,
-      target_topic_id: strategy.value === 'merge' ? targetTopicId.value || null : null,
-      options: options.value,
-    }
-    const res = await api.post(url, body)
-    if (res?.ok) {
-      diff.value = res.diff
-      droppedItems.value = res.dropped_items
-      rawIntroducedErrors.value = res.raw_introduced_errors || []
-      // If the strategy we just sent isn't actually valid for this
-      // topic (e.g. parent passed stale approvedTopicIds and we
-      // auto-picked 'replace' for a topic that's no longer in the
-      // approved graph), switch to the first backend-validated
-      // option. The watcher will re-fire fetchDiff with the corrected
-      // strategy.
-      const validForTopic = (diff.value.valid_strategies_by_topic || {})[diff.value.proposed_topic_id] || []
-      if (validForTopic.length && !validForTopic.includes(strategy.value)) {
-        strategy.value = validForTopic[0]
-      }
-    } else {
-      error.value = res?.error || 'Failed to compute diff'
-    }
+    const res = await api.post(url, applyRequestBody())
+    if (res?.ok) ingestDiffResult(res)
+    else error.value = res?.error || 'Failed to compute diff'
   } catch (err) {
     error.value = err?.message || String(err)
   } finally {
@@ -135,12 +144,7 @@ async function apply() {
   error.value = ''
   try {
     const url = proposalTopicPath(props.repoName, props.proposalId, props.topic.id, 'apply')
-    const body = {
-      strategy: strategy.value,
-      target_topic_id: strategy.value === 'merge' ? targetTopicId.value || null : null,
-      options: options.value,
-    }
-    const res = await api.post(url, body)
+    const res = await api.post(url, applyRequestBody())
     if (res?.ok) {
       emit('applied', { snapshotId: res.snapshot_id, alreadyApplied: !!res.already_applied })
       return
@@ -396,6 +400,17 @@ function deltaIsEmpty(d) {
             </div>
           </article>
         </div>
+      </section>
+
+      <!-- Wiki content diff -->
+      <section v-if="!loadingDiff && diff" class="diffpanel__section" data-testid="diff-wiki-content">
+        <div class="diffpanel__section-label">Wiki content</div>
+        <WikiContentDiff
+          :before="wikiBefore"
+          :after="wikiAfter"
+          before-label="Approved"
+          after-label="Proposed"
+        />
       </section>
 
       <!-- Dropped items (silently filtered) -->

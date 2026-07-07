@@ -497,7 +497,17 @@ watch(selectedProposalId, () => {
           />
 
           <div v-if="data?.revisions?.length" class="topics-candidate-card">
-            <h3 class="topics-subsection-title">Revision History</h3>
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="topics-subsection-title">Revision History</h3>
+              <router-link
+                v-if="(data.revisions || []).length >= 2"
+                class="text-xs font-medium text-blue-700 hover:text-blue-900 hover:underline"
+                :to="{ name: 'repo-topics-compare', params: { name: repo }, query: { proposal: selectedProposalId } }"
+                data-testid="compare-revisions-link"
+              >
+                Compare revisions →
+              </router-link>
+            </div>
             <p class="text-sm text-slate-600 mb-3">
               Browse previous revisions to compare drafts. Historical revisions are read-only.
             </p>

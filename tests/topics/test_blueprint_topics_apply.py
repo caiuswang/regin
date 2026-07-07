@@ -78,6 +78,46 @@ def test_diff_endpoint_returns_serialized_graphdiff(stub_proposal_provider, flas
     assert "dropped_items" in body  # always present, possibly empty
 
 
+def test_diff_endpoint_returns_wiki_content_bodies(stub_proposal_provider, flask_client, fake_git_repo):
+    """The content diff feeds off `wiki_before`/`wiki_after`: on a create
+    there is no approved page yet, so `wiki_before` is empty while
+    `wiki_after` carries the proposed body."""
+    name = _seed_repo(fake_git_repo)
+    proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
+
+    resp = flask_client.post(
+        f"/api/repos/{name}/topics/proposals/{proposal_id}/topics/{topic_id}/diff",
+        json={"strategy": "create"},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert "wiki_before" in body and "wiki_after" in body
+    assert body["wiki_before"] == ""
+    proposal = load_proposal(str(fake_git_repo), proposal_id)
+    proposed = next(t for t in proposal["topics"] if t["id"] == topic_id)
+    # `after` is what apply would actually write — the per-topic body,
+    # stripped (see `_wiki_pages_for_apply`).
+    if proposed.get("wiki"):
+        assert body["wiki_after"] == proposed["wiki"].strip()
+
+
+def test_wiki_bodies_for_diff_merge_persists_no_content_change(tmp_path):
+    """Merge keeps the target topic's existing wiki (`_wiki_pages_for_apply`
+    writes nothing for merge), so the content diff must report no change —
+    the proposed doc's body must NOT leak into `after`."""
+    from types import SimpleNamespace
+    from lib.topics.proposals.apply_service import _wiki_bodies_for_diff
+
+    delta = SimpleNamespace(topic_id="target", before={"id": "target"})
+    resolved = SimpleNamespace(topic_deltas=[delta])
+    before, after = _wiki_bodies_for_diff(
+        str(tmp_path), "run1", {"wiki": "# Proposed body\n"}, resolved,
+        strategy="merge",
+    )
+    assert before == after
+    assert "Proposed body" not in after
+
+
 def test_diff_endpoint_rejects_unknown_strategy(stub_proposal_provider, flask_client, fake_git_repo):
     name = _seed_repo(fake_git_repo)
     proposal_id, topic_id = _create_proposal(flask_client, name, fake_git_repo)
