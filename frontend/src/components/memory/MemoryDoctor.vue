@@ -6,12 +6,15 @@
 // the same trigger as the header "Run reflect", surfaced where it's advised.
 import { computed } from 'vue'
 import Button from '../ui/Button.vue'
+import ReflectPipeline from './ReflectPipeline.vue'
 
 const props = defineProps({
   stats: { type: Object, required: true },
   // Drives the inline Run-reflect button's loading/disabled state; the parent
   // owns the actual reflect call and toggles this.
   reflecting: { type: Boolean, default: false },
+  // The last reflect run's per-stage counts, threaded to the pipeline view.
+  lastResult: { type: Object, default: null },
 })
 const emit = defineEmits(['reflect'])
 
@@ -100,6 +103,8 @@ const entries = (data) => Object.entries(data).sort((a, b) => b[1] - a[1])
         >{{ reflecting ? 'Running…' : 'Run reflect' }}</Button>
       </li>
     </ul>
+
+    <ReflectPipeline :reflecting="reflecting" :last-result="lastResult" />
 
     <!-- Count breakdowns -->
     <div class="grid gap-3 sm:grid-cols-2">
