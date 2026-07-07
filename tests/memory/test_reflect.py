@@ -133,6 +133,121 @@ def test_reflect_gray_zone_without_llm_leaves_both():
     assert result.promoted == 2
 
 
+# ── model-decided promotion (promote_mode / promote judge) ───────────────────
+
+
+def _promote_json(verdict, merge_into=None):
+    import json as _json
+    return _json.dumps({"verdict": verdict, "rationale": "test",
+                        "merge_into": merge_into})
+
+
+def _set_recall_count(memory_id, n):
+    """recall_count is bumped only by the recall path, not store.update — set
+    it directly through the ORM so promotion gates can be exercised."""
+    from lib.memory.engine import MemorySessionLocal
+    from lib.memory.models import Memory
+    with MemorySessionLocal() as s:
+        row = s.get(Memory, memory_id)
+        row.recall_count = n
+        s.add(row)
+        s.commit()
+
+
+def test_promote_falls_back_to_heuristic_without_llm(monkeypatch):
+    """No agent configured → every surviving working row is promoted by the
+    blind rule, never held or dropped, whatever the mode asks. This is the
+    wholesale-failure guard: a model outage must not block consolidation."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_mode", "all")
+    _remember("A durable rule about restarting the backend after edits.")
+    result = reflect(memory.get_store())          # no llm
+    assert result.promoted == 1
+    assert result.held == 0 and result.dropped == 0
+
+
+def test_promote_unparseable_verdict_falls_back_to_promote():
+    """A judge answer that isn't a valid verdict must not strand the row: the
+    parse-failure half of the wholesale-failure guard falls back to promote."""
+    mid = _remember("A fresh observation the judge answers incoherently about.")
+    result = reflect(memory.get_store(), llm=StubLLM("sorry, I cannot decide"))
+    assert result.promoted == 1 and result.held == 0 and result.dropped == 0
+    assert memory.get_store().get_dict(mid)["tier"] == "episodic"
+
+
+def test_promote_judge_holds_unproven_row():
+    """A fresh, never-recalled row is ambiguous; a `hold` verdict keeps it in
+    the working tier instead of promoting."""
+    mid = _remember("A raw, unproven observation from one session.")
+    llm = StubLLM(_promote_json("hold"))
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.held == 1 and result.promoted == 0
+    row = memory.get_store().get_dict(mid)
+    assert row["tier"] == "working" and row["status"] == "active"
+
+
+def test_promote_drop_degrades_to_hold_by_default():
+    """Without opt-in, a destructive `drop` verdict is not honoured — the row
+    stays working rather than being retired by a single model call."""
+    mid = _remember("A low-value one-off note.")
+    result = reflect(memory.get_store(), llm=StubLLM(_promote_json("drop")))
+    assert result.held == 1 and result.dropped == 0
+    row = memory.get_store().get_dict(mid)
+    assert row["status"] == "active" and row["tier"] == "working"
+
+
+def test_promote_drop_retires_when_opted_in(monkeypatch):
+    """With `promote_allow_retire`, a `drop` verdict retires the row via
+    reversible supersede (status retired, not a hard delete)."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
+    mid = _remember("A low-value one-off note.")
+    result = reflect(memory.get_store(), llm=StubLLM(_promote_json("drop")))
+    assert result.dropped == 1 and result.held == 0
+    assert memory.get_store().get_dict(mid)["status"] == "retired"
+
+
+def test_promote_ambiguous_auto_promotes_recalled_row():
+    """In ambiguous mode a deliberately-recalled row clear of any near-duplicate
+    is promoted without consulting the judge at all."""
+    mid = _remember("A proven rule recalled across past sessions.")
+    _set_recall_count(mid, 2)
+    llm = StubLLM(_promote_json("drop"))   # would drop — but must not be asked
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.promoted == 1 and result.held == 0 and result.dropped == 0
+    assert llm.prompts == []               # the judge was skipped
+    assert memory.get_store().get_dict(mid)["tier"] == "episodic"
+
+
+def test_promote_mode_all_judges_recalled_row(monkeypatch):
+    """`all` mode consults the judge even for a well-recalled row that
+    ambiguous mode would have auto-promoted."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_mode", "all")
+    mid = _remember("A proven rule recalled across past sessions.")
+    _set_recall_count(mid, 5)
+    llm = StubLLM(_promote_json("hold"))
+    result = reflect(memory.get_store(), llm=llm)
+    assert llm.prompts                     # consulted despite the recall count
+    assert result.held == 1 and result.promoted == 0
+
+
+def test_promote_merge_folds_into_named_neighbour(monkeypatch):
+    """A `merge` verdict (opted in) retires the row into the neighbour it
+    names, reusing the dedup supersede path."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
+    keeper = _episodic("MARKER-A restart the backend after server edits")
+    dup = _remember("MARKER-B restart backend after edits")
+    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
+                             "MARKER-B": [0.9, 0.436, 0.0]})
+    llm = StubLLM(_promote_json("merge", merge_into=keeper))
+    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
+    assert result.merged >= 1
+    dup_row = memory.get_store().get_dict(dup)
+    assert dup_row["status"] == "retired" and dup_row["superseded_by"] == keeper
+
+
 # ── synthesis: abstract a higher-order rule from a cluster of related rows ───
 
 

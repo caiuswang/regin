@@ -148,7 +148,7 @@ async function runReflect() {
   try {
     const r = await api.post('/memory/reflect', {})
     reflectSummary.value =
-      `reflect: ${r.examined} examined, ${r.merged} merged, ${r.promoted} promoted, ${r.embedded} embedded, ${r.edges} edges, ${r.topics} topics, ${r.decayed} decayed`
+      `reflect: ${r.examined} examined, ${r.merged} merged, ${r.promoted} promoted, ${r.held} held, ${r.dropped} dropped, ${r.embedded} embedded, ${r.edges} edges, ${r.topics} topics, ${r.decayed} decayed`
   } finally {
     reflecting.value = false
   }

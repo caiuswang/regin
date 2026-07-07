@@ -29,6 +29,7 @@ EXPAND_SURFACE_ID = "memory-expand"
 SYNTHESIS_SURFACE_ID = "memory-reflect-synthesis"
 DIGEST_SURFACE_ID = "memory-reflect-digest"
 CONTRADICTION_SURFACE_ID = "memory-reflect-contradiction"
+PROMOTE_SURFACE_ID = "memory-reflect-promote"
 RETITLE_SURFACE_ID = "memory-retitle"
 
 
@@ -217,6 +218,30 @@ _DEFAULT_BODY_CONTRADICTION = (
 )
 
 
+# --- Reflect promote judge (lib/memory/reflect.py::_promote_decision) ---------
+# Decides the fate of a working-tier lesson at consolidation time. Conservative
+# by construction: when unsure it must choose `hold`, never `drop` — the model
+# verdict is a hard control over a destructive action, so the prompt biases
+# toward the reversible outcome (see the "brittle categorical" memory lesson).
+_DEFAULT_BODY_PROMOTE = (
+    "A coding-session lesson is up for consolidation into long-term memory. "
+    "Decide its fate from the candidate and its nearest already-kept "
+    "neighbours.\n\n"
+    "Verdicts:\n"
+    "- promote: a durable, reusable rule worth keeping permanently.\n"
+    "- hold: real but unproven or too raw — keep it working one more cycle. "
+    "Choose this whenever you are unsure.\n"
+    "- drop: redundant, one-off, or low-value — not worth keeping.\n"
+    "- merge: says essentially what one neighbour already says; fold into it "
+    "(set merge_into to that neighbour's id).\n\n"
+    "CANDIDATE:\n{{candidate}}\n\n"
+    "NEAREST KEPT NEIGHBOURS:\n{{neighbours}}\n\n"
+    "Respond with a JSON object and nothing else:\n"
+    '  {"verdict": "promote|hold|drop|merge", '
+    '"rationale": "<= 160 chars", "merge_into": "<neighbour id or null>"}'
+)
+
+
 # --- Reflect digest (lib/memory/reflect.py::_llm_digest) ---------------------
 # Old builder: `_DIGEST_PROMPT.replace("{entries}", entries)`.
 _DEFAULT_BODY_DIGEST = (
@@ -351,6 +376,23 @@ register_surface(
 )
 
 register_surface(
+    PROMOTE_SURFACE_ID,
+    label="Memory — reflect promote judge",
+    area="memory",
+    default_body=_DEFAULT_BODY_PROMOTE,
+    description=(
+        "The reflect-pass judge that decides whether a working-tier lesson is "
+        "promoted, held, dropped, or merged into a neighbour "
+        "(`lib/memory/reflect.py`)."
+    ),
+    applies_to=("memory",),
+    variables=(
+        PromptVariable("candidate", "The working memory under review, as doc text."),
+        PromptVariable("neighbours", "The nearest kept memories, one `[id] <text>` block each."),
+    ),
+)
+
+register_surface(
     RETITLE_SURFACE_ID,
     label="Memory — title distiller",
     area="memory",
@@ -371,6 +413,7 @@ __all__ = [
     "DIGEST_SURFACE_ID",
     "DISTILL_SURFACE_ID",
     "EXPAND_SURFACE_ID",
+    "PROMOTE_SURFACE_ID",
     "RETITLE_SURFACE_ID",
     "SYNTHESIS_SURFACE_ID",
     "TOPIC_CLASSIFY_SURFACE_ID",

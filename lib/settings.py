@@ -303,6 +303,21 @@ class AgentMemoryConfig(BaseModel):
     # lifecycle. Needs an LLM; a no-op without one. Off by default — this is
     # the generation slice; the inject path is separate.
     digest_enabled: bool = False
+    # reflect(): who decides a working row's fate at promotion time.
+    #   heuristic  — the original blind rule: every surviving working row is
+    #                promoted to episodic (no model call).
+    #   ambiguous  — clear-cut rows auto-promote; only rows a cheap abundant
+    #                signal flags as borderline are sent to the promote judge.
+    #   all        — every working row is judged by the model.
+    # `ambiguous`/`all` degrade to `heuristic` whenever no LLM is configured or
+    # the judge errors — promotion must never fail wholesale on a model outage.
+    promote_mode: Literal["heuristic", "ambiguous", "all"] = "ambiguous"
+    # Gate on the judge's *destructive* verdicts. Off → a `drop`/`merge` verdict
+    # degrades to `hold` (the row simply stays working); the model can only ever
+    # promote or hold. On → `drop`/`merge` retire the row via reversible
+    # supersede. Off by default: a noisy categorical must not hard-control a
+    # destructive action without opt-in.
+    promote_allow_retire: bool = False
     # Regenerate a scope's digest only when at least this many newer source
     # memories exist since the current digest, OR it is older than
     # `digest_max_age_days` — keeps the per-scope LLM call off the hot path.

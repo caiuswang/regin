@@ -149,7 +149,8 @@ def api_memory_reflect():
     return jsonify({
         "examined": result.examined, "merged": result.merged,
         "contradictions": result.contradictions,
-        "promoted": result.promoted, "embedded": result.embedded,
+        "promoted": result.promoted, "held": result.held,
+        "dropped": result.dropped, "embedded": result.embedded,
         "forgotten": result.forgotten, "decayed": result.decayed,
         "synthesized": result.synthesized,
         "edges": result.edges, "topics": result.topics,

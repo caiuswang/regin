@@ -59,6 +59,8 @@ class ReflectResult:
     merged: int = 0
     contradictions: int = 0
     promoted: int = 0
+    held: int = 0
+    dropped: int = 0
     embedded: int = 0
     forgotten: int = 0
     decayed: int = 0
@@ -183,6 +185,131 @@ def _promote(store, mem: dict, *, now_field: str, dry_run: bool,
         return
     store.update(mem["id"], tier="episodic", consolidated_at=now_field,
                  importance=_reinforced_importance(mem))
+
+
+_PROMOTE_CLEAR_RECALL = 1     # a deliberately-recalled row has proven useful
+_PROMOTE_NEIGHBOURS = 3       # kept rows shown to the judge as context
+_PROMOTE_VERDICTS = ("promote", "hold", "drop", "merge")
+
+
+def _hold(mem: dict, *, result: ReflectResult) -> None:
+    result.held += 1
+    result.actions.append(f"hold {mem['id'][:8]} (working)")
+
+
+def _drop(store, mem: dict, *, dry_run: bool, result: ReflectResult) -> None:
+    result.dropped += 1
+    result.actions.append(f"drop {mem['id'][:8]} (judged low-value)")
+    if dry_run:
+        return
+    store.update(mem["id"], status="retired")
+    store.record_validation(mem["id"], validator="reflect", action="dropped",
+                            note="promote judge: low-value")
+
+
+def _promotion_ambiguous(mem: dict, nearest_sim: float) -> bool:
+    """Cheap gate for `promote_mode='ambiguous'`: True → consult the judge. A
+    row is clear-cut only when an abundant, reliable signal already vouches for
+    it — deliberately recalled at least once AND clear of the near-duplicate
+    band (not a merge candidate). Everything else goes to the model."""
+    recalled = (mem.get("recall_count") or 0) >= _PROMOTE_CLEAR_RECALL
+    return not (recalled and nearest_sim < _GRAY_ZONE_FLOOR)
+
+
+def _neighbour_map(working: list[dict], episodic: list[dict],
+                   embedder) -> dict[str, list[tuple[dict, float]]]:
+    """Each working row's episodic neighbours, most-similar first."""
+    ep_ids = {e["id"] for e in episodic}
+    by_w: dict[str, list[tuple[dict, float]]] = {w["id"]: [] for w in working}
+    for w, other, sim in _pair_similarities(working, working + episodic, embedder):
+        if other["id"] in ep_ids:
+            by_w[w["id"]].append((other, sim))
+    for wid in by_w:
+        by_w[wid].sort(key=lambda t: t[1], reverse=True)
+    return by_w
+
+
+def _promote_decision(mem: dict, neighbours: list[dict], llm) -> "dict | None":
+    """Ask the judge what to do with a working row. Returns the parsed verdict,
+    or None on any model/parse failure — the caller then falls back to a plain
+    promote, so a model outage never blocks or misroutes consolidation."""
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import PROMOTE_SURFACE_ID
+    blocks = "\n".join(f"[{n['id']}] {_doc_text(n)[:400]}"
+                       for n in neighbours) or "(none)"
+    answer = llm.complete(
+        render_surface(PROMOTE_SURFACE_ID,
+                       {"candidate": _doc_text(mem)[:1500], "neighbours": blocks}),
+        max_tokens=200, surface_id=PROMOTE_SURFACE_ID)
+    if not answer:
+        return None
+    draft = _extract_json_object(answer)
+    if not draft or draft.get("verdict") not in _PROMOTE_VERDICTS:
+        return None
+    return draft
+
+
+def _neighbour_by_id(near: list[tuple[dict, float]],
+                     mid: "str | None") -> "dict | None":
+    for n, _ in near:
+        if n["id"] == mid:
+            return n
+    return None
+
+
+def _apply_verdict(store, mem: dict, verdict: "dict | None",
+                   near: list[tuple[dict, float]], allow_retire: bool, *,
+                   now_field: str, dry_run: bool, result: ReflectResult) -> None:
+    kind = verdict.get("verdict") if verdict else None
+    if kind == "hold":
+        _hold(mem, result=result)
+    elif kind == "drop" and allow_retire:
+        _drop(store, mem, dry_run=dry_run, result=result)
+    elif kind == "merge" and allow_retire:
+        keeper = _neighbour_by_id(near, (verdict or {}).get("merge_into"))
+        if keeper is not None:
+            _merge_pair(store, keeper, mem, dry_run=dry_run, result=result)
+        else:
+            _hold(mem, result=result)
+    elif kind in ("drop", "merge"):     # retire not opted in → keep it working
+        _hold(mem, result=result)
+    else:                               # promote, or verdict None (fallback)
+        _promote(store, mem, now_field=now_field, dry_run=dry_run, result=result)
+
+
+def _judge_row(store, mem: dict, near: list[tuple[dict, float]], cfg, llm, *,
+               now_field: str, dry_run: bool, result: ReflectResult) -> None:
+    """Model-path for one working row: clear-cut rows auto-promote (ambiguous
+    mode only), the rest go to the judge and its verdict is applied."""
+    if cfg.promote_mode == "ambiguous":
+        nearest_sim = near[0][1] if near else 0.0
+        if not _promotion_ambiguous(mem, nearest_sim):
+            _promote(store, mem, now_field=now_field,
+                     dry_run=dry_run, result=result)
+            return
+    verdict = _promote_decision(mem, [n for n, _ in near[:_PROMOTE_NEIGHBOURS]], llm)
+    _apply_verdict(store, mem, verdict, near, cfg.promote_allow_retire,
+                   now_field=now_field, dry_run=dry_run, result=result)
+
+
+def _consolidate_working(store, working: list[dict], consumed: set,
+                         episodic: list[dict], embedder, llm, *,
+                         now_field: str, dry_run: bool,
+                         result: ReflectResult) -> None:
+    """Decide each un-consumed working row's fate — model-judged when
+    `promote_mode` asks and an LLM is available, else the original blind
+    promote (which is also the fallback for every model/parse failure)."""
+    pending = [m for m in working if m["id"] not in consumed]
+    cfg = settings.agent_memory
+    if cfg.promote_mode == "heuristic" or llm is None:
+        for mem in pending:
+            _promote(store, mem, now_field=now_field,
+                     dry_run=dry_run, result=result)
+        return
+    neighbours = _neighbour_map(pending, episodic, embedder)
+    for mem in pending:
+        _judge_row(store, mem, neighbours.get(mem["id"]) or [], cfg, llm,
+                   now_field=now_field, dry_run=dry_run, result=result)
 
 
 def _stale_embedding_todo(store, model_id: str) -> list[tuple[dict, str]]:
@@ -898,10 +1025,8 @@ def reflect(store, embedder=None, llm=None, *,
                                     embedder, llm,
                                     dry_run=dry_run, result=result)
         now = datetime.now().isoformat()
-        for mem in working:
-            if mem["id"] not in consumed:
-                _promote(store, mem, now_field=now,
-                         dry_run=dry_run, result=result)
+        _consolidate_working(store, working, consumed, episodic, embedder, llm,
+                             now_field=now, dry_run=dry_run, result=result)
     _forget_stale(store, episodic, dry_run=dry_run, result=result)
     _score_pending(store, dry_run=dry_run)
     _decay_chronically_ignored(store, episodic, dry_run=dry_run, result=result)
@@ -916,6 +1041,7 @@ def reflect(store, embedder=None, llm=None, *,
     _harvest_edges(store, embedder, dry_run=dry_run, result=result)
     log.write("memory_reflected", examined=result.examined,
               merged=result.merged, promoted=result.promoted,
+              held=result.held, dropped=result.dropped,
               embedded=result.embedded, forgotten=result.forgotten,
               decayed=result.decayed, synthesized=result.synthesized,
               edges=result.edges, topics=result.topics, digests=result.digests,
