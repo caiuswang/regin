@@ -13,6 +13,7 @@ import {
   isDeniedToolSpan,
   isRejectedToolSpan,
   memoryRecallOneLiner,
+  scheduleWakeupParts,
   EDIT_TOOL_NAMES,
   categoryOf,
   SPAN_CATEGORIES,
@@ -286,6 +287,15 @@ const MAIN_BUILDERS = {
   }),
   'tool.TaskCreate': a => taskEventMain(a),
   'tool.TaskUpdate': a => taskEventMain(a),
+  // ScheduleWakeup is turn-final: `stop` = agent finished (mirror the
+  // subagent.stop "◆ finished" idiom); otherwise the agent paused to resume
+  // later, with `reason` explaining why (often background polling).
+  'tool.ScheduleWakeup': a => {
+    const p = scheduleWakeupParts(a)
+    return p.finished
+      ? { pre: '◆ agent finished', text: 'loop stopped', agent: true, agentDone: true, dim: true }
+      : { pre: '⏸', text: capitalize(p.main), dim: true }
+  },
   'rule.check': a => ({
     text: `Rule ${a.rule_id || ''}${a.findings
       ? ` · ${a.findings} finding${a.findings > 1 ? 's' : ''}`

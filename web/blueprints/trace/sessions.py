@@ -1282,6 +1282,10 @@ _MAP_KEEP_ATTR_KEYS = (
     'rewound_away', 'rewind_fork_id',
     'abandoned_prompt_count', 'rolled_back_count',
     'hit_count', 'source', 'skill_id',
+    # ScheduleWakeup label needs these to distinguish "agent finished" (stop)
+    # from "paused to resume" — else the row degrades to a bare tool name on a
+    # fresh (non-shallow /map) reload.
+    'stop', 'delay_seconds', 'reason',
 )
 
 

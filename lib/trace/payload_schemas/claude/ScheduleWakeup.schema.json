@@ -12,6 +12,8 @@
       "additionalProperties": true,
       "properties": {
         "delay_seconds": {"type": "number"},
+        "delaySeconds": {"type": "number"},
+        "stop": {"type": "boolean"},
         "reason": {"type": "string"},
         "prompt": {"type": "string"}
       }

@@ -232,6 +232,28 @@ export function memoryRecallOneLiner(span) {
   return `recalled ${n} ${noun}`
 }
 
+// A `tool.ScheduleWakeup` call is always turn-final: the agent yields control
+// at the end of an autonomous (/loop) turn. `stop` ends the loop — the agent is
+// finished; otherwise it schedules a resume after `delay_seconds`, with `reason`
+// explaining why (often polling background work), so the row reads "paused", not
+// "finished". Shared by fullLabel/toolLabel (conversation) and liveRows
+// (live card) so the three surfaces can't drift. Returns
+// `{ finished: boolean, main: string }`.
+export function scheduleWakeupParts(a) {
+  a = a || {}
+  if (a.stop === true || a.stop === 'true') {
+    return { finished: true, main: 'agent finished — loop stopped' }
+  }
+  const delay = Number(a.delay_seconds)
+  const when = Number.isFinite(delay) && delay > 0 ? fmtElapsedSeconds(delay) : ''
+  const reason = typeof a.reason === 'string' ? a.reason.trim() : ''
+  let main = 'scheduled wakeup'
+  if (when && reason) main = `paused ${when} — ${reason}`
+  else if (when) main = `paused ${when}`
+  else if (reason) main = `paused — ${reason}`
+  return { finished: false, main }
+}
+
 // NOTE: `fullLabel` (conversation view) and `spanLabel` (timeline/tree view,
 // below) are drifted twins — both turn a span into a one-line label but cover
 // different span families (fullLabel: task.notification / assistant_response /
@@ -273,6 +295,9 @@ export function fullLabel(span) {
     }
     if (name === 'tool.TaskOutput' && a.task_id) {
       return a.status ? `${tool} #${a.task_id} → ${a.status}` : `${tool} #${a.task_id}`
+    }
+    if (name === 'tool.ScheduleWakeup') {
+      return `${tool}: ${scheduleWakeupParts(a).main}`
     }
     if (name === 'tool.Skill' && a.skill_name) {
       return `${tool}: ${a.skill_name}`
@@ -373,6 +398,9 @@ function toolLabel(a, fallback) {
   }
   if ((a.tool_name === 'TaskOutput' || fallback === 'TaskOutput') && a.task_id) {
     return a.status ? `${tool} #${a.task_id} → ${a.status}` : `${tool} #${a.task_id}`
+  }
+  if (a.tool_name === 'ScheduleWakeup' || fallback === 'ScheduleWakeup') {
+    return `${tool}: ${scheduleWakeupParts(a).main}`
   }
   if ((a.tool_name === 'Skill' || fallback === 'Skill') && a.skill_name) {
     return `${tool}: ${a.skill_name}`

@@ -495,6 +495,32 @@ def _build_taskoutput_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
             attrs['output_truncated_bytes'] = dropped
 
 
+def _build_schedulewakeup_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    # ScheduleWakeup is always turn-final: the agent yields control at the end
+    # of an autonomous (/loop) turn. `stop` ends the loop (agent finished);
+    # otherwise it schedules a resume after `delay_seconds` (the tool emits
+    # camelCase `delaySeconds`), with `reason` explaining why — often polling
+    # background work, not "done". These three fields are what the trace UI
+    # needs to tell "finished" from "paused to resume".
+    stop = tool_input.get('stop')
+    if isinstance(stop, bool):
+        attrs['stop'] = stop
+    delay = tool_input.get('delay_seconds')
+    if delay is None:
+        delay = tool_input.get('delaySeconds')
+    if isinstance(delay, (int, float)) and not isinstance(delay, bool):
+        attrs['delay_seconds'] = delay
+    reason = tool_input.get('reason')
+    if isinstance(reason, str) and reason:
+        attrs['reason'] = reason
+    prompt = tool_input.get('prompt')
+    if isinstance(prompt, str) and prompt:
+        head, dropped = _truncate_output(prompt, 2048)
+        attrs['prompt'] = head
+        if dropped:
+            attrs['prompt_truncated_bytes'] = dropped
+
+
 def _build_skill_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
     skill_name = tool_input.get('skill')
     if isinstance(skill_name, str) and skill_name:
@@ -645,6 +671,7 @@ _TOOL_BUILDERS: dict = {
     'TaskUpdate': _build_taskupdate_attrs,
     'Workflow': _build_workflow_attrs,
     'TaskOutput': _build_taskoutput_attrs,
+    'ScheduleWakeup': _build_schedulewakeup_attrs,
     'Skill': _build_skill_attrs,
     'WebSearch': _build_websearch_attrs,
     'WebFetch': _build_webfetch_attrs,
