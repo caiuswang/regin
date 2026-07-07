@@ -20,8 +20,12 @@ _DEFAULT_BODY = """You are reviewing a proposed topic-graph draft for this repos
 {{topic_lines}}
 </draft_topics>
 
+<authoring_standards>
+{{include:topic-authoring-standards}}
+</authoring_standards>
+
 {{sibling_block}}{{feedback_block}}<task>
-Assess coverage, accuracy against the current code, and whether any prior open feedback is addressed. Be precise — only raise real problems, not stylistic nitpicks. Also check each ref's `tier`: `"reference"` means pointer-only/context (excluded from content-drift, needs no wiki prose); `"primary"`/absent means the wiki should describe it. Flag mis-tiered refs — a central implementation file marked `reference`, or a pointer-only/example file left `primary` (which nags for drift refreshes). If a <sibling_topics> block is present, also verify the draft does not duplicate a sibling's territory: open the siblings' wiki pages and flag any drafted section that substantially restates one, naming which topic should own the material. End with exactly one line:
+Judge whether the draft MEETS the authoring standards above and is accurate against the current code — do not just measure coverage. Be precise; only raise real problems, not stylistic nitpicks. In particular: (a) is each wiki a tight conceptual overview, or a file-by-file catalog that restates every ref? (b) does any topic duplicate or restate a sibling's territory instead of ceding it with a `[[id]]` link — if a <sibling_topics> block is present, open those wikis and check; (c) are refs correctly tiered — a central file marked `reference`, a pointer-only/example file left `primary` (which nags for drift), or the same file primary in two topics? A draft with broad, accurate coverage that breaks these standards is NOT sound — recommend REGENERATE and name the standard it breaks. Also note whether any prior open feedback is addressed. End with exactly one line:
 RECOMMENDATION: ACCEPT|REGENERATE|DISMISS
   ACCEPT   — the draft is sound; apply it as is.
   REGENERATE — there are fixable gaps; re-draft addressing them.

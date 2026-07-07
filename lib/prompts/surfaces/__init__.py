@@ -8,6 +8,7 @@ registrations are lazy (no import cycle at ``lib.prompts`` import time).
 from __future__ import annotations
 
 from lib.prompts.surfaces import (  # noqa: F401  (import side effect: registration)
+    authoring_standards,
     drafting,
     grader,
     memory,
@@ -16,4 +17,4 @@ from lib.prompts.surfaces import (  # noqa: F401  (import side effect: registrat
     triage,
 )
 
-__all__ = ["drafting", "grader", "memory", "review", "topics", "triage"]
+__all__ = ["authoring_standards", "drafting", "grader", "memory", "review", "topics", "triage"]

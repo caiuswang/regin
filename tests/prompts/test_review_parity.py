@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from lib.prompts import get_surface
 import lib.topics.proposal_review as pr
 
 
@@ -30,26 +31,18 @@ def _reference_build_prompt(proposal: dict[str, Any], open_feedback: str,
         f"<prior_open_feedback>\n{open_feedback}\n</prior_open_feedback>\n\n"
         if open_feedback else ""
     )
+    standards = get_surface("topic-authoring-standards").default_body()
+    task = (
+        "Judge whether the draft MEETS the authoring standards above and is accurate against the current code — do not just measure coverage. Be precise; only raise real problems, not stylistic nitpicks. In particular: (a) is each wiki a tight conceptual overview, or a file-by-file catalog that restates every ref? (b) does any topic duplicate or restate a sibling's territory instead of ceding it with a `[[id]]` link — if a <sibling_topics> block is present, open those wikis and check; (c) are refs correctly tiered — a central file marked `reference`, a pointer-only/example file left `primary` (which nags for drift), or the same file primary in two topics? A draft with broad, accurate coverage that breaks these standards is NOT sound — recommend REGENERATE and name the standard it breaks. Also note whether any prior open feedback is addressed. End with exactly one line:"
+    )
     return (
         "You are reviewing a proposed topic-graph draft for this repository. "
         "Use your Read/Glob/Grep tools to check the listed ref files as they "
         "exist NOW and judge whether the draft is accurate and worth applying.\n\n"
         "<draft_topics>\n" + "\n".join(topic_lines) + "\n</draft_topics>\n\n"
+        "<authoring_standards>\n" + standards + "\n</authoring_standards>\n\n"
         + sibling_block + feedback_block +
-        "<task>\n"
-        "Assess coverage, accuracy against the current code, and whether any "
-        "prior open feedback is addressed. Be precise — only raise real "
-        "problems, not stylistic nitpicks. Also check each ref's `tier`: "
-        "`\"reference\"` means pointer-only/context (excluded from "
-        "content-drift, needs no wiki prose); `\"primary\"`/absent means the "
-        "wiki should describe it. Flag mis-tiered refs — a central "
-        "implementation file marked `reference`, or a pointer-only/example "
-        "file left `primary` (which nags for drift refreshes). If a "
-        "<sibling_topics> block is present, also verify the draft does not "
-        "duplicate a sibling's territory: open the siblings' wiki pages and "
-        "flag any drafted section that substantially restates one, naming "
-        "which topic should own the material. End with "
-        "exactly one line:\n"
+        "<task>\n" + task + "\n"
         "RECOMMENDATION: ACCEPT|REGENERATE|DISMISS\n"
         "  ACCEPT   — the draft is sound; apply it as is.\n"
         "  REGENERATE — there are fixable gaps; re-draft addressing them.\n"
