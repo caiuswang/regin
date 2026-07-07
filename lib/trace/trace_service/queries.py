@@ -488,6 +488,7 @@ def fetch_session_paginated(
     from lib.trace.projection import (
         _build_span_tree, _widen_envelopes,
     )
+    from lib.trace.wakeup_links import annotate_wakeup_resumes
 
     conn = get_connection()
     try:
@@ -521,6 +522,7 @@ def fetch_session_paginated(
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
+        annotate_wakeup_resumes(widened)
         tree = _build_span_tree(widened)
         retired_ids = _compute_retired_ids(raw, grafted)
         return widened, tree, has_more_older, retired_ids

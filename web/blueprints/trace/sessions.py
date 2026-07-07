@@ -1284,8 +1284,10 @@ _MAP_KEEP_ATTR_KEYS = (
     'hit_count', 'source', 'skill_id',
     # ScheduleWakeup label needs these to distinguish "agent finished" (stop)
     # from "paused to resume" — else the row degrades to a bare tool name on a
-    # fresh (non-shallow /map) reload.
+    # fresh (non-shallow /map) reload. `resume_action`/`poll_*` are the
+    # serve-time cross-turn link (wakeup_links.annotate_wakeup_resumes).
     'stop', 'delay_seconds', 'reason',
+    'resume_action', 'resume_span_id', 'poll_round', 'poll_total',
 )
 
 
@@ -1340,6 +1342,8 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
         spans.append(d)
     grafted = merge_spans(spans, session_activity=session_activity)
     _attach_prompt_expansions(trace_id, grafted)
+    from lib.trace.wakeup_links import annotate_wakeup_resumes
+    annotate_wakeup_resumes(grafted)
     for s in grafted:
         kept = _kept_map_attrs(s.get('attributes'))
         s.pop('attributes', None)

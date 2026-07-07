@@ -244,6 +244,15 @@ export function scheduleWakeupParts(a) {
   if (a.stop === true || a.stop === 'true') {
     return { finished: true, main: 'agent finished — loop stopped' }
   }
+  const resume = typeof a.resume_action === 'string' ? a.resume_action.trim() : ''
+  // Idle poll-loop: a run of wakeups that each just reschedule (wakeup_links
+  // stamps poll_round/poll_total). Collapse to a "waiting… (k/N)" progression;
+  // the run's LAST member (round === total) exited into real work, so name it.
+  if (a.poll_total > 1) {
+    const total = a.poll_total
+    const tail = a.poll_round === total && resume ? ` → resumed: ${resume}` : ''
+    return { finished: false, poll: true, main: `waiting… (${a.poll_round}/${total})${tail}` }
+  }
   const delay = Number(a.delay_seconds)
   const when = Number.isFinite(delay) && delay > 0 ? fmtElapsedSeconds(delay) : ''
   const reason = typeof a.reason === 'string' ? a.reason.trim() : ''
@@ -251,6 +260,7 @@ export function scheduleWakeupParts(a) {
   if (when && reason) main = `paused ${when} — ${reason}`
   else if (when) main = `paused ${when}`
   else if (reason) main = `paused — ${reason}`
+  if (resume) main += ` → resumed: ${resume}`
   return { finished: false, main }
 }
 
