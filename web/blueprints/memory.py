@@ -34,9 +34,10 @@ def _bool_arg(name: str, default: bool = False) -> bool:
 
 @memory_bp.route("/api/memory")
 def api_memory_list():
-    """Memories, newest-updated first, paginated (offset-limit). Filters:
-    tier/status/kind/scope/q. Returns the standard `{items, pagination}`
-    envelope plus a `stats` extra for the category bar."""
+    """Memories, paginated (offset-limit). Filters: tier/status/kind/scope/q.
+    `sort` orders the page: `recent` (default, newest-updated first),
+    `recalled`, or `least_recalled`. Returns the standard `{items,
+    pagination}` envelope plus a `stats` extra for the category bar."""
     page_idx = clamp_page(request.args.get("page"))
     size = clamp_size(request.args.get("size"), default=50)
     result = memory.get_store().list_memories_page(
@@ -46,6 +47,7 @@ def api_memory_list():
         scope=request.args.get("scope") or None,
         q=request.args.get("q") or None,
         include_tests=_bool_arg("include_tests"),
+        sort=request.args.get("sort") or None,
         page=page_idx, size=size,
     )
     return jsonify({**result.to_envelope(), "stats": memory.stats()})

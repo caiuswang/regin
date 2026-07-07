@@ -8,6 +8,7 @@ import { useTabRoute } from '../composables/useTabRoute'
 import Card from '../components/Card.vue'
 import PageControls from '../components/PageControls.vue'
 import Button from '../components/ui/Button.vue'
+import Select from '../components/ui/Select.vue'
 import Tabs from '../components/ui/Tabs.vue'
 import MemoryCategoryBar from '../components/memory/MemoryCategoryBar.vue'
 import MemoryList from '../components/memory/MemoryList.vue'
@@ -26,6 +27,12 @@ const { width: listWidth, onResizeStart, onResizeKey } =
 const activeCategory = ref('all')
 const query = ref('')
 const searchDraft = ref('')
+const sortKey = ref('recent')
+const SORT_OPTIONS = [
+  { value: 'recent', label: 'Recently updated' },
+  { value: 'recalled', label: 'Most recalled' },
+  { value: 'least_recalled', label: 'Least recalled' },
+]
 const scope = ref('')
 const includeTests = ref(false)
 const selectedId = ref(null)
@@ -93,6 +100,7 @@ const {
     ...categoryParams(activeCategory.value),
     q: query.value.trim() || undefined,
     scope: scope.value || undefined,
+    sort: sortKey.value !== 'recent' ? sortKey.value : undefined,
   }),
 })
 
@@ -122,6 +130,11 @@ function clearSearch() {
 
 function setScope(value) {
   scope.value = value
+  applyFilters()
+}
+
+function setSort(value) {
+  sortKey.value = value
   applyFilters()
 }
 
@@ -278,6 +291,16 @@ onBeforeUnmount(() => headerObserver?.disconnect())
         />
         <Button variant="secondary" size="sm" @click="onSearch(searchDraft)">Search</Button>
         <Button v-if="query" variant="secondary" size="sm" @click="clearSearch">Clear</Button>
+        <label class="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
+          <span class="max-sm:sr-only">Sort</span>
+          <Select
+            :model-value="sortKey"
+            :options="SORT_OPTIONS"
+            aria-label="Sort memories"
+            class="text-xs"
+            @update:model-value="setSort"
+          />
+        </label>
       </div>
     </div>
 
@@ -299,6 +322,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
             :expanded="!selectedId"
             :memories="memories"
             :selected-id="selectedId"
+            :sort="sortKey"
             :busy="busy || reflecting"
             @select="selectMemory"
             @bulk="onBulk"

@@ -540,11 +540,13 @@ class SqliteMemoryStore:
     def _filtered_memory_stmt(self, *, tier: Optional[str],
                               status: Optional[str], kind: Optional[str],
                               scope: Optional[str], q: Optional[str],
-                              include_tests: bool):
+                              include_tests: bool, sort: Optional[str] = None):
         """Shared SELECT for the curate-UI list endpoints: applies the
-        tier/status/kind/scope/q filters and a deterministic order. The
-        `id` tiebreaker keeps offset pages stable when several rows share
-        an `updated_at` timestamp."""
+        tier/status/kind/scope/q filters and a deterministic order. `sort`
+        picks the primary key (`recent` — default — most-recently-updated;
+        `recalled` / `least_recalled` — by recall_count); `updated_at` then
+        `id` always tie-break so offset pages stay stable when the primary
+        key collides."""
         stmt = select(Memory)
         if tier:
             stmt = stmt.where(Memory.tier == tier)
@@ -561,7 +563,12 @@ class SqliteMemoryStore:
                 Memory.tags.contains(q.strip())))
         if not include_tests:
             stmt = stmt.where(Memory.is_test == 0)
-        return stmt.order_by(Memory.updated_at.desc(), Memory.id.desc())
+        tie = (Memory.updated_at.desc(), Memory.id.desc())
+        if sort == "recalled":
+            return stmt.order_by(Memory.recall_count.desc(), *tie)
+        if sort == "least_recalled":
+            return stmt.order_by(Memory.recall_count.asc(), *tie)
+        return stmt.order_by(*tie)
 
     def list_memories(self, *, tier: Optional[str] = None,
                       status: Optional[str] = None,
@@ -594,15 +601,17 @@ class SqliteMemoryStore:
                            scope: Optional[str] = None,
                            q: Optional[str] = None,
                            include_tests: bool = False,
+                           sort: Optional[str] = None,
                            page: int = 0, size: int = 50):
         """Offset-limit paginated variant for the curate UI. Returns a
         :class:`lib.utils.pagination.Page` whose items are serialized
-        memory dicts (same shape as :meth:`list_memories`)."""
+        memory dicts (same shape as :meth:`list_memories`). `sort` selects
+        the ordering (see :meth:`_filtered_memory_stmt`)."""
         from lib.utils.pagination import paginate_query_stmt
         with MemorySessionLocal() as session:
             stmt = self._filtered_memory_stmt(
                 tier=tier, status=status, kind=kind, scope=scope, q=q,
-                include_tests=include_tests)
+                include_tests=include_tests, sort=sort)
             result = paginate_query_stmt(
                 session, stmt, page=page, size=size, row_to_dict=_serialize)
         log.read("memories_listed", count=len(result.items))

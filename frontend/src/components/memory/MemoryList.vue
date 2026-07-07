@@ -2,14 +2,21 @@
 import { computed, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
+import Icon from '../ui/Icon.vue'
 
 const props = defineProps({
   memories: { type: Array, default: () => [] },
   selectedId: { type: String, default: null },
   busy: { type: Boolean, default: false },
   expanded: { type: Boolean, default: false },
+  sort: { type: String, default: 'recent' },
 })
 const emit = defineEmits(['select', 'bulk'])
+
+// Under a recall-ranked sort the count IS the ordering key, so surface it on
+// every row; otherwise it's incidental and shown only when non-zero (a fresh
+// memory's "0" is noise).
+const recallSorted = computed(() => props.sort !== 'recent')
 
 const checked = ref(new Set())
 
@@ -126,7 +133,8 @@ function runBulk(action) {
           expanded ? 'items-start' : 'items-center',
         ]"
       >
-        <span class="absolute inset-y-0 left-0 w-1" :class="kindBar(m.kind)" aria-hidden="true"></span>
+        <span class="absolute inset-y-0 left-0 w-1" :class="kindBar(m.kind)" :title="m.kind"></span>
+        <span class="sr-only">{{ m.kind }}</span>
         <Checkbox
           :model-value="checked.has(m.id)"
           :class="expanded ? 'mt-1' : ''"
@@ -140,6 +148,7 @@ function runBulk(action) {
         >
           <div class="flex items-center gap-2">
             <span
+              v-if="m.kind !== 'lesson'"
               class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
               :class="kindCls(m.kind)"
             >{{ m.kind }}</span>
@@ -151,6 +160,11 @@ function runBulk(action) {
               class="flex-1 min-w-0 truncate text-sm"
               :class="m.title ? 'font-medium text-slate-800' : 'text-slate-500'"
             >{{ m.title || snippet(m.body) }}</span>
+            <span
+              v-if="recallSorted || m.recall_count"
+              class="flex items-center gap-1 text-[10px] font-mono tabular-nums font-medium text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 shrink-0"
+              :title="`Recalled ${m.recall_count || 0} time${(m.recall_count || 0) === 1 ? '' : 's'}`"
+            ><Icon name="refresh-cw" :size="10" />{{ m.recall_count || 0 }}</span>
             <span class="text-[10px] font-mono text-slate-400 shrink-0">{{ timeLabel(m.updated_at) }}</span>
           </div>
           <p v-if="expanded && m.title" class="mt-1 text-xs text-slate-500 leading-snug">{{ snippet(m.body) }}</p>
