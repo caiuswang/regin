@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "hook_plugin, UserPromptSubmit / PostToolUse wiring, prompt-template injection \u2014 enter when tuning hook behaviour or injected content. Code: lib/hook_plugin.py, lib/prompt_templates.py",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "hook_plugin, UserPromptSubmit / PostToolUse wiring, prompt-template injection \u2014 enter when tuning hook behaviour or injected content. Code: lib/hook_plugin.py, lib/prompt_templates.py",
+  "kind": "bucket",
+  "label": "Hooks & injection",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

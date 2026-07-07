@@ -1,0 +1,45 @@
+{
+  "aliases": [
+    "did the injected memory actually help",
+    "close the recall usefulness loop",
+    "referent appears in a later span",
+    "soft vs hard ignore decay signal",
+    "session document-frequency weighting"
+  ],
+  "blurb": "The did-it-help verdict: referents in later spans, idf-weighted, stamped onto injection events for the decay gate.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_feedback.py"
+  ],
+  "edges": [
+    {
+      "target": "memory-auto-injection",
+      "type": "related"
+    },
+    {
+      "target": "memory-consolidation-reflect",
+      "type": "related"
+    },
+    {
+      "target": "memory-recall-pipeline",
+      "type": "related"
+    },
+    {
+      "target": "memory-exemplar-rescore",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/memory/feedback.py"
+  ],
+  "intent": "Explain the half of the recall loop that learns whether a speculatively-injected memory helped: `score_injection_usefulness` pulls concrete referents (file paths, backtick identifiers) out of each injected memory and checks whether any appear in a tool span that fired *after* injection (the ordering gate is load-bearing), abstaining when there are no referents. Covers the idf weighting that discounts corpus-ubiquitous referents (precomputed session document-frequency in `referent_session_df` via `rebuild_session_referent_df`, gated by `engagement_idf_min_weight`), the `engaged`/`matched` bits stamped once per `injection_events` row so the decay gate can tell a soft ignore from a hard one, the importance reward for engaged hits, the reflect-time `score_pending_sessions` densifying sweep, and how this positive signal pairs with reflect's negative decay half.",
+  "label": "Memory engagement feedback (inject\u2192usefulness verdict, idf-weighted referents, decay gate coupling)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "lib/memory/feedback.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

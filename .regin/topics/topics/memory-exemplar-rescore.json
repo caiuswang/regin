@@ -1,0 +1,57 @@
+{
+  "aliases": [
+    "why is this topic route suppressed for some prompts",
+    "topic route suppress and protect",
+    "query-local reranking signal",
+    "thumbs up down on a routed topic banner",
+    "hand-curate a topic-route case"
+  ],
+  "blurb": "Query-local signed exemplars that suppress or protect a routed topic banner for prompts like the ones it failed/passed on.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_topic_feedback.py tests/memory/test_store.py"
+  ],
+  "edges": [
+    {
+      "target": "memory-topic-route-feedback",
+      "type": "related"
+    },
+    {
+      "target": "memory-auto-injection",
+      "type": "related"
+    },
+    {
+      "target": "memory-curation-surfaces",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "docs/agent-memory-exemplars.md"
+  ],
+  "intent": "Explain regin's signed query-exemplar mechanism as it operates over authoritative-topic routing \u2014 the contextual, query-local complement to the global, slow `importance` decay. An exemplar is the embedding of a prompt a topic banner was injected on, tagged `polarity` +1 (protect) or -1 (suppress) and `source` `auto`/`manual`; `topic_exemplars` keeps them per (topic, polarity), each polarity capped. At route time `store.topic_route_suppressed` withholds a banner query-locally when the prompt's cosine to the topic's negatives clears `topic_negative_suppress_sim` unless a positive protects it or a human `allowed` pin overrides. Covers the auto write path (`apply_topic_relevance`/`_record_topic_exemplars` \u2192 `add_topic_negatives`/`add_topic_positives`), the manual curate path (`/api/memory/exemplars`, `ExemplarCaseList.vue`, `regin memory exemplar-*`), the route-signal probe (`topic_query_signals`), and the inspect/per-row revert surfaces. The route-decision half is `memory-topic-route-feedback`; the design note is `docs/agent-memory-exemplars.md`.",
+  "label": "Signed query exemplars \u2014 topic-route suppression/protection (auto & hand-curated)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "docs/agent-memory-exemplars.md",
+      "role": "docs"
+    },
+    {
+      "path": "lib/memory/store.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/feedback.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/models.py",
+      "role": "schema"
+    },
+    {
+      "path": "frontend/src/components/memory/ExemplarCaseList.vue",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

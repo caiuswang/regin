@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "ORM / SQLModel, db/schema.sql, settings, auth, multi-user, sync \u2014 enter when touching schema, settings, auth, or sync. Code: lib/orm/, lib/settings.py, lib/auth.py, lib/sync/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "ORM / SQLModel, db/schema.sql, settings, auth, multi-user, sync \u2014 enter when touching schema, settings, auth, or sync. Code: lib/orm/, lib/settings.py, lib/auth.py, lib/sync/",
+  "kind": "bucket",
+  "label": "Data & config",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

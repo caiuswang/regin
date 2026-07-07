@@ -1,0 +1,63 @@
+{
+  "aliases": [
+    "conceal experiments",
+    "skill ablation",
+    "pattern A/B variants",
+    "SKILL.md concealment",
+    "rule trigger ablation"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/experiments.py",
+    "lib/orm/models/rules.py",
+    "web/blueprints/experiments.py",
+    "frontend/src/views/Experiment*.vue",
+    "frontend/src/components/PatternExperimentCreator.vue",
+    "tests/rules/test_experiments*.py",
+    "tests/rules/test_blueprint_experiments.py"
+  ],
+  "intent": "Understand the experiment system that conceals selected H2/H3 sections of a pattern's SKILL.md at deploy time so rule-trigger rates can be compared against an unconcealed baseline. Covers the pure conceal filter, the experiments table and RuleTrigger.experiment_id linkage, the one-active-per-pattern lifecycle, the redeploy hook into skill_sync/skill_deployer, the baseline-vs-variant rollup endpoints, the Vue UI surfaces, and the gap between the ingest path and the rollup's variant column.",
+  "label": "Pattern Conceal Experiments",
+  "parent_id": "eval-grading",
+  "refs": [
+    {
+      "path": "web/blueprints/experiments.py",
+      "role": "api"
+    },
+    {
+      "path": "lib/orm/models/rules.py",
+      "role": "schema"
+    },
+    {
+      "path": "frontend/src/components/PatternExperimentCreator.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/views/ExperimentDetailView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/views/ExperimentsView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/experiments.py",
+      "role": "implementation"
+    },
+    {
+      "path": "tests/rules/test_blueprint_experiments.py",
+      "role": "test"
+    },
+    {
+      "path": "tests/rules/test_experiments.py",
+      "role": "test"
+    },
+    {
+      "path": "tests/rules/test_experiments_crud.py",
+      "role": "test"
+    }
+  ],
+  "status": "active"
+}

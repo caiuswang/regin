@@ -1,0 +1,58 @@
+{
+  "aliases": [
+    "recalled_experience block",
+    "how past lessons reach the prompt",
+    "loopback recall server borrow",
+    "speculative inject without reinforcement",
+    "same-session injection dedup"
+  ],
+  "blurb": "How lessons reach the prompt: the UserPromptSubmit hook, the loopback recall borrow, and the long-lived recall/tree-nav MCP server.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_recall_handler.py tests/memory/test_api.py tests/memory/test_mcp_gate.py"
+  ],
+  "edges": [
+    {
+      "target": "memory-recall-pipeline",
+      "type": "related"
+    },
+    {
+      "target": "memory-engagement-feedback",
+      "type": "related"
+    },
+    {
+      "target": "memory-topic-route-feedback",
+      "type": "related"
+    },
+    {
+      "target": "session-trace-design",
+      "type": "related"
+    },
+    {
+      "target": "topic-routing",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "hook_manager/handlers/memory_recall.py",
+    "lib/memory/mcp_server.py"
+  ],
+  "intent": "Show how recalled memories reach an agent and why the delivery path is shaped the way it is. The `UserPromptSubmit` handler is a fresh short-lived process per prompt, so it borrows the warm `regin serve` embedder via a loopback-auth-exempt POST to `/api/memory/recall` (`_recall_via_server`) and falls back to in-process FTS-only (`_recall_fts`); it routes the prompt to an authoritative topic and can withhold a `<topic_context>` banner. Speculative injection never reinforces \u2014 overlap-gated, uncalibrated-capped, same-session deduped via `injection_events` \u2014 except the earned `reinforce_resurfaced`; each inject and routed banner is recorded and `_emit_recall_span` writes a `memory.recall` span. `api_memory_recall` computes route-time topic suppression (it needs the warm embedder) and returns hits plus `topic_suppress`. The long-lived `recall` MCP server exposes `recall`, the address-only tree-nav tools `index_root`/`index_expand`/`index_fetch`, and a `gate` tool for trace-derived span gates.",
+  "label": "Memory auto-injection & on-demand recall (UserPromptSubmit hook, recall MCP server, /api/memory/recall)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "hook_manager/handlers/memory_recall.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/mcp_server.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "web/blueprints/memory.py",
+      "role": "api"
+    }
+  ],
+  "status": "active"
+}

@@ -1,0 +1,71 @@
+{
+  "aliases": [
+    "feedback threads",
+    "not a real drift dismissal",
+    "content-drift refresh note",
+    "regenerate feedback injection",
+    "auto-addressed sweep",
+    "re-baseline topic ref digests"
+  ],
+  "blurb": "Drill in to work on proposal-draft review threads: anchoring, resolution, regenerate carry-forward, the auto-addressed sweep, or the content-drift 'Not a real drift' dismissal.",
+  "commands": [],
+  "edges": [
+    {
+      "target": "topic-proposal-pipeline",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/topics/proposals/feedback.py",
+    "lib/topics/proposal_orm/feedback.py",
+    "frontend/src/components/topics/ProposalCommentsSidebar.vue",
+    "frontend/src/components/topics/ProposalReviewNoteCard.vue"
+  ],
+  "intent": "Document the inline review-comment system layered on a proposal run: how a feedback thread is anchored (general / topic field / proposal summary / wiki range), the thread kinds (human comment, agent review_note, agent content_drift note), what HTTP endpoints CRUD threads and comments, how the ORM stores them with revision pointers, how open threads are formatted into the next regenerate prompt, how the auto-`addressed` sweep snaps a thread closed when its anchored content changes between revisions (diffing a wiki_range note against the anchored topic's OWN per-topic wiki so a scoped regenerate doesn't close untouched topics' notes), and the 'Not a real drift' escape hatch that re-baselines a topic's ref digests and dismisses its content-drift signal on both the origin-run note and the standalone fallback proposal so it stops re-firing.",
+  "label": "Proposal review comments (feedback threads anchored to topics & wiki, incl. content-drift notes)",
+  "parent_id": "topic-graph",
+  "refs": [
+    {
+      "path": "frontend/src/components/topics/ProposalCommentsSidebar.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/topics/ProposalReviewNoteCard.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposals/feedback.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposal_orm/feedback.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposal_orm/serializers.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/content_drift.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/orm/models/proposals.py",
+      "role": "schema"
+    },
+    {
+      "path": "web/blueprints/topics/proposals.py",
+      "role": "api"
+    },
+    {
+      "path": "lib/topics/proposals/external_jobs.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposal_drafting.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

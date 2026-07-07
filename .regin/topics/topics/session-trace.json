@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "OTel-style span ingest, aggregates, merge, trace UI data \u2014 enter when changing trace capture, span attribution, or aggregation. Code: lib/trace/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "OTel-style span ingest, aggregates, merge, trace UI data \u2014 enter when changing trace capture, span attribution, or aggregation. Code: lib/trace/",
+  "kind": "bucket",
+  "label": "Session trace",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

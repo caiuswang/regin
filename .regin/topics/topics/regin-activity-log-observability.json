@@ -1,0 +1,46 @@
+{
+  "aliases": [
+    "where regin logs its own operations",
+    "regin.log jsonl stream",
+    "tail and grep the activity log",
+    "structlog bootstrap configure_logging",
+    "who changed what dashboard audit",
+    "feature-tagged ops history"
+  ],
+  "blurb": "Inspecting or extending regin's own ops history \u2014 activity log, structured logging, or the dashboard audit trail",
+  "commands": [
+    ".venv/bin/python cli/regin.py logs list",
+    ".venv/bin/python cli/regin.py logs tail --since 1h",
+    ".venv/bin/python cli/regin.py logs grep <pattern>"
+  ],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/activity_log.py",
+    "lib/logging_setup.py",
+    "lib/audit.py",
+    "cli/commands/logs.py"
+  ],
+  "intent": "Map regin's self-observability stack \u2014 distinct from `lib/trace/` session traces. `lib/activity_log.py` writes one rotating `feature`-tagged JSONL stream (read=DEBUG / write=INFO discipline, secret-key auto-redaction), surfaced from the terminal via the `regin logs` group (list / tail / grep / prune / path). `lib/logging_setup.py` bootstraps structlog so Flask/SQLAlchemy/lib all emit into one pipeline with console vs. JSON rendering modes. `lib/audit.py` records who changed what in the web dashboard (best-effort, never blocks, routed through AuthSessionLocal). Use this when diagnosing regin's behaviour, not an agent session.",
+  "label": "Ops observability: activity log, structured logging & audit trail (regin's own operations history vs. session traces)",
+  "parent_id": "ops-cli",
+  "refs": [
+    {
+      "path": "cli/commands/logs.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/activity_log.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/audit.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/logging_setup.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

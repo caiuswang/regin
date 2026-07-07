@@ -1,0 +1,205 @@
+{
+  "aliases": [
+    "session spans schema",
+    "OpenTelemetry session model",
+    "trace ingest pipeline",
+    "session aggregates rollup",
+    "turn usage tokens",
+    "session_trace_map",
+    "materialize_session",
+    "SessionTraceView data flow"
+  ],
+  "blurb": "Changing trace capture, span persistence, session aggregates, or the sessions-list / per-trace dashboard read paths",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/trace/**",
+    "lib/orm/models/trace.py",
+    "hook_manager/handlers/*trace*.py",
+    "hook_manager/handlers/session_lifecycle.py",
+    "hook_manager/handlers/prompt_trace.py",
+    "web/blueprints/trace/**",
+    "frontend/src/views/SessionTraceView.vue",
+    "frontend/src/views/SessionsView.vue"
+  ],
+  "intent": "Explain how Claude Code sessions are captured as OpenTelemetry-style spans by hook handlers, persisted through the trace_service ingest layer into session_spans plus a denormalized sessions row, reconciled at read time by the serve-time merge, and rendered by the Vue SessionsView list and the composable-driven SessionTraceView per-trace dashboard via the /api/sessions/* read endpoints.",
+  "label": "Session trace design (OTel-style spans, ingest pipeline, aggregates, dashboard read paths)",
+  "parent_id": "session-trace",
+  "refs": [
+    {
+      "path": "lib/trace/trace_service/__init__.py",
+      "role": "overview"
+    },
+    {
+      "path": "web/blueprints/trace/__init__.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/mcp_calls.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/prompt_images.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/sessions.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/skill_reads.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/spans_ingest.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/turn_usage.py",
+      "role": "api"
+    },
+    {
+      "path": "lib/orm/models/trace.py",
+      "role": "schema"
+    },
+    {
+      "path": "frontend/src/views/SessionTraceView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/views/SessionsView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/post_tool_trace.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/prompt_trace.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/session_lifecycle.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/trace_payload.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/payload_validation.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/projection.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/repair.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/trace_context.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/trace_service/ingest.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/trace_service/queries.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/transcript_parsers.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/transcript_usage.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/plan_trace.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/__init__.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/cache.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/entry.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/span_posters.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/timestamps.py"
+    },
+    {
+      "path": "lib/trace/__init__.py"
+    },
+    {
+      "path": "lib/trace/claude_version.py"
+    },
+    {
+      "path": "lib/trace/is_test.py"
+    },
+    {
+      "path": "lib/trace/payload_drift_store.py"
+    },
+    {
+      "path": "lib/trace/payload_schemas/README.md"
+    },
+    {
+      "path": "lib/trace/plan_context.py"
+    },
+    {
+      "path": "lib/trace/plans.py"
+    },
+    {
+      "path": "lib/trace/transcript_models.py"
+    },
+    {
+      "path": "web/blueprints/trace/ingest_errors.py"
+    },
+    {
+      "path": "frontend/src/composables/useTraceData.js"
+    },
+    {
+      "path": "frontend/src/composables/useSpanContentCache.js"
+    },
+    {
+      "path": "frontend/src/composables/useViewMode.js"
+    },
+    {
+      "path": "frontend/src/composables/useTurns.js"
+    },
+    {
+      "path": "frontend/src/composables/useWorkflowMeta.js"
+    },
+    {
+      "path": "frontend/src/composables/useToolRollup.js"
+    },
+    {
+      "path": "frontend/src/composables/useTraceScroll.js"
+    },
+    {
+      "path": "frontend/src/composables/useTraceTimeline.js"
+    },
+    {
+      "path": "frontend/src/composables/useCompactWatch.js"
+    },
+    {
+      "path": "frontend/src/utils/traceFormatters.js"
+    },
+    {
+      "path": "frontend/src/utils/sessionActivity.js"
+    }
+  ],
+  "status": "active"
+}

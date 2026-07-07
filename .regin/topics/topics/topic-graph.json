@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "The topic taxonomy itself: routing, proposals, review, multi-user sharing, wiki \u2014 enter when changing topic structure, routing, or proposals. Code: lib/topics/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "The topic taxonomy itself: routing, proposals, review, multi-user sharing, wiki \u2014 enter when changing topic structure, routing, or proposals. Code: lib/topics/",
+  "kind": "bucket",
+  "label": "Topic graph & routing",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

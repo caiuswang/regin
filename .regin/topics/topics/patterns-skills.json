@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "Local pattern guides + skill deploy/read \u2014 enter when writing a pattern, deploying a skill, or editing the skill index. Code: lib/patterns/, lib/skills/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "Local pattern guides + skill deploy/read \u2014 enter when writing a pattern, deploying a skill, or editing the skill index. Code: lib/patterns/, lib/skills/",
+  "kind": "bucket",
+  "label": "Patterns & skills",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

@@ -1,0 +1,49 @@
+{
+  "aliases": [
+    "how memories get created",
+    "implicit capture from a finished session",
+    "agentic distiller self-fetches spans",
+    "proposed vs auto-approved memory gate",
+    "distill self-scored importance band"
+  ],
+  "blurb": "Where memories come from: the explicit lesson tee and the agentic post-session distiller with its importance gate.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_distill.py tests/memory/test_capture.py"
+  ],
+  "edges": [
+    {
+      "target": "agent-memory-architecture",
+      "type": "related"
+    },
+    {
+      "target": "memory-consolidation-reflect",
+      "type": "related"
+    },
+    {
+      "target": "memory-curation-surfaces",
+      "type": "related"
+    },
+    {
+      "target": "session-trace-design",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/memory/distill.py"
+  ],
+  "intent": "Explain the two ways a memory is born and why distillation is LLM-only by contract: the explicit path (`send_to_user(type=lesson)` teed into the store by `post_tool_trace._remember_lesson` with span/agent/scope provenance, honoring a `supersedes` id), and the implicit agentic distiller (`distill.py::distill_session`) that reads a finished session's trace, is handed only the high-signal hints (`_grade_digest` grader findings + `_signal_digest` failure\u2192fix / pushback chains) plus read-only trace tools and self-fetches just the spans it needs so prompt size stays constant. Covers the self-scored importance band (`_finalize_status`: drop below `distill_min_importance`, auto-approve at/above `auto_approve_importance`, else queue as `proposed`), dedup-at-write reinforcement (`_dedup_candidate`), at-write contradiction supersede (`_supersede_candidate`, gated by `distill_supersede_on_conflict`), meta-root auto-filing (`_link_meta_root`), and the `DISTILL_TAG` idempotency guard.",
+  "label": "Memory capture & distillation (send_to_user lesson tee + agentic post-session distiller)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "lib/memory/distill.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/post_tool_trace.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

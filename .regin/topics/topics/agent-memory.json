@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "Capture / distil / store / recall / reflect / feedback / exemplars of cross-session memory \u2014 enter for tasks touching memory writes, recall, or lessons. Code: lib/memory/ (except evaluate.py)",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "Capture / distil / store / recall / reflect / feedback / exemplars of cross-session memory \u2014 enter for tasks touching memory writes, recall, or lessons. Code: lib/memory/ (except evaluate.py)",
+  "kind": "bucket",
+  "label": "Agent memory engine",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

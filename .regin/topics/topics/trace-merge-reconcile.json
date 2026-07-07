@@ -1,0 +1,34 @@
+{
+  "aliases": [
+    "serve-time merge",
+    "span reparenting",
+    "rewind fork detection",
+    "discarded span render",
+    "lookahead reattachment"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/trace/merge.py",
+    "lib/trace/repair.py",
+    "lib/trace/projection.py"
+  ],
+  "intent": "The READ-time assembly path in merge.py: serve-time merge_spans, lookahead reattachment of UserPromptSubmit spans, dropped/discarded vs deleted render states, count-vs-items divergence, cancelled-tool span loss, segment-aware ctx%, and prompt-edit forks vs real /rewinds. Drill in when spans exist but render wrong.",
+  "label": "Trace serve-time merge & reconcile (reparent, reattach, forks/rewinds, render states)",
+  "parent_id": "session-trace",
+  "refs": [
+    {
+      "path": "lib/trace/merge.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/repair.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/projection.py"
+    }
+  ],
+  "status": "active"
+}

@@ -1,0 +1,66 @@
+{
+  "aliases": [
+    "how the regin command line is wired",
+    "add a new regin subcommand",
+    "where do CLI command bodies live",
+    "venv re-exec entrypoint",
+    "regin doctor environment check",
+    "init rebuild database commands"
+  ],
+  "blurb": "Adding, grouping, or debugging a `regin` CLI command, or running doctor / init / rebuild",
+  "commands": [
+    ".venv/bin/python cli/regin.py doctor",
+    ".venv/bin/python cli/regin.py init",
+    ".venv/bin/python cli/regin.py init --force",
+    ".venv/bin/python cli/regin.py rebuild",
+    ".venv/bin/python cli/regin.py rebuild --clean"
+  ],
+  "edges": [],
+  "exclude_globs": [
+    "cli/__pycache__/**",
+    "cli/commands/__pycache__/**"
+  ],
+  "include_globs": [
+    "cli/**",
+    "lib/doctor.py",
+    "lib/db_rebuild.py"
+  ],
+  "intent": "Explain how the `regin` CLI is assembled and how to extend it: the thin `cli/regin.py` entrypoint that re-execs under the project `.venv` and fixes sys.path, the Typer root in `cli/app.py` that wires per-domain modules under `cli/commands/` (each exposing `register(app)` for flat commands or a pre-built sub-Typer for `regin <group> <cmd>`), the root callback that stamps every invocation into the activity log, and the shared `cli/deps.py` (`require_db` guard) + `cli/output.py` (testable echo/error/table sinks) helpers. `doctor`, `init --force`, and `rebuild --clean` are the canonical ops/lifecycle commands, backed by `lib/doctor.py` and `lib/db_rebuild.py`.",
+  "label": "regin CLI architecture & command surface (Typer entrypoint, venv re-exec, per-domain command registry, doctor/db lifecycle, add-a-command playbook)",
+  "parent_id": "ops-cli",
+  "refs": [
+    {
+      "path": "cli/regin.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "cli/app.py",
+      "role": "architecture"
+    },
+    {
+      "path": "cli/deps.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/output.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/db.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/meta.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/doctor.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/db_rebuild.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

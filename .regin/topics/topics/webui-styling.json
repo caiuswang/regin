@@ -1,0 +1,66 @@
+{
+  "aliases": [
+    "vue scoped style not applying",
+    "data-theme inversion",
+    "portalled scoped css",
+    "table cell overlap",
+    "icon primitive no emoji"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "frontend/src/assets/style.css",
+    "frontend/src/components/ui/**"
+  ],
+  "intent": "CSS/render-level fixes in the Vue SPA: scoped styles not crossing into extracted child components (use global classes), data-theme palette inversion, Reka/Radix portalled content escaping scoped styles, the .input base class vs Tailwind utilities, focus-ring-as-containment, the Icon primitive (no emoji/inline svg), and measuring table-fixed cell overflow by text Range not the td box.",
+  "label": "WebUI styling & layout gotchas (scoped CSS reach, theming, portalled content, table overflow)",
+  "parent_id": "webui",
+  "refs": [
+    {
+      "path": "frontend/src/assets/style.css",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/ui/Icon.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/ui/Button.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Checkbox.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/CopyId.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Dialog.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/DropdownMenu.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Input.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Popover.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/RadioGroup.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Select.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Tabs.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Textarea.vue"
+    },
+    {
+      "path": "frontend/src/components/ui/Tooltip.vue"
+    }
+  ],
+  "status": "active"
+}

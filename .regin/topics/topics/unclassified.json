@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "Topics awaiting a human bucket assignment. Appearing here is a curation backlog item to place under a real bucket.",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "Topics awaiting a human bucket assignment. Appearing here is a curation backlog item to place under a real bucket.",
+  "kind": "bucket",
+  "label": "Unclassified",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

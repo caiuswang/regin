@@ -1,0 +1,173 @@
+{
+  "aliases": [
+    "phone live session view",
+    "session tail poll composable",
+    "NOW zone sticky footer",
+    "steer the agent from the phone",
+    "answer an ask-user question on mobile",
+    "server phase verdict for the live card",
+    "scope the tail to one subagent"
+  ],
+  "blurb": "Building or debugging the /live phone card \u2014 its poll cadence, row/qa filtering, server-phase NOW-zone states, bridge composer, agent scoping, or session switcher \u2014 start here.",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "frontend/src/views/LiveSessionView.vue",
+    "frontend/src/composables/useLiveTail.js",
+    "frontend/src/composables/useLiveAgents.js",
+    "frontend/src/composables/useLiveScope.js",
+    "frontend/src/composables/useAgentElapsed.js",
+    "frontend/src/composables/useQueuedPrompts.js",
+    "frontend/src/composables/useSlashCommands.js",
+    "frontend/src/utils/liveRows.js",
+    "frontend/src/components/live/**",
+    "frontend/tests/live-*.spec.js"
+  ],
+  "intent": "Explains the /live/:id? mobile-first single-card session view: its header/tail/NOW-zone/scope-bar shape and bottom-sheet interactions, the useLiveTail composable that pages/polls/reconciles the shallow trace map, the liveRows.js row-categorization / signal-tier / human-phrasing rules including the qa and phase-band rows, the server-authoritative phase model that both the header and the LiveNowZone render (never re-derive), the bridge composer + answerable Q&A sheet + raw-terminal peek + slash-command autocomplete, per-agent scoping and roster, and the recent-sessions switcher \u2014 for anyone building, extending, or debugging the mobile live view.",
+  "label": "/live mobile session-tail card (mobile-first live session view, poll/reconcile composable, server-phase NOW zone, bridge composer)",
+  "parent_id": "webui",
+  "refs": [
+    {
+      "path": "frontend/src/views/LiveSessionView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useLiveTail.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/utils/liveRows.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveTailRow.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveNowZone.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveComposer.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveCommandMenu.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveQaSheet.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveScopeBar.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveAgentSheet.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveAgentDetail.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveTaskSheet.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveTerminalSheet.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveCtxMeter.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveQueuedChips.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveSessionPicker.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/live/LiveSheet.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useLiveAgents.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useLiveScope.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useAgentElapsed.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useQueuedPrompts.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useSlashCommands.js",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/utils/sessionActivity.js",
+      "role": "implementation"
+    },
+    {
+      "path": "web/blueprints/trace/sessions.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/bridge.py",
+      "role": "api"
+    },
+    {
+      "path": "frontend/src/router.js",
+      "role": "config"
+    },
+    {
+      "path": "frontend/tests/live-card.spec.js",
+      "role": "test"
+    },
+    {
+      "path": "frontend/tests/live-card-phase-real.spec.js",
+      "role": "test"
+    },
+    {
+      "path": "frontend/tests/live-picker.spec.js",
+      "role": "test"
+    },
+    {
+      "path": "frontend/tests/context-live-peak.spec.js",
+      "role": "test"
+    },
+    {
+      "path": "frontend/tests/trace-live-prompt-handoff.spec.js",
+      "role": "test"
+    },
+    {
+      "path": "frontend/tests/workflow-live-phases.spec.js",
+      "role": "test"
+    },
+    {
+      "path": "docs/mobile-progress-card-design.md",
+      "role": "docs"
+    },
+    {
+      "path": "docs/agent-bridge-design.md",
+      "role": "docs"
+    },
+    {
+      "path": "docs/bridge-slash-autocomplete-design.md",
+      "role": "docs"
+    }
+  ],
+  "status": "active"
+}

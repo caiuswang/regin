@@ -1,0 +1,56 @@
+{
+  "aliases": [
+    "pin the bar before the agent builds",
+    "hard-gate floor plus opt-in recalled lessons",
+    "acceptance checklist verification gates",
+    "reinforce included lessons, decay dropped ones",
+    "close the build loop back into agent memory",
+    "file a failure lesson under a topic node"
+  ],
+  "blurb": "Wiring `regin goal preflight`/`feedback`, the hard-gate floor, or how a goal run pins the bar and feeds memory.",
+  "commands": [
+    "regin goal preflight \"<goal>\" --json",
+    "regin goal preflight \"<goal>\" --with-lessons --session-id <sid>",
+    "regin goal feedback \"<goal>\" --included <id> --fail \"<rule>\" --topic <node-id>"
+  ],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/goal_*.py",
+    "cli/commands/goal.py"
+  ],
+  "intent": "The two regin-side halves of the `/goal-verified` loop-engineering workflow (the build + verify halves are the skill). Preflight is a deterministic, offline kernel: it assembles a roadmap of the universal hard-gate floor (tests stay green + an independent fresh-context reviewer) plus, opt-in, a short menu of FTS-recalled past lessons \u2014 pinning a falsifiable bar before code is written. Per-area convention skills and reference components are sourced outside this kernel (the file-keyed table in CLAUDE.local.md and the real target files). Feedback closes the loop after verification, reusing memory primitives only: included lessons are reinforced, FAILED acceptance items become area-tagged `goal-verified-fail` lesson memories, and those failure-lessons are filed under agent-supplied authoritative topic nodes.",
+  "label": "Loop-engineering: goal preflight roadmap \u2192 verified build \u2192 feedback into memory",
+  "parent_id": "ops-cli",
+  "refs": [
+    {
+      "path": "lib/goal_preflight.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/goal_feedback.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/goal.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": ".claude/skills/goal-verified/SKILL.md",
+      "role": "docs"
+    },
+    {
+      "path": ".claude/skills/goal-verified-treenav/SKILL.md",
+      "role": "docs"
+    },
+    {
+      "path": "tests/core/test_goal_preflight.py",
+      "role": "test"
+    },
+    {
+      "path": "tests/core/test_goal_feedback.py",
+      "role": "test"
+    }
+  ],
+  "status": "active"
+}

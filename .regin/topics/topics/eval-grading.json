@@ -1,0 +1,117 @@
+{
+  "aliases": [
+    "llm judge session grading",
+    "grade a trace",
+    "is this session any good",
+    "correctness and process axes",
+    "recall quality regression eval",
+    "score agent output quality"
+  ],
+  "blurb": "LLM-judge session grading (rubric / correctness / coverage / grounding / agentic), recall-quality eval, pattern-conceal experiments, goal verification \u2014 enter for anything that measures quality or judges good/bad. Code: lib/grader/, lib/memory/evaluate.py, lib/experiments.py, lib/goal_feedback.py",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/grader/**",
+    "lib/memory/evaluate.py",
+    "lib/experiments.py",
+    "lib/goal_feedback.py"
+  ],
+  "intent": "LLM-judge session grading (rubric / correctness / coverage / grounding / agentic), recall-quality eval, pattern-conceal experiments, goal verification \u2014 enter for anything that measures quality or judges good/bad. Code: lib/grader/, lib/memory/evaluate.py, lib/experiments.py, lib/goal_feedback.py",
+  "label": "Evaluation & grading",
+  "parent_id": "evaluation-grading",
+  "refs": [
+    {
+      "path": "lib/grader/__init__.py",
+      "role": "overview"
+    },
+    {
+      "path": "lib/grader/service.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "lib/grader/rubric.py",
+      "role": "schema"
+    },
+    {
+      "path": "lib/experiments.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/goal_feedback.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/adapters.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/combined_agentic.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/evidence.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/store.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/evaluate.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/agentic.py"
+    },
+    {
+      "path": "lib/grader/aggregate.py"
+    },
+    {
+      "path": "lib/grader/correctness.py"
+    },
+    {
+      "path": "lib/grader/coverage.py"
+    },
+    {
+      "path": "lib/grader/dump.py"
+    },
+    {
+      "path": "lib/grader/extraction.py"
+    },
+    {
+      "path": "lib/grader/failure_modes.py"
+    },
+    {
+      "path": "lib/grader/grounding.py"
+    },
+    {
+      "path": "lib/grader/judge_io.py"
+    },
+    {
+      "path": "lib/grader/models.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/grader/pareto.py"
+    },
+    {
+      "path": "lib/grader/process.py"
+    },
+    {
+      "path": "lib/grader/process_agentic.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/grader/prompts.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/grader/source_quality.py"
+    },
+    {
+      "path": "lib/grader/topic_notify.py"
+    }
+  ],
+  "status": "active"
+}

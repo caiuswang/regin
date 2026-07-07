@@ -1,0 +1,75 @@
+{
+  "aliases": [
+    "support a new coding agent",
+    "plug in another CLI agent",
+    "provider capability matrix",
+    "wire up a Kimi-style integration",
+    "agent-agnostic capture seam"
+  ],
+  "blurb": "Integrating a new coding-agent CLI into regin's capture pipeline",
+  "commands": [
+    ".venv/bin/python -m pytest tests/core/test_providers.py tests/skills/test_provider_parity.py tests/hooks/test_kimi_hooks_toml.py tests/trace/test_kimi_transcript.py"
+  ],
+  "edges": [
+    {
+      "target": "session-trace-design",
+      "type": "related"
+    },
+    {
+      "target": "rule-engine-design",
+      "type": "related"
+    },
+    {
+      "target": "topic-proposal-pipeline",
+      "type": "related"
+    },
+    {
+      "target": "trace-span-capture",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [
+    "**/__pycache__/**"
+  ],
+  "include_globs": [
+    "lib/providers/**"
+  ],
+  "intent": "Show a future agent the exact contract and integration points for teaching regin about a new coding-agent CLI (Kimi/Codex-style): subclass the AgentProvider adapter, register it, declare its capabilities/format flags, and wire path resolution, transcript parsing, hook install, permission shaping, and skill deployment so regin captures the agent's sessions without hard-coding vendor paths or payload shapes across the shared pipeline.",
+  "label": "Adding a new agent provider (AgentProvider adapter playbook: contract, registry, hook/transcript wiring)",
+  "parent_id": "agent-providers",
+  "refs": [
+    {
+      "path": "lib/providers/__init__.py",
+      "role": "overview"
+    },
+    {
+      "path": "lib/providers/base.py",
+      "role": "architecture"
+    },
+    {
+      "path": "lib/providers/claude/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/codex/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/generic/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/kimi/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/kimi_hooks.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/registry.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

@@ -1,0 +1,127 @@
+{
+  "aliases": [
+    "message the human mid-task",
+    "progress updates to the user",
+    "inbox unread badge",
+    "supersede a progress message by key",
+    "telegram lark and webhook push notifications",
+    "declared notification event design",
+    "what events can reach my inbox"
+  ],
+  "blurb": "Changing how inbox messages are produced, stored, or shown \u2014 send_to_user progress messages, the declared notification event bus (proposals / drift / grades / permission / plan), push fan-out, or the Inbox UI.",
+  "commands": [
+    "regin events list",
+    "regin events list --json"
+  ],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/agent_messages/**"
+  ],
+  "intent": "How an inbox message reaches the human. Two producers feed one store: (1) agent-authored `send_to_user` MCP calls \u2014 the session-blind stdio server only declares the schema, and the PostToolUse hook (which alone knows the session) persists them through the single `store.record_message` writer; (2) a declared notification event bus (`events.py`) over which every non-`send_to_user` system event \u2014 an agent blocked on a permission/plan, an external proposal drafted, wiki content drift, a session grade landing, a topic proposed for suppression \u2014 is declared once in `REGISTRY` and published through one `emit`, routing to the same writer with a deep-link URL. High-severity types fan out to three pluggable push channels (webhook / Telegram / Lark-Feishu); the Flask API + Vue Inbox render the per-session feed and cross-session unread badge; `regin events list` / `GET /api/events/kinds` enumerate the bus.",
+  "label": "Inbox messages & the notification event bus (send_to_user inbox message store, cross-session Inbox, declared event design, push fan-out)",
+  "parent_id": "webui",
+  "refs": [
+    {
+      "path": "lib/agent_messages/__init__.py",
+      "role": "overview"
+    },
+    {
+      "path": "lib/agent_messages/store.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/mcp_server.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "lib/agent_messages/events.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/event_notify.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/push/registry.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/push/base.py",
+      "role": "api"
+    },
+    {
+      "path": "lib/agent_messages/push/telegram.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/push/lark.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/push/webhook.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/agent_messages/webhook.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/orm/models/agent_messages.py",
+      "role": "schema"
+    },
+    {
+      "path": "hook_manager/handlers/post_tool_trace.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "web/blueprints/trace/agent_messages.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/events.py",
+      "role": "api"
+    },
+    {
+      "path": "cli/commands/events.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "lib/topics/proposal_external.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposals/finish.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/wiki_debt.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/service.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/topic_notify.py",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/views/InboxView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/InboxMessageCard.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/composables/useInboxUnread.js",
+      "role": "implementation"
+    },
+    {
+      "path": "db/schema.sql",
+      "role": "schema"
+    }
+  ],
+  "status": "active"
+}

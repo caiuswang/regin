@@ -1,0 +1,50 @@
+{
+  "aliases": [
+    "the sleep cycle of agent memory",
+    "working to episodic promotion",
+    "generative-agents reflection synthesis",
+    "associative memory edge graph",
+    "attach synthesis cluster to topic graph"
+  ],
+  "blurb": "The offline sleep cycle: how working rows are deduped, promoted, decayed, synthesized, and retired.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_reflect.py tests/memory/test_graph.py"
+  ],
+  "edges": [
+    {
+      "target": "agent-memory-architecture",
+      "type": "related"
+    },
+    {
+      "target": "memory-distillation-capture",
+      "type": "related"
+    },
+    {
+      "target": "memory-engagement-feedback",
+      "type": "related"
+    },
+    {
+      "target": "topic-proposal-pipeline",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/memory/reflect.py",
+    "lib/memory/topic_attach.py"
+  ],
+  "intent": "Explain `reflect()` \u2014 the batch consolidation cycle that turns raw `working` rows into curated `episodic` knowledge \u2014 step by ordered step: near-duplicate dedup (`_dedup_and_judge`, embedding cosine or text-ratio fallback), LLM-judged contradiction in the similarity gray zone, working\u2192episodic promotion with `recall_count`-driven importance (`_promote`), forget-stale retirement of never-recalled aged rows (`_forget_stale`), a pre-decay engagement densifying sweep (`_score_pending`), importance decay for chronically-ignored rows whose gate reads the soft/hard engagement split (`_decay_chronically_ignored`/`_decay_reason`), stale-reference flagging with git rename-follow (`_flag_stale_references`), LLM synthesis of higher-order rules from cosine clusters (`_synthesize`), an optional per-scope digest (`_synthesize_digest`), content-hash-skipped embedding (`_embed_episodic`), and the `related` edge harvest (`_harvest_edges`). `topic_attach.py` proposes merge/create onto the human-approved `.regin/topics` graph.",
+  "label": "Memory consolidation (reflect: dedup, contradiction, promote, synthesize, forget-stale, decay, edges & topics)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "lib/memory/reflect.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/topic_attach.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

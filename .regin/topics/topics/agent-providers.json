@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "AgentProvider adapters (Claude / Kimi), transcript parsing, hook install \u2014 enter when integrating a new coding-agent CLI. Code: lib/providers/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "AgentProvider adapters (Claude / Kimi), transcript parsing, hook install \u2014 enter when integrating a new coding-agent CLI. Code: lib/providers/",
+  "kind": "bucket",
+  "label": "Agent provider adapters",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

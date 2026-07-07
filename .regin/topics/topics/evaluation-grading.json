@@ -1,0 +1,14 @@
+{
+  "aliases": [],
+  "blurb": "Drill in here when you need to measure output quality or judge whether a session, memory, or goal outcome is good or bad.",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "Drill in here when you need to measure output quality or judge whether a session, memory, or goal outcome is good or bad.",
+  "kind": "bucket",
+  "label": "Evaluation & Grading",
+  "parent_id": null,
+  "refs": [],
+  "status": "active"
+}

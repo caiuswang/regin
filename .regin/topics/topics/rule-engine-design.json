@@ -1,0 +1,279 @@
+{
+  "aliases": [
+    "rule engines",
+    "lib.rule_engines",
+    "RuleEngine protocol",
+    "GritEngine BundleEngine RadonEngine",
+    "regin-bundle.yaml",
+    "PostToolUse rule check",
+    "example/rule bundles",
+    "frontend-style-convention bundle",
+    "regin-python-conventions bundle",
+    "add a new rule engine",
+    "applicable_rules contract"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [
+    "**/__pycache__/**",
+    "tests/**",
+    "example/rule/*/node_modules/**"
+  ],
+  "include_globs": [
+    "lib/rule_engines/**",
+    "hook_manager/handlers/rule_check.py",
+    "lib/rules/**",
+    "lib/languages/**",
+    "example/rule/**"
+  ],
+  "intent": "Explain how regin loads, dispatches, and executes lint/rewrite rules: the engine-agnostic Protocol, the three-source registry precedence (explicit settings \u2192 legacy grit fallback \u2192 autodiscovered bundles), the three concrete adapters (Grit, Bundle, Radon), the PostToolUse hook that drives them per edit, the two in-tree example bundles under example/rule/, and the step-by-step playbook for adding a new engine. Use this when adding a new engine kind, packaging a new rule pack as a bundle, wiring an existing engine into a new language, importing one of the example bundles, or debugging why a rule fired (or didn't) on a file.",
+  "label": "Rule engine design (adapter protocol, registry, PostToolUse driver, in-tree example bundles, add-an-engine playbook)",
+  "parent_id": "rule-engines",
+  "refs": [
+    {
+      "path": "lib/languages/base.py",
+      "role": "architecture"
+    },
+    {
+      "path": "lib/rule_engines/base.py",
+      "role": "architecture"
+    },
+    {
+      "path": "hook_manager/handlers/rule_check.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "lib/rule_engines/__init__.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/accessibility.yaml",
+      "role": "schema"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/layout.yaml",
+      "role": "schema"
+    },
+    {
+      "path": "lib/rule_engines/manifest.py",
+      "role": "schema"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/bin/frontend-ux-runner.mjs",
+      "role": "implementation"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/icon_button_accessible_name.mjs",
+      "role": "implementation"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/scripts/check_grit.sh",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/languages/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/rule_engines/bundle.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/rule_engines/grit.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/rule_engines/radon_engine.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/rule_engines/repo_scope.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/rules/engine_rule_disable.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/rules/grit_rule_index.py",
+      "role": "implementation"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/regin-bundle.yaml",
+      "role": "config"
+    },
+    {
+      "path": "example/rule/README.md",
+      "role": "docs"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/SKILL.md",
+      "role": "docs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/SKILL.md"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/bin/check_frontend_ux.sh"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/clickable_requires_affordance.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/disallow_native_alert.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/disallow_native_confirm.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/disallow_raw_hex.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/heading_order.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/interactive_requires_focus_visible.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/prefer_ds_primitive.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/checkers/select_input_in_flex_wrap.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/content.md"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/design-system.yaml",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/lib/ast-utils.mjs"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/manifest.json"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/package-lock.json"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/package.json"
+    },
+    {
+      "path": "example/rule/frontend-style-convention/references/style-convention.md"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/.grit/patterns/python/regin_python_checks.grit"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/.grit/rules.json"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/content.md"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/manifest.json"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/references/python-conventions.md",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/scripts/filter_grit_output.py"
+    },
+    {
+      "path": "example/rule/regin-python-conventions/scripts/find_applicable_files.py"
+    },
+    {
+      "path": "example/rule/vue-complexity/SKILL.md"
+    },
+    {
+      "path": "example/rule/vue-complexity/bin/vue-complexity-runner.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/script_cyclomatic_function.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/script_cyclomatic_module.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/script_function_length.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/script_surface_area.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/template_binding_count.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/template_conditional_loop.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/template_directive_density.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/template_max_depth.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/checkers/template_node_count.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/lib/complexity-utils.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/package.json"
+    },
+    {
+      "path": "example/rule/vue-complexity/references/calibrate.mjs",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/regin-bundle.yaml"
+    },
+    {
+      "path": "example/rule/vue-complexity/script-js.yaml",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/script.yaml",
+      "tier": "reference"
+    },
+    {
+      "path": "example/rule/vue-complexity/template.yaml",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/languages/java.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/languages/python.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/rules/__init__.py"
+    },
+    {
+      "path": "lib/rules/buckets.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/rules/status.py",
+      "tier": "reference"
+    }
+  ],
+  "status": "active"
+}

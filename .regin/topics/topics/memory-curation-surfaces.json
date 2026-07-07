@@ -1,0 +1,95 @@
+{
+  "aliases": [
+    "approve a proposed memory",
+    "retire or forget a memory",
+    "recall probe in the dashboard",
+    "run reflect from the UI",
+    "browse the memory taxonomy tree",
+    "file a memory under a topic node"
+  ],
+  "blurb": "Curate the memory store by hand: approve/retire/restore/forget memories, run reflect, check store health, file memories under topics, walk the taxonomy tree, stamp topic-route exemplars, decide topic suppression, share a memory tree over git, and probe recall.",
+  "commands": [
+    ".venv/bin/python cli/regin.py memory list",
+    ".venv/bin/python cli/regin.py memory stats",
+    ".venv/bin/python cli/regin.py serve"
+  ],
+  "edges": [
+    {
+      "target": "agent-memory-architecture",
+      "type": "related"
+    },
+    {
+      "target": "memory-distillation-capture",
+      "type": "related"
+    },
+    {
+      "target": "memory-consolidation-reflect",
+      "type": "related"
+    },
+    {
+      "target": "memory-recall-pipeline",
+      "type": "related"
+    },
+    {
+      "target": "memory-exemplar-rescore",
+      "type": "related"
+    },
+    {
+      "target": "memory-topic-route-feedback",
+      "type": "related"
+    },
+    {
+      "target": "webui",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "web/blueprints/memory.py",
+    "frontend/src/views/MemoryView.vue",
+    "frontend/src/components/memory/**",
+    "cli/commands/memory.py"
+  ],
+  "intent": "Point an agent at the human-facing controls for curating the cross-session memory store \u2014 the curation that is the whole point of memory being mutable. Covers the `/api/memory/*` Flask blueprint (`web/blueprints/memory.py`), the four-tab `MemoryView.vue` dashboard with its `frontend/src/components/memory/*` panels (including the `MemoryDoctor` health panel), and the `regin memory` Typer CLI (`cli/commands/memory.py`). These are the three coordinated entry points that wrap the `lib.memory` facade for reviewing distill proposals, fixing a memory's veracity, filing memories under topic nodes, walking the topic taxonomy, hand-curating signed topic-route exemplars, deciding which topic banners get withheld, sharing a memory tree over git, and probing what a query would surface.",
+  "label": "Memory curation surfaces (Memory view, /api/memory/* blueprint, regin memory CLI)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "web/blueprints/memory.py",
+      "role": "api"
+    },
+    {
+      "path": "frontend/src/views/MemoryView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/memory.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryDetail.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryDoctor.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryTaxonomy.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/memory/TaxonomyDetail.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

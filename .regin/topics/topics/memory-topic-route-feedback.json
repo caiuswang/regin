@@ -1,0 +1,70 @@
+{
+  "aliases": [
+    "withhold a topic banner",
+    "injectedrelated grade aspect",
+    "topic route suppression gate",
+    "topic relevance fail rate",
+    "topic route playground probe"
+  ],
+  "blurb": "Should a routed topic banner keep firing: the InjectedRelated verdict, per-topic fail rate, and the human suppression gate.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_topic_feedback.py tests/memory/test_topic_playground.py"
+  ],
+  "edges": [
+    {
+      "target": "topic-routing",
+      "type": "related"
+    },
+    {
+      "target": "memory-auto-injection",
+      "type": "related"
+    },
+    {
+      "target": "memory-exemplar-rescore",
+      "type": "related"
+    },
+    {
+      "target": "memory-curation-surfaces",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [],
+  "include_globs": [
+    "frontend/src/components/memory/TopicRoutePlayground.vue",
+    "frontend/src/components/memory/MemoryTopicFeedback.vue"
+  ],
+  "intent": "Explain the relevance feedback loop wrapped around authoritative-topic routing \u2014 the topic analog of memory engagement feedback. The `UserPromptSubmit` hook records each injected `<topic_context>` banner as a `TopicInjection` row; the grader's `InjectedRelated` aspect (`config/settings.json` + `lib/grader/service._maybe_apply_injection_relevance`) judges whether the banner fit the goal and `store.apply_topic_relevance` stamps a `satisfied`|`needs_revision`|`fail` verdict once per session. Aggregated per topic (`topic_relevance_summary`, `topic_relevance_stats`), a recurring fail rate over `topic_relevance_min_scored`/`topic_relevance_fail_rate` only *proposes* suppression \u2014 withholding is human-in-the-loop via a `TopicRouteDecision` (`suppressed`/`allowed`/auto) that gates the hook's `_route_topic`. A `fail` also becomes a -1 topic exemplar and a `pass` a +1, so `topic_route_suppressed` can withhold query-locally. The route playground (`topic_query_signals` \u2192 `/api/memory/topic-route-preview`, `TopicRoutePlayground.vue`/`MemoryTopicFeedback.vue`) probes what a query would route to and why.",
+  "label": "Topic-route relevance feedback (InjectedRelated verdict, fail-rate proposal, human suppression gate, route playground)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "lib/memory/store.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/memory_recall.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/grader/service.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/models.py",
+      "role": "schema"
+    },
+    {
+      "path": "web/blueprints/memory.py",
+      "role": "api"
+    },
+    {
+      "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

@@ -1,0 +1,25 @@
+{
+  "aliases": [
+    "verify recall end to end",
+    "recall eval harness",
+    "dense path silent fail",
+    "embed coverage",
+    "inject path probe"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/memory/evaluate.py"
+  ],
+  "intent": "Proving a recall change actually works: verify end-to-end through the real auto-inject path (not units), why silently-degrading fast paths and ungated FTS fallbacks hide breakage, embed-coverage completeness, mechanical probes that must not reinforce, and --json output hygiene. Drill in before trusting a recall eval.",
+  "label": "Recall eval & end-to-end verification (true inject path, silent-degradation gotchas)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "lib/memory/evaluate.py",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

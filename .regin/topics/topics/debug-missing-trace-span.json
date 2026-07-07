@@ -1,0 +1,141 @@
+{
+  "aliases": [
+    "seen-uuid cache lockout",
+    "repair_session_spans",
+    "session has fewer spans than the transcript",
+    "ingest-errors.jsonl gave_up",
+    "two-copy-of-regin trap"
+  ],
+  "blurb": "A session shows fewer spans than its transcript holds \u2014 triage the hooks log, ingest-errors, and seen-uuid cache, then run the repair.",
+  "commands": [
+    ".venv/bin/python cli/regin.py logs tail --feature hooks -n 200",
+    ".venv/bin/python cli/regin.py logs grep 'handler_failed|handler_slow' --feature hooks",
+    ".venv/bin/python cli/regin.py logs grep span_repair_completed --feature trace_ingest",
+    "tail -n 200 ~/.claude/traces/ingest-errors.jsonl",
+    "curl -s 'http://127.0.0.1:8321/api/ingest-errors?limit=100' -H \"Authorization: Bearer $TOKEN\"",
+    "find ~/.claude/projects -name '<trace_id>.jsonl' -print -quit",
+    "wc -l ~/.local/share/regin/turn_trace_state/<trace_id>.txt",
+    "sqlite3 ~/.local/share/regin/regin.db \"SELECT name, count(*) FROM session_spans WHERE trace_id='<trace_id>' GROUP BY name ORDER BY name\"",
+    "lsof -i :8321",
+    ".venv/bin/python -c \"from lib.trace.repair import repair_session_spans; import json; print(json.dumps(repair_session_spans('<trace_id>'), indent=2))\"",
+    "curl -X POST -H \"Authorization: Bearer $TOKEN\" http://127.0.0.1:8321/api/sessions/<trace_id>/repair-spans",
+    "curl -X POST -H \"Authorization: Bearer $TOKEN\" http://127.0.0.1:8321/api/sessions/<trace_id>/materialize"
+  ],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/trace/repair.py",
+    "lib/trace/transcript_usage.py",
+    "lib/trace/projection.py",
+    "lib/trace/trace_service/**",
+    "lib/hook_plugin.py",
+    "lib/activity_log.py",
+    "lib/providers/**",
+    "hook_manager/handlers/turn_trace/**",
+    "hook_manager/runner.py",
+    "web/app.py",
+    "web/blueprints/trace/sessions.py",
+    "web/blueprints/trace/ingest_errors.py",
+    "cli/commands/logs.py",
+    "tests/trace/test_trace_repair.py",
+    "hook_manager/tests/test_turn_trace.py",
+    "docs/trace/SPAN_DESIGN.md"
+  ],
+  "intent": "Step-by-step procedure for diagnosing why a Claude Code (or Codex / generic-provider) session has fewer rows in regin's session_spans table than the on-disk JSONL transcript implies, and for driving recovery. Triage starts in the hook activity log (feature=hooks) to confirm the turn_trace handler fired, then walks the ingest-errors log, the JSONL transcript, and the per-session seen-uuid cache. The recovery path is lib.trace.repair.repair_session_spans (also POST /api/sessions/<trace_id>/repair-spans), which trims the locked-out uuids, replays turn_trace's live emit pipeline, and materializes the healed projection. Verification reads back from session_spans and confirms the span_repair_completed activity-log row. Every step is shell + the regin venv.",
+  "label": "Debug a missing trace span (hooks-log triage, ingest-errors, seen-uuid cache lockout, repair endpoint)",
+  "parent_id": "session-trace",
+  "refs": [
+    {
+      "path": "lib/trace/repair.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/__init__.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/entry.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/cache.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/span_posters.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/runner.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/hook_plugin.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/activity_log.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/logs.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "lib/trace/transcript_usage.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/projection.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/trace_service/ingest.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/claude/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/codex/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/providers/generic/__init__.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/orm/engine.py",
+      "role": "implementation"
+    },
+    {
+      "path": "web/app.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/sessions.py",
+      "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/ingest_errors.py",
+      "role": "api"
+    },
+    {
+      "path": "tests/trace/test_trace_repair.py",
+      "role": "test"
+    },
+    {
+      "path": "hook_manager/tests/test_turn_trace.py",
+      "role": "test"
+    },
+    {
+      "path": "docs/trace/SPAN_DESIGN.md",
+      "role": "docs"
+    }
+  ],
+  "status": "active"
+}

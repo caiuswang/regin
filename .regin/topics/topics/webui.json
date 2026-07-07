@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "All Vue 3 SPA views + Flask /api blueprints \u2014 enter when changing a frontend page or its API. Code: frontend/, web/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "All Vue 3 SPA views + Flask /api blueprints \u2014 enter when changing a frontend page or its API. Code: frontend/, web/",
+  "kind": "bucket",
+  "label": "Web UI & API",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

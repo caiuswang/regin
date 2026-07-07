@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "cli commands, doctor, audit, activity_log, db_rebuild, token accounting, search \u2014 enter when running the CLI, diagnosing the environment, or inspecting the activity log. Code: cli/, lib/doctor.py, lib/tokens/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "cli commands, doctor, audit, activity_log, db_rebuild, token accounting, search \u2014 enter when running the CLI, diagnosing the environment, or inspecting the activity log. Code: cli/, lib/doctor.py, lib/tokens/",
+  "kind": "bucket",
+  "label": "CLI & ops",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

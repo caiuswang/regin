@@ -1,0 +1,44 @@
+{
+  "aliases": [
+    "session bill wrong",
+    "subagent token spend",
+    "turn usage rows",
+    "workflow bills zero",
+    "token rollup"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/trace/transcript_usage.py",
+    "hook_manager/handlers/turn_trace/**"
+  ],
+  "intent": "Token and dollar accounting for a session: turn_usage rows, why a Task-subagent's API spend goes missing, Workflow billing $0 from a cache-less rate shard, subagent transcript nesting depth, and gating the seen-cache on ingest success. Drill in when the bill or token rollup looks wrong.",
+  "label": "Trace usage & billing (turn_usage, token/cost accounting, subagent bill attribution)",
+  "parent_id": "session-trace",
+  "refs": [
+    {
+      "path": "lib/trace/transcript_usage.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/__init__.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/cache.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/entry.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/span_posters.py"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/timestamps.py"
+    }
+  ],
+  "status": "active"
+}

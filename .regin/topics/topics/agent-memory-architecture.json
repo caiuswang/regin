@@ -1,0 +1,83 @@
+{
+  "aliases": [
+    "cross-session experience store",
+    "how regin remembers across sessions",
+    "memory engine seam",
+    "regin_memory.db design",
+    "remember recall reflect facade"
+  ],
+  "blurb": "Start here before touching memory: the facade, ports/adapters seam, scoping, the self-initializing DB, and the tables.",
+  "commands": [
+    ".venv/bin/python -m pytest tests/memory/test_store.py tests/memory/test_capture.py"
+  ],
+  "edges": [
+    {
+      "target": "memory-recall-pipeline",
+      "type": "related"
+    },
+    {
+      "target": "memory-consolidation-reflect",
+      "type": "related"
+    },
+    {
+      "target": "memory-distillation-capture",
+      "type": "related"
+    },
+    {
+      "target": "memory-curation-surfaces",
+      "type": "related"
+    },
+    {
+      "target": "session-trace-design",
+      "type": "related"
+    },
+    {
+      "target": "memory-exemplar-rescore",
+      "type": "related"
+    }
+  ],
+  "exclude_globs": [
+    "**/__pycache__/**"
+  ],
+  "include_globs": [
+    "lib/memory/**"
+  ],
+  "intent": "Orient a future agent in regin's cross-session memory subsystem before touching any of it. `__init__.py` is a thin module-verb facade delegating to a process-wide `SqliteMemoryStore` built with a `SkillRouterEmbedding`. `ports.py` declares the four decoupling interfaces (`EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`), each degrading gracefully; concrete providers live in `adapters.py` at the edge (`SkillRouterEmbedding` with its optional `embed_queries`/`rerank` extensions, `ExternalAgentLLM` over a configured external command, and the `resolve_distiller`/`resolve_topic_classifier`/`resolve_proposal_reviewer` surface binders). `scoping.py` stamps `global`/`repo:<name>`. The single mutable `memories` table carries both tiers via a `tier` column; `models.py` declares its own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch memory tables, and `engine.py` self-initializes a third engine on `db/regin_memory.db`. `mcp_server.py` is the long-lived MCP entrypoint.",
+  "label": "Agent memory architecture (ports/adapters engine, self-initializing DB, tiers & lifecycle model)",
+  "parent_id": "agent-memory",
+  "refs": [
+    {
+      "path": "lib/memory/__init__.py",
+      "role": "overview"
+    },
+    {
+      "path": "lib/memory/ports.py",
+      "role": "architecture"
+    },
+    {
+      "path": "lib/memory/engine.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/models.py",
+      "role": "schema"
+    },
+    {
+      "path": "lib/memory/adapters.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/memory/scoping.py",
+      "role": "config"
+    },
+    {
+      "path": "lib/memory/mcp_server.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "role": "architecture"
+    }
+  ],
+  "status": "active"
+}

@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "GritQL / Radon / Bundle lint engines, language adapters, PostToolUse enforcement \u2014 enter when changing a lint rule or engine. Code: lib/rule_engines/, lib/rules/, lib/languages/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "GritQL / Radon / Bundle lint engines, language adapters, PostToolUse enforcement \u2014 enter when changing a lint rule or engine. Code: lib/rule_engines/, lib/rules/, lib/languages/",
+  "kind": "bucket",
+  "label": "Rule engines (lint/rewrite)",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

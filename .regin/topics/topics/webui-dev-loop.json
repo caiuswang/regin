@@ -1,0 +1,24 @@
+{
+  "aliases": [
+    "vite proxy restart",
+    "tmux path argv0",
+    "send_to_user link path",
+    "dev server stale"
+  ],
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "frontend/vite.config.js"
+  ],
+  "intent": "Environment/iteration mechanics around working on the UI, not the UI itself: restart the vite dev server after vite.config proxy changes, tmux panes not inheriting the spawner's PATH (absolutise argv[0]), and send_to_user links being file paths not URLs. Drill in when the dev loop misbehaves rather than the rendered surface.",
+  "label": "WebUI dev-loop mechanics (vite proxy restart, tmux PATH, send_to_user link form)",
+  "parent_id": "webui",
+  "refs": [
+    {
+      "path": "frontend/vite.config.js",
+      "role": "implementation"
+    }
+  ],
+  "status": "active"
+}

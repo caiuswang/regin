@@ -1,0 +1,60 @@
+{
+  "aliases": [
+    "regin topics route",
+    "resolve a query into topic context",
+    "match_topic route_topic",
+    "fuzzy keyword overlap router",
+    "wordfreq query weighting",
+    "topic-router skill"
+  ],
+  "blurb": "How a query becomes approved topic context: the matcher, keyword scoring, the route envelope, the --wiki output, and the topic-router skill.",
+  "commands": [
+    "regin topics route <query>",
+    "regin topics route <query> --wiki",
+    "regin topics router-skill",
+    "regin topics rebuild-query-df",
+    "regin topics scan"
+  ],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/topics/route.py",
+    "lib/topics/term_weights.py",
+    "lib/topics/core.py",
+    "lib/topics/scan.py",
+    "lib/topics/wiki.py",
+    "cli/commands/topics.py"
+  ],
+  "intent": "Understand how a freeform query resolves to approved topic context. Covers the priority-ordered matcher in lib/topics/route.py (alias/label exact -> ref-path exact -> ref-path substring -> label/intent substring, then a fuzzy multi-keyword fallback), the keyword-signal model (a wordfreq English-rarity prior in route.py scaled by the repo-adaptive query-log document-frequency multiplier in lib/topics/term_weights.py, plus a per-graph saturation filter that drops corpus-common terms), the route_topic envelope that returns ordered refs + bounded wiki pages + first-degree related topics with an approved/unmatched status, the best_topic_for_text reverse signal for long text, the generated topic-router skill, and the regin topics route/route --wiki/router-skill/rebuild-query-df CLI commands.",
+  "label": "Topic routing (keyword router over the approved graph + topic-router skill)",
+  "parent_id": "topic-graph",
+  "refs": [
+    {
+      "path": "cli/commands/topics.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "lib/topics/route.py",
+      "role": "api"
+    },
+    {
+      "path": "lib/topics/core.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/scan.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/topics/term_weights.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/wiki.py",
+      "role": "implementation",
+      "tier": "reference"
+    }
+  ],
+  "status": "active"
+}

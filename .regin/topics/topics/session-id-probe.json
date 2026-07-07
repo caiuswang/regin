@@ -1,0 +1,40 @@
+{
+  "aliases": [
+    "get my session id from a bash command",
+    "regin session-id subcommand",
+    "CLAUDE_CODE_SESSION_ID environment variable",
+    "why a child session id differs from the task output path",
+    "resolve the live session id for goal feedback"
+  ],
+  "blurb": "Debugging or extending how a Bash command recovers its own Claude Code session id.",
+  "commands": [
+    "regin session-id"
+  ],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [
+    "lib/session_probe.py"
+  ],
+  "intent": "How a Bash command recovers its own Claude Code session id. Claude Code (>= ~2.1) exports the live id into every child process's environment as `CLAUDE_CODE_SESSION_ID`; `lib/session_probe.py::resolve()` reads it and the always-present `regin session-id` subcommand prints it (empty stdout + exit 0 on a miss, so callers treat blank as 'omit the flag'). For a child session the env var is the child's own id \u2014 where that context's trace spans land \u2014 so skills read it here rather than reconstructing it from a Task tool's output path. Consumed by `goal preflight --session-id`, `goal feedback --trace-id`, and the `gate` anti-skip checks.",
+  "label": "Session-id probe (recovering the live Claude Code session id inside a Bash command)",
+  "parent_id": "ops-cli",
+  "refs": [
+    {
+      "path": "lib/session_probe.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/session.py",
+      "role": "entrypoint"
+    },
+    {
+      "path": "tests/test_session_probe.py",
+      "role": "test"
+    },
+    {
+      "path": "tests/cli/test_cli_registration.py",
+      "role": "test"
+    }
+  ],
+  "status": "active"
+}
