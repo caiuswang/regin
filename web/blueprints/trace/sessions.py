@@ -94,6 +94,12 @@ def _attach_session_repos(session, items) -> None:
 
 # ── Sessions list + detail + materialize ───────────────────────
 
+# Origins the `workflow=hide|only` toggle treats as non-interactive runs:
+# captured dynamic-workflow runs and regin-spawned LLM stages. NULL / any
+# other origin reads as an interactive session.
+_RUN_ORIGINS = ('workflow', 'llm-stage')
+
+
 @trace_bp.route('/api/sessions')
 def api_sessions():
     """Keyset-paginated session list, newest first.
@@ -128,13 +134,14 @@ def api_sessions():
       workflow=hide|show|only
                          — filter by the `origin` axis. show (server default) →
                            every row, so external callers and E2E fixtures are
-                           unaffected; hide → exclude captured dynamic-workflow
-                           runs (origin='workflow'); only → just those runs.
+                           unaffected; hide → exclude non-interactive runs
+                           (origin in `_RUN_ORIGINS`: captured workflow runs
+                           and regin-spawned LLM stages); only → just those.
                            SessionsView sends 'hide' by default to keep runs out
                            of the main list. When 'hide' the envelope carries
-                           `workflow_hidden_count` — the number of origin=
-                           'workflow' rows the same other filters would have
-                           matched — for a pivot hint.
+                           `workflow_hidden_count` — the number of run-origin
+                           rows the same other filters would have matched —
+                           for a pivot hint.
       cursor, size       — keyset pagination (see lib.utils.pagination)
     """
     from sqlmodel import select as _select
@@ -230,10 +237,14 @@ def api_sessions():
         d['agent_kind'] = canonical_agent_kind(d.get('agent_type'))
 
         # `origin` is what KIND of row this is: 'session' (a real interactive
-        # agent session, the default) or 'workflow' (a captured dynamic-
-        # workflow run). NULL legacy rows read as 'session'.
+        # agent session, the default), 'workflow' (a captured dynamic-
+        # workflow run), or 'llm-stage' (a regin-spawned LLM stage). NULL
+        # legacy rows read as 'session'.
         d['origin'] = d.get('origin') or 'session'
         d['is_workflow'] = (d['origin'] == 'workflow')
+        # Generalised run-ness: True for every origin the workflow=hide
+        # toggle filters, so the frontend never re-derives the origin list.
+        d['is_run'] = d['origin'] in _RUN_ORIGINS
 
         return d
 
@@ -336,21 +347,23 @@ def api_sessions():
             SessionModel.active_work_ms,
         ))
         # Apply the `workflow` (origin) filter AFTER the shared filters.
-        # NULL legacy rows count as 'session' (not workflow), so `hide` keeps
-        # them and `only` drops them.
+        # NULL legacy rows count as 'session' (not a run), so `hide` keeps
+        # them and `only` drops them. 'llm-stage' rows (regin-spawned LLM
+        # stages, e.g. reflect's judges) ride the same toggle as workflow
+        # captures — both are non-interactive runs.
         if workflow == 'only':
-            stmt = stmt.where(SessionModel.origin == 'workflow')
+            stmt = stmt.where(SessionModel.origin.in_(_RUN_ORIGINS))
         elif workflow == 'hide':
             stmt = stmt.where(_or(SessionModel.origin.is_(None),
-                                  SessionModel.origin != 'workflow'))
+                                  SessionModel.origin.not_in(_RUN_ORIGINS)))
 
         # When hiding runs, count how many the SAME other filters would have
         # matched so the frontend can offer a pivot hint. Same _apply_filters,
-        # restricted to origin='workflow'.
+        # restricted to the run origins.
         if workflow == 'hide':
             hidden_workflow_count = session.exec(
                 _apply_filters(_select(_func.count()).select_from(SessionModel))
-                .where(SessionModel.origin == 'workflow')
+                .where(SessionModel.origin.in_(_RUN_ORIGINS))
             ).one()
         else:
             hidden_workflow_count = None
@@ -360,11 +373,11 @@ def api_sessions():
         if workflow == 'only' and date_filtered:
             wf_all = session.exec(
                 _apply_filters(_select(_func.count()).select_from(SessionModel), skip_date=True)
-                .where(SessionModel.origin == 'workflow')
+                .where(SessionModel.origin.in_(_RUN_ORIGINS))
             ).one()
             wf_dated = session.exec(
                 _apply_filters(_select(_func.count()).select_from(SessionModel))
-                .where(SessionModel.origin == 'workflow')
+                .where(SessionModel.origin.in_(_RUN_ORIGINS))
             ).one()
             workflow_date_hidden_count = max(0, wf_all - wf_dated)
         else:

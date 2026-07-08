@@ -177,6 +177,17 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
      "min": 0, "max": 1, "step": 0.01, "label": "Dedup text threshold",
      "description": "Fallback merge threshold on text similarity when no "
                     "embedder is available."},
+    {"key": "contradiction_scan_enabled", "group": "Consolidation", "type": "bool",
+     "label": "Contradiction sweep",
+     "description": "reflect() judges episodic pairs that name a common repo "
+                    "file path (no cosine gate): CONTRADICT retires the older "
+                    "as false, OBSOLETE retires it with veracity untouched. "
+                    "Judged pairs are never re-bought. Needs an agent."},
+    {"key": "contradiction_budget", "group": "Consolidation", "type": "int",
+     "min": 0, "step": 1, "label": "Contradiction pairs per run",
+     "description": "Cap on LLM-judged pairs per reflect run for the "
+                    "contradiction sweep. 0 pauses the sweep without "
+                    "forgetting which pairs were already judged."},
     {"key": "decay_ignored_threshold", "group": "Consolidation", "type": "int",
      "min": 0, "step": 1, "label": "Decay after N ignored verdicts",
      "description": "reflect() decays an unproven episodic memory's importance "

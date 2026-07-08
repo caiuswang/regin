@@ -133,6 +133,185 @@ def test_reflect_gray_zone_without_llm_leaves_both():
     assert result.promoted == 2
 
 
+# ── contradiction sweep: referent-anchored episodic pairs ────────────────────
+
+
+def _shared_ref_pair():
+    """Two episodic rows naming the same repo path but otherwise dissimilar
+    (unique content FIRST, structurally different bodies), so they never
+    reach the dedup band yet qualify for the referent sweep. Returns
+    (older_id, newer_id) by insertion order."""
+    older = _episodic("BEFORE the refactor, recall settings were read "
+                      "by a shim; the entry point sat in "
+                      "lib/memory/store.py behind a wrapper.")
+    newer = _episodic("Ownership moved: lib/memory/store.py now owns "
+                      "recall directly and the wrapper shim is gone.")
+    return older, newer
+
+
+def test_scan_obsolete_retires_older_without_falsifying():
+    older, newer = _shared_ref_pair()
+    llm = StubLLM("OBSOLETE")
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.obsoleted == 1 and result.contradictions == 0
+    assert result.pairs_checked == 1 and llm.prompts
+    old_row = memory.get_store().get_dict(older)
+    assert old_row["status"] == "retired"
+    assert old_row["superseded_by"] == newer
+    assert old_row["veracity"] == "unknown"          # untouched
+    assert memory.get_store().get_dict(newer)["status"] == "active"
+
+
+def test_scan_contradict_sets_veracity_false():
+    older, newer = _shared_ref_pair()
+    result = reflect(memory.get_store(), llm=StubLLM("CONTRADICT"))
+    assert result.contradictions == 1 and result.obsoleted == 0
+    old_row = memory.get_store().get_dict(older)
+    assert old_row["status"] == "retired"
+    assert old_row["veracity"] == "false"
+    assert old_row["superseded_by"] == newer
+
+
+def test_scan_distinct_records_pair_and_never_rejudges():
+    _shared_ref_pair()
+    llm = StubLLM("DISTINCT")
+    first = reflect(memory.get_store(), llm=llm)
+    assert first.pairs_checked == 1
+    calls = len(llm.prompts)
+    second = reflect(memory.get_store(), llm=llm)
+    assert second.pairs_checked == 0
+    assert len(llm.prompts) == calls                 # zero further LLM calls
+
+
+def test_scan_budget_caps_llm_calls(monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "contradiction_budget", 2)
+    bodies = [
+        "ALPHA fact: the doctor endpoint lives beside cli/regin.py options.",
+        "BETA gotcha: cli/regin.py must run under the venv interpreter.",
+        "GAMMA decision: cli/regin.py subcommands stay flat, no groups.",
+        "DELTA note: rebuild wipes what cli/regin.py init created earlier.",
+    ]
+    for body in bodies:
+        _episodic(body)
+    llm = StubLLM("DISTINCT")                        # 6 candidate pairs > budget
+    result = reflect(memory.get_store(), llm=llm)
+    assert len(llm.prompts) == 2
+    assert result.pairs_checked == 2
+
+
+def test_scan_is_noop_without_llm():
+    older, newer = _shared_ref_pair()
+    result = reflect(memory.get_store())             # no llm
+    assert result.pairs_checked == 0
+    assert result.obsoleted == 0 and result.contradictions == 0
+    assert memory.get_store().get_dict(older)["status"] == "active"
+    assert memory.get_store().get_dict(newer)["status"] == "active"
+
+
+def test_scan_disabled_by_setting(monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory,
+                        "contradiction_scan_enabled", False)
+    _shared_ref_pair()
+    llm = StubLLM("CONTRADICT")
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.pairs_checked == 0 and llm.prompts == []
+
+
+def test_scan_skips_cross_scope_pairs():
+    """Sharing a path string across scopes (two repos both naming
+    docs/README.md) is not the same referent — never a candidate pair."""
+    a = _episodic("Alpha-repo note: docs/README.md documents the fish caveats.",
+                  scope="repo:alpha")
+    b = _episodic("Beta-repo note: docs/README.md build badge is stale.",
+                  scope="repo:beta")
+    llm = StubLLM("CONTRADICT")
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.pairs_checked == 0 and llm.prompts == []
+    assert memory.get_store().get_dict(a)["status"] == "active"
+    assert memory.get_store().get_dict(b)["status"] == "active"
+
+
+def test_gray_zone_retired_row_never_reaches_sweep(monkeypatch):
+    """A row the gray-zone stage retired minutes earlier in the SAME run
+    must not be handed to the sweep judge — the wet sweep re-lists active
+    rows instead of trusting the start-of-run snapshot."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
+    _episodic("Standing note: the recall shim details live in lib/x/y.py's "
+              "wrapper block.")
+    older = _remember("MARKER-A the deploy port is 8321; startup also reads "
+                      "lib/x/y.py first")
+    _remember("MARKER-B the deploy port is 9000")
+    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
+                             "MARKER-B": [0.8, 0.6, 0.0]})
+    llm = StubLLM("CONTRADICT")
+    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
+    assert result.contradictions == 1
+    assert memory.get_store().get_dict(older)["status"] == "retired"
+    # Exactly one judge call — the gray-zone pair. The (retired row,
+    # episodic) shared-path pair is never bought.
+    assert len(llm.prompts) == 1 and result.pairs_checked == 1
+
+
+def test_promoted_row_is_swept_same_run(monkeypatch):
+    """A working row promoted this run is visible to the same run's sweep
+    (the wet sweep re-lists, so fresh episodic rows join immediately)."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
+    _episodic("Standing decision: keep the flag parser inside "
+              "lib/flags/parse.py only.")
+    _remember("Fresh discovery from today: lib/flags/parse.py rejects "
+              "duplicate flags loudly now.")
+    llm = StubLLM("DISTINCT")
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.promoted == 1
+    assert result.pairs_checked == 1 and len(llm.prompts) == 1
+
+
+def test_gray_zone_judge_gated_by_scan_setting(monkeypatch):
+    """`contradiction_scan_enabled` off disables BOTH judge paths — the
+    gray-zone pair is promoted untouched with zero LLM calls."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory,
+                        "contradiction_scan_enabled", False)
+    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
+    _remember("MARKER-A the deploy port is 8321")
+    _remember("MARKER-B the deploy port is 9000")
+    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
+                             "MARKER-B": [0.8, 0.6, 0.0]})
+    llm = StubLLM("CONTRADICT")
+    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
+    assert llm.prompts == [] and result.contradictions == 0
+    assert result.promoted == 2
+
+
+def test_budget_is_shared_across_gray_zone_and_sweep(monkeypatch):
+    """One per-run budget covers both judge paths: a gray-zone call spends
+    it, so the shared-referent sweep pair goes unjudged this run."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "contradiction_budget", 1)
+    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
+    _remember("MARKER-A the deploy port is 8321")
+    _remember("MARKER-B the deploy port is 9000")
+    _shared_ref_pair()                   # sweep candidates, left unjudged
+    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
+                             "MARKER-B": [0.8, 0.6, 0.0]})
+    llm = StubLLM("DISTINCT")
+    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
+    assert len(llm.prompts) == 1 and result.pairs_checked == 1
+
+
+def test_forget_cascades_pair_checks():
+    a, b = _shared_ref_pair()
+    store = memory.get_store()
+    store.record_pair_check(a, b, "DISTINCT")
+    assert store.pair_checked(b, a)                  # order-insensitive
+    store.forget(a)
+    assert not store.pair_checked(a, b)
+
+
 # ── model-decided promotion (promote_mode / promote judge) ───────────────────
 
 
@@ -505,6 +684,18 @@ def test_reflect_writes_digest_when_enabled(monkeypatch):
     hits = memory.get_store().recall(
         "backend schema venv discipline", top_k=10, include_tests=True)
     assert all(h.memory["kind"] != "digest" for h in hits)
+
+
+def test_reflect_digest_prompt_names_scope(monkeypatch):
+    """The digest prompt states which scope is being digested and instructs
+    the model to skip clearly off-scope entries."""
+    _enable_digest(monkeypatch)
+    _seed_digest_sources()
+    llm = StubLLM(_DIGEST_JSON)
+    assert reflect(memory.get_store(), llm=llm).digests == 1
+    prompt = llm.prompts[0]
+    assert 'the scope named "global"' in prompt
+    assert "IGNORE entries clearly specific to a different scope" in prompt
 
 
 def test_reflect_digest_skipped_without_llm(monkeypatch):

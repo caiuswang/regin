@@ -171,6 +171,28 @@ class MemoryValidation(MemoryBase, table=True):
         sa_column=Column("created_at", Text, nullable=False))
 
 
+class MemoryPairCheck(MemoryBase, table=True):
+    """One contradiction-judge verdict for a canonical memory pair
+    (``a_id`` < ``b_id``) — the idempotency ledger for reflect()'s
+    referent-anchored contradiction sweep.
+
+    Deliberately NOT stored in ``memory_validations``: that log is trimmed
+    to the last few rows per memory at write time, so any marker kept there
+    self-evicts and the sweep would re-buy the same LLM verdicts forever.
+    Rows are GC'd when either memory stops resolving to an active row
+    (``Store.prune_pair_checks``) and cascade-deleted with the memory in
+    ``Store.forget``."""
+
+    __tablename__ = "memory_pair_checks"
+
+    a_id: str = Field(sa_column=Column("a_id", String, primary_key=True))
+    b_id: str = Field(sa_column=Column("b_id", String, primary_key=True))
+    verdict: str = Field(
+        sa_column=Column("verdict", String, nullable=False))
+    checked_at: str = Field(
+        sa_column=Column("checked_at", Text, nullable=False))
+
+
 class InjectionEvent(MemoryBase, table=True):
     """One auto-injected memory in one session.
 
@@ -511,7 +533,8 @@ class MemoryHit:
 
 __all__ = [
     "MemoryBase", "memory_metadata",
-    "Memory", "MemoryEmbedding", "MemoryValidation", "InjectionEvent",
+    "Memory", "MemoryEmbedding", "MemoryValidation", "MemoryPairCheck",
+    "InjectionEvent",
     "MemoryEdge", "MemoryTopic", "MemoryTopicMember",
     "MemoryAuthoritativeTopic", "ReferentSessionDF",
     "TopicNegative",

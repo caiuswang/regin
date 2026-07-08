@@ -901,6 +901,25 @@ def test_sessions_rows_carry_origin_and_is_workflow(client, trace_db):
     assert rows['run_x']['agent_kind'] == 'claude'   # never 'workflow'
 
 
+def test_sessions_llm_stage_rides_the_runs_filter(client, trace_db):
+    """origin='llm-stage' rows (regin-spawned LLM stages, e.g. reflect's
+    judges) hide under the same `workflow` toggle as captured runs, count
+    into the same hidden total, and surface under `only` — while reading
+    back is_workflow=False (the two run kinds stay distinguishable)."""
+    _seed_origin_mix(trace_db)
+    _seed_session_row(trace_db, 'stage_z', origin='llm-stage',
+                      agent_type='claude', last_seen='2026-01-01T00:00:00')
+    hidden = client.get('/api/sessions?workflow=hide').get_json()
+    assert _ids(hidden) == {'sess_a', 'sess_b'}
+    assert hidden['workflow_hidden_count'] == 3      # 2 runs + 1 llm stage
+    only = client.get('/api/sessions?workflow=only').get_json()
+    assert _ids(only) == {'run_x', 'run_y', 'stage_z'}
+    rows = {it['trace_id']: it
+            for it in client.get('/api/sessions').get_json()['items']}
+    assert rows['stage_z']['origin'] == 'llm-stage'
+    assert rows['stage_z']['is_workflow'] is False
+
+
 def test_sessions_null_origin_reads_as_session(client, trace_db):
     """A legacy row with NULL origin is treated as an interactive session:
     `hide` keeps it, `only` drops it, and it reads back origin='session'."""

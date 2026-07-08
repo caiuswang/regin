@@ -74,6 +74,17 @@ def create_app():
     finally:
         conn.close()
 
+    # Seed/heal builtin prompt skeletons on startup, not only on init/rebuild:
+    # inserts rows for newly registered surfaces and replaces stored bodies
+    # still equal to a retired default (user edits survive), so a code upgrade
+    # that revises a builtin prompt reaches existing installs. Best-effort — a
+    # prompt-table hiccup must never block serve.
+    try:
+        from lib.prompt_templates import seed_builtin_skeletons
+        seed_builtin_skeletons()
+    except Exception:
+        logging.getLogger(__name__).exception('prompt skeleton seed failed')
+
     # ── Authentication, users, audit (extracted to blueprint) ─────
     from web.blueprints.auth import auth_bp
     app.register_blueprint(auth_bp)

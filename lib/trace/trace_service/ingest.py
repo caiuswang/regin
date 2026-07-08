@@ -1163,6 +1163,30 @@ def _upsert_session_counters(conn, buckets: dict) -> None:
         ))
 
 
+def _stamp_llm_stage_origins(conn, normalised: list[tuple]) -> None:
+    """Mark sessions spawned by a regin LLM stage on the *origin* axis.
+
+    `ExternalAgentLLM` tags its subprocess env with the surface id; the
+    SessionStart hook copies it onto the `session.start` span as
+    `llm_surface`. Mirrors `workflow_ingest._set_session_origin`: `origin`
+    records what KIND of row this is, orthogonal to `agent_type`, so the
+    Sessions list can filter these runs like captured workflows. The common
+    batch (no session.start at all) exits on the cheap name scan without
+    touching attrs.
+    """
+    if not any(span.get('name') == 'session.start' for span, _ in normalised):
+        return
+    stamped: set = set()
+    for span, attrs in normalised:
+        tid = span.get('trace_id')
+        if (span.get('name') == 'session.start' and attrs.get('llm_surface')
+                and tid is not None and tid not in stamped):
+            stamped.add(tid)
+            conn.execute(
+                "UPDATE sessions SET origin = 'llm-stage' WHERE trace_id = ?",
+                (tid,))
+
+
 def _refresh_server_side_peaks(conn, normalised: list[tuple]) -> None:
     """Recompute peak_main_context_tokens for any trace this batch touched
     with server-side spans (advisor and similar sub-calls). Spans can arrive
@@ -1228,6 +1252,7 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         # _counter_buckets_excl_pending, so they never advance any aggregate.
         buckets = _counter_buckets_excl_pending(normalised, existing_set)
         _upsert_session_counters(conn, buckets)
+        _stamp_llm_stage_origins(conn, normalised)
         _refresh_server_side_peaks(conn, normalised)
 
         # Refresh the active-work aggregate for every trace this batch

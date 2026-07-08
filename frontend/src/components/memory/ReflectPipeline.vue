@@ -21,9 +21,10 @@ const props = defineProps({
 const STAGES = [
   { n: 1, name: 'dedup / merge', kind: 'auto', sub: 'cosine · text fallback',
     counts: (r) => [['merged', r.merged]] },
-  { n: 2, name: 'contradiction', kind: 'llm', sub: 'judges gray-zone pairs',
+  { n: 2, name: 'contradiction', kind: 'llm', sub: 'judges shared-referent + gray-zone pairs',
     surface: 'memory-reflect-contradiction',
-    counts: (r) => [['resolved', r.contradictions]] },
+    counts: (r) => [['resolved', r.contradictions], ['obsoleted', r.obsoleted]],
+    control: { type: 'check', key: 'contradiction_scan_enabled', label: 'sweep' } },
   { n: 3, name: 'promote', kind: 'llm', sub: 'model-decided fate',
     surface: 'memory-reflect-promote',
     counts: (r) => [['promoted', r.promoted], ['held', r.held], ['dropped', r.dropped]],

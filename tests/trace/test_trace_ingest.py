@@ -129,6 +129,37 @@ def test_ingest_accepts_single_span(client, trace_db):
     assert _count_spans(trace_db) == 1
 
 
+def test_ingest_session_start_with_llm_surface_stamps_origin(client, trace_db):
+    """A session.start span carrying `llm_surface` (set by ExternalAgentLLM's
+    tagged subprocess env via the SessionStart hook) marks the session row
+    origin='llm-stage', mirroring the workflow-origin stamp."""
+    span = _make_span(
+        name='session.start',
+        attributes={'llm_surface': 'memory-reflect-contradiction'})
+    assert client.post('/api/session-spans', json=span).status_code == 200
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        row = conn.execute(
+            "SELECT origin FROM sessions WHERE trace_id = 't1'").fetchone()
+    finally:
+        conn.close()
+    assert row is not None and row[0] == 'llm-stage'
+
+
+def test_ingest_session_start_without_llm_surface_keeps_session_origin(client, trace_db):
+    span = _make_span(name='session.start')
+    assert client.post('/api/session-spans', json=span).status_code == 200
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        row = conn.execute(
+            "SELECT origin FROM sessions WHERE trace_id = 't1'").fetchone()
+    finally:
+        conn.close()
+    # The column default is the interactive 'session'; only a tagged
+    # session.start may move a row onto a run origin.
+    assert row is not None and row[0] in (None, 'session')
+
+
 def test_ingest_accepts_batch(client, trace_db):
     batch = [_make_span(span_id=f's{i}') for i in range(5)]
     r = client.post('/api/session-spans', json=batch)

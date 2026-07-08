@@ -1,11 +1,11 @@
 """Characterization test: the editable ``memory-reflect-digest`` skeleton renders
-byte-identical to the pre-refactor hardcoded digest prompt.
+byte-identical to the reference scope-aware digest prompt.
 
-The prompt is built inline inside ``reflect._llm_digest``; a capturing fake
-``llm`` records the exact string passed to ``complete``. ``_reference_prompt``
-reproduces the old builder — the frozen ``_DIGEST_PROMPT`` literal with
-``{entries}`` replaced, entries assembled via the same (unchanged, shared)
-``_doc_text`` helper. Edit the surface body
+The prompt is built inside ``reflect._llm_digest``; a capturing fake ``llm``
+records the exact string passed to ``complete``. ``_reference_prompt``
+reproduces the builder — the frozen ``_DIGEST_PROMPT`` literal with
+``{entries}`` / ``{scope}`` replaced, entries assembled via the same
+(unchanged, shared) ``_doc_text`` helper. Edit the surface body
 (``lib/prompts/surfaces/memory.py``) and this reference together.
 """
 
@@ -20,15 +20,18 @@ reflect = importlib.import_module("lib.memory.reflect")
 
 _FROZEN_DIGEST_PROMPT = (
     "Below are the most important things learned across past coding sessions "
-    "for one project scope, highest-priority first. Write a SINGLE compact "
-    "briefing a future session should read first: the durable conventions, "
+    "for one project scope, highest-priority first. The entries belong to "
+    'the scope named "{scope}". Write a SINGLE compact briefing a future '
+    "session in this scope should read first: the durable conventions, "
     "gotchas, and decisions — grouped and deduplicated, concrete and "
-    "actionable. Omit anything narrow or one-off. Aim for under 800 "
-    "characters.\n\n"
+    "actionable. IGNORE entries clearly specific to a different scope "
+    "(e.g. repo-specific gotchas inside the `global` scope). Omit anything "
+    "narrow or one-off. Aim for under 800 characters.\n\n"
     "Respond with a JSON object and nothing else:\n"
     '  {"title": "<= 80 char heading for this briefing", '
     '"body": "the briefing, <= 1500 chars"}\n'
-    "or the bare word NONE if there is no durable, reusable signal.\n\n"
+    "or the bare word NONE if there is no durable, reusable signal or too "
+    "little on-scope signal remains.\n\n"
     "{entries}"
 )
 
@@ -44,16 +47,18 @@ class _CaptureLLM:
         return "NONE"
 
 
-def _reference_prompt(sources):
+def _reference_prompt(sources, scope):
     entries = "\n\n".join(f"[{i + 1}] {reflect._doc_text(m)[:400]}"
                           for i, m in enumerate(sources))
-    return _FROZEN_DIGEST_PROMPT.replace("{entries}", entries)
+    return (_FROZEN_DIGEST_PROMPT
+            .replace("{entries}", entries)
+            .replace("{scope}", scope))
 
 
-def _run(sources):
+def _run(sources, scope="global"):
     llm = _CaptureLLM()
-    reflect._llm_digest(llm, sources)
-    return _reference_prompt(sources), llm.prompt
+    reflect._llm_digest(llm, sources, scope)
+    return _reference_prompt(sources, scope), llm.prompt
 
 
 _SOURCES = [
@@ -74,3 +79,11 @@ def test_parity_scope_sources():
     assert "[1] Schema drift" in actual
     # sanity: the literal JSON single braces survive substitution.
     assert '{"title": "<= 80 char heading' in actual
+
+
+def test_digest_prompt_names_the_scope():
+    _, actual = _run(_SOURCES, scope="repo:regin")
+    assert 'the scope named "repo:regin"' in actual
+    assert "IGNORE entries clearly specific to a different scope" in actual
+    _, global_prompt = _run(_SOURCES, scope="global")
+    assert 'the scope named "global"' in global_prompt

@@ -15,6 +15,7 @@ minimal symmetric embedder still satisfies the port.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -108,12 +109,19 @@ class ExternalAgentLLM:
         agent = self._agent(surface_id)
         if agent is None:
             return None
+        # Tag the spawned agent's env with the surface so its session hooks
+        # can mark the resulting trace as an LLM-stage run, not a real
+        # interactive session (sessions.origin='llm-stage').
+        resolved = surface_id or self._surface_id
+        env = ({**os.environ, "REGIN_LLM_SURFACE": resolved}
+               if resolved else None)
         try:
             proc = subprocess.run(
                 [agent.command, *agent.args, *self._extra_args],
                 input=prompt.encode("utf-8"),
                 capture_output=True,
                 timeout=agent.timeout_seconds,
+                env=env,
                 cwd=(
                     str(agent.cwd.expanduser()) if agent.cwd
                     else (str(cwd) if cwd else None)

@@ -33,6 +33,16 @@ def test_list_and_stats(flask_client):
     assert data["stats"]["total"] == 1
 
 
+def test_stats_endpoint(flask_client):
+    """/api/memory/stats serves the same census the list envelope carries,
+    without paying for a page of rows — the Doctor page's data source."""
+    _seed()
+    data = flask_client.get("/api/memory/stats").get_json()
+    assert data["total"] == 1
+    assert data["by_tier"] == {"working": 1}
+    assert "by_status" in data and "consolidation_debt" in data
+
+
 def test_get_patch_and_forget(flask_client):
     mid = _seed()
     assert flask_client.get(f"/api/memory/{mid}").get_json()[

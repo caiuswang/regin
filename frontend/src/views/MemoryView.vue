@@ -1,10 +1,12 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import api from '../api'
 import { useConfirm } from '../composables/useConfirm'
 import { useResizablePanel } from '../composables/useResizablePanel'
 import { usePage } from '../composables/usePage'
 import { useTabRoute } from '../composables/useTabRoute'
+import { formatReflectSummary } from '../utils/reflectSummary'
 import Card from '../components/Card.vue'
 import PageControls from '../components/PageControls.vue'
 import Button from '../components/ui/Button.vue'
@@ -18,7 +20,6 @@ import MemoryTopicFeedback from '../components/memory/MemoryTopicFeedback.vue'
 import TopicRoutePlayground from '../components/memory/TopicRoutePlayground.vue'
 import MemoryTaxonomy from '../components/memory/MemoryTaxonomy.vue'
 import MemoryWikiRecalls from '../components/memory/MemoryWikiRecalls.vue'
-import MemoryDoctor from '../components/memory/MemoryDoctor.vue'
 
 const { confirm } = useConfirm()
 const { width: listWidth, onResizeStart, onResizeKey } =
@@ -63,9 +64,7 @@ const headerH = ref(0)
 let headerObserver = null
 
 const reflectSummary = ref('')
-const lastResult = ref(null)
 const reflecting = ref(false)
-const showDoctor = ref(false)
 const topicsRef = ref(null)
 const topicFeedbackRef = ref(null)
 const playgroundRef = ref(null)
@@ -148,9 +147,7 @@ async function runReflect() {
   reflecting.value = true
   try {
     const r = await api.post('/memory/reflect', {})
-    lastResult.value = r
-    reflectSummary.value =
-      `reflect: ${r.examined} examined, ${r.merged} merged, ${r.promoted} promoted, ${r.held} held, ${r.dropped} dropped, ${r.embedded} embedded, ${r.edges} edges, ${r.topics} topics, ${r.decayed} decayed`
+    reflectSummary.value = formatReflectSummary(r)
   } finally {
     reflecting.value = false
   }
@@ -246,12 +243,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
           size="sm"
           @click="toggleTests"
         >Include test data</Button>
-        <Button
-          :variant="showDoctor ? 'primary' : 'secondary'"
-          size="sm"
-          :aria-pressed="showDoctor"
-          @click="showDoctor = !showDoctor"
-        >Doctor</Button>
+        <Button :as="RouterLink" to="/memory/doctor" variant="secondary" size="sm">Doctor</Button>
         <Button variant="secondary" size="sm" :disabled="busy || reflecting" @click="runReflect">Run reflect</Button>
       </div>
     </div>
@@ -260,15 +252,6 @@ onBeforeUnmount(() => headerObserver?.disconnect())
       and session distills. Consolidated by reflect, recalled into future prompts.
     </p>
     <p v-if="reflectSummary" class="text-xs text-slate-500 font-mono mb-3">{{ reflectSummary }}</p>
-
-    <MemoryDoctor
-      v-if="showDoctor"
-      :last-result="lastResult"
-      :stats="stats"
-      :reflecting="reflecting"
-      class="mb-3"
-      @reflect="runReflect"
-    />
 
     <Tabs v-model="activeTab" :tabs="TABS" variant="underline" class="-mb-px" />
     </div>

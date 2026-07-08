@@ -48,10 +48,12 @@ const kind = ref(
     : (localStorage.getItem(TEST_TOGGLE_KEY) === '1' ? 'all' : 'real')
 )
 
-// Workflow runs are a second, orthogonal axis to Kind (real/test): a row's
-// `origin` is "session" or "workflow". Hidden by default so the list reads as
-// interactive sessions; the server default is "show" (all), so the UI sends
-// "hide"/"only" explicitly and omits the param only when set to "show".
+// Runs are a second, orthogonal axis to Kind (real/test): a row's `origin`
+// is "session", "workflow" (captured dynamic-workflow run), or "llm-stage"
+// (a regin-spawned LLM stage); the latter two ride this filter. Hidden by
+// default so the list reads as interactive sessions; the server default is
+// "show" (all), so the UI sends "hide"/"only" explicitly and omits the
+// param only when set to "show".
 const WF_KEY = 'regin_sessions_workflow'
 const WF_OPTIONS = [
   { value: 'hide', label: 'Hide runs' },
@@ -170,9 +172,9 @@ const {
   },
 })
 
-// How many origin="workflow" rows the SAME other filters would have matched,
-// reported by the server only when workflow=hide. Drives the "N runs hidden"
-// hint below. `extras` updates on load() (not loadMore), which is correct —
+// How many run-origin rows (workflow + llm-stage) the SAME other filters
+// would have matched, reported by the server only when workflow=hide.
+// Drives the "N runs hidden" hint below. `extras` updates on load() (not loadMore), which is correct —
 // it describes the whole filtered set, not the current page.
 const hiddenWorkflowCount = computed(() => extras.value?.workflow_hidden_count || 0)
 
@@ -399,8 +401,30 @@ function contextBadgeClass(pct) {
   return 'bg-green-50 text-green-700 border-green-200'
 }
 
+// One presentation entry per non-interactive run origin (the origins the
+// server's workflow=hide toggle filters; rows also carry `is_run`): icon
+// tint, tooltip label, and the row badge. Adding a run origin means one
+// entry here plus its icon branch in the template.
+const RUN_ORIGIN_META = {
+  workflow: {
+    label: 'Workflow run',
+    iconClass: 'agent-icon--workflow',
+    badge: 'workflow',
+    badgeClass: 'bg-teal-100 text-teal-800',
+    badgeTitle: 'captured dynamic-workflow run',
+  },
+  'llm-stage': {
+    label: 'LLM stage',
+    iconClass: 'agent-icon--llm-stage',
+    badge: 'llm stage',
+    badgeClass: 'bg-sky-100 text-sky-800',
+    badgeTitle: 'regin-spawned LLM stage run',
+  },
+}
+
 function agentTypeLabel(s) {
-  if (s.origin === 'workflow') return 'Workflow run'
+  const run = RUN_ORIGIN_META[s.origin]
+  if (run) return run.label
   if (s.agent_kind === 'claude') return 'Claude Code session'
   if (s.agent_kind === 'codex') return 'OpenAI Codex session'
   if (s.agent_kind === 'kimi') return 'Kimi Code session'
@@ -408,7 +432,8 @@ function agentTypeLabel(s) {
 }
 
 function agentTypeClass(s) {
-  if (s.origin === 'workflow') return 'agent-icon--workflow'
+  const run = RUN_ORIGIN_META[s.origin]
+  if (run) return run.iconClass
   if (s.agent_kind === 'claude') return 'agent-icon--claude'
   if (s.agent_kind === 'codex') return 'agent-icon--codex'
   if (s.agent_kind === 'kimi') return 'agent-icon--kimi'
@@ -601,9 +626,9 @@ function timeTitle(s) {
       v-if="workflowFilter === 'hide' && hiddenWorkflowCount > 0"
       variant="link"
       class="mb-3 gap-1 text-xs text-teal-700 hover:text-teal-900"
-      title="Show only the captured dynamic-workflow runs"
+      title="Show only the non-interactive runs (workflow captures + LLM stages)"
       @click="workflowFilter = 'only'"
-    >⚙ {{ hiddenWorkflowCount }} workflow run{{ hiddenWorkflowCount === 1 ? '' : 's' }} hidden →</Button>
+    >⚙ {{ hiddenWorkflowCount }} run{{ hiddenWorkflowCount === 1 ? '' : 's' }} hidden →</Button>
 
     <!-- Date-range hint: when showing only runs but some fall outside the
          current date window, offer a one-click jump to "All time". -->
@@ -611,9 +636,9 @@ function timeTitle(s) {
       v-if="workflowFilter === 'only' && workflowDateHiddenCount > 0"
       variant="link"
       class="mb-3 gap-1 text-xs text-amber-700 hover:text-amber-900"
-      title="Expand date range to show all workflow runs"
+      title="Expand date range to show all runs"
       @click="range = 'all'"
-    >⚙ {{ workflowDateHiddenCount }} workflow run{{ workflowDateHiddenCount === 1 ? '' : 's' }} outside date range — show all time →</Button>
+    >⚙ {{ workflowDateHiddenCount }} run{{ workflowDateHiddenCount === 1 ? '' : 's' }} outside date range — show all time →</Button>
 
     <div class="split-card">
       <div v-if="sessions.length" class="hidden sm:block overflow-x-auto">
@@ -681,6 +706,10 @@ function timeTitle(s) {
                     <circle cx="12" cy="8" r="1.3" />
                     <circle cx="12" cy="12" r="1.3" />
                   </svg>
+                  <svg v-else-if="s.origin === 'llm-stage'" viewBox="0 0 16 16" aria-hidden="true">
+                    <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+                    <path d="M5.5 8.5 7 10l3.5-3.5" />
+                  </svg>
                   <svg v-else-if="s.agent_kind === 'claude'" viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5 8 2.2Z" />
                   </svg>
@@ -726,10 +755,11 @@ function timeTitle(s) {
                   class="inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
                 >test</span>
                 <span
-                  v-if="s.origin === 'workflow'"
-                  class="inline-block rounded bg-teal-100 text-teal-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                  title="captured dynamic-workflow run"
-                >workflow</span>
+                  v-if="RUN_ORIGIN_META[s.origin]"
+                  class="inline-block rounded text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
+                  :class="RUN_ORIGIN_META[s.origin].badgeClass"
+                  :title="RUN_ORIGIN_META[s.origin].badgeTitle"
+                >{{ RUN_ORIGIN_META[s.origin].badge }}</span>
                 <span
                   v-if="s.context_pct != null"
                   class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-medium"
@@ -876,6 +906,10 @@ function timeTitle(s) {
 .agent-icon--workflow {
   background: var(--color-emerald-50);
   color: var(--color-teal-700);
+}
+.agent-icon--llm-stage {
+  background: var(--color-sky-50);
+  color: var(--color-sky-700);
 }
 
 /* Visually-joined input + scope selector. Pulling the select tight

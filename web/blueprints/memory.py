@@ -53,6 +53,13 @@ def api_memory_list():
     return jsonify({**result.to_envelope(), "stats": memory.stats()})
 
 
+@memory_bp.route("/api/memory/stats")
+def api_memory_stats():
+    """Store census for the Doctor page — the same `stats` payload the list
+    envelope carries, without paying for a page of rows."""
+    return jsonify(memory.stats())
+
+
 @memory_bp.route("/api/memory/<memory_id>/related")
 def api_memory_related(memory_id):
     """Relationship view for the detail pane: embedding neighbors plus the
@@ -149,6 +156,8 @@ def api_memory_reflect():
     return jsonify({
         "examined": result.examined, "merged": result.merged,
         "contradictions": result.contradictions,
+        "obsoleted": result.obsoleted,
+        "pairs_checked": result.pairs_checked,
         "promoted": result.promoted, "held": result.held,
         "dropped": result.dropped, "digests": result.digests,
         "embedded": result.embedded,

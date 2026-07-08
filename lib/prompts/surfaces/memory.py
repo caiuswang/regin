@@ -21,7 +21,8 @@ Edit a body here and its parity test together.
 
 from __future__ import annotations
 
-from lib.prompts.registry import PromptVariable, register_surface
+from lib.prompts.registry import (PromptVariable, register_retired_default,
+                                  register_surface)
 
 DISTILL_SURFACE_ID = "memory-distill"
 TOPIC_CLASSIFY_SURFACE_ID = "memory-topic-classify"
@@ -205,16 +206,21 @@ _DEFAULT_BODY_SYNTHESIS = (
 )
 
 
-# --- Reflect contradiction judge (lib/memory/reflect.py::_llm_says_contradiction) ---
-# Old builder: an inline f-string — a static instruction + `A: {a}` / `B: {b}`
-# with each memory's `_doc_text(...)[:1500]` interpolated. The two clipped
-# bodies become the `{{memory_a}}` / `{{memory_b}}` slots; the call site does
-# the clipping so the rendered string is byte-identical.
+# --- Reflect contradiction judge (lib/memory/reflect.py::_llm_pair_verdict) ---
+# A 3-way verdict over a time-ordered pair (A = older, B = newer, each shown
+# with its recorded timestamp). OBSOLETE is a judgment of relocation-in-time —
+# B supersedes A without A ever having been false — so the caller retires
+# without falsifying. The call site clips each doc text to 1500 chars.
 _DEFAULT_BODY_CONTRADICTION = (
-    "Two memory entries from past coding sessions follow. Answer with "
-    "exactly one word — CONTRADICT if they make incompatible claims "
-    "about the same thing, or DISTINCT otherwise.\n\n"
-    "A: {{memory_a}}\n\nB: {{memory_b}}\n"
+    "Two memory entries from past coding sessions follow, each with the "
+    "time it was recorded. A is the OLDER entry, B the NEWER. Answer with "
+    "exactly one word:\n"
+    "- CONTRADICT: they make incompatible claims about the same thing.\n"
+    "- OBSOLETE: B describes a later change, fix, or removal that "
+    "supersedes what A records.\n"
+    "- DISTINCT: neither — they can both stand.\n\n"
+    "A (recorded {{created_a}}): {{memory_a}}\n\n"
+    "B (recorded {{created_b}}): {{memory_b}}\n"
 )
 
 
@@ -246,15 +252,18 @@ _DEFAULT_BODY_PROMOTE = (
 # Old builder: `_DIGEST_PROMPT.replace("{entries}", entries)`.
 _DEFAULT_BODY_DIGEST = (
     "Below are the most important things learned across past coding sessions "
-    "for one project scope, highest-priority first. Write a SINGLE compact "
-    "briefing a future session should read first: the durable conventions, "
+    "for one project scope, highest-priority first. The entries belong to "
+    'the scope named "{{scope}}". Write a SINGLE compact briefing a future '
+    "session in this scope should read first: the durable conventions, "
     "gotchas, and decisions — grouped and deduplicated, concrete and "
-    "actionable. Omit anything narrow or one-off. Aim for under 800 "
-    "characters.\n\n"
+    "actionable. IGNORE entries clearly specific to a different scope "
+    "(e.g. repo-specific gotchas inside the `global` scope). Omit anything "
+    "narrow or one-off. Aim for under 800 characters.\n\n"
     "Respond with a JSON object and nothing else:\n"
     '  {"title": "<= 80 char heading for this briefing", '
     '"body": "the briefing, <= 1500 chars"}\n'
-    "or the bare word NONE if there is no durable, reusable signal.\n\n"
+    "or the bare word NONE if there is no durable, reusable signal or too "
+    "little on-scope signal remains.\n\n"
     "{{entries}}"
 )
 
@@ -349,14 +358,17 @@ register_surface(
     area="memory",
     default_body=_DEFAULT_BODY_CONTRADICTION,
     description=(
-        "The reflect-pass judge that decides whether two related memories make "
-        "incompatible claims (CONTRADICT) — the trigger for supersede "
+        "The reflect-pass judge that decides whether a time-ordered memory "
+        "pair contradicts (older retired as false), is obsoleted (older "
+        "retired, veracity untouched), or is distinct "
         "(`lib/memory/reflect.py`)."
     ),
     applies_to=("memory",),
     variables=(
-        PromptVariable("memory_a", "The first memory's doc text (clipped to 1500 chars)."),
-        PromptVariable("memory_b", "The second memory's doc text (clipped to 1500 chars)."),
+        PromptVariable("memory_a", "The older memory's doc text (clipped to 1500 chars)."),
+        PromptVariable("memory_b", "The newer memory's doc text (clipped to 1500 chars)."),
+        PromptVariable("created_a", "The older memory's created_at timestamp."),
+        PromptVariable("created_b", "The newer memory's created_at timestamp."),
     ),
 )
 
@@ -372,6 +384,7 @@ register_surface(
     applies_to=("memory",),
     variables=(
         PromptVariable("entries", "The scope's top episodic memories, one `[n] <text>` block each."),
+        PromptVariable("scope", "The scope name being digested ('global' or 'repo:<name>')."),
     ),
 )
 
@@ -407,6 +420,18 @@ register_surface(
         PromptVariable("entries", "The lessons to retitle, one `<lesson i=n>…</lesson>` block each."),
     ),
 )
+
+# Superseded default bodies (sha256), so the seeder can heal un-edited stale
+# rows on existing installs (see `register_retired_default`):
+#   - contradiction: the original 2-way CONTRADICT/DISTINCT prompt (no
+#     OBSOLETE verdict, no timestamps).
+#   - digest: the original scope-blind briefing prompt (no {{scope}} slot).
+register_retired_default(
+    CONTRADICTION_SURFACE_ID,
+    sha256="9f22fc1136962d500a1b658d556127ed7405aee8506dd477b193f58cc3187c16")
+register_retired_default(
+    DIGEST_SURFACE_ID,
+    sha256="90a21ccd8822e0465fbf10eaccd1b8255d35899c6987469f3e73f7dfffe2333c")
 
 __all__ = [
     "CONTRADICTION_SURFACE_ID",

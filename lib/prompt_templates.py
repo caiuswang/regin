@@ -279,18 +279,48 @@ def _surface_variables(surface: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _body_sha256(body: str) -> str:
+    import hashlib
+
+    return hashlib.sha256((body or "").encode("utf-8")).hexdigest()
+
+
+def _heal_stale_builtin(session, row: Any, surface: Any, now: str) -> bool:
+    """Overwrite a stored builtin row still carrying a RETIRED default body
+    with the current default. `render_surface` prefers the stored row, so
+    without this an existing install would silently pin a superseded prompt
+    forever. A user-edited body never hashes to a retired default and is
+    left untouched. True when the row was healed."""
+    from lib.prompts.registry import retired_default_hashes
+
+    if not row.builtin:
+        return False
+    if _body_sha256(row.body) not in retired_default_hashes(surface.id):
+        return False
+    row.body = surface.default_body()
+    row.variables = _encode_variables(_surface_variables(surface))
+    row.updated_at = now
+    session.add(row)
+    return True
+
+
 def seed_builtin_skeletons() -> int:
     """Insert a ``builtin`` ``skeleton`` row for every registered prompt surface
-    that has no row yet. Idempotent by slug — a user-edited row is left
-    untouched — mirroring the ``schema.sql`` fragment seed. Returns rows added."""
+    that has no row yet, and heal existing builtin rows whose body is still a
+    *retired* default (see `_heal_stale_builtin`). Idempotent by slug — a
+    user-edited row is left untouched — mirroring the ``schema.sql`` fragment
+    seed. Returns rows added or healed."""
     from lib.prompts.registry import list_surfaces
 
     now = _now()
-    inserted = 0
+    changed = 0
     with SessionLocal() as session:
-        existing = {row.slug for row in session.exec(select(PromptTemplate)).all()}
+        existing = {row.slug: row
+                    for row in session.exec(select(PromptTemplate)).all()}
         for surface in list_surfaces():
-            if surface.id in existing:
+            row = existing.get(surface.id)
+            if row is not None:
+                changed += 1 if _heal_stale_builtin(session, row, surface, now) else 0
                 continue
             session.add(
                 PromptTemplate(
@@ -307,9 +337,9 @@ def seed_builtin_skeletons() -> int:
                     updated_at=now,
                 )
             )
-            inserted += 1
+            changed += 1
         session.commit()
-    return inserted
+    return changed
 
 
 def reset_skeleton_to_default(slug: str) -> dict[str, Any]:

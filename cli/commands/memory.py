@@ -535,7 +535,9 @@ def cmd_reflect(
     import lib.memory as memory
     result = memory.reflect(dry_run=dry_run)
     print(f"examined={result.examined} merged={result.merged} "
+          f"pairs_checked={result.pairs_checked} "
           f"contradictions={result.contradictions} "
+          f"obsoleted={result.obsoleted} "
           f"promoted={result.promoted} embedded={result.embedded} "
           f"forgotten={result.forgotten} decayed={result.decayed} "
           f"synthesized={result.synthesized} "

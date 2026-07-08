@@ -252,6 +252,15 @@ class AgentMemoryConfig(BaseModel):
     # text-similarity fallback when the embedder is unavailable.
     dedup_cosine_threshold: float = 0.92
     dedup_text_threshold: float = 0.90
+    # reflect(): referent-anchored contradiction sweep. Real contradictions
+    # are low-cosine, time-ordered pairs "about the same thing", so instead of
+    # gating on similarity the sweep pairs active episodic rows that name at
+    # least one common concrete repo file path and puts each pair to the
+    # 3-way judge (CONTRADICT / OBSOLETE / DISTINCT). Judged pairs are
+    # remembered (`memory_pair_checks`) so a pair is never re-bought;
+    # `contradiction_budget` caps LLM calls per reflect run. Needs an LLM.
+    contradiction_scan_enabled: bool = True
+    contradiction_budget: int = 8
     # distill(): the LLM self-scores each proposal's reusable value in
     # [0,1] (non-obvious × reusable × likely-to-recur). Below
     # `distill_min_importance` the model's own low-confidence draft is

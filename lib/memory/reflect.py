@@ -8,10 +8,16 @@ Walks the `working` tier and, in order:
      it. Similarity is embedding cosine when an `EmbeddingProvider` is
      injected, else a deterministic text ratio — reflect never *requires*
      a model.
-  2. **Contradiction check** — pairs in the similarity gray zone are put
-     to the `LLMProvider` when one is configured; a judged contradiction
-     retires the older row with `veracity='false'`. No LLM → the pair is
-     left alone (veracity stays `unknown` rather than guessed).
+  2. **Contradiction check** — a 3-way judge (CONTRADICT / OBSOLETE /
+     DISTINCT) over time-ordered pairs, fed from two sources: working-tier
+     pairs in the similarity gray zone, and a referent-anchored sweep over
+     the episodic corpus (pairs sharing a concrete repo file path — real
+     contradictions are low-cosine, so the sweep does not gate on
+     similarity). CONTRADICT retires the older row `veracity='false'`;
+     OBSOLETE retires it with veracity untouched (relocation-in-time, not
+     falsity); DISTINCT leaves both. Judged pairs are remembered in
+     `memory_pair_checks` so no pair is bought twice. No LLM → both paths
+     are silent no-ops.
   3. **Promote** — surviving working rows become `episodic`, stamped
      `consolidated_at`, importance nudged by the reinforcement signal
      (`recall_count`).
@@ -58,6 +64,8 @@ class ReflectResult:
     examined: int = 0
     merged: int = 0
     contradictions: int = 0
+    obsoleted: int = 0
+    pairs_checked: int = 0
     promoted: int = 0
     held: int = 0
     dropped: int = 0
@@ -148,28 +156,110 @@ def _merge_pair(store, keeper: dict, loser: dict, *, dry_run: bool,
                             note=f"near-duplicate of {keeper['id']}")
 
 
-def _llm_says_contradiction(llm, a: dict, b: dict) -> bool:
+_PAIR_VERDICTS = ("CONTRADICT", "OBSOLETE", "DISTINCT")
+
+
+def _time_ordered(a: dict, b: dict) -> tuple[dict, dict]:
+    """(older, newer) by created_at."""
+    return ((a, b) if (a["created_at"] or "") <= (b["created_at"] or "")
+            else (b, a))
+
+
+def _llm_pair_verdict(llm, older: dict, newer: dict) -> "str | None":
+    """The 3-way judge over one time-ordered pair. Returns one of
+    `_PAIR_VERDICTS`, or None on no / ambiguous / unparseable answer."""
     from lib.prompts import render_surface
     from lib.prompts.surfaces.memory import CONTRADICTION_SURFACE_ID
     prompt = render_surface(CONTRADICTION_SURFACE_ID, {
-        "memory_a": _doc_text(a)[:1500], "memory_b": _doc_text(b)[:1500]})
-    answer = llm.complete(prompt, max_tokens=8, surface_id=CONTRADICTION_SURFACE_ID)
-    return bool(answer) and "CONTRADICT" in answer.upper()
+        "memory_a": _doc_text(older)[:1500],
+        "memory_b": _doc_text(newer)[:1500],
+        "created_a": older.get("created_at") or "unknown",
+        "created_b": newer.get("created_at") or "unknown"})
+    answer = llm.complete(prompt, max_tokens=8,
+                          surface_id=CONTRADICTION_SURFACE_ID)
+    if not answer:
+        return None
+    found = [v for v in _PAIR_VERDICTS if v in answer.upper()]
+    return found[0] if len(found) == 1 else None
 
 
-def _resolve_contradiction(store, a: dict, b: dict, *, dry_run: bool,
-                           result: ReflectResult) -> None:
-    older, newer = (a, b) if a["created_at"] <= b["created_at"] else (b, a)
-    result.contradictions += 1
+def _retire_older(store, older: dict, newer: dict, *, falsify: bool,
+                  dry_run: bool, result: ReflectResult) -> None:
+    """Retire the OLDER half of a judged pair via supersede. `falsify` is the
+    CONTRADICT case (incompatible claim → veracity='false'); OBSOLETE is
+    relocation-in-time, not falsity, so veracity stays untouched. Callers
+    order the pair via `_time_ordered` before calling."""
+    verb = "contradiction" if falsify else "obsolete"
+    if falsify:
+        result.contradictions += 1
+    else:
+        result.obsoleted += 1
     result.actions.append(
-        f"contradiction: retire {older['id'][:8]} in favor of {newer['id'][:8]}")
+        f"{verb}: retire {older['id'][:8]} in favor of {newer['id'][:8]}")
     if dry_run:
         return
-    store.update(older["id"], status="retired", veracity="false",
-                 superseded_by=newer["id"])
-    store.record_validation(older["id"], validator="reflect",
-                            action="veracity_false",
-                            note=f"contradicted by {newer['id']}")
+    fields = {"status": "retired", "superseded_by": newer["id"]}
+    if falsify:
+        fields["veracity"] = "false"
+    store.update(older["id"], **fields)
+    store.record_validation(
+        older["id"], validator="reflect",
+        action="veracity_false" if falsify else "obsoleted",
+        note=(f"contradicted by {newer['id']}" if falsify
+              else f"obsoleted by {newer['id']}"))
+
+
+def _apply_pair_verdict(store, verdict: "str | None", older: dict,
+                        newer: dict, *, dry_run: bool,
+                        result: ReflectResult) -> bool:
+    """Apply one judge verdict; True when the older row was retired."""
+    if verdict not in ("CONTRADICT", "OBSOLETE"):
+        return False
+    _retire_older(store, older, newer, falsify=(verdict == "CONTRADICT"),
+                  dry_run=dry_run, result=result)
+    return True
+
+
+@dataclass
+class _JudgeState:
+    """Per-run shared state for BOTH contradiction paths (gray-zone and the
+    referent sweep): one LLM handle, one call budget, and the already-judged
+    pair ledger loaded once (the table is small; a per-candidate DB read
+    would dominate the sweep)."""
+
+    llm: object
+    budget: int
+    checked: set
+
+
+def _pair_judge_state(store, llm) -> "_JudgeState | None":
+    """None disables both judge paths — no LLM or the sweep setting is off."""
+    if llm is None or not settings.agent_memory.contradiction_scan_enabled:
+        return None
+    return _JudgeState(llm=llm,
+                       budget=settings.agent_memory.contradiction_budget,
+                       checked=store.checked_pair_keys())
+
+
+def _judge_pair(store, older: dict, newer: dict, judge: _JudgeState, *,
+                dry_run: bool, result: ReflectResult) -> bool:
+    """Judge one time-ordered pair under the shared budget/ledger. Only a
+    DISTINCT verdict is recorded to the ledger — CONTRADICT/OBSOLETE retire
+    the older row, so the pair can never re-qualify (and next run's GC would
+    delete the row anyway). True when the older row was retired."""
+    key = tuple(sorted((older["id"], newer["id"])))
+    if key in judge.checked or judge.budget <= 0:
+        return False
+    judge.budget -= 1
+    verdict = _llm_pair_verdict(judge.llm, older, newer)
+    result.pairs_checked += 1
+    retired = _apply_pair_verdict(store, verdict, older, newer,
+                                  dry_run=dry_run, result=result)
+    if verdict == "DISTINCT":
+        judge.checked.add(key)
+        if not dry_run:
+            store.record_pair_check(older["id"], newer["id"], verdict)
+    return retired
 
 
 def _reinforced_importance(mem: dict) -> float:
@@ -861,15 +951,16 @@ def _digest_is_current(existing: "dict | None", sources: list[dict]) -> bool:
     return fresh < cfg.digest_min_new_cards
 
 
-def _llm_digest(llm, sources: list[dict]) -> "dict | None":
+def _llm_digest(llm, sources: list[dict], scope: str) -> "dict | None":
     """Ask the LLM for one scope-level briefing. None when it declines
     (NONE), the output is unparseable, or the draft is too thin to keep."""
     from lib.prompts import render_surface
     from lib.prompts.surfaces.memory import DIGEST_SURFACE_ID
     entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:400]}"
                           for i, m in enumerate(sources))
-    answer = llm.complete(render_surface(DIGEST_SURFACE_ID, {"entries": entries}),
-                          max_tokens=600, surface_id=DIGEST_SURFACE_ID)
+    answer = llm.complete(
+        render_surface(DIGEST_SURFACE_ID, {"entries": entries, "scope": scope}),
+        max_tokens=600, surface_id=DIGEST_SURFACE_ID)
     if not answer or answer.strip().upper().startswith("NONE"):
         return None
     draft = _extract_json_object(answer)
@@ -920,7 +1011,7 @@ def _synthesize_digest(store, episodic: list[dict], llm, *,
         existing = store.get_digest(scope)
         if _digest_is_current(existing, sources):
             continue
-        draft = _llm_digest(llm, sources)
+        draft = _llm_digest(llm, sources, scope)
         if draft is not None:
             _write_digest(store, scope, existing, draft, sources,
                           dry_run=dry_run, result=result)
@@ -982,9 +1073,11 @@ def _embed_episodic(store, embedder, *, dry_run: bool,
 
 
 def _dedup_and_judge(store, working: list[dict], pool: list[dict],
-                     embedder, llm, *, dry_run: bool,
+                     embedder, judge: "_JudgeState | None", *, dry_run: bool,
                      result: ReflectResult) -> set[str]:
-    """Run dedup + contradiction passes; return ids consumed by a merge."""
+    """Run dedup + gray-zone contradiction passes; return ids consumed by a
+    merge or retirement. The gray-zone judge shares gate, budget, and pair
+    ledger with the referent sweep via `judge` (None → dedup only)."""
     threshold = (settings.agent_memory.dedup_cosine_threshold
                  if embedder is not None and embedder.model_id is not None
                  else settings.agent_memory.dedup_text_threshold)
@@ -996,13 +1089,88 @@ def _dedup_and_judge(store, working: list[dict], pool: list[dict],
             keeper, loser = _keeper_of(newcomer, other)
             _merge_pair(store, keeper, loser, dry_run=dry_run, result=result)
             consumed.add(loser["id"])
-        elif sim >= _GRAY_ZONE_FLOOR and llm is not None:
-            if _llm_says_contradiction(llm, newcomer, other):
-                _resolve_contradiction(store, newcomer, other,
-                                       dry_run=dry_run, result=result)
-                older = min(newcomer, other, key=lambda m: m["created_at"])
+        elif sim >= _GRAY_ZONE_FLOOR and judge is not None:
+            older, newer = _time_ordered(newcomer, other)
+            if _judge_pair(store, older, newer, judge,
+                           dry_run=dry_run, result=result):
                 consumed.add(older["id"])
     return consumed
+
+
+def _bucket_pairs(bucket: list[dict], seen: set) -> list[tuple[dict, dict]]:
+    """Time-ordered candidate pairs within one shared-path bucket: identical
+    scope only (a cross-repo README.md is not the same referent), not already
+    chained by supersede, deduped across buckets via `seen`."""
+    out: list[tuple[dict, dict]] = []
+    for i, a in enumerate(bucket):
+        for b in bucket[i + 1:]:
+            key = tuple(sorted((a["id"], b["id"])))
+            if key in seen or a["scope"] != b["scope"]:
+                continue
+            if (a.get("superseded_by") == b["id"]
+                    or b.get("superseded_by") == a["id"]):
+                continue
+            seen.add(key)
+            out.append(_time_ordered(a, b))
+    return out
+
+
+def _shared_referent_pairs(rows: list[dict]) -> list[tuple[dict, dict]]:
+    """Candidate (older, newer) pairs for the contradiction sweep: two
+    same-scope rows naming at least one common concrete repo file path. No
+    cosine gate — real contradictions are low-similarity. Built off an
+    inverted path→rows index (pairs form only inside a bucket, not across
+    the whole corpus). Newest newer-member first, so fresh knowledge is
+    judged before the budget runs out."""
+    by_path: dict[str, list[dict]] = {}
+    for m in rows:
+        for path in _referenced_paths(m):
+            by_path.setdefault(path, []).append(m)
+    seen: set = set()
+    pairs: list[tuple[dict, dict]] = []
+    for bucket in by_path.values():
+        pairs.extend(_bucket_pairs(bucket, seen))
+    pairs.sort(key=lambda p: p[1]["created_at"] or "", reverse=True)
+    return pairs
+
+
+def _sweep_rows(store, episodic: list[dict], consumed: set, *,
+                dry_run: bool) -> list[dict]:
+    """Fresh active episodic rows for the sweep. A wet run re-lists from the
+    store, so rows retired earlier this run (gray-zone verdicts, merges)
+    drop out and rows promoted this run join immediately. A dry run wrote
+    nothing, so it filters the start-of-run snapshot by the ids the earlier
+    stages consumed instead."""
+    if dry_run:
+        return [m for m in episodic if m["id"] not in consumed]
+    return [m for m in store.list_memories(tier="episodic", status="active",
+                                           include_tests=True, limit=10_000)
+            if m["kind"] != "digest"]
+
+
+def _scan_contradictions(store, episodic: list[dict], consumed: set,
+                         judge: "_JudgeState | None", *, dry_run: bool,
+                         result: ReflectResult) -> set[str]:
+    """Referent-anchored contradiction sweep over the episodic corpus.
+    DISTINCT verdicts land in `memory_pair_checks` (idempotency — the capped
+    validation log would self-evict any marker) and all judge calls draw
+    from the shared per-run budget. Returns the retired ids so the caller
+    can drop them from later stages."""
+    if judge is None:
+        return set()
+    if not dry_run:
+        store.prune_pair_checks()
+    rows = _sweep_rows(store, episodic, consumed, dry_run=dry_run)
+    retired: set[str] = set()
+    for older, newer in _shared_referent_pairs(rows):
+        if judge.budget <= 0:
+            break
+        if older["id"] in retired or newer["id"] in retired:
+            continue
+        if _judge_pair(store, older, newer, judge,
+                       dry_run=dry_run, result=result):
+            retired.add(older["id"])
+    return retired
 
 
 def reflect(store, embedder=None, llm=None, *,
@@ -1020,13 +1188,19 @@ def reflect(store, embedder=None, llm=None, *,
                                                include_tests=True, limit=10_000)
                 if m["kind"] != "digest"]
     result.examined = len(working)
+    judge = _pair_judge_state(store, llm)
+    consumed: set[str] = set()
     if working:
         consumed = _dedup_and_judge(store, working, working + episodic,
-                                    embedder, llm,
+                                    embedder, judge,
                                     dry_run=dry_run, result=result)
         now = datetime.now().isoformat()
         _consolidate_working(store, working, consumed, episodic, embedder, llm,
                              now_field=now, dry_run=dry_run, result=result)
+    retired = _scan_contradictions(store, episodic, consumed, judge,
+                                   dry_run=dry_run, result=result)
+    episodic = [m for m in episodic if m["id"] not in retired
+                and m["id"] not in consumed]
     _forget_stale(store, episodic, dry_run=dry_run, result=result)
     _score_pending(store, dry_run=dry_run)
     _decay_chronically_ignored(store, episodic, dry_run=dry_run, result=result)
@@ -1040,7 +1214,9 @@ def reflect(store, embedder=None, llm=None, *,
     # After embed so freshly written synthesis/promotion rows are linkable.
     _harvest_edges(store, embedder, dry_run=dry_run, result=result)
     log.write("memory_reflected", examined=result.examined,
-              merged=result.merged, promoted=result.promoted,
+              merged=result.merged, contradictions=result.contradictions,
+              obsoleted=result.obsoleted, pairs_checked=result.pairs_checked,
+              promoted=result.promoted,
               held=result.held, dropped=result.dropped,
               embedded=result.embedded, forgotten=result.forgotten,
               decayed=result.decayed, synthesized=result.synthesized,

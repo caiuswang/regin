@@ -34,7 +34,7 @@ from lib.memory.models import (
     DEFAULT_KIND, DEFAULT_STATUS, DEFAULT_TIER, DISTILL_TAG,
     MEMORY_KINDS, MEMORY_STATUSES, MEMORY_TIERS, VERACITY_VALUES,
     InjectionEvent, Memory, MemoryAuthoritativeTopic, MemoryEdge,
-    MemoryEmbedding, MemoryHit, MemoryInput, MemoryTopic,
+    MemoryEmbedding, MemoryHit, MemoryInput, MemoryPairCheck, MemoryTopic,
     MemoryTopicMember, MemoryValidation, TopicExemplar, TopicInjection,
     TopicRouteDecision, TopicWikiRecall,
 )
@@ -128,6 +128,12 @@ def _document_frequency(rows) -> "Counter":
         for tok in _overlap_tokens(f"{title or ''} {body} {tags or ''}"):
             df[tok] += 1
     return df
+
+
+def _canonical_pair(a: str, b: str) -> tuple[str, str]:
+    """Canonical (lo, hi) ordering for undirected id pairs — one row per
+    pair in `memory_edges` and `memory_pair_checks`."""
+    return (a, b) if a < b else (b, a)
 
 
 def _now() -> str:
@@ -466,6 +472,10 @@ class SqliteMemoryStore:
             for link in session.exec(select(MemoryAuthoritativeTopic).where(
                     MemoryAuthoritativeTopic.memory_id == memory_id)).all():
                 session.delete(link)
+            for check in session.exec(select(MemoryPairCheck).where(
+                    or_(MemoryPairCheck.a_id == memory_id,
+                        MemoryPairCheck.b_id == memory_id))).all():
+                session.delete(check)
             session.execute(
                 sa_text("DELETE FROM memories_fts WHERE memory_id = :id"),
                 {"id": memory_id})
@@ -481,6 +491,47 @@ class SqliteMemoryStore:
                 note=note, created_at=_now()))
             self._trim_validations(session, memory_id)
             session.commit()
+
+    def pair_checked(self, a_id: str, b_id: str) -> bool:
+        with MemorySessionLocal() as session:
+            return session.get(
+                MemoryPairCheck, _canonical_pair(a_id, b_id)) is not None
+
+    def checked_pair_keys(self) -> set[tuple[str, str]]:
+        """Every recorded pair-check key, canonical order. The table is
+        small (bounded by DISTINCT verdicts over budgeted runs), so callers
+        load it once per pass instead of a per-candidate lookup."""
+        with MemorySessionLocal() as session:
+            rows = session.exec(
+                select(MemoryPairCheck.a_id, MemoryPairCheck.b_id)).all()
+        return {(a, b) for a, b in rows}
+
+    def record_pair_check(self, a_id: str, b_id: str, verdict: str) -> None:
+        """Insert-only: callers consult the ledger before judging, so an
+        existing row means the verdict was already bought — keep it."""
+        lo, hi = _canonical_pair(a_id, b_id)
+        with MemorySessionLocal() as session:
+            if session.get(MemoryPairCheck, (lo, hi)) is not None:
+                return
+            session.add(MemoryPairCheck(a_id=lo, b_id=hi, verdict=verdict,
+                                        checked_at=_now()))
+            session.commit()
+
+    def prune_pair_checks(self) -> int:
+        """Drop pair-check rows whose either side no longer resolves to an
+        active memory — the retention half of the sweep's idempotency ledger.
+        Returns the count removed."""
+        with MemorySessionLocal() as session:
+            active = select(Memory.id).where(Memory.status == "active")
+            rows = session.exec(select(MemoryPairCheck).where(or_(
+                MemoryPairCheck.a_id.not_in(active),
+                MemoryPairCheck.b_id.not_in(active)))).all()
+            for row in rows:
+                session.delete(row)
+            session.commit()
+        if rows:
+            log.write("memory_pair_checks_pruned", count=len(rows))
+        return len(rows)
 
     def _trim_validations(self, session, memory_id: str) -> None:
         rows = session.exec(
@@ -742,7 +793,7 @@ class SqliteMemoryStore:
         for a, b, w in pairs:
             if a == b:
                 continue
-            lo, hi = (a, b) if a < b else (b, a)
+            lo, hi = _canonical_pair(a, b)
             if (lo, hi) not in best or w > best[(lo, hi)]:
                 best[(lo, hi)] = float(w)
         now = _now()

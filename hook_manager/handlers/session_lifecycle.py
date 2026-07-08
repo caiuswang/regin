@@ -23,10 +23,17 @@ def handle_start(payload: HookPayload) -> HookResponse | None:
         # show which model each session used (and what a /model switch
         # mid-session produced on resume).
         agent_type = _session_agent_type(payload)
+        extra = {'agent_type': agent_type} if agent_type else {}
+        # ExternalAgentLLM tags its subprocess env with the surface it is
+        # running, so the resulting trace can be marked as an LLM-stage run
+        # rather than an interactive session.
+        llm_surface = os.environ.get('REGIN_LLM_SURFACE')
+        if llm_surface:
+            extra['llm_surface'] = llm_surface
         _emit_span(payload, 'session.start',
                    key_aliases=(('source', 'source'), ('model', 'model')),
                    default_key='source', default_value='startup',
-                   extra_attrs={'agent_type': agent_type} if agent_type else None)
+                   extra_attrs=extra or None)
     except Exception:
         pass
     try:

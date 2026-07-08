@@ -81,6 +81,25 @@ def register_surface(
     return surface
 
 
+# SHA-256 of *superseded* default bodies, per surface id. `render_surface`
+# prefers the stored row and the seeder only inserts missing slugs, so when a
+# default body changes the old seed would silently pin the old prompt forever
+# on existing installs. Registering the retired body's hash lets
+# `seed_builtin_skeletons` recognise an un-edited stale row (its body still
+# hashes to a retired default) and heal it to the current default; a
+# user-edited body never matches and is left alone.
+_RETIRED_DEFAULT_HASHES: "dict[str, set[str]]" = {}
+
+
+def register_retired_default(surface_id: str, *, sha256: str) -> None:
+    _RETIRED_DEFAULT_HASHES.setdefault(surface_id, set()).add(sha256)
+
+
+def retired_default_hashes(surface_id: str) -> set[str]:
+    _ensure_loaded()
+    return _RETIRED_DEFAULT_HASHES.get(surface_id, set())
+
+
 def get_surface(surface_id: str) -> PromptSurface | None:
     _ensure_loaded()
     return _SURFACES.get(surface_id)
@@ -111,4 +130,6 @@ __all__ = [
     "get_surface",
     "list_surfaces",
     "register_surface",
+    "register_retired_default",
+    "retired_default_hashes",
 ]
