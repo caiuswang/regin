@@ -15,11 +15,17 @@ from pathlib import Path
 import pytest
 
 from lib.settings import settings
+from lib.topics import TopicGraphError
 from lib.topics.content_drift import emit_refresh_proposal
 from lib.topics.core import topic_path
 from lib.topics.proposal_drafting import format_review_feedback_for_prompt
 from lib.topics.proposal_review import (
+    _build_prompt,
+    _finish_block,
     _parse_recommendation,
+    _review_finish_command,
+    _review_output_path,
+    finish_review_note,
     generate_review_note,
     maybe_generate_review_note,
 )
@@ -42,6 +48,37 @@ class _RaisingLLM:
     def complete(self, prompt, *, max_tokens=1024, cwd=None):
         del prompt, max_tokens, cwd
         raise RuntimeError("boom")
+
+
+class _StubReviewer:
+    """Reviewer stub for the async path: yields a launchable spawn spec so
+    `start_review_run` proceeds (the actual spawn is stubbed separately)."""
+
+    def spawn_spec(self, *, surface_id=None):
+        from lib.memory.adapters import SpawnSpec
+        return SpawnSpec(argv=["true"], timeout=1, cwd=None, surface_id=None)
+
+
+class _RaisingReviewer:
+    def spawn_spec(self, *, surface_id=None):
+        raise RuntimeError("boom")
+
+
+def _fake_spawn(answer):
+    """A stand-in for the `_spawn_review_agent` seam: simulates the review
+    agent by writing `answer` to the output file and running the finish ingest
+    synchronously (no real subprocess, no thread)."""
+    def spawn(repo, proposal_id, spec, prompt):
+        del spec, prompt
+        _review_output_path(repo, proposal_id).write_text(answer)
+        finish_review_note(repo, proposal_id, source="test")
+    return spawn
+
+
+def _seed_review_output(repo: Path, pid: str, answer: str) -> None:
+    path = _review_output_path(repo, pid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(answer)
 
 
 def _make_proposal(repo: Path) -> str:
@@ -141,25 +178,120 @@ def test_maybe_review_note_gated_off_by_default(fake_git_repo, monkeypatch):
 
 
 def test_maybe_review_note_best_effort_on_failure(fake_git_repo, monkeypatch):
-    """A reviewer that raises must not propagate — the run is already done."""
+    """A reviewer that raises while launching must not propagate — the run is
+    already done."""
     monkeypatch.setattr(settings.topic_evolution, "auto_review_notes", True)
     monkeypatch.setattr(
-        "lib.memory.adapters.resolve_proposal_reviewer", lambda: _RaisingLLM(),
+        "lib.memory.adapters.resolve_proposal_reviewer", lambda: _RaisingReviewer(),
     )
     pid = _make_proposal(fake_git_repo)
     assert maybe_generate_review_note(fake_git_repo, pid) is False
     assert _review_notes(fake_git_repo, pid) == []
 
 
-def test_maybe_review_note_creates_when_enabled(fake_git_repo, monkeypatch):
+def test_maybe_review_note_starts_job_when_enabled(fake_git_repo, monkeypatch):
+    """The gated trigger now *starts the detached job* (returns True) and the
+    reviewer submits its note via the finish path — here simulated by the spawn
+    seed."""
     monkeypatch.setattr(settings.topic_evolution, "auto_review_notes", True)
     monkeypatch.setattr(
-        "lib.memory.adapters.resolve_proposal_reviewer",
-        lambda: _StubLLM("ok\nRECOMMENDATION: ACCEPT"),
+        "lib.memory.adapters.resolve_proposal_reviewer", lambda: _StubReviewer(),
+    )
+    monkeypatch.setattr(
+        "lib.topics.proposal_review._spawn_review_agent",
+        _fake_spawn("ok\nRECOMMENDATION: ACCEPT"),
     )
     pid = _make_proposal(fake_git_repo)
     assert maybe_generate_review_note(fake_git_repo, pid) is True
     assert len(_review_notes(fake_git_repo, pid)) == 1
+
+
+def test_maybe_review_note_no_note_when_no_agent(fake_git_repo, monkeypatch):
+    """Gate on but no external agent configured → nothing to launch, no note,
+    no crash (spawn_spec None)."""
+    monkeypatch.setattr(settings.topic_evolution, "auto_review_notes", True)
+
+    class _Unconfigured:
+        def spawn_spec(self, *, surface_id=None):
+            return None
+    monkeypatch.setattr(
+        "lib.memory.adapters.resolve_proposal_reviewer", lambda: _Unconfigured(),
+    )
+    pid = _make_proposal(fake_git_repo)
+    assert maybe_generate_review_note(fake_git_repo, pid) is False
+    assert _review_notes(fake_git_repo, pid) == []
+
+
+# ── finish_review_note (notify-on-finish ingest) ────────────────
+
+
+def test_finish_review_note_writes_from_output_file(fake_git_repo):
+    pid = _make_proposal(fake_git_repo)
+    _seed_review_output(fake_git_repo, pid, "Solid draft.\nRECOMMENDATION: DISMISS")
+    thread = finish_review_note(fake_git_repo, pid, source="agent")
+    assert thread is not None
+    assert thread["kind"] == "review_note"
+    assert thread["created_by"] == "agent"
+    assert thread["metadata"]["recommendation"] == "DISMISS"
+    assert len(_review_notes(fake_git_repo, pid)) == 1
+
+
+def test_finish_review_note_idempotent(fake_git_repo):
+    """A resumed session re-running the finish command can't double-post."""
+    pid = _make_proposal(fake_git_repo)
+    _seed_review_output(fake_git_repo, pid, "RECOMMENDATION: ACCEPT")
+    assert finish_review_note(fake_git_repo, pid) is not None
+    assert finish_review_note(fake_git_repo, pid) is None
+    assert len(_review_notes(fake_git_repo, pid)) == 1
+
+
+def test_finish_review_note_missing_output_raises(fake_git_repo):
+    """Signalled with no usable output → visible failure, no empty note."""
+    pid = _make_proposal(fake_git_repo)
+    with pytest.raises(TopicGraphError):
+        finish_review_note(fake_git_repo, pid, source="agent")
+    assert _review_notes(fake_git_repo, pid) == []
+
+
+# ── prompt wiring: finish command baked in (resume-survivable) ──
+
+
+def test_async_prompt_bakes_finish_command_and_output_path(fake_git_repo):
+    """The async prompt = the (editable) review body + a submit block appended
+    OUTSIDE render_surface, so the literal finish command + output path survive
+    even a stored/edited review-prompt row."""
+    proposal = {"topics": [{"id": "t1", "intent": "x", "refs": [{"path": "a.py"}]}]}
+    prompt = _build_prompt(proposal, "") + _finish_block(fake_git_repo, "pX")
+    assert "<submit>" in prompt
+    assert str(_review_output_path(fake_git_repo, "pX")) in prompt
+    assert "review-finish" in prompt
+    # the literal finish command (not just the substring) is present verbatim
+    assert _review_finish_command(fake_git_repo, "pX") in prompt
+
+
+def test_finish_block_survives_stored_prompt_row(fake_git_repo, monkeypatch):
+    """Regression: render_surface prefers a stored/edited prompt row over the
+    registry default. A stored review body without any placeholder must still
+    yield an async prompt carrying the submit block + finish command — because
+    it is appended outside render_surface, not interpolated into the body."""
+    monkeypatch.setattr(
+        "lib.prompts.resolve._stored_body",
+        lambda surface_id: "OLD CUSTOM REVIEW BODY — no placeholders here.",
+    )
+    proposal = {"topics": [{"id": "t1", "intent": "x", "refs": []}]}
+    prompt = _build_prompt(proposal, "") + _finish_block(fake_git_repo, "pX")
+    # the editable body is the stored (custom) one …
+    assert "OLD CUSTOM REVIEW BODY" in prompt
+    # … but the mechanical hand-off is still present
+    assert "<submit>" in prompt
+    assert _review_finish_command(fake_git_repo, "pX") in prompt
+
+
+def test_sync_prompt_has_no_finish_block(fake_git_repo):
+    """The synchronous (stdout-parsed) manual path must not tell the agent to
+    self-submit — that would double-post."""
+    proposal = {"topics": [{"id": "t1", "intent": "x", "refs": []}]}
+    assert "<submit>" not in _build_prompt(proposal, "")
 
 
 # ── carry-forward into the next run (the existing rail) ──────────
@@ -184,12 +316,16 @@ def test_review_note_carried_into_regenerate_prompt(fake_git_repo):
 
 
 def test_auto_review_note_on_create_run(stub_proposal_provider, fake_git_repo, monkeypatch):
-    """With the gate on, a real create_proposal_run mints the note via the
-    wired trigger in core_io — no manual call."""
+    """With the gate on, a real create_proposal_run starts the review job via
+    the wired trigger in core_io — no manual call. The spawn seam simulates the
+    reviewer submitting through the finish path."""
     monkeypatch.setattr(settings.topic_evolution, "auto_review_notes", True)
     monkeypatch.setattr(
-        "lib.memory.adapters.resolve_proposal_reviewer",
-        lambda: _StubLLM("looks good\nRECOMMENDATION: ACCEPT"),
+        "lib.memory.adapters.resolve_proposal_reviewer", lambda: _StubReviewer(),
+    )
+    monkeypatch.setattr(
+        "lib.topics.proposal_review._spawn_review_agent",
+        _fake_spawn("looks good\nRECOMMENDATION: ACCEPT"),
     )
     resolve_or_create_repo(str(fake_git_repo))
     from lib.topics.proposals import create_proposal_run

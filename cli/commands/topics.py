@@ -317,6 +317,29 @@ def cmd_topics_review_note(
 
 
 @topics_app.command(
+    "review-finish",
+    help="Submit a review agent's verdict into a review_note thread "
+         "(the review agent calls this as its final step)")
+def cmd_topics_review_finish(
+    proposal_id: str = typer.Argument(..., help="Proposal run id"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.proposal_review import finish_review_note
+
+    try:
+        thread = finish_review_note(_repo_path(repo), proposal_id, source="agent")
+    except TopicGraphError as exc:
+        print(f"Review finish failed: {exc}")
+        raise typer.Exit(1)
+    if thread is None:
+        print(f"{proposal_id}: review already submitted (no-op)")
+        return
+    recommendation = (thread.get("metadata") or {}).get("recommendation")
+    print(f"Review note added to proposal {proposal_id} "
+          f"(thread {thread.get('id')}, recommendation {recommendation})")
+
+
+@topics_app.command(
     "proposal-finish",
     help="Ingest a finished proposal run on the agent's completion signal "
          "(the drafting agent calls this as its final step)")

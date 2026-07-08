@@ -17,10 +17,24 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
+
+
+@dataclass(frozen=True)
+class SpawnSpec:
+    """How to launch a configured external agent as a *detached* subprocess
+    (the async analogue of `ExternalAgentLLM.complete`, which blocks). The
+    caller Popens `argv`, pipes the prompt to stdin, and never waits on the
+    result inline — the agent reports back through its own side channel."""
+
+    argv: list[str]
+    timeout: int
+    cwd: str | None
+    surface_id: str | None
 
 log = get_activity_logger("memory")
 
@@ -135,6 +149,20 @@ class ExternalAgentLLM:
             return None
         return proc.stdout.decode("utf-8", errors="replace")[: max_tokens * 8]
 
+    def spawn_spec(self, *, surface_id: "str | None" = None) -> "SpawnSpec | None":
+        """The launch spec for running this agent detached (vs. `complete`,
+        which blocks and reads stdout). Returns None when no agent is
+        configured, so a caller falls back to no-op just like `complete`."""
+        agent = self._agent(surface_id)
+        if agent is None:
+            return None
+        return SpawnSpec(
+            argv=[agent.command, *agent.args, *self._extra_args],
+            timeout=agent.timeout_seconds,
+            cwd=str(agent.cwd.expanduser()) if agent.cwd else None,
+            surface_id=surface_id or self._surface_id,
+        )
+
 
 def resolve_distiller() -> ExternalAgentLLM:
     """The distiller LLM, granted the read-only trace commands so it can
@@ -182,6 +210,6 @@ def resolve_proposal_reviewer() -> ExternalAgentLLM:
     )
 
 
-__all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller",
-           "resolve_dreamer", "resolve_topic_classifier", "resolve_retitler",
-           "resolve_proposal_reviewer"]
+__all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "SpawnSpec",
+           "resolve_distiller", "resolve_dreamer", "resolve_topic_classifier",
+           "resolve_retitler", "resolve_proposal_reviewer"]
