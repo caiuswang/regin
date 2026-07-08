@@ -23,7 +23,6 @@ import SkillReadsView from './views/SkillReadsView.vue'
 import MCPCallsView from './views/MCPCallsView.vue'
 import InboxView from './views/InboxView.vue'
 import MemoryView from './views/MemoryView.vue'
-import MemoryDoctorView from './views/MemoryDoctorView.vue'
 import GradesView from './views/GradesView.vue'
 import IngestErrorsView from './views/IngestErrorsView.vue'
 import TraceView from './views/TraceView.vue'
@@ -62,7 +61,6 @@ const routes = [
   { path: '/live/:id?', name: 'live', component: LiveSessionView },
   { path: '/inbox', name: 'inbox', component: InboxView },
   { path: '/memory', name: 'memory', component: MemoryView },
-  { path: '/memory/doctor', name: 'memory-doctor', component: MemoryDoctorView },
   { path: '/grades', name: 'grades', component: GradesView },
   {
     path: '/trace',

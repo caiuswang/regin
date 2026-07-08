@@ -75,7 +75,6 @@ const navGroups = computed(() => [
       { to: '/live', label: 'Live', icon: 'live' },
       { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox', badge: () => inboxUnread.value },
       { to: '/memory', label: 'Memory', exact: true, icon: 'patterns' },
-      { to: '/memory/doctor', label: 'Doctor', exact: true, icon: 'audit' },
       { to: '/grades', label: 'Grades', exact: true, icon: 'rules' },
       { to: '/audit', label: 'Audit', icon: 'audit' },
     ],

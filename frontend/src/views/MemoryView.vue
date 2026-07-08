@@ -1,6 +1,5 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
-import { RouterLink } from 'vue-router'
 import api from '../api'
 import { useConfirm } from '../composables/useConfirm'
 import { useResizablePanel } from '../composables/useResizablePanel'
@@ -20,6 +19,7 @@ import MemoryTopicFeedback from '../components/memory/MemoryTopicFeedback.vue'
 import TopicRoutePlayground from '../components/memory/TopicRoutePlayground.vue'
 import MemoryTaxonomy from '../components/memory/MemoryTaxonomy.vue'
 import MemoryWikiRecalls from '../components/memory/MemoryWikiRecalls.vue'
+import MemoryDoctor from '../components/memory/MemoryDoctor.vue'
 
 const { confirm } = useConfirm()
 const { width: listWidth, onResizeStart, onResizeKey } =
@@ -40,13 +40,14 @@ const selectedId = ref(null)
 
 // Three domain-coherent tabs replace the single long scroll: browse/manage,
 // topic clustering + routing, and recall-ranking tuning.
-const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'tree', 'wikis', 'recall'] })
+const activeTab = useTabRoute({ default: 'memories', valid: ['memories', 'topics', 'tree', 'wikis', 'recall', 'doctor'] })
 const TABS = [
   { value: 'memories', label: 'Memories' },
   { value: 'topics', label: 'Topics' },
   { value: 'tree', label: 'Tree' },
   { value: 'wikis', label: 'Wikis' },
   { value: 'recall', label: 'Recall' },
+  { value: 'doctor', label: 'Doctor' },
 ]
 
 // Selecting a memory from any tab (topic member, recall hit) jumps to the
@@ -65,6 +66,7 @@ let headerObserver = null
 
 const reflectSummary = ref('')
 const reflecting = ref(false)
+const lastResult = ref(null)
 const topicsRef = ref(null)
 const topicFeedbackRef = ref(null)
 const playgroundRef = ref(null)
@@ -147,6 +149,7 @@ async function runReflect() {
   reflecting.value = true
   try {
     const r = await api.post('/memory/reflect', {})
+    lastResult.value = r
     reflectSummary.value = formatReflectSummary(r)
   } finally {
     reflecting.value = false
@@ -243,15 +246,12 @@ onBeforeUnmount(() => headerObserver?.disconnect())
           size="sm"
           @click="toggleTests"
         >Include test data</Button>
-        <Button :as="RouterLink" to="/memory/doctor" variant="secondary" size="sm">Doctor</Button>
-        <Button variant="secondary" size="sm" :disabled="busy || reflecting" @click="runReflect">Run reflect</Button>
       </div>
     </div>
     <p class="text-sm text-slate-500 mb-3">
       Cross-session experience captured from <code class="text-[12px]">send_to_user(type=lesson)</code>
       and session distills. Consolidated by reflect, recalled into future prompts.
     </p>
-    <p v-if="reflectSummary" class="text-xs text-slate-500 font-mono mb-3">{{ reflectSummary }}</p>
 
     <Tabs v-model="activeTab" :tabs="TABS" variant="underline" class="-mb-px" />
     </div>
@@ -423,6 +423,18 @@ onBeforeUnmount(() => headerObserver?.disconnect())
           </ul>
         </div>
       </Card>
+    </div>
+
+    <!-- Doctor: store-health census + the reflect pipeline console — the
+         operate side of the store, folded in from the old standalone page. -->
+    <div v-show="activeTab === 'doctor'" class="pt-4">
+      <p v-if="reflectSummary" class="text-xs text-slate-500 font-mono mb-3">{{ reflectSummary }}</p>
+      <MemoryDoctor
+        :stats="stats"
+        :reflecting="reflecting"
+        :last-result="lastResult"
+        @reflect="runReflect"
+      />
     </div>
   </div>
 </template>
