@@ -160,6 +160,21 @@ async function runReflect() {
   taxonomyRef.value?.reload()
 }
 
+// The Doctor's "Classify with agent" action: file the unfiled memories under
+// authoritative topics, then refresh the census + tree so the orphan count
+// drops. No scope — classifies every unfiled memory against the repo taxonomy.
+const classifying = ref(false)
+async function runClassify() {
+  classifying.value = true
+  try {
+    await api.post('/memory/link-orphans', {})
+  } finally {
+    classifying.value = false
+  }
+  await load()
+  taxonomyRef.value?.reload()
+}
+
 async function runRecall() {
   const q = recallQuery.value.trim()
   if (!q) return
@@ -432,8 +447,10 @@ onBeforeUnmount(() => headerObserver?.disconnect())
       <MemoryDoctor
         :stats="stats"
         :reflecting="reflecting"
+        :classifying="classifying"
         :last-result="lastResult"
         @reflect="runReflect"
+        @classify="runClassify"
       />
     </div>
   </div>

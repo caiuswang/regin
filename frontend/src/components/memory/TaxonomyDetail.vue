@@ -20,10 +20,17 @@ const props = defineProps({
   topics: { type: Array, default: () => [] },    // [{id,label}] file-a-memory picker
   selectedId: { type: String, default: null },
   orphanId: { type: String, default: '__orphaned__' },
+  // Drives the "Classify all" button's loading state on the orphan node; the
+  // parent owns the POST /memory/link-orphans call.
+  classifying: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
   error: { type: String, default: '' },
 })
-const emit = defineEmits(['select-memory', 'select-node', 'topics-changed'])
+const emit = defineEmits(['select-memory', 'select-node', 'topics-changed', 'classify'])
+
+// The editable classifier prompt lives in prompt management under this slug.
+const CLASSIFY_SURFACE = 'memory-topic-classify'
+const isOrphan = computed(() => props.selectedId === props.orphanId)
 
 const edges = computed(() => props.detail?.edges || [])
 const refs = computed(() => props.detail?.refs || [])
@@ -118,6 +125,26 @@ watch(() => props.detail?.id, () => {
       <div class="flex-1 overflow-y-auto px-4 py-3 space-y-5">
         <!-- Memories — the primary payload, anchored first -->
         <section>
+          <!-- Orphan bucket only: batch-file every unfiled memory via the
+               agentic classifier, instead of the per-row manual picker below. -->
+          <div
+            v-if="isOrphan && detail.memory_total"
+            class="mb-3 flex items-center flex-wrap gap-2 rounded-md border border-border-subtle bg-surface-2 px-3 py-2"
+          >
+            <span class="text-xs text-fg-muted min-w-0">
+              Auto-file these {{ detail.memory_total }} unfiled memories under authoritative topics.
+            </span>
+            <Button
+              variant="primary" size="sm"
+              class="ml-auto h-7 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+              :disabled="classifying"
+              @click="emit('classify')"
+            >{{ classifying ? 'Classifying…' : 'Classify all with agent' }}</Button>
+            <router-link
+              :to="{ path: '/prompt-templates', query: { surface: CLASSIFY_SURFACE } }"
+              class="text-link text-xs hover:underline whitespace-nowrap"
+            >configure →</router-link>
+          </div>
           <h4 class="flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wider text-fg-subtle mb-2">
             Memories <span class="font-mono text-fg-faint normal-case tracking-normal">{{ detail.memory_total }}</span>
           </h4>

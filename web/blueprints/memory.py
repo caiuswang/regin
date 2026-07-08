@@ -17,12 +17,12 @@ from lib.utils.pagination import clamp_page, clamp_size
 
 memory_bp = Blueprint("memory", __name__)
 
-# Synthetic taxonomy root for active memories with no authoritative-topic
-# link. Double-underscore so it can never collide with a real topic.json id.
-_ORPHAN_NODE_ID = "__orphaned__"
-_ORPHAN_LABEL = "Orphaned (unfiled)"
-_ORPHAN_BLURB = ("Active memories not linked to any topic node — "
-                 "assign them below.")
+# Synthetic taxonomy root for active memories with no authoritative-topic link.
+# Shared with the MCP index_* walk (lib.memory.store) so the two surfaces can't
+# drift on the node's id/label/blurb.
+_ORPHAN_NODE_ID = memory.ORPHAN_NODE_ID
+_ORPHAN_LABEL = memory.ORPHAN_LABEL
+_ORPHAN_BLURB = memory.ORPHAN_BLURB
 
 
 def _bool_arg(name: str, default: bool = False) -> bool:
@@ -592,6 +592,47 @@ def api_memory_topic_unlink(memory_id, node_id):
     return jsonify({"ok": True, "removed": removed,
                     "authoritative_topics": store.authoritative_topics_of(
                         memory_id)})
+
+
+@memory_bp.route("/api/memory/link-orphans", methods=["POST"])
+def api_memory_link_orphans():
+    """Agentically file the unfiled memories under authoritative topic nodes —
+    the WebUI trigger for `regin memory link-topics --orphans-only`. Body:
+    {scope?}. Runs the editable `memory-topic-classify` surface over the active
+    memories with no topic link (narrowed to `scope` when given), links what the
+    agent returns (source='agent'), and returns the run counts plus the residual
+    orphan count so the caller can refresh. Synchronous, mirroring POST
+    /api/memory/reflect. Fail-loud: 409 when no external classifier agent is
+    configured — never a silent no-op. The graph classified against is `scope`'s
+    own repo taxonomy (meta-roots merged), so a repo-scoped run is exact."""
+    from lib.topics.graph_io import load_authoritative_graph
+    from lib.topics.meta_roots import merge_meta_roots
+    from lib.memory.adapters import resolve_topic_classifier
+    from lib.memory.topic_classify import (classify_and_link,
+                                           ClassifierUnavailable)
+    scope = (request.get_json(silent=True) or {}).get("scope") or None
+    store = memory.get_store()
+    rows = [m for m in (store.get_dict(mid)
+                        for mid in store.orphaned_memory_ids(scope=scope)) if m]
+    if not rows:
+        return jsonify({"ok": True, "memories": 0, "placed": 0, "linked": 0,
+                        "orphaned": 0})
+    graph = merge_meta_roots(load_authoritative_graph(_scope_repo_root(scope)))
+    stats: dict = {}
+    try:
+        result = classify_and_link(
+            store, rows, graph, resolve_topic_classifier(), stats=stats)
+    except ClassifierUnavailable as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({
+        "ok": True,
+        "memories": stats.get("memories", len(rows)),
+        "placed": stats.get("placed", 0),
+        "linked": result["linked"],
+        "batches": stats.get("batches", 0),
+        "unparsed": stats.get("unparsed", 0),
+        "orphaned": len(store.orphaned_memory_ids(scope=scope)),
+    })
 
 
 @memory_bp.route("/api/memory/graph")

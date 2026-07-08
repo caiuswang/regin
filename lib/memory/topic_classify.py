@@ -185,4 +185,25 @@ def classify_memories(memories: list[dict], graph: dict, llm, *,
     return assignments
 
 
-__all__ = ["classify_memories", "ClassifierUnavailable", "CLASSIFY_SOURCE"]
+def classify_and_link(store, memories: list[dict], graph: dict, llm, *,
+                      source: str = CLASSIFY_SOURCE,
+                      stats: "dict | None" = None) -> dict:
+    """Classify `memories` and persist each returned topic link, in one call —
+    the write-side wrapper the CLI's `_apply_assignments` open-codes, shared so
+    the WebUI endpoint doesn't reimplement (or import from) the CLI.
+
+    Returns `{assignments, linked}`: the raw `{memory_id: [topic_id, ...]}` map
+    and the count of *new* links created (`link_authoritative_topic` returns
+    False on an idempotent refresh, so a re-run reports 0 without double
+    counting). Raises `ClassifierUnavailable` unchanged when no batch completed."""
+    assignments = classify_memories(memories, graph, llm, stats=stats)
+    linked = 0
+    for mid, topic_ids in assignments.items():
+        for tid in topic_ids:
+            if store.link_authoritative_topic(mid, tid, source=source):
+                linked += 1
+    return {"assignments": assignments, "linked": linked}
+
+
+__all__ = ["classify_memories", "classify_and_link",
+           "ClassifierUnavailable", "CLASSIFY_SOURCE"]

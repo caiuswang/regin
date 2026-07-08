@@ -13,10 +13,16 @@ const props = defineProps({
   // Drives the inline Run-reflect button's loading/disabled state; the parent
   // owns the actual reflect call and toggles this.
   reflecting: { type: Boolean, default: false },
+  // Same, for the Classify-orphans agent run (the parent owns the POST).
+  classifying: { type: Boolean, default: false },
   // The last reflect run's per-stage counts, threaded to the pipeline view.
   lastResult: { type: Object, default: null },
 })
-const emit = defineEmits(['reflect'])
+const emit = defineEmits(['reflect', 'classify'])
+
+// The editable classifier prompt lives in prompt management under this surface
+// slug — the "configure →" link deep-links the Prompts view straight to it.
+const CLASSIFY_SURFACE = 'memory-topic-classify'
 
 // `embed_coverage` is null when nothing is embeddable (no active rows), which
 // is distinct from 0% (embeddable but unembedded) — keep it null so neither
@@ -49,6 +55,13 @@ const checks = computed(() => {
     out.push({
       level: 'info',
       text: `${debt.proposed} proposal(s) awaiting your approval`,
+    })
+  }
+  if ((s.orphaned || 0) > 0) {
+    out.push({
+      level: 'info',
+      action: 'classify',
+      text: `${s.orphaned} memories unfiled (no topic) — the agentic classifier files them`,
     })
   }
   if (!out.length) {
@@ -101,6 +114,19 @@ const entries = (data) => Object.entries(data).sort((a, b) => b[1] - a[1])
           :disabled="reflecting"
           @click="emit('reflect')"
         >{{ reflecting ? 'Running…' : 'Run reflect' }}</Button>
+        <template v-if="c.action === 'classify'">
+          <Button
+            variant="secondary"
+            size="sm"
+            class="ml-1 -my-0.5"
+            :disabled="classifying"
+            @click="emit('classify')"
+          >{{ classifying ? 'Classifying…' : 'Classify with agent' }}</Button>
+          <router-link
+            :to="{ path: '/prompt-templates', query: { surface: CLASSIFY_SURFACE } }"
+            class="text-link hover:underline whitespace-nowrap"
+          >configure →</router-link>
+        </template>
       </li>
     </ul>
 

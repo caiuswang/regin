@@ -123,6 +123,23 @@ async function onTopicsChanged({ from, to }) {
   if (selectedId.value) await selectNode(selectedId.value)
 }
 
+// Orphan bucket "Classify all": run the agentic classifier over the unfiled
+// memories in the current repo scope, then rebuild the tree so they move out of
+// the Orphaned node into their topics (its count drops, possibly to 0).
+const classifying = ref(false)
+async function onClassifyOrphans() {
+  if (classifying.value) return
+  classifying.value = true
+  try {
+    await api.post('/memory/link-orphans', { scope: scope.value || undefined })
+  } finally {
+    classifying.value = false
+  }
+  await reload()
+  if (nodes.value[selectedId.value]) await selectNode(selectedId.value)
+  else selectedId.value = null
+}
+
 // Switching repository re-scopes every count: reload() drops the detail cache
 // and rebuilds the tree; the open node is then re-fetched under the new scope.
 async function onScopeChange(value) {
@@ -216,11 +233,13 @@ defineExpose({ reload })
           :topics="topicOptions"
           :selected-id="selectedId"
           :orphan-id="ORPHAN_ID"
+          :classifying="classifying"
           :loading="detailLoading"
           :error="detailError"
           @select-memory="id => emit('select', id)"
           @select-node="selectNode"
           @topics-changed="onTopicsChanged"
+          @classify="onClassifyOrphans"
         />
       </div>
     </div>

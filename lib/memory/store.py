@@ -30,6 +30,17 @@ from sqlmodel import select
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
 from lib.memory.engine import MemorySessionLocal, memory_db_path
+
+# Synthetic taxonomy node collecting active memories with NO authoritative-topic
+# link — the "unfiled" bucket surfaced by BOTH the WebUI taxonomy tree and the
+# MCP index_* walk, so an untopiced memory is visibly pending instead of being
+# invisible to every subtree. Double-underscore so it can never collide with a
+# real topic.json id. Shared here (next to `orphaned_memory_ids`, the query that
+# defines "orphan") so the two surfaces can never drift on id/label/blurb.
+ORPHAN_NODE_ID = "__orphaned__"
+ORPHAN_LABEL = "Orphaned (unfiled)"
+ORPHAN_BLURB = ("Active memories not linked to any topic node — "
+                "classify or file them below.")
 from lib.memory.models import (
     DEFAULT_KIND, DEFAULT_STATUS, DEFAULT_TIER, DISTILL_TAG,
     MEMORY_KINDS, MEMORY_STATUSES, MEMORY_TIERS, VERACITY_VALUES,
@@ -2121,6 +2132,10 @@ class SqliteMemoryStore:
             # is the capture backlog awaiting human approval. Both derive from
             # the rows already fetched — no extra query.
             "consolidation_debt": self._consolidation_debt(rows),
+            # Active memories with no authoritative-topic link — the "unfiled"
+            # census the Doctor gates its Classify action on. Own query (the
+            # NULL-join can't be read off `rows`), cheap and indexed.
+            "orphaned": len(self.orphaned_memory_ids()),
             "db_path": memory_db_path(),
         }
 
@@ -2132,4 +2147,5 @@ class SqliteMemoryStore:
         return {"working_active": working_active, "proposed": proposed}
 
 
-__all__ = ["SqliteMemoryStore"]
+__all__ = ["SqliteMemoryStore",
+           "ORPHAN_NODE_ID", "ORPHAN_LABEL", "ORPHAN_BLURB"]

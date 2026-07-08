@@ -21,6 +21,8 @@ from typing import Optional
 
 from lib.memory.models import MemoryHit, MemoryInput  # noqa: F401 — re-export
 from lib.memory.reflect import ReflectResult
+from lib.memory.store import (  # noqa: F401 — re-export the shared orphan node
+    ORPHAN_BLURB, ORPHAN_LABEL, ORPHAN_NODE_ID)
 from lib.settings import settings
 
 _store = None

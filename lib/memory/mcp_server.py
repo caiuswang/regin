@@ -107,6 +107,16 @@ def _format_card(card: dict, mem_count: Optional[int],
             f"\n    {card['blurb']}")
 
 
+def _orphan_nav_card(node_id: str, label: str, blurb: str, count: int) -> str:
+    """The synthetic 'unfiled' bucket rendered as a nav card, so a memory with
+    no authoritative-topic link is visible in the index walk (parity with the
+    WebUI taxonomy tree) instead of hanging under no subtree. A leaf: its
+    members are read with `index_fetch`, not descended into."""
+    return _format_card(
+        {"id": node_id, "label": label, "child_count": 0, "blurb": blurb},
+        count)
+
+
 def _wiki_section(node_id: str, read_count: int = 0) -> tuple[str, bool]:
     """Address of the curated per-topic wiki — the agent Reads it if it wants
     the narrative. We hand over the path, not the contents. Returns
@@ -191,6 +201,13 @@ def index_root(scope: str = "") -> str:
                           _subtree_mem_count(store, graph, rid, scope),
                           reads.get(rid, 0))
              for rid in build_tree(graph)["roots"]]
+    # Surface the unfiled bucket only when it holds something — untopiced
+    # memories hang under no subtree, so without this they're invisible here.
+    orphans = store.orphaned_memory_ids(scope=scope or None)
+    if orphans:
+        lines.append(_orphan_nav_card(
+            memory.ORPHAN_NODE_ID, memory.ORPHAN_LABEL, memory.ORPHAN_BLURB,
+            len(orphans)))
     if not lines:
         return "topic graph has no nodes (run `regin topics scan`)"
     return "top-level topics (then index_expand / index_fetch):\n" + \
@@ -214,6 +231,11 @@ def index_expand(node_id: str, scope: str = "") -> str:
     from lib.topics.tree import build_tree, node_card
     if not memory.enabled():
         return "agent memory is disabled (settings.agent_memory.enabled)"
+    if node_id == memory.ORPHAN_NODE_ID:
+        orphans = memory.get_store().orphaned_memory_ids(scope=scope or None)
+        return (f"{memory.ORPHAN_NODE_ID} · {memory.ORPHAN_LABEL} "
+                f"({len(orphans)} mem in subtree)\n{memory.ORPHAN_BLURB}"
+                "\n\n(leaf — use index_fetch to read its memories)")
     graph = _load_graph()
     card = node_card(graph, node_id)
     if card is None:
@@ -267,6 +289,14 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "",
     from lib.topics.tree import subtree_ids
     if not memory.enabled():
         return "agent memory is disabled (settings.agent_memory.enabled)"
+    if node_id == memory.ORPHAN_NODE_ID:
+        store = memory.get_store()
+        ids = store.orphaned_memory_ids(scope=scope or None)
+        sections = ["## wiki\n(none — unfiled memories, not a topic)",
+                    "## source refs\n(none)",
+                    _memories_section(store, ids, top_k)]
+        return (f"{memory.ORPHAN_NODE_ID} · {memory.ORPHAN_LABEL}\n\n"
+                + "\n\n".join(sections))
     graph = _load_graph()
     node = (graph.get("topics") or {}).get(node_id)
     if node is None:
