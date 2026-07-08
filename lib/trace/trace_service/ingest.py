@@ -579,6 +579,72 @@ def ingest_session_status(
         conn.close()
 
 
+def _derive_model_from_spans(conn, trace_id: str) -> str | None:
+    """Recompute a session's model from its stored model-carrying spans
+    using the exact live-ingest precedence (the `_PER_NAME_HANDLERS`
+    handlers on a throwaway bucket), so the backfill can never drift from
+    live ingest. `session.start` contributes its variant-bracketed id and
+    `turn`/`assistant_response` the transcript's bare base."""
+    import json as _json
+
+    model_names = tuple(
+        n for n, h in _PER_NAME_HANDLERS.items()
+        if h in (_handle_transcript_model, _handle_session_start)
+    )
+    placeholders = ",".join("?" * len(model_names))
+    rows = conn.execute(
+        f"SELECT name, attributes, start_time FROM session_spans "
+        f"WHERE trace_id = ? AND name IN ({placeholders}) ORDER BY start_time",
+        (trace_id, *model_names),
+    ).fetchall()
+    bucket = _new_session_bucket()
+    for row in rows:
+        try:
+            attrs = _json.loads(row['attributes']) if row['attributes'] else {}
+        except (ValueError, TypeError):
+            attrs = {}
+        handler = _PER_NAME_HANDLERS.get(row['name'])
+        if handler is not None:
+            handler(bucket, attrs, row['start_time'])
+    return bucket['model']
+
+
+def backfill_session_models(only_missing: bool = True, limit: int = 0) -> dict:
+    """Set `sessions.model` from stored transcript spans for sessions that
+    never resolved one at ingest time — transcript-replayed `llm-stage`
+    runs whose model landed only on `assistant_response` spans, which the
+    aggregation ignored before that handler was registered.
+
+    Idempotent: re-derives and re-applies via `ingest_session_status`,
+    whose precedence guard won't downgrade a variant-bracketed id. The
+    context window is derived from `model` at read time, so setting the
+    model is enough to fix the context %/window too.
+    """
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        where = "WHERE model IS NULL" if only_missing else ""
+        candidates = conn.execute(
+            f"SELECT trace_id, model FROM sessions {where}"
+        ).fetchall()
+        counts = {'updated': 0, 'unchanged': 0, 'no_model': 0}
+        for row in candidates:
+            if limit and counts['updated'] >= limit:
+                break
+            derived = _derive_model_from_spans(conn, row['trace_id'])
+            if not derived:
+                counts['no_model'] += 1
+            elif derived == row['model']:
+                counts['unchanged'] += 1
+            else:
+                ingest_session_status(row['trace_id'], model=derived)
+                counts['updated'] += 1
+    finally:
+        conn.close()
+    return counts
+
+
 def _is_less_specific_model(incoming: str, current: str | None) -> bool:
     """True when `incoming` is the bare base of a more-specific `current`,
     or when `incoming` is the placeholder `<synthetic>` that Claude Code
@@ -754,10 +820,26 @@ def _handle_session_start(bucket: dict, attrs: dict, start) -> None:
                       '_cwd_start', start, latest=False, store_stripped=True)
 
 
-def _handle_turn_model(bucket: dict, attrs: dict, start) -> None:
-    """`turn` spans report the model from the transcript JSONL — same
-    'latest wins' rule as session.start, but the bare-base form must
-    not downgrade a variant-bracketed model already on the bucket."""
+def _handle_transcript_model(bucket: dict, attrs: dict, start) -> None:
+    """`turn` and `assistant_response` spans report the model from the
+    transcript JSONL — same 'latest wins' rule as session.start, but the
+    bare-base form must not downgrade a variant-bracketed model already
+    on the bucket.
+
+    `assistant_response` is the only model carrier for transcript-replayed
+    sessions (internal `llm-stage` agent runs, resumes) that never emit a
+    live `turn` model span and whose `session.start` has no model — without
+    it their `sessions.model` stays NULL and the context window falls back
+    to the 200K default. Parent-trace `assistant_response` spans belong to
+    the main agent only (Task subagents write isolated sibling transcripts),
+    so this can't pull a subagent's model onto the session.
+
+    Kimi subagent turns, however, ARE emitted as `assistant_response`
+    spans under the parent trace_id (`kimi_subagents._emit_subagent_turns`)
+    — they carry an `agent_id` the main-agent turns never have, so skip
+    them: a subagent's model must not overwrite the parent session's."""
+    if attrs.get('agent_id'):
+        return
     m = attrs.get('model')
     if not (isinstance(m, str) and m.strip()):
         return
@@ -782,7 +864,8 @@ _PER_NAME_HANDLERS = {
     'prompt': _handle_prompt_title,
     'session.title': _handle_session_title,
     'session.start': _handle_session_start,
-    'turn': _handle_turn_model,
+    'turn': _handle_transcript_model,
+    'assistant_response': _handle_transcript_model,
     'session.end': _handle_session_end,
 }
 

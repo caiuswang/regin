@@ -18,6 +18,7 @@ from __future__ import annotations
 from lib.trace.trace_service.ingest import (
     _SESSIONS_UPSERT_SQL,
     _span_counter_buckets,
+    backfill_session_models,
     ingest_session_spans,
     ingest_session_status,
     ingest_tool_attribution,
@@ -37,6 +38,7 @@ from lib.trace.trace_service.queries import (
 __all__ = [
     "_SESSIONS_UPSERT_SQL",
     "_span_counter_buckets",
+    "backfill_session_models",
     "fetch_session_paginated",
     "fetch_session_projection",
     "fetch_tool_token_rollup",

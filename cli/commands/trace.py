@@ -236,6 +236,29 @@ def cmd_backfill_tokens(
     )
 
 
+@trace_app.command("backfill-model",
+                   help="Set sessions.model from stored transcript spans for "
+                        "sessions that never resolved one (e.g. llm-stage runs "
+                        "whose model lived only on assistant_response spans)")
+def cmd_backfill_model(
+    only_missing: bool = typer.Option(
+        True, "--only-missing/--all",
+        help="Skip sessions that already have model set",
+    ),
+    limit: int = typer.Option(
+        0, "--limit",
+        help="Stop after updating this many sessions (0 = no limit)",
+    ),
+) -> None:
+    from lib.trace.trace_service import backfill_session_models
+
+    counts = backfill_session_models(only_missing=only_missing, limit=limit)
+    print(
+        f"Done. updated={counts['updated']} "
+        f"unchanged={counts['unchanged']} no_model={counts['no_model']}"
+    )
+
+
 def _resolve_one_session(conn, trace_id: str, norm) -> tuple:
     """Resolve one session's high-signal spans against `norm`.
 

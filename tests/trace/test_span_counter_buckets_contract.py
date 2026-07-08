@@ -243,6 +243,47 @@ def test_turn_model_upgrades_when_strictly_different():
     assert bucket['model'] == 'claude-sonnet-4-7'
 
 
+def test_assistant_response_sets_model_when_no_turn_or_start_model():
+    # Transcript-replayed llm-stage sessions carry the model only on
+    # assistant_response spans — their session.start has no model and they
+    # emit no live `turn` span. Without this the session model stays NULL.
+    spans = [
+        _span('t', 'a', 'session.start', start='2026-05-15T10:00:00',
+              attrs={'llm_surface': 'topic-proposal-review'}),
+        _span('t', 'b', 'assistant_response', start='2026-05-15T10:05:00',
+              attrs={'model': 'claude-sonnet-5'}),
+    ]
+    bucket = _span_counter_buckets(spans, set())['t']
+    assert bucket['model'] == 'claude-sonnet-5'
+
+
+def test_assistant_response_bare_base_does_not_downgrade_variant():
+    # A variant-bracketed id from session.start must survive a later
+    # bare-base assistant_response span, same guard as `turn`.
+    spans = [
+        _span('t', 'a', 'session.start', start='2026-05-15T10:00:00',
+              attrs={'model': 'claude-opus-4-8[1m]'}),
+        _span('t', 'b', 'assistant_response', start='2026-05-15T10:05:00',
+              attrs={'model': 'claude-opus-4-8'}),
+    ]
+    bucket = _span_counter_buckets(spans, set())['t']
+    assert bucket['model'] == 'claude-opus-4-8[1m]'
+
+
+def test_subagent_assistant_response_does_not_set_parent_model():
+    # Kimi subagent turns are emitted as assistant_response spans under the
+    # PARENT trace_id, tagged with agent_id. A subagent's model must never
+    # overwrite the parent session's model.
+    spans = [
+        _span('t', 'a', 'session.start', start='2026-05-15T10:00:00',
+              attrs={'model': 'kimi-main'}),
+        _span('t', 'b', 'assistant_response', start='2026-05-15T10:05:00',
+              attrs={'model': 'kimi-subagent', 'agent_id': 'sa-1'}),
+    ]
+    bucket = _span_counter_buckets(spans, set())['t']
+    assert bucket['model'] == 'kimi-main'
+
+
 # ── session.end: ended_at latest, ended_reason follows latest ────
 
 def test_session_end_records_latest_ended_at_and_reason():
