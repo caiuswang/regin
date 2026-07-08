@@ -217,6 +217,41 @@ def test_agent_memory_put_persists_and_coerces_skip_commands(
     assert shared["agent_memory"]["inject_skip_commands"] == ["/review", "/goal"]
 
 
+def test_agent_memory_put_preserves_shared_fields_when_block_also_in_local(
+        flask_client, isolated_settings_files):
+    """Regression: a partial PUT must merge against the SHARED file's block,
+    not `_load_settings()`'s shallow {**shared, **local} view — which returns
+    only the local copy for a block present in both files, so re-saving to the
+    shared file wipes every shared-only field. See _scope_block_base."""
+    isolated_settings_files["shared"].write_text(json.dumps({"agent_memory": {
+        "auto_inject": False,
+        "recall_top_k": 9,
+        "inject_skip_commands": ["/goal", "/review"],
+    }}))
+    # SAME block key present in local too — this is what triggered the wipe.
+    isolated_settings_files["local"].write_text(json.dumps({"agent_memory": {
+        "recall_mode": "subagent",
+    }}))
+
+    resp = flask_client.put(
+        "/api/settings/agent-memory",
+        json={"promote_mode": "all"},          # a single-key change
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+
+    shared = json.loads(
+        isolated_settings_files["shared"].read_text())["agent_memory"]
+    assert shared["promote_mode"] == "all"           # the change landed
+    assert shared["auto_inject"] is False            # …and nothing was dropped
+    assert shared["recall_top_k"] == 9
+    assert shared["inject_skip_commands"] == ["/goal", "/review"]
+    # the local override is left where it belongs, untouched
+    local = json.loads(
+        isolated_settings_files["local"].read_text())["agent_memory"]
+    assert local == {"recall_mode": "subagent"}
+
+
 def test_agent_memory_put_accepts_empty_skip_commands(
         flask_client, isolated_settings_files):
     """An empty list is valid (restores inject-on-every-command) and

@@ -426,6 +426,21 @@ def _block_get(name: str):
     return jsonify({"fields": fields})
 
 
+def _scope_block_base(attr: str, scope: str) -> dict:
+    """The block dict from the file the save will target, so a partial PUT
+    merges against the full on-disk block and cannot drop the fields it did
+    not send.
+
+    `_load_settings()` shallow-merges the two files (`{**shared, **local}`), so
+    for a block present in BOTH it returns only the *local* copy — using that as
+    the merge base silently wipes every shared-only field when the block is
+    re-saved to the shared file. The scope's own file is the field-preserving
+    base; local-only overrides stay in local and are read-merged at load."""
+    from lib import settings as _cfg
+    path = _cfg.SETTINGS_LOCAL_PATH if scope == 'local' else _cfg.SETTINGS_PATH
+    return dict(_cfg._load_json(path).get(attr) or {})
+
+
 def _block_put(name: str):
     """Validate + persist edited fields for one block, preserving unexposed
     on-disk overrides, and reload the singleton so it applies live."""
@@ -438,7 +453,7 @@ def _block_put(name: str):
     updates, errors = _coerce_block(block['fields'], body)
     if errors:
         return jsonify({'ok': False, 'errors': errors}), 400
-    merged = dict(_load_settings().get(block['attr']) or {})
+    merged = _scope_block_base(block['attr'], block['scope'])
     merged.update(updates)
     try:
         block['model'](**merged)  # full pydantic re-validation
