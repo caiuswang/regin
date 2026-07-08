@@ -21,6 +21,7 @@ import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Select from '../ui/Select.vue'
 import WikiContentDiff from './WikiContentDiff.vue'
+import WordDiffInline from './WordDiffInline.vue'
 
 const props = defineProps({
   repoName: { type: String, required: true },
@@ -341,10 +342,8 @@ function deltaIsEmpty(d) {
                 <div v-for="(s, i) in delta.scalar_changes" :key="'sc-' + i" class="diffpanel__field">
                   <dt>{{ s.field }}</dt>
                   <dd>
-                    <span v-if="s.before" class="diffpanel__field-before">{{ s.before }}</span>
-                    <span v-else class="diffpanel__field-empty">—</span>
-                    <svg viewBox="0 0 20 20" fill="currentColor" class="w-3 h-3 text-slate-400" aria-hidden="true"><path fill-rule="evenodd" d="M3 10a.75.75 0 0 1 .75-.75h10.94L11.97 6.53a.75.75 0 1 1 1.06-1.06l4 4a.75.75 0 0 1 0 1.06l-4 4a.75.75 0 1 1-1.06-1.06l2.72-2.72H3.75A.75.75 0 0 1 3 10Z" clip-rule="evenodd"/></svg>
-                    <span class="diffpanel__field-after">{{ s.after }}</span>
+                    <span v-if="!s.before && !s.after" class="diffpanel__field-empty">—</span>
+                    <WordDiffInline v-else :before="s.before || ''" :after="s.after || ''" />
                   </dd>
                 </div>
               </dl>
@@ -741,23 +740,7 @@ function deltaIsEmpty(d) {
   flex-wrap: wrap;
   color: var(--color-slate-900);
 }
-.diffpanel__field-before {
-  text-decoration: line-through;
-  color: var(--color-slate-400);
-  background: var(--color-red-50);
-  padding: 0.0625rem 0.375rem;
-  border-radius: 0.25rem;
-}
 .diffpanel__field-empty { color: var(--color-slate-300); }
-.diffpanel__field-after {
-  background: var(--color-emerald-50);
-  color: var(--color-emerald-800);
-  padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
-  max-width: 60ch;
-  line-height: 1.45;
-  word-break: break-word;
-}
 .diffpanel__field dd { max-width: 100%; }
 
 /* ── Merge target empty / picker ────────────────────────────────── */

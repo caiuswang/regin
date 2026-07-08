@@ -8,6 +8,7 @@
 import { computed } from 'vue'
 import { diffTopicRefs, diffTopicMeta, hasMetaChange, formatRef, formatEdge } from '../../utils/topicDiff'
 import WikiContentDiff from './WikiContentDiff.vue'
+import WordDiffInline from './WordDiffInline.vue'
 import AddRemoveList from './AddRemoveList.vue'
 
 const props = defineProps({
@@ -69,9 +70,8 @@ const metaChanged = computed(() => hasMetaChange(meta.value))
           <div v-for="(s, i) in meta.scalars" :key="'sc-' + i" class="tcc__scalar">
             <dt>{{ s.field }}</dt>
             <dd>
-              <span class="tcc__before">{{ s.before || '—' }}</span>
-              <span class="tcc__arrow" aria-hidden="true">→</span>
-              <span class="tcc__after">{{ s.after || '—' }}</span>
+              <span v-if="!s.before && !s.after" class="tcc__empty-val">—</span>
+              <WordDiffInline v-else :before="s.before || ''" :after="s.after || ''" />
             </dd>
           </div>
         </dl>
@@ -140,19 +140,5 @@ const metaChanged = computed(() => hasMetaChange(meta.value))
 .tcc__scalar { display: grid; grid-template-columns: 6rem 1fr; gap: 0.5rem; align-items: baseline; font-size: 0.75rem; }
 .tcc__scalar dt { font-weight: 500; color: var(--color-slate-500); text-transform: capitalize; }
 .tcc__scalar dd { margin: 0; display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; }
-.tcc__before {
-  text-decoration: line-through;
-  color: var(--color-slate-400);
-  background: var(--color-red-50);
-  padding: 0.0625rem 0.375rem;
-  border-radius: 0.25rem;
-}
-.tcc__arrow { color: var(--color-slate-400); }
-.tcc__after {
-  background: var(--color-emerald-50);
-  color: var(--color-emerald-800);
-  padding: 0.0625rem 0.375rem;
-  border-radius: 0.25rem;
-  word-break: break-word;
-}
+.tcc__empty-val { color: var(--color-slate-300); }
 </style>

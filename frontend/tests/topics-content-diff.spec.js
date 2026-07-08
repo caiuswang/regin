@@ -182,6 +182,43 @@ test.describe('Word-level diff views', () => {
     await expect(page.locator('[data-testid="wiki-diff-identical"]')).toBeVisible()
     await expect(page.locator('[data-testid="wiki-diff-view-toggle"]')).toHaveCount(0)
   })
+
+  test('an intent scalar change highlights only the changed words', async ({ page }) => {
+    await page.route('**/topics/workspace/proposals**', (route) =>
+      route.fulfill({ json: workspaceWithSelectedTopic() }))
+    await page.route('**/topics/proposals/**/topics/**/diff', (route) =>
+      route.fulfill({
+        json: {
+          ok: true,
+          diff: {
+            strategy: 'create', proposed_topic_id: 'doc-a', is_applyable: true,
+            topic_deltas: [{
+              kind: 'create', topic_id: 'doc-a',
+              alias_adds: [], alias_removes: [], ref_adds: [], ref_removes: [],
+              edge_adds: [], edge_removes: [],
+              scalar_changes: [{ field: 'intent', before: 'map the SPA layer', after: 'map the SPA and API layer' }],
+            }],
+            graph_warnings: [], introduced_errors: [],
+            valid_strategies_by_topic: { 'doc-a': ['create'] },
+          },
+          dropped_items: { orphan_edges: [], dead_refs: [], duplicate_aliases: [] },
+          raw_introduced_errors: [],
+          wiki_before: '# Doc A\nbody\n', wiki_after: '# Doc A\nbody\n',
+        },
+      }))
+    await gotoTopics(page)
+    await page.goto(page.url() + '&proposal=mock-run')
+    await page.locator('[data-testid="apply-proposed-topic"]').click()
+
+    const wd = page.locator('.diffpanel__field [data-testid="word-diff-inline"]')
+    await expect(wd).toBeVisible()
+    // Same word-level behavior as the wiki diff: only the added words highlight…
+    await expect(wd.locator('.wdiff__seg--add')).toContainText('API')
+    await expect(wd.locator('.wdiff__seg--add')).not.toContainText('map')
+    await expect(wd.locator('.wdiff__seg--remove')).toHaveCount(0)
+    // …and the shared prefix stays plain text on the field.
+    await expect(wd).toContainText('map the SPA')
+  })
 })
 
 // Per-revision topic bodies: r3 (id 1) → r4 (id 2) changes the wiki AND adds
