@@ -15,21 +15,28 @@ const props = defineProps({
   lastResult: { type: Object, default: null },
 })
 
+// `surface` is the prompt-skeleton slug an LLM stage dispatches to — its agent
+// and prompt are managed in the Prompts view, so the pipeline links there
+// rather than duplicating the binding.
 const STAGES = [
   { n: 1, name: 'dedup / merge', kind: 'auto', sub: 'cosine · text fallback',
     counts: (r) => [['merged', r.merged]] },
   { n: 2, name: 'contradiction', kind: 'llm', sub: 'judges gray-zone pairs',
+    surface: 'memory-reflect-contradiction',
     counts: (r) => [['resolved', r.contradictions]] },
   { n: 3, name: 'promote', kind: 'llm', sub: 'model-decided fate',
+    surface: 'memory-reflect-promote',
     counts: (r) => [['promoted', r.promoted], ['held', r.held], ['dropped', r.dropped]],
     control: { type: 'select', key: 'promote_mode', options: ['heuristic', 'ambiguous', 'all'] },
     extra: { type: 'check', key: 'promote_allow_retire', label: 'may retire' } },
   { n: 4, name: 'forget · decay · flag-stale', kind: 'auto', sub: 'age + recall signals',
     counts: (r) => [['decayed', r.decayed], ['forgotten', r.forgotten], ['flagged', r.flagged_stale]] },
   { n: 5, name: 'synthesis', kind: 'llm', sub: '≥3-row clusters → one rule',
+    surface: 'memory-reflect-synthesis',
     counts: (r) => [['synthesized', r.synthesized], ['topics', r.topics]],
     control: { type: 'check', key: 'synthesis_enabled', label: 'enabled' } },
   { n: 6, name: 'digest', kind: 'llm', sub: 'per-scope standing briefing',
+    surface: 'memory-reflect-digest',
     counts: (r) => [['digests', r.digests]],
     control: { type: 'check', key: 'digest_enabled', label: 'enabled' } },
   { n: 7, name: 'embed · edges', kind: 'auto', sub: 'dense model · similarity links',
@@ -41,6 +48,8 @@ const STAGES = [
 // (single-key) body drops the unspecified fields. We re-send the whole block
 // on each change — the same contract the Settings view uses.
 const config = reactive({})
+// surface slug → bound agent id (null = the dispatch's own default).
+const agentBySurface = reactive({})
 const loading = ref(true)
 const error = ref('')
 
@@ -53,6 +62,15 @@ async function load() {
     error.value = 'Could not load pipeline settings.'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAgents() {
+  try {
+    const data = await api.get('/prompt-templates?kind=skeleton')
+    for (const t of data.templates || []) agentBySurface[t.slug] = t.agent
+  } catch {
+    /* non-fatal — the pipeline still renders without the agent labels */
   }
 }
 
@@ -71,9 +89,13 @@ const rows = computed(() =>
   STAGES.map((s) => ({
     ...s,
     outcome: props.lastResult ? s.counts(props.lastResult) : null,
+    boundAgent: s.surface ? agentBySurface[s.surface] || 'default' : null,
   })))
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadAgents()
+})
 </script>
 
 <template>
@@ -123,6 +145,14 @@ onMounted(load)
             />
           </div>
           <div class="text-[11px] text-fg-faint mt-0.5">{{ s.sub }}</div>
+          <div v-if="s.surface" class="flex items-center gap-1.5 mt-0.5 text-[11px]">
+            <span class="text-fg-faint">agent</span>
+            <span class="font-mono text-fg-subtle">{{ s.boundAgent }}</span>
+            <router-link
+              :to="{ path: '/prompt-templates', query: { surface: s.surface } }"
+              class="text-link hover:underline"
+            >configure →</router-link>
+          </div>
         </div>
         <div class="flex items-center gap-2 justify-end">
           <template v-if="s.outcome">

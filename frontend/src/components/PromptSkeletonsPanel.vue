@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../api'
 import Badge from './Badge.vue'
 import Card from './Card.vue'
@@ -9,6 +10,7 @@ import SurfaceAgentPicker from './SurfaceAgentPicker.vue'
 import { useConfirm } from '../composables/useConfirm'
 
 const { confirm } = useConfirm()
+const route = useRoute()
 
 const skeletons = ref([])
 const agents = ref([])
@@ -159,7 +161,20 @@ async function resetToDefault(skeleton) {
   }
 }
 
-onMounted(load)
+// Deep-link target: `/prompt-templates?surface=<slug>` opens that skeleton's
+// editor and scrolls it into view (the pipeline's `configure →` link).
+async function openFromRoute() {
+  const want = route.query.surface
+  if (!want || !skeletons.value.some((s) => s.slug === want)) return
+  editingSlug.value = want
+  await nextTick()
+  document.getElementById(`sk-${want}`)?.scrollIntoView({ block: 'center' })
+}
+
+onMounted(async () => {
+  await load()
+  await openFromRoute()
+})
 </script>
 
 <template>
@@ -195,6 +210,7 @@ onMounted(load)
     <div class="prompt-grid">
       <div
         v-for="s in sortedSkeletons"
+        :id="`sk-${s.slug}`"
         :key="s.slug"
         class="prompt-card"
         :class="{ 'prompt-card-editing': editingSlug === s.slug }"
