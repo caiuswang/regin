@@ -36,8 +36,10 @@ const STAGES = [
     counts: (r) => [['embedded', r.embedded], ['edges', r.edges]] },
 ]
 
-const CONFIG_KEYS = ['promote_mode', 'promote_allow_retire',
-                     'synthesis_enabled', 'digest_enabled']
+// Mirror EVERY exposed agent-memory field, not just the pipeline's four: the
+// settings PUT persists exactly the block payload it is given, so a partial
+// (single-key) body drops the unspecified fields. We re-send the whole block
+// on each change — the same contract the Settings view uses.
 const config = reactive({})
 const loading = ref(true)
 const error = ref('')
@@ -46,9 +48,7 @@ async function load() {
   loading.value = true
   try {
     const data = await api.get('/settings/agent-memory')
-    for (const f of data.fields || []) {
-      if (CONFIG_KEYS.includes(f.key)) config[f.key] = f.value
-    }
+    for (const f of data.fields || []) config[f.key] = f.value
   } catch {
     error.value = 'Could not load pipeline settings.'
   } finally {
@@ -60,7 +60,7 @@ async function save(key, value) {
   const prev = config[key]
   config[key] = value
   try {
-    await api.put('/settings/agent-memory', { [key]: value })
+    await api.put('/settings/agent-memory', { ...config })
   } catch {
     config[key] = prev
     error.value = `Could not save ${key}.`
