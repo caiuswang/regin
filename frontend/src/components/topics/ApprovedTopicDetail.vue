@@ -1,8 +1,9 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { useBusyAction } from '../../composables/useBusyAction'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
@@ -20,13 +21,7 @@ const route = useRoute()
 const router = useRouter()
 const { confirm } = useConfirm()
 
-const busyAction = ref('')
-function startBusy(action) { busyAction.value = action }
-function stopBusy() { busyAction.value = '' }
-function isBusy(action = '') {
-  if (!busyAction.value) return false
-  return action ? busyAction.value === action : true
-}
+const { startBusy, stopBusy, isBusy } = useBusyAction()
 
 const allTopics = computed(() => props.data?.table || [])
 const selectedTopic = computed(() => props.data?.selected_topic || null)

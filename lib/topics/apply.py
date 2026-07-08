@@ -253,16 +253,16 @@ def _provenance_rows_for_delta(
             f"alias {alias!r} removed from {delta.topic_id} via {kind}",
             aliases=(alias,),
         ))
-    for path, role in delta.ref_adds:
+    for path, role, tier in delta.ref_adds:
         rows.append(_row(
             f"ref_added_by_{kind}",
-            f"ref {path!r} (role={role}) added to {delta.topic_id} via {kind}",
+            f"ref {path!r} (role={role}, tier={tier}) added to {delta.topic_id} via {kind}",
             paths=(path,),
         ))
-    for path, role in delta.ref_removes:
+    for path, role, tier in delta.ref_removes:
         rows.append(_row(
             f"ref_removed_by_{kind}",
-            f"ref {path!r} (role={role}) removed from {delta.topic_id} via {kind}",
+            f"ref {path!r} (role={role}, tier={tier}) removed from {delta.topic_id} via {kind}",
             paths=(path,),
         ))
     for target, etype in delta.edge_adds:

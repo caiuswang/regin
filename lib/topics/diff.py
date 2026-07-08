@@ -63,8 +63,8 @@ class TopicDelta:
     after: Optional[dict[str, Any]] = None
     alias_adds: tuple[str, ...] = ()
     alias_removes: tuple[str, ...] = ()
-    ref_adds: tuple[tuple[str, str], ...] = ()  # (path, role)
-    ref_removes: tuple[tuple[str, str], ...] = ()
+    ref_adds: tuple[tuple[str, str, str], ...] = ()  # (path, role, tier)
+    ref_removes: tuple[tuple[str, str, str], ...] = ()
     edge_adds: tuple[tuple[str, str], ...] = ()  # (target, type)
     edge_removes: tuple[tuple[str, str], ...] = ()
     scalar_changes: tuple[tuple[str, Any, Any], ...] = ()  # (field, before, after)
@@ -99,6 +99,14 @@ class GraphDiff:
 
 def _ref_key(ref: dict[str, Any]) -> tuple[str, str]:
     return (ref.get("path") or "", ref.get("role") or "")
+
+
+def _ref_delta_key(ref: dict[str, Any]) -> tuple[str, str, str]:
+    """Ref identity for change detection — includes tier, so a ref whose only
+    change is its tier (e.g. reference→primary) surfaces as a remove+add in the
+    delta. Merge dedup deliberately still keys on `_ref_key` (path, role) so a
+    tier difference never duplicates a file into the merged topic."""
+    return (ref.get("path") or "", ref.get("role") or "", ref.get("tier") or "primary")
 
 
 def _edge_key(edge: dict[str, Any]) -> tuple[str, str]:
@@ -136,6 +144,29 @@ def _scalar_fields() -> tuple[str, ...]:
     return ("label", "intent", "status")
 
 
+def _keyed_add_remove(before_items, after_items, keyfn):
+    """Add/remove key-sets between two dict-item lists, as sorted key tuples."""
+    before = {keyfn(i): i for i in before_items if isinstance(i, dict)}
+    after = {keyfn(i): i for i in after_items if isinstance(i, dict)}
+    adds = tuple(sorted(after.keys() - before.keys()))
+    removes = tuple(sorted(before.keys() - after.keys()))
+    return adds, removes
+
+
+def _alias_add_remove(before_aliases, after_aliases):
+    """Alias add/remove: diff on normalized key, emit the original alias text."""
+    before = _alias_keys(before_aliases)
+    after = _alias_keys(after_aliases)
+    adds = tuple(sorted(after[k] for k in after.keys() - before.keys()))
+    removes = tuple(sorted(before[k] for k in before.keys() - after.keys()))
+    return adds, removes
+
+
+def _scalar_changes(a: dict[str, Any], b: dict[str, Any]) -> tuple[tuple[str, Any, Any], ...]:
+    changes = [(f, a.get(f), b.get(f)) for f in _scalar_fields() if a.get(f) != b.get(f)]
+    return tuple(changes)
+
+
 def compute_topic_delta(
     *,
     topic_id_after: str,
@@ -148,30 +179,9 @@ def compute_topic_delta(
     a = before or {}
     b = after or {}
 
-    before_aliases = _alias_keys(a.get("aliases", []))
-    after_aliases = _alias_keys(b.get("aliases", []))
-    alias_adds = tuple(sorted(
-        after_aliases[k] for k in after_aliases.keys() - before_aliases.keys()
-    ))
-    alias_removes = tuple(sorted(
-        before_aliases[k] for k in before_aliases.keys() - after_aliases.keys()
-    ))
-
-    before_refs = {_ref_key(r): r for r in a.get("refs", []) if isinstance(r, dict)}
-    after_refs = {_ref_key(r): r for r in b.get("refs", []) if isinstance(r, dict)}
-    ref_adds = tuple(sorted(after_refs.keys() - before_refs.keys()))
-    ref_removes = tuple(sorted(before_refs.keys() - after_refs.keys()))
-
-    before_edges = {_edge_key(e): e for e in a.get("edges", []) if isinstance(e, dict)}
-    after_edges = {_edge_key(e): e for e in b.get("edges", []) if isinstance(e, dict)}
-    edge_adds = tuple(sorted(after_edges.keys() - before_edges.keys()))
-    edge_removes = tuple(sorted(before_edges.keys() - after_edges.keys()))
-
-    scalar_changes: list[tuple[str, Any, Any]] = []
-    for fname in _scalar_fields():
-        ba, bb = a.get(fname), b.get(fname)
-        if ba != bb:
-            scalar_changes.append((fname, ba, bb))
+    alias_adds, alias_removes = _alias_add_remove(a.get("aliases", []), b.get("aliases", []))
+    ref_adds, ref_removes = _keyed_add_remove(a.get("refs", []), b.get("refs", []), _ref_delta_key)
+    edge_adds, edge_removes = _keyed_add_remove(a.get("edges", []), b.get("edges", []), _edge_key)
 
     return TopicDelta(
         topic_id=topic_id_after,
@@ -184,7 +194,7 @@ def compute_topic_delta(
         ref_removes=ref_removes,
         edge_adds=edge_adds,
         edge_removes=edge_removes,
-        scalar_changes=tuple(scalar_changes),
+        scalar_changes=_scalar_changes(a, b),
     )
 
 
@@ -485,8 +495,8 @@ def serialize_topic_delta(d: TopicDelta) -> dict[str, Any]:
         "after": d.after,
         "alias_adds": list(d.alias_adds),
         "alias_removes": list(d.alias_removes),
-        "ref_adds": [{"path": p, "role": r} for p, r in d.ref_adds],
-        "ref_removes": [{"path": p, "role": r} for p, r in d.ref_removes],
+        "ref_adds": [{"path": p, "role": r, "tier": t} for p, r, t in d.ref_adds],
+        "ref_removes": [{"path": p, "role": r, "tier": t} for p, r, t in d.ref_removes],
         "edge_adds": [{"target": t, "type": ty} for t, ty in d.edge_adds],
         "edge_removes": [{"target": t, "type": ty} for t, ty in d.edge_removes],
         "scalar_changes": [

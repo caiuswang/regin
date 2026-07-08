@@ -282,9 +282,10 @@ def test_apply_diff_merge_unions_aliases_and_refs(fake_git_repo, fresh_repo):
     assert "i-alias" in delta.alias_adds
     # Existing alias is preserved, not duplicated.
     assert "t-alias" not in delta.alias_adds
-    # New ref added, existing one not duplicated.
-    assert ("docs/extra.md", "docs") in delta.ref_adds
-    assert ("README.md", "overview") not in delta.ref_adds
+    # New ref added, existing one not duplicated. Ref-delta keys carry tier
+    # (defaulting to "primary") so a tier-only change surfaces in the diff.
+    assert ("docs/extra.md", "docs", "primary") in delta.ref_adds
+    assert ("README.md", "overview", "primary") not in delta.ref_adds
 
     apply_diff(fresh_repo.id, diff, reason="merge")
     after = load_graph_merged(fake_git_repo)
@@ -448,3 +449,23 @@ def test_resolve_diff_preserves_create_collision_error():
         e.code == "topic.id_collides_with_approved" for e in resolved.introduced_errors
     ), "strategy precondition error must survive resolution"
     assert not resolved.is_applyable
+
+
+def test_compute_topic_delta_surfaces_tier_only_ref_change():
+    """A ref whose only change is its tier must show as a remove + add, so the
+    apply-time DiffPanel is not silent about a tier reclassification."""
+    before = {"refs": [{"path": "lib/x.py", "role": "impl", "tier": "primary"}]}
+    after = {"refs": [{"path": "lib/x.py", "role": "impl", "tier": "reference"}]}
+    delta = compute_topic_delta(topic_id_after="t", kind="replace", before=before, after=after)
+    assert ("lib/x.py", "impl", "reference") in delta.ref_adds
+    assert ("lib/x.py", "impl", "primary") in delta.ref_removes
+
+    # A missing tier defaults to "primary" — no false positive against an
+    # explicit primary.
+    delta2 = compute_topic_delta(
+        topic_id_after="t", kind="replace",
+        before={"refs": [{"path": "lib/x.py", "role": "impl"}]},
+        after={"refs": [{"path": "lib/x.py", "role": "impl", "tier": "primary"}]},
+    )
+    assert delta2.ref_adds == ()
+    assert delta2.ref_removes == ()

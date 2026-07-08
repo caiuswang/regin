@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import { useProposalApplyAll } from '../../composables/useProposalApplyAll'
+import { useBusyAction } from '../../composables/useBusyAction'
 import { topicReviewStatusColor } from '../../composables/useBadgeColor'
 import { isPendingTopic } from '../../utils/proposalApply'
 import Badge from '../Badge.vue'
@@ -31,18 +32,12 @@ const route = useRoute()
 const router = useRouter()
 const { confirm } = useConfirm()
 
-const busyAction = ref('')
 const editingProposalTopicId = ref(null)
 const proposalDraft = ref({})
 const applyingTopicId = ref(null)
 const commentsDrawerOpen = ref(false)
 
-function startBusy(action) { busyAction.value = action }
-function stopBusy() { busyAction.value = '' }
-function isBusy(action = '') {
-  if (!busyAction.value) return false
-  return action ? busyAction.value === action : true
-}
+const { busyAction, startBusy, stopBusy, isBusy } = useBusyAction()
 
 const runs = computed(() => props.data?.runs || [])
 const selectedRun = computed(() => props.data?.selected_run || null)
@@ -600,7 +595,7 @@ watch(selectedProposalId, () => {
                 v-for="edge in selectedDraftTopic.edges"
                 :key="`${edge.type || 'related'}:${edge.target || edge.to}`"
                 color="gray"
-                :label="`${edge.type || 'related'}: ${edge.target || edge.to}`"
+                :label="`${edge.type || 'related'}: ${edge.label || edge.target || edge.to}`"
               />
             </div>
           </div>

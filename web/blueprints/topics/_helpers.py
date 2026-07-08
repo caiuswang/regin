@@ -352,6 +352,41 @@ def _build_draft_topic_rows(
     return draft_topic_rows, selected_draft_topic_id, selected_draft_topic
 
 
+def _topic_label_map(proposal_topics: list[dict], repo_path: str) -> dict[str, str]:
+    """id → label for edge resolution: approved-graph topics first, then the
+    proposal's own siblings (in-flight labels win over the approved snapshot)."""
+    from lib.topics.graph_io import load_authoritative_graph
+    labels: dict[str, str] = {}
+    try:
+        graph = load_authoritative_graph(repo_path)
+    except Exception:
+        graph = {}
+    for tid, topic in (graph.get("topics") or {}).items():
+        labels[tid] = topic.get("label") or tid
+    for topic in proposal_topics:
+        tid = topic.get("id")
+        if tid:
+            labels[tid] = topic.get("label") or tid
+    return labels
+
+
+def _with_labeled_edges(topic: dict, proposal_topics: list[dict], repo_path: str) -> dict:
+    """Copy of `topic` whose edges each carry a resolved `label`, so the proposal
+    detail can name related topics (matching the approved wiki page) instead of
+    showing a bare target id. Returned unchanged when there are no edges."""
+    edges = [edge for edge in (topic.get("edges") or []) if isinstance(edge, dict)]
+    if not edges:
+        return topic
+    labels = _topic_label_map(proposal_topics, repo_path)
+    return {
+        **topic,
+        "edges": [
+            {**edge, "label": labels.get(edge.get("target"), edge.get("target"))}
+            for edge in edges
+        ],
+    }
+
+
 def _feedback_summary(
     feedback_threads: list[dict], selected_draft_topic_id: str | None
 ) -> dict:
@@ -478,6 +513,8 @@ def _proposal_workspace_payload(
         draft_topic_rows, selected_draft_topic_id, selected_draft_topic = _build_draft_topic_rows(
             topics, feedback_threads, selected_draft_topic_id
         )
+        if selected_draft_topic:
+            selected_draft_topic = _with_labeled_edges(selected_draft_topic, topics, repo_path)
 
     from lib.prompt_templates import list_templates
 

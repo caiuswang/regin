@@ -372,11 +372,13 @@ function deltaIsEmpty(d) {
                     <span class="diffpanel__sign diffpanel__sign--add">+</span>
                     <code class="diffpanel__path">{{ r.path }}</code>
                     <span class="diffpanel__role">{{ r.role }}</span>
+                    <span v-if="r.tier && r.tier !== 'primary'" class="diffpanel__role">{{ r.tier }}</span>
                   </li>
                   <li v-for="(r, i) in delta.ref_removes" :key="'rfr-' + i" class="diffpanel__remove">
                     <span class="diffpanel__sign diffpanel__sign--remove">−</span>
                     <code class="diffpanel__path">{{ r.path }}</code>
                     <span class="diffpanel__role">{{ r.role }}</span>
+                    <span v-if="r.tier && r.tier !== 'primary'" class="diffpanel__role">{{ r.tier }}</span>
                   </li>
                 </ul>
               </div>
