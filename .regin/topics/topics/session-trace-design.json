@@ -4,8 +4,6 @@
     "OpenTelemetry session model",
     "trace ingest pipeline",
     "session aggregates rollup",
-    "turn usage tokens",
-    "session_trace_map",
     "materialize_session",
     "SessionTraceView data flow"
   ],
@@ -17,13 +15,14 @@
     "lib/trace/**",
     "lib/orm/models/trace.py",
     "hook_manager/handlers/*trace*.py",
+    "hook_manager/handlers/turn_trace/**",
     "hook_manager/handlers/session_lifecycle.py",
-    "hook_manager/handlers/prompt_trace.py",
     "web/blueprints/trace/**",
     "frontend/src/views/SessionTraceView.vue",
-    "frontend/src/views/SessionsView.vue"
+    "frontend/src/views/SessionsView.vue",
+    "frontend/src/components/SessionConversationView.vue"
   ],
-  "intent": "Explain how Claude Code sessions are captured as OpenTelemetry-style spans by hook handlers, persisted through the trace_service ingest layer into session_spans plus a denormalized sessions row, reconciled at read time by the serve-time merge, and rendered by the Vue SessionsView list and the composable-driven SessionTraceView per-trace dashboard via the /api/sessions/* read endpoints.",
+  "intent": "Explain how Claude Code sessions are captured as OpenTelemetry-style spans by hook handlers, persisted through the trace_service ingest layer into session_spans plus a denormalized sessions row, reconciled at read time by the serve-time merge, and rendered by the Vue SessionsView list and the two SessionTraceView render paths (timeline tree + append-only conversation cards) via the /api/sessions/* read endpoints.",
   "label": "Session trace design (OTel-style spans, ingest pipeline, aggregates, dashboard read paths)",
   "parent_id": "session-trace",
   "refs": [
@@ -36,19 +35,7 @@
       "role": "api"
     },
     {
-      "path": "web/blueprints/trace/mcp_calls.py",
-      "role": "api"
-    },
-    {
-      "path": "web/blueprints/trace/prompt_images.py",
-      "role": "api"
-    },
-    {
       "path": "web/blueprints/trace/sessions.py",
-      "role": "api"
-    },
-    {
-      "path": "web/blueprints/trace/skill_reads.py",
       "role": "api"
     },
     {
@@ -60,39 +47,41 @@
       "role": "api"
     },
     {
+      "path": "web/blueprints/trace/mcp_calls.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
+      "path": "web/blueprints/trace/skill_reads.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
+      "path": "web/blueprints/trace/prompt_images.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
+      "path": "web/blueprints/trace/ingest_errors.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
       "path": "lib/orm/models/trace.py",
       "role": "schema"
     },
     {
-      "path": "frontend/src/views/SessionTraceView.vue",
+      "path": "lib/trace/trace_service/ingest.py",
       "role": "implementation"
     },
     {
-      "path": "frontend/src/views/SessionsView.vue",
+      "path": "lib/trace/trace_service/queries.py",
       "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/post_tool_trace.py",
+      "path": "lib/trace/merge.py",
       "role": "implementation",
       "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/prompt_trace.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/session_lifecycle.py",
-      "role": "implementation"
-    },
-    {
-      "path": "hook_manager/handlers/trace_payload.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/payload_validation.py",
-      "role": "implementation"
     },
     {
       "path": "lib/trace/projection.py",
@@ -104,16 +93,13 @@
       "role": "implementation"
     },
     {
-      "path": "lib/trace/trace_context.py",
-      "role": "implementation"
+      "path": "lib/trace/pending_spans.py",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/trace_service/ingest.py",
-      "role": "implementation"
-    },
-    {
-      "path": "lib/trace/trace_service/queries.py",
-      "role": "implementation"
+      "path": "lib/trace/payload_validation.py",
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/transcript_parsers.py",
@@ -126,6 +112,34 @@
       "tier": "reference"
     },
     {
+      "path": "lib/trace/trace_context.py",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/session_lifecycle.py",
+      "role": "implementation"
+    },
+    {
+      "path": "hook_manager/handlers/prompt_trace.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/pre_tool_trace.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/post_tool_trace.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/trace_payload.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
       "path": "hook_manager/handlers/plan_trace.py",
       "tier": "reference"
     },
@@ -134,19 +148,22 @@
       "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/cache.py",
-      "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
-      "tier": "reference"
-    },
-    {
       "path": "hook_manager/handlers/turn_trace/entry.py",
+      "role": "implementation",
       "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/turn_trace/span_posters.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/cache.py",
       "tier": "reference"
     },
     {
@@ -154,65 +171,75 @@
       "tier": "reference"
     },
     {
-      "path": "lib/trace/__init__.py"
+      "path": "frontend/src/views/SessionTraceView.vue",
+      "role": "implementation"
     },
     {
-      "path": "lib/trace/claude_version.py"
+      "path": "frontend/src/views/SessionsView.vue",
+      "role": "implementation"
     },
     {
-      "path": "lib/trace/is_test.py"
+      "path": "frontend/src/components/SessionConversationView.vue",
+      "role": "implementation"
     },
     {
-      "path": "lib/trace/payload_drift_store.py"
-    },
-    {
-      "path": "lib/trace/payload_schemas/README.md",
+      "path": "frontend/src/composables/useAgentLaunchMerge.js",
       "tier": "reference"
     },
     {
-      "path": "lib/trace/plan_context.py"
+      "path": "frontend/src/components/conversation/ConversationSpanCard.vue",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/plans.py"
+      "path": "frontend/src/components/conversation/cards/SubagentCard.vue",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/transcript_models.py"
+      "path": "frontend/src/components/conversation/cards/AgentResultCard.vue",
+      "tier": "reference"
     },
     {
-      "path": "web/blueprints/trace/ingest_errors.py"
+      "path": "frontend/src/composables/useTraceData.js",
+      "role": "implementation"
     },
     {
-      "path": "frontend/src/composables/useTraceData.js"
-    },
-    {
-      "path": "frontend/src/composables/useSpanContentCache.js"
-    },
-    {
-      "path": "frontend/src/composables/useViewMode.js"
-    },
-    {
-      "path": "frontend/src/composables/useTurns.js"
-    },
-    {
-      "path": "frontend/src/composables/useWorkflowMeta.js"
-    },
-    {
-      "path": "frontend/src/composables/useToolRollup.js"
-    },
-    {
-      "path": "frontend/src/composables/useTraceScroll.js"
-    },
-    {
-      "path": "frontend/src/composables/useTraceTimeline.js"
-    },
-    {
-      "path": "frontend/src/composables/useCompactWatch.js"
+      "path": "frontend/src/composables/useSpanContentCache.js",
+      "role": "implementation"
     },
     {
       "path": "frontend/src/utils/traceFormatters.js"
     },
     {
-      "path": "frontend/src/utils/sessionActivity.js"
+      "path": "frontend/src/utils/sessionActivity.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useViewMode.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useTurns.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useWorkflowMeta.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useToolRollup.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useTraceScroll.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useTraceTimeline.js",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/composables/useCompactWatch.js",
+      "tier": "reference"
     }
   ],
   "status": "active"

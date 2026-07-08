@@ -27,6 +27,11 @@
   "parent_id": "topic-graph",
   "refs": [
     {
+      "path": "cli/commands/topics.py",
+      "role": "entrypoint",
+      "tier": "reference"
+    },
+    {
       "path": "web/blueprints/topics/apply.py",
       "role": "api"
     },
@@ -39,19 +44,16 @@
       "role": "api"
     },
     {
+      "path": "lib/memory/adapters.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
       "path": "lib/topics/proposal_drafting.py",
       "role": "implementation"
     },
     {
       "path": "lib/topics/proposal_external.py",
-      "role": "implementation"
-    },
-    {
-      "path": "lib/topics/proposal_providers.py",
-      "role": "implementation"
-    },
-    {
-      "path": "lib/topics/proposal_review.py",
       "role": "implementation"
     },
     {
@@ -72,6 +74,14 @@
     },
     {
       "path": "lib/topics/proposal_orm/serializers.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposal_providers.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/topics/proposal_review.py",
       "role": "implementation"
     },
     {
@@ -99,21 +109,16 @@
       "role": "implementation"
     },
     {
-      "path": "lib/topics/proposals/run_control.py",
+      "path": "lib/topics/proposals/reap.py",
       "role": "implementation"
     },
     {
-      "path": "lib/topics/proposals/reap.py",
+      "path": "lib/topics/proposals/run_control.py",
       "role": "implementation"
     },
     {
       "path": "lib/topics/proposals/topic_actions.py",
       "role": "implementation"
-    },
-    {
-      "path": "lib/memory/adapters.py",
-      "role": "implementation",
-      "tier": "reference"
     },
     {
       "path": "lib/prompts/surfaces/review.py",
@@ -123,9 +128,7 @@
       "path": "lib/topics/proposal_expiry.py"
     },
     {
-      "path": "cli/commands/topics.py",
-      "role": "entrypoint",
-      "tier": "reference"
+      "path": "lib/topics/proposals/apply_service.py"
     }
   ],
   "status": "active"

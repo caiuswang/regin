@@ -1,226 +1,91 @@
 {
   "aliases": [
     "new span builder",
+    "make a tool show up as a span",
     "payload schema for a tool",
     "trace a new system event",
     "kimi transcript to spans",
-    "injected block span"
+    "pending in-flight tool span"
   ],
+  "blurb": "Making X show up as a span: add a tool builder + payload schema, a new harness.* system subtype, or a provider transcript normalization",
   "commands": [],
   "edges": [],
   "exclude_globs": [],
   "include_globs": [
-    "lib/trace/transcript_parsers.py",
     "hook_manager/handlers/*trace*.py",
+    "hook_manager/handlers/turn_trace/**",
+    "lib/trace/transcript_parsers.py",
+    "lib/trace/payload_validation.py",
+    "lib/trace/payload_drift_store.py",
     "lib/trace/payload_schemas/**"
   ],
-  "intent": "Adding or reshaping a span TYPE: a new _TOOL_BUILDERS entry, its payload schema, the attr-whitelist for an injected block, wiring a new traced system-event subtype across the capture layers, or normalizing a non-Claude provider's transcript (Kimi) into spans. Drill in when the question is 'how do I make X show up as a span'.",
+  "intent": "The WRITE side of the trace: turning a live session's hook payloads and transcript entries INTO spans. Drill in to add or reshape a span TYPE \u2014 a new _TOOL_BUILDERS entry and its payload schema, the attr whitelist for an injected/system block, a new harness.* system-event subtype, or normalizing a non-Claude provider's transcript into spans. The question is 'how do I make X show up as a span'.",
   "label": "Trace span capture (builders, payload schemas, new system subtypes, provider quirks)",
   "parent_id": "session-trace",
   "refs": [
     {
-      "path": "hook_manager/handlers/plan_trace.py"
+      "path": "hook_manager/handlers/post_tool_trace.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/post_tool_trace.py"
+      "path": "hook_manager/handlers/pre_tool_trace.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/pre_tool_trace.py"
+      "path": "hook_manager/handlers/prompt_trace.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/prompt_trace.py"
+      "path": "hook_manager/handlers/plan_trace.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/trace_payload.py"
+      "path": "hook_manager/handlers/trace_payload.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/__init__.py"
+      "path": "hook_manager/handlers/turn_trace/span_posters.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/cache.py"
+      "path": "hook_manager/handlers/turn_trace/entry.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/deny_detection.py"
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/entry.py"
+      "path": "lib/trace/transcript_parsers.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/span_posters.py"
+      "path": "lib/trace/payload_validation.py",
+      "role": "implementation"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/timestamps.py"
+      "path": "lib/trace/payload_drift_store.py",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/payload_schemas/README.md"
+      "path": "lib/trace/payload_schemas/README.md",
+      "role": "docs"
     },
     {
-      "path": "lib/trace/payload_schemas/claude/Agent.schema.json"
+      "path": "lib/trace/payload_schemas/claude/Bash.schema.json",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/payload_schemas/claude/AskUserQuestion.schema.json"
+      "path": "lib/trace/payload_schemas/claude/Agent.schema.json",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/payload_schemas/claude/Bash.schema.json"
+      "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json",
+      "tier": "reference"
     },
     {
-      "path": "lib/trace/payload_schemas/claude/CronCreate.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/CronDelete.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/CronList.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Edit.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/ExitPlanMode.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Glob.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Grep.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/MultiEdit.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Read.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Skill.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/TaskCreate.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/TaskList.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/TaskOutput.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/TaskStop.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/TaskUpdate.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/ToolSearch.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/WebFetch.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/WebSearch.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Workflow.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Write.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/ConfigChange.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/CwdChanged.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/InstructionsLoaded.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/Notification.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/PermissionDenied.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/PermissionRequest.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/PostToolUseFailure.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/PreToolUse.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/SessionEnd.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/SessionStart.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/Stop.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/StopFailure.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStart.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/SubagentStop.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/TaskCompleted.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/TaskCreated.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptExpansion.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_hooks/UserPromptSubmit.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/Agent.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/Bash.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/Edit.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/FetchURL.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/Read.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/TodoList.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/Write.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/_hooks/PostCompact.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/_hooks/PostToolUseFailure.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/_hooks/PreCompact.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStart.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/_hooks/SubagentStop.schema.json"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/_hooks/UserPromptSubmit.schema.json"
-    },
-    {
-      "path": "lib/trace/transcript_parsers.py"
+      "path": "lib/trace/payload_schemas/kimi/Bash.schema.json",
+      "tier": "reference"
     }
   ],
   "status": "active"

@@ -4,14 +4,11 @@
     "retire or forget a memory",
     "recall probe in the dashboard",
     "run reflect from the UI",
-    "browse the memory taxonomy tree",
-    "file a memory under a topic node"
+    "browse the memory taxonomy tree"
   ],
-  "blurb": "Curate the memory store by hand: approve/retire/restore/forget memories, run reflect, check store health, file memories under topics, walk the taxonomy tree, stamp topic-route exemplars, decide topic suppression, share a memory tree over git, and probe recall.",
+  "blurb": "The human controls: approve/retire/forget, run reflect, browse the taxonomy, curate exemplars \u2014 via UI, API, and CLI.",
   "commands": [
-    ".venv/bin/python cli/regin.py memory list",
-    ".venv/bin/python cli/regin.py memory stats",
-    ".venv/bin/python cli/regin.py serve"
+    ".venv/bin/python -m pytest tests/memory/test_api.py"
   ],
   "edges": [
     {
@@ -27,19 +24,7 @@
       "type": "related"
     },
     {
-      "target": "memory-recall-pipeline",
-      "type": "related"
-    },
-    {
       "target": "memory-exemplar-rescore",
-      "type": "related"
-    },
-    {
-      "target": "memory-topic-route-feedback",
-      "type": "related"
-    },
-    {
-      "target": "webui",
       "type": "related"
     }
   ],
@@ -50,7 +35,7 @@
     "frontend/src/components/memory/**",
     "cli/commands/memory.py"
   ],
-  "intent": "Point an agent at the human-facing controls for curating the cross-session memory store \u2014 the curation that is the whole point of memory being mutable. Covers the `/api/memory/*` Flask blueprint (`web/blueprints/memory.py`), the four-tab `MemoryView.vue` dashboard with its `frontend/src/components/memory/*` panels (including the `MemoryDoctor` health panel), and the `regin memory` Typer CLI (`cli/commands/memory.py`). These are the three coordinated entry points that wrap the `lib.memory` facade for reviewing distill proposals, fixing a memory's veracity, filing memories under topic nodes, walking the topic taxonomy, hand-curating signed topic-route exemplars, deciding which topic banners get withheld, sharing a memory tree over git, and probing what a query would surface.",
+  "intent": "Point an agent at the human-facing controls for curating the store \u2014 the curation that is the entire point of memory being mutable. Covers the `/api/memory/*` blueprint (`web/blueprints/memory.py`: list, get, related, graph, bulk, recall probe, run-reflect, wiki-recalls, topics, taxonomy, approve/retire/restore, PATCH update, DELETE forget, the exemplar add/remove/list routes, topic-feedback decision, route-preview, link-orphans agentic classify, and tree export/import), the six-tab `MemoryView.vue` dashboard and its `frontend/src/components/memory/*` panels (Memories list/detail, Topics + feedback, Tree taxonomy, Wikis, Recall probe, and the Doctor census/reflect console), and the `regin memory` CLI mirror (`cli/commands/memory.py`) \u2014 the three entry points for reviewing distill proposals, fixing veracity, running reflect, filing the unfiled, browsing the taxonomy, and probing what a query would surface.",
   "label": "Memory curation surfaces (Memory view, /api/memory/* blueprint, regin memory CLI)",
   "parent_id": "agent-memory",
   "refs": [
@@ -65,32 +50,6 @@
     {
       "path": "cli/commands/memory.py",
       "role": "entrypoint"
-    },
-    {
-      "path": "frontend/src/components/memory/MemoryDetail.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "frontend/src/components/memory/MemoryDoctor.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "frontend/src/components/memory/MemoryTaxonomy.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "frontend/src/components/memory/TaxonomyDetail.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
-      "role": "implementation",
-      "tier": "reference"
     }
   ],
   "status": "active"

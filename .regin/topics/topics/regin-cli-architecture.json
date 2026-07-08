@@ -30,20 +30,12 @@
   "parent_id": "ops-cli",
   "refs": [
     {
-      "path": "cli/regin.py",
-      "role": "entrypoint"
-    },
-    {
       "path": "cli/app.py",
       "role": "architecture"
     },
     {
-      "path": "cli/deps.py",
-      "role": "implementation"
-    },
-    {
-      "path": "cli/output.py",
-      "role": "implementation"
+      "path": "cli/regin.py",
+      "role": "entrypoint"
     },
     {
       "path": "cli/commands/db.py",
@@ -54,12 +46,29 @@
       "role": "implementation"
     },
     {
-      "path": "lib/doctor.py",
+      "path": "cli/deps.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/output.py",
       "role": "implementation"
     },
     {
       "path": "lib/db_rebuild.py",
       "role": "implementation"
+    },
+    {
+      "path": "lib/doctor.py",
+      "role": "implementation"
+    },
+    {
+      "path": "cli/commands/memory.py"
+    },
+    {
+      "path": "cli/commands/topics.py"
+    },
+    {
+      "path": "cli/commands/trace.py"
     }
   ],
   "status": "active"

@@ -47,8 +47,7 @@
     },
     {
       "path": "lib/memory/mcp_server.py",
-      "role": "entrypoint",
-      "tier": "reference"
+      "role": "entrypoint"
     },
     {
       "path": "web/blueprints/memory.py",

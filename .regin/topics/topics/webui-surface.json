@@ -16,56 +16,60 @@
     "frontend/src/App.vue",
     "frontend/src/components/AppLayout.vue"
   ],
-  "intent": "Give a future agent a one-stop index of every page in the regin dashboard: which Vue view renders each route, how the routes are grouped in the sidebar, which feature flags hide a group, and how the SPA is built and served by Flask. It is a navigational map that hands off to the deep feature topics (memory, trace, rules, topics) rather than re-explaining them.",
+  "intent": "Give a future agent a one-stop index of every page in the regin dashboard: which Vue view renders each route, how the routes are grouped in the sidebar, which feature flags hide a group, and how the SPA is built and served by Flask. It is a navigational map that hands off to the deep feature topics (memory, trace, rules, topics, live card) rather than re-explaining them.",
   "label": "WebUI surface map (Vue 3 SPA pages, router routes, sidebar nav groups & the Flask shell that serves them)",
   "parent_id": "webui",
   "refs": [
     {
-      "path": "frontend/src/router.js",
-      "role": "entrypoint"
-    },
-    {
       "path": "frontend/src/components/AppLayout.vue",
       "role": "architecture"
-    },
-    {
-      "path": "web/app.py",
-      "role": "api"
     },
     {
       "path": "frontend/src/App.vue",
       "role": "entrypoint"
     },
     {
-      "path": "frontend/src/views/DashboardView.vue",
-      "role": "implementation"
+      "path": "frontend/src/router.js",
+      "role": "entrypoint"
     },
     {
-      "path": "frontend/src/views/SessionsView.vue",
-      "role": "implementation",
+      "path": "web/app.py",
+      "role": "api"
+    },
+    {
+      "path": "frontend/src/views/DesignSystemView.vue",
+      "role": "docs",
       "tier": "reference"
     },
     {
-      "path": "frontend/src/views/SessionTraceView.vue",
-      "role": "implementation",
+      "path": "frontend/src/views/DashboardView.vue",
       "tier": "reference"
     },
     {
       "path": "frontend/src/views/LiveSessionView.vue",
-      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/LoginView.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/MemoryView.vue"
+    },
+    {
+      "path": "frontend/src/views/RevisionCompareView.vue"
+    },
+    {
+      "path": "frontend/src/views/SessionTraceView.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/SessionsView.vue",
       "tier": "reference"
     },
     {
       "path": "frontend/src/views/SettingsView.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "frontend/src/views/LoginView.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "frontend/src/views/DesignSystemView.vue",
-      "role": "docs"
+      "tier": "reference"
     }
   ],
   "status": "active"

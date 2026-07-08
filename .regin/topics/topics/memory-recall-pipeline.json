@@ -38,14 +38,13 @@
     "lib/memory/expand.py",
     "lib/memory/evaluate.py"
   ],
-  "intent": "Explain the read-side ranking stack a `recall()` request flows through in `store.py`, so an agent debugging or tuning recall knows which knob moves which result. `recall` embeds the query once, fuses `_lexical_ids` (FTS5/BM25) and `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) via `_rrf`, narrows to `_eligible_rows`, applies the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), reranks the RRF head with the cross-encoder (`_order_candidates`, sigmoid confidence, `rerank_cap`), multiplies by the bounded `_quality_factor`, softly lifts topic-linked rows (`_apply_topic_boost`), applies optional MMR diversity (`_mmr_select`) and 1-hop edge expansion (`_expand_via_edges`), and reinforces on deliberate recall (`_bump_recall`). `expand.py` is the LLM query rewrite; `evaluate.py` the FTS-only regression harness.",
+  "intent": "Explain the read-side ranking stack a `recall()` request flows through in `store.py`, so an agent debugging or tuning recall knows which knob moves which result. `recall` embeds the query once, fuses `_lexical_ids` (FTS5/BM25) and `_dense_ids` (cosine over `memory_embeddings`, with `_lazy_backfill`) via `_rrf`, narrows to `_eligible_rows`, applies the `_gate_lexical_overlap` precision gate (idf-filtered informative tokens), reranks the RRF head with the cross-encoder (`_order_candidates`, sigmoid confidence, `rerank_cap`), multiplies by the bounded `_quality_factor`, softly lifts topic-linked rows (`_apply_topic_boost`), applies optional MMR diversity (`_mmr_select`) and 1-hop edge expansion (`_expand_via_edges`), and reinforces on deliberate recall (`_bump_recall`). `expand.py` is the LLM query rewrite; `evaluate.py` is a pointer to the FTS-only regression harness owned by recall-eval-verification.",
   "label": "Memory recall pipeline (FTS + dense + RRF + rerank, quality weighting, topic boost, MMR, edge expansion, query expansion)",
   "parent_id": "agent-memory",
   "refs": [
     {
       "path": "lib/memory/store.py",
-      "role": "implementation",
-      "tier": "reference"
+      "role": "implementation"
     },
     {
       "path": "lib/memory/expand.py",

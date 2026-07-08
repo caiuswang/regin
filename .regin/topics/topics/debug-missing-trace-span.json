@@ -46,26 +46,27 @@
   "parent_id": "session-trace",
   "refs": [
     {
-      "path": "lib/trace/repair.py",
-      "role": "implementation",
+      "path": "cli/commands/logs.py",
+      "role": "entrypoint",
       "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/__init__.py",
+      "path": "web/app.py",
+      "role": "api",
       "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/entry.py",
-      "role": "implementation",
+      "path": "web/blueprints/trace/ingest_errors.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
+      "path": "web/blueprints/trace/sessions.py",
+      "role": "api",
       "tier": "reference"
     },
     {
       "path": "hook_manager/handlers/turn_trace/cache.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/turn_trace/span_posters.py",
       "role": "implementation",
       "tier": "reference"
     },
@@ -75,11 +76,17 @@
       "tier": "reference"
     },
     {
-      "path": "hook_manager/runner.py",
-      "role": "implementation"
+      "path": "hook_manager/handlers/turn_trace/entry.py",
+      "role": "implementation",
+      "tier": "reference"
     },
     {
-      "path": "lib/hook_plugin.py",
+      "path": "hook_manager/handlers/turn_trace/span_posters.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/runner.py",
       "role": "implementation"
     },
     {
@@ -88,24 +95,12 @@
       "tier": "reference"
     },
     {
-      "path": "cli/commands/logs.py",
-      "role": "entrypoint",
-      "tier": "reference"
+      "path": "lib/hook_plugin.py",
+      "role": "implementation"
     },
     {
-      "path": "lib/trace/transcript_usage.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/projection.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/trace_service/ingest.py",
-      "role": "implementation",
-      "tier": "reference"
+      "path": "lib/orm/engine.py",
+      "role": "implementation"
     },
     {
       "path": "lib/providers/claude/__init__.py",
@@ -123,35 +118,47 @@
       "tier": "reference"
     },
     {
-      "path": "lib/orm/engine.py",
-      "role": "implementation"
-    },
-    {
-      "path": "web/app.py",
-      "role": "api",
+      "path": "lib/trace/projection.py",
+      "role": "implementation",
       "tier": "reference"
     },
     {
-      "path": "web/blueprints/trace/sessions.py",
-      "role": "api",
+      "path": "lib/trace/repair.py",
+      "role": "implementation",
       "tier": "reference"
     },
     {
-      "path": "web/blueprints/trace/ingest_errors.py",
-      "role": "api",
+      "path": "lib/trace/trace_service/ingest.py",
+      "role": "implementation",
       "tier": "reference"
     },
     {
-      "path": "tests/trace/test_trace_repair.py",
-      "role": "test"
+      "path": "lib/trace/transcript_usage.py",
+      "role": "implementation",
+      "tier": "reference"
     },
     {
       "path": "hook_manager/tests/test_turn_trace.py",
       "role": "test"
     },
     {
+      "path": "tests/trace/test_trace_repair.py",
+      "role": "test"
+    },
+    {
       "path": "docs/trace/SPAN_DESIGN.md",
       "role": "docs"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/__init__.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/trace_service/__init__.py"
+    },
+    {
+      "path": "lib/trace/trace_service/queries.py",
+      "tier": "reference"
     }
   ],
   "status": "active"

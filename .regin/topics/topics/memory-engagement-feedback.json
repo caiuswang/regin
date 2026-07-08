@@ -32,13 +32,18 @@
   "include_globs": [
     "lib/memory/feedback.py"
   ],
-  "intent": "Explain the half of the recall loop that learns whether a speculatively-injected memory helped: `score_injection_usefulness` pulls concrete referents (file paths, backtick identifiers) out of each injected memory and checks whether any appear in a tool span that fired *after* injection (the ordering gate is load-bearing), abstaining when there are no referents. Covers the idf weighting that discounts corpus-ubiquitous referents (precomputed session document-frequency in `referent_session_df` via `rebuild_session_referent_df`, gated by `engagement_idf_min_weight`), the `engaged`/`matched` bits stamped once per `injection_events` row so the decay gate can tell a soft ignore from a hard one, the importance reward for engaged hits, the reflect-time `score_pending_sessions` densifying sweep, and how this positive signal pairs with reflect's negative decay half.",
+  "intent": "Explain the half of the recall loop that learns whether a speculatively-injected memory helped: `score_injection_usefulness` pulls concrete referents (backtick identifiers, file paths) out of each injected memory via `_referents` and checks whether any appear in a tool span that fired *after* injection (`_post_injection_spans` \u2014 the ordering gate is load-bearing), abstaining when there are no referents. Covers the idf weighting that discounts corpus-ubiquitous referents (precomputed session document-frequency in `referent_session_df` via `rebuild_session_referent_df`, gated by `engagement_idf_min_weight`), the `engaged`/`matched` bits stamped once per `injection_events` row so the decay gate can tell a soft ignore from a hard one, the `_ENGAGED_BONUS` importance reward for engaged hits, the reflect-time `score_pending_sessions` densifying sweep, and how this positive signal pairs with reflect's negative decay half.",
   "label": "Memory engagement feedback (inject\u2192usefulness verdict, idf-weighted referents, decay gate coupling)",
   "parent_id": "agent-memory",
   "refs": [
     {
       "path": "lib/memory/feedback.py",
       "role": "implementation"
+    },
+    {
+      "path": "lib/memory/models.py",
+      "role": "schema",
+      "tier": "reference"
     }
   ],
   "status": "active"

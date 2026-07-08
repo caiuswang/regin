@@ -42,7 +42,7 @@
   "include_globs": [
     "lib/memory/**"
   ],
-  "intent": "Orient a future agent in regin's cross-session memory subsystem before touching any of it. `__init__.py` is a thin module-verb facade delegating to a process-wide `SqliteMemoryStore` built with a `SkillRouterEmbedding`. `ports.py` declares the four decoupling interfaces (`EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`), each degrading gracefully; concrete providers live in `adapters.py` at the edge (`SkillRouterEmbedding` with its optional `embed_queries`/`rerank` extensions, `ExternalAgentLLM` over a configured external command, and the `resolve_distiller`/`resolve_topic_classifier`/`resolve_proposal_reviewer` surface binders). `scoping.py` stamps `global`/`repo:<name>`. The single mutable `memories` table carries both tiers via a `tier` column; `models.py` declares its own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch memory tables, and `engine.py` self-initializes a third engine on `db/regin_memory.db`. `mcp_server.py` is the long-lived MCP entrypoint.",
+  "intent": "Orient a future agent in regin's cross-session memory subsystem before touching any of it. `__init__.py` is a thin module-verb facade delegating to a process-wide `SqliteMemoryStore` built with a `SkillRouterEmbedding`. `ports.py` declares the four decoupling interfaces (`EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`), each degrading gracefully; concrete providers live in `adapters.py` at the edge (`SkillRouterEmbedding` with its optional `embed_queries`/`rerank` extensions, `ExternalAgentLLM` over a configured external command with a blocking `complete` and a detached `spawn_spec`/`SpawnSpec`, and the five surface-binder resolvers `resolve_distiller`/`resolve_dreamer`/`resolve_topic_classifier`/`resolve_retitler`/`resolve_proposal_reviewer`). `scoping.py` stamps `global`/`repo:<name>`. The single mutable `memories` table carries both tiers via a `tier` column; `models.py` declares its own `memory_metadata` so `regin init`/`rebuild` and Alembic never touch memory tables, and `engine.py` self-initializes a third engine on `db/regin_memory.db`. `mcp_server.py` is the long-lived MCP entrypoint, explained in memory-auto-injection.",
   "label": "Agent memory architecture (ports/adapters engine, self-initializing DB, tiers & lifecycle model)",
   "parent_id": "agent-memory",
   "refs": [
@@ -72,11 +72,13 @@
     },
     {
       "path": "lib/memory/mcp_server.py",
-      "role": "entrypoint"
+      "role": "entrypoint",
+      "tier": "reference"
     },
     {
       "path": "ARCHITECTURE.md",
-      "role": "architecture"
+      "role": "architecture",
+      "tier": "reference"
     }
   ],
   "status": "active"

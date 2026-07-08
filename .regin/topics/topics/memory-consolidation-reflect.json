@@ -2,11 +2,11 @@
   "aliases": [
     "the sleep cycle of agent memory",
     "working to episodic promotion",
-    "generative-agents reflection synthesis",
+    "agentic dream consolidation plan",
     "associative memory edge graph",
     "attach synthesis cluster to topic graph"
   ],
-  "blurb": "The offline sleep cycle: how working rows are deduped, promoted, decayed, synthesized, and retired.",
+  "blurb": "The offline sleep cycle: how working rows are deduped, dreamed over, decayed, synthesized, and retired.",
   "commands": [
     ".venv/bin/python -m pytest tests/memory/test_reflect.py tests/memory/test_graph.py"
   ],
@@ -33,8 +33,8 @@
     "lib/memory/reflect.py",
     "lib/memory/topic_attach.py"
   ],
-  "intent": "Explain `reflect()` \u2014 the batch consolidation cycle that turns raw `working` rows into curated `episodic` knowledge \u2014 step by ordered step: near-duplicate dedup (`_dedup_and_judge`, embedding cosine or text-ratio fallback), LLM-judged contradiction in the similarity gray zone, working\u2192episodic promotion with `recall_count`-driven importance (`_promote`), forget-stale retirement of never-recalled aged rows (`_forget_stale`), a pre-decay engagement densifying sweep (`_score_pending`), importance decay for chronically-ignored rows whose gate reads the soft/hard engagement split (`_decay_chronically_ignored`/`_decay_reason`), stale-reference flagging with git rename-follow (`_flag_stale_references`), LLM synthesis of higher-order rules from cosine clusters (`_synthesize`), an optional per-scope digest (`_synthesize_digest`), content-hash-skipped embedding (`_embed_episodic`), and the `related` edge harvest (`_harvest_edges`). `topic_attach.py` proposes merge/create onto the human-approved `.regin/topics` graph.",
-  "label": "Memory consolidation (reflect: dedup, contradiction, promote, synthesize, forget-stale, decay, edges & topics)",
+  "intent": "Explain `reflect()` \u2014 the batch consolidation cycle that turns raw `working` rows into curated `episodic` knowledge \u2014 as four ordered stages. (1) A mechanical no-model pre-pass: near-duplicate dedup (`_dedup_merge`, embedding cosine or `difflib` text-ratio fallback), the pre-decay engagement sweep (`_score_pending`), and legacy `kind='digest'` retirement. (2) The single agentic `dream` LLM stage (`_dream`): one `llm.complete` over a bounded evidence pack (`_build_dream_pack`) of pending working rows with their co-retrieval neighbours plus up to `contradiction_budget` suspect same-referent episodic pairs, returning one JSON plan (promote/hold/drop/merge, contradict/obsolete/distinct, synthesize) applied deterministically with per-action validation (`_apply_dream_plan`), blind-promote on model outage. (3) Lifecycle decay: forget-stale (`_forget_stale`), chronically-ignored importance decay reading the soft/hard engagement split (`_decay_chronically_ignored`/`_decay_reason`), and stale-reference flagging with git rename-follow (`_flag_stale_references`). (4) Embed (`_embed_episodic`) + `related`-edge harvest (`_harvest_edges`). `topic_attach.py` lands synthesis clusters on the human-approved `.regin/topics` graph.",
+  "label": "Memory consolidation (reflect: mechanical pre-pass, agentic dream, lifecycle decay, embed & edges)",
   "parent_id": "agent-memory",
   "refs": [
     {
