@@ -3,82 +3,84 @@
 `reflect()` in `lib/memory/reflect.py` is the offline "sleep cycle" that turns
 raw `working` rows into curated `episodic` knowledge and keeps the store from
 drifting. It is idempotent — a second pass over an already-consolidated store
-finds nothing to do — and `dry_run=True` reports what would happen without
-writing. It never *requires* a model: an embedder sharpens each stage, an LLM
-unlocks the generative ones, and both absent it still dedups and promotes.
+finds nothing to do — and `dry_run=True` builds the evidence pack and calls the
+LLM but applies nothing, so the would-be plan lands in `result.actions`. It
+never *requires* a model: an embedder sharpens similarity, an LLM unlocks the
+generative judgment, and absent both every surviving working row is still
+deduped and blind-promoted.
 
-## The ordered cycle (`reflect`)
+## The four stages (`reflect`)
 
-1. **Dedup** (`_dedup_and_judge` → `_merge_pair`). `_pair_similarities` compares
-   every working row against the working+episodic pool (embedding cosine when an
-   embedder is injected, else a deterministic `difflib` text ratio). Pairs at or
-   above the threshold (`dedup_cosine_threshold` / `dedup_text_threshold`)
-   collapse: `_keeper_of` keeps the episodic row, then the more-recalled, then
-   the older; the loser is retired with `superseded_by` pointing at the keeper.
-2. **Contradiction** (`_resolve_contradiction`). Pairs in the gray zone
-   `[_GRAY_ZONE_FLOOR = 0.75, threshold)` are put to the LLM
-   (`_llm_says_contradiction`, via the editable `memory-contradiction` surface);
-   a judged contradiction retires the older row with `veracity='false'`. No LLM
-   → the pair is left alone (veracity stays `unknown` rather than guessed).
-3. **Promote** (`_promote`). Surviving working rows become `episodic`, stamped
-   `consolidated_at`, importance nudged by the reinforcement signal
-   (`_reinforced_importance`, a `log1p(recall_count)` boost).
-4. **Forget-stale** (`_forget_stale`). Episodic rows aged past
-   `forget_after_days` that were never *deliberately* recalled
-   (`recall_count == 0`) are retired — the negative half of the usefulness loop
-   (speculative auto-inject doesn't reinforce). `0` disables; fresh rows can't
-   be stale, keeping reflect idempotent on a young store.
-5. **Pre-decay engagement sweep** (`_score_pending`). Before decay reads the
-   signal, densify it: `rebuild_session_referent_df` + `score_pending_sessions`
-   stamp engagement verdicts on finished, unscored injects, and
-   `_refresh_query_df` rebuilds the topic router's query term-frequency cache.
-   A write, so skipped on dry-run and gated by `score_pending_on_reflect`.
-6. **Decay** (`_decay_chronically_ignored`). A memory that earned no positive
-   signal loses `_IGNORED_DECAY_STEP` importance (floored at
-   `_IGNORED_DECAY_FLOOR`, never retired). `_decay_reason` gates it in order:
-   hard spares (`_decay_spared`: a deliberate recall, a `_POSITIVE_ACTIONS`
-   validation, or already at the floor); the dense engagement *rate*
-   (`_engagement_spare`, reading the engaged / soft-ignored / hard-ignored split
-   — soft ignores get benefit of the doubt); then the pre-rate count thresholds
-   `ignored` / `injected` (`_threshold_decay_reason`), each self-limiting or
-   gated once per memory.
-7. **Stale references** (`_flag_stale_references`, opt-in `verify_stale_refs`).
-   `_referenced_paths` regex-extracts concrete repo file paths a memory names;
-   `_missing_refs` checks them against the scope's repo root. A path git history
-   shows was *renamed* is rewritten in place first (`_rename_follow`, gated by
-   `topic_evolution.mechanical_autoapply`, via `lib.topics.drift`); only the
-   genuinely-deleted residual is flagged with a `stale_ref` validation and a
-   `veracity` demote true→unknown (never retired — a regex is a heuristic).
-8. **Synthesize** (`_synthesize`). Generative-Agents-style reflection: greedy
-   clusters of related-but-distinct episodic rows (cosine band
-   `[_SYNTHESIS_FLOOR = 0.55, dedup_threshold)`, min 3 members, up to 3 clusters)
-   are handed to the LLM (`_llm_synthesis`, `memory-reflect-synthesis` surface)
-   to abstract one higher-order rule. `_write_synthesis` writes it as a new
-   episodic row and stamps each source `synthesized` (the idempotency marker);
-   `_record_synthesis_topic` either feeds it into the authoritative topic-
-   proposal queue (`topic_attach.maybe_propose_authoritative` when
-   `reflect_proposes_authoritative_topics`) or mints an orphan `memory_topic`
-   (`create_topic`, gated by `topics_enabled`). Needs both an embedder and an
-   LLM.
-9. **Digest** (`_synthesize_digest`, opt-in `digest_enabled`). Rolls each
-   scope's most important episodic rows into ONE maintained briefing, refreshed
-   in place via `supersede`. Standing context read by scope, excluded from
-   similarity recall and the lifecycle. Needs only an LLM; runs after synthesis
-   so a fresh card can feed it the same pass.
-10. **Embed** (`_embed_episodic`). Active rows of both tiers get vectors
-    (content-hash-skipped when unchanged) so the dense recall leg can see them —
-    a fresh working-tier lesson is dense-visible without waiting for promotion.
-11. **Harvest edges** (`_harvest_edges`, `edges_enabled`). Rebuilds the whole
-    `related` edge set from `cosine_pairs` in `[edge_floor, dedup_threshold)`
-    (near-identical pairs are merged, not linked), capped per node
-    (`_cap_edges_per_node` / `edge_max_per_node`). Runs after embed so freshly
-    written rows are linkable.
+**1. Mechanical pre-pass** (no model). `_dedup_merge` collapses near-identical
+pairs at or above the dedup threshold (`dedup_cosine_threshold` when an embedder
+is injected, else the deterministic `dedup_text_threshold`); `_keeper_of` keeps
+the episodic row, then the more-recalled, then the older, retiring the loser
+with `superseded_by` pointing at the keeper. `_score_pending` runs the pre-decay
+engagement sweep (`rebuild_session_referent_df` + `score_pending_sessions`, plus
+the topic router's query-df refresh) so decay reads a dense signal. Legacy
+`kind='digest'` rows are retired (`_retire_legacy_digests`); consolidation has no
+separate digest stage.
+
+**2. Dream** — the one agentic LLM stage per run (`_dream`). A single
+`llm.complete` receives a bounded evidence pack (`_build_dream_pack`, capped at
+`_DREAM_PACK_CAP`): every pending working row with its top co-retrieval
+neighbours (pulled through the store's own `recall`, i.e. what the runtime would
+actually surface next to it, not a raw cosine band) plus up to
+`contradiction_budget` suspect episodic pairs (same-scope rows sharing a
+concrete repo file path, not yet judged — the `memory_pair_checks` ledger tracks
+judged pairs so an offered-but-unjudged pair re-presents next run). The model
+returns one JSON plan through the editable `memory-reflect-dream` surface:
+promote/hold/drop/merge per working row, contradict/obsolete/distinct per pair,
+and optional synthesize actions. `_apply_dream_plan` applies it
+deterministically with per-action validation — the model-claimed older/newer
+order is never trusted (`created_at` decides), a circular merge is rejected,
+destructive verdicts (drop/merge) apply only under `promote_allow_retire` and
+otherwise degrade to hold, and any invalid action is skipped and counted
+(`dream_skipped`). A synthesize action writes a new episodic row whose
+importance is the *median* of its ≥ 3 distinct same-scope episodic sources (an
+abstraction can't outrank its evidence by construction) and routes it through
+`_record_synthesis_topic`. Working rows the plan never mentions blind-promote;
+rows it addressed invalidly are held, never blind-promoted. No LLM,
+`dream_enabled` off, or an unparseable plan → every surviving working row is
+blind-promoted, so a model outage never blocks consolidation; rows beyond
+`_DREAM_MAX_WORKING` defer untouched to the next run.
+
+**3. Lifecycle decay** (no model). `_forget_stale` retires episodic rows aged
+past `forget_after_days` that were never *deliberately* recalled
+(`recall_count == 0`) — the negative half of the usefulness loop (speculative
+auto-inject doesn't reinforce). `_decay_chronically_ignored` docks
+`_IGNORED_DECAY_STEP` importance (floored at `_IGNORED_DECAY_FLOOR`, never
+retired) from rows that earned no positive signal; `_decay_reason` gates it in
+order — hard spares (`_decay_spared`: a deliberate recall, a `_POSITIVE_ACTIONS`
+validation, or already at the floor); the dense engagement *rate*
+(`_engagement_spare`, reading the engaged / soft-ignored / hard-ignored split,
+where soft ignores get benefit of the doubt); then the pre-rate count thresholds
+`ignored` / `injected` (`_threshold_decay_reason`), each self-limiting or gated
+once per memory. `_flag_stale_references` (opt-in `verify_stale_refs`)
+regex-extracts concrete repo paths a memory names, rewrites any git-renamed path
+in place first (`_rename_follow`, gated by
+`topic_evolution.mechanical_autoapply`), and flags only the genuinely-deleted
+residual with a `stale_ref` validation and a `veracity` demote true→unknown
+(never retired — a regex is a heuristic).
+
+**4. Embed + edges** (embedder only). `_embed_episodic` gives active rows of
+*both* tiers vectors (content-hash-skipped when unchanged) so a fresh
+working-tier lesson is dense-visible without waiting for promotion.
+`_harvest_edges` (`edges_enabled`) rebuilds the whole `related` edge set from
+`cosine_pairs` in `[edge_floor, dedup_threshold)` (near-identical pairs are
+merged, not linked), capped per node (`_cap_edges_per_node` /
+`edge_max_per_node`). Runs after embed so freshly written synthesis/promotion
+rows are linkable.
 
 ## By-products
 
-The `related`-edge graph and emergent `memory_topics` feed the curate UI's
-relationship views and recall's edge expansion; `topic_attach.py` lands
-synthesis proposals in the same human review queue as topic proposals. The
-positive counterpart to this cycle's decay half is
+The dream stage is agentic: `resolve_dreamer` (see
+**agent-memory-architecture**) grants it the read-only memory tools to pull
+evidence beyond the bounded pack. Its synthesis proposals land in the same human
+review queue as topic proposals via `topic_attach.py`
+(`maybe_propose_authoritative` when `reflect_proposes_authoritative_topics`,
+else an orphan `memory_topic` under `topics_enabled`). The `related`-edge graph
+and emergent `memory_topics` feed the curate UI's relationship views and
+recall's edge expansion. The positive counterpart to this cycle's decay half is
 **memory-engagement-feedback**; the rows it consolidates are born in
 **memory-distillation-capture**.

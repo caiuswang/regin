@@ -42,15 +42,26 @@ sets it and clears any open inbox proposal for the topic.
 
 ## Inspect & probe
 
-`list_topic_injections` returns recent injections for the CLI `memory
-topic-feedback` and the Memory view's panel, each carrying a `judged`
-positive/negative flag (from `_manual_topic_exemplar_polarities`) so a thumb
-re-lights after reload. The route playground —
-`web/blueprints/memory.py::api_topic_route_preview` → `_route_preview`, backed by
-`store.topic_query_signals` and `lib.topics.route` — probes what a query would
-route to (keyword `route_explain`) and which topics' exemplars lean on it, and is
-rendered by `frontend/src/components/memory/TopicRoutePlayground.vue` /
-`MemoryTopicFeedback.vue`.
+Two Memory-view panels make the loop legible.
+`frontend/src/components/memory/MemoryTopicFeedback.vue` is the summary grid —
+one row per topic (`scored` / `fails` / `fail_rate` / `status` / `decision`), a
+fail-rate bar that only *proposes*, and the decision buttons (Approve suppress /
+Keep routing on a `proposed` row, Suppress on a routing one, Reset to `auto`) that
+POST `/api/memory/topic-feedback/<id>/decision`. Below it, a Recent-injections
+accordion (fed by `list_topic_injections`) lists each `<topic_context>` block
+regin routed — its relevance verdict, prompt, session link, and 👍/👎 Judge
+thumbs that POST `/api/memory/exemplars`. A thumb re-lights from the row's
+`judged` flag (`_manual_topic_exemplar_polarities`) after reload, and turns amber
+when a click stored nothing because no embedder is configured.
+
+Each row's 🔍 emits `inspect` to open
+`frontend/src/components/memory/TopicRoutePlayground.vue`, which probes a query
+against `web/blueprints/memory.py::api_topic_route_preview` → `_route_preview`
+(backed by `store.topic_query_signals` and `route_explain` in `lib.topics.route`):
+it shows what the keyword router (`match_topic`) would inject, its suppress
+verdict, and which topics' exemplars lean on the query (pos/neg max-cosine,
+counts), and its thumbs hand-curate exemplar cases through the same
+`/api/memory/exemplars` write.
 
 The query-local suppress/protect primitive this loop writes into is
 **memory-exemplar-rescore**; the routing mechanism it wraps is `topic-routing`.

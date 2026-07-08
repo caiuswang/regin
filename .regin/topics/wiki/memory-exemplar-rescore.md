@@ -37,7 +37,7 @@ hook.
 - **Auto**: `store.apply_topic_relevance` → `_record_topic_exemplars` turns a
   graded `fail` into a -1 negative and a `pass` into a +1 positive (gated on the
   suppression feature being on; best-effort so a write can't fail the grade).
-- **Manual**: `POST /api/memory/exemplars` (`web/blueprints/memory.py`) records a
+- **Manual**: `POST /api/memory/exemplars` records a
   hand-curated case with `source='manual'`; `frontend/src/components/memory/ExemplarCaseList.vue`
   and the `regin memory exemplar-*` CLI drive it. `remove_topic_exemplars` drops
   a whole polarity; `delete_exemplar` reverts a single mislabeled row;
@@ -55,4 +55,5 @@ curated case can be stored at all, so the UI can warn before a no-op.
 
 The route-decision half of the same loop (the `InjectedRelated` verdict, the
 fail-rate proposal, and the human suppression gate) is
-**memory-topic-route-feedback**.
+**memory-topic-route-feedback**; the human-curation surfaces are
+**memory-curation-surfaces**.

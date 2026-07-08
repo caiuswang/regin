@@ -56,8 +56,8 @@ hybrid shape and degrades gracefully at every outer stage when the injected
 
 - `expand.py` — the LLM query-rewrite front-end for terse prompts, turning a
   two-word ask into a fuller recall query.
-- `evaluate.py` — an FTS-only regression harness for recall quality (its own
-  `tests/memory/test_evaluate.py`).
+- `evaluate.py` — an FTS-only regression harness for recall quality; its
+  end-to-end verification discipline lives in **recall-eval-verification**.
 
 Embeddings are written by `reflect()` (working-tier rows are raw on purpose,
 with `_lazy_backfill` covering the gap), so a store that has never reflected

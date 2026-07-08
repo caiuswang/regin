@@ -16,6 +16,7 @@ import ProposalCommentsSidebar from './ProposalCommentsSidebar.vue'
 import ProposalRunHeader from './ProposalRunHeader.vue'
 import ProposalDraftTopicsTable from './ProposalDraftTopicsTable.vue'
 import ProposalContentThreads from './ProposalContentThreads.vue'
+import TopicReferencesTable from './TopicReferencesTable.vue'
 
 const props = defineProps({
   repo: { type: String, required: true },
@@ -591,6 +592,20 @@ watch(selectedProposalId, () => {
             </div>
             <p v-else class="text-sm text-slate-500">No aliases proposed for this topic.</p>
           </div>
+
+          <div v-if="(selectedDraftTopic.edges || []).length" class="space-y-2">
+            <h3 class="topics-subsection-title !mb-0">Related topics</h3>
+            <div class="flex flex-wrap gap-2">
+              <Badge
+                v-for="edge in selectedDraftTopic.edges"
+                :key="`${edge.type || 'related'}:${edge.target || edge.to}`"
+                color="gray"
+                :label="`${edge.type || 'related'}: ${edge.target || edge.to}`"
+              />
+            </div>
+          </div>
+
+          <TopicReferencesTable :refs="selectedDraftTopic.refs || []" />
 
           <div>
             <h3 class="topics-subsection-title">Evidence Paths</h3>

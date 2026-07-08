@@ -6,10 +6,18 @@ gated so the store never fills with session-narrating noise.
 ## Explicit: the lesson tee
 
 `send_to_user(type=lesson)` is teed into the store by
-`hook_manager/handlers/post_tool_trace._remember_lesson`, carrying span / agent /
-scope provenance and honoring a `supersedes` id (the non-destructive
-correction-in-place). This is the deliberate "a future session should know this"
-path.
+`hook_manager/handlers/post_tool_trace._remember_lesson`, which fires from
+`_record_agent_message` whenever a `send_to_user` call carries `type='lesson'`.
+The lesson body becomes a working-tier memory carrying the span / agent / scope
+provenance (`source_span_id` / `source_agent_id` / `resolve_write_scope`) the hook
+already has, and honors a `supersedes` id — the non-destructive
+correction-in-place that retires the named memory and chains this one onto it. A
+lesson's title is mandatory; when the agent omits one, a placeholder is derived
+from the body (`title_from_body`) and tagged `auto-title` (`retitle.AUTO_TITLE_TAG`)
+so `regin memory retitle` can later distill a real one-line rule rather than
+silently dropping the lesson. Both writes are best-effort — neither store's
+failure can block the other. This is the deliberate "a future session should
+know this" path.
 
 ## Implicit: the agentic distiller (`lib/memory/distill.py`)
 
@@ -22,8 +30,8 @@ That gate is what keeps the store curated; distill never writes silently.
 
 **Distillation is LLM-only by contract:** the model is what turns a session into
 an *abstracted* rule. Deterministic heuristics still run, but only to surface the
-highest-signal moments at the top of the LLM input — they no longer fabricate
-proposals of their own (that produced "running account" noise). With no
+highest-signal moments at the top of the LLM input; they do not fabricate
+proposals themselves, which would produce "running account" noise. With no
 `LLMProvider` configured, distill proposes nothing.
 
 **It is agentic.** `resolve_distiller` (see **agent-memory-architecture**) grants

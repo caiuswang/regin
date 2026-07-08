@@ -1,60 +1,60 @@
 # Memory curation surfaces
 
-regin's cross-session memory store is mutable on purpose: distillation proposes memories, reflection rewrites and prunes them, recall ranks them, and topic-route feedback decides which banners get injected. None of that is useful unless a human can step in to approve a proposal, fix a memory whose claim turned out wrong, file memories where they belong, hand-curate the signals the route ranker learns from, and see what a query would surface. This topic maps those human-facing controls. They come in three coordinated forms that all wrap the same engine facade (`lib.memory`):
-
-- a Flask JSON API — `web/blueprints/memory.py` (`/api/memory/*`)
-- a Vue 3 dashboard — `frontend/src/views/MemoryView.vue` plus `frontend/src/components/memory/*`
-- a Typer CLI — `cli/commands/memory.py` (`regin memory …`)
-
-For the engine internals behind these surfaces, see the sibling topics: capture/[distillation](./memory-distillation-capture.md), [reflect/consolidation](./memory-consolidation-reflect.md), [recall pipeline](./memory-recall-pipeline.md), [signed exemplars](./memory-exemplar-rescore.md), and [topic-route feedback](./memory-topic-route-feedback.md). This page covers only the controls.
-
-## The dashboard — `MemoryView.vue`
-
-The view organizes the surface into four tab routes (`useTabRoute`, default `memories`; valid: `memories`, `topics`, `tree`, `recall`). A pinned header carries the memory count, an **Include test data** toggle, a **Doctor** toggle, and a **Run reflect** button; its height is measured by a `ResizeObserver` and fed to the list rail's sticky offset. Selecting a memory from any tab (a topic member, a recall hit, a taxonomy headline) routes back to **Memories** via `selectMemory` so its detail pane is visible.
-
-- **Doctor** — `MemoryDoctor` is a collapsible health-and-statistics panel that hangs off the header (toggled by the **Doctor** button). It is regin's `doctor` idiom applied to the memory store: it reads the same `stats` envelope the list endpoint already returns, so it needs no extra fetch. It renders worst-first health checks — working rows awaiting consolidation, embedding coverage below 100% of active rows, and proposals awaiting approval — falling back to a single green "Store is healthy" row when there are no findings. `embed_coverage` is held distinct from a real 0% (null when nothing is embeddable, so the panel never invents a "0%"). Its one action is an inline **Run reflect** button on the consolidation-debt row, emitting the same `reflect` trigger as the header button, surfaced where it is advised. Below the checks it lays out four count breakdowns — by tier, status, kind, and scope — as labeled chip rows, and prints the store's `db_path`.
-- **Memories** — the browse/manage tab. `MemoryCategoryBar` filters by category (inbox = proposed, retired, `kind:*`, `tier:*`, all-active); a search box drives the `q` filter; `MemoryList` is the paginated corpus (offset-limit `usePage` over `/api/memory`, with `stats` riding back on the same envelope to keep the category bar in sync per page). When a memory is selected the list collapses to a drag-resizable, self-scrolling rail (`useResizablePanel`, ←/→ to resize) and `MemoryDetail` opens beside it.
-  - `MemoryDetail` is where per-memory curation happens. It fetches the memory and its `/related` payload in parallel. The body renders as Markdown with an inline **Edit** form (title / body / tags, PATCHed via `/api/memory/<id>`); a `lesson` requires a title, so the form blocks save with a client-side message when the title is blank (the server enforces the same rule). Lifecycle buttons appear by status: **Approve** on a `proposed` memory (→ active), **Retire** on an `active` one, **Restore** on a `retired` one, and **Forget** (hard delete, behind a confirm). A right-hand aside shows importance, recall count, scope, timestamps, tags, a link to the source session/span, the supersede chain (**Superseded by** / **Supersedes**), embedding **Related** neighbors, and two distinct topic blocks: **Filed under** (authoritative topic nodes — the linked ids come off the `/related` payload's `authoritative_topics`, with a `topic-nodes`-fed picker to file and an × to unfile each) and **Topics (emergent)** (the reflect-synthesized clusters the memory belongs to).
-  - A bulk action bar in `MemoryList` posts `approve`/`retire`/`restore`/`forget` over many ids (`/api/memory/bulk`), with a confirm gate on the destructive `forget`.
-- **Topics** — three stacked panels.
-  - `MemoryTopics` lists memories grouped by the synthesis-cluster topic nodes they belong to.
-  - `MemoryTopicFeedback` is the topic-routing feedback loop: a per-topic table of `scored`/`fails`/`fail_rate` with a status badge (`proposed` / `suppressed` / `allowed` / `routing`) and the human gate — the fail-rate bar only **proposes** a route for suppression; a route is withheld only after a human clicks **Approve suppress** (or **Keep routing** / **Suppress** / **Reset**), each posting `topic-feedback/<id>/decision`. Below it, an accordion logs recent `<topic_context>` injections; each row carries quick 👍/👎 **Judge** thumbs that write a positive/negative exemplar for that exact prompt (`POST /api/memory/exemplars`, the thumb staying lit per recorded write) and a 🔍 handoff that loads the prompt straight into the playground (`playgroundRef.probe(query)`). A banner warns when no embedder is configured, since exemplar writes are embedding-keyed and would otherwise store nothing.
-  - `TopicRoutePlayground` is where signed topic-route exemplars are hand-curated: type a query, see what the keyword router (`match_topic`) would route it to — with a "matched on …" line naming the keyword basis — and which topics' query-exemplars lean on it (pos/neg max-cosine, counts, and a suppress/protect/routes verdict against the active threshold), then stamp 👍/👎 to write a positive (protect) or negative (suppress) exemplar. `ExemplarCaseList` is the per-topic drill-down that expands a candidate row to list individual cases and revert them one at a time.
-- **Tree** — `MemoryTaxonomy` walks the authoritative topic taxonomy from `.regin/topics/topic.json` — the WebUI mirror of the `index_root`/`index_expand`/`index_fetch` memory MCP walk. The whole graph ships in one `/api/memory/taxonomy` payload (it is small) and the frontend drills client-side. `MemoryTaxonomy` orchestrates two interchangeable left navigators — `TaxonomyTree` (an accessible keyboard tree) and `TaxonomyGraph` (a radial graph) — against a shared, independently-scrolling `TaxonomyDetail` pane, with a filter box and a collapsible, drag-resizable divider. Each node card carries its label, router blurb, child/ref counts, subtree memory count, related-topic edges, and whether a curated wiki page exists; a synthetic **Orphaned (unfiled)** root collects active memories linked to no topic node.
-  - `TaxonomyDetail` is the right pane: a sticky header with a breadcrumb of clickable ancestors, meta chips (memory total, ref count, a ✓/✗ wiki chip), then dividered sections ordered by importance — the node's **Memories** first (importance-ranked `MemoryHeadline` rows; clicking one emits `select` so the parent surfaces it in the Memories tab), **Related topics** from the node's `edges[]` (each re-selects that node), role-tagged **Source refs**, and a collapsible **Wiki** narrative (auto-collapsed when there are memories to read first). Each memory row carries its own file-a-memory controls: a "File under topic…" `Select` (options are every real topic node, the Orphaned bucket excluded) with a **File** button that `POST`s `/api/memory/<id>/topics`, and an **Unfile here** button on non-orphan nodes that `DELETE`s `/api/memory/<id>/topics/<node_id>`. A file/unfile emits `topics-changed` back to `MemoryTaxonomy`, which drops the affected nodes' cached detail, reloads the tree counts, and re-opens the current node so the move shows immediately.
-- **Recall** — a probe box. Type a query, hit **Recall**, and it `POST`s `/api/memory/recall` and renders the scored hits, with a single `score_kind` badge explaining which retrieval path won (cross-encoder rerank, dense+lexical RRF, or lexical FTS fallback). Clicking a hit jumps to its detail in the Memories tab.
+The human-facing controls for curating the store — the reason memory is mutable
+at all. Three entry points over one engine: the `/api/memory/*` blueprint, the
+Memory dashboard, and the `regin memory` CLI.
 
 ## The API — `web/blueprints/memory.py`
 
-The `memory_bp` blueprint exposes the routes the dashboard calls, all under `/api/memory` and all behind the global auth gate (memory content is distilled session experience — nothing here is on the public allowlist):
+`memory_bp` sits behind the global auth gate (distilled session experience is
+never on the public allowlist) and exposes the full curate surface:
 
-- **Browse / read**: `GET /api/memory` (paginated list + `stats` extra), `GET /api/memory/<id>` (one), `GET /api/memory/<id>/related` (embedding neighbors + the supersede chain + `authoritative_topics`), `GET /api/memory/graph` (the associative edge graph for visualization).
-- **Curate a memory**: `POST /api/memory/<id>/approve`, `POST /api/memory/<id>/retire` (`{wrong: true}` also sets `veracity=false`), `POST /api/memory/<id>/restore` (reactivate *and* clear the supersede link so recall surfaces it again), `PATCH /api/memory/<id>` (edit the `_EDITABLE` field set), `DELETE /api/memory/<id>` (hard forget), and `POST /api/memory/bulk` for one action over many ids. Approve/retire/bulk record a `user` validation event.
-- **Run the engine**: `POST /api/memory/recall` (the probe — also the warm-model dense path the auto-inject hook borrows, gated by `min_overlap` and optionally boosting a routed topic node, and computing route-time `topic_suppress` for a keyword-routed `route_topic_id`), `POST /api/memory/reflect` (trigger consolidation, with `dry_run`).
-- **Taxonomy**: `GET /api/memory/taxonomy` (the whole tree as `{roots, nodes}`, optional `scope` filter, a synthetic `__orphaned__` root for unfiled memories), `GET /api/memory/taxonomy/<node_id>` (one node expanded for reading — blurb, refs, edges, rendered wiki body, subtree memory headlines), `GET /api/memory/topic-nodes` (the `{id,label}` picker source), plus `POST /api/memory/<id>/topics` and `DELETE /api/memory/<id>/topics/<node_id>` to file/unfile a memory under an authoritative node.
-- **Synthesis topics**: `GET /api/memory/topics` (named clusters with member counts), `GET /api/memory/topics/<topic_id>` (one with live members).
-- **Topic-route feedback**: `GET /api/memory/topic-feedback` (relevance summary + recent injections + embedder presence), `POST /api/memory/topic-feedback/<topic_id>/decision` (the human gate — `suppressed` / `allowed` / `auto`, which also resolves any open inbox proposal), `POST /api/memory/topic-route-preview` (the playground's read probe: keyword route + per-topic exemplar signals over the authoritative graph).
-- **Signed exemplars**: `POST /api/memory/exemplars` (add a positive/negative topic-route case), `DELETE /api/memory/exemplars` (drop a topic's exemplars by polarity or all), and `GET`/`DELETE /api/memory/exemplars/<kind>/<key>` (list a topic's cases / delete one case by id).
+- **List / inspect**: `GET /api/memory` (paginated list + census),
+  `/stats`, `/<id>`, `/<id>/related` (neighbours + supersede chain), `/graph`
+  (the `related` edge graph).
+- **Recall / reflect**: `POST /api/memory/recall` (the recall probe, also the
+  auto-inject hook's warm-embedder path — see **memory-auto-injection**),
+  `POST /api/memory/reflect` (run consolidation), `GET /wiki-recalls`.
+- **Curate actions**: `POST /api/memory/bulk` (approve / retire / forget /
+  restore many), `PATCH /<id>` (edit), `DELETE /<id>` (forget), and the
+  single-row `/<id>/approve` · `/retire` · `/restore`.
+- **Taxonomy / filing**: `GET /taxonomy` and `/taxonomy/<node_id>`,
+  `POST|DELETE /<id>/topics[/<node_id>]` (link / unlink), and
+  `POST /link-orphans` — the agentic classifier that files the unfiled.
+- **Topics / feedback / exemplars**: `/topics`, `/topic-feedback` and its
+  `/<id>/decision` gate, the exemplar add / remove / list routes, and
+  `/topic-route-preview` — these back the two feedback loops
+  (**memory-topic-route-feedback**, **memory-exemplar-rescore**), not curation
+  proper.
+- **Sharing**: tree export / import for cross-clone topic sharing.
+
+## The dashboard — `MemoryView.vue`
+
+`frontend/src/views/MemoryView.vue` is a six-tab shell (`Tabs` + `useTabRoute`):
+
+- **Memories** — `MemoryCategoryBar` plus a resizable `MemoryList` /
+  `MemoryDetail` rail, with search, scope / sort filters, `PageControls`, and
+  bulk actions; the place to approve a `proposed` distill row or fix a memory's
+  veracity.
+- **Topics** — `MemoryTopics`, plus the two feedback panels
+  (`MemoryTopicFeedback`, `TopicRoutePlayground`) that other topics own.
+- **Tree** — `MemoryTaxonomy` (tree / graph / detail); unfiled memories appear
+  as a synthetic orphan node.
+- **Wikis** — `MemoryWikiRecalls` (per-topic wiki read stats).
+- **Recall** — an inline recall probe whose `score_kind` badge reads
+  rerank / rrf / fts.
+- **Doctor** — `MemoryDoctor`: the store census and reflect console, with a
+  "Classify with agent" action that drives `link-orphans`.
 
 ## The CLI — `cli/commands/memory.py`
 
-The `regin memory` Typer app (`memory_app`) mirrors the same controls for terminal and agent use. Its subcommands:
+`regin memory` (`memory_app`) mirrors the same operations for scripts and
+headless runs: `recall` / `recall-for-task`, `list`, `stats`, `reflect`,
+`distill`, `approve`, `forget`, `restore`, `supersede`, `remember`,
+`retitle` / `backfill-titles`, `link-topics`, `topic-feedback` / `topic-decide`,
+the `exemplar-*` family, `eval`, `curate-apply`, and `export-tree` /
+`import-tree`.
 
-- **Read / probe**: `recall`, `recall-for-task` (structure-first, task-scoped recall over a subsystem subtree, emitting a `memory.recall.task` span and a `<recalled_experience>` block; `--json` for an orchestrator), `list`, `stats`.
-- **Write a memory**: `remember` (create one directly, optionally `--topic`-filed under an authoritative node — including the global meta-roots `skills` / `preferences`).
-- **Lifecycle**: `approve`, `forget` (hard delete), `restore` (reactivate + clear the supersede link — the inverse of retire), `supersede` (retire-and-replace, chained via `superseded_by` — the non-destructive alternative to `forget`).
-- **Engine runs**: `reflect` (consolidation), `distill` (post-session capture with self-scored auto-approve/propose/drop and an idempotency guard `--force` bypasses), `eval` (grade recall quality against a JSONL case set; exits non-zero when hit@k < 1.0), `backfill-titles` (fill missing titles across the corpus).
-- **Topic linkage**: `link-topics` (agentic by default — an LLM returns the genuinely related node(s), fail-loud when no external agent is configured; `--hard-match` for the deterministic ref-path heuristic; `--orphans-only` for an incremental re-run over the unfiled bucket), `topic-feedback`, `topic-decide` (the suppression decision).
-- **Exemplars**: `exemplar-add`, `exemplar-rm` (by polarity or both), `exemplar-list`, `exemplar-forget` (one case by id).
-- **Git-shareable tree**: `export-tree` (write active memories as a markdown tree mirrored onto the authoritative topic graph — one canonical file per memory under its lexicographically-smallest linked node, frontmatter-only stubs at every other linked node, and `_unfiled/` for memories with no authoritative link) and `import-tree` (upsert that tree back into the local store; idempotent by id, so re-running after a `git pull` re-links rather than duplicates).
-- **Bulk curation**: `curate-apply` (apply a `memory-curate` plan of retag/retire/merge/rewrite/forget actions; every id resolved up front so a bad plan aborts before any write; dry-run by default, all ops but `forget` reversible via `restore`), and `consolidate-skills` (graduate proven `skill-<slug>` memories whose recall_count clears the bar into a skill's `## Lessons (from agent memory)` section and redeploy; `manual: true` patterns are listed as proposals, never auto-written).
-
-## Where to start
-
-- Reviewing distill proposals or fixing a wrong memory → **Memories** tab / `approve`, `retire`, `supersede`, the PATCH route.
-- Checking store health — consolidation debt, embedding coverage, tier/status/kind/scope breakdowns → the header **Doctor** toggle (`MemoryDoctor`), which reads the list endpoint's `stats` envelope.
-- Filing a memory where it belongs → **Memories** detail pane topic picker, the **Tree** tab's per-memory file/unfile controls, `remember --topic`, `link-topics`, or the `<id>/topics` routes.
-- Tuning which topic banner a prompt routes to → **Topics** tab `TopicRoutePlayground` + `exemplar-*` commands and the `exemplars` routes; withhold an over-eager route via the feedback panel / `topic-decide` / the `topic-feedback/<id>/decision` route.
-- Orienting in what the store knows by subsystem → **Tree** tab / `recall-for-task` / the `taxonomy` routes.
-- Sharing the memory tree across a team over git → `export-tree` then `import-tree`.
-- Probing what a query would surface → **Recall** tab / `recall` / `POST /api/memory/recall`.
+Proposals arrive here from **memory-distillation-capture** and are curated
+further by **memory-consolidation-reflect**; this page is where a human accepts,
+edits, retires, or files what those produce.

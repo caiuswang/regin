@@ -38,7 +38,8 @@ the banner when the server says so.
 
 The endpoint sits behind the global auth gate — memory content is distilled
 session experience, so nothing here belongs on the public allowlist; the hook
-capture path writes through `lib.memory` directly, not HTTP.
+capture path writes through `lib.memory` directly, not HTTP. The full route
+surface is **memory-curation-surfaces**.
 
 ## The recall MCP server
 

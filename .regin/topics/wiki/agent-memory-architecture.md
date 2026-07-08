@@ -17,9 +17,9 @@ web blueprint, CLI) goes through it rather than constructing a store.
 
 `ports.py` declares the four decoupling interfaces the engine depends on and
 nothing else — `EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink` —
-each documented to degrade gracefully: no embedder → FTS-only recall; no LLM →
-deterministic reflect/distill heuristics (in practice distill proposes nothing
-without an LLM); no sink → no export. The engine modules (`store`, `reflect`,
+each a `runtime_checkable` Protocol documented to degrade gracefully: no embedder
+→ FTS-only recall; no LLM → reflect blind-promotes its working rows and distill
+proposes nothing; no sink → no export. The engine modules (`store`, `reflect`,
 `distill`) accept these ports by constructor injection and never import concrete
 providers.
 
@@ -44,13 +44,21 @@ Swapping or removing an adapter is a zero-diff change to the engine. It ships:
   `lib.prompts.surface_agent`; with none configured `complete` returns `None`
   and callers fall back to heuristics. `extra_args` are appended to the agent's
   argv — the hook for granting an agentic caller its read-only tools
-  (`--allowedTools …`).
-- Three resolvers bind a surface to that LLM: `resolve_distiller` grants the
+  (`--allowedTools …`), and a `surface_id` tags the spawned trace (via a
+  `REGIN_LLM_SURFACE` env stamp) as an `llm-stage` run rather than an
+  interactive session. `complete` blocks and reads stdout; `spawn_spec` returns
+  a `SpawnSpec` — the same argv / cwd / surface bundle for launching the agent
+  *detached*, for a caller that reports back over its own side channel instead
+  of waiting on the result inline.
+- Five resolvers bind a surface to that LLM: `resolve_distiller` grants the
   read-only `trace dump` / `trace span` tools (`distill_allowed_tools`) so the
-  distiller can self-fetch a session's spans; `resolve_topic_classifier` grants
-  no tools (plain-text-in, JSON-out taxonomy reasoning for
-  `memory link-topics`); `resolve_proposal_reviewer` grants `Read,Glob,Grep` so
-  the review LLM verifies a draft against the current refs itself.
+  distiller can self-fetch a session's spans; `resolve_dreamer` grants the
+  read-only memory tools (`dream_allowed_tools`) so `reflect`'s single dream
+  stage can pull evidence beyond its bounded pack; `resolve_topic_classifier`
+  and `resolve_retitler` grant no tools (plain-text-in, JSON-out reasoning for
+  `memory link-topics` and one-line-rule titling in `memory retitle`);
+  `resolve_proposal_reviewer` grants `Read,Glob,Grep` so the review LLM verifies
+  a draft against the current refs itself.
 
 ## Scoping
 
@@ -69,10 +77,11 @@ checkout. The single mutable `memories` table carries both tiers via a `tier`
 column (`working` / `episodic`, default `working`) alongside importance,
 veracity, `recall_count`, provenance (`source_trace_id` / `source_span_id` /
 `source_agent_id`), and lifecycle stamps. Its side tables are
-`memory_embeddings`, `memory_validations`, `injection_events`,
-`topic_injections`, `topic_route_decisions`, `memory_edges`, `memory_topics`,
-`memory_topic_members`, `memory_authoritative_topics`, `referent_session_df`,
-and `topic_exemplars`.
+`memory_embeddings`, `memory_validations`, `memory_pair_checks` (the dream
+stage's judged-pair ledger), `injection_events`, `topic_injections`,
+`topic_route_decisions`, `memory_edges`, `memory_topics`,
+`memory_topic_members`, `memory_authoritative_topics`, `topic_wiki_recalls`,
+`referent_session_df`, and `topic_exemplars`.
 
 Unlike the append-only `session_spans` store, memory is **mutable by design** —
 rows are updated, superseded, retired, and deleted in place, because that

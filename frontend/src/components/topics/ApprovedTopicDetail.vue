@@ -7,6 +7,7 @@ import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
+import TopicReferencesTable from './TopicReferencesTable.vue'
 
 const props = defineProps({
   repo: { type: String, required: true },
@@ -110,12 +111,6 @@ async function deleteTopic() {
   }
 }
 
-function roleColor(role) {
-  if (role === 'test') return 'green'
-  if (role === 'architecture' || role === 'overview') return 'blue'
-  if (role === 'api' || role === 'entrypoint') return 'purple'
-  return 'gray'
-}
 </script>
 
 <template>
@@ -209,24 +204,7 @@ function roleColor(role) {
           </div>
         </div>
 
-        <div>
-          <h3 class="topics-subsection-title">References</h3>
-          <div class="overflow-x-auto">
-            <table class="tbl">
-              <thead><tr><th>Role</th><th>Tier</th><th>Path</th></tr></thead>
-              <tbody>
-                <tr v-for="ref in (selectedTopic.refs || [])" :key="`${ref.role}:${ref.path}`">
-                  <td><Badge :color="roleColor(ref.role)" :label="ref.role" /></td>
-                  <td><Badge :color="(ref.tier || 'primary') === 'primary' ? 'blue' : 'gray'" :label="ref.tier || 'primary'" /></td>
-                  <td><code class="text-xs">{{ ref.path }}</code></td>
-                </tr>
-                <tr v-if="!(selectedTopic.refs || []).length">
-                  <td colspan="3" class="text-gray-500">No references recorded.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <TopicReferencesTable :refs="selectedTopic.refs || []" />
 
         <div v-if="selectedTopic.wiki_content" class="topics-markdown">
           <h3 class="topics-subsection-title">Wiki Preview</h3>
