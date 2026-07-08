@@ -113,6 +113,77 @@ test.describe('Apply panel wiki-content diff', () => {
   })
 })
 
+function diffRoute(before, after) {
+  return (route) => route.fulfill({
+    json: {
+      ok: true,
+      diff: {
+        strategy: 'create', proposed_topic_id: 'doc-a', is_applyable: true,
+        topic_deltas: [], graph_warnings: [], introduced_errors: [],
+        valid_strategies_by_topic: { 'doc-a': ['create'] },
+      },
+      dropped_items: { orphan_edges: [], dead_refs: [], duplicate_aliases: [] },
+      raw_introduced_errors: [],
+      wiki_before: before,
+      wiki_after: after,
+    },
+  })
+}
+
+async function openApplyPanel(page, before, after) {
+  await page.route('**/topics/workspace/proposals**', (route) =>
+    route.fulfill({ json: workspaceWithSelectedTopic() }))
+  await page.route('**/topics/proposals/**/topics/**/diff', diffRoute(before, after))
+  await gotoTopics(page)
+  await page.goto(page.url() + '&proposal=mock-run')
+  await page.locator('[data-testid="apply-proposed-topic"]').click()
+  await expect(page.locator('[data-testid="wiki-content-diff"]')).toBeVisible()
+}
+
+test.describe('Word-level diff views', () => {
+  // Only "decoupling" → "core" changes on an otherwise-shared line.
+  const BEFORE = '# Ports\ndeclares the four decoupling interfaces\n'
+  const AFTER = '# Ports\ndeclares the four core interfaces\n'
+
+  test('Unified view highlights only the changed word, not the whole line', async ({ page }) => {
+    await openApplyPanel(page, BEFORE, AFTER)
+    const diff = page.locator('[data-testid="wiki-content-diff"]')
+    // Default is Unified.
+    await expect(diff.locator('[data-testid="wiki-diff-view-unified"]')).toHaveAttribute('aria-checked', 'true')
+    // The changed word is isolated in a word-level highlight span…
+    await expect(diff.locator('.wikidiff__row--remove .wikidiff__seg--remove')).toContainText('decoupling')
+    await expect(diff.locator('.wikidiff__row--add .wikidiff__seg--add')).toContainText('core')
+    // …and the shared words are NOT highlighted (no seg covers "declares").
+    await expect(diff.locator('.wikidiff__seg--add')).not.toContainText('declares')
+    await expect(diff.locator('.wikidiff__seg--remove')).not.toContainText('declares')
+  })
+
+  test('Inline view shows a flowing block with Common/New/Removed word counts', async ({ page }) => {
+    await openApplyPanel(page, BEFORE, AFTER)
+    const diff = page.locator('[data-testid="wiki-content-diff"]')
+    await diff.locator('[data-testid="wiki-diff-view-inline"]').click()
+
+    const inline = diff.locator('[data-testid="wiki-diff-inline"]')
+    await expect(inline).toBeVisible()
+    // Line-gutter rows are gone in the flowing view.
+    await expect(diff.locator('.wikidiff__row')).toHaveCount(0)
+    // Word highlights survive in the flowing block.
+    await expect(inline.locator('.wikidiff__seg--add')).toContainText('core')
+    await expect(inline.locator('.wikidiff__seg--remove')).toContainText('decoupling')
+    // Exactly one word added, one removed.
+    const stats = diff.locator('[data-testid="wiki-diff-stats"]')
+    await expect(stats).toContainText('New: 1')
+    await expect(stats).toContainText('Removed: 1')
+  })
+
+  test('the view toggle is absent when there is nothing to diff', async ({ page }) => {
+    const same = '# Ports\nunchanged body\n'
+    await openApplyPanel(page, same, same)
+    await expect(page.locator('[data-testid="wiki-diff-identical"]')).toBeVisible()
+    await expect(page.locator('[data-testid="wiki-diff-view-toggle"]')).toHaveCount(0)
+  })
+})
+
 // Per-revision topic bodies: r3 (id 1) → r4 (id 2) changes the wiki AND adds
 // a reference file + an alias, so the compare card exercises all three panes.
 function topicForRevision(rev) {
