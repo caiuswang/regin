@@ -145,26 +145,17 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
                     "never to zero, so a repo-ubiquitous term still counts a "
                     "little when it's the only hit."},
     # ── Consolidation ──
-    {"key": "promote_mode", "group": "Consolidation", "type": "choice",
-     "options": ["heuristic", "ambiguous", "all"],
-     "label": "Promotion decision",
-     "description": "Who decides a working row's fate at promotion. heuristic: "
-                    "the blind rule (always promote). ambiguous: clear-cut rows "
-                    "auto-promote, borderline ones go to the judge. all: the "
-                    "judge sees every row. Degrades to heuristic with no agent."},
+    {"key": "dream_enabled", "group": "Consolidation", "type": "bool",
+     "label": "Dream (LLM consolidation)",
+     "description": "reflect()'s single agentic stage: one call per run decides "
+                    "every working row's fate, judges suspect pairs, and may "
+                    "synthesize. Off (or no agent): surviving working rows are "
+                    "blind-promoted and nothing else is judged."},
     {"key": "promote_allow_retire", "group": "Consolidation", "type": "bool",
-     "label": "Let the judge retire rows",
-     "description": "Honour the promote judge's drop/merge verdicts (reversible "
+     "label": "Let the dream retire rows",
+     "description": "Honour the dream's drop/merge verdicts (reversible "
                     "supersede). Off: those verdicts degrade to 'hold' and the "
                     "model can only promote or keep a row working."},
-    {"key": "synthesis_enabled", "group": "Consolidation", "type": "bool",
-     "label": "Synthesize higher-order rules",
-     "description": "reflect() abstracts one rule from each tight cluster of "
-                    "related episodic memories. Needs an embedder and an agent."},
-    {"key": "digest_enabled", "group": "Consolidation", "type": "bool",
-     "label": "Maintain per-scope digests",
-     "description": "reflect() rolls each scope's top memories into one standing "
-                    "briefing, refreshed in place. Needs an agent. Off by default."},
     {"key": "forget_after_days", "group": "Consolidation", "type": "int",
      "min": 0, "step": 1, "label": "Forget never-recalled after (days)",
      "description": "reflect() retires episodic memories this old that were "
@@ -177,17 +168,11 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
      "min": 0, "max": 1, "step": 0.01, "label": "Dedup text threshold",
      "description": "Fallback merge threshold on text similarity when no "
                     "embedder is available."},
-    {"key": "contradiction_scan_enabled", "group": "Consolidation", "type": "bool",
-     "label": "Contradiction sweep",
-     "description": "reflect() judges episodic pairs that name a common repo "
-                    "file path (no cosine gate): CONTRADICT retires the older "
-                    "as false, OBSOLETE retires it with veracity untouched. "
-                    "Judged pairs are never re-bought. Needs an agent."},
     {"key": "contradiction_budget", "group": "Consolidation", "type": "int",
-     "min": 0, "step": 1, "label": "Contradiction pairs per run",
-     "description": "Cap on LLM-judged pairs per reflect run for the "
-                    "contradiction sweep. 0 pauses the sweep without "
-                    "forgetting which pairs were already judged."},
+     "min": 0, "step": 1, "label": "Suspect pairs per dream",
+     "description": "Cap on suspect episodic pairs (same scope, sharing a repo "
+                    "file path) offered to one dream. Judged pairs are never "
+                    "re-bought; 0 offers none without forgetting the ledger."},
     {"key": "decay_ignored_threshold", "group": "Consolidation", "type": "int",
      "min": 0, "step": 1, "label": "Decay after N ignored verdicts",
      "description": "reflect() decays an unproven episodic memory's importance "

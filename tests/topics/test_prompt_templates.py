@@ -126,7 +126,11 @@ def test_list_endpoint_returns_builtin_on_fresh_db(flask_client, tmp_db):
     assert response.status_code == 200
     data = response.get_json()
     assert data["ok"] is True
-    assert [t["slug"] for t in data["templates"]] == ["gitnexus-usage"]
+    # A fresh DB carries the schema.sql-seeded gitnexus row plus the builtin
+    # skeleton rows create_app seeds at startup — every one of them builtin.
+    slugs = [t["slug"] for t in data["templates"]]
+    assert "gitnexus-usage" in slugs
+    assert all(t["builtin"] for t in data["templates"])
 
 
 def test_crud_endpoints_round_trip(flask_client, tmp_db):
@@ -150,9 +154,10 @@ def test_crud_endpoints_round_trip(flask_client, tmp_db):
     delete = flask_client.delete(f"/api/prompt-templates/{slug}", headers=_editor_auth())
     assert delete.status_code == 200
 
-    # The seeded built-in remains after the custom template is deleted.
+    # The seeded built-ins remain after the custom template is deleted.
     listing = flask_client.get("/api/prompt-templates").get_json()
-    assert [t["slug"] for t in listing["templates"]] == ["gitnexus-usage"]
+    slugs = [t["slug"] for t in listing["templates"]]
+    assert "gitnexus-usage" in slugs and slug not in slugs
 
 
 def test_create_requires_auth(anon_client, tmp_db):

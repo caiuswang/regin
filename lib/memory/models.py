@@ -172,13 +172,15 @@ class MemoryValidation(MemoryBase, table=True):
 
 
 class MemoryPairCheck(MemoryBase, table=True):
-    """One contradiction-judge verdict for a canonical memory pair
-    (``a_id`` < ``b_id``) — the idempotency ledger for reflect()'s
-    referent-anchored contradiction sweep.
+    """The JUDGED-pair ledger: a canonical memory pair (``a_id`` < ``b_id``)
+    a reflect dream actually ruled on, with its verdict. The pack generator
+    consults it so a judged pair is never re-bought; a pair merely offered
+    but left unjudged carries no row and re-presents next run — retry by
+    design, not a leak.
 
     Deliberately NOT stored in ``memory_validations``: that log is trimmed
     to the last few rows per memory at write time, so any marker kept there
-    self-evicts and the sweep would re-buy the same LLM verdicts forever.
+    self-evicts and the dream would re-buy the same judgments forever.
     Rows are GC'd when either memory stops resolving to an active row
     (``Store.prune_pair_checks``) and cascade-deleted with the memory in
     ``Store.forget``."""

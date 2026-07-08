@@ -7,9 +7,21 @@ import lib.memory as memory
 from lib.memory.reflect import reflect
 from lib.settings import settings
 
-from tests.memory.test_reflect import (
-    StubEmbedder, StubLLM, _CLUSTER_VECS, _SYNTHESIS_JSON, _seed_cluster,
-)
+from tests.memory.test_reflect import PlanLLM, StubEmbedder
+
+# Three unit vectors with pairwise cosine ~0.70-0.74 — inside the `related`
+# edge band [0.55, dedup_cosine_threshold=0.92): linked, never merged.
+_CLUSTER_VECS = {
+    "MARKER-A": [1.0, 0.0, 0.0],
+    "MARKER-B": [0.7, 0.714, 0.0],
+    "MARKER-C": [0.7, 0.357, 0.619],
+}
+
+_SYNTH_TITLE = "Restart the backend after editing server code"
+_SYNTH_BODY = ("Across these cases the shared root cause was a stale "
+               "process: after editing server-side code, restart the "
+               "backend so tests and the UI exercise the new behaviour "
+               "rather than the cached old one.")
 
 
 def _episodic(body, **kw):
@@ -18,6 +30,23 @@ def _episodic(body, **kw):
     kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.get_store().remember(MemoryInput(
         body=body, tier="episodic", status="active", **kw))
+
+
+def _seed_cluster():
+    """Three related episodic rows sharing a referent path, so they all
+    reach the dream pack as suspect-pair members. Returns their ids."""
+    a = _episodic("MARKER-A reused backend served stale code until restart; "
+                  "root cause traced into lib/dev/server.py")
+    b = _episodic("MARKER-B the dev server kept old routes after an edit "
+                  "landed in lib/dev/server.py")
+    c = _episodic("MARKER-C playwright asserted against a stale backend "
+                  "spawned from lib/dev/server.py")
+    return [a, b, c]
+
+
+def _synth_plan(ids):
+    return {"actions": [{"action": "synthesize", "source_ids": ids,
+                         "title": _SYNTH_TITLE, "body": _SYNTH_BODY}]}
 
 
 # ── edges ────────────────────────────────────────────────────────────────
@@ -80,9 +109,9 @@ def test_edges_skipped_without_embedder():
 
 
 def test_synthesis_creates_topic_with_members():
-    _seed_cluster()
+    ids = _seed_cluster()
     embedder = StubEmbedder(_CLUSTER_VECS)
-    llm = StubLLM(_SYNTHESIS_JSON)
+    llm = PlanLLM(_synth_plan(ids))
 
     result = reflect(memory.get_store(), embedder=embedder, llm=llm)
 
@@ -90,7 +119,7 @@ def test_synthesis_creates_topic_with_members():
     topics = memory.get_store().list_topics()
     assert len(topics) == 1
     topic = topics[0]
-    assert topic["name"] == "Restart the backend after editing server code"
+    assert topic["name"] == _SYNTH_TITLE
     assert topic["member_count"] == 3
     assert topic["summary_memory_id"]  # the synthesised rule is the card
 
@@ -100,9 +129,9 @@ def test_synthesis_creates_topic_with_members():
 
 def test_topics_disabled_still_synthesizes(monkeypatch):
     monkeypatch.setattr(settings.agent_memory, "topics_enabled", False)
-    _seed_cluster()
+    ids = _seed_cluster()
     embedder = StubEmbedder(_CLUSTER_VECS)
-    llm = StubLLM(_SYNTHESIS_JSON)
+    llm = PlanLLM(_synth_plan(ids))
 
     result = reflect(memory.get_store(), embedder=embedder, llm=llm)
 
@@ -111,16 +140,15 @@ def test_topics_disabled_still_synthesizes(monkeypatch):
 
 
 def test_related_view_includes_topics():
-    _seed_cluster()
+    ids = _seed_cluster()
     embedder = StubEmbedder(_CLUSTER_VECS)
-    reflect(memory.get_store(), embedder=embedder, llm=StubLLM(_SYNTHESIS_JSON))
+    reflect(memory.get_store(), embedder=embedder, llm=PlanLLM(_synth_plan(ids)))
 
     member = next(m for m in memory.get_store().list_memories(
         include_tests=True) if "synthesis" not in (m["tags"] or []))
     rel = memory.get_store().related(member["id"], include_tests=True)
     assert rel["topics"]
-    assert rel["topics"][0]["name"] == \
-        "Restart the backend after editing server code"
+    assert rel["topics"][0]["name"] == _SYNTH_TITLE
 
 
 # ── recall expansion ───────────────────────────────────────────────────────

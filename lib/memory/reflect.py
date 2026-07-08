@@ -1,42 +1,32 @@
 """`reflect()` — the consolidation cycle (mnemopi's `sleep`).
 
-Walks the `working` tier and, in order:
+Four stages, in order:
 
-  1. **Dedup** — near-identical memories collapse into one row: the
-     keeper survives (episodic preferred, then most-recalled, then
-     oldest), the newcomer is retired with `superseded_by` pointing at
-     it. Similarity is embedding cosine when an `EmbeddingProvider` is
-     injected, else a deterministic text ratio — reflect never *requires*
-     a model.
-  2. **Contradiction check** — a 3-way judge (CONTRADICT / OBSOLETE /
-     DISTINCT) over time-ordered pairs, fed from two sources: working-tier
-     pairs in the similarity gray zone, and a referent-anchored sweep over
-     the episodic corpus (pairs sharing a concrete repo file path — real
-     contradictions are low-cosine, so the sweep does not gate on
-     similarity). CONTRADICT retires the older row `veracity='false'`;
-     OBSOLETE retires it with veracity untouched (relocation-in-time, not
-     falsity); DISTINCT leaves both. Judged pairs are remembered in
-     `memory_pair_checks` so no pair is bought twice. No LLM → both paths
-     are silent no-ops.
-  3. **Promote** — surviving working rows become `episodic`, stamped
-     `consolidated_at`, importance nudged by the reinforcement signal
-     (`recall_count`).
-  4. **Synthesize** — clusters of *related but distinct* episodic rows are
-     handed to the `LLMProvider` (when one is configured alongside an
-     embedder) to abstract a single higher-order rule — Generative-Agents
-     reflection, the step beyond dedup/GC. Sources are kept and marked
-     `synthesized`; recall favours the more general, higher-importance
-     synthesis. No embedder or no LLM → skipped.
-  5. **Digest** — (opt-in, `digest_enabled`) roll each scope's most
-     important episodic rows into ONE maintained briefing, refreshed in
-     place via supersede. The structure layer: standing context read by
-     scope, excluded from similarity recall and the lifecycle. Needs only
-     an LLM. Runs after synthesis so a fresh card can feed it the same pass.
-  6. **Embed** — active rows of both tiers get vectors (content-hash-
-     skipped when unchanged) so the dense recall leg can see them; a
-     fresh working-tier lesson must be dense-visible before promotion.
+  1. **Mechanical pre-pass** — no model. Near-identical memories collapse
+     into one row (the keeper survives: episodic preferred, then
+     most-recalled, then oldest; similarity is embedding cosine when an
+     `EmbeddingProvider` is injected, else a deterministic text ratio),
+     the pending engagement sweep is scored, and any legacy `kind='digest'`
+     rows are retired (the digest stage was removed).
+  2. **Dream** — the ONE agentic LLM stage per run. A single
+     `llm.complete` call receives a bounded evidence pack — every pending
+     working row with its top co-retrieval neighbours, plus up to
+     `contradiction_budget` suspect episodic pairs (same scope, sharing a
+     concrete repo file path, not yet presented) — and returns one JSON
+     plan: promote/hold/drop/merge per working row,
+     contradict/obsolete/distinct per pair, and optional synthesize
+     actions. The plan is applied deterministically with per-action
+     validation; anything invalid is skipped and counted. No LLM,
+     `dream_enabled` off, or an unparseable plan → every surviving working
+     row is blind-promoted (a model outage never blocks consolidation).
+  3. **Lifecycle decay** — forget never-recalled aged rows, decay
+     chronically-ignored ones, flag stale file references.
+  4. **Embed + edges** — active rows of both tiers get vectors
+     (content-hash-skipped when unchanged) and the `related` edge graph is
+     rebuilt, after the dream so fresh promotions/syntheses are covered.
 
-`dry_run=True` reports what would happen without writing.
+`dry_run=True` builds the pack and calls the LLM, but applies nothing —
+the would-be plan lands in `result.actions`.
 """
 
 from __future__ import annotations
@@ -46,6 +36,7 @@ import hashlib
 import json
 import math
 import re
+import statistics
 from dataclasses import dataclass, field as dc_field
 from typing import Optional
 
@@ -53,10 +44,6 @@ from lib.activity_log import get_activity_logger
 from lib.settings import settings
 
 log = get_activity_logger("memory")
-
-# Gray zone below the dedup threshold where two memories are suspiciously
-# close but not mergeable — candidates for the LLM contradiction check.
-_GRAY_ZONE_FLOOR = 0.75
 
 
 @dataclass
@@ -66,6 +53,7 @@ class ReflectResult:
     contradictions: int = 0
     obsoleted: int = 0
     pairs_checked: int = 0
+    dream_skipped: int = 0
     promoted: int = 0
     held: int = 0
     dropped: int = 0
@@ -75,7 +63,6 @@ class ReflectResult:
     synthesized: int = 0
     edges: int = 0
     topics: int = 0
-    digests: int = 0
     flagged_stale: int = 0
     ref_renames: int = 0
     dry_run: bool = False
@@ -156,31 +143,10 @@ def _merge_pair(store, keeper: dict, loser: dict, *, dry_run: bool,
                             note=f"near-duplicate of {keeper['id']}")
 
 
-_PAIR_VERDICTS = ("CONTRADICT", "OBSOLETE", "DISTINCT")
-
-
 def _time_ordered(a: dict, b: dict) -> tuple[dict, dict]:
     """(older, newer) by created_at."""
     return ((a, b) if (a["created_at"] or "") <= (b["created_at"] or "")
             else (b, a))
-
-
-def _llm_pair_verdict(llm, older: dict, newer: dict) -> "str | None":
-    """The 3-way judge over one time-ordered pair. Returns one of
-    `_PAIR_VERDICTS`, or None on no / ambiguous / unparseable answer."""
-    from lib.prompts import render_surface
-    from lib.prompts.surfaces.memory import CONTRADICTION_SURFACE_ID
-    prompt = render_surface(CONTRADICTION_SURFACE_ID, {
-        "memory_a": _doc_text(older)[:1500],
-        "memory_b": _doc_text(newer)[:1500],
-        "created_a": older.get("created_at") or "unknown",
-        "created_b": newer.get("created_at") or "unknown"})
-    answer = llm.complete(prompt, max_tokens=8,
-                          surface_id=CONTRADICTION_SURFACE_ID)
-    if not answer:
-        return None
-    found = [v for v in _PAIR_VERDICTS if v in answer.upper()]
-    return found[0] if len(found) == 1 else None
 
 
 def _retire_older(store, older: dict, newer: dict, *, falsify: bool,
@@ -209,59 +175,6 @@ def _retire_older(store, older: dict, newer: dict, *, falsify: bool,
               else f"obsoleted by {newer['id']}"))
 
 
-def _apply_pair_verdict(store, verdict: "str | None", older: dict,
-                        newer: dict, *, dry_run: bool,
-                        result: ReflectResult) -> bool:
-    """Apply one judge verdict; True when the older row was retired."""
-    if verdict not in ("CONTRADICT", "OBSOLETE"):
-        return False
-    _retire_older(store, older, newer, falsify=(verdict == "CONTRADICT"),
-                  dry_run=dry_run, result=result)
-    return True
-
-
-@dataclass
-class _JudgeState:
-    """Per-run shared state for BOTH contradiction paths (gray-zone and the
-    referent sweep): one LLM handle, one call budget, and the already-judged
-    pair ledger loaded once (the table is small; a per-candidate DB read
-    would dominate the sweep)."""
-
-    llm: object
-    budget: int
-    checked: set
-
-
-def _pair_judge_state(store, llm) -> "_JudgeState | None":
-    """None disables both judge paths — no LLM or the sweep setting is off."""
-    if llm is None or not settings.agent_memory.contradiction_scan_enabled:
-        return None
-    return _JudgeState(llm=llm,
-                       budget=settings.agent_memory.contradiction_budget,
-                       checked=store.checked_pair_keys())
-
-
-def _judge_pair(store, older: dict, newer: dict, judge: _JudgeState, *,
-                dry_run: bool, result: ReflectResult) -> bool:
-    """Judge one time-ordered pair under the shared budget/ledger. Only a
-    DISTINCT verdict is recorded to the ledger — CONTRADICT/OBSOLETE retire
-    the older row, so the pair can never re-qualify (and next run's GC would
-    delete the row anyway). True when the older row was retired."""
-    key = tuple(sorted((older["id"], newer["id"])))
-    if key in judge.checked or judge.budget <= 0:
-        return False
-    judge.budget -= 1
-    verdict = _llm_pair_verdict(judge.llm, older, newer)
-    result.pairs_checked += 1
-    retired = _apply_pair_verdict(store, verdict, older, newer,
-                                  dry_run=dry_run, result=result)
-    if verdict == "DISTINCT":
-        judge.checked.add(key)
-        if not dry_run:
-            store.record_pair_check(older["id"], newer["id"], verdict)
-    return retired
-
-
 def _reinforced_importance(mem: dict) -> float:
     boost = 0.05 * math.log1p(mem.get("recall_count") or 0)
     return min(1.0, max(0.0, mem["importance"] + boost))
@@ -277,11 +190,6 @@ def _promote(store, mem: dict, *, now_field: str, dry_run: bool,
                  importance=_reinforced_importance(mem))
 
 
-_PROMOTE_CLEAR_RECALL = 1     # a deliberately-recalled row has proven useful
-_PROMOTE_NEIGHBOURS = 3       # kept rows shown to the judge as context
-_PROMOTE_VERDICTS = ("promote", "hold", "drop", "merge")
-
-
 def _hold(mem: dict, *, result: ReflectResult) -> None:
     result.held += 1
     result.actions.append(f"hold {mem['id'][:8]} (working)")
@@ -295,111 +203,6 @@ def _drop(store, mem: dict, *, dry_run: bool, result: ReflectResult) -> None:
     store.update(mem["id"], status="retired")
     store.record_validation(mem["id"], validator="reflect", action="dropped",
                             note="promote judge: low-value")
-
-
-def _promotion_ambiguous(mem: dict, nearest_sim: float) -> bool:
-    """Cheap gate for `promote_mode='ambiguous'`: True → consult the judge. A
-    row is clear-cut only when an abundant, reliable signal already vouches for
-    it — deliberately recalled at least once AND clear of the near-duplicate
-    band (not a merge candidate). Everything else goes to the model."""
-    recalled = (mem.get("recall_count") or 0) >= _PROMOTE_CLEAR_RECALL
-    return not (recalled and nearest_sim < _GRAY_ZONE_FLOOR)
-
-
-def _neighbour_map(working: list[dict], episodic: list[dict],
-                   embedder) -> dict[str, list[tuple[dict, float]]]:
-    """Each working row's episodic neighbours, most-similar first."""
-    ep_ids = {e["id"] for e in episodic}
-    by_w: dict[str, list[tuple[dict, float]]] = {w["id"]: [] for w in working}
-    for w, other, sim in _pair_similarities(working, working + episodic, embedder):
-        if other["id"] in ep_ids:
-            by_w[w["id"]].append((other, sim))
-    for wid in by_w:
-        by_w[wid].sort(key=lambda t: t[1], reverse=True)
-    return by_w
-
-
-def _promote_decision(mem: dict, neighbours: list[dict], llm) -> "dict | None":
-    """Ask the judge what to do with a working row. Returns the parsed verdict,
-    or None on any model/parse failure — the caller then falls back to a plain
-    promote, so a model outage never blocks or misroutes consolidation."""
-    from lib.prompts import render_surface
-    from lib.prompts.surfaces.memory import PROMOTE_SURFACE_ID
-    blocks = "\n".join(f"[{n['id']}] {_doc_text(n)[:400]}"
-                       for n in neighbours) or "(none)"
-    answer = llm.complete(
-        render_surface(PROMOTE_SURFACE_ID,
-                       {"candidate": _doc_text(mem)[:1500], "neighbours": blocks}),
-        max_tokens=200, surface_id=PROMOTE_SURFACE_ID)
-    if not answer:
-        return None
-    draft = _extract_json_object(answer)
-    if not draft or draft.get("verdict") not in _PROMOTE_VERDICTS:
-        return None
-    return draft
-
-
-def _neighbour_by_id(near: list[tuple[dict, float]],
-                     mid: "str | None") -> "dict | None":
-    for n, _ in near:
-        if n["id"] == mid:
-            return n
-    return None
-
-
-def _apply_verdict(store, mem: dict, verdict: "dict | None",
-                   near: list[tuple[dict, float]], allow_retire: bool, *,
-                   now_field: str, dry_run: bool, result: ReflectResult) -> None:
-    kind = verdict.get("verdict") if verdict else None
-    if kind == "hold":
-        _hold(mem, result=result)
-    elif kind == "drop" and allow_retire:
-        _drop(store, mem, dry_run=dry_run, result=result)
-    elif kind == "merge" and allow_retire:
-        keeper = _neighbour_by_id(near, (verdict or {}).get("merge_into"))
-        if keeper is not None:
-            _merge_pair(store, keeper, mem, dry_run=dry_run, result=result)
-        else:
-            _hold(mem, result=result)
-    elif kind in ("drop", "merge"):     # retire not opted in → keep it working
-        _hold(mem, result=result)
-    else:                               # promote, or verdict None (fallback)
-        _promote(store, mem, now_field=now_field, dry_run=dry_run, result=result)
-
-
-def _judge_row(store, mem: dict, near: list[tuple[dict, float]], cfg, llm, *,
-               now_field: str, dry_run: bool, result: ReflectResult) -> None:
-    """Model-path for one working row: clear-cut rows auto-promote (ambiguous
-    mode only), the rest go to the judge and its verdict is applied."""
-    if cfg.promote_mode == "ambiguous":
-        nearest_sim = near[0][1] if near else 0.0
-        if not _promotion_ambiguous(mem, nearest_sim):
-            _promote(store, mem, now_field=now_field,
-                     dry_run=dry_run, result=result)
-            return
-    verdict = _promote_decision(mem, [n for n, _ in near[:_PROMOTE_NEIGHBOURS]], llm)
-    _apply_verdict(store, mem, verdict, near, cfg.promote_allow_retire,
-                   now_field=now_field, dry_run=dry_run, result=result)
-
-
-def _consolidate_working(store, working: list[dict], consumed: set,
-                         episodic: list[dict], embedder, llm, *,
-                         now_field: str, dry_run: bool,
-                         result: ReflectResult) -> None:
-    """Decide each un-consumed working row's fate — model-judged when
-    `promote_mode` asks and an LLM is available, else the original blind
-    promote (which is also the fallback for every model/parse failure)."""
-    pending = [m for m in working if m["id"] not in consumed]
-    cfg = settings.agent_memory
-    if cfg.promote_mode == "heuristic" or llm is None:
-        for mem in pending:
-            _promote(store, mem, now_field=now_field,
-                     dry_run=dry_run, result=result)
-        return
-    neighbours = _neighbour_map(pending, episodic, embedder)
-    for mem in pending:
-        _judge_row(store, mem, neighbours.get(mem["id"]) or [], cfg, llm,
-                   now_field=now_field, dry_run=dry_run, result=result)
 
 
 def _stale_embedding_todo(store, model_id: str) -> list[tuple[dict, str]]:
@@ -745,21 +548,6 @@ def _flag_stale_references(store, rows: list[dict], *, dry_run: bool,
         _check_one_stale(store, mem, dry_run=dry_run, result=result)
 
 
-# Synthesis (Generative-Agents-style reflection): cluster related episodic
-# memories and abstract ONE higher-order rule from each cluster. The cluster
-# band is [floor, dedup_threshold) cosine — related but not duplicates (those
-# are merged). Sources are kept (their specifics still matter; recall favours
-# the more general, higher-importance synthesis) and marked 'synthesized' so a
-# second pass over the same cluster is a no-op.
-_SYNTHESIS_FLOOR = 0.55
-_SYNTHESIS_MIN_CLUSTER = 3
-_SYNTHESIS_MAX_CLUSTERS = 3   # bound LLM calls per reflect run
-
-# The synthesis prompt now lives as the editable `memory-reflect-synthesis`
-# surface (lib/prompts/surfaces/memory.py::_DEFAULT_BODY_SYNTHESIS);
-# `_llm_synthesis` wires the clustered entries into its `{{entries}}` slot.
-
-
 def _extract_json_object(answer: str):
     """Parse a single JSON object out of model output, tolerating fences and
     surrounding prose. None when no object can be parsed."""
@@ -772,92 +560,6 @@ def _extract_json_object(answer: str):
     except (json.JSONDecodeError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None
-
-
-def _unsynthesized(store, episodic: list[dict]) -> list[dict]:
-    """Episodic rows not already folded into a synthesis. Skipping members
-    that carry a 'synthesized' validation is what keeps the pass idempotent —
-    a re-run over the same cluster finds no fresh members."""
-    return [m for m in episodic
-            if not _validation_action_counts(store, m["id"]).get("synthesized")]
-
-
-def _cluster_neighbours(rows: list[dict], cos, i: int,
-                        clustered: set[str], dedup_t: float) -> list[dict]:
-    """The seed at `i` plus every not-yet-clustered row whose cosine to it
-    sits in the synthesis band [`_SYNTHESIS_FLOOR`, dedup_threshold)."""
-    members = [rows[i]]
-    for j, other in enumerate(rows):
-        if i == j or other["id"] in clustered:
-            continue
-        if _SYNTHESIS_FLOOR <= float(cos[i][j]) < dedup_t:
-            members.append(other)
-    return members
-
-
-def _synthesis_clusters(rows: list[dict], embedder) -> list[list[dict]]:
-    """Greedy clusters of related-but-distinct rows (each at least
-    `_SYNTHESIS_MIN_CLUSTER` members, no row in two clusters)."""
-    cos = _cosine_matrix(embedder, [_doc_text(m) for m in rows])
-    if cos is None:
-        return []
-    dedup_t = settings.agent_memory.dedup_cosine_threshold
-    clustered: set[str] = set()
-    clusters: list[list[dict]] = []
-    for i, seed in enumerate(rows):
-        if seed["id"] in clustered:
-            continue
-        members = _cluster_neighbours(rows, cos, i, clustered, dedup_t)
-        if len(members) >= _SYNTHESIS_MIN_CLUSTER:
-            clustered.update(m["id"] for m in members)
-            clusters.append(members)
-    return clusters
-
-
-def _llm_synthesis(llm, members: list[dict]) -> "dict | None":
-    """Ask the LLM to abstract one rule from a cluster. None when it declines
-    (NONE), the output is unparseable, or the draft is too thin to keep."""
-    from lib.prompts import render_surface
-    from lib.prompts.surfaces.memory import SYNTHESIS_SURFACE_ID
-    entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:600]}"
-                          for i, m in enumerate(members))
-    answer = llm.complete(render_surface(SYNTHESIS_SURFACE_ID, {"entries": entries}),
-                          max_tokens=400, surface_id=SYNTHESIS_SURFACE_ID)
-    if not answer or answer.strip().upper().startswith("NONE"):
-        return None
-    draft = _extract_json_object(answer)
-    if not draft:
-        return None
-    title = str(draft.get("title") or "").strip()
-    body = str(draft.get("body") or "").strip()
-    if len(title) < 10 or len(body) < 60:
-        return None
-    return {"title": title[:120], "body": body[:2000]}
-
-
-def _write_synthesis(store, members: list[dict], draft: dict, *,
-                     dry_run: bool, result: ReflectResult,
-                     embedder=None) -> None:
-    """Write the synthesised rule as a new episodic memory and stamp each
-    source with a 'synthesized' validation (the idempotency marker)."""
-    from lib.memory.models import MemoryInput
-    result.synthesized += 1
-    result.actions.append(
-        f"synthesize {len(members)} -> «{draft['title'][:48]}»")
-    if dry_run:
-        return
-    scopes = {m["scope"] for m in members}
-    topic_scope = scopes.pop() if len(scopes) == 1 else "global"
-    importance = min(1.0, max(m["importance"] for m in members) + 0.05)
-    mid = store.remember(MemoryInput(
-        body=draft["body"], title=draft["title"], kind="lesson",
-        tier="episodic", status="active",
-        scope=topic_scope, tags=["synthesis"], importance=importance))
-    for m in members:
-        store.record_validation(m["id"], validator="reflect",
-                                action="synthesized", note=f"into {mid}")
-    _record_synthesis_topic(store, members, draft, mid, topic_scope,
-                            embedder, result)
 
 
 def _record_synthesis_topic(store, members, draft, mid, topic_scope,
@@ -883,138 +585,21 @@ def _record_synthesis_topic(store, members, draft, mid, topic_scope,
         result.topics += 1
 
 
-def _synthesize(store, episodic: list[dict], embedder, llm, *,
-                dry_run: bool, result: ReflectResult) -> None:
-    """Cluster related episodic rows and abstract a higher-order rule from
-    each. A no-op without both an embedder (to cluster) and an LLM (to
-    abstract), or when `synthesis_enabled` is off — synthesis is the one
-    consolidation step that genuinely needs both models."""
-    if (not settings.agent_memory.synthesis_enabled
-            or embedder is None or embedder.model_id is None or llm is None):
-        return
-    candidates = _unsynthesized(store, episodic)
-    if len(candidates) < _SYNTHESIS_MIN_CLUSTER:
-        return
-    clusters = _synthesis_clusters(candidates, embedder)[:_SYNTHESIS_MAX_CLUSTERS]
-    for members in clusters:
-        draft = _llm_synthesis(llm, members)
-        if draft is not None:
-            _write_synthesis(store, members, draft,
-                             dry_run=dry_run, result=result,
-                             embedder=embedder)
-
-
-# Digest (the structure layer): roll each scope's most important episodic
-# memories into ONE maintained briefing, refreshed in place via supersede.
-# Distinct from synthesis (which abstracts a rule from one tight cluster);
-# the digest summarises the whole scope and is injected as standing context,
-# never a per-query recall hit. Needs only an LLM. Gated on `digest_enabled`.
-_DIGEST_MIN_SOURCES = 3
-
-# The digest prompt now lives as the editable `memory-reflect-digest` surface
-# (lib/prompts/surfaces/memory.py::_DEFAULT_BODY_DIGEST); `_llm_digest` wires the
-# scope's top memories into its `{{entries}}` slot.
-
-
-def _age_days(stamp: "str | None") -> float:
-    """Whole/fractional days since an ISO timestamp; +inf when absent or
-    unparseable (so a missing stamp always trips the age gate)."""
-    if not stamp:
-        return float("inf")
-    try:
-        from datetime import datetime
-        delta = datetime.now() - datetime.fromisoformat(stamp)
-        return delta.total_seconds() / 86400.0
-    except ValueError:
-        return float("inf")
-
-
-def _digest_sources(episodic: list[dict], scope: str, cap: int) -> list[dict]:
-    """A scope's episodic rows, highest-importance first, capped. Synthesis
-    cards (importance = cluster max + 0.05) naturally sort to the front."""
-    rows = [m for m in episodic if m["scope"] == scope]
-    rows.sort(key=lambda m: m.get("importance") or 0.0, reverse=True)
-    return rows[:cap]
-
-
-def _digest_is_current(existing: "dict | None", sources: list[dict]) -> bool:
-    """True when the existing digest needn't be regenerated yet: younger than
-    `digest_max_age_days` AND fewer than `digest_min_new_cards` sources are
-    newer than it. None (no digest) is never current."""
-    if existing is None:
-        return False
-    cfg = settings.agent_memory
-    stamp = existing.get("updated_at") or existing.get("created_at")
-    if _age_days(stamp) >= cfg.digest_max_age_days:
-        return False
-    fresh = sum(1 for m in sources if (m.get("created_at") or "") > (stamp or ""))
-    return fresh < cfg.digest_min_new_cards
-
-
-def _llm_digest(llm, sources: list[dict], scope: str) -> "dict | None":
-    """Ask the LLM for one scope-level briefing. None when it declines
-    (NONE), the output is unparseable, or the draft is too thin to keep."""
-    from lib.prompts import render_surface
-    from lib.prompts.surfaces.memory import DIGEST_SURFACE_ID
-    entries = "\n\n".join(f"[{i + 1}] {_doc_text(m)[:400]}"
-                          for i, m in enumerate(sources))
-    answer = llm.complete(
-        render_surface(DIGEST_SURFACE_ID, {"entries": entries, "scope": scope}),
-        max_tokens=600, surface_id=DIGEST_SURFACE_ID)
-    if not answer or answer.strip().upper().startswith("NONE"):
-        return None
-    draft = _extract_json_object(answer)
-    if not draft:
-        return None
-    title = str(draft.get("title") or "").strip()
-    body = str(draft.get("body") or "").strip()
-    if len(title) < 6 or len(body) < 80:
-        return None
-    return {"title": title[:120], "body": body[:2000]}
-
-
-def _write_digest(store, scope: str, existing: "dict | None", draft: dict,
-                  sources: list[dict], *, dry_run: bool,
-                  result: ReflectResult) -> None:
-    """Write (or supersede) the scope's digest. Importance is fixed high so
-    the row is never a decay/forget target; it is excluded from recall and
-    the lifecycle regardless, this just keeps any future quality read sane."""
-    from lib.memory.models import MemoryInput
-    result.digests += 1
-    verb = "refresh" if existing else "create"
-    result.actions.append(
-        f"digest[{scope}] {verb} <- {len(sources)} src «{draft['title'][:40]}»")
-    if dry_run:
-        return
-    payload = MemoryInput(
-        body=draft["body"], title=draft["title"], kind="digest",
-        tier="episodic", status="active", scope=scope, tags=["digest"],
-        importance=0.8)
-    if existing is None:
-        store.remember(payload)
-    else:
-        store.supersede(existing["id"], payload)
-
-
-def _synthesize_digest(store, episodic: list[dict], llm, *,
-                       dry_run: bool, result: ReflectResult) -> None:
-    """Maintain one digest per scope. A no-op without an LLM or when
-    `digest_enabled` is off. `episodic` is already digest-free (reflect filters
-    them out), so a scope's own digest never feeds its regeneration."""
-    if not settings.agent_memory.digest_enabled or llm is None:
-        return
-    cap = settings.agent_memory.digest_max_sources
-    for scope in sorted({m["scope"] for m in episodic}):
-        sources = _digest_sources(episodic, scope, cap)
-        if len(sources) < _DIGEST_MIN_SOURCES:
+def _retire_legacy_digests(store, *, dry_run: bool,
+                           result: ReflectResult) -> None:
+    """One-time cleanup for the removed digest stage: any still-active
+    `kind='digest'` row is retired so the write-only briefings stop riding
+    along. Idempotent — once retired, nothing matches again."""
+    rows = store.list_memories(kind="digest", status="active",
+                               include_tests=True, limit=100)
+    for row in rows:
+        result.actions.append(f"retire legacy digest {row['id'][:8]}")
+        if dry_run:
             continue
-        existing = store.get_digest(scope)
-        if _digest_is_current(existing, sources):
-            continue
-        draft = _llm_digest(llm, sources, scope)
-        if draft is not None:
-            _write_digest(store, scope, existing, draft, sources,
-                          dry_run=dry_run, result=result)
+        store.update(row["id"], status="retired")
+        store.record_validation(row["id"], validator="reflect",
+                                action="retired",
+                                note="digest stage removed")
 
 
 def _cap_edges_per_node(pairs: list, cap: int) -> list:
@@ -1072,12 +657,11 @@ def _embed_episodic(store, embedder, *, dry_run: bool,
         store.set_embedding(mem["id"], vec, embedder.model_id, h)
 
 
-def _dedup_and_judge(store, working: list[dict], pool: list[dict],
-                     embedder, judge: "_JudgeState | None", *, dry_run: bool,
-                     result: ReflectResult) -> set[str]:
-    """Run dedup + gray-zone contradiction passes; return ids consumed by a
-    merge or retirement. The gray-zone judge shares gate, budget, and pair
-    ledger with the referent sweep via `judge` (None → dedup only)."""
+def _dedup_merge(store, working: list[dict], pool: list[dict],
+                 embedder, *, dry_run: bool,
+                 result: ReflectResult) -> set[str]:
+    """Mechanical dedup: collapse near-identical pairs at/above the dedup
+    threshold; return ids consumed by a merge."""
     threshold = (settings.agent_memory.dedup_cosine_threshold
                  if embedder is not None and embedder.model_id is not None
                  else settings.agent_memory.dedup_text_threshold)
@@ -1089,11 +673,6 @@ def _dedup_and_judge(store, working: list[dict], pool: list[dict],
             keeper, loser = _keeper_of(newcomer, other)
             _merge_pair(store, keeper, loser, dry_run=dry_run, result=result)
             consumed.add(loser["id"])
-        elif sim >= _GRAY_ZONE_FLOOR and judge is not None:
-            older, newer = _time_ordered(newcomer, other)
-            if _judge_pair(store, older, newer, judge,
-                           dry_run=dry_run, result=result):
-                consumed.add(older["id"])
     return consumed
 
 
@@ -1134,13 +713,89 @@ def _shared_referent_pairs(rows: list[dict]) -> list[tuple[dict, dict]]:
     return pairs
 
 
-def _sweep_rows(store, episodic: list[dict], consumed: set, *,
-                dry_run: bool) -> list[dict]:
-    """Fresh active episodic rows for the sweep. A wet run re-lists from the
-    store, so rows retired earlier this run (gray-zone verdicts, merges)
-    drop out and rows promoted this run join immediately. A dry run wrote
-    nothing, so it filters the start-of-run snapshot by the ids the earlier
-    stages consumed instead."""
+# ── Dream: the single agentic LLM stage ─────────────────────────────────
+_DREAM_NEIGHBOURS = 3         # co-retrieval neighbours shown per working row
+_DREAM_PACK_CAP = 40          # total evidence entries in one pack
+_DREAM_MAX_WORKING = 25       # working rows per dream; the rest defer a run
+_DREAM_CLIP = 600             # chars of body per pack entry
+_DREAM_ROW_ACTIONS = ("promote", "hold", "drop", "merge")
+_DREAM_PAIR_ACTIONS = ("contradict", "obsolete", "distinct")
+_DREAM_PYTHON = ".venv/bin/python"
+
+
+@dataclass
+class _DreamPack:
+    """The bounded, mechanically-built evidence one dream call sees."""
+
+    working: list
+    working_by_id: dict
+    neighbours: dict              # working id -> [neighbour rows]
+    pairs: list                   # [(older, newer)]
+    by_id: dict                   # id -> row, for every entry in the pack
+
+
+def _pack_entry(mem: dict) -> str:
+    return (f"[{mem['id']}] tier={mem['tier']} scope={mem['scope']} "
+            f"created={mem.get('created_at') or 'unknown'}\n"
+            f"{_doc_text(mem)[:_DREAM_CLIP]}")
+
+
+def _neighbour_k(pending_count: int) -> int:
+    """Per-row neighbour context shrinks as the working backlog grows, so
+    suspect pairs keep their share of the bounded pack."""
+    if pending_count <= 8:
+        return _DREAM_NEIGHBOURS
+    return 2 if pending_count <= 16 else 1
+
+
+def _cap_pending(pending: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(packed, deferred): newest-first cap on the working rows one dream
+    sees. Deferred rows are untouched — excluded from the dream AND from
+    the blind-promote fallback, so they stay working for the next run and
+    the prompt stays bounded."""
+    ordered = sorted(pending, key=lambda m: m.get("created_at") or "",
+                     reverse=True)
+    return ordered[:_DREAM_MAX_WORKING], ordered[_DREAM_MAX_WORKING:]
+
+
+def _pack_neighbours(store, pending: list[dict], k: int) -> dict:
+    """Top-k co-retrieval neighbours per working row via the store's own
+    recall path — what the runtime would actually surface next to it, not a
+    raw cosine band. Best-effort: a recall failure just means no context."""
+    out: dict = {}
+    for w in pending:
+        try:
+            hits = store.recall(_doc_text(w), top_k=k + 1,
+                                include_tests=True, reinforce=False)
+        except Exception:  # noqa: BLE001 - evidence is optional, never fatal
+            log.error("dream_neighbour_recall_failed", exc_info=True)
+            hits = []
+        out[w["id"]] = [h.memory for h in hits
+                        if h.memory["id"] != w["id"]][:k]
+    return out
+
+
+def _suspect_pairs(store, rows: list[dict]) -> list:
+    """Up to `contradiction_budget` same-scope shared-referent pairs not yet
+    judged by a dream (`memory_pair_checks` is the judged-pair ledger,
+    loaded once; an offered-but-unjudged pair re-presents next run)."""
+    checked = store.checked_pair_keys()
+    budget = max(0, settings.agent_memory.contradiction_budget)
+    pairs: list = []
+    for older, newer in _shared_referent_pairs(rows):
+        if len(pairs) >= budget:
+            break
+        if tuple(sorted((older["id"], newer["id"]))) in checked:
+            continue
+        pairs.append((older, newer))
+    return pairs
+
+
+def _fresh_episodic(store, episodic: list[dict], consumed: set, *,
+                    dry_run: bool) -> list[dict]:
+    """Active episodic rows as of NOW for the pack: a wet run re-lists from
+    the store (rows merged/retired earlier this run drop out); a dry run
+    wrote nothing, so it filters the start-of-run snapshot instead."""
     if dry_run:
         return [m for m in episodic if m["id"] not in consumed]
     return [m for m in store.list_memories(tier="episodic", status="active",
@@ -1148,79 +803,388 @@ def _sweep_rows(store, episodic: list[dict], consumed: set, *,
             if m["kind"] != "digest"]
 
 
-def _scan_contradictions(store, episodic: list[dict], consumed: set,
-                         judge: "_JudgeState | None", *, dry_run: bool,
-                         result: ReflectResult) -> set[str]:
-    """Referent-anchored contradiction sweep over the episodic corpus.
-    DISTINCT verdicts land in `memory_pair_checks` (idempotency — the capped
-    validation log would self-evict any marker) and all judge calls draw
-    from the shared per-run budget. Returns the retired ids so the caller
-    can drop them from later stages."""
-    if judge is None:
+def _trim_pack(pending: list, pairs: list, neighbours: dict) -> None:
+    """Bound the pack: working rows are never dropped (each needs a
+    verdict); neighbour context shrinks first, then the oldest suspect
+    pairs fall off the end."""
+    budget = _DREAM_PACK_CAP - len(pending)
+
+    def rest() -> int:
+        return sum(len(v) for v in neighbours.values()) + 2 * len(pairs)
+
+    while rest() > budget and any(neighbours.values()):
+        wid = max(neighbours, key=lambda k: len(neighbours[k]))
+        neighbours[wid].pop()
+    while rest() > budget and pairs:
+        pairs.pop()
+
+
+def _build_dream_pack(store, pending: list[dict],
+                      episodic_rows: list[dict]) -> _DreamPack:
+    pairs = _suspect_pairs(store, episodic_rows)
+    neighbours = _pack_neighbours(store, pending, _neighbour_k(len(pending)))
+    _trim_pack(pending, pairs, neighbours)
+    by_id = {w["id"]: w for w in pending}
+    for rows in neighbours.values():
+        for n in rows:
+            by_id.setdefault(n["id"], n)
+    for a, b in pairs:
+        by_id.setdefault(a["id"], a)
+        by_id.setdefault(b["id"], b)
+    return _DreamPack(working=pending,
+                      working_by_id={w["id"]: w for w in pending},
+                      neighbours=neighbours, pairs=pairs, by_id=by_id)
+
+
+def _working_block(pack: _DreamPack) -> str:
+    blocks = []
+    for w in pack.working:
+        lines = [_pack_entry(w)]
+        near = pack.neighbours.get(w["id"]) or []
+        if near:
+            lines.append("nearest kept memories:")
+            lines.extend(f"  {_pack_entry(n)}" for n in near)
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks) or "(none)"
+
+
+def _pairs_block(pack: _DreamPack) -> str:
+    blocks = [f"OLDER:\n{_pack_entry(older)}\nNEWER:\n{_pack_entry(newer)}"
+              for older, newer in pack.pairs]
+    return "\n\n".join(blocks) or "(none)"
+
+
+def _extract_json_array(answer: str):
+    """Parse a top-level JSON array out of model output, tolerating fences
+    and surrounding prose. None when no array can be parsed."""
+    text = re.sub(r"```(?:json)?", "", answer or "")
+    start, end = text.find("["), text.rfind("]")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def _dream_plan_actions(llm, pack: _DreamPack) -> "list | None":
+    """The single LLM call of the run: render the pack into the dream
+    surface, parse the plan. Accepts the documented `{"actions": [...]}`
+    object or a bare top-level action array; None on no/unparseable
+    answer."""
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import DREAM_SURFACE_ID
+    prompt = render_surface(DREAM_SURFACE_ID, {
+        "working_block": _working_block(pack),
+        "pairs_block": _pairs_block(pack),
+        "python": _DREAM_PYTHON})
+    answer = llm.complete(prompt, max_tokens=4000,
+                          surface_id=DREAM_SURFACE_ID)
+    plan = _extract_json_object(answer or "")
+    if isinstance(plan, dict) and isinstance(plan.get("actions"), list):
+        return plan["actions"]
+    return _extract_json_array(answer or "")
+
+
+@dataclass
+class _PlanState:
+    """Mutable bookkeeping while one dream plan is applied: `handled`
+    working ids never fall through to the blind-promote tail; `retired`
+    ids are dead for the rest of the plan (no merge keeper, no pair side);
+    `judged` pair keys apply once; `merging` is the pre-scanned set of
+    merge subjects, so a keeper that is itself merged away this plan is
+    invalid (a circular merge would otherwise retire both rows)."""
+
+    merging: frozenset
+    handled: set = dc_field(default_factory=set)
+    judged: set = dc_field(default_factory=set)
+    retired: set = dc_field(default_factory=set)
+
+
+def _hold_skipped(row: dict, state: _PlanState, *,
+                  result: ReflectResult) -> None:
+    """The uniform invalid-row-action rule: the model addressed this row
+    but its action can't be applied — hold it (never blind-promote a row
+    the model may have wanted retired) and count the skip."""
+    result.dream_skipped += 1
+    state.handled.add(row["id"])
+    _hold(row, result=result)
+
+
+def _merge_keeper(action: dict, pack: _DreamPack,
+                  state: _PlanState) -> "dict | None":
+    """The validated merge target: a distinct pack entry that is neither
+    retired earlier in this plan nor itself a merge subject."""
+    keeper = pack.by_id.get(action.get("keeper"))
+    if keeper is None or keeper["id"] == action.get("id"):
+        return None
+    if keeper["id"] in state.retired or keeper["id"] in state.merging:
+        return None
+    return keeper
+
+
+def _apply_row_action(store, action: dict, pack: _DreamPack,
+                      state: _PlanState, *, now_field: str, dry_run: bool,
+                      result: ReflectResult) -> None:
+    """Row verdicts touch only pack working rows, once each; destructive
+    verdicts (drop/merge) are honoured only under `promote_allow_retire`,
+    else they degrade to hold. An invalid-but-addressed row is held, never
+    blind-promoted."""
+    mid = action.get("id")
+    row = pack.working_by_id.get(mid)
+    if row is None or mid in state.handled:
+        result.dream_skipped += 1
+        return
+    kind = action["action"]
+    allow = settings.agent_memory.promote_allow_retire
+    if kind == "merge":
+        keeper = _merge_keeper(action, pack, state)
+        if keeper is None:
+            _hold_skipped(row, state, result=result)
+            return
+        state.handled.add(mid)
+        if allow:
+            _merge_pair(store, keeper, row, dry_run=dry_run, result=result)
+            state.retired.add(mid)
+        else:
+            _hold(row, result=result)
+        return
+    state.handled.add(mid)
+    if kind == "promote":
+        _promote(store, row, now_field=now_field,
+                 dry_run=dry_run, result=result)
+    elif kind == "drop" and allow:
+        _drop(store, row, dry_run=dry_run, result=result)
+        state.retired.add(mid)
+    else:                          # hold, or drop without the retire opt-in
+        _hold(row, result=result)
+
+
+def _pair_rows(action: dict, pack: _DreamPack,
+               state: _PlanState) -> "tuple[dict, dict] | None":
+    """(older, newer) for a pair verdict over ANY two distinct same-scope
+    pack entries — a working row may be judged against its neighbour, not
+    only the pre-offered suspect pairs. None when either side is out of
+    pack, scopes differ, a side is already retired this plan, or the pair
+    was judged already."""
+    a = pack.by_id.get(action.get("older"))
+    b = pack.by_id.get(action.get("newer"))
+    if a is None or b is None or a["id"] == b["id"]:
+        return None
+    if a["scope"] != b["scope"]:
+        return None
+    if a["id"] in state.retired or b["id"] in state.retired:
+        return None
+    key = tuple(sorted((a["id"], b["id"])))
+    if key in state.judged:
+        return None
+    state.judged.add(key)
+    return _time_ordered(a, b)
+
+
+def _apply_pair_action(store, action: dict, pack: _DreamPack,
+                       state: _PlanState, *, dry_run: bool,
+                       result: ReflectResult) -> None:
+    """The model-claimed older/newer order is never trusted — `created_at`
+    decides. Every judged pair lands in the judged-pair ledger; a retired
+    working row is marked handled so the fallback never re-promotes it."""
+    pair = _pair_rows(action, pack, state)
+    if pair is None:
+        result.dream_skipped += 1
+        return
+    older, newer = pair
+    result.pairs_checked += 1
+    kind = action["action"]
+    if kind in ("contradict", "obsolete"):
+        _retire_older(store, older, newer, falsify=(kind == "contradict"),
+                      dry_run=dry_run, result=result)
+        state.retired.add(older["id"])
+        if older["id"] in pack.working_by_id:
+            state.handled.add(older["id"])
+    else:
+        result.actions.append(
+            f"distinct: keep {older['id'][:8]} + {newer['id'][:8]}")
+    if not dry_run:
+        store.record_pair_check(older["id"], newer["id"], kind.upper())
+
+
+def _synthesis_rows_eligible(store, rows: list[dict]) -> bool:
+    """All EPISODIC (a working row's fate belongs to its own row action),
+    ONE scope, and none already folded into a prior synthesis (the
+    `synthesized` validation is the idempotency marker)."""
+    if any(r["tier"] != "episodic" for r in rows):
+        return False
+    if len({r["scope"] for r in rows}) != 1:
+        return False
+    return not any(
+        _validation_action_counts(store, r["id"]).get("synthesized")
+        for r in rows)
+
+
+def _synthesis_sources(store, action: dict,
+                       pack: _DreamPack) -> "list | None":
+    """The validated source rows for one synthesize action: ≥3 distinct,
+    resolvable pack ids clearing `_synthesis_rows_eligible` — else None."""
+    ids = list(dict.fromkeys(action.get("source_ids") or []))
+    rows = [pack.by_id.get(i) for i in ids]
+    if len(rows) < 3 or any(r is None for r in rows):
+        return None
+    return rows if _synthesis_rows_eligible(store, rows) else None
+
+
+def _apply_synthesize(store, action: dict, pack: _DreamPack, embedder, *,
+                      dry_run: bool, result: ReflectResult) -> None:
+    """Code-enforced synthesis constraints: validated same-scope episodic
+    sources, a real title+body, importance = median of the sources (an
+    abstraction must earn rank, never outrank its evidence by
+    construction), and the distill approval gate decides
+    proposed-vs-active."""
+    rows = _synthesis_sources(store, action, pack)
+    title = str(action.get("title") or "").strip()
+    body = str(action.get("body") or "").strip()
+    if rows is None or len(title) < 10 or len(body) < 60:
+        result.dream_skipped += 1
+        return
+    importance = min(1.0, float(statistics.median(
+        r["importance"] for r in rows)))
+    status = ("active" if importance >=
+              settings.agent_memory.auto_approve_importance else "proposed")
+    result.synthesized += 1
+    result.actions.append(
+        f"synthesize {len(rows)} -> «{title[:48]}» ({status})")
+    if dry_run:
+        return
+    from lib.memory.models import MemoryInput
+    scope = rows[0]["scope"]
+    mid = store.remember(MemoryInput(
+        body=body[:2000], title=title[:120], kind="lesson",
+        tier="episodic", status=status, scope=scope,
+        tags=["synthesis"], importance=importance))
+    for r in rows:
+        store.record_validation(r["id"], validator="reflect",
+                                action="synthesized", note=f"into {mid}")
+    _record_synthesis_topic(store, rows, {"title": title, "body": body},
+                            mid, scope, embedder, result)
+
+
+def _merge_subject_ids(actions: list) -> frozenset:
+    return frozenset(a.get("id") for a in actions
+                     if isinstance(a, dict) and a.get("action") == "merge")
+
+
+def _apply_dream_plan(store, actions: list, pack: _DreamPack, embedder, *,
+                      now_field: str, dry_run: bool,
+                      result: ReflectResult) -> set[str]:
+    """Deterministic application of the parsed plan. Working rows the plan
+    never mentions fall back to a blind promote (a partial plan must not
+    strand fresh lessons in the working tier); rows the plan addressed —
+    even invalidly — never do (see `_hold_skipped`)."""
+    state = _PlanState(merging=_merge_subject_ids(actions))
+    for action in actions:
+        kind = action.get("action") if isinstance(action, dict) else None
+        if kind in _DREAM_ROW_ACTIONS:
+            _apply_row_action(store, action, pack, state,
+                              now_field=now_field, dry_run=dry_run,
+                              result=result)
+        elif kind in _DREAM_PAIR_ACTIONS:
+            _apply_pair_action(store, action, pack, state,
+                               dry_run=dry_run, result=result)
+        elif kind == "synthesize":
+            _apply_synthesize(store, action, pack, embedder,
+                              dry_run=dry_run, result=result)
+        else:
+            result.dream_skipped += 1
+    for row in pack.working:
+        if row["id"] not in state.handled:
+            _promote(store, row, now_field=now_field,
+                     dry_run=dry_run, result=result)
+    return state.retired
+
+
+def _blind_promote(store, pending: list[dict], *, now_field: str,
+                   dry_run: bool, result: ReflectResult) -> None:
+    for mem in pending:
+        _promote(store, mem, now_field=now_field,
+                 dry_run=dry_run, result=result)
+
+
+def _dream(store, working: list[dict], consumed: set, episodic: list[dict],
+           embedder, llm, *, dry_run: bool,
+           result: ReflectResult) -> set[str]:
+    """The single agentic LLM stage: one `llm.complete` per reflect run over
+    a bounded evidence pack; the returned plan is applied deterministically.
+    No LLM / disabled / unparseable → blind promote (consolidation never
+    blocks on a model outage). Working rows beyond the pack cap are
+    deferred untouched to the next run. Returns the ids retired by pair
+    verdicts."""
+    from datetime import datetime
+    now_field = datetime.now().isoformat()
+    pending_all = [m for m in working if m["id"] not in consumed]
+    if llm is None or not settings.agent_memory.dream_enabled:
+        _blind_promote(store, pending_all, now_field=now_field,
+                       dry_run=dry_run, result=result)
         return set()
+    pending, deferred = _cap_pending(pending_all)
+    if deferred:
+        result.actions.append(
+            f"defer {len(deferred)} working row(s) to the next run")
     if not dry_run:
         store.prune_pair_checks()
-    rows = _sweep_rows(store, episodic, consumed, dry_run=dry_run)
-    retired: set[str] = set()
-    for older, newer in _shared_referent_pairs(rows):
-        if judge.budget <= 0:
-            break
-        if older["id"] in retired or newer["id"] in retired:
-            continue
-        if _judge_pair(store, older, newer, judge,
-                       dry_run=dry_run, result=result):
-            retired.add(older["id"])
-    return retired
+    rows = _fresh_episodic(store, episodic, consumed, dry_run=dry_run)
+    pack = _build_dream_pack(store, pending, rows)
+    if not pack.working and not pack.pairs:
+        return set()
+    actions = _dream_plan_actions(llm, pack)
+    if actions is None:
+        _blind_promote(store, pack.working, now_field=now_field,
+                       dry_run=dry_run, result=result)
+        return set()
+    return _apply_dream_plan(store, actions, pack, embedder,
+                             now_field=now_field, dry_run=dry_run,
+                             result=result)
 
 
 def reflect(store, embedder=None, llm=None, *,
             dry_run: bool = False) -> ReflectResult:
-    """One consolidation pass. Idempotent: a second run over an already-
+    """One consolidation pass: mechanical pre-pass → one agentic dream →
+    lifecycle decay → embed/edges. Idempotent: a second run over an already-
     consolidated store finds nothing to do."""
-    from datetime import datetime
     result = ReflectResult(dry_run=dry_run)
     working = store.list_memories(tier="working", status="active",
                                   include_tests=True, limit=10_000)
-    # Digests are episodic by storage but sit outside the learning lifecycle:
-    # they must not be deduped, synthesised, decayed or forgotten against real
-    # memories, so they're excluded from the working set every stage sees.
+    # Legacy digests are episodic by storage but sit outside the learning
+    # lifecycle; they're excluded from every stage (and retired below).
     episodic = [m for m in store.list_memories(tier="episodic", status="active",
                                                include_tests=True, limit=10_000)
                 if m["kind"] != "digest"]
     result.examined = len(working)
-    judge = _pair_judge_state(store, llm)
+    _retire_legacy_digests(store, dry_run=dry_run, result=result)
     consumed: set[str] = set()
     if working:
-        consumed = _dedup_and_judge(store, working, working + episodic,
-                                    embedder, judge,
-                                    dry_run=dry_run, result=result)
-        now = datetime.now().isoformat()
-        _consolidate_working(store, working, consumed, episodic, embedder, llm,
-                             now_field=now, dry_run=dry_run, result=result)
-    retired = _scan_contradictions(store, episodic, consumed, judge,
-                                   dry_run=dry_run, result=result)
+        consumed = _dedup_merge(store, working, working + episodic, embedder,
+                                dry_run=dry_run, result=result)
+    _score_pending(store, dry_run=dry_run)
+    retired = _dream(store, working, consumed, episodic, embedder, llm,
+                     dry_run=dry_run, result=result)
     episodic = [m for m in episodic if m["id"] not in retired
                 and m["id"] not in consumed]
     _forget_stale(store, episodic, dry_run=dry_run, result=result)
-    _score_pending(store, dry_run=dry_run)
     _decay_chronically_ignored(store, episodic, dry_run=dry_run, result=result)
     _flag_stale_references(store, working + episodic,
                            dry_run=dry_run, result=result)
-    _synthesize(store, episodic, embedder, llm, dry_run=dry_run, result=result)
-    # After synthesis so a freshly written card can feed the same scope's
-    # digest this pass; only needs an LLM (no embedder).
-    _synthesize_digest(store, episodic, llm, dry_run=dry_run, result=result)
     _embed_episodic(store, embedder, dry_run=dry_run, result=result)
     # After embed so freshly written synthesis/promotion rows are linkable.
     _harvest_edges(store, embedder, dry_run=dry_run, result=result)
     log.write("memory_reflected", examined=result.examined,
               merged=result.merged, contradictions=result.contradictions,
               obsoleted=result.obsoleted, pairs_checked=result.pairs_checked,
+              dream_skipped=result.dream_skipped,
               promoted=result.promoted,
               held=result.held, dropped=result.dropped,
               embedded=result.embedded, forgotten=result.forgotten,
               decayed=result.decayed, synthesized=result.synthesized,
-              edges=result.edges, topics=result.topics, digests=result.digests,
+              edges=result.edges, topics=result.topics,
               flagged_stale=result.flagged_stale, ref_renames=result.ref_renames,
               dry_run=dry_run)
     return result

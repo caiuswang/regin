@@ -498,9 +498,9 @@ class SqliteMemoryStore:
                 MemoryPairCheck, _canonical_pair(a_id, b_id)) is not None
 
     def checked_pair_keys(self) -> set[tuple[str, str]]:
-        """Every recorded pair-check key, canonical order. The table is
-        small (bounded by DISTINCT verdicts over budgeted runs), so callers
-        load it once per pass instead of a per-candidate lookup."""
+        """Every judged-pair ledger key, canonical order. The table is
+        small (bounded by budgeted dream verdicts per run), so callers load
+        it once per pass instead of a per-candidate lookup."""
         with MemorySessionLocal() as session:
             rows = session.exec(
                 select(MemoryPairCheck.a_id, MemoryPairCheck.b_id)).all()
@@ -518,9 +518,9 @@ class SqliteMemoryStore:
             session.commit()
 
     def prune_pair_checks(self) -> int:
-        """Drop pair-check rows whose either side no longer resolves to an
-        active memory — the retention half of the sweep's idempotency ledger.
-        Returns the count removed."""
+        """Drop judged-pair ledger rows whose either side no longer resolves
+        to an active memory — the retention half of the dream's idempotency
+        ledger. Returns the count removed."""
         with MemorySessionLocal() as session:
             active = select(Memory.id).where(Memory.status == "active")
             rows = session.exec(select(MemoryPairCheck).where(or_(
@@ -635,16 +635,6 @@ class SqliteMemoryStore:
             rows = session.exec(stmt).all()
             log.read("memories_listed", count=len(rows))
             return [_serialize(r) for r in rows]
-
-    def get_digest(self, scope: str) -> Optional[dict]:
-        """The current maintained digest (`kind="digest"`) for a scope, or
-        None. At most one is active per scope — reflect()'s digest stage
-        refreshes it via supersede. Digests are excluded from similarity
-        recall, so they are read by scope through this accessor, not via
-        :meth:`recall`."""
-        rows = self.list_memories(kind="digest", scope=scope, status="active",
-                                  include_tests=True, limit=1)
-        return rows[0] if rows else None
 
     def list_memories_page(self, *, tier: Optional[str] = None,
                            status: Optional[str] = None,

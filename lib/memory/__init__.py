@@ -92,10 +92,10 @@ def restore(memory_id: str) -> bool:
 
 
 def reflect(*, dry_run: bool = False) -> ReflectResult:
-    from lib.memory.adapters import ExternalAgentLLM, SkillRouterEmbedding
+    from lib.memory.adapters import SkillRouterEmbedding, resolve_dreamer
     from lib.memory.reflect import reflect as _reflect
     return _reflect(get_store(), embedder=SkillRouterEmbedding(),
-                    llm=ExternalAgentLLM(), dry_run=dry_run)
+                    llm=resolve_dreamer(), dry_run=dry_run)
 
 
 def stats() -> dict:

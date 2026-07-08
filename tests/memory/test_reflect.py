@@ -1,6 +1,8 @@
-"""reflect(): dedup, contradiction, promotion, embedding, idempotency."""
+"""reflect() v4: mechanical pre-pass, the single dream LLM stage, lifecycle."""
 
 from __future__ import annotations
+
+import json
 
 import lib.memory as memory
 from lib.memory.reflect import reflect
@@ -31,20 +33,49 @@ class StubEmbedder:
         return out
 
 
-class StubLLM:
-    def __init__(self, answer):
-        self.answer = answer
+class PlanLLM:
+    """Fake dream agent: returns one JSON plan (dict → serialized; string →
+    verbatim, for the unparseable case) and records every prompt."""
+
+    def __init__(self, plan):
+        self.plan = plan
         self.prompts = []
 
     def complete(self, prompt, *, max_tokens=1024, surface_id=None):
         self.prompts.append(prompt)
-        return self.answer
+        return self.plan if isinstance(self.plan, str) else json.dumps(self.plan)
 
 
 def _remember(body, **kw):
     kw.setdefault("is_test", True)
     kw.setdefault("title", body[:80])  # lessons now require a (unique) title
     return memory.remember(body, **kw)
+
+
+def _episodic(body, **kw):
+    """Insert an already-consolidated (episodic, active) test memory directly,
+    bypassing the working→episodic promotion."""
+    from lib.memory.models import MemoryInput
+    kw.setdefault("is_test", True)
+    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
+    return memory.get_store().remember(MemoryInput(
+        body=body, tier="episodic", status="active", **kw))
+
+
+def _shared_ref_pair():
+    """Two episodic rows naming the same repo path but otherwise dissimilar
+    (unique content FIRST, structurally different bodies), so they never
+    reach the dedup band yet qualify as a suspect pair. Returns
+    (older_id, newer_id) by insertion order."""
+    older = _episodic("BEFORE the refactor, recall settings were read "
+                      "by a shim; the entry point sat in "
+                      "lib/memory/store.py behind a wrapper.")
+    newer = _episodic("Ownership moved: lib/memory/store.py now owns "
+                      "recall directly and the wrapper shim is gone.")
+    return older, newer
+
+
+# ── mechanical pre-pass (no model) ───────────────────────────────────────────
 
 
 def test_reflect_merges_text_duplicates_and_promotes():
@@ -103,68 +134,202 @@ def test_reflect_dedup_via_stub_embedder_and_embeds_episodic():
     assert memory.get_store().embedding_meta()  # vectors actually stored
 
 
-def test_reflect_gray_zone_contradiction_with_llm():
-    older = _remember("MARKER-A the deploy port is 8321")
-    newer = _remember("MARKER-B the deploy port is 9000")
-    # similarity 0.8: inside the gray zone [0.75, threshold)
-    embedder = StubEmbedder({
-        "MARKER-A": [1.0, 0.0, 0.0],
-        "MARKER-B": [0.8, 0.6, 0.0],
-    })
-    llm = StubLLM("CONTRADICT")
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert result.contradictions == 1
-    assert llm.prompts  # the LLM was actually consulted
-    old_row = memory.get_store().get_dict(older)
-    assert old_row["status"] == "retired"
-    assert old_row["veracity"] == "false"
-    assert old_row["superseded_by"] == newer
+def test_reflect_retires_legacy_digest_rows():
+    """The digest stage is gone; the pre-pass retires any still-active
+    legacy digest row (idempotent) and no stage ever sees it."""
+    from lib.memory.models import MemoryInput
+    from lib.memory.reflect import _validation_action_counts
+    did = memory.get_store().remember(MemoryInput(
+        body="Legacy standing briefing body.", title="Old digest",
+        kind="digest", tier="episodic", status="active",
+        tags=["digest"], is_test=True))
+
+    result = reflect(memory.get_store())
+    row = memory.get_store().get_dict(did)
+    assert row["status"] == "retired"
+    assert _validation_action_counts(
+        memory.get_store(), did).get("retired") == 1
+    # Nothing else happened to it: no merge/promote/decay counted.
+    assert result.examined == 0 and result.promoted == 0
+
+    second = reflect(memory.get_store())
+    assert _validation_action_counts(
+        memory.get_store(), did).get("retired") == 1  # not re-retired
+    assert second.actions == []
 
 
-def test_reflect_gray_zone_without_llm_leaves_both():
-    _remember("MARKER-A the deploy port is 8321")
-    _remember("MARKER-B the deploy port is 9000")
-    embedder = StubEmbedder({
-        "MARKER-A": [1.0, 0.0, 0.0],
-        "MARKER-B": [0.8, 0.6, 0.0],
-    })
-    result = reflect(memory.get_store(), embedder=embedder)
-    assert result.contradictions == 0
-    assert result.promoted == 2
+# ── dream: the single agentic LLM stage ─────────────────────────────────────
 
 
-# ── contradiction sweep: referent-anchored episodic pairs ────────────────────
-
-
-def _shared_ref_pair():
-    """Two episodic rows naming the same repo path but otherwise dissimilar
-    (unique content FIRST, structurally different bodies), so they never
-    reach the dedup band yet qualify for the referent sweep. Returns
-    (older_id, newer_id) by insertion order."""
-    older = _episodic("BEFORE the refactor, recall settings were read "
-                      "by a shim; the entry point sat in "
-                      "lib/memory/store.py behind a wrapper.")
-    newer = _episodic("Ownership moved: lib/memory/store.py now owns "
-                      "recall directly and the wrapper shim is gone.")
-    return older, newer
-
-
-def test_scan_obsolete_retires_older_without_falsifying():
+def test_dream_makes_exactly_one_llm_call_for_rows_and_pairs():
+    w1 = _remember("Fresh lesson: restart vite after proxy config edits.")
+    w2 = _remember("Fresh lesson: usePage breaks when total is zero items.")
     older, newer = _shared_ref_pair()
-    llm = StubLLM("OBSOLETE")
+    llm = PlanLLM({"actions": [
+        {"action": "promote", "id": w1},
+        {"action": "hold", "id": w2},
+        {"action": "distinct", "older": older, "newer": newer},
+    ]})
     result = reflect(memory.get_store(), llm=llm)
-    assert result.obsoleted == 1 and result.contradictions == 0
-    assert result.pairs_checked == 1 and llm.prompts
-    old_row = memory.get_store().get_dict(older)
-    assert old_row["status"] == "retired"
-    assert old_row["superseded_by"] == newer
-    assert old_row["veracity"] == "unknown"          # untouched
-    assert memory.get_store().get_dict(newer)["status"] == "active"
+    assert len(llm.prompts) == 1          # one call covers rows AND pairs
+    assert w1 in llm.prompts[0] and w2 in llm.prompts[0]
+    assert older in llm.prompts[0] and newer in llm.prompts[0]
+    assert result.promoted == 1 and result.held == 1
+    assert result.pairs_checked == 1 and result.dream_skipped == 0
+    assert memory.get_store().get_dict(w1)["tier"] == "episodic"
+    assert memory.get_store().get_dict(w2)["tier"] == "working"
 
 
-def test_scan_contradict_sets_veracity_false():
+def test_dream_skips_llm_entirely_with_empty_pack():
+    _episodic("Lone episodic note with no path references whatsoever.")
+    llm = PlanLLM({"actions": []})
+    result = reflect(memory.get_store(), llm=llm)
+    assert llm.prompts == []
+    assert result.promoted == 0 and result.pairs_checked == 0
+
+
+def test_dream_disabled_blind_promotes_without_llm_call(monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "dream_enabled", False)
+    w = _remember("A fresh lesson the disabled dream never sees.")
+    _shared_ref_pair()
+    llm = PlanLLM({"actions": [{"action": "drop", "id": w}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert llm.prompts == []
+    assert result.promoted == 1 and result.dropped == 0
+    assert memory.get_store().get_dict(w)["tier"] == "episodic"
+
+
+def test_dream_no_llm_blind_promotes():
+    w = _remember("A fresh lesson with no model configured.")
+    result = reflect(memory.get_store())        # no llm
+    assert result.promoted == 1 and result.pairs_checked == 0
+    assert memory.get_store().get_dict(w)["tier"] == "episodic"
+
+
+def test_dream_unparseable_plan_blind_promotes():
+    w = _remember("A fresh lesson the model answers incoherently about.")
+    llm = PlanLLM("sorry, I cannot produce a plan today")
+    result = reflect(memory.get_store(), llm=llm)
+    assert len(llm.prompts) == 1
+    assert result.promoted == 1 and result.dream_skipped == 0
+    assert memory.get_store().get_dict(w)["tier"] == "episodic"
+
+
+def test_dream_unknown_or_bogus_actions_skip_and_fall_back():
+    w = _remember("A fresh lesson the plan never mentions by its real id.")
+    llm = PlanLLM({"actions": [
+        {"action": "promote", "id": "no-such-id"},
+        {"action": "levitate"},
+    ]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.dream_skipped == 2
+    assert result.promoted == 1           # unmentioned row → blind promote
+    assert memory.get_store().get_dict(w)["tier"] == "episodic"
+
+
+def test_dream_drop_degrades_to_hold_by_default():
+    w = _remember("A low-value one-off note.")
+    llm = PlanLLM({"actions": [{"action": "drop", "id": w}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.held == 1 and result.dropped == 0
+    row = memory.get_store().get_dict(w)
+    assert row["status"] == "active" and row["tier"] == "working"
+
+
+def test_dream_drop_retires_when_opted_in(monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
+    w = _remember("A low-value one-off note.")
+    llm = PlanLLM({"actions": [{"action": "drop", "id": w}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.dropped == 1 and result.held == 0
+    assert memory.get_store().get_dict(w)["status"] == "retired"
+
+
+def test_dream_merge_folds_into_pack_keeper(monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
+    keeper = _episodic("Restart the backend after edits or tests hit "
+                       "stale code paths.")
+    w = _remember("Backend needs a restart following code edits; otherwise "
+                  "stale behaviour shows in tests.")
+    llm = PlanLLM({"actions": [{"action": "merge", "id": w, "keeper": keeper}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.merged == 1
+    row = memory.get_store().get_dict(w)
+    assert row["status"] == "retired" and row["superseded_by"] == keeper
+
+
+def test_dream_merge_with_unknown_keeper_holds_the_row():
+    """Uniform invalid-row-action rule: the model addressed the row, so a
+    bad keeper means hold — never blind-promote what it wanted retired."""
+    w = _remember("A lesson whose merge target does not exist in the pack.")
+    llm = PlanLLM({"actions": [{"action": "merge", "id": w, "keeper": "nope"}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.dream_skipped == 1
+    assert result.held == 1 and result.promoted == 0
+    row = memory.get_store().get_dict(w)
+    assert row["tier"] == "working" and row["status"] == "active"
+
+
+def test_dream_circular_merge_holds_both_rows(monkeypatch):
+    """`merge w1→w2; merge w2→w1` must not retire both rows into a circular
+    supersede — a keeper that is itself merged away in the same plan is
+    invalid, so both rows are held."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
+    w1 = _remember("First circular lesson about tokens in the settings loader.")
+    w2 = _remember("Second circular lesson about flags in the router config.")
+    llm = PlanLLM({"actions": [
+        {"action": "merge", "id": w1, "keeper": w2},
+        {"action": "merge", "id": w2, "keeper": w1},
+    ]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.merged == 0 and result.held == 2
+    assert result.dream_skipped == 2 and result.promoted == 0
+    for mid in (w1, w2):
+        row = memory.get_store().get_dict(mid)
+        assert row["status"] == "active" and row["tier"] == "working"
+        assert row["superseded_by"] is None
+
+
+def test_dream_merge_into_plan_corpse_holds_the_row(monkeypatch):
+    """A keeper retired by an earlier action of the SAME plan is a corpse —
+    the merge is skipped and the row held."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
     older, newer = _shared_ref_pair()
-    result = reflect(memory.get_store(), llm=StubLLM("CONTRADICT"))
+    w = _remember("A lesson that tries to merge into a row this plan retires.")
+    llm = PlanLLM({"actions": [
+        {"action": "obsolete", "older": older, "newer": newer},
+        {"action": "merge", "id": w, "keeper": older},
+    ]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.obsoleted == 1
+    assert result.merged == 0 and result.held == 1
+    assert result.dream_skipped == 1
+    row = memory.get_store().get_dict(w)
+    assert row["status"] == "active" and row["tier"] == "working"
+
+
+def test_dream_duplicate_row_actions_first_wins():
+    w = _remember("A lesson the plan decides about twice.")
+    llm = PlanLLM({"actions": [
+        {"action": "hold", "id": w},
+        {"action": "promote", "id": w},
+    ]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.held == 1 and result.promoted == 0
+    assert result.dream_skipped == 1
+    assert memory.get_store().get_dict(w)["tier"] == "working"
+
+
+def test_dream_contradict_sets_veracity_false():
+    older, newer = _shared_ref_pair()
+    llm = PlanLLM({"actions": [
+        {"action": "contradict", "older": older, "newer": newer}]})
+    result = reflect(memory.get_store(), llm=llm)
     assert result.contradictions == 1 and result.obsoleted == 0
     old_row = memory.get_store().get_dict(older)
     assert old_row["status"] == "retired"
@@ -172,18 +337,135 @@ def test_scan_contradict_sets_veracity_false():
     assert old_row["superseded_by"] == newer
 
 
-def test_scan_distinct_records_pair_and_never_rejudges():
+def test_dream_obsolete_retires_older_without_falsifying():
+    older, newer = _shared_ref_pair()
+    llm = PlanLLM({"actions": [
+        {"action": "obsolete", "older": older, "newer": newer}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.obsoleted == 1 and result.contradictions == 0
+    old_row = memory.get_store().get_dict(older)
+    assert old_row["status"] == "retired"
+    assert old_row["superseded_by"] == newer
+    assert old_row["veracity"] == "unknown"          # untouched
+    assert memory.get_store().get_dict(newer)["status"] == "active"
+
+
+def test_dream_pair_order_is_created_at_not_model_claim():
+    older, newer = _shared_ref_pair()
+    llm = PlanLLM({"actions": [                       # swapped on purpose
+        {"action": "obsolete", "older": newer, "newer": older}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.obsoleted == 1
+    old_row = memory.get_store().get_dict(older)
+    assert old_row["status"] == "retired"
+    assert old_row["superseded_by"] == newer          # created_at decided
+    assert memory.get_store().get_dict(newer)["status"] == "active"
+
+
+def test_dream_pair_action_with_out_of_pack_ids_is_skipped():
+    w = _remember("A working row so the pack is non-empty and the "
+                  "dream actually runs.")
+    llm = PlanLLM({"actions": [
+        {"action": "promote", "id": w},
+        {"action": "contradict", "older": "ghost-a", "newer": "ghost-b"}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.dream_skipped == 1 and result.contradictions == 0
+    assert result.pairs_checked == 0
+
+
+def test_dream_pair_verdict_requires_same_scope():
+    """Two pack entries from different scopes can never be a pair — even
+    when both are visible as neighbours."""
+    w = _remember("A worker row mentioning cache directory naming rules.")
+    a = _episodic("Alpha take: cache directory naming rules differ by host.",
+                  scope="repo:alpha")
+    b = _episodic("Beta take: cache directory naming rules got simplified.",
+                  scope="repo:beta")
+    llm = PlanLLM({"actions": [
+        {"action": "promote", "id": w},
+        {"action": "contradict", "older": a, "newer": b}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.dream_skipped == 1 and result.contradictions == 0
+    assert memory.get_store().get_dict(a)["status"] == "active"
+    assert memory.get_store().get_dict(b)["status"] == "active"
+
+
+def test_dream_pair_verdict_spans_working_and_neighbour():
+    """A pair verdict is not locked to the pre-offered suspect pairs: any
+    two distinct same-scope pack entries qualify — here a working row
+    obsoletes the episodic neighbour recall surfaced next to it."""
+    ep = _episodic("The recall hook reads its config from the env block today.")
+    w = _remember("Update: recall hook config moved; the env block is "
+                  "removed now.")
+    llm = PlanLLM({"actions": [
+        {"action": "obsolete", "older": ep, "newer": w},
+        {"action": "promote", "id": w},
+    ]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.obsoleted == 1 and result.pairs_checked == 1
+    assert result.promoted == 1
+    old_row = memory.get_store().get_dict(ep)
+    assert old_row["status"] == "retired"
+    assert old_row["superseded_by"] == w
+    assert old_row["veracity"] == "unknown"
+
+
+def test_dream_pair_retiring_working_row_marks_it_handled():
+    """When the retired side of a pair verdict is a WORKING row, it is
+    settled — the blind-promote fallback must not resurrect it."""
+    w = _remember("Old belief: the settings loader tolerates a missing "
+                  "config file silently.")
+    ep = _episodic("Correction: the settings loader now raises when the "
+                   "config file is missing.")
+    llm = PlanLLM({"actions": [
+        {"action": "contradict", "older": w, "newer": ep}]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.contradictions == 1
+    assert result.promoted == 0           # never blind-promoted afterwards
+    row = memory.get_store().get_dict(w)
+    assert row["status"] == "retired"
+    assert row["veracity"] == "false" and row["superseded_by"] == ep
+
+
+def test_dream_accepts_top_level_array_plan():
+    w = _remember("A lesson delivered in a bare-array plan.")
+    llm = PlanLLM([{"action": "hold", "id": w}])
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.held == 1 and result.promoted == 0
+    assert memory.get_store().get_dict(w)["tier"] == "working"
+
+
+def test_dream_defers_working_overflow_and_keeps_pairs():
+    """≥ the working cap: the pack holds the newest 25, suspect pairs are
+    still offered, and overflow rows are deferred untouched (working, not
+    blind-promoted)."""
+    import uuid
+    for i in range(50):
+        _remember(f"unique-{uuid.uuid4().hex} standalone observation {i}")
     _shared_ref_pair()
-    llm = StubLLM("DISTINCT")
+    llm = PlanLLM({"actions": []})
+    result = reflect(memory.get_store(), llm=llm)
+    assert len(llm.prompts) == 1
+    assert result.promoted == 25          # only the packed rows
+    assert "OLDER:" in llm.prompts[0]     # a suspect pair was still offered
+    assert any(a.startswith("defer 25 working") for a in result.actions)
+    working_left = memory.get_store().list_memories(
+        tier="working", status="active", include_tests=True, limit=100)
+    assert len(working_left) == 25
+
+
+def test_dream_pair_ledger_prevents_re_presentation():
+    older, newer = _shared_ref_pair()
+    llm = PlanLLM({"actions": [
+        {"action": "distinct", "older": older, "newer": newer}]})
     first = reflect(memory.get_store(), llm=llm)
-    assert first.pairs_checked == 1
-    calls = len(llm.prompts)
+    assert first.pairs_checked == 1 and len(llm.prompts) == 1
     second = reflect(memory.get_store(), llm=llm)
     assert second.pairs_checked == 0
-    assert len(llm.prompts) == calls                 # zero further LLM calls
+    assert len(llm.prompts) == 1          # empty pack → no second call
 
 
-def test_scan_budget_caps_llm_calls(monkeypatch):
+def test_dream_pack_caps_suspect_pairs_at_budget(monkeypatch):
     from lib.settings import settings
     monkeypatch.setattr(settings.agent_memory, "contradiction_budget", 2)
     bodies = [
@@ -194,113 +476,47 @@ def test_scan_budget_caps_llm_calls(monkeypatch):
     ]
     for body in bodies:
         _episodic(body)
-    llm = StubLLM("DISTINCT")                        # 6 candidate pairs > budget
+    llm = PlanLLM({"actions": []})        # 6 candidate pairs > budget of 2
     result = reflect(memory.get_store(), llm=llm)
-    assert len(llm.prompts) == 2
-    assert result.pairs_checked == 2
+    assert len(llm.prompts) == 1
+    assert llm.prompts[0].count("OLDER:") == 2
+    assert result.pairs_checked == 0      # offered, but the plan judged none
 
 
-def test_scan_is_noop_without_llm():
-    older, newer = _shared_ref_pair()
-    result = reflect(memory.get_store())             # no llm
-    assert result.pairs_checked == 0
-    assert result.obsoleted == 0 and result.contradictions == 0
-    assert memory.get_store().get_dict(older)["status"] == "active"
-    assert memory.get_store().get_dict(newer)["status"] == "active"
-
-
-def test_scan_disabled_by_setting(monkeypatch):
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory,
-                        "contradiction_scan_enabled", False)
-    _shared_ref_pair()
-    llm = StubLLM("CONTRADICT")
-    result = reflect(memory.get_store(), llm=llm)
-    assert result.pairs_checked == 0 and llm.prompts == []
-
-
-def test_scan_skips_cross_scope_pairs():
+def test_dream_skips_cross_scope_pairs():
     """Sharing a path string across scopes (two repos both naming
     docs/README.md) is not the same referent — never a candidate pair."""
     a = _episodic("Alpha-repo note: docs/README.md documents the fish caveats.",
                   scope="repo:alpha")
     b = _episodic("Beta-repo note: docs/README.md build badge is stale.",
                   scope="repo:beta")
-    llm = StubLLM("CONTRADICT")
+    llm = PlanLLM({"actions": []})
     result = reflect(memory.get_store(), llm=llm)
-    assert result.pairs_checked == 0 and llm.prompts == []
+    assert llm.prompts == [] and result.pairs_checked == 0
     assert memory.get_store().get_dict(a)["status"] == "active"
     assert memory.get_store().get_dict(b)["status"] == "active"
 
 
-def test_gray_zone_retired_row_never_reaches_sweep(monkeypatch):
-    """A row the gray-zone stage retired minutes earlier in the SAME run
-    must not be handed to the sweep judge — the wet sweep re-lists active
-    rows instead of trusting the start-of-run snapshot."""
+def test_dream_dry_run_reports_plan_but_applies_nothing(monkeypatch):
     from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
-    _episodic("Standing note: the recall shim details live in lib/x/y.py's "
-              "wrapper block.")
-    older = _remember("MARKER-A the deploy port is 8321; startup also reads "
-                      "lib/x/y.py first")
-    _remember("MARKER-B the deploy port is 9000")
-    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
-                             "MARKER-B": [0.8, 0.6, 0.0]})
-    llm = StubLLM("CONTRADICT")
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert result.contradictions == 1
-    assert memory.get_store().get_dict(older)["status"] == "retired"
-    # Exactly one judge call — the gray-zone pair. The (retired row,
-    # episodic) shared-path pair is never bought.
-    assert len(llm.prompts) == 1 and result.pairs_checked == 1
-
-
-def test_promoted_row_is_swept_same_run(monkeypatch):
-    """A working row promoted this run is visible to the same run's sweep
-    (the wet sweep re-lists, so fresh episodic rows join immediately)."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
-    _episodic("Standing decision: keep the flag parser inside "
-              "lib/flags/parse.py only.")
-    _remember("Fresh discovery from today: lib/flags/parse.py rejects "
-              "duplicate flags loudly now.")
-    llm = StubLLM("DISTINCT")
-    result = reflect(memory.get_store(), llm=llm)
-    assert result.promoted == 1
-    assert result.pairs_checked == 1 and len(llm.prompts) == 1
-
-
-def test_gray_zone_judge_gated_by_scan_setting(monkeypatch):
-    """`contradiction_scan_enabled` off disables BOTH judge paths — the
-    gray-zone pair is promoted untouched with zero LLM calls."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory,
-                        "contradiction_scan_enabled", False)
-    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
-    _remember("MARKER-A the deploy port is 8321")
-    _remember("MARKER-B the deploy port is 9000")
-    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
-                             "MARKER-B": [0.8, 0.6, 0.0]})
-    llm = StubLLM("CONTRADICT")
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert llm.prompts == [] and result.contradictions == 0
-    assert result.promoted == 2
-
-
-def test_budget_is_shared_across_gray_zone_and_sweep(monkeypatch):
-    """One per-run budget covers both judge paths: a gray-zone call spends
-    it, so the shared-referent sweep pair goes unjudged this run."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "contradiction_budget", 1)
-    monkeypatch.setattr(settings.agent_memory, "promote_mode", "heuristic")
-    _remember("MARKER-A the deploy port is 8321")
-    _remember("MARKER-B the deploy port is 9000")
-    _shared_ref_pair()                   # sweep candidates, left unjudged
-    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
-                             "MARKER-B": [0.8, 0.6, 0.0]})
-    llm = StubLLM("DISTINCT")
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert len(llm.prompts) == 1 and result.pairs_checked == 1
+    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
+    w = _remember("A fresh lesson the dry run would drop.")
+    older, newer = _shared_ref_pair()
+    llm = PlanLLM({"actions": [
+        {"action": "drop", "id": w},
+        {"action": "contradict", "older": older, "newer": newer},
+    ]})
+    result = reflect(memory.get_store(), llm=llm, dry_run=True)
+    assert len(llm.prompts) == 1
+    assert result.dropped == 1 and result.contradictions == 1   # reported
+    assert result.actions                                        # …in actions
+    row = memory.get_store().get_dict(w)
+    assert row["status"] == "active" and row["tier"] == "working"
+    old_row = memory.get_store().get_dict(older)
+    assert old_row["status"] == "active" and old_row["veracity"] == "unknown"
+    # The ledger was not written either: a second dry run re-presents it.
+    second = reflect(memory.get_store(), llm=llm, dry_run=True)
+    assert second.pairs_checked == 1
 
 
 def test_forget_cascades_pair_checks():
@@ -312,202 +528,130 @@ def test_forget_cascades_pair_checks():
     assert not store.pair_checked(a, b)
 
 
-# ── model-decided promotion (promote_mode / promote judge) ───────────────────
+# ── dream synthesize: code-enforced constraints ──────────────────────────────
+
+_SYNTH_TITLE = "Restart long-lived processes after editing their code"
+_SYNTH_BODY = ("When a long-lived process serves stale behaviour after a "
+               "code edit, restart it before trusting any test or UI check; "
+               "a stale process mimics a real bug.")
 
 
-def _promote_json(verdict, merge_into=None):
-    import json as _json
-    return _json.dumps({"verdict": verdict, "rationale": "test",
-                        "merge_into": merge_into})
+def _seed_synth_sources():
+    """Three episodic rows sharing a referent path, so all three land in
+    the dream pack deterministically (as suspect-pair members). Returns
+    their ids, oldest first."""
+    e1 = _episodic("Case one: lib/proc/restart.py showed the dev server "
+                   "kept old routes after an edit.", importance=0.3)
+    e2 = _episodic("Case two: lib/proc/restart.py again — playwright hit a "
+                   "not-yet-reloaded backend.", importance=0.9)
+    e3 = _episodic("Case three: a reused backend from lib/proc/restart.py "
+                   "served stale code until restart.", importance=0.5)
+    return e1, e2, e3
 
 
-def _set_recall_count(memory_id, n):
-    """recall_count is bumped only by the recall path, not store.update — set
-    it directly through the ORM so promotion gates can be exercised."""
-    from lib.memory.engine import MemorySessionLocal
-    from lib.memory.models import Memory
-    with MemorySessionLocal() as s:
-        row = s.get(Memory, memory_id)
-        row.recall_count = n
-        s.add(row)
-        s.commit()
+def _synth_action(ids, body=_SYNTH_BODY):
+    return {"action": "synthesize", "source_ids": list(ids),
+            "title": _SYNTH_TITLE, "body": body}
 
 
-def test_promote_falls_back_to_heuristic_without_llm(monkeypatch):
-    """No agent configured → every surviving working row is promoted by the
-    blind rule, never held or dropped, whatever the mode asks. This is the
-    wholesale-failure guard: a model outage must not block consolidation."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "promote_mode", "all")
-    _remember("A durable rule about restarting the backend after edits.")
-    result = reflect(memory.get_store())          # no llm
-    assert result.promoted == 1
-    assert result.held == 0 and result.dropped == 0
-
-
-def test_promote_unparseable_verdict_falls_back_to_promote():
-    """A judge answer that isn't a valid verdict must not strand the row: the
-    parse-failure half of the wholesale-failure guard falls back to promote."""
-    mid = _remember("A fresh observation the judge answers incoherently about.")
-    result = reflect(memory.get_store(), llm=StubLLM("sorry, I cannot decide"))
-    assert result.promoted == 1 and result.held == 0 and result.dropped == 0
-    assert memory.get_store().get_dict(mid)["tier"] == "episodic"
-
-
-def test_promote_judge_holds_unproven_row():
-    """A fresh, never-recalled row is ambiguous; a `hold` verdict keeps it in
-    the working tier instead of promoting."""
-    mid = _remember("A raw, unproven observation from one session.")
-    llm = StubLLM(_promote_json("hold"))
+def test_dream_synthesize_uses_median_importance_and_proposed_gate():
+    e1, e2, e3 = _seed_synth_sources()
+    llm = PlanLLM({"actions": [
+        _synth_action([e1, e2, e3]),
+        {"action": "distinct", "older": e1, "newer": e2},
+    ]})
     result = reflect(memory.get_store(), llm=llm)
-    assert result.held == 1 and result.promoted == 0
-    row = memory.get_store().get_dict(mid)
-    assert row["tier"] == "working" and row["status"] == "active"
-
-
-def test_promote_drop_degrades_to_hold_by_default():
-    """Without opt-in, a destructive `drop` verdict is not honoured — the row
-    stays working rather than being retired by a single model call."""
-    mid = _remember("A low-value one-off note.")
-    result = reflect(memory.get_store(), llm=StubLLM(_promote_json("drop")))
-    assert result.held == 1 and result.dropped == 0
-    row = memory.get_store().get_dict(mid)
-    assert row["status"] == "active" and row["tier"] == "working"
-
-
-def test_promote_drop_retires_when_opted_in(monkeypatch):
-    """With `promote_allow_retire`, a `drop` verdict retires the row via
-    reversible supersede (status retired, not a hard delete)."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
-    mid = _remember("A low-value one-off note.")
-    result = reflect(memory.get_store(), llm=StubLLM(_promote_json("drop")))
-    assert result.dropped == 1 and result.held == 0
-    assert memory.get_store().get_dict(mid)["status"] == "retired"
-
-
-def test_promote_ambiguous_auto_promotes_recalled_row():
-    """In ambiguous mode a deliberately-recalled row clear of any near-duplicate
-    is promoted without consulting the judge at all."""
-    mid = _remember("A proven rule recalled across past sessions.")
-    _set_recall_count(mid, 2)
-    llm = StubLLM(_promote_json("drop"))   # would drop — but must not be asked
-    result = reflect(memory.get_store(), llm=llm)
-    assert result.promoted == 1 and result.held == 0 and result.dropped == 0
-    assert llm.prompts == []               # the judge was skipped
-    assert memory.get_store().get_dict(mid)["tier"] == "episodic"
-
-
-def test_promote_mode_all_judges_recalled_row(monkeypatch):
-    """`all` mode consults the judge even for a well-recalled row that
-    ambiguous mode would have auto-promoted."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "promote_mode", "all")
-    mid = _remember("A proven rule recalled across past sessions.")
-    _set_recall_count(mid, 5)
-    llm = StubLLM(_promote_json("hold"))
-    result = reflect(memory.get_store(), llm=llm)
-    assert llm.prompts                     # consulted despite the recall count
-    assert result.held == 1 and result.promoted == 0
-
-
-def test_promote_merge_folds_into_named_neighbour(monkeypatch):
-    """A `merge` verdict (opted in) retires the row into the neighbour it
-    names, reusing the dedup supersede path."""
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "promote_allow_retire", True)
-    keeper = _episodic("MARKER-A restart the backend after server edits")
-    dup = _remember("MARKER-B restart backend after edits")
-    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0],
-                             "MARKER-B": [0.9, 0.436, 0.0]})
-    llm = StubLLM(_promote_json("merge", merge_into=keeper))
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert result.merged >= 1
-    dup_row = memory.get_store().get_dict(dup)
-    assert dup_row["status"] == "retired" and dup_row["superseded_by"] == keeper
-
-
-# ── synthesis: abstract a higher-order rule from a cluster of related rows ───
-
-
-def _episodic(body, **kw):
-    """Insert an already-consolidated (episodic, active) test memory directly,
-    bypassing the working→episodic promotion so synthesis can be exercised in
-    one reflect pass."""
-    from lib.memory.models import MemoryInput
-    kw.setdefault("is_test", True)
-    kw.setdefault("title", body[:80])  # lessons now require a (unique) title
-    return memory.get_store().remember(MemoryInput(
-        body=body, tier="episodic", status="active", **kw))
-
-
-# Three unit vectors with pairwise cosine ~0.70-0.74 — inside the synthesis
-# band [0.55, dedup_cosine_threshold=0.92): related enough to cluster, far
-# enough apart not to be merged as duplicates.
-_CLUSTER_VECS = {
-    "MARKER-A": [1.0, 0.0, 0.0],
-    "MARKER-B": [0.7, 0.714, 0.0],
-    "MARKER-C": [0.7, 0.357, 0.619],
-}
-
-_SYNTHESIS_JSON = (
-    '{"title": "Restart the backend after editing server code", '
-    '"body": "Across these cases the shared root cause was a stale process: '
-    'after editing server-side code, restart the backend so tests and the UI '
-    'exercise the new behaviour rather than the cached old one."}')
-
-
-def _seed_cluster():
-    _episodic("MARKER-A reused backend served stale code until restart")
-    _episodic("MARKER-B the dev server kept old routes after an edit")
-    _episodic("MARKER-C playwright asserted against a not-yet-reloaded backend")
-
-
-def test_reflect_synthesizes_cluster_with_llm():
-    _seed_cluster()
-    embedder = StubEmbedder(_CLUSTER_VECS)
-    llm = StubLLM(_SYNTHESIS_JSON)
-
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-
-    assert result.synthesized == 1
-    rows = memory.get_store().list_memories(include_tests=True)
-    synth = [r for r in rows if "synthesis" in (r["tags"] or [])]
+    assert result.synthesized == 1 and result.dream_skipped == 0
+    synth = [r for r in memory.get_store().list_memories(
+        status="proposed", include_tests=True)
+        if "synthesis" in (r["tags"] or [])]
     assert len(synth) == 1
     s = synth[0]
-    assert s["tier"] == "episodic" and s["status"] == "active"
-    assert s["title"] == "Restart the backend after editing server code"
-    assert llm.prompts  # the LLM was actually consulted to abstract the rule
-    # every source row is marked 'synthesized' (the idempotency guard)
+    assert s["title"] == _SYNTH_TITLE and s["tier"] == "episodic"
+    # median(0.3, 0.9, 0.5) = 0.5 — never above the sources' max.
+    assert s["importance"] == 0.5
+    assert s["status"] == "proposed"      # 0.5 < auto_approve_importance
     from sqlmodel import select
     from lib.memory.engine import MemorySessionLocal
     from lib.memory.models import MemoryValidation
     with MemorySessionLocal() as session:
         marked = session.exec(select(MemoryValidation.memory_id).where(
             MemoryValidation.action == "synthesized")).all()
-    assert len(set(marked)) == 3
+    assert set(marked) == {e1, e2, e3}
 
 
-def test_reflect_synthesis_is_idempotent():
-    _seed_cluster()
-    embedder = StubEmbedder(_CLUSTER_VECS)
-    llm = StubLLM(_SYNTHESIS_JSON)
-
-    first = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert first.synthesized == 1
-    # second pass: the cluster's members are already marked, so no fresh
-    # cluster forms and nothing new is synthesised
-    second = reflect(memory.get_store(), embedder=embedder, llm=llm)
-    assert second.synthesized == 0
-    synth = [r for r in memory.get_store().list_memories(include_tests=True)
+def test_dream_synthesize_auto_approves_high_median():
+    e1, e2, e3 = _seed_synth_sources()
+    store = memory.get_store()
+    for mid in (e1, e2, e3):
+        store.update(mid, importance=0.9)
+    llm = PlanLLM({"actions": [_synth_action([e1, e2, e3])]})
+    result = reflect(store, llm=llm)
+    assert result.synthesized == 1
+    synth = [r for r in store.list_memories(status="active",
+                                            include_tests=True)
              if "synthesis" in (r["tags"] or [])]
-    assert len(synth) == 1  # still exactly one synthesis row
+    assert len(synth) == 1
+    assert synth[0]["importance"] == 0.9  # median, not max + bonus
+    assert synth[0]["status"] == "active"  # 0.9 >= auto_approve_importance
 
 
-def test_reflect_proposes_authoritative_topic_when_enabled(monkeypatch):
-    """With `reflect_proposes_authoritative_topics` on, synthesis feeds the
-    authoritative proposal queue (and links the rule to the merged node)
-    instead of minting an orphan `memory_topic`."""
+def test_dream_synthesize_requires_three_distinct_pack_sources():
+    e1, e2, _e3 = _seed_synth_sources()
+    llm = PlanLLM({"actions": [_synth_action([e1, e1, e2])]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.synthesized == 0 and result.dream_skipped == 1
+
+
+def test_dream_synthesize_rejects_out_of_pack_sources():
+    from lib.memory.models import MemoryInput
+    e1, e2, _e3 = _seed_synth_sources()
+    # A `proposed` row exists in the store but can never enter the pack:
+    # recall only surfaces active rows and it shares no referent path.
+    outsider = memory.get_store().remember(MemoryInput(
+        body="A row that never entered the pack at all.",
+        title="Out-of-pack row", tier="episodic", status="proposed",
+        is_test=True))
+    llm = PlanLLM({"actions": [_synth_action([e1, e2, outsider])]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.synthesized == 0 and result.dream_skipped == 1
+
+
+def test_dream_synthesize_rejects_working_sources():
+    """A pending working row's fate belongs to its own row action — citing
+    it as a synthesis source is invalid."""
+    e1, e2, _e3 = _seed_synth_sources()
+    w = _remember("Case four: another stale-process sighting during the "
+                  "trace work, restart fixed it.")
+    llm = PlanLLM({"actions": [
+        _synth_action([w, e1, e2]),
+        {"action": "promote", "id": w},
+    ]})
+    result = reflect(memory.get_store(), llm=llm)
+    assert result.synthesized == 0 and result.dream_skipped == 1
+    assert result.promoted == 1
+
+
+def test_dream_synthesize_is_idempotent_across_runs():
+    """Sources already folded into a synthesis (the `synthesized`
+    validation) can't be re-cited — an identical plan next run mints no
+    duplicate card."""
+    e1, e2, e3 = _seed_synth_sources()
+    llm = PlanLLM({"actions": [_synth_action([e1, e2, e3])]})
+    first = reflect(memory.get_store(), llm=llm)
+    assert first.synthesized == 1
+    second = reflect(memory.get_store(), llm=llm)
+    assert second.synthesized == 0 and second.dream_skipped == 1
+    cards = [r for r in memory.get_store().list_memories(
+        status="proposed", include_tests=True)
+        if "synthesis" in (r["tags"] or [])]
+    assert len(cards) == 1                # still exactly one card
+
+
+def test_dream_synthesis_proposes_authoritative_topic(monkeypatch):
+    """With `reflect_proposes_authoritative_topics` on, a dream synthesis
+    feeds the authoritative proposal queue (and links the rule to the
+    merged node) instead of minting an orphan `memory_topic`."""
     from lib.settings import settings
     from lib.orm.engine import SessionLocal
     from lib.orm.models.proposals import ProposalRun
@@ -518,53 +662,24 @@ def test_reflect_proposes_authoritative_topic_when_enabled(monkeypatch):
         "refs": [{"path": "web/app.py", "role": "entrypoint"}]}}}
     monkeypatch.setattr("lib.topics.route.load_authoritative_graph",
                         lambda repo: graph)
-    _seed_cluster()
-    # The draft body carries MARKER-A, so the stub embeds the rule summary
-    # onto the same vector as the backend node's identity text → a merge.
-    synth_json = ('{"title": "Restart the backend after server edits", '
-                  '"body": "MARKER-A restart the backend so tests hit new '
-                  'code rather than the cached old process."}')
-    embedder = StubEmbedder(_CLUSTER_VECS)
-    llm = StubLLM(synth_json)
-
+    e1, e2, e3 = _seed_synth_sources()
+    embedder = StubEmbedder({"MARKER-A": [1.0, 0.0, 0.0]})
+    llm = PlanLLM({"actions": [_synth_action(
+        [e1, e2, e3],
+        body="MARKER-A restart the backend so tests hit new code "
+             "rather than the cached old process.")]})
     result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-
     assert result.synthesized == 1
     assert result.topics == 1                       # a proposal was emitted
     assert memory.get_store().list_topics() == []   # no orphan memory_topic
-    synth = [r for r in memory.get_store().list_memories(include_tests=True)
-             if "synthesis" in (r["tags"] or [])][0]
-    # merge target already exists → the rule is linked to it now
-    assert memory.get_store().authoritative_topics_of(synth["id"]) == ["backend"]
+    synth = [r for r in memory.get_store().list_memories(
+        status="proposed", include_tests=True)
+        if "synthesis" in (r["tags"] or [])][0]
+    assert memory.get_store().authoritative_topics_of(
+        synth["id"]) == ["backend"]
     with SessionLocal() as s:
         run = s.get(ProposalRun, f"memory-reflect-{synth['id']}")
     assert run is not None and run.provider == "memory-reflect"
-
-
-def test_reflect_synthesis_skipped_without_llm():
-    """Synthesis needs an LLM to abstract; with an embedder but no LLM the
-    pass is a no-op (clustering alone never writes a memory)."""
-    _seed_cluster()
-    embedder = StubEmbedder(_CLUSTER_VECS)
-
-    result = reflect(memory.get_store(), embedder=embedder)
-
-    assert result.synthesized == 0
-    synth = [r for r in memory.get_store().list_memories(include_tests=True)
-             if "synthesis" in (r["tags"] or [])]
-    assert synth == []
-
-
-def test_reflect_no_synthesis_below_min_cluster():
-    """Two related rows are below the minimum cluster size — no synthesis."""
-    _episodic("MARKER-A reused backend served stale code until restart")
-    _episodic("MARKER-B the dev server kept old routes after an edit")
-    embedder = StubEmbedder(_CLUSTER_VECS)
-    llm = StubLLM(_SYNTHESIS_JSON)
-
-    result = reflect(memory.get_store(), embedder=embedder, llm=llm)
-
-    assert result.synthesized == 0
 
 
 # ── re-verification: flag memories whose named file paths no longer resolve ──
@@ -632,123 +747,3 @@ def test_reflect_stale_ref_skips_unverifiable_scope(tmp_path, monkeypatch):
     _register_repo(tmp_path, monkeypatch)
     _remember("Global note mentioning lib/gone.py somewhere.", scope="global")
     assert reflect(memory.get_store()).flagged_stale == 0
-
-
-# ── digest: the maintained per-scope structure layer (opt-in) ───────────────
-
-_DIGEST_JSON = (
-    '{"title": "Project briefing: build & test discipline", '
-    '"body": "Restart the backend after server edits or tests hit stale code. '
-    'Schema changes must also land in db/schema.sql. Use the .venv interpreter '
-    'for every CLI command rather than the system python."}')
-
-
-def _enable_digest(monkeypatch, **overrides):
-    from lib.settings import settings
-    monkeypatch.setattr(settings.agent_memory, "digest_enabled", True)
-    for key, value in overrides.items():
-        monkeypatch.setattr(settings.agent_memory, key, value)
-
-
-def _seed_digest_sources(n=3):
-    for i in range(n):
-        _episodic(f"DIGEST-SRC-{i} a durable convention worth remembering #{i}")
-
-
-def test_reflect_digest_disabled_by_default():
-    """The digest stage is off unless `digest_enabled` is set — an LLM alone
-    is not enough to opt in."""
-    _seed_digest_sources()
-    result = reflect(memory.get_store(), llm=StubLLM(_DIGEST_JSON))
-    assert result.digests == 0
-    assert memory.get_store().get_digest("global") is None
-
-
-def test_reflect_writes_digest_when_enabled(monkeypatch):
-    """With the flag on and an LLM, reflect rolls a scope's episodic rows into
-    one `kind="digest"` memory — and that digest never appears in recall."""
-    _enable_digest(monkeypatch)
-    _seed_digest_sources()
-    result = reflect(memory.get_store(), llm=StubLLM(_DIGEST_JSON))
-
-    assert result.digests == 1
-    digest = memory.get_store().get_digest("global")
-    assert digest is not None
-    assert digest["kind"] == "digest" and digest["tier"] == "episodic"
-    assert digest["status"] == "active" and digest["scope"] == "global"
-    assert digest["title"] == "Project briefing: build & test discipline"
-    assert "digest" in (digest["tags"] or [])
-
-    # Excluded from similarity recall: it exists (get_digest found it) yet
-    # never surfaces as a recall hit, even on its own vocabulary.
-    hits = memory.get_store().recall(
-        "backend schema venv discipline", top_k=10, include_tests=True)
-    assert all(h.memory["kind"] != "digest" for h in hits)
-
-
-def test_reflect_digest_prompt_names_scope(monkeypatch):
-    """The digest prompt states which scope is being digested and instructs
-    the model to skip clearly off-scope entries."""
-    _enable_digest(monkeypatch)
-    _seed_digest_sources()
-    llm = StubLLM(_DIGEST_JSON)
-    assert reflect(memory.get_store(), llm=llm).digests == 1
-    prompt = llm.prompts[0]
-    assert 'the scope named "global"' in prompt
-    assert "IGNORE entries clearly specific to a different scope" in prompt
-
-
-def test_reflect_digest_skipped_without_llm(monkeypatch):
-    """The digest needs an LLM to write the briefing; enabled but LLM-less is
-    a no-op."""
-    _enable_digest(monkeypatch)
-    _seed_digest_sources()
-    assert reflect(memory.get_store()).digests == 0
-
-
-def test_reflect_digest_needs_minimum_sources(monkeypatch):
-    """A scope with fewer than the minimum sources isn't worth a digest."""
-    _enable_digest(monkeypatch)
-    _seed_digest_sources(n=2)
-    assert reflect(memory.get_store(), llm=StubLLM(_DIGEST_JSON)).digests == 0
-
-
-def test_reflect_digest_current_skips_regeneration(monkeypatch):
-    """Once written, a fresh digest with no newer sources is left alone — the
-    cadence guard keeps the per-scope LLM call off the hot path."""
-    _enable_digest(monkeypatch)
-    _seed_digest_sources()
-    llm = StubLLM(_DIGEST_JSON)
-    first = reflect(memory.get_store(), llm=llm)
-    assert first.digests == 1
-    original = memory.get_store().get_digest("global")
-
-    second = reflect(memory.get_store(), llm=llm)
-    assert second.digests == 0
-    assert memory.get_store().get_digest("global")["id"] == original["id"]
-
-
-def test_reflect_digest_refreshes_via_supersede(monkeypatch):
-    """Enough newer sources trip the cadence guard: the digest is regenerated
-    in place — the old row retired and chained to the new one — so exactly one
-    stays active per scope."""
-    _enable_digest(monkeypatch)
-    _seed_digest_sources()
-    llm = StubLLM(_DIGEST_JSON)
-    reflect(memory.get_store(), llm=llm)
-    original = memory.get_store().get_digest("global")
-
-    # Three newer sources clear `digest_min_new_cards` (default 3).
-    for i in range(3):
-        _episodic(f"DIGEST-NEW-{i} a freshly learned convention #{i}")
-    result = reflect(memory.get_store(), llm=llm)
-
-    assert result.digests == 1
-    current = memory.get_store().get_digest("global")
-    assert current["id"] != original["id"]
-    retired = memory.get(original["id"])
-    assert retired.status == "retired"
-    assert retired.superseded_by == current["id"]
-    actives = memory.get_store().list_memories(
-        kind="digest", status="active", include_tests=True)
-    assert len(actives) == 1

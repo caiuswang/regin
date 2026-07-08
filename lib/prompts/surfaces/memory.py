@@ -1,9 +1,10 @@
 """Stage 2 surface registrations for regin's memory-subsystem agent prompts.
 
 Each hardcoded prompt in ``lib/memory/`` — the distiller, the topic classifier,
-the recall query-expander, and the two reflect passes (synthesis + digest) — is
-migrated here into a ``{{var}}``-placeholder default body, registered as an
-editable *surface*, and its call site rewired to ``render_surface``.
+the recall query-expander, and the reflect dream (the single consolidation
+stage) — is migrated here into a ``{{var}}``-placeholder default body,
+registered as an editable *surface*, and its call site rewired to
+``render_surface``.
 
 Single-brace tokens — IMPORTANT
 -------------------------------
@@ -27,10 +28,7 @@ from lib.prompts.registry import (PromptVariable, register_retired_default,
 DISTILL_SURFACE_ID = "memory-distill"
 TOPIC_CLASSIFY_SURFACE_ID = "memory-topic-classify"
 EXPAND_SURFACE_ID = "memory-expand"
-SYNTHESIS_SURFACE_ID = "memory-reflect-synthesis"
-DIGEST_SURFACE_ID = "memory-reflect-digest"
-CONTRADICTION_SURFACE_ID = "memory-reflect-contradiction"
-PROMOTE_SURFACE_ID = "memory-reflect-promote"
+DREAM_SURFACE_ID = "memory-reflect-dream"
 RETITLE_SURFACE_ID = "memory-retitle"
 
 
@@ -189,83 +187,67 @@ _DEFAULT_BODY_EXPAND = (
 )
 
 
-# --- Reflect synthesis (lib/memory/reflect.py::_llm_synthesis) ---------------
-# Old builder: `_SYNTHESIS_PROMPT.replace("{entries}", entries)`.
-_DEFAULT_BODY_SYNTHESIS = (
-    "Several memories from past coding sessions are clustered below because "
-    "an embedding model judged them topically related. Write ONE higher-level, "
-    "reusable rule that captures the general principle they share — more "
-    "abstract than any single entry, yet still concrete and actionable for a "
-    "future session. If they share no genuine common principle (merely "
-    "surface-similar), reply with exactly NONE.\n\n"
-    "Respond with a JSON object and nothing else:\n"
-    '  {"title": "the principle in one line, <= 80 chars", '
-    '"body": "the reusable rule, <= 600 chars"}\n'
-    "or the bare word NONE.\n\n"
-    "{{entries}}"
-)
+# --- Reflect dream (lib/memory/reflect.py::_dream) ---------------------------
+# The single consolidation LLM stage: ONE call per reflect run decides every
+# working row's fate, judges every suspect pair, and may propose a synthesis.
+# The evidence pack is built mechanically and bounded; the agent may pull
+# deeper evidence via the read-only memory CLI (`dream_allowed_tools`).
+_DEFAULT_BODY_DREAM = """<role>
+You are the consolidation ("dream") pass over a coding agent's cross-session
+memory store. In ONE pass you decide the fate of each fresh working-tier
+memory, judge each suspect pair for contradiction, and may abstract a
+genuinely shared principle. Be conservative: memories steer future sessions,
+and a wrong retirement or a forced abstraction is worse than waiting a cycle.
+</role>
 
+<working_memories>
+{{working_block}}
+</working_memories>
 
-# --- Reflect contradiction judge (lib/memory/reflect.py::_llm_pair_verdict) ---
-# A 3-way verdict over a time-ordered pair (A = older, B = newer, each shown
-# with its recorded timestamp). OBSOLETE is a judgment of relocation-in-time —
-# B supersedes A without A ever having been false — so the caller retires
-# without falsifying. The call site clips each doc text to 1500 chars.
-_DEFAULT_BODY_CONTRADICTION = (
-    "Two memory entries from past coding sessions follow, each with the "
-    "time it was recorded. A is the OLDER entry, B the NEWER. Answer with "
-    "exactly one word:\n"
-    "- CONTRADICT: they make incompatible claims about the same thing.\n"
-    "- OBSOLETE: B describes a later change, fix, or removal that "
-    "supersedes what A records.\n"
-    "- DISTINCT: neither — they can both stand.\n\n"
-    "A (recorded {{created_a}}): {{memory_a}}\n\n"
-    "B (recorded {{created_b}}): {{memory_b}}\n"
-)
+<suspect_pairs>
+{{pairs_block}}
+</suspect_pairs>
 
+<gather_evidence>
+You have a shell with read-only memory commands. The pack above is clipped;
+pull deeper evidence sparingly when a decision genuinely hinges on it:
+  {{python}} cli/regin.py memory recall "<what a future task would ask>"
+  {{python}} cli/regin.py memory list --scope "<scope>" --sort importance
+</gather_evidence>
 
-# --- Reflect promote judge (lib/memory/reflect.py::_promote_decision) ---------
-# Decides the fate of a working-tier lesson at consolidation time. Conservative
-# by construction: when unsure it must choose `hold`, never `drop` — the model
-# verdict is a hard control over a destructive action, so the prompt biases
-# toward the reversible outcome (see the "brittle categorical" memory lesson).
-_DEFAULT_BODY_PROMOTE = (
-    "A coding-session lesson is up for consolidation into long-term memory. "
-    "Decide its fate from the candidate and its nearest already-kept "
-    "neighbours.\n\n"
-    "Verdicts:\n"
-    "- promote: a durable, reusable rule worth keeping permanently.\n"
-    "- hold: real but unproven or too raw — keep it working one more cycle. "
-    "Choose this whenever you are unsure.\n"
-    "- drop: redundant, one-off, or low-value — not worth keeping.\n"
-    "- merge: says essentially what one neighbour already says; fold into it "
-    "(set merge_into to that neighbour's id).\n\n"
-    "CANDIDATE:\n{{candidate}}\n\n"
-    "NEAREST KEPT NEIGHBOURS:\n{{neighbours}}\n\n"
-    "Respond with a JSON object and nothing else:\n"
-    '  {"verdict": "promote|hold|drop|merge", '
-    '"rationale": "<= 160 chars", "merge_into": "<neighbour id or null>"}'
-)
+<decisions>
+For EVERY working memory choose exactly one:
+- promote: a durable, reusable rule worth keeping permanently (episodic).
+- hold: real but unproven or too raw — keep it working one more cycle.
+  Choose this whenever you are unsure.
+- drop: redundant, one-off, or low-value — not worth keeping.
+- merge: says essentially what one listed memory already says; set "keeper"
+  to that memory's id.
+For EVERY suspect pair choose exactly one (OLDER vs NEWER by recorded time):
+- contradict: they make incompatible claims about the same thing.
+- obsolete: the NEWER describes a later change, fix, or removal that
+  supersedes what the OLDER records.
+- distinct: neither — both stand. Choose this whenever you are unsure.
+Optionally add synthesize actions, ONLY when at least 3 listed entries
+genuinely instantiate ONE transferable principle — never force an
+abstraction from merely co-retrieved entries; proposing no synthesis is the
+normal outcome.
+</decisions>
 
-
-# --- Reflect digest (lib/memory/reflect.py::_llm_digest) ---------------------
-# Old builder: `_DIGEST_PROMPT.replace("{entries}", entries)`.
-_DEFAULT_BODY_DIGEST = (
-    "Below are the most important things learned across past coding sessions "
-    "for one project scope, highest-priority first. The entries belong to "
-    'the scope named "{{scope}}". Write a SINGLE compact briefing a future '
-    "session in this scope should read first: the durable conventions, "
-    "gotchas, and decisions — grouped and deduplicated, concrete and "
-    "actionable. IGNORE entries clearly specific to a different scope "
-    "(e.g. repo-specific gotchas inside the `global` scope). Omit anything "
-    "narrow or one-off. Aim for under 800 characters.\n\n"
-    "Respond with a JSON object and nothing else:\n"
-    '  {"title": "<= 80 char heading for this briefing", '
-    '"body": "the briefing, <= 1500 chars"}\n'
-    "or the bare word NONE if there is no durable, reusable signal or too "
-    "little on-scope signal remains.\n\n"
-    "{{entries}}"
-)
+<output_format>
+Respond with ONE JSON object and NOTHING else — no prose before or after:
+  {"actions": [
+    {"action": "promote|hold|drop|merge", "id": "<working memory id>",
+     "keeper": "<listed memory id, merge only>", "rationale": "<= 120 chars"},
+    {"action": "contradict|obsolete|distinct", "older": "<id>",
+     "newer": "<id>", "rationale": "<= 120 chars"},
+    {"action": "synthesize", "source_ids": ["<id>", "..."],
+     "title": "the principle in one line, <= 80 chars",
+     "body": "the reusable rule, <= 600 chars", "rationale": "<= 120 chars"}
+  ]}
+Include exactly one action per working memory and one per suspect pair.
+</output_format>
+"""
 
 
 # --- Title distiller (lib/memory/retitle.py::_compose_prompt) ----------------
@@ -338,70 +320,21 @@ register_surface(
 )
 
 register_surface(
-    SYNTHESIS_SURFACE_ID,
-    label="Memory — reflect synthesis",
+    DREAM_SURFACE_ID,
+    label="Memory — reflect dream",
     area="memory",
-    default_body=_DEFAULT_BODY_SYNTHESIS,
+    default_body=_DEFAULT_BODY_DREAM,
     description=(
-        "The reflect-pass prompt that abstracts ONE higher-order rule from a "
-        "cluster of related memories (`lib/memory/reflect.py`)."
+        "The single reflect consolidation stage: one agentic call per run "
+        "that decides every working row's fate (promote/hold/drop/merge), "
+        "judges every suspect pair (contradict/obsolete/distinct), and may "
+        "propose a synthesis (`lib/memory/reflect.py::_dream`)."
     ),
     applies_to=("memory",),
     variables=(
-        PromptVariable("entries", "The clustered source memories, one `[n] <text>` block each."),
-    ),
-)
-
-register_surface(
-    CONTRADICTION_SURFACE_ID,
-    label="Memory — reflect contradiction judge",
-    area="memory",
-    default_body=_DEFAULT_BODY_CONTRADICTION,
-    description=(
-        "The reflect-pass judge that decides whether a time-ordered memory "
-        "pair contradicts (older retired as false), is obsoleted (older "
-        "retired, veracity untouched), or is distinct "
-        "(`lib/memory/reflect.py`)."
-    ),
-    applies_to=("memory",),
-    variables=(
-        PromptVariable("memory_a", "The older memory's doc text (clipped to 1500 chars)."),
-        PromptVariable("memory_b", "The newer memory's doc text (clipped to 1500 chars)."),
-        PromptVariable("created_a", "The older memory's created_at timestamp."),
-        PromptVariable("created_b", "The newer memory's created_at timestamp."),
-    ),
-)
-
-register_surface(
-    DIGEST_SURFACE_ID,
-    label="Memory — reflect digest",
-    area="memory",
-    default_body=_DEFAULT_BODY_DIGEST,
-    description=(
-        "The reflect-pass prompt that rolls a scope's most important memories "
-        "into one maintained briefing (`lib/memory/reflect.py`)."
-    ),
-    applies_to=("memory",),
-    variables=(
-        PromptVariable("entries", "The scope's top episodic memories, one `[n] <text>` block each."),
-        PromptVariable("scope", "The scope name being digested ('global' or 'repo:<name>')."),
-    ),
-)
-
-register_surface(
-    PROMOTE_SURFACE_ID,
-    label="Memory — reflect promote judge",
-    area="memory",
-    default_body=_DEFAULT_BODY_PROMOTE,
-    description=(
-        "The reflect-pass judge that decides whether a working-tier lesson is "
-        "promoted, held, dropped, or merged into a neighbour "
-        "(`lib/memory/reflect.py`)."
-    ),
-    applies_to=("memory",),
-    variables=(
-        PromptVariable("candidate", "The working memory under review, as doc text."),
-        PromptVariable("neighbours", "The nearest kept memories, one `[id] <text>` block each."),
+        PromptVariable("working_block", "Every pending working-tier memory with its top co-retrieval neighbours."),
+        PromptVariable("pairs_block", "The suspect episodic pairs (shared referent, same scope), OLDER/NEWER labeled."),
+        PromptVariable("python", "The interpreter the agent invokes regin's CLI with (e.g. `.venv/bin/python`)."),
     ),
 )
 
@@ -422,24 +355,39 @@ register_surface(
 )
 
 # Superseded default bodies (sha256), so the seeder can heal un-edited stale
-# rows on existing installs (see `register_retired_default`):
-#   - contradiction: the original 2-way CONTRADICT/DISTINCT prompt (no
-#     OBSOLETE verdict, no timestamps).
-#   - digest: the original scope-blind briefing prompt (no {{scope}} slot).
-register_retired_default(
-    CONTRADICTION_SURFACE_ID,
-    sha256="9f22fc1136962d500a1b658d556127ed7405aee8506dd477b193f58cc3187c16")
-register_retired_default(
-    DIGEST_SURFACE_ID,
-    sha256="90a21ccd8822e0465fbf10eaccd1b8255d35899c6987469f3e73f7dfffe2333c")
+# rows — or DELETE them when the slug itself was retired (all four reflect
+# micro-stage surfaces were folded into the single dream stage; a builtin row
+# still carrying one of these default bodies is dead seed data, while a
+# user-edited row for a dead slug is kept). Two generations per slug where a
+# revision shipped between the original and the retirement.
+_RETIRED_SLUG_HASHES = {
+    "memory-reflect-contradiction": (
+        # original 2-way CONTRADICT/DISTINCT prompt
+        "9f22fc1136962d500a1b658d556127ed7405aee8506dd477b193f58cc3187c16",
+        # 3-way CONTRADICT/OBSOLETE/DISTINCT revision
+        "bce549d97d6aa29506c2359be25a0e501c5af1f578f8f9bd88d84be6c13bed40",
+    ),
+    "memory-reflect-digest": (
+        # original scope-blind briefing prompt
+        "90a21ccd8822e0465fbf10eaccd1b8255d35899c6987469f3e73f7dfffe2333c",
+        # scope-aware revision
+        "8c252b895f57c5f1b14010cb4dfbe60555a083cada7f716f7fb6b089d5caebc7",
+    ),
+    "memory-reflect-promote": (
+        "a73f90b41556790ca921812f2e77a6b642b6a8b280831bec1500a2c248b39f60",
+    ),
+    "memory-reflect-synthesis": (
+        "b6dbf2efd0526c9c1d9136d72d68ac0d96bce541c174f7c0448d1cdfa371bc98",
+    ),
+}
+for _slug, _hashes in _RETIRED_SLUG_HASHES.items():
+    for _sha in _hashes:
+        register_retired_default(_slug, sha256=_sha)
 
 __all__ = [
-    "CONTRADICTION_SURFACE_ID",
-    "DIGEST_SURFACE_ID",
     "DISTILL_SURFACE_ID",
+    "DREAM_SURFACE_ID",
     "EXPAND_SURFACE_ID",
-    "PROMOTE_SURFACE_ID",
     "RETITLE_SURFACE_ID",
-    "SYNTHESIS_SURFACE_ID",
     "TOPIC_CLASSIFY_SURFACE_ID",
 ]

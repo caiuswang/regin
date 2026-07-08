@@ -538,6 +538,7 @@ def cmd_reflect(
           f"pairs_checked={result.pairs_checked} "
           f"contradictions={result.contradictions} "
           f"obsoleted={result.obsoleted} "
+          f"dream_skipped={result.dream_skipped} "
           f"promoted={result.promoted} embedded={result.embedded} "
           f"forgotten={result.forgotten} decayed={result.decayed} "
           f"synthesized={result.synthesized} "

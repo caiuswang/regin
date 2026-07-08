@@ -132,7 +132,8 @@
     "dedup_cosine_threshold": 0.92,
     "dedup_text_threshold": 0.9,
     "decay_ignored_threshold": 5,
-    "decay_injected_threshold": 8
+    "decay_injected_threshold": 8,
+    "promote_allow_retire": false
   },
   "topic_evolution": {
     "evolution_enabled": true,

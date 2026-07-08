@@ -146,6 +146,16 @@ def resolve_distiller() -> ExternalAgentLLM:
     return ExternalAgentLLM(extra_args=extra, surface_id=DISTILL_SURFACE_ID)
 
 
+def resolve_dreamer() -> ExternalAgentLLM:
+    """The reflect dream LLM, granted the read-only memory commands so it
+    can pull evidence beyond the bounded pack (agentic consolidation).
+    Mirrors `resolve_distiller`."""
+    from lib.prompts.surfaces.memory import DREAM_SURFACE_ID
+    tools = settings.agent_memory.dream_allowed_tools
+    extra = ["--allowedTools", ",".join(tools)] if tools else []
+    return ExternalAgentLLM(extra_args=extra, surface_id=DREAM_SURFACE_ID)
+
+
 def resolve_topic_classifier() -> ExternalAgentLLM:
     """The LLM behind agentic `memory link-topics`: plain text in, JSON out —
     it reasons over the taxonomy and the memory body, granting no tools."""
@@ -173,5 +183,5 @@ def resolve_proposal_reviewer() -> ExternalAgentLLM:
 
 
 __all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "resolve_distiller",
-           "resolve_topic_classifier", "resolve_retitler",
+           "resolve_dreamer", "resolve_topic_classifier", "resolve_retitler",
            "resolve_proposal_reviewer"]

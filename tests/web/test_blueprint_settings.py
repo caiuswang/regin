@@ -235,14 +235,14 @@ def test_agent_memory_put_preserves_shared_fields_when_block_also_in_local(
 
     resp = flask_client.put(
         "/api/settings/agent-memory",
-        json={"promote_mode": "all"},          # a single-key change
+        json={"scope_policy": "global"},       # a single-key change
         headers=_editor_auth_header(),
     )
     assert resp.status_code == 200, resp.get_data(as_text=True)
 
     shared = json.loads(
         isolated_settings_files["shared"].read_text())["agent_memory"]
-    assert shared["promote_mode"] == "all"           # the change landed
+    assert shared["scope_policy"] == "global"        # the change landed
     assert shared["auto_inject"] is False            # …and nothing was dropped
     assert shared["recall_top_k"] == 9
     assert shared["inject_skip_commands"] == ["/goal", "/review"]

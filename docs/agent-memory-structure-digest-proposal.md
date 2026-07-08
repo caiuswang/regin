@@ -1,6 +1,14 @@
 # Proposal: a maintained structure-digest layer for agent memory
 
-> Status: **proposal, not built.** Borrows the one architectural idea worth taking
+> Status: **historical — built, then removed.** The digest stage shipped as
+> reflect()'s opt-in `digest_enabled` generation slice, but the briefings were
+> write-only (never injected or recalled), so the stage and its settings
+> (`digest_enabled`, `digest_min_new_cards`, `digest_max_age_days`,
+> `digest_max_sources`) were removed in the reflect-v4 "dream" redesign;
+> reflect now retires any leftover `kind='digest'` rows. This document is
+> kept as the design record.
+
+> Original status: **proposal, not built.** Borrows the one architectural idea worth taking
 > from TencentCloud's TencentDB-Agent-Memory after reading its source
 > (`~/typescript-project/TencentDB-Agent-Memory`). Everything else in that system
 > regin already matches or exceeds; this is the single delta.

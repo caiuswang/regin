@@ -252,14 +252,23 @@ class AgentMemoryConfig(BaseModel):
     # text-similarity fallback when the embedder is unavailable.
     dedup_cosine_threshold: float = 0.92
     dedup_text_threshold: float = 0.90
-    # reflect(): referent-anchored contradiction sweep. Real contradictions
-    # are low-cosine, time-ordered pairs "about the same thing", so instead of
-    # gating on similarity the sweep pairs active episodic rows that name at
-    # least one common concrete repo file path and puts each pair to the
-    # 3-way judge (CONTRADICT / OBSOLETE / DISTINCT). Judged pairs are
-    # remembered (`memory_pair_checks`) so a pair is never re-bought;
-    # `contradiction_budget` caps LLM calls per reflect run. Needs an LLM.
-    contradiction_scan_enabled: bool = True
+    # reflect(): the "dream" — the ONE agentic LLM stage per reflect run. A
+    # single call receives a bounded evidence pack (every pending working row
+    # with its co-retrieval neighbours + suspect episodic pairs) and returns
+    # one plan: promote/hold/drop/merge per row, contradict/obsolete/distinct
+    # per pair, optional synthesis. Off (or no LLM) → every surviving working
+    # row is blind-promoted and nothing else is judged.
+    dream_enabled: bool = True
+    # Read-only tools the dream subprocess may use to pull evidence beyond
+    # the pack (`claude --allowedTools`); mirrors `distill_allowed_tools`.
+    dream_allowed_tools: list[str] = [
+        "Bash(.venv/bin/python cli/regin.py memory list:*)",
+        "Bash(.venv/bin/python cli/regin.py memory recall:*)",
+    ]
+    # Cap on suspect episodic pairs offered to one dream. Candidates are
+    # same-scope pairs naming a common concrete repo file path (real
+    # contradictions are low-cosine, so no similarity gate), excluding pairs
+    # already presented (`memory_pair_checks`).
     contradiction_budget: int = 8
     # distill(): the LLM self-scores each proposal's reusable value in
     # [0,1] (non-obvious × reusable × likely-to-recur). Below
@@ -294,49 +303,13 @@ class AgentMemoryConfig(BaseModel):
     # human to apply by hand. Driven by `regin memory consolidate-skills`.
     consolidate_skills_enabled: bool = True
     consolidate_skill_min_recall: int = 3
-    # reflect(): synthesis (Generative-Agents reflection). Cluster *related
-    # but distinct* episodic rows (cosine in [0.55, dedup_threshold)) and ask
-    # the LLM to abstract ONE higher-order rule per cluster, written as a new
-    # episodic memory; sources are kept and marked 'synthesized'. Needs both
-    # an embedder (to cluster) and an LLM (to abstract); a no-op without
-    # either. Off → reflect only dedups / promotes / decays, never synthesises.
-    synthesis_enabled: bool = True
-    # reflect(): the structure layer. Roll each scope's most important
-    # episodic memories (synthesis cards first — they carry the highest
-    # importance — then the rest) into ONE compact maintained briefing
-    # ("what this scope's sessions have learned"), persisted as a single
-    # `kind="digest"` memory per scope and refreshed in place via supersede.
-    # The store-derived, auto-maintained complement to the hand-curated
-    # MEMORY.md. Excluded from similarity recall (standing context, read by
-    # scope, never a per-query hit) and from the dedup/synthesis/decay
-    # lifecycle. Needs an LLM; a no-op without one. Off by default — this is
-    # the generation slice; the inject path is separate.
-    digest_enabled: bool = False
-    # reflect(): who decides a working row's fate at promotion time.
-    #   heuristic  — the original blind rule: every surviving working row is
-    #                promoted to episodic (no model call).
-    #   ambiguous  — clear-cut rows auto-promote; only rows a cheap abundant
-    #                signal flags as borderline are sent to the promote judge.
-    #   all        — every working row is judged by the model.
-    # `ambiguous`/`all` degrade to `heuristic` whenever no LLM is configured or
-    # the judge errors — promotion must never fail wholesale on a model outage.
-    promote_mode: Literal["heuristic", "ambiguous", "all"] = "ambiguous"
-    # Gate on the judge's *destructive* verdicts. Off → a `drop`/`merge` verdict
-    # degrades to `hold` (the row simply stays working); the model can only ever
-    # promote or hold. On → `drop`/`merge` retire the row via reversible
-    # supersede. Off by default: a noisy categorical must not hard-control a
-    # destructive action without opt-in.
+    # Gate on the dream's *destructive* row verdicts. Off → a `drop`/`merge`
+    # verdict degrades to `hold` (the row simply stays working); the model can
+    # only ever promote or hold. On → `drop`/`merge` retire the row via
+    # reversible supersede. Off by default: a noisy categorical must not
+    # hard-control a destructive action without opt-in.
     promote_allow_retire: bool = False
-    # Regenerate a scope's digest only when at least this many newer source
-    # memories exist since the current digest, OR it is older than
-    # `digest_max_age_days` — keeps the per-scope LLM call off the hot path.
-    digest_min_new_cards: int = 3
-    digest_max_age_days: float = 7.0
-    # Cap on source memories (top-importance episodic) fed to the digest LLM,
-    # bounding the prompt; a scope needs at least a few sources to be worth one.
-    digest_max_sources: int = 20
-    # reflect(): persist the embedding-cosine neighbour graph that synthesis
-    # clustering already computes (and otherwise discards) as `related` edges
+    # reflect(): persist the embedding-cosine neighbour graph as `related` edges
     # in `memory_edges`. Every pair of active embedded memories whose cosine
     # is >= `edge_floor` (and below the dedup threshold — near-identical pairs
     # are merged, not linked) becomes one undirected edge. reflect rebuilds the

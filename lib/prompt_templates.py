@@ -304,12 +304,34 @@ def _heal_stale_builtin(session, row: Any, surface: Any, now: str) -> bool:
     return True
 
 
+def _delete_dead_builtin(session, row: Any) -> bool:
+    """Delete a builtin row ONLY when its slug was explicitly retired (it
+    has registered retired-default hashes) AND its body is un-edited
+    (hashes to one of them — the last-shipped defaults of dead slugs live
+    on as retired hashes). An unregistered slug with NO retired hashes is
+    not dead — it may belong to a surface that registers late — and a
+    user-edited row for a dead slug is kept: deleting it would destroy the
+    only copy of the user's work."""
+    from lib.prompts.registry import retired_default_hashes
+
+    if not row.builtin:
+        return False
+    hashes = retired_default_hashes(row.slug)
+    if not hashes:                      # never explicitly retired → not dead
+        return False
+    if _body_sha256(row.body) not in hashes:
+        return False
+    session.delete(row)
+    return True
+
+
 def seed_builtin_skeletons() -> int:
     """Insert a ``builtin`` ``skeleton`` row for every registered prompt surface
-    that has no row yet, and heal existing builtin rows whose body is still a
-    *retired* default (see `_heal_stale_builtin`). Idempotent by slug — a
-    user-edited row is left untouched — mirroring the ``schema.sql`` fragment
-    seed. Returns rows added or healed."""
+    that has no row yet, heal existing builtin rows whose body is still a
+    *retired* default (see `_heal_stale_builtin`), and delete un-edited
+    builtin rows for slugs no longer registered (see `_delete_dead_builtin`).
+    Idempotent by slug — a user-edited row is left untouched — mirroring the
+    ``schema.sql`` fragment seed. Returns rows added, healed, or deleted."""
     from lib.prompts.registry import list_surfaces
 
     now = _now()
@@ -317,7 +339,9 @@ def seed_builtin_skeletons() -> int:
     with SessionLocal() as session:
         existing = {row.slug: row
                     for row in session.exec(select(PromptTemplate)).all()}
+        registered: set[str] = set()
         for surface in list_surfaces():
+            registered.add(surface.id)
             row = existing.get(surface.id)
             if row is not None:
                 changed += 1 if _heal_stale_builtin(session, row, surface, now) else 0
@@ -338,6 +362,9 @@ def seed_builtin_skeletons() -> int:
                 )
             )
             changed += 1
+        for slug, row in existing.items():
+            if slug not in registered:
+                changed += 1 if _delete_dead_builtin(session, row) else 0
         session.commit()
     return changed
 
