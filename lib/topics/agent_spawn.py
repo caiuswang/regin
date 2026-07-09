@@ -206,12 +206,21 @@ def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:
     dropped."""
     try:
         from lib.memory.adapters import resolve_proposal_reviewer
+        from lib.prompts.surfaces.triage import SURFACE_ID as TRIAGE_SURFACE_ID
 
         inputs = _triage_inputs(repo_path, proposal)
         if inputs is None:
             return True
+        # surface_id also re-resolves the agent BINDING (ExternalAgentLLM._agent
+        # keys the per-surface `agent` column off this same value), not just the
+        # trace tag. Before this override, triage silently inherited whatever
+        # agent the review surface was bound to; its own binding column existed
+        # but was dead. Passing the triage surface's own id here fixes both the
+        # trace mislabel and that dead binding in one change — intentional, not
+        # a side effect to guard against.
         answer = resolve_proposal_reviewer().complete(
-            _triage_prompt(*inputs), max_tokens=512, cwd=repo_path)
+            _triage_prompt(*inputs), max_tokens=512, cwd=repo_path,
+            surface_id=TRIAGE_SURFACE_ID)
         if not answer or not str(answer).strip():
             return True  # no agent / empty → fail open (spawn)
         match = _TRIAGE_RE.search(str(answer))

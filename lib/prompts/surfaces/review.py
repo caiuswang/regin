@@ -49,6 +49,7 @@ register_surface(
         PromptVariable("sibling_block", "The `<sibling_topics>` block listing same-bucket approved neighbours with their wiki paths, or empty when the draft has none.", required=False),
         PromptVariable("feedback_block", "The `<prior_open_feedback>` block replaying still-open human threads, or empty when there is none.", required=False),
     ),
+    tags=("topic-proposal-agent", "review"),
 )
 
 __all__ = ["SURFACE_ID"]

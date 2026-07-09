@@ -34,6 +34,7 @@ register_surface(
         "{{include:topic-authoring-standards}} so both judge against one standard."
     ),
     kind="fragment",
+    tags=("topic-proposal-agent",),
 )
 
 __all__ = ["SURFACE_ID"]

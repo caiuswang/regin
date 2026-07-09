@@ -48,6 +48,7 @@ register_surface(
         PromptVariable("changed_refs", "Bullet list of the changed ref paths, or the `- (this topic's refs)` fallback."),
         PromptVariable("current_wiki", "The topic's current wiki markdown, or `(no wiki on file)` when empty."),
     ),
+    tags=("topic-proposal-agent", "drift-triage"),
 )
 
 __all__ = ["SURFACE_ID"]

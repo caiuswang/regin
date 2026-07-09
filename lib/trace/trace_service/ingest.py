@@ -1302,6 +1302,15 @@ def _surface_tags(conn, surface_id: object) -> list[str]:
     return out
 
 
+def _upsert_auto_tags(conn, tid: str, tags: list[str]) -> None:
+    """Insert `tags` as source='auto' session_tags for `tid`. Shared by every
+    `_stamp_*_origins` stamper; callers are responsible for the
+    first-sighting (`existing_set`) guard before calling this, since that
+    guard's shape (which attribute names the surface) differs per stamper."""
+    for slug in tags:
+        conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
+
+
 def _stamp_llm_stage_origins(conn, normalised: list[tuple],
                              existing_set: set) -> None:
     """Mark sessions spawned by a regin LLM stage on the *origin* axis, and
@@ -1339,32 +1348,48 @@ def _stamp_llm_stage_origins(conn, normalised: list[tuple],
                 "UPDATE sessions SET origin = 'llm-stage' WHERE trace_id = ?",
                 (tid,))
         if (tid, span.get('span_id')) not in existing_set:
-            for slug in _surface_tags(conn, surface):
-                conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
+            _upsert_auto_tags(conn, tid, _surface_tags(conn, surface))
 
 
-def _stamp_topic_proposal_origins(conn, normalised: list[tuple]) -> None:
-    """Mark regin-spawned topic-proposal sessions on the *origin* axis.
+def _stamp_topic_proposal_origins(conn, normalised: list[tuple],
+                                  existing_set: set) -> None:
+    """Mark regin-spawned topic-proposal sessions on the *origin* axis, and
+    auto-tag them by the drafting surface.
 
     `proposal_external._emit` tags every proposal span (including
     `session.start`) with `agent_type='topic-proposal-agent'`. Mirrors
     `_stamp_llm_stage_origins`: `origin` records what KIND of row this is,
     so the builtin `topic-proposal` category derives from a single axis
-    (origin) rather than sniffing `agent_type` at read time. The common
-    batch (no session.start) exits on the cheap name scan.
+    (origin) rather than sniffing `agent_type` at read time. Unlike the
+    llm-stage surfaces, drafting has no `llm_surface` attr to disambiguate
+    (its agent isn't spawned through `ExternalAgentLLM`) — but there is only
+    ONE drafting surface, so its tags are looked up once per call (not once
+    per span — the surface can't vary within one call) and memoized in
+    `drafting_tags`. First-sighting-guarded via `existing_set`, same as
+    `_stamp_llm_stage_origins`. The common batch (no session.start) exits on
+    the cheap name scan.
     """
     if not any(span.get('name') == 'session.start' for span, _ in normalised):
         return
     stamped: set = set()
+    drafting_tags: "list[str] | None" = None
     for span, attrs in normalised:
         tid = span.get('trace_id')
-        if (span.get('name') == 'session.start'
-                and attrs.get('agent_type') == 'topic-proposal-agent'
-                and tid is not None and tid not in stamped):
+        is_drafting_start = (span.get('name') == 'session.start'
+                             and attrs.get('agent_type') == 'topic-proposal-agent'
+                             and tid is not None)
+        if not is_drafting_start:
+            continue
+        if tid not in stamped:
             stamped.add(tid)
             conn.execute(
                 "UPDATE sessions SET origin = 'topic-proposal' WHERE trace_id = ?",
                 (tid,))
+        if (tid, span.get('span_id')) not in existing_set:
+            if drafting_tags is None:
+                from lib.prompts.surfaces.drafting import SURFACE_ID as drafting_surface_id
+                drafting_tags = _surface_tags(conn, drafting_surface_id)
+            _upsert_auto_tags(conn, tid, drafting_tags)
 
 
 _SESSION_TAGS_AUTO_UPSERT_SQL = """
@@ -1464,7 +1489,7 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         buckets = _counter_buckets_excl_pending(normalised, existing_set)
         _upsert_session_counters(conn, buckets)
         _stamp_llm_stage_origins(conn, normalised, existing_set)
-        _stamp_topic_proposal_origins(conn, normalised)
+        _stamp_topic_proposal_origins(conn, normalised, existing_set)
         _stamp_prompt_tags(conn, normalised, existing_set)
         _refresh_server_side_peaks(conn, normalised)
 

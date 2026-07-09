@@ -61,6 +61,7 @@ register_surface(
     ),
     applies_to=("grader",),
     variables=(),
+    tags=("grader", "correctness"),
 )
 
 register_surface(
@@ -74,6 +75,7 @@ register_surface(
     ),
     applies_to=("grader",),
     variables=(),
+    tags=("grader", "process"),
 )
 
 __all__ = ["CORRECTNESS_SURFACE_ID", "PROCESS_SURFACE_ID"]

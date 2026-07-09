@@ -398,6 +398,34 @@ def test_llm_stage_session_auto_tagged_from_surface(client):
     assert {t['slug'] for t in row['tags'] if not t['builtin']} == {'memory', 'dream'}
 
 
+def _topic_proposal_start_span(trace_id, span_id, ts='2026-03-01T00:00:00'):
+    return ({'trace_id': trace_id, 'span_id': span_id, 'name': 'session.start',
+             'start_time': ts, 'end_time': ts, 'kind': 'internal'},
+            {'agent_type': 'topic-proposal-agent'})
+
+
+def test_topic_proposal_session_auto_tagged_from_drafting_surface(client):
+    # Drafting sessions have no llm_surface attr (unlike the llm-stage
+    # surfaces) but should still self-apply the drafting surface's declared
+    # tags via _stamp_topic_proposal_origins, mirroring the llm-stage path.
+    from lib.trace.trace_service import ingest
+    ingest.ingest_session_spans([_topic_proposal_start_span('t-draft', 'ss-1')])
+    conn = sqlite3.connect(str(client._db_path))
+    try:
+        origin = conn.execute(
+            "SELECT origin FROM sessions WHERE trace_id='t-draft'").fetchone()[0]
+    finally:
+        conn.close()
+    assert origin == 'topic-proposal'
+    assert _custom_tag_rows(client._db_path, 't-draft') == {
+        'topic-proposal-agent': 'auto', 'drafting': 'auto'}
+    j = client.get('/api/sessions?workflow=show&kind=all').get_json()
+    row = next(x for x in j['items'] if x['trace_id'] == 't-draft')
+    assert row['category'] == 'topic-proposal'
+    assert {t['slug'] for t in row['tags'] if not t['builtin']} == {
+        'topic-proposal-agent', 'drafting'}
+
+
 def test_surface_tag_not_resurrected_after_removal(client):
     from lib.trace.trace_service import ingest
     span = _session_start_span('t-dream2', 'ss-1', 'memory-reflect-dream')

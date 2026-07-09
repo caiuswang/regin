@@ -94,6 +94,7 @@ register_surface(
         PromptVariable("intent", "The topic's whitespace-collapsed intent (clipped to 400 chars)."),
         PromptVariable("memories", "The leaf's memories rendered as `<memory id=…>` blocks."),
     ),
+    tags=("topics", "split-leaf"),
 )
 
 register_surface(
@@ -111,6 +112,7 @@ register_surface(
         PromptVariable("hi", "Upper bound on the number of buckets to propose."),
         PromptVariable("topics", "The flat topics rendered as `<topic id=…>` blocks."),
     ),
+    tags=("topics", "group-buckets"),
 )
 
 __all__ = [

@@ -40,15 +40,19 @@ def spy(monkeypatch):
 class _StubReviewer:
     """Stub the agentic materiality triage LLM with a fixed answer. Records
     every `cwd` it was called with, so tests can assert the triage call was
-    scoped to the target repo, not left to inherit the host process's cwd."""
+    scoped to the target repo, not left to inherit the host process's cwd.
+    Also records every `surface_id`, so tests can assert triage passes its
+    OWN surface id rather than silently inheriting the reviewer's."""
 
     def __init__(self, answer):
         self._answer = answer
         self.seen_cwds: list = []
+        self.seen_surface_ids: list = []
 
-    def complete(self, prompt, *, max_tokens=1024, cwd=None):
+    def complete(self, prompt, *, max_tokens=1024, cwd=None, surface_id=None):
         del prompt, max_tokens
         self.seen_cwds.append(cwd)
+        self.seen_surface_ids.append(surface_id)
         return self._answer
 
 
@@ -209,6 +213,26 @@ def test_triage_passes_repo_path_as_cwd(fake_git_repo, monkeypatch, spy):
     maybe_spawn_refresh_agents(repo)
 
     assert reviewer.seen_cwds == [repo]
+
+
+def test_triage_passes_its_own_surface_id(fake_git_repo, monkeypatch, spy):
+    """Triage must pass ITS OWN surface id, not silently inherit whatever the
+    reviewer LLM was constructed with (regression: it used to call `.complete()`
+    with no `surface_id` override at all, so triage sessions were traced —
+    and agent-bound — as `topic-proposal-review` runs)."""
+    from lib.prompts.surfaces.triage import SURFACE_ID as TRIAGE_SURFACE_ID
+
+    _configure(monkeypatch, spawn=True, configured=True)
+    reviewer = _set_triage(monkeypatch, "Only whitespace moved.\nVERDICT: TRIVIAL")
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _write_wiki(repo, "t1")
+    emit_refresh_proposal(repo, "t1", ["a.py"])
+
+    maybe_spawn_refresh_agents(repo)
+
+    assert reviewer.seen_surface_ids == [TRIAGE_SURFACE_ID]
 
 
 def test_triage_material_spawns(fake_git_repo, monkeypatch, spy):

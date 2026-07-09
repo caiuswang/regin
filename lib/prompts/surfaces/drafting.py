@@ -94,6 +94,7 @@ register_surface(
         PromptVariable("buckets_json", "JSON summary of the available top-level navigation buckets."),
         PromptVariable("sibling_section", "The 'Sibling topics being refreshed' block, or empty.", required=False),
     ),
+    tags=("topic-proposal-agent", "drafting"),
 )
 
 __all__ = ["SURFACE_ID"]
