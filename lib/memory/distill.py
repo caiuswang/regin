@@ -425,15 +425,15 @@ def _llm_says_supersedes(llm, p: MemoryInput, mem: dict) -> bool:
     existing memory `mem` about the same thing — so the old one is now wrong
     and should be retired in favour of the new. One-word answer; anything but
     an explicit CONTRADICT means keep both (never retire on a guess)."""
-    prompt = (
-        "An EXISTING memory and a NEW memory from coding sessions follow. "
-        "Does the NEW one make a claim INCOMPATIBLE with the EXISTING one "
-        "about the same thing (so the EXISTING one is now wrong)? Answer with "
-        "exactly one word — CONTRADICT if incompatible, or CONSISTENT "
-        "otherwise.\n\n"
-        f"EXISTING: {mem.get('title') or ''}\n{(mem.get('body') or '')[:1200]}"
-        f"\n\nNEW: {p.title or ''}\n{p.body[:1200]}\n"
-    )
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.memory import SUPERSEDE_CHECK_SURFACE_ID
+
+    prompt = render_surface(SUPERSEDE_CHECK_SURFACE_ID, {
+        "existing_title": mem.get("title") or "",
+        "existing_body": (mem.get("body") or "")[:1200],
+        "new_title": p.title or "",
+        "new_body": p.body[:1200],
+    })
     answer = llm.complete(prompt, max_tokens=8)
     return bool(answer) and "CONTRADICT" in answer.upper()
 

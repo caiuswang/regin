@@ -9,6 +9,12 @@ without relocating the constants. The ``default_body`` is a **lazy callable**
 without the ``prompts → grader → prompts`` import cycle a top-level import
 would create — the same trick ``default_system_prompts()`` uses.
 
+The standalone ``agentic``/``process_agentic`` judges above are no longer the
+live deep-tier path — ``lib/grader/combined_agentic.py`` replaced them with one
+combined judge call, but kept its own separate copy of the role/rubric text.
+The three ``grader-combined-*`` surfaces below register THAT prompt (the one
+``service.py`` actually sends), using the same lazy-callable trick.
+
 Single-brace tokens — IMPORTANT
 -------------------------------
 The judge bodies contain ``{trace_id}`` and ``{python}`` tokens that the grader
@@ -78,4 +84,85 @@ register_surface(
     tags=("grader", "process"),
 )
 
-__all__ = ["CORRECTNESS_SURFACE_ID", "PROCESS_SURFACE_ID"]
+
+COMBINED_ROLE_SURFACE_ID = "grader-combined-role"
+COMBINED_CORRECTNESS_SURFACE_ID = "grader-combined-correctness"
+COMBINED_PROCESS_SURFACE_ID = "grader-combined-process"
+
+
+def _combined_role_default_body() -> str:
+    """The combined judge's shared role/evidence-gathering preamble (lazy)."""
+    from lib.grader.combined_agentic import _ROLE
+
+    return _ROLE
+
+
+def _combined_correctness_default_body() -> str:
+    """The combined judge's `<correctness>` rubric block (lazy)."""
+    from lib.grader.combined_agentic import _CORRECTNESS_BLOCK
+
+    return _CORRECTNESS_BLOCK
+
+
+def _combined_process_default_body() -> str:
+    """The combined judge's `<process>` rubric block (lazy)."""
+    from lib.grader.combined_agentic import _PROCESS_BLOCK
+
+    return _PROCESS_BLOCK
+
+
+register_surface(
+    COMBINED_ROLE_SURFACE_ID,
+    label="Deep judge — combined role & evidence-gathering",
+    area="grader",
+    default_body=_combined_role_default_body,
+    description=(
+        "Shared preamble (role + how to fetch trace evidence) for the single "
+        "combined deep-tier judge run that replaced the standalone "
+        "correctness/process judges "
+        "(`lib/grader/combined_agentic.py::build_combined_prompt`). "
+        + _SINGLE_BRACE_NOTE
+    ),
+    kind="fragment",
+    applies_to=("grader",),
+    variables=(),
+    tags=("grader", "combined"),
+)
+
+register_surface(
+    COMBINED_CORRECTNESS_SURFACE_ID,
+    label="Deep judge — combined correctness block",
+    area="grader",
+    default_body=_combined_correctness_default_body,
+    description=(
+        "The `<correctness>` rubric block spliced into the combined judge "
+        "prompt when correctness is one of the requested axes "
+        "(`lib/grader/combined_agentic.py::build_combined_prompt`)."
+    ),
+    kind="fragment",
+    applies_to=("grader",),
+    tags=("grader", "combined", "correctness"),
+)
+
+register_surface(
+    COMBINED_PROCESS_SURFACE_ID,
+    label="Deep judge — combined process block",
+    area="grader",
+    default_body=_combined_process_default_body,
+    description=(
+        "The `<process>` rubric block spliced into the combined judge "
+        "prompt when process is one of the requested axes "
+        "(`lib/grader/combined_agentic.py::build_combined_prompt`)."
+    ),
+    kind="fragment",
+    applies_to=("grader",),
+    tags=("grader", "combined", "process"),
+)
+
+__all__ = [
+    "CORRECTNESS_SURFACE_ID",
+    "PROCESS_SURFACE_ID",
+    "COMBINED_ROLE_SURFACE_ID",
+    "COMBINED_CORRECTNESS_SURFACE_ID",
+    "COMBINED_PROCESS_SURFACE_ID",
+]

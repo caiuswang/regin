@@ -38,6 +38,10 @@ _ASPECT_VERDICTS = {SATISFIED, NEEDS_REVISION, FAIL}
 
 # ── prompt fragments (faithful to the standalone judges; the shared
 # parsers/gates remain the source of rigor) ──────────────────────────
+# These constants are the *default* bodies for the grader-combined-role/
+# correctness/process surfaces (lib/prompts/surfaces/grader.py) — edit a
+# skeleton in /prompt-templates and build_combined_prompt() picks it up via
+# render_surface; these stay in-file only as the registry's lazy default.
 
 _ROLE = """<role>
 You are a strict, independent judge for AI coding-agent sessions. You grade
@@ -131,11 +135,18 @@ def _output_block(axes: tuple[str, ...],
 
 def build_combined_prompt(trace_id: str, python: str, axes: tuple[str, ...],
                           aspect_defs: list[tuple[str, str, str]]) -> str:
-    parts = [_ROLE.replace("{trace_id}", trace_id).replace("{python}", python)]
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.grader import (
+        COMBINED_CORRECTNESS_SURFACE_ID, COMBINED_PROCESS_SURFACE_ID,
+        COMBINED_ROLE_SURFACE_ID,
+    )
+    role = render_surface(COMBINED_ROLE_SURFACE_ID, {})
+    role = role.replace("{trace_id}", trace_id).replace("{python}", python)
+    parts = [role]
     if "correctness" in axes:
-        parts.append(_CORRECTNESS_BLOCK)
+        parts.append(render_surface(COMBINED_CORRECTNESS_SURFACE_ID, {}))
     if "process" in axes:
-        parts.append(_PROCESS_BLOCK)
+        parts.append(render_surface(COMBINED_PROCESS_SURFACE_ID, {}))
     if aspect_defs:
         parts.append(_aspects_block(aspect_defs))
     parts.append(_output_block(axes, aspect_defs))

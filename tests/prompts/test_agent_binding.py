@@ -156,6 +156,15 @@ def test_grader_bound_agent_from_either_surface(tmp_db, two_agents):
     assert grader_bound_agent() == "codex"
 
 
+def test_grader_bound_agent_from_live_combined_surface(tmp_db, two_agents):
+    # grader-combined-role is what build_combined_prompt actually renders for
+    # a live deep-grading run — a binding there must resolve too, not just on
+    # the standalone (dead) grader-correctness/grader-process surfaces.
+    seed_builtin_skeletons()
+    update_template("grader-combined-role", {"agent": "codex"})
+    assert grader_bound_agent() == "codex"
+
+
 def test_resolve_judge_uses_binding(tmp_db, two_agents, monkeypatch):
     from lib.grader.adapters import resolve_judge
 

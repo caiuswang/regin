@@ -59,8 +59,16 @@ def surface_agent(surface_id: str | None) -> str | None:
 
 
 # The grader runs one judge agent per deep-grade session, not one per aspect, so
-# both grader surfaces resolve to the same judge: a binding on *either* one wins.
-GRADER_SURFACE_IDS = ("grader-correctness", "grader-process")
+# every grader surface resolves to the same judge: a binding on *any* one wins.
+# grader-correctness/-process are the standalone judges' (dead) surfaces, kept
+# for back-compat with any existing binding; grader-combined-* are what
+# combined_agentic.py's build_combined_prompt actually renders for a live deep
+# grading run — omitting them would make a binding on those surfaces a silent
+# no-op (see lib/prompts/surfaces/grader.py's module docstring).
+GRADER_SURFACE_IDS = (
+    "grader-correctness", "grader-process",
+    "grader-combined-role", "grader-combined-correctness", "grader-combined-process",
+)
 
 
 def grader_bound_agent() -> str | None:

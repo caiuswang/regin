@@ -1,10 +1,10 @@
 """Stage 2 surface registrations for regin's memory-subsystem agent prompts.
 
 Each hardcoded prompt in ``lib/memory/`` — the distiller, the topic classifier,
-the recall query-expander, and the reflect dream (the single consolidation
-stage) — is migrated here into a ``{{var}}``-placeholder default body,
-registered as an editable *surface*, and its call site rewired to
-``render_surface``.
+the recall query-expander, the reflect dream (the single consolidation
+stage), the title distiller, and the at-write supersede conflict check — is
+migrated here into a ``{{var}}``-placeholder default body, registered as an
+editable *surface*, and its call site rewired to ``render_surface``.
 
 Single-brace tokens — IMPORTANT
 -------------------------------
@@ -30,6 +30,7 @@ TOPIC_CLASSIFY_SURFACE_ID = "memory-topic-classify"
 EXPAND_SURFACE_ID = "memory-expand"
 DREAM_SURFACE_ID = "memory-reflect-dream"
 RETITLE_SURFACE_ID = "memory-retitle"
+SUPERSEDE_CHECK_SURFACE_ID = "memory-supersede-check"
 
 
 # --- Memory distiller (lib/memory/distill.py::_compose_prompt) ---------------
@@ -269,6 +270,21 @@ _DEFAULT_BODY_RETITLE = (
 )
 
 
+# --- Supersede conflict check (lib/memory/distill.py::_llm_says_supersedes) --
+# Old builder: an f-string with {mem title/body[:1200]} and {p title/body[:1200]}
+# interpolated directly. The literal "CONTRADICT if incompatible" phrase must
+# stay verbatim — tests key a stub LLM off it (tests/memory/test_distill.py).
+_DEFAULT_BODY_SUPERSEDE_CHECK = (
+    "An EXISTING memory and a NEW memory from coding sessions follow. "
+    "Does the NEW one make a claim INCOMPATIBLE with the EXISTING one "
+    "about the same thing (so the EXISTING one is now wrong)? Answer with "
+    "exactly one word — CONTRADICT if incompatible, or CONSISTENT "
+    "otherwise.\n\n"
+    "EXISTING: {{existing_title}}\n{{existing_body}}"
+    "\n\nNEW: {{new_title}}\n{{new_body}}\n"
+)
+
+
 register_surface(
     DISTILL_SURFACE_ID,
     label="Memory — session distiller",
@@ -359,6 +375,29 @@ register_surface(
     ),
 )
 
+register_surface(
+    SUPERSEDE_CHECK_SURFACE_ID,
+    label="Memory — supersede conflict check",
+    area="memory",
+    default_body=_DEFAULT_BODY_SUPERSEDE_CHECK,
+    tags=("memory", "supersede-check"),
+    description=(
+        "At-write-time judgment: does a new memory proposal make a claim "
+        "INCOMPATIBLE with an existing memory in the lexical gray band, so "
+        "the existing one should be retired in its favour "
+        "(`lib/memory/distill.py::_llm_says_supersedes`). One-word "
+        "CONTRADICT/CONSISTENT answer; gated on "
+        "`distill_supersede_on_conflict`."
+    ),
+    applies_to=("memory",),
+    variables=(
+        PromptVariable("existing_title", "The existing memory's title."),
+        PromptVariable("existing_body", "The existing memory's body, clipped to 1200 chars."),
+        PromptVariable("new_title", "The new proposal's title."),
+        PromptVariable("new_body", "The new proposal's body, clipped to 1200 chars."),
+    ),
+)
+
 # Superseded default bodies (sha256), so the seeder can heal un-edited stale
 # rows — or DELETE them when the slug itself was retired (all four reflect
 # micro-stage surfaces were folded into the single dream stage; a builtin row
@@ -394,5 +433,6 @@ __all__ = [
     "DREAM_SURFACE_ID",
     "EXPAND_SURFACE_ID",
     "RETITLE_SURFACE_ID",
+    "SUPERSEDE_CHECK_SURFACE_ID",
     "TOPIC_CLASSIFY_SURFACE_ID",
 ]
