@@ -1250,28 +1250,68 @@ def _upsert_session_counters(conn, buckets: dict) -> None:
         ))
 
 
-def _stamp_llm_stage_origins(conn, normalised: list[tuple]) -> None:
-    """Mark sessions spawned by a regin LLM stage on the *origin* axis.
+def _surface_tags(surface_id: object) -> list[str]:
+    """Normalized custom tags the prompt surface `surface_id` declares, or [].
+
+    The link between prompt management and session tags: a surface's
+    `PromptSurface.tags` are the groups its runs self-apply. Author-controlled
+    literals are run through `normalize_custom_slug` so a typo or a
+    builtin-colliding slug is dropped rather than written. Unknown surface → [].
+    """
+    if not isinstance(surface_id, str) or not surface_id:
+        return []
+    from lib.prompts.registry import get_surface
+    from lib.trace.session_tags import normalize_custom_slug
+    surface = get_surface(surface_id)
+    if surface is None:
+        return []
+    out: list[str] = []
+    for raw in surface.tags:
+        slug = normalize_custom_slug(raw)
+        if slug and slug not in out:
+            out.append(slug)
+    return out
+
+
+def _stamp_llm_stage_origins(conn, normalised: list[tuple],
+                             existing_set: set) -> None:
+    """Mark sessions spawned by a regin LLM stage on the *origin* axis, and
+    auto-tag them by surface.
 
     `ExternalAgentLLM` tags its subprocess env with the surface id; the
     SessionStart hook copies it onto the `session.start` span as
     `llm_surface`. Mirrors `workflow_ingest._set_session_origin`: `origin`
     records what KIND of row this is, orthogonal to `agent_type`, so the
-    Sessions list can filter these runs like captured workflows. The common
-    batch (no session.start at all) exits on the cheap name scan without
-    touching attrs.
+    Sessions list can filter these runs like captured workflows.
+
+    Regin's own spawned agents never carry a `regin-tags:` prompt marker, so
+    the first sighting of the `session.start` span also self-applies the
+    source='auto' custom tags the run's **prompt surface declares** (via
+    `PromptSurface.tags` in the prompt registry) — the tag config lives with
+    the prompt, not derived blindly from the surface id, so prompt management
+    decides what a surface's sessions are tagged with. A surface that declares
+    no tags is left on the origin axis only. First-sighting-guarded (via
+    `existing_set`) so a surface tag the user removed isn't resurrected on
+    re-ingest. The common batch (no session.start at all) exits on the cheap
+    name scan.
     """
     if not any(span.get('name') == 'session.start' for span, _ in normalised):
         return
     stamped: set = set()
     for span, attrs in normalised:
         tid = span.get('trace_id')
-        if (span.get('name') == 'session.start' and attrs.get('llm_surface')
-                and tid is not None and tid not in stamped):
+        surface = attrs.get('llm_surface')
+        if not (span.get('name') == 'session.start' and surface
+                and tid is not None):
+            continue
+        if tid not in stamped:
             stamped.add(tid)
             conn.execute(
                 "UPDATE sessions SET origin = 'llm-stage' WHERE trace_id = ?",
                 (tid,))
+        if (tid, span.get('span_id')) not in existing_set:
+            for slug in _surface_tags(surface):
+                conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
 
 
 def _stamp_topic_proposal_origins(conn, normalised: list[tuple]) -> None:
@@ -1394,7 +1434,7 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         # _counter_buckets_excl_pending, so they never advance any aggregate.
         buckets = _counter_buckets_excl_pending(normalised, existing_set)
         _upsert_session_counters(conn, buckets)
-        _stamp_llm_stage_origins(conn, normalised)
+        _stamp_llm_stage_origins(conn, normalised, existing_set)
         _stamp_topic_proposal_origins(conn, normalised)
         _stamp_prompt_tags(conn, normalised, existing_set)
         _refresh_server_side_peaks(conn, normalised)

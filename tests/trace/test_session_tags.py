@@ -278,3 +278,53 @@ def test_auto_tag_does_not_override_manual_source(client):
     # the pre-existing manual tag keeps source='manual'; the new one is 'auto'
     assert _custom_tag_rows(client._db_path, 't-mix') == {
         'shared': 'manual', 'extra': 'auto'}
+
+
+# ── surface-declared tags: regin's own spawned agents ───────────
+
+def _session_start_span(trace_id, span_id, surface, ts='2026-03-01T00:00:00'):
+    return ({'trace_id': trace_id, 'span_id': span_id, 'name': 'session.start',
+             'start_time': ts, 'end_time': ts, 'kind': 'internal'},
+            {'llm_surface': surface})
+
+
+def test_surface_tags_reads_prompt_registry_declaration():
+    # the dream surface declares its groups in prompt management
+    from lib.trace.trace_service.ingest import _surface_tags
+    assert _surface_tags('memory-reflect-dream') == ['memory', 'dream']
+    assert _surface_tags('memory-distill') == ['memory', 'distill']
+    # unknown / blank surface → no tags
+    assert _surface_tags('not-a-surface') == []
+    assert _surface_tags('') == []
+    assert _surface_tags(None) == []
+
+
+def test_llm_stage_session_auto_tagged_from_surface(client):
+    from lib.trace.trace_service import ingest
+    ingest.ingest_session_spans([_session_start_span(
+        't-dream', 'ss-1', 'memory-reflect-dream')])
+    # origin marked llm-stage AND the surface's declared tags applied as auto
+    conn = sqlite3.connect(str(client._db_path))
+    try:
+        origin = conn.execute(
+            "SELECT origin FROM sessions WHERE trace_id='t-dream'").fetchone()[0]
+    finally:
+        conn.close()
+    assert origin == 'llm-stage'
+    assert _custom_tag_rows(client._db_path, 't-dream') == {
+        'memory': 'auto', 'dream': 'auto'}
+    # builtin category is `system` (llm-stage), custom tags ride alongside
+    j = client.get('/api/sessions?workflow=show&kind=all').get_json()
+    row = next(x for x in j['items'] if x['trace_id'] == 't-dream')
+    assert row['category'] == 'system'
+    assert {t['slug'] for t in row['tags'] if not t['builtin']} == {'memory', 'dream'}
+
+
+def test_surface_tag_not_resurrected_after_removal(client):
+    from lib.trace.trace_service import ingest
+    span = _session_start_span('t-dream2', 'ss-1', 'memory-reflect-dream')
+    ingest.ingest_session_spans([span])
+    assert client.delete('/api/sessions/t-dream2/tags/dream').status_code == 200
+    # re-ingesting the same session.start span must not bring 'dream' back
+    ingest.ingest_session_spans([span])
+    assert _custom_tag_rows(client._db_path, 't-dream2') == {'memory': 'auto'}

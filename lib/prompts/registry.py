@@ -42,6 +42,13 @@ class PromptSurface:
     kind: str = "skeleton"
     variables: tuple[PromptVariable, ...] = ()
     applies_to: tuple[str, ...] = ()
+    # Custom session tags a run spawned from this surface self-applies (as
+    # source='auto'). Opt-in: a surface that declares none is only marked on
+    # the origin axis. This is how prompt management decides what a prompt's
+    # sessions are tagged with — the tag lives with the prompt, not derived
+    # blindly from the surface id. Consumed at ingest by
+    # `_stamp_llm_stage_origins` (lib/trace/trace_service/ingest.py).
+    tags: tuple[str, ...] = ()
 
     def default_body(self) -> str:
         body = self._default_body
@@ -64,6 +71,7 @@ def register_surface(
     kind: str = "skeleton",
     variables: "tuple[PromptVariable, ...] | list[PromptVariable]" = (),
     applies_to: "tuple[str, ...] | list[str]" = (),
+    tags: "tuple[str, ...] | list[str]" = (),
 ) -> PromptSurface:
     """Register (or replace) a surface. Idempotent by ``surface_id`` so a module
     re-import doesn't stack duplicates."""
@@ -76,6 +84,7 @@ def register_surface(
         kind=kind,
         variables=tuple(variables),
         applies_to=tuple(applies_to),
+        tags=tuple(tags),
     )
     _SURFACES[surface_id] = surface
     return surface

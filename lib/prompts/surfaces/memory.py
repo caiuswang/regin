@@ -274,6 +274,7 @@ register_surface(
     label="Memory — session distiller",
     area="memory",
     default_body=_DEFAULT_BODY_DISTILL,
+    tags=("memory", "distill"),
     description=(
         "The agentic prompt that distills a finished session's trace into "
         "reusable memory proposals (`lib/memory/distill.py`). The agent "
@@ -293,6 +294,7 @@ register_surface(
     label="Memory — topic classifier",
     area="memory",
     default_body=_DEFAULT_BODY_TOPIC_CLASSIFY,
+    tags=("memory", "topic-classify"),
     description=(
         "The prompt that classifies a batch of memories onto a repo's topic "
         "taxonomy nodes (`lib/memory/topic_classify.py`)."
@@ -309,6 +311,7 @@ register_surface(
     label="Memory — recall query expansion",
     area="memory",
     default_body=_DEFAULT_BODY_EXPAND,
+    tags=("memory", "recall-expand"),
     description=(
         "The prompt that rewrites a terse recall request into a keyword-rich "
         "search query (`lib/memory/expand.py`)."
@@ -324,6 +327,7 @@ register_surface(
     label="Memory — reflect dream",
     area="memory",
     default_body=_DEFAULT_BODY_DREAM,
+    tags=("memory", "dream"),
     description=(
         "The single reflect consolidation stage: one agentic call per run "
         "that decides every working row's fate (promote/hold/drop/merge), "
@@ -343,6 +347,7 @@ register_surface(
     label="Memory — title distiller",
     area="memory",
     default_body=_DEFAULT_BODY_RETITLE,
+    tags=("memory", "retitle"),
     description=(
         "Re-derives a proper one-line rule TITLE for lessons that were "
         "captured without one (a truncated body-slice placeholder). Batched "
