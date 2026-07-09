@@ -47,6 +47,68 @@ _FALLBACK_TAG = "user"
 # collision-free with the builtin slugs.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
+# Prompt auto-tagging: an external caller can prefix a prompt's FIRST line with
+# `regin-tags: a, b` (singular `regin-tag:` and any case accepted) to have the
+# session self-tag. Deliberately delicate — the marker is a self-contained line
+# the agent ignores, tags are the same slugs as manual custom tags, and the
+# stored rows carry source='auto' so they read as derived, not hand-assigned.
+_TAG_MARKER_RE = re.compile(r"^\s*regin-tags?\s*:\s*(.*)$", re.IGNORECASE)
+
+# Ceiling on tags parsed from one marker line, so a runaway line can't spray
+# the tag facet with dozens of groups.
+_MAX_PROMPT_TAGS = 8
+
+AUTO_TAG_SOURCE = "auto"
+
+
+def _first_nonblank_line(text: str) -> str | None:
+    return next((ln for ln in text.splitlines() if ln.strip()), None)
+
+
+def parse_prompt_tags(text: object) -> list[str]:
+    """Custom tag slugs declared on a prompt's first line, or ``[]``.
+
+    The first non-blank line must read ``regin-tags: a, b c``. The remainder
+    is split on commas/whitespace; each token may carry a leading ``#``
+    (hashtag style); tokens are normalized like manual tags via
+    `normalize_custom_slug` (so builtin-category slugs and bad charsets are
+    dropped), deduped in order, and capped at `_MAX_PROMPT_TAGS`.
+    """
+    if not isinstance(text, str):
+        return []
+    line = _first_nonblank_line(text)
+    if line is None:
+        return []
+    m = _TAG_MARKER_RE.match(line)
+    if not m:
+        return []
+    out: list[str] = []
+    for raw in re.split(r"[,\s]+", m.group(1)):
+        slug = normalize_custom_slug(raw.lstrip("#"))
+        if slug and slug not in out:
+            out.append(slug)
+        if len(out) >= _MAX_PROMPT_TAGS:
+            break
+    return out
+
+
+def strip_prompt_tag_marker(text: object) -> object:
+    """`text` with a leading `regin-tags:` marker line removed.
+
+    Lets the session title derive from the real first instruction rather than
+    the metadata line — so an auto-tag marker never disturbs the agent's goal
+    or the list title. A no-op (returns `text` unchanged) when the first
+    non-blank line isn't a marker, so ordinary prompts are untouched.
+    """
+    if not isinstance(text, str):
+        return text
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            continue
+        return "\n".join(lines[i + 1:]) if _TAG_MARKER_RE.match(ln) else text
+    return text
+
 
 def builtin_slugs() -> list[str]:
     return [t["slug"] for t in BUILTIN_TAGS]

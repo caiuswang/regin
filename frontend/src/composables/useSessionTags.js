@@ -20,12 +20,14 @@ export function useSessionTags() {
   }
 
   // Rebuild a row's flat `tags` list from its (unchanging) builtin category
-  // plus the custom slugs the server just returned — so the row reflects an
-  // add/remove without a full list refetch.
-  function buildRowTags(category, customSlugs) {
+  // plus the custom tags the server just returned — so the row reflects an
+  // add/remove without a full list refetch. Each custom entry is
+  // `{ slug, source }` ('manual' | 'auto'); `source` is preserved so a manual
+  // mutation never relabels the row's auto tags as manual.
+  function buildRowTags(category, customTags) {
     const tags = [{ slug: category, source: 'auto', builtin: true }]
-    for (const slug of customSlugs) {
-      tags.push({ slug, source: 'manual', builtin: false })
+    for (const t of customTags) {
+      tags.push({ slug: t.slug, source: t.source || 'manual', builtin: false })
     }
     return tags
   }

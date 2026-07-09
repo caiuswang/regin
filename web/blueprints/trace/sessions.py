@@ -179,16 +179,16 @@ def _attach_session_tags(session, items):
     custom = {}
     if trace_ids:
         rows = session.exec(
-            _select(_SessionTag.trace_id, _SessionTag.tag)
+            _select(_SessionTag.trace_id, _SessionTag.tag, _SessionTag.source)
             .where(_SessionTag.trace_id.in_(trace_ids))
         ).all()
-        for tid, tag in rows:
-            custom.setdefault(tid, []).append(tag)
+        for tid, tag, source in rows:
+            custom.setdefault(tid, []).append((tag, source or 'manual'))
     for it in items:
         builtin = builtin_tag_for_origin(it.get('origin'))
         tags = [{'slug': builtin, 'source': 'auto', 'builtin': True}]
-        for tag in sorted(custom.get(it.get('trace_id'), [])):
-            tags.append({'slug': tag, 'source': 'manual', 'builtin': False})
+        for tag, source in sorted(custom.get(it.get('trace_id'), [])):
+            tags.append({'slug': tag, 'source': source, 'builtin': False})
         it['tags'] = tags
 
 
@@ -1981,12 +1981,18 @@ def api_session_delete(trace_id):
 
 
 def _session_custom_tags(session, trace_id):
-    """The sorted custom tag slugs currently on a session."""
+    """The custom tags on a session as `{slug, source}`, sorted by slug.
+
+    Carries `source` ('manual' | 'auto') so a mutation response lets the
+    frontend re-render the row's chips without relabeling auto tags as manual.
+    """
     from sqlmodel import select as _select
     rows = session.exec(
-        _select(SessionTag.tag).where(SessionTag.trace_id == trace_id)
+        _select(SessionTag.tag, SessionTag.source)
+        .where(SessionTag.trace_id == trace_id)
     ).all()
-    return sorted(rows)
+    return [{'slug': tag, 'source': source or 'manual'}
+            for tag, source in sorted(rows)]
 
 
 @trace_bp.route('/api/session-tags')

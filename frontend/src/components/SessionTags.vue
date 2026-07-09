@@ -27,11 +27,20 @@ const BUILTIN_LABEL = {
 
 function chipClass(tag) {
   if (tag.builtin) return BUILTIN_TONE[tag.slug] || 'tag-chip--user'
-  return 'tag-chip--custom'
+  // Auto tags (derived from a prompt's `regin-tags:` marker) read as a
+  // distinct, quieter class than hand-added custom tags.
+  return tag.source === 'auto' ? 'tag-chip--auto' : 'tag-chip--custom'
 }
 
 function chipLabel(tag) {
   return tag.builtin ? (BUILTIN_LABEL[tag.slug] || tag.slug) : tag.slug
+}
+
+function chipTitle(tag) {
+  if (tag.builtin) return `${tag.slug} (builtin category)`
+  return tag.source === 'auto'
+    ? `auto tag from prompt: ${tag.slug}`
+    : `custom tag: ${tag.slug}`
 }
 
 const adding = ref(false)
@@ -63,7 +72,7 @@ function submitAdd() {
       :key="tag.slug"
       class="tag-chip"
       :class="chipClass(tag)"
-      :title="tag.builtin ? `${tag.slug} (builtin category)` : `custom tag: ${tag.slug}`"
+      :title="chipTitle(tag)"
     >
       {{ chipLabel(tag) }}
       <button
@@ -135,6 +144,15 @@ function submitAdd() {
 .tag-chip--custom {
   background: var(--color-amber-100);
   color: var(--color-amber-800);
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* Auto tags (from a prompt `regin-tags:` marker): quieter than hand-added
+   amber chips — a tinted outline reads as "derived, not hand-picked". */
+.tag-chip--auto {
+  background: transparent;
+  border: 1px dashed var(--color-amber-300);
+  color: var(--color-amber-700);
   text-transform: none;
   letter-spacing: normal;
 }

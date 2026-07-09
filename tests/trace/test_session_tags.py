@@ -136,9 +136,10 @@ def test_invalid_tag_narrows_to_empty(client):
 def test_custom_tag_add_filter_list_remove_roundtrip(client):
     _seed(client._db_path, 's1', origin='session')
 
-    # add (uppercase normalizes to lowercase slug)
+    # add (uppercase normalizes to lowercase slug); response carries source
     r = client.post('/api/sessions/s1/tags', json={'tag': 'Important'})
-    assert r.status_code == 200 and r.get_json()['tags'] == ['important']
+    assert r.status_code == 200 and r.get_json()['tags'] == [
+        {'slug': 'important', 'source': 'manual'}]
 
     # a session now carries builtin + custom together (M2M)
     j = client.get('/api/sessions?workflow=show').get_json()
@@ -154,7 +155,7 @@ def test_custom_tag_add_filter_list_remove_roundtrip(client):
 
     # idempotent re-add
     r = client.post('/api/sessions/s1/tags', json={'tag': 'important'})
-    assert r.get_json()['tags'] == ['important']
+    assert r.get_json()['tags'] == [{'slug': 'important', 'source': 'manual'}]
 
     # remove
     r = client.delete('/api/sessions/s1/tags/important')
@@ -177,3 +178,103 @@ def test_deleting_session_clears_its_custom_tags(client):
     assert client.get('/api/session-tags').get_json()['tags']
     client.delete('/api/sessions/s3')
     assert client.get('/api/session-tags').get_json()['tags'] == []
+
+
+# ── prompt-marker auto-tagging: parser + ingest ─────────────────
+
+def test_parse_prompt_tags_marker_forms():
+    # comma/space separated, hashtag prefix stripped, order-preserving dedupe
+    assert reg.parse_prompt_tags(
+        'regin-tags: refactor, #backend-api  refactor\nFix the bug') == [
+        'refactor', 'backend-api']
+    # singular + uppercase marker accepted
+    assert reg.parse_prompt_tags('REGIN-TAG: Nightly') == ['nightly']
+    # builtin slugs and bad-charset tokens are dropped, not tagged
+    assert reg.parse_prompt_tags('regin-tags: system, under_score, ok') == ['ok']
+    # capped at 8
+    many = 'regin-tags: ' + ' '.join(f't{i}' for i in range(20))
+    assert len(reg.parse_prompt_tags(many)) == 8
+
+
+def test_parse_prompt_tags_non_markers():
+    for text in ('Fix the bug', '', 'regin-tags without colon', None,
+                 '   \n\nregin-tags: late'):  # marker must be first non-blank line
+        assert reg.parse_prompt_tags(text) == (
+            ['late'] if text == '   \n\nregin-tags: late' else [])
+
+
+def test_strip_prompt_tag_marker():
+    assert reg.strip_prompt_tag_marker(
+        'regin-tags: a, b\nReal instruction') == 'Real instruction'
+    # blank lines before the marker are tolerated; the marker line is removed
+    assert reg.strip_prompt_tag_marker(
+        '\nregin-tags: a\n\nGoal') == '\nGoal'
+    # no marker → unchanged
+    assert reg.strip_prompt_tag_marker('Just a prompt') == 'Just a prompt'
+
+
+def _prompt_span(trace_id, span_id, text, ts='2026-02-01T00:00:00'):
+    return ({'trace_id': trace_id, 'span_id': span_id, 'name': 'prompt',
+             'start_time': ts, 'end_time': ts, 'kind': 'internal'},
+            {'text': text})
+
+
+def _custom_tag_rows(db_path, trace_id):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return dict(conn.execute(
+            "SELECT tag, source FROM session_tags WHERE trace_id = ?",
+            (trace_id,)).fetchall())
+    finally:
+        conn.close()
+
+
+def test_ingest_prompt_marker_auto_tags_session(client):
+    from lib.trace.trace_service import ingest
+    ingest.ingest_session_spans([_prompt_span(
+        't-auto', 'prompt-1', 'regin-tags: nightly, refactor\nDo the work')])
+    # stored as source='auto'
+    assert _custom_tag_rows(client._db_path, 't-auto') == {
+        'nightly': 'auto', 'refactor': 'auto'}
+    # surfaced on the list row with source, and filterable like any custom tag
+    j = client.get('/api/sessions?workflow=show&kind=all').get_json()
+    row = next(x for x in j['items'] if x['trace_id'] == 't-auto')
+    auto = {t['slug']: t['source'] for t in row['tags'] if not t['builtin']}
+    assert auto == {'nightly': 'auto', 'refactor': 'auto'}
+    ids = {x['trace_id'] for x in client.get(
+        '/api/sessions?workflow=show&kind=all&tag=nightly').get_json()['items']}
+    assert ids == {'t-auto'}
+
+
+def test_ingest_prompt_marker_does_not_pollute_title(client):
+    from lib.trace.trace_service import ingest
+    ingest.ingest_session_spans([_prompt_span(
+        't-title', 'prompt-1', 'regin-tags: x\nThe real instruction')])
+    conn = sqlite3.connect(str(client._db_path))
+    try:
+        title = conn.execute(
+            "SELECT title FROM sessions WHERE trace_id = ?", ('t-title',)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert title == 'The real instruction'
+
+
+def test_auto_tag_not_resurrected_after_removal(client):
+    from lib.trace.trace_service import ingest
+    span = _prompt_span('t-rm', 'prompt-1', 'regin-tags: gone\nwork')
+    ingest.ingest_session_spans([span])
+    assert client.delete('/api/sessions/t-rm/tags/gone').status_code == 200
+    # re-ingesting the SAME span must not bring the removed tag back
+    ingest.ingest_session_spans([span])
+    assert _custom_tag_rows(client._db_path, 't-rm') == {}
+
+
+def test_auto_tag_does_not_override_manual_source(client):
+    from lib.trace.trace_service import ingest
+    client.post('/api/sessions/t-mix/tags', json={'tag': 'shared'})
+    ingest.ingest_session_spans([_prompt_span(
+        't-mix', 'prompt-1', 'regin-tags: shared, extra\nwork')])
+    # the pre-existing manual tag keeps source='manual'; the new one is 'auto'
+    assert _custom_tag_rows(client._db_path, 't-mix') == {
+        'shared': 'manual', 'extra': 'auto'}

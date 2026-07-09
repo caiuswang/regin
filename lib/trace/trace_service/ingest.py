@@ -14,6 +14,7 @@ import json
 
 from lib.activity_log import get_activity_logger as _get_activity_logger
 from lib.trace.pending_spans import is_pending_span_id
+from lib.trace.session_tags import parse_prompt_tags, strip_prompt_tag_marker
 
 
 def _trace_log():
@@ -754,8 +755,11 @@ def _update_time_bounds(bucket: dict, start, end) -> None:
 
 
 def _handle_prompt_title(bucket: dict, attrs: dict, start) -> None:
-    """Earliest prompt by start_time becomes the 'first_prompt' title."""
-    trimmed = _trim_title(attrs.get('text'))
+    """Earliest prompt by start_time becomes the 'first_prompt' title.
+
+    A leading `regin-tags:` auto-tag marker line is stripped first so the
+    title reflects the real instruction, not the metadata line."""
+    trimmed = _trim_title(strip_prompt_tag_marker(attrs.get('text')))
     if not trimmed:
         return
     if bucket['_title_start'] is None or (start and start < bucket['_title_start']):
@@ -1294,6 +1298,37 @@ def _stamp_topic_proposal_origins(conn, normalised: list[tuple]) -> None:
                 (tid,))
 
 
+_SESSION_TAGS_AUTO_UPSERT_SQL = """
+    INSERT INTO session_tags (trace_id, tag, source)
+    VALUES (?, ?, 'auto')
+    ON CONFLICT(trace_id, tag) DO NOTHING
+"""
+
+
+def _stamp_prompt_tags(conn, normalised: list[tuple], existing_set: set) -> None:
+    """Auto-tag sessions from a `regin-tags:` marker on a prompt's first line.
+
+    Only NEW `prompt` spans (absent from `existing_set`) are parsed, so a tag
+    the user later removed is never resurrected when the same transcript is
+    re-scanned. The flip side: a prompt whose FIRST-ever ingest carried no
+    `text` is never re-parsed on a later re-ingest that does — unreachable in
+    practice (a `prompt` span carries its full text from the first sighting).
+    Rows are written with source='auto'; `ON CONFLICT DO NOTHING` leaves a
+    same-slug manual tag (source='manual') untouched. The common batch (no
+    prompt span) exits on the cheap name scan without touching attrs.
+    """
+    if not any(span.get('name') == 'prompt' for span, _ in normalised):
+        return
+    for span, attrs in normalised:
+        if span.get('name') != 'prompt':
+            continue
+        tid = span.get('trace_id')
+        if tid is None or (tid, span.get('span_id')) in existing_set:
+            continue
+        for slug in parse_prompt_tags(attrs.get('text')):
+            conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
+
+
 def _refresh_server_side_peaks(conn, normalised: list[tuple]) -> None:
     """Recompute peak_main_context_tokens for any trace this batch touched
     with server-side spans (advisor and similar sub-calls). Spans can arrive
@@ -1361,6 +1396,7 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         _upsert_session_counters(conn, buckets)
         _stamp_llm_stage_origins(conn, normalised)
         _stamp_topic_proposal_origins(conn, normalised)
+        _stamp_prompt_tags(conn, normalised, existing_set)
         _refresh_server_side_peaks(conn, normalised)
 
         # Refresh the active-work aggregate for every trace this batch
