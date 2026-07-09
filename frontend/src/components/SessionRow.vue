@@ -13,6 +13,7 @@ import { fmtTokens } from '../utils/traceFormatters.js'
 import { isActiveSession, parseLocalIso } from '../utils/sessionActivity.js'
 import { useCopy } from '../composables/useCopy.js'
 import Checkbox from './ui/Checkbox.vue'
+import SessionTags from './SessionTags.vue'
 
 defineProps({
   s: { type: Object, required: true },
@@ -21,7 +22,7 @@ defineProps({
   isClosing: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['toggle', 'delete', 'close'])
+const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
 
 const { copyText } = useCopy()
 
@@ -239,15 +240,17 @@ function activityMoreTitle(s) {
           :title="s.test_name"
         >{{ shortTestName(s.test_name) }}</span>
       </template>
-      <span
-        v-if="s.origin === 'workflow'"
-        class="ml-2 inline-block rounded bg-teal-100 text-teal-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-        title="captured dynamic-workflow run"
-      >workflow</span>
     </td>
     <td class="col-title">
       <span v-if="s.title" class="block truncate text-sm text-gray-800" :title="s.title">{{ titlePreview(s.title) }}</span>
       <span v-else class="text-gray-400 italic text-xs">no prompt</span>
+      <SessionTags
+        class="mt-1"
+        :tags="s.tags || []"
+        :trace-id="s.trace_id"
+        @add="(slug) => emit('add-tag', slug)"
+        @remove="(slug) => emit('remove-tag', slug)"
+      />
     </td>
     <td class="whitespace-nowrap">
       <template v-if="s.repos && s.repos.length">

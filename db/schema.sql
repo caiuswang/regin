@@ -332,6 +332,19 @@ CREATE TABLE IF NOT EXISTS session_repos (
 );
 CREATE INDEX IF NOT EXISTS idx_session_repos_repo ON session_repos(repo_id);
 
+-- Custom (user-authored) tags binding a session to one or more groups —
+-- the M2M store behind the Sessions-list tag facet. Only custom tags live
+-- here (source='manual'); the builtin category tags (user / topic-proposal /
+-- system) are derived from sessions.origin at read time, never stored.
+CREATE TABLE IF NOT EXISTS session_tags (
+    trace_id   TEXT NOT NULL,
+    tag        TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'manual',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (trace_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
+
 -- Per-assistant-turn token usage. One row per API response, keyed on
 -- the transcript's message uuid so handler replays are idempotent.
 -- Kept out of session_spans because turns aren't operations in the

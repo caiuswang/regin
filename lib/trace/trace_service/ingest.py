@@ -1270,6 +1270,30 @@ def _stamp_llm_stage_origins(conn, normalised: list[tuple]) -> None:
                 (tid,))
 
 
+def _stamp_topic_proposal_origins(conn, normalised: list[tuple]) -> None:
+    """Mark regin-spawned topic-proposal sessions on the *origin* axis.
+
+    `proposal_external._emit` tags every proposal span (including
+    `session.start`) with `agent_type='topic-proposal-agent'`. Mirrors
+    `_stamp_llm_stage_origins`: `origin` records what KIND of row this is,
+    so the builtin `topic-proposal` category derives from a single axis
+    (origin) rather than sniffing `agent_type` at read time. The common
+    batch (no session.start) exits on the cheap name scan.
+    """
+    if not any(span.get('name') == 'session.start' for span, _ in normalised):
+        return
+    stamped: set = set()
+    for span, attrs in normalised:
+        tid = span.get('trace_id')
+        if (span.get('name') == 'session.start'
+                and attrs.get('agent_type') == 'topic-proposal-agent'
+                and tid is not None and tid not in stamped):
+            stamped.add(tid)
+            conn.execute(
+                "UPDATE sessions SET origin = 'topic-proposal' WHERE trace_id = ?",
+                (tid,))
+
+
 def _refresh_server_side_peaks(conn, normalised: list[tuple]) -> None:
     """Recompute peak_main_context_tokens for any trace this batch touched
     with server-side spans (advisor and similar sub-calls). Spans can arrive
@@ -1336,6 +1360,7 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         buckets = _counter_buckets_excl_pending(normalised, existing_set)
         _upsert_session_counters(conn, buckets)
         _stamp_llm_stage_origins(conn, normalised)
+        _stamp_topic_proposal_origins(conn, normalised)
         _refresh_server_side_peaks(conn, normalised)
 
         # Refresh the active-work aggregate for every trace this batch

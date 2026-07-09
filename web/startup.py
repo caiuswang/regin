@@ -218,6 +218,39 @@ def init_session_repos_schema(conn) -> None:
     conn.commit()
 
 
+def init_session_tags_schema(conn) -> None:
+    """Create the `session_tags` join table + backfill topic-proposal origins.
+
+    The table stores only *custom* tags (source='manual'); builtin category
+    tags derive from `sessions.origin`. Topic-proposal sessions are the one
+    builtin category that historically landed as `origin='session'` (they
+    were only distinguished by `agent_type='topic-proposal-agent'`). The
+    ingest path now stamps `origin='topic-proposal'` going forward; this
+    idempotent, PRAGMA-free backfill converges any pre-existing rows so the
+    builtin derivation stays single-axis (origin only). Bounded and a no-op
+    once converged, so it's cheap to run on every boot.
+    """
+    if not _table_exists(conn, 'session_tags'):
+        conn.execute("""
+            CREATE TABLE session_tags (
+                trace_id   TEXT NOT NULL,
+                tag        TEXT NOT NULL,
+                source     TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (trace_id, tag)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX idx_session_tags_tag ON session_tags(tag)")
+    if _table_exists(conn, 'sessions'):
+        conn.execute(
+            "UPDATE sessions SET origin = 'topic-proposal' "
+            "WHERE agent_type = 'topic-proposal-agent' "
+            "AND (origin IS NULL OR origin = 'session')"
+        )
+    conn.commit()
+
+
 def init_turn_usage_schema(conn) -> None:
     """Create `turn_usage` if missing.
 

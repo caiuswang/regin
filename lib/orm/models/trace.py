@@ -364,6 +364,30 @@ class PlanSession(Base, table=True):
         default=None, sa_column=Column("review_started_at", Text))
 
 
+class SessionTag(Base, table=True):
+    """User-authored tags binding a session to one or more custom groups.
+
+    The M2M store behind the Sessions-list tag facet. Holds only *custom*
+    tags (`source='manual'`); the builtin category tags (user / topic-proposal
+    / system) are derived from `sessions.origin` at read time and never
+    stored here (see `lib/trace/session_tags.py`). Composite PK (trace_id,
+    tag) makes re-tagging idempotent.
+    """
+
+    __tablename__ = "session_tags"
+
+    trace_id: str = Field(sa_column=Column("trace_id", String, primary_key=True))
+    tag: str = Field(sa_column=Column("tag", String, primary_key=True))
+    source: str = Field(
+        default="manual",
+        sa_column=Column("source", String, nullable=False,
+                         server_default=text("'manual'")))
+    created_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("created_at", Text, nullable=False,
+                         server_default=text("(datetime('now'))")))
+
+
 class SessionRepo(Base, table=True):
     """Which registered repos a session touched — the multi-repo join table.
 
@@ -419,4 +443,5 @@ class PromptImage(Base, table=True):
 
 
 __all__ = ["SessionSpan", "SessionTraceMap", "Session", "TurnUsage",
-           "SkillRead", "PlanSession", "SessionRepo", "PromptImage"]
+           "SkillRead", "PlanSession", "SessionRepo", "SessionTag",
+           "PromptImage"]

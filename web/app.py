@@ -41,6 +41,7 @@ from web.startup import (
     init_session_spans_schema as _init_session_spans_schema,
     init_sessions_schema as _init_sessions_schema,
     init_session_repos_schema as _init_session_repos_schema,
+    init_session_tags_schema as _init_session_tags_schema,
     init_turn_usage_schema as _init_turn_usage_schema,
     init_prompt_images_schema as _init_prompt_images_schema,
     init_topic_proposal_schema as _init_topic_proposal_schema,
@@ -64,6 +65,7 @@ def create_app():
         _init_session_spans_schema(conn)
         _init_sessions_schema(conn)
         _init_session_repos_schema(conn)
+        _init_session_tags_schema(conn)
         _init_turn_usage_schema(conn)
         _init_prompt_images_schema(conn)
         _init_topic_proposal_schema(conn)

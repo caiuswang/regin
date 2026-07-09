@@ -3,12 +3,14 @@ import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import CursorControls from '../components/CursorControls.vue'
 import SessionRow from '../components/SessionRow.vue'
+import SessionTags from '../components/SessionTags.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
 import { useCopy } from '../composables/useCopy'
 import { useCursor } from '../composables/useCursor'
+import { useSessionTags } from '../composables/useSessionTags'
 import { useStickyHeader } from '../composables/useStickyHeader'
 import { isActiveSession, parseLocalIso } from '../utils/sessionActivity.js'
 
@@ -48,23 +50,17 @@ const kind = ref(
     : (localStorage.getItem(TEST_TOGGLE_KEY) === '1' ? 'all' : 'real')
 )
 
-// Runs are a second, orthogonal axis to Kind (real/test): a row's `origin`
-// is "session", "workflow" (captured dynamic-workflow run), or "llm-stage"
-// (a regin-spawned LLM stage); the latter two ride this filter. Hidden by
-// default so the list reads as interactive sessions; the server default is
-// "show" (all), so the UI sends "hide"/"only" explicitly and omits the
-// param only when set to "show".
-const WF_KEY = 'regin_sessions_workflow'
-const WF_OPTIONS = [
-  { value: 'hide', label: 'Hide runs' },
-  { value: 'show', label: 'Show runs' },
-  { value: 'only', label: 'Only runs' },
-]
-const workflowFilter = ref(
-  WF_OPTIONS.some(o => o.value === localStorage.getItem(WF_KEY))
-    ? localStorage.getItem(WF_KEY)
-    : 'hide'
-)
+// Tag facet: the single grouping axis. A session carries one intrinsic
+// builtin category tag (user / topic-proposal / system, derived server-side
+// from `origin`) plus any number of custom tags. Selecting a tag narrows to
+// sessions carrying it; '' means "all". This generalizes the old binary
+// workflow=hide/show/only toggle — the server still honors `workflow=` for
+// back-compat, but this view drives the richer `tag=` axis instead.
+const TAG_KEY = 'regin_sessions_tag'
+const tagFilter = ref(localStorage.getItem(TAG_KEY) || '')
+const {
+  customTags, loadCustomTags, patchRowTags, addTag, removeTag,
+} = useSessionTags()
 
 const ACTIVE_OPTIONS = [
   { value: 'all', label: 'Any status' },
@@ -156,9 +152,8 @@ const {
     return {
       // 'real' is the server default; only send when narrowing/widening.
       kind: kind.value !== 'real' ? kind.value : undefined,
-      // 'show' (= all rows) is the server default; the UI default 'hide' IS
-      // sent, and 'only' too — we omit the param solely for 'show'.
-      workflow: workflowFilter.value !== 'show' ? workflowFilter.value : undefined,
+      // Tag facet: '' means "all sessions"; a slug narrows to carriers.
+      tag: tagFilter.value || undefined,
       active: activeFilter.value !== 'all' ? activeFilter.value : undefined,
       trace_id: activeTraceId.value || undefined,
       q: activeSearch.value || undefined,
@@ -172,15 +167,28 @@ const {
   },
 })
 
-// How many run-origin rows (workflow + llm-stage) the SAME other filters
-// would have matched, reported by the server only when workflow=hide.
-// Drives the "N runs hidden" hint below. `extras` updates on load() (not loadMore), which is correct —
-// it describes the whole filtered set, not the current page.
-const hiddenWorkflowCount = computed(() => extras.value?.workflow_hidden_count || 0)
+// Per-tag counts over the SAME other filters (minus the tag selection), from
+// the list envelope — drives the counts shown against each facet option.
+// `extras` updates on load() (not loadMore), so it describes the whole
+// filtered set, not just the current page.
+const tagCounts = computed(() => extras.value?.tag_counts || {})
 
-// How many workflow runs the date filter excluded, reported only when
-// workflow=only and a date bound is active. Drives the "widen date range" hint.
-const workflowDateHiddenCount = computed(() => extras.value?.workflow_date_hidden_count || 0)
+// Builtin category tags (ordered, with labels) come from the same envelope so
+// the facet never hard-codes them; the custom tags come from /session-tags.
+const builtinTags = computed(() => extras.value?.builtin_tags || [])
+
+// Facet options: All, then each builtin category, then each custom tag —
+// every entry carrying its count for the current filter set.
+const tagOptions = computed(() => {
+  const opts = [{ value: '', label: 'All sessions' }]
+  for (const t of builtinTags.value) {
+    opts.push({ value: t.slug, label: `${t.label} (${tagCounts.value[t.slug] || 0})` })
+  }
+  for (const t of customTags.value) {
+    opts.push({ value: t.slug, label: `#${t.slug} (${tagCounts.value[t.slug] ?? t.count})` })
+  }
+  return opts
+})
 
 const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
 
@@ -326,6 +334,7 @@ async function batchDelete() {
 
 onMounted(() => {
   loadRepoOptions()
+  loadCustomTags()
   reload()
 })
 
@@ -339,10 +348,28 @@ watch(kind, (v) => {
   reload()
 })
 
-watch(workflowFilter, (v) => {
-  localStorage.setItem(WF_KEY, v)
+watch(tagFilter, (v) => {
+  localStorage.setItem(TAG_KEY, v || '')
   reload()
 })
+
+// Add/remove a custom tag on one row: call the API, patch that row's chips
+// from the returned slugs (patchRowTags reassigns the shallowRef so the
+// chips re-render), and refresh the facet's custom-tag options so a brand-new
+// tag appears (or a now-unused one drops off).
+async function onAddTag(traceId, slug) {
+  const newTags = await addTag(traceId, slug)
+  if (!newTags) { flash('Could not add tag', 'error'); return }
+  patchRowTags(sessions, traceId, newTags)
+  loadCustomTags()
+}
+
+async function onRemoveTag(traceId, slug) {
+  const newTags = await removeTag(traceId, slug)
+  if (newTags == null) { flash('Could not remove tag', 'error'); return }
+  patchRowTags(sessions, traceId, newTags)
+  loadCustomTags()
+}
 
 watch(activeFilter, (v) => {
   localStorage.setItem(ACTIVE_KEY, v)
@@ -562,14 +589,14 @@ function timeTitle(s) {
           </select>
         </label>
 
-        <label class="facet-pill" :class="{ 'facet-pill--active': workflowFilter !== 'hide' }">
-          <span class="facet-pill__label">Workflow runs</span>
+        <label class="facet-pill" :class="{ 'facet-pill--active': tagFilter !== '' }">
+          <span class="facet-pill__label">Tag</span>
           <select
-            v-model="workflowFilter"
+            v-model="tagFilter"
             class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Filter captured dynamic-workflow runs"
+            aria-label="Filter by session tag"
           >
-            <option v-for="opt in WF_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            <option v-for="opt in tagOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </select>
         </label>
 
@@ -620,26 +647,6 @@ function timeTitle(s) {
     </div>
     <!-- /sticky page header -->
 
-    <!-- Hidden-runs hint: when runs are hidden but some matched the other
-         filters, offer a one-click jump to "Only runs". -->
-    <Button
-      v-if="workflowFilter === 'hide' && hiddenWorkflowCount > 0"
-      variant="link"
-      class="mb-3 gap-1 text-xs text-teal-700 hover:text-teal-900"
-      title="Show only the non-interactive runs (workflow captures + LLM stages)"
-      @click="workflowFilter = 'only'"
-    >⚙ {{ hiddenWorkflowCount }} run{{ hiddenWorkflowCount === 1 ? '' : 's' }} hidden →</Button>
-
-    <!-- Date-range hint: when showing only runs but some fall outside the
-         current date window, offer a one-click jump to "All time". -->
-    <Button
-      v-if="workflowFilter === 'only' && workflowDateHiddenCount > 0"
-      variant="link"
-      class="mb-3 gap-1 text-xs text-amber-700 hover:text-amber-900"
-      title="Expand date range to show all runs"
-      @click="range = 'all'"
-    >⚙ {{ workflowDateHiddenCount }} run{{ workflowDateHiddenCount === 1 ? '' : 's' }} outside date range — show all time →</Button>
-
     <div class="split-card">
       <div v-if="sessions.length" class="hidden sm:block overflow-x-auto">
         <table class="tbl sessions-tbl">
@@ -677,6 +684,8 @@ function timeTitle(s) {
               @toggle="(checked) => toggleOne(s.trace_id, checked)"
               @delete="deleteSession"
               @close="closeSession"
+              @add-tag="(slug) => onAddTag(s.trace_id, slug)"
+              @remove-tag="(slug) => onRemoveTag(s.trace_id, slug)"
             />
           </tbody>
         </table>
@@ -755,12 +764,6 @@ function timeTitle(s) {
                   class="inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
                 >test</span>
                 <span
-                  v-if="RUN_ORIGIN_META[s.origin]"
-                  class="inline-block rounded text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                  :class="RUN_ORIGIN_META[s.origin].badgeClass"
-                  :title="RUN_ORIGIN_META[s.origin].badgeTitle"
-                >{{ RUN_ORIGIN_META[s.origin].badge }}</span>
-                <span
                   v-if="s.context_pct != null"
                   class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-medium"
                   :class="contextBadgeClass(s.context_pct)"
@@ -780,6 +783,13 @@ function timeTitle(s) {
                 <span v-if="s.title">{{ titlePreview(s.title) }}</span>
                 <span v-else class="text-gray-400 italic text-xs">no prompt</span>
               </div>
+              <SessionTags
+                class="mt-1.5"
+                :tags="s.tags || []"
+                :trace-id="s.trace_id"
+                @add="(slug) => onAddTag(s.trace_id, slug)"
+                @remove="(slug) => onRemoveTag(s.trace_id, slug)"
+              />
               <dl class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600">
                 <div class="flex justify-between"><dt class="text-gray-400">Spans</dt><dd>{{ s.span_count }}</dd></div>
                 <div class="flex justify-between"><dt class="text-gray-400">Edits</dt><dd>{{ s.file_edits }}</dd></div>

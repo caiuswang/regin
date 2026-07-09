@@ -27,7 +27,7 @@ from lib.orm.models.rules import Experiment, RuleTrigger, RuleTriggerSuppression
 from lib.orm.models.sync import Branch, Repo
 from lib.orm.models.trace import (
     PlanSession, PromptImage, Session, SessionRepo, SessionSpan,
-    SessionTraceMap, SkillRead, TurnUsage,
+    SessionTag, SessionTraceMap, SkillRead, TurnUsage,
 )
 from lib.orm.models.users import AuditLog, User
 
@@ -44,5 +44,5 @@ __all__ = [
     "GraphSnapshot", "TopicAudit", "TopicRefDigest",
     "RuleTrigger", "RuleTriggerSuppression", "Experiment",
     "SessionSpan", "Session", "SkillRead", "PlanSession", "TurnUsage",
-    "SessionRepo", "PromptImage",
+    "SessionRepo", "SessionTag", "PromptImage",
 ]

@@ -10,10 +10,14 @@ from flask import request, jsonify, Response
 
 from lib import hook_plugin as _hp
 from lib.providers import canonical_agent_kind
+from lib.trace.session_tags import (
+    builtin_tag_for_origin, builtin_meta, is_builtin, normalize_custom_slug,
+    origins_for_builtin, system_origins, BUILTIN_TAGS,
+)
 from lib.orm import SessionLocal
 from lib.orm.models import (
     PlanSession, PromptImage, RuleTrigger, Session as SessionModel,
-    SessionRepo, SessionSpan, SessionTraceMap, SkillRead, TurnUsage,
+    SessionRepo, SessionSpan, SessionTag, SessionTraceMap, SkillRead, TurnUsage,
 )
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace import trace_service
@@ -96,8 +100,124 @@ def _attach_session_repos(session, items) -> None:
 
 # Origins the `workflow=hide|only` toggle treats as non-interactive runs:
 # captured dynamic-workflow runs and regin-spawned LLM stages. NULL / any
-# other origin reads as an interactive session.
-_RUN_ORIGINS = ('workflow', 'llm-stage')
+# other origin reads as an interactive session. Derived from the `system`
+# builtin tag so the legacy toggle and the tag facet share one definition
+# of "a run" (see lib/trace/session_tags.py).
+_RUN_ORIGINS = system_origins()
+
+# Every origin explicitly owned by a non-fallback builtin category — used to
+# express the fallback `user` tag as "origin not claimed by another builtin".
+_CLAIMED_ORIGINS = tuple(o for t in BUILTIN_TAGS for o in t["origins"])
+
+
+# ── Session tags: derived-builtin + stored-custom, one flat surface ──
+
+# Sentinel slug: a `tag=` was requested but nothing valid survived. Resolves
+# to an always-false clause so a garbage slug narrows to empty rather than
+# silently widening to the unfiltered list.
+_IMPOSSIBLE_TAG = '\x00none'
+
+
+def _parse_tag_filter():
+    """Validated tag slugs from the repeatable `tag=` query param (AND-ed).
+
+    Builtin slugs pass through; custom slugs are normalized. An empty `tag=`
+    means "no selection". A non-empty but unusable slug (bad charset) yields
+    the impossible sentinel so the result narrows to nothing rather than
+    500ing or silently returning everything.
+    """
+    slugs = []
+    requested = False
+    for raw in request.args.getlist('tag'):
+        bare = raw.strip().lower() if isinstance(raw, str) else ''
+        if bare:
+            requested = True
+        candidate = bare if is_builtin(bare) else normalize_custom_slug(raw)
+        if candidate and candidate not in slugs:
+            slugs.append(candidate)
+    if requested and not slugs:
+        return [_IMPOSSIBLE_TAG]
+    return slugs
+
+
+def _tag_where(slug):
+    """A WHERE clause selecting sessions carrying `slug`.
+
+    A builtin category slug resolves to an `origin` predicate (single axis);
+    the fallback `user` tag is "origin owned by no other builtin". A custom
+    slug resolves to membership in the `session_tags` join table.
+    """
+    from sqlalchemy import or_ as _or, false as _false
+    from sqlmodel import select as _select
+    from lib.orm.models.trace import SessionTag as _SessionTag
+    if slug == _IMPOSSIBLE_TAG:
+        return _false()
+    if is_builtin(slug):
+        origins = origins_for_builtin(slug)
+        if origins is None:
+            return _or(SessionModel.origin.is_(None),
+                       SessionModel.origin.not_in(_CLAIMED_ORIGINS))
+        return SessionModel.origin.in_(origins)
+    return SessionModel.trace_id.in_(
+        _select(_SessionTag.trace_id).where(_SessionTag.tag == slug))
+
+
+def _apply_tag_filter(stmt, slugs):
+    """AND every selected tag onto `stmt` (empty list → unchanged)."""
+    for slug in slugs:
+        stmt = stmt.where(_tag_where(slug))
+    return stmt
+
+
+def _attach_session_tags(session, items):
+    """Give each row a flat `tags` list: derived builtin category first, then
+    stored custom tags. One query over the page's trace_ids (mirrors
+    `_attach_session_repos`)."""
+    from sqlmodel import select as _select
+    from lib.orm.models.trace import SessionTag as _SessionTag
+    trace_ids = [it.get('trace_id') for it in items if it.get('trace_id')]
+    custom = {}
+    if trace_ids:
+        rows = session.exec(
+            _select(_SessionTag.trace_id, _SessionTag.tag)
+            .where(_SessionTag.trace_id.in_(trace_ids))
+        ).all()
+        for tid, tag in rows:
+            custom.setdefault(tid, []).append(tag)
+    for it in items:
+        builtin = builtin_tag_for_origin(it.get('origin'))
+        tags = [{'slug': builtin, 'source': 'auto', 'builtin': True}]
+        for tag in sorted(custom.get(it.get('trace_id'), [])):
+            tags.append({'slug': tag, 'source': 'manual', 'builtin': False})
+        it['tags'] = tags
+
+
+def _tag_counts(session, apply_filters):
+    """Per-tag counts over the same filter set (minus the tag filter itself),
+    for the facet. Builtin counts fold a `GROUP BY origin`; custom counts join
+    `session_tags`. `apply_filters` is the caller's shared-WHERE closure."""
+    from sqlalchemy import func as _func
+    from sqlmodel import select as _select
+    from lib.orm.models.trace import SessionTag as _SessionTag
+    counts = {}
+    origin_rows = session.exec(
+        apply_filters(_select(SessionModel.origin, _func.count())
+                      .select_from(SessionModel))
+        .group_by(SessionModel.origin)
+    ).all()
+    for origin, n in origin_rows:
+        slug = builtin_tag_for_origin(origin)
+        counts[slug] = counts.get(slug, 0) + n
+    custom_rows = session.exec(
+        apply_filters(_select(_SessionTag.tag, _func.count())
+                      .select_from(SessionModel)
+                      .join(_SessionTag,
+                            _SessionTag.trace_id == SessionModel.trace_id))
+        .group_by(_SessionTag.tag)
+    ).all()
+    for tag, n in custom_rows:
+        counts[tag] = n
+    return counts
 
 
 @trace_bp.route('/api/sessions')
@@ -165,6 +285,7 @@ def api_sessions():
     workflow = (request.args.get('workflow') or 'show').strip().lower()
     if workflow not in ('hide', 'show', 'only'):
         workflow = 'show'
+    tag_slugs = _parse_tag_filter()
     cursor_token = request.args.get('cursor')
     size = clamp_size(request.args.get('size'), default=50)
 
@@ -241,6 +362,10 @@ def api_sessions():
         # workflow run), or 'llm-stage' (a regin-spawned LLM stage). NULL
         # legacy rows read as 'session'.
         d['origin'] = d.get('origin') or 'session'
+        # Builtin category tag (user / topic-proposal / system), derived from
+        # the single `origin` axis. The full `tags` list (this + any stored
+        # custom tags) is attached in bulk by `_attach_session_tags`.
+        d['category'] = builtin_tag_for_origin(d['origin'])
         d['is_workflow'] = (d['origin'] == 'workflow')
         # Generalised run-ness: True for every origin the workflow=hide
         # toggle filters, so the frontend never re-derives the origin list.
@@ -357,6 +482,14 @@ def api_sessions():
             stmt = stmt.where(_or(SessionModel.origin.is_(None),
                                   SessionModel.origin.not_in(_RUN_ORIGINS)))
 
+        # Tag facet: AND every selected tag (builtin category → origin,
+        # custom → session_tags membership). Orthogonal to `workflow`.
+        stmt = _apply_tag_filter(stmt, tag_slugs)
+
+        # Per-tag counts for the facet, over the shared filters but NOT the
+        # tag selection itself (so a selected facet still shows sibling counts).
+        tag_counts = _tag_counts(session, _apply_filters)
+
         # When hiding runs, count how many the SAME other filters would have
         # matched so the frontend can offer a pivot hint. Same _apply_filters,
         # restricted to the run origins.
@@ -391,11 +524,14 @@ def api_sessions():
             row_to_dict=_row_to_dict,
         )
         _attach_session_repos(session, page.items)
+        _attach_session_tags(session, page.items)
     envelope = page.to_envelope()
     envelope['sessions'] = envelope['items']  # legacy field
     envelope['search'] = search
     envelope['workflow_hidden_count'] = hidden_workflow_count
     envelope['workflow_date_hidden_count'] = workflow_date_hidden_count
+    envelope['tag_counts'] = tag_counts
+    envelope['builtin_tags'] = builtin_meta()
     return jsonify(envelope)
 
 
@@ -1751,6 +1887,7 @@ _SESSION_DELETE_TARGETS = (
     ('trace_map', SessionTraceMap, SessionTraceMap.trace_id),
     ('turn_usage', TurnUsage, TurnUsage.trace_id),
     ('session_repos', SessionRepo, SessionRepo.trace_id),
+    ('session_tags', SessionTag, SessionTag.trace_id),
     ('skill_reads', SkillRead, SkillRead.session_id),
     ('plan_sessions', PlanSession, PlanSession.session_id),
     ('rule_triggers', RuleTrigger, RuleTrigger.session_id),
@@ -1817,10 +1954,11 @@ def api_session_batch_delete():
 def api_session_delete(trace_id):
     """Delete a session and all of its related trace rows.
 
-    Nine tables carry the session id (see `_SESSION_DELETE_TARGETS`):
-    sessions/session_spans/session_trace_map/turn_usage/prompt_images and
-    session_repos key on trace_id; skill_reads/plan_sessions/rule_triggers
-    key on session_id. Everything is removed in one BEGIN IMMEDIATE so a
+    Every session-keyed table is cleared (see `_SESSION_DELETE_TARGETS`):
+    sessions/session_spans/session_trace_map/turn_usage/prompt_images,
+    session_repos and session_tags key on trace_id; skill_reads/
+    plan_sessions/rule_triggers key on session_id. Everything is removed in
+    one BEGIN IMMEDIATE so a
     crash mid-delete can't leave half a session in the DB (which would leak
     into the sessions list with a missing title or zero spans) or strand
     trace_map/turn_usage/repo rows that no reader can ever reach again.
@@ -1840,6 +1978,98 @@ def api_session_delete(trace_id):
         'trace_id': trace_id,
         'deleted': deleted,
     })
+
+
+def _session_custom_tags(session, trace_id):
+    """The sorted custom tag slugs currently on a session."""
+    from sqlmodel import select as _select
+    rows = session.exec(
+        _select(SessionTag.tag).where(SessionTag.trace_id == trace_id)
+    ).all()
+    return sorted(rows)
+
+
+@trace_bp.route('/api/session-tags')
+def api_session_tags():
+    """List the custom tags in use, with how many sessions carry each.
+
+    Powers the tag facet's custom section and add-tag autocomplete. Builtin
+    category tags are NOT listed here — they come from `builtin_tags` /
+    `tag_counts` on the sessions envelope (they're derived, not stored).
+    """
+    from sqlalchemy import func as _func
+    from sqlmodel import select as _select
+    with SessionLocal() as session:
+        rows = session.exec(
+            _select(SessionTag.tag, _func.count())
+            .group_by(SessionTag.tag)
+            .order_by(SessionTag.tag)
+        ).all()
+    return jsonify({'tags': [{'slug': t, 'count': n} for t, n in rows]})
+
+
+@trace_bp.route('/api/sessions/<trace_id>/tags', methods=['POST'])
+def api_session_tag_add(trace_id):
+    """Add a custom tag to a session (idempotent).
+
+    Body: `{"tag": "<slug>"}`. The slug is normalized/validated; builtin
+    category slugs are rejected (they're intrinsic, derived from origin, and
+    can't be hand-assigned). Returns the session's full custom tag list.
+    """
+    body = request.get_json(silent=True) or {}
+    slug = normalize_custom_slug(body.get('tag'))
+    if not slug:
+        return jsonify({
+            'ok': False,
+            'error': 'tag must be a slug of a-z, 0-9, dash (1-40 chars) and '
+                     'not a builtin category',
+        }), 400
+    try:
+        with SessionLocal() as session:
+            exists = session.get(SessionTag, (trace_id, slug))
+            if exists is None:
+                now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                session.add(SessionTag(trace_id=trace_id, tag=slug,
+                                       source='manual', created_at=now))
+                session.commit()
+            tags = _session_custom_tags(session, trace_id)
+    except Exception as exc:
+        return jsonify({
+            'ok': False,
+            'error': f'{type(exc).__name__}: {exc}',
+        }), 500
+    return jsonify({'ok': True, 'trace_id': trace_id, 'tags': tags})
+
+
+@trace_bp.route('/api/sessions/<trace_id>/tags/<tag>', methods=['DELETE'])
+def api_session_tag_remove(trace_id, tag):
+    """Remove a custom tag from a session.
+
+    Builtin category slugs can't be removed (they're derived, not stored);
+    the attempt is a 400 rather than a silent no-op. Unknown (session, tag)
+    pairs delete zero rows and still return ok — idempotent.
+    """
+    from sqlalchemy import delete as _delete
+    if is_builtin(tag):
+        return jsonify({
+            'ok': False,
+            'error': f'"{tag}" is a builtin category and cannot be removed',
+        }), 400
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                _delete(SessionTag)
+                .where(SessionTag.trace_id == trace_id)
+                .where(SessionTag.tag == tag)
+            )
+            session.commit()
+            tags = _session_custom_tags(session, trace_id)
+    except Exception as exc:
+        return jsonify({
+            'ok': False,
+            'error': f'{type(exc).__name__}: {exc}',
+        }), 500
+    return jsonify({'ok': True, 'trace_id': trace_id, 'tags': tags})
 
 
 @trace_bp.route('/api/sessions/<trace_id>/close', methods=['POST'])

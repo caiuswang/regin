@@ -256,8 +256,8 @@ def test_batch_delete_removes_from_all_session_tables(flask_client, tmp_db):
     # Two sessions seeded with 1 row each in every session-keyed table.
     assert body["deleted"] == {
         "sessions": 2, "spans": 2, "trace_map": 2, "turn_usage": 2,
-        "session_repos": 2, "skill_reads": 2, "plan_sessions": 2,
-        "rule_triggers": 2, "prompt_images": 0,
+        "session_repos": 2, "session_tags": 0, "skill_reads": 2,
+        "plan_sessions": 2, "rule_triggers": 2, "prompt_images": 0,
     }
     _assert_no_session_residue("t1")
     _assert_no_session_residue("t2")
@@ -300,8 +300,8 @@ def test_session_delete_removes_full_session(flask_client, tmp_db):
     assert body["ok"] is True
     assert body["deleted"] == {
         "sessions": 1, "spans": 1, "trace_map": 1, "turn_usage": 1,
-        "session_repos": 1, "skill_reads": 1, "plan_sessions": 1,
-        "rule_triggers": 1, "prompt_images": 0,
+        "session_repos": 1, "session_tags": 0, "skill_reads": 1,
+        "plan_sessions": 1, "rule_triggers": 1, "prompt_images": 0,
     }
     # No table that carries the session id may keep a row behind.
     _assert_no_session_residue("to-delete")
