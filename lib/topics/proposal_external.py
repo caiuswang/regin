@@ -390,8 +390,14 @@ def run_external_agent_proposal(
 
     stdout_path = out_dir / "stdout.log"
     stderr_path = out_dir / "stderr.log"
+    from lib.prompts.surfaces.drafting import SURFACE_ID as _DRAFTING_SURFACE_ID
     env = {
         **os.environ,
+        # Tag the spawned agent's own Claude session by the drafting surface so
+        # ingest stamps origin='llm-stage' + the surface's declared tags on the
+        # REAL agent session (the synthetic wrapper's `agent_type` tag never
+        # reaches it). Mirrors proposal_review's REGIN_LLM_SURFACE.
+        "REGIN_LLM_SURFACE": _DRAFTING_SURFACE_ID,
         "REGIN_TOPIC_PROPOSAL_DIR": str(out_dir),
         "REGIN_TOPIC_PROPOSAL_OUTPUT": str(temp_output_path),
         "REGIN_TOPIC_PROPOSAL_CANONICAL_OUTPUT": str(output_path),
@@ -849,37 +855,28 @@ drifted files.
 def _prior_reference_block(prior_draft: dict[str, Any] | None) -> str:
     """The regenerate-only 'Prior draft reference' block, or '' on a fresh run.
 
-    Kept as a discrete builder so it can be passed as the ``prior_reference``
-    variable into the editable drafting skeleton (see lib/prompts/surfaces)."""
+    The static guidance is the editable ``topic-proposal-regenerate`` surface
+    (``lib/prompts/surfaces/regenerate.py``); this builder assembles only the
+    runtime context it interpolates and passes the result as the
+    ``prior_reference`` variable of the drafting skeleton. A broken user edit
+    degrades to the built-in default inside ``render_surface``."""
     if not prior_draft:
         return ""
+    from lib.prompts import render_surface
+    from lib.prompts.surfaces.regenerate import SURFACE_ID
+
     feedback_reference = ""
     feedback_block = format_review_feedback_for_prompt(prior_draft.get("feedback_threads") or [])
     if feedback_block:
-        feedback_reference = f"""
-{feedback_block}
-
-"""
-    scope_reference = _scoped_refresh_directive(prior_draft)
-    return f"""
-
-Prior draft reference:
-{feedback_reference}{scope_reference}Use the previous proposal and wiki only as reference — to keep good coverage and to address any review feedback above — not as a baseline to diff against. Re-check every topic against the current repository.
-
-Write each topic's wiki and the notes as a standalone description of the repository as it is NOW. Do NOT write changelog or diff prose comparing this revision to the previous one: avoid phrasing like "was removed", "is now", "no longer", "the old …", "previously", "changed from", or "renamed to". The reader has never seen the prior draft — describe the current structure and behavior directly, citing files that exist today.
-
-A regenerate REVISES the page in place; it does not accrete. Keep each wiki's scope and length close to the prior draft — correct what the current code no longer matches and cut detail that has gone stale, rather than appending new file-by-file descriptions because some files changed. A drift note asking you to refresh a topic is a request to re-verify and tighten its existing narrative, not to grow it.
-
-Previous proposal JSON:
-```json
-{json.dumps(_prior_proposal_for_prompt(prior_draft.get('proposal')), indent=2, sort_keys=True)}
-```
-
-Previous wiki markdown:
-```markdown
-{str(prior_draft.get('wiki') or '')}
-```
-"""
+        feedback_reference = f"\n{feedback_block}\n\n"
+    return render_surface(SURFACE_ID, {
+        "review_feedback": feedback_reference,
+        "scope_directive": _scoped_refresh_directive(prior_draft),
+        "prior_proposal_json": json.dumps(
+            _prior_proposal_for_prompt(prior_draft.get("proposal")),
+            indent=2, sort_keys=True),
+        "prior_wiki_markdown": str(prior_draft.get("wiki") or ""),
+    })
 
 
 def _instructions(

@@ -126,6 +126,39 @@ def test_create_external_agent_proposal_run_writes_status_and_trace(monkeypatch,
     assert "session.end" in span_names
 
 
+def test_drafting_agent_env_carries_llm_surface(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+    (fake_git_repo / "service").mkdir()
+    (fake_git_repo / "service" / "api.py").write_text("import os\n")
+    subprocess.check_call(["git", "-C", str(fake_git_repo), "add", "."])
+    subprocess.check_call(["git", "-C", str(fake_git_repo), "commit", "-q", "-m", "service"])
+    bootstrap(fake_git_repo)
+
+    surface_sidecar = tmp_path / "seen_surface.txt"
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json, os\n"
+        f"open({str(surface_sidecar)!r}, 'w').write(os.environ.get('REGIN_LLM_SURFACE', ''))\n"
+        "payload = {'topics': [{'id': 'service', 'label': 'Service', 'aliases': [], "
+        "'intent': 'Curated context for Service.', 'status': 'active', "
+        "'refs': [{'path': 'service/api.py', 'role': 'implementation'}], "
+        "'edges': [], 'commands': [], 'include_globs': ['service/**'], "
+        "'exclude_globs': [], 'evidence_paths': ['service/api.py']}], "
+        "'notes': [], 'wiki': '# Service\\n'}\n"
+        "open(os.environ['REGIN_TOPIC_PROPOSAL_OUTPUT'], 'w').write(json.dumps(payload))\n"
+    )
+    monkeypatch.setattr(
+        "lib.topics.proposal_external.settings.topic_proposal_external_agents",
+        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+    )
+
+    create_proposal_run(fake_git_repo, run_id="run1", agent="fake")
+
+    # The real agent session self-tags (origin='llm-stage' + the drafting
+    # surface's declared tags) off this env var; the synthetic wrapper's
+    # agent_type tag never reaches it.
+    assert surface_sidecar.read_text() == "topic-proposal-drafting"
+
+
 def test_external_agent_run_rejects_stale_temp_output_from_prior_attempt(monkeypatch, fake_git_repo, tmp_path, tmp_db):
     (fake_git_repo / "service").mkdir()
     (fake_git_repo / "service" / "api.py").write_text("import os\n")
