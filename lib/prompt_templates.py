@@ -57,6 +57,7 @@ def _row_to_dict(row: PromptTemplate) -> dict[str, Any]:
         "variables": _decode_variables(row.variables),
         "applies_to": _decode_list(row.applies_to),
         "default_for_providers": _decode_list(row.default_for_providers),
+        "tags": _decode_list(row.tags),
         "agent": row.agent or None,
         "builtin": bool(row.builtin),
         "created_at": row.created_at,
@@ -78,6 +79,22 @@ def _encode_list(values: Iterable[str] | None) -> str:
     if not values:
         return "[]"
     return json.dumps([str(v) for v in values])
+
+
+def _normalize_tags(values: Iterable[str] | None) -> list[str]:
+    """Validated custom session-tag slugs from a payload, order-preserving,
+    deduped. Each is run through `normalize_custom_slug` so a builtin-colliding
+    or bad-charset slug is dropped rather than stored — the same rule the tag
+    CRUD endpoints and the prompt-marker parser use, so a surface can't declare
+    a tag the Sessions list would reject."""
+    from lib.trace.session_tags import normalize_custom_slug
+
+    out: list[str] = []
+    for raw in values or []:
+        slug = normalize_custom_slug(raw)
+        if slug and slug not in out:
+            out.append(slug)
+    return out
 
 
 def _decode_variables(blob: str | None) -> list[dict[str, Any]]:
@@ -219,6 +236,7 @@ def create_template(payload: dict[str, Any]) -> dict[str, Any]:
             variables=_encode_variables(payload.get("variables")),
             applies_to=_encode_list(payload.get("applies_to")),
             default_for_providers=_encode_list(payload.get("default_for_providers")),
+            tags=_encode_list(_normalize_tags(payload.get("tags"))),
             builtin=0,
             created_at=now,
             updated_at=now,
@@ -244,6 +262,8 @@ def update_template(slug: str, payload: dict[str, Any]) -> dict[str, Any]:
             row.applies_to = _encode_list(payload["applies_to"])
         if "default_for_providers" in payload:
             row.default_for_providers = _encode_list(payload["default_for_providers"])
+        if "tags" in payload:
+            row.tags = _encode_list(_normalize_tags(payload["tags"]))
         if "agent" in payload:
             row.agent = _validate_agent_binding(payload["agent"])
         row.updated_at = now
@@ -356,6 +376,7 @@ def seed_builtin_skeletons() -> int:
                     variables=_encode_variables(_surface_variables(surface)),
                     applies_to=_encode_list(surface.applies_to),
                     default_for_providers="[]",
+                    tags=_encode_list(_normalize_tags(surface.tags)),
                     builtin=1,
                     created_at=now,
                     updated_at=now,
@@ -378,7 +399,9 @@ def reset_skeleton_to_default(slug: str) -> dict[str, Any]:
     if surface is None:
         raise PromptTemplateError(f"no built-in default for prompt: {slug}")
     return update_template(
-        slug, {"body": surface.default_body(), "variables": _surface_variables(surface)}
+        slug, {"body": surface.default_body(),
+               "variables": _surface_variables(surface),
+               "tags": list(surface.tags)}
     )
 
 

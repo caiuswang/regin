@@ -491,6 +491,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     variables               TEXT NOT NULL DEFAULT '[]',
     applies_to              TEXT NOT NULL DEFAULT '[]',
     default_for_providers   TEXT NOT NULL DEFAULT '[]',
+    tags                    TEXT NOT NULL DEFAULT '[]',  -- JSON array of custom session-tag slugs a skeleton's runs self-apply (source='auto')
     agent                   TEXT,
     builtin                 INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),

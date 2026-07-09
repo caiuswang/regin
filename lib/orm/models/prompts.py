@@ -37,6 +37,13 @@ class PromptTemplate(Base, table=True):
     default_for_providers: str = Field(
         sa_column=Column("default_for_providers", Text, nullable=False, server_default=text("'[]'")),
     )
+    # For skeleton rows: JSON array of custom session-tag slugs a run spawned
+    # from this surface self-applies (as source='auto'). The editable override
+    # of `PromptSurface.tags`; read at ingest by `_stamp_llm_stage_origins`.
+    # Mirror this column in db/schema.sql + web/startup.py.
+    tags: str = Field(
+        sa_column=Column("tags", Text, nullable=False, server_default=text("'[]'")),
+    )
     # For skeleton rows: the external agent this goal-prompt is *bound* to — a
     # key in `settings.topic_proposal_external_agents`. NULL = no binding, so the
     # dispatch falls back to the surface's default agent (never dropped — see the

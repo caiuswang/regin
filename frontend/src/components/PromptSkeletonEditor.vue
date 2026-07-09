@@ -14,9 +14,25 @@ const draftBody = ref(props.skeleton.body || '')
 const bodyRef = ref(null)
 const validationError = ref('')
 
+// Editable auto-tags: the custom session tags a run from this surface applies
+// to its session. Slugs are normalized/validated server-side on save.
+const draftTags = ref([...(props.skeleton.tags || [])])
+const tagDraft = ref('')
+
 // A row switch unmounts/remounts this editor, but a Reset mutates the body of
 // the still-mounted skeleton in place — mirror it into the draft so Reset shows.
 watch(() => props.skeleton.body, (body) => { draftBody.value = body || '' })
+watch(() => props.skeleton.tags, (tags) => { draftTags.value = [...(tags || [])] })
+
+function addTag() {
+  const slug = tagDraft.value.trim().toLowerCase()
+  if (slug && !draftTags.value.includes(slug)) draftTags.value = [...draftTags.value, slug]
+  tagDraft.value = ''
+}
+
+function removeTag(slug) {
+  draftTags.value = draftTags.value.filter((t) => t !== slug)
+}
 
 function varToken(name) {
   return `{{${name}}}`
@@ -26,7 +42,10 @@ const vars = computed(() => props.skeleton.variables || [])
 const unknownVars = computed(() => unknownVariables(draftBody.value, vars.value))
 const preview = computed(() => renderPreview(draftBody.value, vars.value))
 const unknownVarsLabel = computed(() => unknownVars.value.map(varToken).join(', '))
-const dirty = computed(() => draftBody.value !== (props.skeleton.body || ''))
+const tagsDirty = computed(
+  () => JSON.stringify(draftTags.value) !== JSON.stringify(props.skeleton.tags || []),
+)
+const dirty = computed(() => draftBody.value !== (props.skeleton.body || '') || tagsDirty.value)
 
 function insertVar(name) {
   const token = `{{${name}}}`
@@ -58,7 +77,7 @@ function onSave() {
       + 'Only the declared variables above are filled at render time — remove these or a run falls back to the default.'
     return
   }
-  emit('save', draftBody.value)
+  emit('save', { body: draftBody.value, tags: draftTags.value })
 }
 </script>
 
@@ -85,6 +104,32 @@ function onSave() {
         {{ varToken(v.name) }}
         <span v-if="v.required === false" class="var-optional">opt</span>
       </Button>
+    </div>
+
+    <div class="tag-editor">
+      <span class="palette-label">Auto tags</span>
+      <span class="tag-hint">Sessions from this prompt self-apply these as removable auto tags.</span>
+      <div class="tag-row">
+        <span v-for="t in draftTags" :key="t" class="tag-pill">
+          {{ t }}
+          <button
+            type="button"
+            class="tag-pill__x focus-visible:outline-2 focus-visible:outline-blue-500"
+            :aria-label="`Remove tag ${t}`"
+            @click="removeTag(t)"
+          >×</button>
+        </span>
+        <input
+          v-model="tagDraft"
+          type="text"
+          class="tag-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          placeholder="add tag…"
+          aria-label="Add an auto tag slug"
+          maxlength="40"
+          @keydown.enter.prevent="addTag"
+          @keydown.,.prevent="addTag"
+        >
+      </div>
     </div>
 
     <div class="editor-grid">
@@ -150,6 +195,49 @@ function onSave() {
 .var-optional {
     color: var(--color-slate-400);
     margin-left: 0.25rem;
+}
+.tag-editor {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.6rem;
+    margin-bottom: 0.85rem;
+}
+.tag-hint {
+    font-size: 0.72rem;
+    color: var(--color-slate-500);
+}
+.tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    flex-basis: 100%;
+}
+.tag-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    background: transparent;
+    border: 1px dashed var(--color-amber-300);
+    color: var(--color-amber-700);
+    border-radius: 0.25rem;
+    font-size: 0.72rem;
+    padding: 0.1rem 0.35rem;
+}
+.tag-pill__x {
+    cursor: pointer;
+    opacity: 0.6;
+    font-size: 0.85rem;
+    line-height: 1;
+}
+.tag-pill__x:hover { opacity: 1; }
+.tag-input {
+    border: 1px solid var(--color-slate-300);
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    padding: 0.12rem 0.4rem;
+    width: 7rem;
 }
 .editor-grid {
     display: grid;

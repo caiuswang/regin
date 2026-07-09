@@ -119,11 +119,11 @@ function cancelEdit() {
   saveError.value = ''
 }
 
-async function onSave(body) {
+async function onSave({ body, tags }) {
   saveError.value = ''
   busy.value = 'save'
   try {
-    const result = await api.patch(`/prompt-templates/${editingSlug.value}`, { body })
+    const result = await api.patch(`/prompt-templates/${editingSlug.value}`, { body, tags })
     if (!result.ok) {
       saveError.value = result.error || 'Save failed'
       return
@@ -226,6 +226,12 @@ onMounted(async () => {
             <code class="row-slug">{{ s.slug }}</code>
             <span class="row-dot">·</span>
             <span>{{ (s.variables || []).length }} variable(s)</span>
+            <template v-if="(s.tags || []).length">
+              <span class="row-dot">·</span>
+              <span class="row-tags">
+                <span v-for="t in s.tags" :key="t" class="row-tag">{{ t }}</span>
+              </span>
+            </template>
           </div>
         </div>
         <div class="prompt-card-controls">
@@ -397,4 +403,16 @@ onMounted(async () => {
     white-space: nowrap;
 }
 .row-dot { color: var(--color-slate-300); }
+.row-tags {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.row-tag {
+    border: 1px dashed var(--color-amber-300);
+    border-radius: 0.2rem;
+    color: var(--color-amber-700);
+    padding: 0 0.3rem;
+    font-size: 0.68rem;
+}
 </style>

@@ -251,6 +251,48 @@ def init_session_tags_schema(conn) -> None:
     conn.commit()
 
 
+def init_prompt_templates_schema(conn) -> None:
+    """Additive repair for the `prompt_templates` table.
+
+    The table itself is created by `db/schema.sql` at `regin init`; this only
+    heals installs that predate a later column. `tags` (JSON array of custom
+    session-tag slugs a skeleton's runs self-apply) post-dates the table, so an
+    upgraded DB needs the `ALTER` or the next read of `PromptTemplate.tags`
+    500s. No-op when the table is absent (schema.sql owns creation) or the
+    column already exists.
+    """
+    if not _table_exists(conn, 'prompt_templates'):
+        return
+    if 'tags' not in _column_names(conn, 'prompt_templates'):
+        conn.execute(
+            "ALTER TABLE prompt_templates ADD COLUMN tags TEXT NOT NULL "
+            "DEFAULT '[]'"
+        )
+        _backfill_surface_tags(conn)
+    conn.commit()
+
+
+def _backfill_surface_tags(conn) -> None:
+    """One-time: seed existing builtin skeleton rows with their surface's
+    registry-declared tags at the moment the `tags` column is introduced.
+
+    Runs only inside the column-add branch above, so it fires exactly once per
+    DB — before any user could have edited/cleared a surface's tags, so it can
+    never resurrect a deliberate clear (that's why it isn't in the per-boot
+    `seed_builtin_skeletons`). Fresh installs skip it entirely: schema.sql
+    already ships the column and `seed_builtin_skeletons` seeds new rows.
+    """
+    import json as _json
+    from lib.prompts.registry import list_surfaces
+    for surface in list_surfaces():
+        if not surface.tags:
+            continue
+        conn.execute(
+            "UPDATE prompt_templates SET tags = ? WHERE slug = ? AND tags = '[]'",
+            (_json.dumps(list(surface.tags)), surface.id),
+        )
+
+
 def init_turn_usage_schema(conn) -> None:
     """Create `turn_usage` if missing.
 

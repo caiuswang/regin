@@ -288,15 +288,93 @@ def _session_start_span(trace_id, span_id, surface, ts='2026-03-01T00:00:00'):
             {'llm_surface': surface})
 
 
-def test_surface_tags_reads_prompt_registry_declaration():
-    # the dream surface declares its groups in prompt management
+def test_surface_tags_registry_fallback_when_no_row(trace_db):
+    # No stored prompt_templates row yet → fall back to the surface's
+    # registry-declared default tags.
+    from lib.orm.engine import get_connection
     from lib.trace.trace_service.ingest import _surface_tags
-    assert _surface_tags('memory-reflect-dream') == ['memory', 'dream']
-    assert _surface_tags('memory-distill') == ['memory', 'distill']
-    # unknown / blank surface → no tags
-    assert _surface_tags('not-a-surface') == []
-    assert _surface_tags('') == []
-    assert _surface_tags(None) == []
+    conn = get_connection()
+    try:
+        assert _surface_tags(conn, 'memory-reflect-dream') == ['memory', 'dream']
+        assert _surface_tags(conn, 'memory-distill') == ['memory', 'distill']
+        # unknown / blank surface → no tags
+        assert _surface_tags(conn, 'not-a-surface') == []
+        assert _surface_tags(conn, '') == []
+        assert _surface_tags(conn, None) == []
+    finally:
+        conn.close()
+
+
+def test_surface_tags_reads_stored_override(client):
+    # Editing a surface's tags in prompt management (PATCH) overrides the
+    # registry default at ingest time.
+    from lib.orm.engine import get_connection
+    from lib.trace.trace_service.ingest import _surface_tags
+    r = client.patch('/api/prompt-templates/memory-reflect-dream',
+                     json={'tags': ['nightly', 'System', 'bad slug']})
+    assert r.status_code == 200
+    # builtin-colliding + bad-charset dropped, kept order/dedupe
+    assert r.get_json()['template']['tags'] == ['nightly']
+    conn = get_connection()
+    try:
+        assert _surface_tags(conn, 'memory-reflect-dream') == ['nightly']
+    finally:
+        conn.close()
+    # a run of that surface now self-applies the edited tag, not the default
+    from lib.trace.trace_service import ingest
+    ingest.ingest_session_spans([_session_start_span(
+        't-edited', 'ss-1', 'memory-reflect-dream')])
+    assert _custom_tag_rows(client._db_path, 't-edited') == {'nightly': 'auto'}
+
+
+def test_surface_tags_cleared_to_empty_is_honored(client):
+    from lib.orm.engine import get_connection
+    from lib.trace.trace_service.ingest import _surface_tags
+    client.patch('/api/prompt-templates/memory-distill', json={'tags': []})
+    conn = get_connection()
+    try:
+        # empty stored row is honored (not overridden by the registry default)
+        assert _surface_tags(conn, 'memory-distill') == []
+    finally:
+        conn.close()
+
+
+def test_surface_tags_reset_restores_registry_default(client):
+    client.patch('/api/prompt-templates/memory-reflect-dream',
+                 json={'tags': ['nightly']})
+    r = client.post('/api/prompt-templates/memory-reflect-dream/reset', json={})
+    assert r.status_code == 200
+    assert r.get_json()['template']['tags'] == ['memory', 'dream']
+
+
+def test_seed_skeleton_carries_registry_tags(client):
+    # the booted app seeds each surface row with its declared tags
+    j = client.get('/api/prompt-templates?kind=skeleton').get_json()
+    dream = next(t for t in j['templates'] if t['slug'] == 'memory-reflect-dream')
+    assert dream['tags'] == ['memory', 'dream']
+
+
+def test_prompt_templates_tags_column_migration_backfills(tmp_path):
+    # An existing install whose skeleton rows predate the `tags` column:
+    # the additive migration adds the column AND one-time backfills the
+    # registry tags for existing builtin rows (before any user could edit).
+    import sqlite3
+    from web.startup import init_prompt_templates_schema
+    p = tmp_path / 'old.db'
+    conn = sqlite3.connect(str(p))
+    conn.execute(
+        "CREATE TABLE prompt_templates (id INTEGER PRIMARY KEY, slug TEXT UNIQUE, "
+        "label TEXT, body TEXT NOT NULL, builtin INTEGER NOT NULL DEFAULT 0)")
+    conn.execute("INSERT INTO prompt_templates (slug, label, body, builtin) "
+                 "VALUES ('memory-reflect-dream', 'Dream', 'b', 1)")
+    conn.commit()
+    init_prompt_templates_schema(conn)
+    import json
+    row = conn.execute(
+        "SELECT tags FROM prompt_templates WHERE slug='memory-reflect-dream'"
+    ).fetchone()[0]
+    conn.close()
+    assert json.loads(row) == ['memory', 'dream']
 
 
 def test_llm_stage_session_auto_tagged_from_surface(client):

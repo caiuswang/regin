@@ -1250,23 +1250,52 @@ def _upsert_session_counters(conn, buckets: dict) -> None:
         ))
 
 
-def _surface_tags(surface_id: object) -> list[str]:
-    """Normalized custom tags the prompt surface `surface_id` declares, or [].
+def _stored_surface_tags(conn, surface_id: str) -> "list | None":
+    """The stored `prompt_templates` row's tags as a list, or None when there
+    is no row (caller then falls back to the registry default). Returns None on
+    any DB error — e.g. the `tags` column not yet migrated — so tagging
+    degrades to the default rather than failing ingest."""
+    import json as _json
+    try:
+        row = conn.execute(
+            "SELECT tags FROM prompt_templates WHERE slug = ?",
+            (surface_id,)).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    raw = row[0]
+    if not raw:
+        return []
+    try:
+        value = _json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return [v for v in value if isinstance(v, str)]
 
-    The link between prompt management and session tags: a surface's
-    `PromptSurface.tags` are the groups its runs self-apply. Author-controlled
-    literals are run through `normalize_custom_slug` so a typo or a
-    builtin-colliding slug is dropped rather than written. Unknown surface → [].
+
+def _surface_tags(conn, surface_id: object) -> list[str]:
+    """The normalized custom tags a prompt surface's runs self-apply.
+
+    The link between prompt management and session tags. Reads the STORED
+    prompt-template row's `tags` — the editable override set in the
+    /prompt-templates UI — and falls back to the surface's `PromptSurface.tags`
+    registry default only when no row exists yet, mirroring how
+    `render_surface` prefers the stored body. An existing row with an empty
+    list is honored (the user cleared the tags), not overridden. Every slug is
+    re-normalized so a stale/hand-edited value can't inject a bad or
+    builtin-colliding tag. Unknown surface / un-migrated column → [].
     """
     if not isinstance(surface_id, str) or not surface_id:
         return []
-    from lib.prompts.registry import get_surface
     from lib.trace.session_tags import normalize_custom_slug
-    surface = get_surface(surface_id)
-    if surface is None:
-        return []
+    stored = _stored_surface_tags(conn, surface_id)
+    if stored is None:
+        from lib.prompts.registry import get_surface
+        surface = get_surface(surface_id)
+        stored = list(surface.tags) if surface else []
     out: list[str] = []
-    for raw in surface.tags:
+    for raw in stored:
         slug = normalize_custom_slug(raw)
         if slug and slug not in out:
             out.append(slug)
@@ -1310,7 +1339,7 @@ def _stamp_llm_stage_origins(conn, normalised: list[tuple],
                 "UPDATE sessions SET origin = 'llm-stage' WHERE trace_id = ?",
                 (tid,))
         if (tid, span.get('span_id')) not in existing_set:
-            for slug in _surface_tags(surface):
+            for slug in _surface_tags(conn, surface):
                 conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
 
 
