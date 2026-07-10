@@ -435,6 +435,8 @@ function contextBadgeClass(pct) {
     </div>
     <div class="flex flex-col items-end gap-1.5 min-w-0 max-w-full">
       <div class="flex flex-wrap justify-end items-center gap-1.5">
+        <!-- Header-row actions the parent owns (e.g. the agents popover). -->
+        <slot name="actions"></slot>
         <button
           v-for="opt in [
             { id: 'conversation', label: 'Conversation' },

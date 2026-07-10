@@ -1,6 +1,7 @@
 import { ref, watch, nextTick } from 'vue'
 import api from '../api'
 import { dropRetiredSpans } from '../utils/traceFormatters.js'
+import { isSyntheticSpanId } from './useSpanTree.js'
 import { findNodeBySpanId, withNodeChildren } from '../utils/spanTree.js'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
 
@@ -42,6 +43,8 @@ const SESSION_SUMMARY_KEYS = [
   'span_count_total',
   'task_list',
   'queued_prompts',
+  'agent_roster',
+  'server_now',
 ]
 
 export function useTraceData(route, { session, allSpans, selectedSpan }) {
@@ -106,7 +109,7 @@ export function useTraceData(route, { session, allSpans, selectedSpan }) {
     const data = await api.get(
       `/sessions/${route.params.id}/map?shallow=1&limit=${PAGE_SIZE}`,
     )
-    session.value = { ...data, spans: data.spans || [] }
+    session.value = { ...data, spans: data.spans || [], server_now_at: Date.now() }
     treeNodes.value = data.tree || []
     hasMoreOlder.value = !!data.has_more_older
     oldestLoadedId.value = data.oldest_loaded_id ?? null
@@ -174,6 +177,10 @@ export function useTraceData(route, { session, allSpans, selectedSpan }) {
     for (const k of SESSION_SUMMARY_KEYS) {
       if (k in data) patch[k] = data[k]
     }
+    // Client-clock stamp of when server_now landed — elapsed readouts use
+    // only DELTAS of each clock (see useAgentElapsed), never a cross-clock
+    // subtraction, so a viewer in another timezone never leaks the offset.
+    if ('server_now' in data) patch.server_now_at = Date.now()
     session.value = { ...session.value, ...patch }
   }
 
@@ -347,8 +354,10 @@ export function useTraceData(route, { session, allSpans, selectedSpan }) {
     }
   }
 
-  async function ensureSpanSubtreeLoaded(rootSpanId) {
-    if (!rootSpanId || subtreeLoaded.value.has(rootSpanId)) return
+  async function ensureSpanSubtreeLoaded(rootSpanId, { force = false } = {}) {
+    // Synthesized scoped-task prompt ids exist only client-side — 404 upstream.
+    if (!rootSpanId || isSyntheticSpanId(rootSpanId)) return
+    if (!force && subtreeLoaded.value.has(rootSpanId)) return
     if (loadingChildren.value.has(rootSpanId)) return
     // One `deep=1` fetch returns the whole nested subtree. The previous BFS
     // fired a shallow `/children` per non-leaf node, which exploded into
@@ -367,6 +376,12 @@ export function useTraceData(route, { session, allSpans, selectedSpan }) {
     }
   }
 
+  // Force-refetch a subtree that already settled: a RUNNING scoped agent keeps
+  // growing new spans under its start marker, and the trailing-roots refresh in
+  // refreshRecentRootSubtrees misses agents anchored under older prompts.
+  const refreshSpanSubtree = (rootSpanId) =>
+    ensureSpanSubtreeLoaded(rootSpanId, { force: true })
+
   // Live link from rule-trigger event rows: changing ?span= without changing
   // /sessions/<id>/ keeps the user on the same session and just re-selects.
   watch(() => route.query.span, (v) => {
@@ -379,6 +394,7 @@ export function useTraceData(route, { session, allSpans, selectedSpan }) {
     loadSession, applyDeepLinkSpan, applySessionSummary,
     refreshRecentRootSubtrees, reloadLiveTail, loadOlder,
     mergeLoadedSpans, ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded,
+    refreshSpanSubtree,
     ensureTerminalSpansLoaded, ensureWorkflowSpansLoaded,
   }
 }

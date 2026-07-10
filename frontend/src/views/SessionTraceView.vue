@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
@@ -22,6 +22,10 @@ import { useToolRollup } from '../composables/useToolRollup.js'
 import { useWorkflowMeta } from '../composables/useWorkflowMeta.js'
 import { useTraceData } from '../composables/useTraceData.js'
 import { useTurns } from '../composables/useTurns.js'
+import { useLiveAgents } from '../composables/useLiveAgents.js'
+import { useTraceScope } from '../composables/useTraceScope.js'
+import TraceScopeBar from '../components/TraceScopeBar.vue'
+import TraceAgentsPopover from '../components/TraceAgentsPopover.vue'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
 import ToolTokenRollup from '../components/ToolTokenRollup.vue'
 import SessionTraceHeader from '../components/SessionTraceHeader.vue'
@@ -32,6 +36,7 @@ import SessionTurnsSidebar from '../components/SessionTurnsSidebar.vue'
 import SessionTimelineTree from '../components/SessionTimelineTree.vue'
 
 const route = useRoute()
+const router = useRouter()
 const session = ref(null)
 const loading = ref(true)
 const reloading = ref(false)
@@ -81,9 +86,20 @@ const {
   newestLoadedId,
   loadSession, reloadLiveTail, loadOlder,
   subtreeLoaded,
-  ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded,
+  ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded, refreshSpanSubtree,
   ensureTerminalSpansLoaded, ensureWorkflowSpansLoaded,
 } = useTraceData(route, { session, allSpans, selectedSpan })
+
+// Whole-session subagent roster (server-classified, window-independent) +
+// the per-agent Conversation scope. The header keeps showing MAIN-session
+// truth; the scope only re-projects the conversation spine.
+const liveAgents = useLiveAgents(() => allSpans.value, () => session.value?.agent_roster)
+const traceScope = useTraceScope(route, router, {
+  getAgents: () => liveAgents.agents,
+  getRoster: () => session.value?.agent_roster,
+  ensureSpanSubtreeLoaded,
+  ensureTerminalSpansLoaded,
+})
 
 // View mode: 'conversation' | 'timeline' | 'terminal' | 'messages'.
 // Resolution order: `?view=` query param > localStorage > default (see useViewMode).
@@ -273,6 +289,11 @@ async function reload() {
   reloading.value = true
   try {
     const tasks = [reloadLiveTail(), fetchToolRollup()]
+    // A RUNNING scoped agent keeps growing spans under its start marker —
+    // the trailing-roots refresh misses agents anchored under older prompts.
+    if (traceScope.scopedAgent?.running && traceScope.startSpanId) {
+      tasks.push(refreshSpanSubtree(traceScope.startSpanId))
+    }
     // Messages tab rides the same live poll: cheap per-session query.
     if (viewMode.value === 'messages') tasks.push(ensureAgentMessagesLoaded())
     // Only refetch turns if they're loaded AND visible. While folded the
@@ -499,7 +520,18 @@ const {
       @update:view-mode="setViewMode"
       @reload="reload"
       @jump-to-task="jumpToTaskSpan"
-    />
+    >
+      <template #actions>
+        <TraceAgentsPopover
+          :running-agents="liveAgents.runningAgents"
+          :finished-agents="liveAgents.finishedAgents"
+          :running-count="liveAgents.runningCount"
+          :server-now="session?.server_now || ''"
+          :server-now-at="session?.server_now_at || 0"
+          @scope="traceScope.enter($event)"
+        />
+      </template>
+    </SessionTraceHeader>
 
     <ToolTokenRollup :rollup-data="toolRollupData" @jump-span="selectSpanById" />
 
@@ -513,6 +545,18 @@ const {
       :trace-end="traceEnd"
       :trace-duration="traceDuration"
       @select-node="onOverviewSpanClick"
+    />
+
+    <!-- Scoped-view bar: pins with the page header while the Conversation
+         tab shows one subagent's subtree. Other tabs are never scoped (the
+         ?agent= param persists but only Conversation applies it). -->
+    <TraceScopeBar
+      v-if="viewMode === 'conversation' && (traceScope.scopedAgent || traceScope.notFound)"
+      :agent="traceScope.scopedAgent"
+      :not-found="traceScope.notFound"
+      :server-now="session?.server_now || ''"
+      :server-now-at="session?.server_now_at || 0"
+      @exit="traceScope.exit()"
     />
 
     <!-- Top indicator: only render when older history is available
@@ -551,7 +595,16 @@ const {
     <div class="flex flex-col lg:flex-row gap-4 lg:items-start">
       <!-- Conversation view: rendered outside Card so its sidebar can be sticky -->
       <template v-if="viewMode === 'conversation'">
+        <!-- Deep-link limbo (`?agent=` set, roster not yet landed): mask the
+             feed rather than flash the full main conversation and then snap
+             to the scoped re-projection. -->
+        <div
+          v-if="traceScope.pending"
+          class="flex-1 min-w-0 text-slate-400 text-center py-8"
+          data-testid="trace-scope-pending"
+        >Loading agent scope…</div>
         <SessionConversationView
+          v-else
           :spans="allSpans"
           :turns="turns"
           :selected-span="selectedSpan"
@@ -559,11 +612,14 @@ const {
           :context-window-tokens="session?.context_window_tokens"
           :workflow-runs-by-id="workflowRunsById"
           :loaded-subtrees="subtreeLoaded"
+          :scope-agent="traceScope.scopedAgent"
+          :scope-loading="traceScope.loadingSubtree"
           class="flex-1 min-w-0"
           @select-span="selectedSpan = $event"
           @fetch-content="fetchSpanContent"
           @load-subtree="ensureSpanSubtreeLoaded"
           @jump-live="jumpToLatestSpan"
+          @enter-scope="traceScope.enter($event)"
         />
       </template>
 

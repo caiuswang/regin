@@ -34,7 +34,7 @@ defineProps({
   // run_id → enriched workflow-run summary
   workflowRunsById: { type: Object, default: () => ({}) },
 })
-defineEmits(['activate'])
+defineEmits(['activate', 'enter-scope'])
 </script>
 
 <template>
@@ -111,6 +111,7 @@ defineEmits(['activate'])
     v-else-if="span.name === 'subagent.start'"
     :span="span" :selected-span="selectedSpan" :folding="folding" :agent-merge="agentMerge"
     @activate="$emit('activate', $event)"
+    @enter-scope="$emit('enter-scope', $event)"
   />
   <AgentResultCard
     v-else-if="span.name === 'workflow.agent_result'"

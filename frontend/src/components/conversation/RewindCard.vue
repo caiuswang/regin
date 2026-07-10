@@ -25,7 +25,7 @@ const props = defineProps({
   // can advertise a count yet have no backing spans in the trace store.
   loaded: { type: Boolean, default: false },
 })
-const emit = defineEmits(['select', 'toggle', 'activate'])
+const emit = defineEmits(['select', 'toggle', 'activate', 'enter-scope'])
 
 const selected = computed(() => {
   const sel = props.ctx?.selectedSpan
@@ -175,6 +175,7 @@ function baseName(p) {
         :agent-merge="ctx.agentMerge"
         :workflow-runs-by-id="ctx.workflowRunsById"
         @activate="emit('activate', $event)"
+        @enter-scope="emit('enter-scope', $event)"
       />
     </template>
   </div>

@@ -1,4 +1,13 @@
 import { computed, unref } from 'vue'
+import { partitionScope } from '../utils/liveRows.js'
+
+// Synthesized task-prompt ids (a scoped agent with no captured `prompt-sa-`
+// span). They exist only client-side, so subtree/content fetches for them
+// would 404 — every fetch path must check before hitting the API.
+export const SYNTH_PROMPT_PREFIX = 'prompt-sa-synth-'
+export function isSyntheticSpanId(spanId) {
+  return typeof spanId === 'string' && spanId.startsWith(SYNTH_PROMPT_PREFIX)
+}
 
 // The conversation spine only knows how to render a small, closed set of
 // root span names: `prompt` (→ turn group), `compact.pre`/`compact.post`
@@ -112,8 +121,19 @@ function countToolish(descendants) {
  * view re-derived these inline; the composable lets future trace views
  * (e.g. SessionTraceView) share the same tree without copy-paste drift.
  *
+ * When `scopeInput` resolves to `{ startSpanId, agentId, promptText }` the
+ * derivations collapse to ONE prompt group: the agent's task prompt (a real
+ * `prompt` span found inside the subtree — new sessions carry
+ * `prompt-sa-<agent_id>` — else a synthesized `prompt-sa-synth-<agentId>`
+ * placeholder built from `promptText`) followed by the whole subtree under
+ * `startSpanId`. The subtree flattens with inAgent=false at the top level —
+ * the scope IS the agent, so no grouping rail; nested `subagent.start`
+ * subtrees still flag/fold normally. Turn usage / workflow projections are
+ * main-session bookkeeping and go empty while scoped.
+ *
  * @param {Ref<Array>|() => Array|Array} spansInput - flat spans list
  * @param {Ref<Array>|() => Array|Array} [turnsInput=null] - aligned turns[]
+ * @param {() => (Object|null)} [scopeInput=null] - per-agent scope getter
  * @returns {{
  *   spanById: ComputedRef<Map>,
  *   childrenByParent: ComputedRef<Map>,
@@ -125,11 +145,12 @@ function countToolish(descendants) {
  *   turnItems: ComputedRef<Array>,
  * }}
  */
-export function useSpanTree(spansInput, turnsInput = null) {
+export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {
   const spans = () =>
     typeof spansInput === 'function' ? spansInput() : (unref(spansInput) || [])
   const turns = () =>
     typeof turnsInput === 'function' ? turnsInput() : unref(turnsInput)
+  const scope = () => (typeof scopeInput === 'function' ? scopeInput() : null)
 
   const spanById = computed(() => {
     const map = new Map()
@@ -213,7 +234,8 @@ export function useSpanTree(spansInput, turnsInput = null) {
   })
 
   const isWorkflow = computed(() =>
-    !!workflowRoot.value || spans().some((s) => s.name === 'workflow.phase'),
+    !scope()
+    && (!!workflowRoot.value || spans().some((s) => s.name === 'workflow.phase')),
   )
 
   function _orderedPhases() {
@@ -270,7 +292,60 @@ export function useSpanTree(spansInput, turnsInput = null) {
     return [{ type: 'group', prompt: objective || root, descendants, workflow: true }]
   }
 
+  // The one scoped prompt group. Prefer a real task-prompt span inside the
+  // subtree; synthesize only when real spans loaded but no prompt is among
+  // them (an agent with zero loaded spans stays empty — the view renders the
+  // count-vs-loaded divergence state, never a lone synthetic prompt).
+  // `spanCount === 0` is the server's terminal "nothing captured" verdict —
+  // it wins even when the loaded tree carries harness rows for the agent
+  // (a pending prompt-sa placeholder, its reparented stop marker), which
+  // would otherwise render as a misleading one-card feed. Except while the
+  // agent is RUNNING: the count is a snapshot that lags ingest, so a
+  // just-launched agent's 0 is provisional — show what the tree has.
+  // Roster entries reconstructed from surviving `agent_id`-tagged spans have
+  // no `subagent.start` anchor to flatten from (start_span_id null → a
+  // synthetic roster- id). Fall back to the /live partition rule — the flat
+  // attribute match, markers excluded — so their loaded spans stay reachable
+  // instead of dead-ending behind an unresolvable tree walk.
+  function scopedAttrFallback(agentId) {
+    return partitionScope(spans(), agentId)
+      .sort((a, b) => {
+        const at = a.start_time ? new Date(a.start_time).getTime() : 0
+        const bt = b.start_time ? new Date(b.start_time).getTime() : 0
+        return at - bt || (a.id || 0) - (b.id || 0)
+      })
+      .map((span) => ({ span, depth: 0, inAgent: false, inWorkflow: false }))
+  }
+
+  function scopedEntries(sc) {
+    if (sc.spanCount === 0 && !sc.running) return []
+    let flat = flattenDescendants(sc.startSpanId)
+    if (!flat.length) flat = scopedAttrFallback(sc.agentId)
+    if (!flat.length) return []
+    const promptIdx = flat.findIndex((d) => d.span.name === 'prompt')
+    if (promptIdx >= 0) {
+      return [{
+        type: 'group',
+        prompt: flat[promptIdx].span,
+        descendants: flat.filter((_, i) => i !== promptIdx),
+      }]
+    }
+    return [{
+      type: 'group',
+      prompt: {
+        span_id: `${SYNTH_PROMPT_PREFIX}${sc.agentId}`,
+        name: 'prompt',
+        parent_id: null,
+        start_time: flat[0].span.start_time,
+        attributes: { text: sc.promptText || '', agent_id: sc.agentId },
+      },
+      descendants: flat,
+    }]
+  }
+
   const entries = computed(() => {
+    const sc = scope()
+    if (sc) return scopedEntries(sc)
     if (isWorkflow.value) return workflowEntries()
     const out = []
     for (const root of rootSpans.value) {
@@ -303,6 +378,7 @@ export function useSpanTree(spansInput, turnsInput = null) {
   )
 
   const turnItems = computed(() => {
+    if (scope()) return [] // turn usage is main-session bookkeeping
     const turnBuckets = bucketTurnsByPrompt(turns(), promptGroups.value)
     return promptGroups.value.map((entry, idx) => {
       const toolCounts = countToolish(entry.descendants)
@@ -392,7 +468,7 @@ export function useSpanTree(spansInput, turnsInput = null) {
   // True once the run has real `workflow.phase` spans (built from the
   // completion manifest). False for a live run — where the rail instead shows
   // the declared `phasePlan` below.
-  const hasPhaseSpans = computed(() => _orderedPhases().length > 0)
+  const hasPhaseSpans = computed(() => !scope() && _orderedPhases().length > 0)
 
   // The declared phase plan (title + detail, ordered) parsed from the workflow
   // script at ingest and stamped on the live run root. Available before the

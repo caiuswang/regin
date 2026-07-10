@@ -1431,6 +1431,9 @@ _MAP_KEEP_ATTR_KEYS = (
     'rewound_away', 'rewind_fork_id',
     'abandoned_prompt_count', 'rolled_back_count',
     'hit_count', 'source', 'skill_id',
+    # The per-agent scope key: the frontend's attribute partition (orphan
+    # roster entries with no start marker to tree-walk from) matches on it.
+    'agent_id',
     # ScheduleWakeup label needs these to distinguish "agent finished" (stop)
     # from "paused to resume" — else the row degrades to a bare tool name on a
     # fresh (non-shallow /map) reload. `resume_action`/`poll_*` are the

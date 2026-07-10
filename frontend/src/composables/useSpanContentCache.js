@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import api from '../api'
+import { isSyntheticSpanId } from './useSpanTree.js'
 
 // On-demand span content (attributes) cache for the trace view. The shallow
 // /map load ships root spans without their full attribute bag; the detail
@@ -29,6 +30,8 @@ export function useSpanContentCache(session, route) {
   })
 
   async function fetchSpanContent(spanId) {
+    // Synthesized scoped-task prompt ids exist only client-side — 404 upstream.
+    if (isSyntheticSpanId(spanId)) return {}
     if (spanContentCache.value.has(spanId)) return spanContentCache.value.get(spanId)
     try {
       const data = await api.get(`/sessions/${route.params.id}/spans/${spanId}/content`)

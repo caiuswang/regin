@@ -20,7 +20,7 @@ const props = defineProps({
   //                      agentPromptOwnerId, agentPromptPreview
   agentMerge: { type: Object, required: true },
 })
-const emit = defineEmits(['activate'])
+const emit = defineEmits(['activate', 'enter-scope'])
 
 const prompt = computed(() => props.agentMerge.agentPrompt(props.span))
 const promptOwnerId = computed(() => props.agentMerge.agentPromptOwnerId(props.span))
@@ -76,6 +76,19 @@ function selectAgentPrompt() {
         title="Estimated tokens the subagent's result added back into the main (parent) context"
       >+{{ fmtTokens(span.attributes.main_session_impact_tokens) }} → main</span>
       <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
+      <!-- Scope the conversation feed to this agent's subtree (desktop
+           sibling of the /live card's agent scoping). Not offered for agents
+           on a discarded /rewind branch: the scoped feed drops rewound_away
+           spans, so the affordance would open an empty scope — the discarded
+           run stays readable inline behind its rewind marker instead. -->
+      <Button
+        v-if="span.attributes?.agent_id && !span.attributes?.rewound_away"
+        variant="ghost"
+        data-testid="trace-agent-view"
+        class="shrink-0 h-auto -my-1 px-1.5 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50 hover:text-violet-800"
+        :aria-label="`Scope the view to ${span.attributes?.agent_type || 'this agent'}`"
+        @click.stop="emit('enter-scope', span.attributes.agent_id)"
+      >Agent view →</Button>
     </div>
     <!-- Task prompt card (collapsed by default) -->
     <div

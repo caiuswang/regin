@@ -4,6 +4,7 @@ import PromptBody from './PromptBody.vue'
 import Icon from './ui/Icon.vue'
 import ConversationToc from './conversation/ConversationToc.vue'
 import ConversationSpanCard from './conversation/ConversationSpanCard.vue'
+import TurnUsageFooter from './conversation/TurnUsageFooter.vue'
 import RewindCard from './conversation/RewindCard.vue'
 import { useSpanTree } from '../composables/useSpanTree.js'
 import { useConversationPins } from '../composables/useConversationPins.js'
@@ -28,9 +29,15 @@ const props = defineProps({
   // Set of span_ids whose `deep=1` subtree fetch has settled — lets a lazily
   // loaded card (e.g. RewindCard) tell "still loading" from "loaded, empty".
   loadedSubtrees: { default: () => new Set() },
+  // Per-agent scope: a useLiveAgents roster entry, or null for the main feed.
+  // While set, the spine collapses to that agent's single auto-expanded group.
+  scopeAgent: { type: Object, default: null },
+  // True while the scoped agent's subtree fetch is in flight — drives the
+  // spinner-vs-unreachable split in the scoped empty state.
+  scopeLoading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live'])
+const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live', 'enter-scope'])
 
 const { copyText } = useCopy()
 
@@ -54,7 +61,15 @@ const {
   spanById, childrenOf,
   entries, promptGroups, turnItems, isWorkflow, phaseItems,
   hasPhaseSpans, phasePlan,
-} = useSpanTree(() => props.spans, () => props.turns)
+} = useSpanTree(() => props.spans, () => props.turns, () => (props.scopeAgent
+  ? {
+      startSpanId: props.scopeAgent.spanId,
+      agentId: props.scopeAgent.agentId,
+      promptText: props.scopeAgent.promptPreview || props.scopeAgent.description || '',
+      spanCount: props.scopeAgent.spanCount,
+      running: props.scopeAgent.running,
+    }
+  : null))
 
 // A surviving `promptlive-` placeholder is only "stranded" once the session
 // can no longer resolve it — i.e. it has ended. While live, the newest
@@ -295,24 +310,6 @@ watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]
   }
 }, { flush: 'post' })
 
-// ── Turn metadata helper ──────────────────────────────────────
-function turnCtxPct(turn) {
-  if (!turn || !turn.context_used_tokens || !props.contextWindowTokens) return null
-  const window = props.contextWindowTokens
-  if (!window || window <= 0) return null
-  return Math.max(0, Math.min(100, (turn.context_used_tokens / window) * 100))
-}
-
-// Per-prompt footer disclosure: which prompts show their full API-turn list.
-const expandedTurnFooters = ref(new Set())
-function isTurnFooterExpanded(promptId) { return expandedTurnFooters.value.has(promptId) }
-function toggleTurnFooter(promptId) {
-  const next = new Set(expandedTurnFooters.value)
-  if (next.has(promptId)) next.delete(promptId)
-  else next.add(promptId)
-  expandedTurnFooters.value = next
-}
-
 // ── On-demand content fetching ────────────────────────────────
 function needsContentFetch(span) {
   if (!span) return false
@@ -376,6 +373,7 @@ function toolChipsForEntry(entry) {
   <div class="flex gap-4 items-start">
     <!-- ──────── LEFT RAIL: TURNS / PHASES TOC ──────── -->
     <ConversationToc
+      v-if="!scopeAgent"
       :is-workflow="isWorkflow"
       :has-phase-spans="hasPhaseSpans"
       :phase-items="phaseItems"
@@ -537,6 +535,7 @@ function toolChipsForEntry(entry) {
                   :agent-merge="agentMerge"
                   :workflow-runs-by-id="workflowRunsById"
                   @activate="onActivate"
+                  @enter-scope="$emit('enter-scope', $event)"
                 />
               </div>
             </template>
@@ -550,53 +549,12 @@ function toolChipsForEntry(entry) {
           </template>
 
           <!-- Turn metadata footer: rollup of every API turn this prompt drove -->
-          <div
+          <TurnUsageFooter
             v-if="turnItems[entryIdx]?.turnAgg"
-            class="text-[11px] text-slate-400 pl-2"
-          >
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="cursor-pointer hover:text-slate-700 rounded focus-visible:outline-2 focus-visible:outline-blue-500"
-                :title="'API turns #' + turnItems[entryIdx].turns[0].turn_index + '–#' + turnItems[entryIdx].turnAgg.lastTurn.turn_index + ' answered this prompt — click to list them'"
-                @click="toggleTurnFooter(entry.prompt.span_id)"
-              >{{ turnItems[entryIdx].turnAgg.count }} {{ turnItems[entryIdx].turnAgg.count === 1 ? 'turn' : 'turns' }} {{ isTurnFooterExpanded(entry.prompt.span_id) ? '▴' : '▾' }}</button>
-              <span class="text-slate-300">·</span>
-              <span>↑{{ fmtTokens(turnItems[entryIdx].turnAgg.inputTokens) }}</span>
-              <span>↓{{ fmtTokens(turnItems[entryIdx].turnAgg.outputTokens) }}</span>
-              <span
-                v-if="turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn) != null"
-                class="inline-flex items-center px-1 rounded text-[10px] text-white"
-                :class="turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn) >= 80
-                  ? 'bg-red-500'
-                  : turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn) >= 50
-                    ? 'bg-amber-500'
-                    : 'bg-green-500'"
-                title="context occupancy after this prompt's last turn"
-              >{{ Math.round(turnCtxPct(turnItems[entryIdx].turnAgg.lastTurn)) }}%</span>
-              <span
-                v-if="turnItems[entryIdx].turnAgg.lastTurn.effort_level"
-                class="inline-flex items-center px-1 rounded text-[10px] bg-violet-100 text-violet-700"
-                :title="'reasoning effort level on this prompt\'s last turn: ' + turnItems[entryIdx].turnAgg.lastTurn.effort_level"
-              >{{ turnItems[entryIdx].turnAgg.lastTurn.effort_level }}</span>
-            </div>
-            <div
-              v-if="isTurnFooterExpanded(entry.prompt.span_id)"
-              class="mt-1 space-y-0.5 font-mono text-[10px]"
-            >
-              <div
-                v-for="t in turnItems[entryIdx].turns"
-                :key="t.turn_uuid"
-                class="flex items-center gap-2"
-              >
-                <span class="w-8 text-right shrink-0">#{{ t.turn_index }}</span>
-                <span>{{ fmtClock(t.timestamp) }}</span>
-                <span>↑{{ fmtTokens((t.input_tokens || 0) + (t.cache_creation_tokens || 0)) }}</span>
-                <span>↓{{ fmtTokens(t.output_tokens || 0) }}</span>
-                <span v-if="turnCtxPct(t) != null">ctx {{ Math.round(turnCtxPct(t)) }}%</span>
-              </div>
-            </div>
-          </div>
+            :key="entry.prompt.span_id"
+            :item="turnItems[entryIdx]"
+            :context-window-tokens="contextWindowTokens"
+          />
         </div>
 
         <!-- Rewind boundary divider (collapsed discarded branch + file rollback) -->
@@ -614,6 +572,7 @@ function toolChipsForEntry(entry) {
             @select="onSelectSpan"
             @toggle="toggleRewindExpanded(entry.span.span_id)"
             @activate="onActivate"
+            @enter-scope="$emit('enter-scope', $event)"
           />
         </div>
 
@@ -703,9 +662,20 @@ function toolChipsForEntry(entry) {
         </div>
       </div>
 
-      <!-- Empty state -->
+      <!-- Empty state. While scoped, "no spans ever captured" (server
+           span_count 0) and "spans exist but the subtree fetch is in flight"
+           are different states — never flash a false empty for the latter. -->
       <div v-if="!entries.length" class="text-slate-400 text-center py-8">
-        No events recorded for this session.
+        <span v-if="scopeAgent && !scopeAgent.spanCount && !scopeAgent.running" data-testid="trace-scope-empty">no spans captured for this agent</span>
+        <span v-else-if="scopeAgent && (scopeLoading || scopeAgent.running)" data-testid="trace-scope-loading" class="inline-flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
+            <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Loading agent spans…
+        </span>
+        <span v-else-if="scopeAgent" data-testid="trace-scope-unreachable">agent spans not loaded — load earlier history to view</span>
+        <template v-else>No events recorded for this session.</template>
       </div>
     </div>
 
