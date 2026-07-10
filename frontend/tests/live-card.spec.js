@@ -3298,6 +3298,18 @@ test.describe('Scoped tail opens with the agent prompt (Slice C)', () => {
     await expect(first).toContainText('WF_LIVE_PROMPT_MARKER')
     await expect(first).toHaveAttribute('data-kind', 'msg')
     await expect(rows(page).last()).toContainText('WF_LIVE_RESULT_MARKER')
+
+    // Synthesized rows are tappable: they resolve only via scope.scopedSpans,
+    // so the sheet must not be instantly closed by the pruned-span watcher.
+    await first.click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+    await expect(sheet).toContainText('WF_LIVE_PROMPT_MARKER — dig into everything')
+    await page.keyboard.press('Escape')
+    await expect(sheet).toBeHidden()
+    await rows(page).last().click()
+    await expect(sheet).toBeVisible()
+    await expect(sheet).toContainText('WF_LIVE_RESULT_MARKER')
   })
 })
 

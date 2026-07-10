@@ -277,10 +277,17 @@ const sheetOpen = computed({
   set(v) { if (!v) closeSheet() },
 })
 const sheetKind = computed(() => sheet.value?.kind)
-// Resolved live so a lazy content fetch re-renders the open sheet.
-const sheetSpan = computed(() => (sheet.value?.spanId
-  ? spans.value.find(s => s.span_id === sheet.value.spanId)
-  : null))
+// Resolved live so a lazy content fetch re-renders the open sheet. The
+// scoped tail's synthesized rows (leading prompt / trailing result) exist
+// only in scope.scopedSpans, so fall through to it — else their sheet would
+// resolve to nothing and be instantly closed by the pruned-span watcher.
+const sheetSpan = computed(() => {
+  const id = sheet.value?.spanId
+  if (!id) return null
+  return spans.value.find(s => s.span_id === id)
+    || scope.scopedSpans.find(s => s.span_id === id)
+    || null
+})
 
 // A span-pinned sheet whose span gets pruned mid-open (placeholder resolved,
 // window aged out) would linger as a blank title bar over an empty body —
