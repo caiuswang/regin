@@ -195,6 +195,35 @@ def _await_pane_text(socket: str | None, pane: str, needle: str,
     return False
 
 
+# A multi-question ask is answered by stepping the SAME select TUI: the caller
+# submits question 1, the pane renders question 2 with its cursor back at the
+# top, and so on. The hazard is a silently-failed advance — if the prior Enter
+# did not land, the pane is still on the earlier question, so blindly sending
+# the next answer navigates the WRONG question. The stepper passes the text of
+# the question it believes is focused; this confirms it is on-screen before we
+# touch the arrows. Whitespace is collapsed on both sides so a terminal line-
+# wrap inside the question can't defeat the substring match.
+_QUESTION_NEEDLE_LEN = 40
+
+
+def _pane_shows_question(socket: str | None, pane: str, text: str,
+                         attempts: int = 4, interval: float = 0.25) -> bool:
+    """True when `text` (whitespace-normalized) is visible in the pane.
+
+    An empty needle confirms trivially (nothing to verify). Polls briefly
+    because the next question can lag the prior submission's Enter."""
+    needle = re.sub(r"\s+", " ", text or "").strip()[:_QUESTION_NEEDLE_LEN]
+    if not needle:
+        return True
+    for i in range(attempts):
+        if i:
+            time.sleep(interval)
+        capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+        if needle in re.sub(r"\s+", " ", capture.stdout or ""):
+            return True
+    return False
+
+
 # Named keys the bridge may inject as a RAW keystroke (no literal text, no
 # trailing Enter, no composer ack). Escape is the recovery key: a harness
 # overlay (slash-command help, a menu) swallows the composer's typed text so
@@ -336,15 +365,15 @@ def _reachable_answer_pane(trace_id: str, expect_chat: bool):
 def deliver_answer(trace_id: str, option_index: int,
                    free_text: str | None = None,
                    expect_chat: bool = False) -> DeliveryResult:
-    """Answer a pending AskUserQuestion in `trace_id`'s reachable pane by
-    selecting option `option_index` (0-based), or, when `free_text` is given,
-    the "Type something." entry at that index typed with `free_text`. With
+    """Answer a pending single-question AskUserQuestion in `trace_id`'s reachable
+    pane by selecting option `option_index` (0-based), or, when `free_text` is
+    given, the "Type something." entry at that index typed with `free_text`. With
     `expect_chat`, `option_index` targets the "Chat about this" entry: the pane
     is first checked for that entry (refuse if a legacy build lacks it), then it
     is selected — dismissing the menu — and any `free_text` is typed into the
-    reopened composer as a conversational reply. Same reachability / identity /
-    rate guards as `deliver`; structured refusal (never an exception) on every
-    expected failure; audited."""
+    reopened composer as a conversational reply. Multi-question asks go through
+    `deliver_answers`. Same reachability / identity / rate guards as `deliver`;
+    structured refusal (never an exception) on every expected failure; audited."""
     if not settings.agent_bridge.enabled:
         return _refuse(trace_id, "bridge disabled")
     if not isinstance(option_index, int) or option_index < 0 \
@@ -363,6 +392,120 @@ def deliver_answer(trace_id: str, option_index: int,
               option_index=option_index, free_text=clean is not None,
               chat=expect_chat, delivered=result.delivered, detail=result.detail)
     return result
+
+
+# A MULTI-question ask renders a TABBED select TUI: one tab per question plus a
+# final review/Submit tab (empirically, claude v2.1.x). Selecting an option
+# (Enter) checks that question's tab AND auto-advances to the next question, its
+# option cursor reset to the top — so a forward walk is: for each question,
+# navigate to its option and Enter; the last Enter lands on the review tab, whose
+# "Submit answers" entry needs ONE more Enter to actually submit. Answering the
+# last question does NOT auto-submit, so the submit step is mandatory.
+_MAX_ANSWERS = 12
+_SUBMIT_NEEDLE = "Submit answers"
+
+
+def _answer_one(row: dict, option_index: int,
+                free_text: str | None) -> DeliveryResult:
+    """Select `option_index` in the CURRENTLY-focused question tab (plain pick:
+    Enter; free text: type at the "Type something." entry, ack, then Enter).
+
+    Assumes copy-mode is already cancelled and the intended tab is focused —
+    `deliver_answers` guards focus per question before calling this. The select
+    Enter both checks the tab and advances to the next question."""
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    _navigate(socket, pane, option_index)
+    if free_text is None:
+        r = _tmux(socket, "send-keys", "-t", pane, "Enter")
+        if r.returncode != 0:
+            return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+        return DeliveryResult(True, f"selected option {option_index + 1}")
+    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", free_text)
+    if r.returncode != 0:
+        return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+    if not _await_pane_text(socket, pane, free_text[:30]):
+        return DeliveryResult(False, "typed answer not visible in pane")
+    _tmux(socket, "send-keys", "-t", pane, "Enter")
+    return DeliveryResult(True, "typed answer delivered")
+
+
+def _parse_one_answer(a) -> tuple | None:
+    """One answer dict → (option_index, clean_text|None, confirm_text|None), or
+    None if invalid."""
+    if not isinstance(a, dict):
+        return None
+    oi = a.get("option_index")
+    if not isinstance(oi, int) or oi < 0 or oi > _ANSWER_MAX_NAV:
+        return None
+    raw = a.get("text")
+    text = None
+    if raw is not None:
+        text = sanitize_text(raw) if isinstance(raw, str) else ""
+        if not text:
+            return None
+    confirm = a.get("confirm_text")
+    return (oi, text, confirm if isinstance(confirm, str) else None)
+
+
+def _parse_answers(answers) -> list | None:
+    """Validate the ordered per-question answer list into tuples, or None if the
+    shape is invalid (rejected whole, never partially applied)."""
+    if not isinstance(answers, list) or not answers or len(answers) > _MAX_ANSWERS:
+        return None
+    out = []
+    for a in answers:
+        parsed = _parse_one_answer(a)
+        if parsed is None:
+            return None
+        out.append(parsed)
+    return out
+
+
+def _walk_answers(row: dict, parsed: list) -> DeliveryResult:
+    """Select each question's option in order, guarding that the expected
+    question is the focused tab before each — the select Enter checks the tab
+    and auto-advances. Stops (structured) at the first desync/failure."""
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    for i, (option_index, text, confirm) in enumerate(parsed):
+        if confirm and not _pane_shows_question(socket, pane, confirm):
+            return DeliveryResult(False, f"question {i + 1} not focused in pane")
+        step = _answer_one(row, option_index, text)
+        if not step.delivered:
+            return DeliveryResult(False, f"question {i + 1}: {step.detail}")
+    return DeliveryResult(True, "all questions answered")
+
+
+def deliver_answers(trace_id: str, answers) -> DeliveryResult:
+    """Answer a MULTI-question AskUserQuestion by walking its tabbed select TUI.
+
+    `answers` is the ordered per-question list ({option_index, text?,
+    confirm_text?}). Each question is answered in order (focus-guarded); the
+    select Enter checks that tab and advances. After the last, the review/Submit
+    tab is verified and Enter'd to submit. Refuses (structured, never raising) on
+    any desync, so a stuck walk can neither answer the wrong tab nor submit a
+    half-filled form. Same reachability / identity / rate guards as `deliver`;
+    audited."""
+    if not settings.agent_bridge.enabled:
+        return _refuse(trace_id, "bridge disabled")
+    parsed = _parse_answers(answers)
+    if parsed is None:
+        return _refuse(trace_id, "invalid answers")
+    row, in_mode, refusal = _reachable_answer_pane(trace_id, False)
+    if row is None:
+        return _refuse(trace_id, refusal)
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    if in_mode:
+        _tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
+        time.sleep(0.1)
+    walk = _walk_answers(row, parsed)
+    if not walk.delivered:
+        return _refuse(trace_id, walk.detail)
+    if not _pane_shows_question(socket, pane, _SUBMIT_NEEDLE):
+        return _refuse(trace_id, "submit screen not shown; answers not submitted")
+    _tmux(socket, "send-keys", "-t", pane, "Enter")
+    log.write("bridge_answers_outcome", trace_id=trace_id, count=len(parsed),
+              delivered=True, detail=f"submitted to {pane}")
+    return DeliveryResult(True, f"submitted {len(parsed)} answers to {pane}")
 
 
 def deliver(trace_id: str, text: str) -> DeliveryResult:

@@ -324,6 +324,44 @@ def test_answer_chat_absent_defaults_false(flask_client, monkeypatch):
     assert calls == [("T-d", 0, None, False)]
 
 
+def test_answer_multi_routes_to_deliver_answers(flask_client, monkeypatch):
+    """An `answers` array routes to deliver_answers (not the single path) and
+    records a joined inbox body of the per-question labels."""
+    _enable(monkeypatch)
+    seen: list = []
+
+    def _fake(trace_id, answers):
+        seen.append((trace_id, answers))
+        return delivery.DeliveryResult(True, "submitted 2 answers to %7")
+
+    monkeypatch.setattr(delivery, "deliver_answers", _fake)
+    answers = [
+        {"option_index": 1, "label": "Search", "confirm_text": "PROBEQ1"},
+        {"option_index": 2, "label": "Reset", "confirm_text": "PROBEQ2"},
+    ]
+    resp = flask_client.post("/api/sessions/T-multi/bridge-answer",
+                             json={"answers": answers})
+    assert resp.status_code == 200
+    assert resp.get_json()["delivered"] is True
+    assert seen == [("T-multi", answers)]  # array passed through verbatim
+    rows = _rows("T-multi")
+    assert len(rows) == 1 and rows[0]["body"] == "Search · Reset"
+
+
+def test_answer_multi_disabled_structured_refusal(flask_client, monkeypatch):
+    _enable(monkeypatch, enabled=False)
+
+    def _fail(*_a, **_k):  # must not be called
+        raise AssertionError("deliver_answers called while bridge disabled")
+
+    monkeypatch.setattr(delivery, "deliver_answers", _fail)
+    resp = flask_client.post("/api/sessions/T-x/bridge-answer",
+                             json={"answers": [{"option_index": 0}]})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"delivered": False, "detail": "bridge disabled"}
+    assert _rows("T-x") == []
+
+
 def test_answer_bridge_token_never_in_response(flask_client, monkeypatch):
     _enable(monkeypatch)
     _mock_answer(monkeypatch)

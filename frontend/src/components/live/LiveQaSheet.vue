@@ -6,13 +6,16 @@
 // option tinted, a free-typed answer as ✎, the denial reason as an amber
 // block.
 //
-// When the span is a PENDING single-question ask AND the agent bridge is
-// reachable, the sheet delegates to LiveQaAnswer — the interactive
-// select→confirm operator surface (pick · note · type-your-own · chat).
-// Multi-question asks and unreachable/completed spans stay read-only —
-// blindly walking a multi-question TUI could answer the wrong sub-question.
+// When the span is a PENDING ask over a reachable bridge whose questions are
+// all single-select, the sheet delegates to the interactive operator surface:
+// LiveQaAnswer for one question (pick · note · type-your-own · chat), or
+// LiveQaAnswerMulti for several (a Prev/Next stepper that collects every answer
+// and delivers them in order on Send-all). An ask with a multi-select question,
+// or an unreachable/completed span, stays read-only — a multi-select TUI needs
+// per-option toggles the bridge can't drive blindly.
 import { computed } from 'vue'
 import LiveQaAnswer from './LiveQaAnswer.vue'
+import LiveQaAnswerMulti from './LiveQaAnswerMulti.vue'
 import {
   askOptLabel, askOptDescription, askIsChosen, askFreeText, askNote,
   toolDisplayName,
@@ -37,11 +40,18 @@ const permRequested = computed(() => (a.value.command_preview
   : (a.value.requested_permission || `tool.${toolDisplayName(a.value.tool_name || 'tool')}`)))
 
 const questions = computed(() => a.value.questions || [])
-// Answerable only for a live single-question ask over a reachable bridge —
-// the select TUI shows one question at a time, so a multi-question ask can't
-// be safely driven from a snapshot that doesn't know which one is focused.
+// Every question single-select: the operator surface drives one option per
+// question. A multi-select question needs per-option toggles the bridge can't
+// drive blindly, so such an ask stays read-only.
+const singleSelectOnly = computed(() => questions.value.length >= 1
+  && questions.value.every(q => !q.multiSelect))
+const hasMultiSelect = computed(() => questions.value.some(q => q.multiSelect))
+// Answerable for a live single-select ask (one OR many questions) over a
+// reachable bridge; the multi-question walk collects all answers then delivers
+// them in order, each guarded by a focused-question check on the backend.
 const canAnswer = computed(() => isAsk.value && pending.value
-  && props.bridgeReachable && !!props.sessionId && questions.value.length === 1)
+  && props.bridgeReachable && !!props.sessionId && singleSelectOnly.value)
+const isMulti = computed(() => questions.value.length > 1)
 
 function chosen(q, opt) {
   return !pending.value && askIsChosen(props.span, q, opt)
@@ -50,14 +60,23 @@ function chosen(q, opt) {
 
 <template>
   <div v-if="isAsk" data-testid="live-qa-sheet">
+    <LiveQaAnswerMulti
+      v-if="canAnswer && isMulti"
+      :span="span"
+      :session-id="sessionId"
+      @answered="$emit('answered')"
+    />
     <LiveQaAnswer
-      v-if="canAnswer"
+      v-else-if="canAnswer"
       :span="span"
       :session-id="sessionId"
       @answered="$emit('answered')"
     />
     <template v-else>
-      <p v-if="pending" class="live-qa-pending-note">
+      <p v-if="pending && hasMultiSelect" class="live-qa-pending-note">
+        This ask has a multi-select question — answer it directly in the agent terminal.
+      </p>
+      <p v-else-if="pending" class="live-qa-pending-note">
         Waiting for your answer in the agent session — this card is read-only.
       </p>
       <p v-if="!questions.length" class="live-qa-pending-note">

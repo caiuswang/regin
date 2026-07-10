@@ -446,6 +446,87 @@ def test_answer_stale_identity_refuses(monkeypatch):
     assert _downs(calls) == [] and _enters(calls) == []  # never drove the TUI
 
 
+# ── 11b. deliver_answers: multi-question tabbed-TUI walk + submit ────
+# The tabbed TUI (empirically, claude v2.1.x): selecting an option checks its
+# question tab AND auto-advances; the last select lands on the review/Submit
+# tab, which needs one more Enter. A single fake capture string stands in for
+# the pane, so every question text + "Submit answers" in it makes the focus
+# guards pass; omit one to exercise a refusal.
+def test_answers_walks_each_question_then_submits(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="PROBEQ1 which box\nPROBEQ2 which cache\nSubmit answers")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answers("t1", [
+        {"option_index": 1, "confirm_text": "PROBEQ1 which box"},
+        {"option_index": 2, "confirm_text": "PROBEQ2 which cache"},
+    ])
+
+    assert res.delivered is True and "submitted 2 answers" in res.detail
+    assert len(_downs(calls)) == 3   # 1 (Q1 option) + 2 (Q2 option)
+    assert len(_enters(calls)) == 3  # Q1 select + Q2 select + Submit
+
+
+def test_answers_refuses_when_a_question_not_focused(monkeypatch):
+    # Q2's text is not on-screen (a failed advance) → stop before answering it,
+    # and never reach the Submit Enter.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="PROBEQ1 which box\nSubmit answers")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answers("t1", [
+        {"option_index": 0, "confirm_text": "PROBEQ1 which box"},
+        {"option_index": 0, "confirm_text": "PROBEQ2 which cache"},
+    ])
+
+    assert res.delivered is False
+    assert "question 2 not focused" in res.detail
+    assert len(_enters(calls)) == 1  # only Q1's select landed; no Submit
+
+
+def test_answers_refuses_when_submit_screen_absent(monkeypatch):
+    # Every question answered but the review/Submit tab never shows → do NOT
+    # press a blind Enter that might do the wrong thing; refuse.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="PROBEQ1 which box\nPROBEQ2 which cache")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answers("t1", [
+        {"option_index": 0, "confirm_text": "PROBEQ1 which box"},
+        {"option_index": 0, "confirm_text": "PROBEQ2 which cache"},
+    ])
+
+    assert res.delivered is False
+    assert "submit screen not shown" in res.detail
+    assert len(_enters(calls)) == 2  # both selects, but no Submit Enter
+
+
+def test_answers_free_text_question_types_and_acks(monkeypatch):
+    # A per-question typed answer rides the "Type something." entry: navigate,
+    # type, ack (capture shows it), Enter — then the next question, then submit.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="PROBEQ1\nPROBEQ2\nSubmit answers\nmy typed reply")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answers("t1", [
+        {"option_index": 2, "text": "my typed reply", "confirm_text": "PROBEQ1"},
+        {"option_index": 0, "confirm_text": "PROBEQ2"},
+    ])
+
+    assert res.delivered is True
+    assert any(c[-1] == "my typed reply" for c in _literal_sends(calls))
+
+
+def test_answers_invalid_shape_refuses_before_tmux(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.deliver_answers("t1", []).delivered is False
+    assert delivery.deliver_answers("t1", [{"option_index": -1}]).delivered is False
+    assert delivery.deliver_answers("t1", "nope").delivered is False
+    assert calls == []  # rejected before any tmux subprocess
+
+
 # ── capture_screen: read-only snapshot, screen-only by default ──
 
 

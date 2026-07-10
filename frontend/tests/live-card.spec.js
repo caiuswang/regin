@@ -1730,6 +1730,147 @@ test.describe('Answer a pending ask from the QA sheet', () => {
   })
 })
 
+// ---- answer a pending MULTI-question ask from the QA sheet ------------------
+//
+// When every question is single-select, a many-question ask is answerable as a
+// Prev/Next stepper: the operator answers each question (changing any freely),
+// and NOTHING reaches the pane until "Send all", which delivers the answers in
+// order — each POST carrying `confirm_text` (that question) so the backend can
+// refuse a stale focus. An ask with a multi-select question stays read-only.
+test.describe('Answer a pending multi-question ask', () => {
+  async function seedMultiQuestion(page, { firstMultiSelect = false } = {}) {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'multi-question fixture', is_test: true } },
+      { trace_id: traceId, span_id: `pending-tu-${sfx}`, parent_id: null,
+        name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
+        attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`, is_test: true,
+          questions: [
+            { question: 'Q1_MARKER — which box zooms?', header: 'Box',
+              multiSelect: firstMultiSelect,
+              options: [{ label: 'Composer' }, { label: 'Search' }] },
+            { question: 'Q2_MARKER — which cache?', header: 'Cache', multiSelect: false,
+              options: [{ label: 'Bust' }, { label: 'Keep' }, { label: 'Reset' }] },
+          ] } },
+    ])
+    await bridgeReachableMap(page, traceId)
+    return { traceId, sfx }
+  }
+
+  async function openMulti(page, traceId) {
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const nowZone = page.locator('[data-testid="live-now"]')
+    await expect(nowZone).toHaveAttribute('data-state', 'question', { timeout: 10_000 })
+    await page.locator('[data-testid="live-now-options"]').click()
+    const sheet = page.locator('[data-testid="live-sheet"]')
+    await expect(sheet).toBeVisible()
+    return sheet
+  }
+
+  test('one atomic POST carries every answer in order with confirm_text', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted 2 answers' })
+    const sheet = await openMulti(page, traceId)
+
+    await expect(sheet.locator('[data-testid="live-qa-answer-multi"]')).toBeVisible()
+    await expect(sheet.locator('[data-testid="live-qa-step"]')).toContainText('Question 1 of 2')
+    const sendAll = sheet.locator('[data-testid="live-qa-send-all"]')
+    await expect(sendAll).toBeDisabled()  // no send until every question answered
+
+    // Answer Q1 (Search), advance to Q2.
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await expect(sheet.locator('[data-testid="live-qa-step"]')).toContainText('Question 2 of 2')
+
+    // Answer Q2 (Reset) — now every question is answered.
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(2).click()
+    await expect(sendAll).toBeEnabled()
+
+    await page.waitForTimeout(150)
+    expect(posts.length).toBe(0)  // nothing reached the pane before Send-all
+
+    await sendAll.click()
+    await expect.poll(() => posts.length).toBe(1)  // ONE atomic request
+    const { answers } = posts[0]
+    expect(answers).toHaveLength(2)
+    expect(answers[0].option_index).toBe(1)
+    expect(answers[0].label).toBe('Search')
+    expect(answers[0].confirm_text).toContain('Q1_MARKER')
+    expect(answers[1].option_index).toBe(2)
+    expect(answers[1].label).toBe('Reset')
+    expect(answers[1].confirm_text).toContain('Q2_MARKER')
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('Previous lets you change an earlier answer before sending', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()  // Q1 Composer
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()  // Q2 Bust
+    // Switch back to Q1 and choose differently.
+    await sheet.locator('[data-testid="live-qa-prev"]').click()
+    await expect(sheet.locator('[data-testid="live-qa-step"]')).toContainText('Question 1 of 2')
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()  // Q1 Search now
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    expect(posts[0].answers[0].label).toBe('Search')  // the revised choice, not Composer
+    expect(posts[0].answers[1].label).toBe('Bust')
+  })
+
+  test('a backend refusal surfaces the detail and keeps the sheet open', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    // The atomic walk refused mid-way (a focus-guard failure names the question).
+    await stubBridgeAnswer(page, traceId,
+      { delivered: false, detail: 'question 2 not focused in pane' })
+    const sheet = await openMulti(page, traceId)
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+
+    await expect(sheet).toContainText('question 2 not focused')
+    await expect(sheet).toBeVisible()  // not closed on failure
+  })
+
+  test('Type-your-own in a question rides the free-text entry in the atomic POST', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    // Q1: type your own instead of picking a listed option.
+    await sheet.locator('[data-testid="live-qa-stage-free"]').click()
+    await sheet.locator('[data-testid="live-qa-free-input"]').fill('a custom box')
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    // Q2: pick Keep (index 1).
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    const { answers } = posts[0]
+    // Q1 free-text → option_index = the option count (2), text carries the answer.
+    expect(answers[0].option_index).toBe(2)
+    expect(answers[0].text).toBe('a custom box')
+    expect(answers[1].option_index).toBe(1)
+    expect(answers[1].label).toBe('Keep')
+  })
+
+  test('an ask with a multi-select question stays read-only with a reason', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page, { firstMultiSelect: true })
+    const sheet = await openMulti(page, traceId)
+    await expect(sheet.locator('[data-testid="live-qa-answer-multi"]')).toHaveCount(0)
+    await expect(sheet.locator('[data-testid="live-qa-answer"]')).toHaveCount(0)
+    await expect(sheet).toContainText('multi-select')
+  })
+})
+
 // ---- review regressions -----------------------------------------------------
 //
 // Header/status lifecycle, outcome-row phrasing, filter-count, and

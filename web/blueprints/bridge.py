@@ -189,27 +189,54 @@ def _parse_answer(payload: dict):
     return option_index, text, chat, (text or label or f"option {option_index + 1}")
 
 
+def _answer_body_part(a) -> str:
+    """One multi-answer item → its sanitized inbox label (falls back to the
+    option ordinal)."""
+    if not isinstance(a, dict):
+        return "option"
+    raw = a.get("label") or a.get("text") or ""
+    clean = delivery.sanitize_text(raw) if isinstance(raw, str) else ""
+    if clean:
+        return clean
+    oi = a.get("option_index")
+    return f"option {oi + 1}" if isinstance(oi, int) and oi >= 0 else "option"
+
+
+def _answers_body(answers: list) -> str:
+    """Human-readable inbox line summarizing a multi-question submission."""
+    return " · ".join(_answer_body_part(a) for a in answers) or "answers"
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-answer', methods=['POST'])
 @require_editor
 def api_session_bridge_answer(trace_id):
     """Answer a pending AskUserQuestion in the /live card's session by driving
-    its select TUI (editor+ only). `option_index` (0-based) picks a listed
-    option; an optional `text` selects the auto-appended "Type something."
-    entry at that index and types a free-form answer; `chat=true` targets the
-    "Chat about this" entry (menu dismiss + optional composer message). Same
-    JWT + `require_editor`
-    gate as `bridge-send` — driving a live agent terminal outranks every
-    editor-gated mutation, so viewers get 403. The human-readable answer
-    (`label`, else the free text) is recorded in the steering inbox for audit,
-    mirroring `bridge-send`. A disabled bridge is a clean structured refusal.
+    its select TUI (editor+ only). A single-question ask takes `option_index`
+    (0-based) to pick a listed option; an optional `text` selects the appended
+    "Type something." entry and types a free-form answer; `chat=true` targets the
+    "Chat about this" entry (menu dismiss + optional composer message). A
+    MULTI-question ask sends an ordered `answers` array (`{option_index, text?,
+    label?, confirm_text?}`) that `deliver_answers` walks tab-by-tab and submits.
+    Same JWT + `require_editor` gate as `bridge-send` — driving a live agent
+    terminal outranks every editor-gated mutation, so viewers get 403. The
+    human-readable answer is recorded in the steering inbox for audit, mirroring
+    `bridge-send`. A disabled bridge is a clean structured refusal.
     """
     if not settings.agent_bridge.enabled:
         return jsonify({"delivered": False, "detail": "bridge disabled"})
-    option_index, text, chat, body = _parse_answer(request.get_json(silent=True) or {})
-    if option_index is None:
-        return jsonify({"error": "option_index required"}), 400
+    payload = request.get_json(silent=True) or {}
     user = get_current_user()
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    if isinstance(payload.get("answers"), list):
+        answers = payload["answers"]
+        row_id = store.record_bridge_message(trace_id, _answers_body(answers), sender)
+        result = delivery.deliver_answers(trace_id, answers)
+        store.mark_delivered(row_id, result.delivered, result.detail)
+        return jsonify({"delivered": result.delivered,
+                        "detail": result.detail, "id": row_id})
+    option_index, text, chat, body = _parse_answer(payload)
+    if option_index is None:
+        return jsonify({"error": "option_index required"}), 400
     row_id = store.record_bridge_message(trace_id, body, sender)
     result = delivery.deliver_answer(trace_id, option_index, text, expect_chat=chat)
     store.mark_delivered(row_id, result.delivered, result.detail)

@@ -2528,6 +2528,22 @@ details summary {
     color: var(--color-fg-subtle);
     margin-bottom: 2px;
 }
+.live-qa-step {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+    margin-bottom: 4px;
+}
+.live-qa-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+.live-qa-nav .live-qa-send { margin-left: auto; }
 .live-qa-title { font-size: 13px; font-weight: 600; color: var(--color-fg); overflow-wrap: anywhere; }
 .live-qa-opt {
     display: flex;
