@@ -2593,7 +2593,11 @@ button.live-qa-pick.live-qa-staged {
 .live-qa-confirm-hint { margin: 6px 0 0; font-size: 11px; color: var(--color-fg-subtle); }
 /* Per-option preview disclosure (mirrors the desktop AskUserQuestionCard). */
 .live-qa-optwrap + .live-qa-optwrap { border-top: 1px solid var(--color-border-subtle); }
-.live-qa-preview { margin: 0 12px 8px 36px; }
+/* In the answerer the details is a sibling of the full-width option button, so
+   it clears the mark (36px). In the read-only sheet it lives INSIDE
+   .live-qa-optbody, already indented past the mark — align it flush there. */
+.live-qa-preview { margin: 4px 12px 8px 36px; }
+.live-qa-optbody > .live-qa-preview { margin-left: 0; }
 .live-qa-preview > summary {
     cursor: pointer;
     font-size: 10.5px;
