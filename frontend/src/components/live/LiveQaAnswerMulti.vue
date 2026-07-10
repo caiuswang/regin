@@ -12,9 +12,18 @@
 // backend refuses if a failed advance left an earlier question focused. Collect-
 // then-send is what makes "go back and change an answer" safe: revision happens
 // in the card, before anything irreversible reaches the live agent.
+//
+// Each question keeps ONE answer object holding BOTH verbs' state ({kind,
+// index, label, note, text}): tapping an option after typing a custom answer
+// only flips `kind`, so switching back to "Type your own" restores the text
+// instead of silently discarding it — a wiped draft here once delivered the
+// wrong option to a live agent. The pre-send summary shows exactly what
+// `payloadFor` will deliver per question, so the operator confirms what they
+// see, not what they remember.
 import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
+import LiveQaGrowInput from './LiveQaGrowInput.vue'
 import { askOptLabel, askOptDescription } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
@@ -29,9 +38,16 @@ const idx = ref(0)
 const q = computed(() => questions.value[idx.value] || null)
 const options = computed(() => q.value?.options || [])
 
-// answers[i] = { kind: 'option', index, label, note } | { kind: 'free', text } | null
-const answers = ref(questions.value.map(() => null))
-const cur = computed(() => answers.value[idx.value])
+function blankAnswer() {
+  return { kind: null, index: -1, label: '', note: '', text: '' }
+}
+// answers[i].kind: null (unanswered) | 'option' | 'free'
+const answers = ref(questions.value.map(() => blankAnswer()))
+function answerAt(i) {
+  if (!answers.value[i]) answers.value[i] = blankAnswer()
+  return answers.value[i]
+}
+const cur = computed(() => answers.value[idx.value] || null)
 
 const phase = ref('ready') // ready | sending | failed
 const detail = ref('')
@@ -40,25 +56,38 @@ const sending = computed(() => phase.value === 'sending')
 
 function pickOption(oi) {
   if (sending.value) return
-  answers.value[idx.value] = { kind: 'option', index: oi, label: askOptLabel(options.value[oi]), note: '' }
+  const a = answerAt(idx.value)
+  // A note is written against one specific option — changing the pick must
+  // not carry it over (the typed free-text draft, by contrast, is kept).
+  if (a.index !== oi) a.note = ''
+  a.kind = 'option'
+  a.index = oi
+  a.label = askOptLabel(options.value[oi])
 }
 function startFree() {
   if (sending.value) return
-  answers.value[idx.value] = { kind: 'free', text: '' }
+  answerAt(idx.value).kind = 'free'
 }
 
-const curAnswered = computed(() => {
-  const a = cur.value
+function answered(a) {
   if (!a) return false
-  return a.kind === 'option' || !!(a.text || '').trim()
-})
-const allAnswered = computed(() => answers.value.length > 0 && answers.value.every(a =>
-  a && (a.kind === 'option' || !!(a.text || '').trim())))
+  if (a.kind === 'option') return true
+  return a.kind === 'free' && !!(a.text || '').trim()
+}
+const curAnswered = computed(() => answered(cur.value))
+const allAnswered = computed(() => total.value > 0
+  && questions.value.every((_, i) => answered(answers.value[i])))
 
 function go(delta) {
   if (sending.value) return
   const n = idx.value + delta
   if (n >= 0 && n < total.value) idx.value = n
+}
+function jumpTo(i) {
+  if (!sending.value && i >= 0 && i < total.value) idx.value = i
+}
+function onFieldEnter() {
+  if (idx.value < total.value - 1 && curAnswered.value) go(1)
 }
 
 // Mirror LiveQaAnswer's single-question mapping, per question: a plain pick
@@ -75,6 +104,14 @@ function payloadFor(i) {
   return { option_index: a.index, label: a.label, confirm_text }
 }
 
+// The exact text each question will deliver, read off the payload itself so
+// the summary structurally cannot drift from the POST.
+function summaryText(i) {
+  if (!answers.value[i] || !answers.value[i].kind) return ''
+  const p = payloadFor(i)
+  return p.text || p.label || ''
+}
+
 // One atomic POST: the backend walks every tab and presses Submit, verifying
 // focus per question — so a dropped round-trip can never leave the ask half
 // filled, and the operator's revisions all happened here before send.
@@ -83,10 +120,10 @@ async function sendAll() {
   phase.value = 'sending'
   detail.value = ''
   sendingLabel.value = `Sending ${total.value} answers to the terminal…`
-  const answers = questions.value.map((_, i) => payloadFor(i))
+  const payload = questions.value.map((_, i) => payloadFor(i))
   let res = null
   try {
-    res = await api.post(`/sessions/${props.sessionId}/bridge-answer`, { answers })
+    res = await api.post(`/sessions/${props.sessionId}/bridge-answer`, { answers: payload })
   } catch { res = null }
   if (res && res.delivered) {
     emit('answered')
@@ -130,30 +167,50 @@ async function sendAll() {
         @click="startFree"
       >
         <span class="live-qa-optmark">✎</span>
-        <span class="live-qa-optbody"><span class="live-qa-optlbl">Type your own</span></span>
+        <span class="live-qa-optbody">
+          <span class="live-qa-optlbl">Type your own</span>
+          <span v-if="cur && cur.kind !== 'free' && (cur.text || '').trim()" class="live-qa-optdesc">
+            draft kept: “{{ cur.text.trim() }}”
+          </span>
+        </span>
       </component>
     </div>
 
-    <input
+    <LiveQaGrowInput
       v-if="cur && cur.kind === 'option'"
       v-model="cur.note"
-      class="live-qa-free-input"
-      type="text"
       placeholder="Add a note to this choice (optional)…"
       aria-label="Add a note to this choice"
       :disabled="sending"
-      data-testid="live-qa-note-input"
+      testid="live-qa-note-input"
+      @enter="onFieldEnter"
     />
-    <input
+    <LiveQaGrowInput
       v-else-if="cur && cur.kind === 'free'"
       v-model="cur.text"
-      class="live-qa-free-input"
-      type="text"
       placeholder="Type your own answer…"
       aria-label="Type your own answer"
       :disabled="sending"
-      data-testid="live-qa-free-input"
+      testid="live-qa-free-input"
+      @enter="onFieldEnter"
     />
+
+    <div v-if="allAnswered" class="live-qa-summary" data-testid="live-qa-summary">
+      <div class="live-qa-summary-hd">Send all will deliver:</div>
+      <component
+        :is="'button'"
+        v-for="(qq, i) in questions"
+        :key="i"
+        class="live-qa-summary-row"
+        :class="{ 'live-qa-summary-cur': i === idx }"
+        :disabled="sending || undefined"
+        data-testid="live-qa-summary-row"
+        @click="jumpTo(i)"
+      >
+        <span class="live-qa-summary-mark">{{ answers[i] && answers[i].kind === 'free' ? '✎' : '›' }}</span>
+        <span class="live-qa-summary-txt">{{ summaryText(i) }}</span>
+      </component>
+    </div>
 
     <div class="live-qa-nav">
       <Button
@@ -176,7 +233,7 @@ async function sendAll() {
       <template v-else-if="phase === 'failed'">
         ✗ {{ detail }} · the ask is mid-way in the terminal — finish it directly there
       </template>
-      <template v-else-if="allAnswered">all {{ total }} answered — Send all delivers them to the terminal in order</template>
+      <template v-else-if="allAnswered">review the summary above, then Send all delivers in order</template>
       <template v-else>answer each question, then Send all — go back to change any before sending</template>
     </p>
   </div>

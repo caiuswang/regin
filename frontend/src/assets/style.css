@@ -2650,6 +2650,47 @@ button.live-qa-pick.live-qa-staged {
 }
 .live-qa-free-input:focus { outline: none; border-color: var(--color-ring); }
 .live-qa-free-input:disabled { opacity: 0.6; }
+/* Auto-growing variant (LiveQaGrowInput): JS sets height to scrollHeight on
+   input; the cap turns further growth into internal scrolling. */
+.live-qa-grow {
+    display: block;
+    width: 100%;
+    resize: none;
+    overflow-y: auto;
+    max-height: 9.5em;
+    line-height: 1.4;
+    font-family: inherit;
+}
+/* Pre-send review of a multi-question ask: one row per question showing the
+   exact text/label Send-all will deliver; tapping a row jumps back to it. */
+.live-qa-summary {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface-2);
+}
+.live-qa-summary-hd { font-size: 11px; color: var(--color-fg-subtle); margin-bottom: 4px; }
+.live-qa-summary-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    width: 100%;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    text-align: left;
+    font-size: 12.5px;
+    color: var(--color-fg);
+    cursor: pointer;
+}
+.live-qa-summary-row:hover { background: var(--color-surface); }
+.live-qa-summary-row:focus-visible { outline: 2px solid var(--color-ring); outline-offset: -2px; }
+.live-qa-summary-row:disabled { opacity: 0.6; cursor: default; }
+.live-qa-summary-cur { background: var(--color-surface); }
+.live-qa-summary-mark { flex: none; color: var(--color-fg-subtle); }
+.live-qa-summary-txt { overflow-wrap: anywhere; }
 .live-qa-answer-meta { margin: 6px 2px 0; font-size: 11.5px; color: var(--color-fg-subtle); }
 .live-qa-answer-meta.live-qa-failed { color: var(--color-danger); }
 .live-qa-note {

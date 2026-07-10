@@ -16,6 +16,7 @@
 import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
+import LiveQaGrowInput from './LiveQaGrowInput.vue'
 import { askOptLabel, askOptDescription } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
@@ -143,29 +144,32 @@ async function confirm() {
         <template v-else-if="staged.kind === 'free'">Type your own answer</template>
         <template v-else>Chat about this — the menu closes and your message goes to the agent</template>
       </div>
-      <input
+      <!-- No @enter here: a note is optional garnish on an already-staged
+           pick, and the send is irreversible — only the explicit Confirm
+           button may fire it while a note is being typed. -->
+      <LiveQaGrowInput
         v-if="staged.kind === 'option'"
-        v-model="note" class="live-qa-free-input" type="text"
+        v-model="note"
         placeholder="Add a note to this choice (optional)…"
         aria-label="Add a note to this choice" :disabled="sending"
-        data-testid="live-qa-note-input"
+        testid="live-qa-note-input"
       />
       <p v-if="staged.kind === 'option' && note.trim()" class="live-qa-confirm-hint">
         The terminal has no note field, so this is sent as a typed answer: “{{ staged.label }} — {{ note.trim() }}”.
       </p>
-      <input
+      <LiveQaGrowInput
         v-else-if="staged.kind === 'free'"
-        v-model="freeText" class="live-qa-free-input" type="text"
+        v-model="freeText"
         placeholder="Type your own answer…" aria-label="Type your own answer"
-        :disabled="sending" data-testid="live-qa-free-input"
-        @keydown.enter.prevent="confirm"
+        :disabled="sending" testid="live-qa-free-input"
+        @enter="confirm"
       />
-      <input
+      <LiveQaGrowInput
         v-else
-        v-model="chatText" class="live-qa-free-input" type="text"
+        v-model="chatText"
         placeholder="Message for the agent (optional)…" aria-label="Chat message"
-        :disabled="sending" data-testid="live-qa-chat-input"
-        @keydown.enter.prevent="confirm"
+        :disabled="sending" testid="live-qa-chat-input"
+        @enter="confirm"
       />
       <div class="live-qa-confirm-actions">
         <Button

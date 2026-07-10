@@ -1869,6 +1869,97 @@ test.describe('Answer a pending multi-question ask', () => {
     await expect(sheet.locator('[data-testid="live-qa-answer"]')).toHaveCount(0)
     await expect(sheet).toContainText('multi-select')
   })
+
+  test('tapping an option after typing keeps the draft; switching back restores and sends it', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    // Q1: type a custom answer, then tap a listed option (the incident: this
+    // used to silently wipe the draft and deliver the option instead).
+    await sheet.locator('[data-testid="live-qa-stage-free"]').click()
+    await sheet.locator('[data-testid="live-qa-free-input"]').fill('my own answer')
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()
+    // The draft survives the toggle and is visible on the Type-your-own row.
+    await expect(sheet.locator('[data-testid="live-qa-stage-free"]')).toContainText('my own answer')
+    // Switch back — the field restores the typed draft.
+    await sheet.locator('[data-testid="live-qa-stage-free"]').click()
+    await expect(sheet.locator('[data-testid="live-qa-free-input"]')).toHaveValue('my own answer')
+
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()  // Q2 Keep
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    const { answers } = posts[0]
+    expect(answers[0].option_index).toBe(2)        // the free-text entry
+    expect(answers[0].text).toBe('my own answer')  // the typed draft, not 'Search'
+    expect(answers[1].label).toBe('Keep')
+  })
+
+  test('the pre-send summary shows exactly what each question delivers and jumps on tap', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    const summary = sheet.locator('[data-testid="live-qa-summary"]')
+    await expect(summary).toHaveCount(0)  // hidden until every question is answered
+
+    await sheet.locator('[data-testid="live-qa-stage-free"]').click()
+    await sheet.locator('[data-testid="live-qa-free-input"]').fill('a custom box')
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()  // Q2 Bust
+    await sheet.locator('[data-testid="live-qa-note-input"]').fill('gently')
+
+    const rows = sheet.locator('[data-testid="live-qa-summary-row"]')
+    await expect(summary).toBeVisible()
+    await expect(rows.nth(0)).toContainText('✎')
+    await expect(rows.nth(0)).toContainText('a custom box')
+    // Option + note delivers as the free-text 'label — note' — the summary
+    // mirrors the payload text exactly.
+    await expect(rows.nth(1)).toContainText('Bust — gently')
+
+    // Tapping a summary row jumps back to that question for revision.
+    await rows.nth(0).click()
+    await expect(sheet.locator('[data-testid="live-qa-step"]')).toContainText('Question 1 of 2')
+  })
+
+  test('changing the picked option drops a note written for the previous option', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()  // Q1 Composer
+    await sheet.locator('[data-testid="live-qa-note-input"]').fill('only for Composer')
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()  // change mind → Search
+    await expect(sheet.locator('[data-testid="live-qa-note-input"]')).toHaveValue('')
+
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()  // Q2 Bust
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    const { answers } = posts[0]
+    expect(answers[0].option_index).toBe(1)     // plain pick of Search…
+    expect(answers[0].text).toBeUndefined()     // …not a noted answer carrying Composer's note
+  })
+
+  test('the typed-answer field auto-grows so long text stays visible', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    await sheet.locator('[data-testid="live-qa-stage-free"]').click()
+    const field = sheet.locator('[data-testid="live-qa-free-input"]')
+    const empty = (await field.boundingBox()).height
+    await field.fill('a long custom answer that definitely wraps across several lines '.repeat(2))
+    const grown = (await field.boundingBox()).height
+    expect(grown).toBeGreaterThan(empty * 1.8)  // multiple lines now visible
+    // No internal scrolling below the CSS cap: the full text is on screen
+    // (±4px for the border, which scrollHeight excludes under border-box).
+    const clipped = await field.evaluate((el) => el.scrollHeight - el.clientHeight > 4)
+    expect(clipped).toBe(false)
+  })
 })
 
 // ---- review regressions -----------------------------------------------------

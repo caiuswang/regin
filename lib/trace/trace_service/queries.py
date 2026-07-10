@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from lib.trace.is_test import _IS_TEST_CASE, _IS_TEST_WHERE
+from lib.trace.workflow_labels import attach_workflow_agent_labels
 from lib.utils.pagination import CursorPage, keyset_page
 
 
@@ -253,6 +254,7 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
         _attach_prompt_expansions(trace_id, widened)
+        attach_workflow_agent_labels(trace_id, widened, conn)
         tree = _build_span_tree(widened)
         return widened, tree
     finally:
@@ -522,6 +524,7 @@ def fetch_session_paginated(
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
+        attach_workflow_agent_labels(trace_id, widened, conn)
         annotate_wakeup_resumes(widened)
         tree = _build_span_tree(widened)
         retired_ids = _compute_retired_ids(raw, grafted)

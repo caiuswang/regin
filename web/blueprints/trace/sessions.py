@@ -1145,7 +1145,24 @@ def _roster_with_activity(trace_id: str) -> tuple:
     activity = {r['aid']: dict(r) for r in act_rows}
     if not act_rows and not marks:
         return [], activity, ended
-    return _build_roster(act_rows, marks, launches, ended), activity, ended
+    roster = _build_roster(act_rows, marks, launches, ended)
+    _fill_workflow_agent_descriptions(trace_id, roster)
+    return roster, activity, ended
+
+
+def _fill_workflow_agent_descriptions(trace_id: str, roster: list) -> None:
+    """Fill description-less workflow-subagent entries with their script
+    label, joined from the captured run trace. No-op when nothing is missing
+    or the run trace isn't ingested yet."""
+    def needs_label(e):
+        return e['agent_type'] == 'workflow-subagent' and not e['description']
+    if not any(needs_label(e) for e in roster):
+        return
+    from lib.trace.workflow_labels import workflow_agent_labels
+    labels = workflow_agent_labels(trace_id)
+    for e in roster:
+        if needs_label(e) and e['agent_id'] in labels:
+            e['description'] = labels[e['agent_id']]
 
 
 # ── Per-agent phase (server verdict) ─────────────────────────────────
@@ -1442,7 +1459,9 @@ _MAP_KEEP_ATTR_KEYS = (
     'hit_count', 'source', 'skill_id',
     # The per-agent scope key: the frontend's attribute partition (orphan
     # roster entries with no start marker to tree-walk from) matches on it.
-    'agent_id',
+    # `label` rides along so a workflow subagent's marker stays nameable
+    # after the strip.
+    'agent_id', 'label',
     # ScheduleWakeup label needs these to distinguish "agent finished" (stop)
     # from "paused to resume" — else the row degrades to a bare tool name on a
     # fresh (non-shallow /map) reload. `resume_action`/`poll_*` are the
@@ -1503,6 +1522,8 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
         spans.append(d)
     grafted = merge_spans(spans, session_activity=session_activity)
     _attach_prompt_expansions(trace_id, grafted)
+    from lib.trace.workflow_labels import attach_workflow_agent_labels
+    attach_workflow_agent_labels(trace_id, grafted)
     from lib.trace.wakeup_links import annotate_wakeup_resumes
     annotate_wakeup_resumes(grafted)
     for s in grafted:
