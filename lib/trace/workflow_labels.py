@@ -1,56 +1,82 @@
-"""Serve-time labels for workflow-subagent markers in a launching session.
+"""Serve-time enrichment of workflow-subagent markers in a launching session.
 
-Claude Code's SubagentStart hook payload carries no label for workflow
-subagents, so a launching session's `subagent.start`/`subagent.stop` markers
-render as indistinguishable "workflow-subagent" rows. The captured run trace
-(`workflow_run_id` stamped on the `tool.Workflow` span) stores the same
-agents WITH their script labels under identical agent_ids — join the label
-in at serve time; the append-only store is never mutated.
+Claude Code's SubagentStart/Stop hooks carry only agent_id + agent_type for
+workflow subagents, so a launching session's markers render as
+indistinguishable "workflow-subagent" rows with no task prompt, result, or
+model. The captured run trace (`workflow_run_id` stamped on the
+`tool.Workflow` span) stores the same agents under identical agent_ids WITH
+those attributes — join them in at serve time; the append-only store is
+never mutated.
 """
 
 from __future__ import annotations
 
+import json
 import time
 
-_MARKER_NAMES = ("subagent.start", "subagent.stop")
+# Attribute subset copied onto each marker kind. Fill-only — an attribute the
+# hook DID capture is never overwritten. `result_full` stays behind in the run
+# trace: it can be tens of KB and the launching session's card previews only.
+_START_COPY_KEYS = ("label", "prompt", "model", "state", "tokens",
+                    "tool_calls", "result_preview", "result_full")
+_STOP_COPY_KEYS = ("label", "result_preview")
+_MARKER_COPY_KEYS = {"subagent.start": _START_COPY_KEYS,
+                     "subagent.stop": _STOP_COPY_KEYS}
 
 # The live pages re-poll their session every few seconds and the markers stay
-# label-less in the store forever, so the same cross-trace join would re-run
-# on every poll (and again for the roster in the same request). A short TTL
-# absorbs that; labels appearing after run-trace ingest lag by at most the TTL.
+# bare in the store forever, so the same cross-trace join would re-run on
+# every poll (and again for the roster in the same request). A short TTL
+# absorbs that; enrichment appearing after run-trace ingest lags by at most
+# the TTL.
 _CACHE_TTL_SEC = 30.0
 _CACHE_MAX = 128
 _cache: dict[tuple, tuple[float, dict]] = {}
 
 
-def _is_unlabeled_workflow_marker(span: dict) -> bool:
+def _is_bare_workflow_marker(span: dict) -> bool:
     attrs = span.get("attributes") or {}
-    return (span.get("name") in _MARKER_NAMES
+    return (span.get("name") in _MARKER_COPY_KEYS
             and attrs.get("agent_type") == "workflow-subagent"
             and not attrs.get("label"))
 
 
-def _query_labels(trace_id: str, conn) -> dict:
-    run_rows = conn.execute(
+def _spawned_run_ids(trace_id: str, conn) -> list:
+    rows = conn.execute(
         "SELECT DISTINCT json_extract(attributes,'$.workflow_run_id') AS rid"
         "  FROM session_spans"
         " WHERE trace_id = ? AND name = 'tool.Workflow'",
         (trace_id,)).fetchall()
-    run_ids = [r["rid"] for r in run_rows if r["rid"]]
+    return [r["rid"] for r in rows if r["rid"]]
+
+
+def _parse_attrs(raw) -> dict:
+    try:
+        return json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _query_agent_attrs(trace_id: str, conn) -> dict:
+    run_ids = _spawned_run_ids(trace_id, conn)
     if not run_ids:
         return {}
     ph = ",".join("?" for _ in run_ids)
     rows = conn.execute(
-        "SELECT json_extract(attributes,'$.agent_id') AS aid,"
-        "       json_extract(attributes,'$.label') AS label"
-        "  FROM session_spans"
+        "SELECT attributes FROM session_spans"
         f" WHERE trace_id IN ({ph}) AND name = 'subagent.start'",
         tuple(run_ids)).fetchall()
-    return {r["aid"]: r["label"] for r in rows if r["aid"] and r["label"]}
+    out = {}
+    for r in rows:
+        attrs = _parse_attrs(r["attributes"])
+        aid = attrs.get("agent_id")
+        if aid and attrs.get("label"):
+            out[aid] = {k: attrs[k] for k in _START_COPY_KEYS if attrs.get(k)}
+    return out
 
 
-def workflow_agent_labels(trace_id: str, conn=None) -> dict:
-    """agent_id → label from the run traces this session's workflows spawned.
+def workflow_agent_attrs(trace_id: str, conn=None) -> dict:
+    """agent_id → attribute subset from the run traces this session's
+    workflows spawned.
 
     Empty when the session launched no workflow or no run trace is ingested
     yet — callers then leave their rows untouched (graceful fallback). Pass
@@ -64,33 +90,40 @@ def workflow_agent_labels(trace_id: str, conn=None) -> dict:
     if hit and now - hit[0] < _CACHE_TTL_SEC:
         return hit[1]
     if conn is not None:
-        labels = _query_labels(trace_id, conn)
+        agent_attrs = _query_agent_attrs(trace_id, conn)
     else:
         own = _engine.get_connection()
         try:
-            labels = _query_labels(trace_id, own)
+            agent_attrs = _query_agent_attrs(trace_id, own)
         finally:
             own.close()
-    _cache[key] = (now, labels)
+    _cache[key] = (now, agent_attrs)
     while len(_cache) > _CACHE_MAX:
         _cache.pop(next(iter(_cache)))
-    return labels
+    return agent_attrs
 
 
-def attach_workflow_agent_labels(trace_id: str, spans: list,
-                                 conn=None) -> None:
-    """Fill missing `label` on workflow-subagent markers, in place.
+def attach_workflow_agent_attrs(trace_id: str, spans: list,
+                                conn=None) -> None:
+    """Enrich bare workflow-subagent markers in place (fill-only).
 
-    Short-circuits without touching the DB when no marker needs a label."""
-    needy = [s for s in spans if _is_unlabeled_workflow_marker(s)]
+    Short-circuits without touching the DB when no marker needs it."""
+    needy = [s for s in spans if _is_bare_workflow_marker(s)]
     if not needy:
         return
-    labels = workflow_agent_labels(trace_id, conn)
-    if not labels:
+    agent_attrs = workflow_agent_attrs(trace_id, conn)
+    if not agent_attrs:
         return
     for s in needy:
-        attrs = s.get("attributes") or {}
-        label = labels.get(attrs.get("agent_id"))
-        if label:
-            attrs["label"] = label
-            s["attributes"] = attrs
+        _fill_marker(s, agent_attrs)
+
+
+def _fill_marker(span: dict, agent_attrs: dict) -> None:
+    attrs = span.get("attributes") or {}
+    src = agent_attrs.get(attrs.get("agent_id"))
+    if not src:
+        return
+    for k in _MARKER_COPY_KEYS[span["name"]]:
+        if src.get(k) and not attrs.get(k):
+            attrs[k] = src[k]
+    span["attributes"] = attrs

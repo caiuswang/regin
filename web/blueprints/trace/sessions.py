@@ -1155,17 +1155,21 @@ def _roster_with_activity(trace_id: str) -> tuple:
 
 def _fill_workflow_agent_descriptions(trace_id: str, roster: list) -> None:
     """Fill description-less workflow-subagent entries with their script
-    label, joined from the captured run trace. No-op when nothing is missing
-    or the run trace isn't ingested yet."""
-    def needs_label(e):
+    label and task prompt, joined from the captured run trace. No-op when
+    nothing is missing or the run trace isn't ingested yet."""
+    def needs_fill(e):
         return e['agent_type'] == 'workflow-subagent' and not e['description']
-    if not any(needs_label(e) for e in roster):
+    if not any(needs_fill(e) for e in roster):
         return
-    from lib.trace.workflow_labels import workflow_agent_labels
-    labels = workflow_agent_labels(trace_id)
+    from lib.trace.workflow_labels import workflow_agent_attrs
+    agent_attrs = workflow_agent_attrs(trace_id)
     for e in roster:
-        if needs_label(e) and e['agent_id'] in labels:
-            e['description'] = labels[e['agent_id']]
+        src = agent_attrs.get(e['agent_id'])
+        if not needs_fill(e) or not src:
+            continue
+        e['description'] = src.get('label') or e['description']
+        if not e['prompt_preview'] and src.get('prompt'):
+            e['prompt_preview'] = src['prompt'][:400]
 
 
 # ── Per-agent phase (server verdict) ─────────────────────────────────
@@ -1525,8 +1529,8 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
         spans.append(d)
     grafted = merge_spans(spans, session_activity=session_activity)
     _attach_prompt_expansions(trace_id, grafted)
-    from lib.trace.workflow_labels import attach_workflow_agent_labels
-    attach_workflow_agent_labels(trace_id, grafted)
+    from lib.trace.workflow_labels import attach_workflow_agent_attrs
+    attach_workflow_agent_attrs(trace_id, grafted)
     from lib.trace.wakeup_links import annotate_wakeup_resumes
     annotate_wakeup_resumes(grafted)
     for s in grafted:

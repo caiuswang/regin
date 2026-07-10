@@ -70,7 +70,11 @@ def _seed_run_trace(db_path):
     _seed(db_path, [
         {'trace_id': RUN_TRACE, 'span_id': 'run-sa-1', 'name': 'subagent.start',
          'attributes': {'agent_id': 'agent-aaa', 'label': 'survey:tags',
-                        'agent_type': 'workflow-subagent'}},
+                        'agent_type': 'workflow-subagent',
+                        'prompt': 'Investigate the tag bug end to end',
+                        'model': 'claude-opus-4-8[1m]', 'state': 'done',
+                        'tokens': 57273, 'tool_calls': 21,
+                        'result_preview': '{"files": ["SessionTags.vue"]}'}},
     ])
 
 
@@ -85,6 +89,24 @@ def test_projection_attaches_run_labels(trace_db):
     widened, _tree = fetch_session_projection(LAUNCH_TRACE)
     assert _marker_attrs(widened, 'sa-start-1')['label'] == 'survey:tags'
     assert _marker_attrs(widened, 'sa-stop-1')['label'] == 'survey:tags'
+
+
+def test_projection_enriches_start_marker_with_run_facts(trace_db):
+    """The start marker gains the run's prompt/result/model facts; the stop
+    marker gains only label + result_preview (no task prompt duplication)."""
+    _seed_launch_session(trace_db)
+    _seed_run_trace(trace_db)
+    from lib.trace.trace_service import fetch_session_projection
+    widened, _tree = fetch_session_projection(LAUNCH_TRACE)
+    start = _marker_attrs(widened, 'sa-start-1')
+    assert start['prompt'] == 'Investigate the tag bug end to end'
+    assert start['model'] == 'claude-opus-4-8[1m]'
+    assert start['tokens'] == 57273
+    assert start['tool_calls'] == 21
+    assert start['result_preview'] == '{"files": ["SessionTags.vue"]}'
+    stop = _marker_attrs(widened, 'sa-stop-1')
+    assert stop['result_preview'] == '{"files": ["SessionTags.vue"]}'
+    assert 'prompt' not in stop
 
 
 def test_paginated_attaches_run_labels(trace_db):
@@ -117,3 +139,4 @@ def test_roster_description_filled_from_run_labels(trace_db):
     roster, _activity, _ended = _roster_with_activity(LAUNCH_TRACE)
     entry = next(e for e in roster if e['agent_id'] == 'agent-aaa')
     assert entry['description'] == 'survey:tags'
+    assert entry['prompt_preview'] == 'Investigate the tag bug end to end'

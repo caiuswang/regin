@@ -94,6 +94,11 @@ const {
     }
   : null))
 
+// Workflow-run projections emit a synthetic workflow.agent_result AFTER each
+// agent's turns (_pushAgent), so SubagentCard must not render its own result
+// card there — provided so the flag skips the dispatcher's prop chain.
+provide('traceIsWorkflowRun', isWorkflow)
+
 // A surviving `promptlive-` placeholder is only "stranded" once the session
 // can no longer resolve it — i.e. it has ended. While live, the newest
 // placeholder is just the in-flight prompt. Gate the unresolved styling on

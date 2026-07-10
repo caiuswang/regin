@@ -5,6 +5,7 @@ import {
   fmtClock, fmtModel, fmtTokens, fmtDuration, fullLabel, toolRowDotClass,
 } from '../../../utils/traceFormatters.js'
 import { AGENT_PROMPT_PREVIEW_CHARS } from '../../../composables/useAgentLaunchMerge.js'
+import AgentResultCard from './AgentResultCard.vue'
 import Button from '../../ui/Button.vue'
 
 // Subagent launch: subagent.start with its tool.Agent (description + prompt)
@@ -24,6 +25,15 @@ const emit = defineEmits(['activate', 'enter-scope'])
 
 const prompt = computed(() => props.agentMerge.agentPrompt(props.span))
 const promptOwnerId = computed(() => props.agentMerge.agentPromptOwnerId(props.span))
+
+// A workflow-run projection emits its own synthetic workflow.agent_result
+// after the agent's turns — only render the inline result card outside it
+// (e.g. a launching session whose markers were enriched from the run trace).
+const isWorkflowRun = inject('traceIsWorkflowRun', ref(false))
+const resultSpan = computed(() => {
+  if (isWorkflowRun.value || !props.agentMerge.agentResultText(props.span)) return null
+  return { ...props.span, span_id: `${props.span.span_id}::result`, name: 'workflow.agent_result' }
+})
 
 // agent_id currently open in the companion pane (≥xl split), provided by the
 // hosting SessionConversationView. Injected (not a prop) so the marker doesn't
@@ -133,6 +143,9 @@ function selectAgentPrompt() {
           class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed"
         >{{ agentMerge.agentPromptPreview(prompt) }}</div>
       </div>
+    </div>
+    <div v-if="resultSpan" class="ml-6">
+      <AgentResultCard :span="resultSpan" :agent-merge="agentMerge" :folding="folding" />
     </div>
   </div>
 </template>
