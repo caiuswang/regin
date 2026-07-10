@@ -99,9 +99,9 @@ watch(() => props.detail?.id, () => {
           <span class="text-fg-muted font-medium">{{ detail.label }}</span>
         </nav>
 
-        <div class="flex items-start gap-2">
+        <div class="flex items-start flex-wrap gap-x-2 gap-y-0.5">
           <h3 class="text-base font-semibold text-fg leading-snug min-w-0">{{ detail.label }}</h3>
-          <code class="shrink-0 text-[11px] text-fg-faint mt-0.5">{{ detail.id }}</code>
+          <code class="min-w-0 truncate text-[11px] text-fg-faint mt-0.5">{{ detail.id }}</code>
         </div>
         <p v-if="detail.blurb" class="text-sm text-fg-muted leading-relaxed mt-1">{{ detail.blurb }}</p>
 
@@ -158,13 +158,13 @@ watch(() => props.detail?.id, () => {
                   :options="topics"
                   placeholder="File under topic…"
                   :disabled="busy === m.id"
-                  class="text-xs h-7 py-0!"
+                  class="text-xs h-7 max-md:h-9 py-0!"
                   :aria-label="`File ${m.title || m.kind} under a topic`"
                   @update:model-value="v => pick = { ...pick, [m.id]: v }"
                 />
                 <Button
                   variant="secondary" size="sm"
-                  class="h-7 gap-1 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+                  class="h-7 max-md:h-9 gap-1 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
                   :disabled="!pick[m.id] || busy === m.id"
                   @click="assign(m.id)"
                 >
@@ -173,7 +173,7 @@ watch(() => props.detail?.id, () => {
                 <Button
                   v-if="canUnlink"
                   variant="ghost" size="sm"
-                  class="h-7 gap-1 text-fg-faint hover:text-danger focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+                  class="h-7 max-md:h-9 gap-1 text-fg-faint hover:text-danger focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
                   :disabled="busy === m.id"
                   :title="`Unfile from ${detail.label}`"
                   @click="unlink(m.id)"
@@ -195,7 +195,7 @@ watch(() => props.detail?.id, () => {
               :key="e.target"
               variant="secondary"
               size="sm"
-              class="h-auto py-1 gap-1.5 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+              class="h-auto py-1 gap-1.5 max-w-full whitespace-normal! break-words text-left justify-start focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
               :title="e.type"
               @click="emit('select-node', e.target)"
             >

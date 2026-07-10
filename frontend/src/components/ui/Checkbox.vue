@@ -30,6 +30,10 @@ defineEmits(['update:modelValue'])
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  /* Tap area ≥32px around the 16px box; negative margin keeps the layout
+     box where it was so surrounding flow doesn't shift. */
+  padding: 0.5rem;
+  margin: -0.5rem;
   cursor: pointer;
   font-size: 0.8125rem;
   color: var(--color-fg);

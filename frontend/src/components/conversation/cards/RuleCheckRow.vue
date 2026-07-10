@@ -41,7 +41,7 @@ function onRowClick() {
       <span class="text-slate-500">rule</span>
       {{ ' ' }}<template v-for="(tag, ti) in (span.attributes?.engine_tags || [])" :key="ti"
         ><span
-          class="font-mono text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1 rounded"
+          class="hidden sm:inline font-mono text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1 rounded"
           :title="`engine: ${tag.engine}, language: ${tag.language}`"
         >{{ tag.engine }}·{{ tag.language }}</span>{{ ' ' }}</template
       ><span

@@ -237,6 +237,10 @@ function onToggle() { emit('toggle') }
 .rule-card__cta-link {
   color: var(--color-blue-800);
   text-decoration: none;
+  /* Pad the hit area to >=36px without changing visual weight. */
+  display: inline-block;
+  padding-block: 12px;
+  margin-block: -12px;
 }
 .rule-card__cta-link:hover { text-decoration: underline; }
 

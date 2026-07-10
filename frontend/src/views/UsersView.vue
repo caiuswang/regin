@@ -178,7 +178,7 @@ const roleBadgeColor = (role) => {
       <h2 class="section-heading">Team members</h2>
       <Card :no-padding="true">
         <div class="overflow-x-auto">
-        <table class="tbl">
+        <table class="tbl users-tbl">
           <thead>
             <tr>
               <th>Username</th>
@@ -224,4 +224,16 @@ const roleBadgeColor = (role) => {
     width: 7rem;
     font-size: 0.75rem;
 }
+/* Keep the identity column visible while the rest of the row scrolls,
+   so role changes / deletes always show who they apply to. */
+.users-tbl th:first-child,
+.users-tbl td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--color-white);
+    box-shadow: inset -1px 0 0 var(--color-slate-100);
+}
+.users-tbl thead th:first-child { background: var(--color-slate-50); }
+.users-tbl tbody tr:hover td:first-child { background: var(--color-slate-50); }
 </style>

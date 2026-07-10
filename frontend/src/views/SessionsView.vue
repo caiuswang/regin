@@ -107,6 +107,13 @@ const { filtersOpen, activeFilterCount } = useSessionFilterCollapse({
   range, kind, tagFilter, activeFilter, repoFilter, activeTraceId,
 })
 
+// Below sm the expanded facet grid rides in the sticky toolbar and buries
+// the results — fold it as soon as any filter/search is applied so the list
+// gets the viewport back. Desktop keeps the grid open across changes.
+watch([range, kind, tagFilter, activeFilter, repoFilter, activeSearch, activeTraceId], () => {
+  if (window.matchMedia('(max-width: 639px)').matches) filtersOpen.value = false
+})
+
 async function loadRepoOptions() {
   try {
     const res = await api.get('/repos')
@@ -680,7 +687,11 @@ function timeTitle(s) {
               <th>Context</th>
               <th title="Total wall-clock time / active agent work time (user-idle gaps excluded)">Elapsed / Active</th>
               <th>Last seen</th>
-              <th class="text-right"><span class="sr-only">Actions</span></th>
+              <!-- `relative` anchors the absolutely-positioned sr-only label
+                   to this th; unanchored it escapes the table wrapper's
+                   scroll containment and gives the whole PAGE an 85px
+                   horizontal pan at laptop widths. -->
+              <th class="text-right relative"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -749,7 +760,7 @@ function timeTitle(s) {
                 <Button
                   variant="ghost"
                   size="icon"
-                  class="h-5 w-5 text-gray-400 hover:text-gray-700"
+                  class="-m-1.5 text-gray-400 hover:text-gray-700"
                   title="Copy session id"
                   :aria-label="`Copy session id ${s.trace_id}`"
                   @click.stop="copyText(s.trace_id)"
@@ -816,22 +827,22 @@ function timeTitle(s) {
                   <dd v-else class="text-gray-300">-</dd>
                 </div>
               </dl>
-              <div class="mt-2 flex justify-end gap-4">
+              <div class="mt-2 flex justify-end gap-2">
                 <router-link
                   :to="`/live/${s.trace_id}`"
-                  class="text-xs text-emerald-600 hover:text-emerald-800 hover:underline"
+                  class="inline-flex min-h-9 items-center rounded-lg border border-emerald-200 px-3 text-xs font-medium text-emerald-700 hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-blue-500"
                   :title="`Watch session ${s.trace_id.slice(0, 12)}… in the live view`"
                 >Live</router-link>
                 <Button
                   v-if="s.status !== 'ended'"
-                  variant="link"
-                  class="text-xs text-slate-500 hover:text-slate-800 disabled:cursor-wait"
+                  variant="secondary"
+                  class="px-3 text-xs disabled:cursor-wait"
                   :disabled="closing === s.trace_id"
                   @click="closeSession(s)"
                 >{{ closing === s.trace_id ? 'Closing…' : 'Close' }}</Button>
                 <Button
-                  variant="link"
-                  class="text-xs text-red-600 hover:text-red-800 disabled:cursor-wait"
+                  variant="danger"
+                  class="px-3 text-xs disabled:cursor-wait"
                   :disabled="deleting === s.trace_id"
                   @click="deleteSession(s)"
                 >{{ deleting === s.trace_id ? 'Deleting…' : 'Delete' }}</Button>

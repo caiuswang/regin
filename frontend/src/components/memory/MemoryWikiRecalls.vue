@@ -111,8 +111,8 @@ onMounted(() => load(false))
             <tr class="text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
               <th class="py-2 pr-3 font-semibold">Topic</th>
               <th class="py-2 px-3 text-right font-semibold">Read</th>
-              <th class="py-2 px-3 text-right font-semibold">Exp.</th>
-              <th class="py-2 pl-3 text-right font-semibold">Last read</th>
+              <th class="py-2 px-3 text-right font-semibold max-sm:hidden">Exp.</th>
+              <th class="py-2 pl-3 text-right font-semibold max-sm:hidden">Last read</th>
             </tr>
           </thead>
           <tbody>
@@ -147,14 +147,14 @@ onMounted(() => load(false))
               </td>
               <td class="py-2.5 px-3">
                 <div class="flex items-center justify-end gap-2.5">
-                  <span class="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
+                  <span class="h-1.5 w-16 max-sm:w-10 shrink-0 overflow-hidden rounded-full bg-surface-3" aria-hidden="true">
                     <span class="block h-full rounded-full bg-primary" :style="{ width: barWidth(r.read) + '%' }"></span>
                   </span>
                   <span class="w-5 text-right font-mono tabular-nums text-fg">{{ r.read }}</span>
                 </div>
               </td>
-              <td class="py-2.5 px-3 text-right font-mono tabular-nums text-fg-faint">{{ r.exposure }}</td>
-              <td class="py-2.5 pl-3 text-right font-mono tabular-nums whitespace-nowrap text-fg-faint">{{ shortDate(r.last_read) }}</td>
+              <td class="py-2.5 px-3 text-right font-mono tabular-nums text-fg-faint max-sm:hidden">{{ r.exposure }}</td>
+              <td class="py-2.5 pl-3 text-right font-mono tabular-nums whitespace-nowrap text-fg-faint max-sm:hidden">{{ shortDate(r.last_read) }}</td>
             </tr>
           </tbody>
         </table>

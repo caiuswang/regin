@@ -107,7 +107,9 @@ function tokenTitle(d) {
               >MCP</span>
               <span class="truncate">{{ spanLabel(node.data) }}</span>
             </div>
-            <div class="text-xs text-gray-400 truncate" :title="node.data.name">{{ node.data.name }}</div>
+            <div class="text-xs text-gray-400 truncate" :title="node.data.name">
+              {{ node.data.name }}<span v-if="node.data.duration_ms" class="sm:hidden"> · {{ fmtDuration(node.data.duration_ms) }}</span>
+            </div>
           </div>
         </div>
       </template>
@@ -136,3 +138,17 @@ function tokenTitle(d) {
     </Column>
   </TreeTable>
 </template>
+
+<style scoped>
+/* Below sm the three columns squeeze span labels into an unreadable sliver:
+   drop the Time and Tokens columns (duration rides under the label instead)
+   so the Span cell takes the full viewport width. */
+@media (max-width: 639px) {
+  :deep(.p-treetable-thead > tr > th:nth-child(2)),
+  :deep(.p-treetable-thead > tr > th:nth-child(3)),
+  :deep(.p-treetable-tbody > tr > td:nth-child(2)),
+  :deep(.p-treetable-tbody > tr > td:nth-child(3)) {
+    display: none;
+  }
+}
+</style>

@@ -12,7 +12,7 @@ async function refresh() {
 }
 
 export function useDriftSummary() {
-  if (!polling) {
+  if (!polling && api.getToken()) {
     refresh()
     polling = setInterval(refresh, 60_000)
   }

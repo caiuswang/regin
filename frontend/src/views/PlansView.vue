@@ -80,10 +80,10 @@ function fmtDate(iso) {
         <thead>
           <tr>
             <th>Title</th>
-            <th>Filename</th>
+            <th class="hidden md:table-cell">Filename</th>
             <th>Repo</th>
             <th>Updated</th>
-            <th class="text-right">Size</th>
+            <th class="hidden md:table-cell text-right">Size</th>
           </tr>
         </thead>
         <tbody>
@@ -94,7 +94,7 @@ function fmtDate(iso) {
                 {{ p.title }}
               </router-link>
             </td>
-            <td><code class="cell-code">{{ p.filename }}</code></td>
+            <td class="hidden md:table-cell"><code class="cell-code">{{ p.filename }}</code></td>
             <td class="whitespace-nowrap">
               <span
                 v-for="name in (p.repos || [])"
@@ -104,7 +104,7 @@ function fmtDate(iso) {
               <span v-if="!p.repos || !p.repos.length" class="text-gray-300 text-xs" title="No linked plan-session in a registered repo">-</span>
             </td>
             <td class="text-slate-500">{{ fmtDate(p.updated_at) }}</td>
-            <td class="text-right text-slate-500 font-mono text-xs">{{ p.size }} B</td>
+            <td class="hidden md:table-cell text-right text-slate-500 font-mono text-xs">{{ p.size }} B</td>
           </tr>
           <tr v-if="!plans.length">
             <td colspan="5" class="empty-row">

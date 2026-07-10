@@ -54,7 +54,7 @@ onMounted(async () => {
     </Card>
 
     <h2 class="section-heading">Patterns ({{ data.patterns.length }})</h2>
-    <Card :no-padding="true" class="mb-6">
+    <Card :no-padding="true" class="mb-6 max-w-4xl">
       <div class="overflow-x-auto">
       <table class="tbl">
         <thead><tr><th>Title</th><th style="width: 12rem">Category</th></tr></thead>
@@ -74,7 +74,7 @@ onMounted(async () => {
     </Card>
 
     <h2 class="section-heading">Approved Wiki ({{ data.wiki.length }})</h2>
-    <Card :no-padding="true" class="mb-6">
+    <Card :no-padding="true" class="mb-6 max-w-4xl">
       <div class="overflow-x-auto">
       <table class="tbl">
         <thead><tr><th>Topic</th><th style="width: 12rem">Category</th></tr></thead>

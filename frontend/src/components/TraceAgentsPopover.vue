@@ -40,6 +40,10 @@ function onDocKeydown(e) {
 // roster must not self-dismiss it.
 function onAnyScroll(e) {
   if (rootEl.value && rootEl.value.contains(e.target)) return
+  // A scroll event landing within a beat of opening is the tap's own
+  // scroll-into-view settling (browsers deliver it on the next frame) —
+  // re-anchor to the button instead of dismissing what the user just opened.
+  if (performance.now() - openedAt < 350) { placePopover(); return }
   open.value = false
 }
 function onWinResize() { open.value = false }
@@ -79,10 +83,12 @@ function placePopover() {
   }
 }
 
+let openedAt = 0
 function onButton() {
   if (props.paneMode) { emit('open-roster'); return }
   if (open.value) { open.value = false; return }
   placePopover()
+  openedAt = performance.now()
   open.value = true
 }
 

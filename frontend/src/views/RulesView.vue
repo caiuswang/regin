@@ -302,4 +302,12 @@ function fmtSize(bytes) {
 .tbl td {
     vertical-align: top;
 }
+
+/* Floor for the rule-id / script-name column: without it, table auto-layout
+   crushes the break-all id to one character per line on a phone instead of
+   letting the Card's overflow-x-auto scroll. */
+.tbl td:first-child,
+.tbl th:first-child {
+    min-width: 11rem;
+}
 </style>

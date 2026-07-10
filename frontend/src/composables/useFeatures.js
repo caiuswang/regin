@@ -30,6 +30,7 @@ function fetchFeatures() {
 
 function loadFeatures() {
   if (inflight) return inflight
+  if (!api.getToken()) return Promise.resolve()
   inflight = fetchFeatures()
   return inflight
 }

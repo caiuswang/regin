@@ -10,13 +10,14 @@ import TraceConversationRegion from '../components/TraceConversationRegion.vue'
 import SuppressButton from '../components/triggers/SuppressButton.vue'
 import { dropRetiredSpans } from '../utils/traceFormatters.js'
 import { useTraceScroll } from '../composables/useTraceScroll.js'
-import { useStickyHeader } from '../composables/useStickyHeader.js'
+import { useStickyHeader, useStickyChromeHeight } from '../composables/useStickyHeader.js'
 import { useViewMode } from '../composables/useViewMode.js'
 import { useFilterState } from '../composables/useFilterState.js'
 import { useRuleTriggers } from '../composables/useRuleTriggers.js'
 import { useTraceTimeline } from '../composables/useTraceTimeline.js'
 import { useCompactWatch } from '../composables/useCompactWatch.js'
 import { useSpanContentCache } from '../composables/useSpanContentCache.js'
+import { useSpanSheet } from '../composables/useSpanSheet.js'
 import { useToolRollup } from '../composables/useToolRollup.js'
 import { useWorkflowMeta } from '../composables/useWorkflowMeta.js'
 import { useTraceData } from '../composables/useTraceData.js'
@@ -29,6 +30,7 @@ import TraceAgentPane from '../components/TraceAgentPane.vue'
 import TraceAgentsPopover from '../components/TraceAgentsPopover.vue'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
 import ToolTokenRollup from '../components/ToolTokenRollup.vue'
+import Icon from '../components/ui/Icon.vue'
 import SessionTraceHeader from '../components/SessionTraceHeader.vue'
 import TraceOverviewStrip from '../components/TraceOverviewStrip.vue'
 import SpanDetailPanel from '../components/SpanDetailPanel.vue'
@@ -60,6 +62,11 @@ const { ruleTriggersByRuleId, canSuppressRule, loadTriggersForSelectedSpan } =
 const expandedKeys = ref({})
 const selectedKeys = ref({})   // PrimeVue TreeTable v-model:selection-keys
 
+// Breakpoint flags drive structural (component-level) switches: the agent
+// scope's companion pane vs takeover (≥xl), and the span-detail rail vs
+// mobile bottom sheet (lg). See useBreakpoint / the redesign artifact.
+const { isLgUp, isXl, is2xl } = useBreakpoint()
+
 // Sticky page header: everything that frames the trace (title row, tokens
 // rollup, mini-timeline, more-history banner) pins to the top of the scroll
 // container so the user keeps navigation context while scrolling a long
@@ -67,7 +74,24 @@ const selectedKeys = ref({})   // PrimeVue TreeTable v-model:selection-keys
 // the rendered header with a ResizeObserver and expose it as a CSS var.
 // Re-measures on mount + whenever `loading` flips falsy (the v-else branch
 // renders the sticky element only after session data lands).
+//
+// Below lg the full header is too tall to pin (it ate over half a phone
+// viewport), so it scrolls away and only a compact strip — title line +
+// view-mode switcher — stays sticky. Each sticky element gets its own
+// measured height; `stickyChromeHeight` is whichever one is pinned at the
+// current breakpoint, and drives every dependent offset (thead, sidebar,
+// conversation rails).
 const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
+const { stickyHeaderEl: compactBarEl, stickyHeaderHeight: compactBarHeight } =
+  useStickyHeader(loading)
+const stickyChromeHeight = useStickyChromeHeight(isLgUp, stickyHeaderHeight, compactBarHeight)
+
+const MODE_OPTIONS = [
+  { id: 'conversation', label: 'Conversation' },
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'messages', label: 'Messages' },
+]
 
 // On-demand span content cache; `allSpans` overlays it onto session.spans so
 // every consumer reads one merged list (see useSpanContentCache).
@@ -90,12 +114,6 @@ const {
   ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded, refreshSpanSubtree,
   ensureTerminalSpansLoaded, ensureWorkflowSpansLoaded,
 } = useTraceData(route, { session, allSpans, selectedSpan })
-
-// Agent scope is a responsive presentation of one `?agent=` state: a right
-// companion pane at ≥xl (beside the still-visible feed), the full-feed
-// takeover + TraceScopeBar below it. The breakpoint alone decides — no new
-// state. See useBreakpoint / the redesign artifact.
-const { isXl, is2xl } = useBreakpoint()
 
 // ≥xl the user chooses how a scope is presented: the 'split' companion pane
 // (beside the main feed) or the 'full' only-subagent takeover (the same
@@ -206,6 +224,17 @@ const feedProps = computed(() => ({
   loadedSubtrees: subtreeLoaded.value,
   serverNow: session.value?.server_now || '',
   serverNowAt: session.value?.server_now_at || 0,
+}))
+
+const { sheetOpen, selectSpan } = useSpanSheet(selectedSpan, isLgUp, route.query.span)
+
+// Prop bundle shared by the desktop rail and the mobile-sheet renderings of
+// the span detail panel (keeps the template's directive budget in check).
+const spanDetailProps = computed(() => ({
+  selectedSpan: selectedSpan.value,
+  ruleTriggersByRuleId: ruleTriggersByRuleId.value,
+  canSuppressRule: canSuppressRule.value,
+  workflowRunsById: workflowRunsById.value,
 }))
 
 // send_to_user messages (Messages tab). Null until first load so the tab
@@ -456,7 +485,7 @@ async function toggleTimelineNode(node) {
 async function onOverviewSpanClick(node) {
   if (!node?.data?.span_id) return
   const spanId = node.data.span_id
-  selectedSpan.value = allSpans.value.find(s => s.span_id === spanId) || node.data
+  selectSpan(allSpans.value.find(s => s.span_id === spanId) || node.data)
   if (!node.leaf) {
     expandedKeys.value = { ...expandedKeys.value, [node.key]: true }
     await ensureNodeChildrenLoaded(spanId)
@@ -496,7 +525,7 @@ async function selectSpanById(spanId) {
       }
     }
   }
-  if (span) selectedSpan.value = span
+  if (span) selectSpan(span)
 }
 
 // Jump from a row in the expanded task list to the most relevant span for
@@ -511,7 +540,7 @@ async function onNodeSelect(event) {
   const nodeData = event?.node?.data || event?.data
   if (!nodeData?.span_id) return
   const full = allSpans.value.find(s => s.span_id === nodeData.span_id)
-  selectedSpan.value = full || nodeData
+  selectSpan(full || nodeData)
 
   const selectedNode = event?.node || findNodeBySpanId(treeNodes.value, nodeData.span_id)
   if (selectedNode && !selectedNode.leaf) {
@@ -573,7 +602,7 @@ const {
   <div
     v-else
     class="trace-detail-root"
-    :style="{ '--regin-trace-header-h': stickyHeaderHeight ? stickyHeaderHeight + 'px' : '0px' }"
+    :style="{ '--regin-trace-header-h': stickyChromeHeight ? stickyChromeHeight + 'px' : '0px' }"
   >
     <!-- Sticky page header: title row, tokens rollup, mini-timeline and
          the "more history" affordance pin to the top of `.content-scroll`
@@ -585,7 +614,7 @@ const {
          to the sidebar's sticky offset. -->
     <div
       ref="stickyHeaderEl"
-      class="sticky -top-4 lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-4 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+      class="lg:sticky lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-4 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
     >
     <SessionTraceHeader
       :key="session?.trace_id"
@@ -668,7 +697,33 @@ const {
       <span v-else class="text-[11px] tracking-wider uppercase">↑ More history above</span>
     </div>
     </div>
-    <!-- /sticky page header -->
+    <!-- /page header (sticky ≥lg only) -->
+
+    <!-- Compact sticky strip, phones/tablets: the full header above is too
+         tall to pin below lg, so it scrolls away and only this title line +
+         view-mode switcher stays. Placed after the header so it takes over
+         the pin as the header scrolls out. -->
+    <div
+      ref="compactBarEl"
+      class="lg:hidden sticky -top-4 z-20 -mx-4 mb-3 border-b border-slate-200 bg-white px-4 py-2 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+    >
+      <div class="truncate text-[13px] font-semibold text-slate-800" :title="session.title || ''">
+        {{ session.title || 'Session timeline' }}
+      </div>
+      <div class="mt-1.5 flex gap-1 overflow-x-auto">
+        <Button
+          v-for="opt in MODE_OPTIONS"
+          :key="opt.id"
+          variant="ghost"
+          size="sm"
+          class="h-auto shrink-0 rounded-full border px-2.5 py-1 text-[11px]"
+          :class="viewMode === opt.id
+            ? 'bg-blue-50 border-blue-400 text-blue-700 font-medium'
+            : 'bg-white border-slate-200 text-slate-600'"
+          @click="setViewMode(opt.id)"
+        >{{ opt.label }}</Button>
+      </div>
+    </div>
 
     <!-- Queued prompts: typed while the agent is busy fire no hook, so they
          can't show as spans; derived live from the transcript and transient —
@@ -698,8 +753,8 @@ const {
           :pane-visible="paneVisible"
           :hide-toc="paneVisible && !is2xl"
           :feed="feedProps"
-          :sticky-top="stickyHeaderHeight"
-          @select-span="selectedSpan = $event"
+          :sticky-top="stickyChromeHeight"
+          @select-span="selectSpan($event)"
           @fetch-content="fetchSpanContent"
           @load-subtree="ensureSpanSubtreeLoaded"
           @jump-live="jumpToLatestSpan"
@@ -728,7 +783,7 @@ const {
               :spans="allSpans"
               :turns="turns"
               :selected-span="selectedSpan"
-              @select-span="selectedSpan = $event"
+              @select-span="selectSpan($event)"
               @fetch-content="fetchSpanContent"
               @load-subtree="ensureSpanSubtreeLoaded"
             />
@@ -750,7 +805,7 @@ const {
            Conversation tab it is opt-in (detailRailOpen) for the same
            density reason; the sticky tab below reopens it. -->
       <Button
-        v-if="viewMode === 'conversation' && selectedSpan && !detailRailOpen"
+        v-if="isLgUp && viewMode === 'conversation' && selectedSpan && !detailRailOpen"
         variant="ghost"
         class="sticky self-start shrink-0 z-10 gap-1 px-2 py-1.5 h-auto rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
         :style="{ top: stickyHeaderHeight ? `calc(${stickyHeaderHeight}px - 1rem)` : '5rem' }"
@@ -762,8 +817,11 @@ const {
         </svg>
         Details
       </Button>
+      <!-- ≥lg only: below lg span details render as the bottom sheet at the
+           end of this template instead of a stacked-below-the-feed aside
+           the user would never see. -->
       <aside
-        v-if="selectedSpan && viewMode !== 'messages' && (viewMode !== 'conversation' || detailRailOpen)"
+        v-if="isLgUp && detailRailShown"
         class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:self-start lg:overflow-y-auto z-10"
         :style="{
           /* Page header is sticky-pinned with top: -1.5rem (lg padding-top)
@@ -788,10 +846,7 @@ const {
         </div>
         <SpanDetailPanel
           :key="selectedSpan && selectedSpan.span_id"
-          :selected-span="selectedSpan"
-          :rule-triggers-by-rule-id="ruleTriggersByRuleId"
-          :can-suppress-rule="canSuppressRule"
-          :workflow-runs-by-id="workflowRunsById"
+          v-bind="spanDetailProps"
           @suppress-changed="loadTriggersForSelectedSpan"
           @view-message="goToMessage"
         />
@@ -814,10 +869,44 @@ const {
         />
       </aside>
     </div>
+    <!-- Below-lg bottom sheet for the selected span: the aside above is
+         desktop-only, and on a phone a selection must produce immediately
+         visible feedback. Backdrop tap or the close button dismisses the
+         sheet; the selection itself is kept (desktop parity). -->
+    <Teleport to="body">
+      <div
+        v-if="!isLgUp && sheetOpen && selectedSpan && viewMode !== 'messages'"
+        class="fixed inset-0 z-40 cursor-pointer bg-slate-900/40 hover:bg-slate-900/45"
+        @click.self="sheetOpen = false"
+      >
+        <div class="absolute inset-x-0 bottom-0 flex max-h-[75vh] cursor-auto flex-col rounded-t-xl bg-white shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-200 px-4 py-1.5">
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Span details</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close span details"
+              @click="sheetOpen = false"
+            >
+              <Icon name="x" />
+            </Button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3">
+            <SpanDetailPanel
+              :key="selectedSpan.span_id"
+              v-bind="spanDetailProps"
+              @suppress-changed="loadTriggersForSelectedSpan"
+              @view-message="goToMessage"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
     <!-- Infinite-feed-style footer: spinner during reload, otherwise
          a quiet end-of-timeline marker. Same pattern as Twitter/IG,
-         no instructional text. -->
-    <div class="mt-8 mb-4 flex items-center justify-center text-slate-400">
+         no instructional text. `pb-20` below lg keeps the last rows
+         scrollable clear of the fixed "Follow latest" pill. -->
+    <div class="mt-8 mb-4 pb-20 lg:pb-0 flex items-center justify-center text-slate-400">
       <span v-if="reloading" class="inline-flex items-center gap-2 text-[12px]">
         <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
           <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
@@ -846,11 +935,12 @@ const {
 .trace-detail-root :deep(.p-treetable-table-container) {
   overflow: visible !important;
 }
-/* At mobile the ~416px span timeline exceeds a 375px viewport; the
-   `overflow: visible` overrides above delete the horizontal scroll that
-   would let it pan. Restore horizontal scroll only on small screens
-   (desktop keeps sticky headers via `visible`). */
-@media (max-width: 767px) {
+/* Below lg the timeline must stay reachable via a LOCAL horizontal
+   scroll (Pattern M): even with Time/Tokens dropped below sm, deep tree
+   indentation can exceed a phone width. That scroll container would trap
+   sticky th, so the thead pins only at ≥lg where the wrappers stay
+   `overflow: visible`. */
+@media (max-width: 1023px) {
   .trace-detail-root :deep(.trace-content-card.card) {
     overflow-x: auto;
   }
@@ -858,18 +948,12 @@ const {
     overflow-x: auto !important;
   }
 }
-.trace-detail-root :deep(.p-treetable-thead > tr > th) {
-  position: sticky;
-  /* Page header pins at `top: -1rem` (mobile) / `-1.5rem` (desktop) so its
-     opaque background covers `.content-scroll`'s padding-top; the thead
-     pins flush below it, so subtract the same offset. */
-  top: calc(var(--regin-trace-header-h, 0px) - 1rem);
-  z-index: 5;
-  background: var(--color-white);
-}
 @media (min-width: 1024px) {
   .trace-detail-root :deep(.p-treetable-thead > tr > th) {
+    position: sticky;
     top: calc(var(--regin-trace-header-h, 0px) - 1.5rem);
+    z-index: 5;
+    background: var(--color-white);
   }
 }
 </style>

@@ -595,6 +595,7 @@ watch(selectedProposalId, () => {
                 v-for="edge in selectedDraftTopic.edges"
                 :key="`${edge.type || 'related'}:${edge.target || edge.to}`"
                 color="gray"
+                class="max-w-full whitespace-normal! break-words text-left"
                 :label="`${edge.type || 'related'}: ${edge.label || edge.target || edge.to}`"
               />
             </div>
@@ -668,7 +669,6 @@ watch(selectedProposalId, () => {
             <h3 class="text-sm font-semibold text-slate-700">Review comments</h3>
             <Button
               variant="secondary"
-              size="sm"
               @click="commentsDrawerOpen = false"
             >Close</Button>
           </header>

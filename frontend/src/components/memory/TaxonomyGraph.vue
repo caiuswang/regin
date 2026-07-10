@@ -120,14 +120,45 @@ function onWheel(e) {
   zoomAround(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 0.89)
 }
 function zoomBtn(factor) { zoomAround(dims.value.w / 2, dims.value.h / 2, factor) }
-function onDown(e) { dragging.value = true; moved = false; startX = e.clientX; startY = e.clientY }
+const pointers = new Map()
+let pinchDist = 0
+function onDown(e) {
+  pointers.set(e.pointerId, e)
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()]
+    pinchDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    dragging.value = false
+    moved = true
+    return
+  }
+  dragging.value = true; moved = false; startX = e.clientX; startY = e.clientY
+}
 function onMove(e) {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, e)
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()]
+    const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    if (pinchDist) {
+      const rect = wrap.value.getBoundingClientRect()
+      zoomAround(
+        (a.clientX + b.clientX) / 2 - rect.left,
+        (a.clientY + b.clientY) / 2 - rect.top,
+        d / pinchDist,
+      )
+    }
+    pinchDist = d
+    return
+  }
   if (!dragging.value) return
   if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 3) moved = true
   tx.value += e.movementX
   ty.value += e.movementY
 }
-function onUp() { dragging.value = false }
+function onUp(e) {
+  if (e) pointers.delete(e.pointerId)
+  pinchDist = 0
+  dragging.value = false
+}
 function onNode(id) { if (!moved) emit('select', id) }
 function onNodeKey(e, id) {
   if (e.key !== 'Enter' && e.key !== ' ') return
@@ -155,11 +186,12 @@ watch(() => props.roots, fit)
       class="h-full w-full touch-none select-none"
       :class="dragging ? 'cursor-grabbing' : 'cursor-grab'"
       role="application"
-      aria-label="Topic taxonomy graph — drag to pan, scroll to zoom"
+      aria-label="Topic taxonomy graph — drag to pan, scroll or pinch to zoom"
       @wheel="onWheel"
       @pointerdown="onDown"
       @pointermove="onMove"
       @pointerup="onUp"
+      @pointercancel="onUp"
       @pointerleave="onUp"
     >
       <g :transform="`translate(${tx},${ty}) scale(${s})`">
@@ -206,7 +238,7 @@ watch(() => props.roots, fit)
       </g>
     </svg>
 
-    <p class="pointer-events-none absolute top-2 left-3 text-[11px] text-fg-faint">drag to pan · scroll to zoom</p>
+    <p class="pointer-events-none absolute top-2 left-3 text-[11px] text-fg-faint">drag to pan · scroll or pinch to zoom</p>
     <div class="absolute bottom-2 right-2 flex flex-col gap-1">
       <Button variant="secondary" size="icon" class="h-7 w-7 focus-visible:outline-2 focus-visible:outline-ring" aria-label="Zoom in" @click="zoomBtn(1.2)"><Icon name="plus" :size="15" /></Button>
       <Button variant="secondary" size="icon" class="h-7 w-7 focus-visible:outline-2 focus-visible:outline-ring" aria-label="Zoom out" @click="zoomBtn(0.83)"><span class="text-base leading-none">−</span></Button>

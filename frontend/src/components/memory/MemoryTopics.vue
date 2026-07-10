@@ -90,7 +90,7 @@ defineExpose({ reload })
             <Button
               variant="link"
               size="sm"
-              class="text-left text-slate-600 hover:text-blue-600 hover:no-underline w-full truncate focus-visible:ring-2 focus-visible:ring-blue-400"
+              class="min-h-9 py-2 justify-start text-left text-slate-600 hover:text-blue-600 hover:no-underline w-full truncate focus-visible:ring-2 focus-visible:ring-blue-400"
               @click="emit('select', m.id)"
             >· {{ m.title || m.kind }}</Button>
           </li>

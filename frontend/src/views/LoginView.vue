@@ -119,12 +119,12 @@ const headline = computed(() => {
       </form>
 
       <div v-if="mode === 'login'" class="login-switch">
-        <Button variant="link" @click="mode = 'register'">
+        <Button variant="link" class="min-h-9 px-3" @click="mode = 'register'">
           Create an account
         </Button>
       </div>
       <div v-if="mode === 'register'" class="login-switch">
-        <Button variant="link" @click="mode = 'login'">
+        <Button variant="link" class="min-h-9 px-3" @click="mode = 'login'">
           Back to login
         </Button>
       </div>
@@ -134,10 +134,12 @@ const headline = computed(() => {
 
 <style scoped>
 .login-shell {
-    min-height: 60vh;
+    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 1rem;
+    background: linear-gradient(180deg, var(--color-slate-50) 0%, var(--color-slate-100) 100%);
 }
 
 .login-card {

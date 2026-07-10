@@ -584,6 +584,11 @@ const userInitials = computed(() => {
 .mobile-menu-btn:focus-visible { outline: 2px solid var(--color-blue-500); outline-offset: 1px; }
 
 .mobile-brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding-inline: 0.5rem;
+  margin-inline: -0.5rem;
   font-weight: 700;
   color: var(--color-slate-900);
   font-size: 1rem;

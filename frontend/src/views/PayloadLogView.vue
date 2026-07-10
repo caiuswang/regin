@@ -236,13 +236,15 @@ onMounted(load)
                 <span v-else class="text-muted">—</span>
               </td>
               <td class="cell-truncate">
-                <code v-if="e.session_id" class="cell-code" :title="e.session_id">{{ e.session_id }}</code>
+                <code v-if="e.session_id" class="cell-code" :title="e.session_id">{{ e.session_id.slice(0, 8) }}</code>
                 <span v-else class="text-muted">—</span>
               </td>
             </tr>
             <tr v-if="expandedIdx === i" class="expansion-row">
               <td colspan="5">
-                <pre class="code-block">{{ pretty(e.payload) }}</pre>
+                <div class="expansion-clamp">
+                  <pre class="code-block">{{ pretty(e.payload) }}</pre>
+                </div>
               </td>
             </tr>
           </template>
@@ -324,7 +326,7 @@ onMounted(load)
 }
 
 /* Table */
-.log-tbl { table-layout: fixed; }
+.log-tbl { table-layout: fixed; min-width: 40rem; }
 .caret-col { width: 1.5rem; }
 .log-tbl > thead > tr > th:nth-child(2) { width: 11rem; }   /* Time */
 .log-tbl > thead > tr > th:nth-child(3) { width: 10rem; }   /* Event */
@@ -360,8 +362,19 @@ onMounted(load)
   white-space: pre;
 }
 
+/* Pin the payload to the scroller's visible box so JSON wraps at the
+   viewport instead of the full table width on phones. */
+.expansion-clamp {
+  position: sticky;
+  left: 0;
+  max-width: calc(100vw - 3rem);
+}
+
 @media (max-width: 800px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }
   .kpi-path { grid-column: 1 / -1; }
+}
+@media (max-width: 639px) {
+  .code-block { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 </style>

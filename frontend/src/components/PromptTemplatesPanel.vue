@@ -26,6 +26,11 @@ const sortedTemplates = computed(() =>
   }),
 )
 
+const editingTemplate = computed(() =>
+  editing.value && editing.value !== '__new__'
+    ? templates.value.find(t => t.slug === editing.value) || null
+    : null)
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -124,17 +129,6 @@ onMounted(load)
           </tr>
         </thead>
         <tbody>
-          <tr v-if="editing === '__new__'" class="editor-row">
-            <td colspan="3">
-              <PromptFragmentEditor
-                :template="null"
-                :busy="busy"
-                :save-error="saveError"
-                @save="onSave"
-                @cancel="cancelEdit"
-              />
-            </td>
-          </tr>
           <template v-for="t in sortedTemplates" :key="t.slug">
             <tr :class="{ 'row-editing': editing === t.slug, 'tbl-row-active': editing === t.slug }">
               <td>
@@ -166,23 +160,25 @@ onMounted(load)
                 </Button>
               </td>
             </tr>
-            <tr v-if="editing === t.slug" class="editor-row">
-              <td colspan="3">
-                <PromptFragmentEditor
-                  :template="t"
-                  :busy="busy"
-                  :save-error="saveError"
-                  @save="onSave"
-                  @cancel="cancelEdit"
-                />
-              </td>
-            </tr>
           </template>
           <tr v-if="!sortedTemplates.length && editing !== '__new__'">
             <td colspan="3" class="empty-row">No prompt templates yet. Click <em>New template</em> to create one.</td>
           </tr>
         </tbody>
       </table>
+      </div>
+      <div v-if="editing" class="editor-block">
+        <div v-if="editingTemplate" class="editor-block-title">
+          Editing <span class="font-medium">{{ editingTemplate.label }}</span>
+        </div>
+        <div v-else class="editor-block-title">New template</div>
+        <PromptFragmentEditor
+          :template="editingTemplate"
+          :busy="busy"
+          :save-error="saveError"
+          @save="onSave"
+          @cancel="cancelEdit"
+        />
       </div>
     </Card>
   </div>
@@ -219,5 +215,15 @@ onMounted(load)
     color: var(--color-slate-600);
     margin-top: 0.25rem;
     max-width: 46rem;
+    overflow-wrap: anywhere;
+}
+.editor-block {
+    border-top: 1px solid var(--color-slate-200);
+    padding: 1rem;
+}
+.editor-block-title {
+    font-size: 0.8125rem;
+    color: var(--color-slate-500);
+    margin-bottom: 0.5rem;
 }
 </style>

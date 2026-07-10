@@ -22,6 +22,7 @@ const props = defineProps({
 })
 
 const view = ref('unified')
+const expanded = ref(false)
 
 const rows = computed(() => lineDiff(props.before, props.after))
 const stats = computed(() => diffStats(rows.value))
@@ -71,7 +72,13 @@ const hasDiff = computed(() => !isEmpty.value && !isIdentical.value)
       No content changes — the wiki body is unchanged.
     </p>
 
-    <div v-else-if="view === 'unified'" class="wikidiff__body" role="table" aria-label="Wiki content diff">
+    <div
+      v-else-if="view === 'unified'"
+      class="wikidiff__body"
+      :class="{ 'wikidiff__body--expanded': expanded }"
+      role="table"
+      aria-label="Wiki content diff"
+    >
       <div
         v-for="(row, i) in rows"
         :key="i"
@@ -98,7 +105,7 @@ const hasDiff = computed(() => !isEmpty.value && !isIdentical.value)
         <span class="wikidiff__stat wikidiff__stat--add">New: <strong>{{ inlineStats.added }}</strong></span>
         <span class="wikidiff__stat wikidiff__stat--remove">Removed: <strong>{{ inlineStats.removed }}</strong></span>
       </div>
-      <p class="wikidiff__inline">
+      <p class="wikidiff__inline" :class="{ 'wikidiff__body--expanded': expanded }">
         <span
           v-for="(seg, s) in inlineSegments"
           :key="s"
@@ -106,6 +113,16 @@ const hasDiff = computed(() => !isEmpty.value && !isIdentical.value)
         >{{ seg.text }}</span>
       </p>
     </div>
+
+    <Button
+      v-if="hasDiff"
+      variant="ghost"
+      size="sm"
+      class="wikidiff__expand min-h-9 w-full rounded-none"
+      :aria-expanded="expanded"
+      data-testid="wiki-diff-expand"
+      @click="expanded = !expanded"
+    >{{ expanded ? 'Collapse diff' : 'Show full diff' }}</Button>
   </div>
 </template>
 
@@ -202,7 +219,7 @@ const hasDiff = computed(() => !isEmpty.value && !isIdentical.value)
   border-radius: 0.5rem;
 }
 .wikidiff__toggle-btn {
-  height: 1.5rem;
+  height: 2.25rem;
   padding: 0 0.5rem;
   font-size: 0.6875rem;
   font-weight: 600;
@@ -242,5 +259,12 @@ const hasDiff = computed(() => !isEmpty.value && !isIdentical.value)
   color: var(--color-slate-800);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.wikidiff__body--expanded {
+  max-height: none;
+}
+.wikidiff__expand {
+  border-top: 1px solid var(--color-slate-100);
+  color: var(--color-slate-500);
 }
 </style>

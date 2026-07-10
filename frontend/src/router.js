@@ -36,6 +36,7 @@ import UsersView from './views/UsersView.vue'
 import SchemaDriftView from './views/SchemaDriftView.vue'
 import PayloadLogView from './views/PayloadLogView.vue'
 import DesignSystemView from './views/DesignSystemView.vue'
+import NotFoundView from './views/NotFoundView.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
@@ -85,6 +86,9 @@ const routes = [
   { path: '/payload-log', name: 'payload-log', component: PayloadLogView },
   { path: '/ds', name: 'design-system', component: DesignSystemView },
   { path: '/account', name: 'account', component: UsersView },
+  // Catch-all: App.vue only mounts the shell for matched routes, so an
+  // unmatched path would otherwise render a blank page with no way out.
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
 ]
 
 const router = createRouter({

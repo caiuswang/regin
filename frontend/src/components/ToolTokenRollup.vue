@@ -170,10 +170,10 @@ const sessionBill = computed(() => {
     v-if="toolRollupSummary.hasData"
     class="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs"
   >
-    <div class="flex items-center gap-2" :class="rollupExpanded ? 'mb-1.5' : ''">
+    <div class="flex flex-wrap items-center gap-2" :class="rollupExpanded ? 'mb-1.5' : ''">
       <button
         type="button"
-        class="flex items-center gap-2 -mx-1 px-1 rounded transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        class="flex flex-wrap items-center gap-2 -mx-1 px-1 min-w-0 text-left rounded transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
         :aria-expanded="rollupExpanded"
         @click="rollupExpanded = !rollupExpanded"
       >

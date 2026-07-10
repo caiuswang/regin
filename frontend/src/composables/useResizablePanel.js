@@ -18,8 +18,9 @@ export function useResizablePanel(key, { min = 176, max = 560, def = 288 } = {})
     width.value = clamp(startW + (e.clientX - startX))
   }
   function onEnd() {
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onEnd)
+    document.removeEventListener('pointermove', onMove)
+    document.removeEventListener('pointerup', onEnd)
+    document.removeEventListener('pointercancel', onEnd)
     document.body.style.userSelect = ''
     document.body.style.cursor = ''
     localStorage.setItem(key, String(Math.round(width.value)))
@@ -27,8 +28,9 @@ export function useResizablePanel(key, { min = 176, max = 560, def = 288 } = {})
   function onResizeStart(e) {
     startX = e.clientX
     startW = width.value
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onEnd)
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onEnd)
+    document.addEventListener('pointercancel', onEnd)
     document.body.style.userSelect = 'none'      // suppress text selection while dragging
     document.body.style.cursor = 'col-resize'
     e.preventDefault()

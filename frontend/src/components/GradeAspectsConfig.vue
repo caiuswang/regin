@@ -205,6 +205,7 @@ onMounted(load)
 .aspect-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.6rem;
   padding: 0.4rem 0;
 }
@@ -218,6 +219,9 @@ onMounted(load)
 .aspect-label-wrap { display: inline-flex; align-items: center; gap: 0.45rem; }
 .aspect-label { font-size: 0.85rem; font-weight: 500; text-transform: capitalize; }
 .aspect-desc { flex: 1; }
-.add-aspect { display: flex; gap: 0.5rem; align-items: center; }
+.add-aspect { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .config-actions { margin-top: 1rem; display: flex; justify-content: flex-end; }
+@media (max-width: 639px) {
+  .aspect-desc { flex: 1 1 100%; }
+}
 </style>

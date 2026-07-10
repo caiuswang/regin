@@ -3,12 +3,12 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Badge from '../components/Badge.vue'
-import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
-import Select from '../components/ui/Select.vue'
 import AuditPanel from '../components/topics/AuditPanel.vue'
 import HistoryPanel from '../components/topics/HistoryPanel.vue'
+import { useBreakpoint } from '../composables/useBreakpoint'
 import WikiWorkspace from '../components/topics/WikiWorkspace.vue'
+import ProposalCreateCard from '../components/topics/ProposalCreateCard.vue'
 import ProposalRunsList from '../components/topics/ProposalRunsList.vue'
 import ProposalRunDetail from '../components/topics/ProposalRunDetail.vue'
 
@@ -36,26 +36,11 @@ const proposalData = ref(null)
 const wikiLoaded = ref(false)
 const proposalLoaded = ref(false)
 
-const selectedProvider = ref('')
-const selectedComplexity = ref('auto')
-const selectedAgent = ref('')
-const proposalTopicRequest = ref('')
-const selectedTemplateSlugs = ref([])
 let proposalPollTimer = null
 
 // List of approved topic ids — passed to ProposalRunDetail for DiffPanel's merge-target picker.
 const approvedTopicIds = computed(() => (wikiData.value?.table || []).map((t) => t.id))
 
-const selectedProposalProvider = computed(() => proposalData.value?.providers?.find((provider) => provider.id === selectedProvider.value) || null)
-const selectedProviderAgents = computed(() => selectedProposalProvider.value?.agents || [])
-const availableTemplates = computed(() => {
-  const provider = selectedProvider.value
-  const templates = proposalData.value?.prompt_templates || []
-  return templates.filter((t) => {
-    const applies = t.applies_to || []
-    return applies.length === 0 || applies.includes(provider)
-  })
-})
 const activeProposalRuns = computed(() => (proposalData.value?.runs || []).filter((run) => ['queued', 'running', 'waiting_for_permission'].includes(run.state)))
 
 const summaryStats = computed(() => {
@@ -66,6 +51,20 @@ const summaryStats = computed(() => {
     { label: 'Broken Refs', value: summaryData.value.broken_ref_count, tone: summaryData.value.broken_ref_count ? 'red' : 'green' },
   ]
 })
+
+// On phones (and on any proposal-detail deep link) the full hero + stat tiles
+// + create-proposal card push the actual content ~2 viewports down, so those
+// blocks collapse to one-line summaries behind disclosure toggles.
+const { isMdUp } = useBreakpoint()
+const chromeExpanded = ref(false)
+const proposalDetailOpen = computed(() => workspace.value === 'proposals' && Boolean(route.query.proposal))
+const chromeCollapsible = computed(() => proposalDetailOpen.value || !isMdUp.value)
+const compactChrome = computed(() => chromeCollapsible.value && !chromeExpanded.value)
+const compactModes = computed(() => [
+  { id: 'wiki', label: 'Approved', count: summaryData.value?.approved_topic_count || 0 },
+  { id: 'proposals', label: 'Proposals', count: summaryData.value?.proposal_run_count || 0 },
+  { id: 'audit', label: 'Audit', count: summaryData.value?.broken_ref_count || 0 },
+])
 
 function withQuery(next) {
   return { ...route.query, ...next }
@@ -100,22 +99,6 @@ async function loadWiki() {
   wikiLoaded.value = true
 }
 
-function selectDefaultProvider() {
-  if (!proposalData.value?.providers?.some((provider) => provider.id === selectedProvider.value) && proposalData.value?.providers?.length) {
-    selectedProvider.value = proposalData.value.providers.find((provider) => provider.id === 'langchain' && provider.configured)?.id || proposalData.value.providers[0].id
-  }
-}
-
-function syncAgentForProvider() {
-  if (selectedProposalProvider.value?.id === 'external-agent') {
-    if (!selectedProviderAgents.value.includes(selectedAgent.value)) {
-      selectedAgent.value = selectedProviderAgents.value[0] || ''
-    }
-  } else {
-    selectedAgent.value = ''
-  }
-}
-
 async function loadProposals() {
   proposalError.value = ''
   const params = new URLSearchParams()
@@ -125,8 +108,6 @@ async function loadProposals() {
   const suffix = params.toString() ? `?${params.toString()}` : ''
   proposalData.value = await api.get(`/repos/${repo.value}/topics/workspace/proposals${suffix}`)
   proposalLoaded.value = true
-  selectDefaultProvider()
-  syncAgentForProvider()
   refreshProposalPolling()
 }
 
@@ -258,44 +239,9 @@ async function refreshSummaryWikiProposals() {
   await Promise.all([loadSummary(), loadWiki(), loadProposals()])
 }
 
-function applyTemplateDefaultsForProvider() {
-  selectedTemplateSlugs.value = []
-}
-
-function toggleTemplate(slug) {
-  const set = new Set(selectedTemplateSlugs.value)
-  if (set.has(slug)) set.delete(slug)
-  else set.add(slug)
-  selectedTemplateSlugs.value = Array.from(set)
-}
-
-async function createProposal() {
-  proposalError.value = ''
-  if (selectedProposalProvider.value?.network && !selectedProposalProvider.value?.configured) {
-    proposalError.value = `${selectedProposalProvider.value.label} is not configured. Set a proposal model/API key or choose External Agent.`
-    return
-  }
-  startBusy('create-proposal')
-  try {
-    const result = await api.post(`/repos/${repo.value}/topics/proposals`, {
-      scope: 'all',
-      provider: selectedProvider.value,
-      complexity: selectedComplexity.value,
-      agent: selectedProposalProvider.value?.id === 'external-agent' ? selectedAgent.value : undefined,
-      topic_request: proposalTopicRequest.value.trim(),
-      prompt_template_ids: selectedTemplateSlugs.value,
-    })
-    if (!result.ok) {
-      proposalError.value = result.msg || result.error || 'Proposal failed'
-      return
-    }
-    router.replace({ query: withQuery({ tab: 'proposals', proposal: result.proposal.id, draft: undefined }) })
-    await refreshSummaryAndProposals()
-  } catch (err) {
-    proposalError.value = err.message || String(err)
-  } finally {
-    stopBusy()
-  }
+async function onProposalCreated(proposalId) {
+  router.replace({ query: withQuery({ tab: 'proposals', proposal: proposalId, draft: undefined }) })
+  await refreshSummaryAndProposals()
 }
 
 async function onDiffApplied() {
@@ -363,17 +309,6 @@ watch(
   },
 )
 
-watch(selectedProvider, () => {
-  if (selectedProposalProvider.value?.id === 'external-agent') {
-    if (!selectedProviderAgents.value.includes(selectedAgent.value)) {
-      selectedAgent.value = selectedProviderAgents.value[0] || ''
-    }
-  } else {
-    selectedAgent.value = ''
-  }
-  applyTemplateDefaultsForProvider()
-})
-
 onMounted(async () => {
   await load()
 })
@@ -386,7 +321,32 @@ onUnmounted(() => {
 <template>
   <div v-if="loading" class="empty-state">Loading topics workspace…</div>
   <div v-else class="topics-workspace">
-    <section class="topics-shell">
+    <section v-if="compactChrome" class="mb-5 space-y-2">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface px-3 py-1.5">
+        <span class="text-sm font-semibold text-fg">Topics Workspace</span>
+        <router-link :to="`/repos/${repo}`" class="topics-repo-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+          {{ repo }}
+        </router-link>
+        <Button variant="ghost" size="sm" class="ml-auto min-h-9" @click="chromeExpanded = true">Show details</Button>
+      </div>
+      <div class="grid grid-cols-3 gap-1 rounded-xl border border-border bg-surface p-1" role="tablist" aria-label="Topics workspaces">
+        <Button
+          v-for="mode in compactModes"
+          :key="mode.id"
+          variant="ghost"
+          size="sm"
+          role="tab"
+          class="min-h-10"
+          :class="workspace === mode.id ? 'bg-surface-2 text-fg font-semibold' : ''"
+          :aria-selected="workspace === mode.id ? 'true' : 'false'"
+          @click="setWorkspace(mode.id)"
+        >
+          {{ mode.label }}
+          <span class="text-xs text-fg-faint font-mono tabular-nums">{{ mode.count }}</span>
+        </Button>
+      </div>
+    </section>
+    <section v-else class="topics-shell">
       <div class="topics-shell-hero">
         <div class="topics-shell-copy">
           <div class="topics-shell-meta-row">
@@ -394,6 +354,7 @@ onUnmounted(() => {
             <router-link :to="`/repos/${repo}`" class="topics-repo-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
               {{ repo }}
             </router-link>
+            <Button v-if="chromeCollapsible" variant="ghost" size="sm" class="min-h-9" @click="chromeExpanded = false">Hide details</Button>
           </div>
           <h1 class="topics-title">Topics Workspace</h1>
           <p class="topics-subtitle">
@@ -425,9 +386,9 @@ onUnmounted(() => {
       </div>
 
       <div class="topics-shell-nav" role="tablist" aria-label="Topics workspaces">
-        <button
-          type="button"
-          class="topics-mode-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        <Button
+          variant="ghost"
+          class="topics-mode-button h-auto justify-start whitespace-normal"
           :class="{ 'topics-mode-button-active': workspace === 'wiki' }"
           @click="setWorkspace('wiki')"
         >
@@ -436,10 +397,10 @@ onUnmounted(() => {
             <span class="topics-mode-count">{{ summaryData?.approved_topic_count || 0 }}</span>
           </div>
           <span class="topics-mode-meta">Canonical topics</span>
-        </button>
-        <button
-          type="button"
-          class="topics-mode-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        </Button>
+        <Button
+          variant="ghost"
+          class="topics-mode-button h-auto justify-start whitespace-normal"
           :class="{ 'topics-mode-button-active': workspace === 'proposals' }"
           @click="setWorkspace('proposals')"
         >
@@ -448,10 +409,10 @@ onUnmounted(() => {
             <span class="topics-mode-count">{{ summaryData?.proposal_run_count || 0 }}</span>
           </div>
           <span class="topics-mode-meta">Draft runs</span>
-        </button>
-        <button
-          type="button"
-          class="topics-mode-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+        </Button>
+        <Button
+          variant="ghost"
+          class="topics-mode-button h-auto justify-start whitespace-normal"
           :class="{ 'topics-mode-button-active': workspace === 'audit' }"
           @click="setWorkspace('audit')"
         >
@@ -460,7 +421,7 @@ onUnmounted(() => {
             <span class="topics-mode-count">{{ summaryData?.broken_ref_count || 0 }}</span>
           </div>
           <span class="topics-mode-meta">Graph health</span>
-        </button>
+        </Button>
         <!--
           History tab hidden pending UX redesign — restore once snapshot
           preview/restore is clearer than the current row+modal flow.
@@ -518,66 +479,15 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <Card>
-        <div class="topics-proposal-controls">
-          <Select
-            v-model="selectedProvider"
-            aria-label="Proposal provider"
-            block
-            class="topics-input"
-            :options="(proposalData?.providers || []).map(p => ({ value: p.id, label: `${p.label}${(p.network && !p.configured) || (p.id === 'external-agent' && !p.configured) ? ' (not configured)' : ''}` }))"
-          />
-          <Select
-            v-model="selectedComplexity"
-            aria-label="Proposal complexity"
-            block
-            class="topics-input"
-            :options="[
-              { value: 'auto', label: 'Auto' },
-              { value: 'simple', label: 'Simple' },
-              { value: 'standard', label: 'Standard' },
-              { value: 'complex', label: 'Complex' },
-            ]"
-          />
-          <Select
-            v-if="selectedProposalProvider?.id === 'external-agent'"
-            v-model="selectedAgent"
-            aria-label="External agent"
-            block
-            class="topics-input"
-            :options="selectedProviderAgents"
-          />
-          <input
-            v-model="proposalTopicRequest"
-            type="text"
-            aria-label="Proposal focus or scope"
-            class="topics-input topics-input-grow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            placeholder="Optional focus, boundary, or subsystem"
-          >
-          <Button
-            variant="primary"
-            :disabled="isBusy() || ((selectedProposalProvider?.network || selectedProposalProvider?.id === 'external-agent') && !selectedProposalProvider?.configured)"
-            @click="createProposal"
-          >
-            {{ isBusy('create-proposal') ? 'Working...' : 'Generate Proposal' }}
-          </Button>
-        </div>
-        <div v-if="availableTemplates.length" class="topics-template-chips">
-          <span class="topics-template-chips-label">Prompt templates:</span>
-          <button
-            v-for="template in availableTemplates"
-            :key="template.slug"
-            type="button"
-            class="topics-template-chip focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            :class="{ 'topics-template-chip-active': selectedTemplateSlugs.includes(template.slug) }"
-            :title="template.description || template.label"
-            @click="toggleTemplate(template.slug)"
-          >
-            {{ template.label }}
-          </button>
-          <router-link to="/prompt-templates" class="topics-template-chips-manage">Manage…</router-link>
-        </div>
-      </Card>
+      <ProposalCreateCard
+        :repo="repo"
+        :data="proposalData"
+        :busy="isBusy()"
+        :compact="compactChrome"
+        @created="onProposalCreated"
+        @error="(msg) => proposalError = msg"
+        @busy="(on) => on ? startBusy('create-proposal') : stopBusy()"
+      />
 
       <div v-if="proposalError" class="alert alert-info">{{ proposalError }}</div>
 

@@ -834,4 +834,20 @@ watch([activeSection, selectedProvider], ([section]) => {
   outline: 2px solid var(--color-blue-600);
   outline-offset: 2px;
 }
+@media (max-width: 1023px) {
+  .sv-layout { grid-template-columns: 1fr; }
+  .sv-sidebar {
+    min-width: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-slate-100);
+    padding: 0.75rem;
+  }
+  .sv-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 0.25rem;
+  }
+  .sv-nav-item { width: auto; flex: 0 0 auto; white-space: nowrap; }
+  .sv-content { padding: 1rem; }
+}
 </style>

@@ -14,7 +14,7 @@ async function refresh() {
 }
 
 export function useInboxUnread() {
-  if (!polling) {
+  if (!polling && api.getToken()) {
     refresh()
     polling = setInterval(refresh, 20_000)
   }

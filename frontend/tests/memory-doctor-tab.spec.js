@@ -30,7 +30,9 @@ test('Memory doctor is a sub-tab; header Doctor + Run-reflect buttons are gone',
   await expect(page.getByRole('heading', { name: 'Memory doctor' })).toBeVisible()
   await expect(page.getByText('Reflect pipeline')).toBeVisible()
   await expect(page.getByText('Tier', { exact: true })).toBeVisible()
-  await expect(page.getByText('dream')).toBeVisible()
+  // exact: the substring 'dream' also appears in topic labels rendered by the
+  // (v-show-hidden) Tree/Wikis tabs, whose rows depend on live recall data.
+  await expect(page.getByText('dream', { exact: true })).toBeVisible()
 
   expect(consoleErrors, `console errors: ${consoleErrors.join('\n')}`).toEqual([])
 })

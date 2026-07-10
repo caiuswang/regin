@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import Badge from '../Badge.vue'
+import ClampedText from '../ui/ClampedText.vue'
 import { fmtLocalDateTime } from '../../utils/traceFormatters'
 
 const props = defineProps({
@@ -43,7 +44,9 @@ function feedbackThreadColor(status) {
             <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
             <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
           </div>
-          <p class="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+          <ClampedText :lines="6" class="mt-1">
+            <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+          </ClampedText>
         </article>
       </div>
     </template>
@@ -72,7 +75,9 @@ function feedbackThreadColor(status) {
               <span class="font-medium uppercase tracking-wide">{{ comment.author_kind }}</span>
               <span>{{ fmtLocalDateTime(comment.created_at) }}</span>
             </div>
-            <p class="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+            <ClampedText :lines="6" class="mt-1">
+            <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+          </ClampedText>
           </article>
         </div>
       </div>

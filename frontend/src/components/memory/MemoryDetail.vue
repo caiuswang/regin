@@ -175,7 +175,7 @@ function timeLabel(iso) {
       <Button
         variant="link"
         size="sm"
-        class="text-slate-500 hover:text-slate-800 hover:no-underline gap-1 mb-4"
+        class="min-h-9 py-2 text-slate-500 hover:text-slate-800 hover:no-underline gap-1 mb-2"
         @click="emit('close')"
       ><Icon name="chevron-left" :size="14" />Back to all memories</Button>
 

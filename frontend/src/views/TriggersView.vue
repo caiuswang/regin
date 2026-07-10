@@ -5,6 +5,7 @@ import RuleCard from '../components/triggers/RuleCard.vue'
 import Select from '../components/ui/Select.vue'
 import { useTriggerRules } from '../composables/useTriggerRules'
 import { useStickyHeader } from '../composables/useStickyHeader'
+import { useBreakpoint } from '../composables/useBreakpoint'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,6 +16,7 @@ const {
 } = useTriggerRules(route, router)
 
 const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
+const { isMdUp } = useBreakpoint()
 
 const expandedId = ref(null)
 function toggle(ruleId) {
@@ -38,6 +40,15 @@ const sorts = [
   { value: 'last_seen', label: 'Last seen' },
   { value: 'rule_id',   label: 'Rule ID' },
 ]
+
+const kpiTiles = computed(() => [
+  { key: 'configured', value: kpis.value.configured, label: 'rules configured', cls: '', hint: null },
+  { key: 'active', value: kpis.value.active, label: 'active in window', cls: 'kpi-tile--active', hint: null },
+  { key: 'noisy', value: kpis.value.noisy, label: 'noisy', cls: 'kpi-tile--noisy',
+    hint: thresholds.value ? `(≥${thresholds.value.noisy_min_rate_pct}% & ≥${thresholds.value.noisy_min_fires} fires)` : null },
+  { key: 'dead', value: kpis.value.dead, label: 'dead', cls: 'kpi-tile--dead',
+    hint: thresholds.value ? `(≥${thresholds.value.dead_min_checks} checks, 0 fires)` : null },
+])
 
 // Empty-state mode. Distinguishes the four root causes so the message
 // can point at a fix instead of just saying "nothing here".
@@ -63,37 +74,32 @@ const emptyMode = computed(() => {
     class="sticky-page-root"
     :style="{ '--regin-trace-header-h': stickyHeaderHeight ? stickyHeaderHeight + 'px' : '0px' }"
   >
-    <!-- Sticky toolbar -->
+    <!-- Below md the KPI strip renders here, in normal flow, so the pinned
+         band stays small on a phone. v-if (not a CSS toggle) keeps a single
+         DOM instance for the e2e strict-mode locators. -->
+    <div v-if="!isMdUp" class="kpi-strip">
+      <div v-for="t in kpiTiles" :key="t.key" class="kpi-tile" :class="t.cls">
+        <div class="kpi-tile__value">{{ t.value }}</div>
+        <div class="kpi-tile__label">
+          {{ t.label }}
+          <span v-if="t.hint" class="kpi-tile__hint">{{ t.hint }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sticky toolbar: below md only the search/sort row pins; the KPI
+         strip and chip row move to the flow copies above/below. -->
     <div
       ref="stickyHeaderEl"
-      class="sticky -top-4 lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-3 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+      class="sticky -top-4 lg:-top-6 z-20 bg-white -mx-4 md:-mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-3 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
     >
       <!-- KPI strip -->
-      <div class="kpi-strip">
-        <div class="kpi-tile">
-          <div class="kpi-tile__value">{{ kpis.configured }}</div>
-          <div class="kpi-tile__label">rules configured</div>
-        </div>
-        <div class="kpi-tile kpi-tile--active">
-          <div class="kpi-tile__value">{{ kpis.active }}</div>
-          <div class="kpi-tile__label">active in window</div>
-        </div>
-        <div class="kpi-tile kpi-tile--noisy">
-          <div class="kpi-tile__value">{{ kpis.noisy }}</div>
+      <div v-if="isMdUp" class="kpi-strip">
+        <div v-for="t in kpiTiles" :key="t.key" class="kpi-tile" :class="t.cls">
+          <div class="kpi-tile__value">{{ t.value }}</div>
           <div class="kpi-tile__label">
-            noisy
-            <span v-if="thresholds" class="kpi-tile__hint">
-              (≥{{ thresholds.noisy_min_rate_pct }}% &amp; ≥{{ thresholds.noisy_min_fires }} fires)
-            </span>
-          </div>
-        </div>
-        <div class="kpi-tile kpi-tile--dead">
-          <div class="kpi-tile__value">{{ kpis.dead }}</div>
-          <div class="kpi-tile__label">
-            dead
-            <span v-if="thresholds" class="kpi-tile__hint">
-              (≥{{ thresholds.dead_min_checks }} checks, 0 fires)
-            </span>
+            {{ t.label }}
+            <span v-if="t.hint" class="kpi-tile__hint">{{ t.hint }}</span>
           </div>
         </div>
       </div>
@@ -128,7 +134,7 @@ const emptyMode = computed(() => {
       </div>
 
       <!-- Status chip row -->
-      <div class="trigger-chips">
+      <div v-if="isMdUp" class="trigger-chips">
         <button
           v-for="s in statuses" :key="s.value"
           type="button"
@@ -155,6 +161,32 @@ const emptyMode = computed(() => {
           @click="clearFilters"
         >Clear filters</button>
       </div>
+    </div>
+
+    <!-- Below md the chip row scrolls away with the KPI strip. -->
+    <div v-if="!isMdUp" class="trigger-chips mb-4">
+      <button
+        v-for="s in statuses" :key="s.value"
+        type="button"
+        class="filter-chip focus-visible:outline-2 focus-visible:outline-blue-500"
+        :class="{ active: filters.status === s.value }"
+        :title="s.hint"
+        @click="setFilter('status', s.value === 'all' ? null : s.value)"
+      >{{ s.label }}</button>
+      <span class="trigger-chips__divider" aria-hidden="true">·</span>
+      <button
+        type="button"
+        class="filter-chip focus-visible:outline-2 focus-visible:outline-blue-500"
+        :class="{ active: filters.marks === '1' }"
+        title="Rules with at least one user-marked noise event in this range"
+        @click="setFilter('marks', filters.marks === '1' ? null : '1')"
+      >🔇 With noise marks</button>
+      <button
+        v-if="filters.search || filters.severity || filters.engine || filters.status !== 'all' || filters.marks"
+        type="button"
+        class="filter-chip filter-chip--clear focus-visible:outline-2 focus-visible:outline-blue-500"
+        @click="clearFilters"
+      >Clear filters</button>
     </div>
 
     <!-- Rule list -->
@@ -236,6 +268,7 @@ const emptyMode = computed(() => {
   margin-top: 1px;
 }
 
+
 .trigger-toolbar {
   display: flex;
   align-items: center;
@@ -272,6 +305,9 @@ const emptyMode = computed(() => {
   font-size: 12px;
   color: var(--color-blue-800);
   text-decoration: none;
+  /* Pad the hit area to >=36px without changing visual weight. */
+  padding-block: 10px;
+  margin-block: -10px;
 }
 .trigger-toolbar__raw-link:hover { text-decoration: underline; }
 

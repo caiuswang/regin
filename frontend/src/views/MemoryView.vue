@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import api from '../api'
+import { useBreakpoint } from '../composables/useBreakpoint'
 import { useConfirm } from '../composables/useConfirm'
 import { useResizablePanel } from '../composables/useResizablePanel'
 import { usePage } from '../composables/usePage'
@@ -22,6 +23,7 @@ import MemoryWikiRecalls from '../components/memory/MemoryWikiRecalls.vue'
 import MemoryDoctor from '../components/memory/MemoryDoctor.vue'
 
 const { confirm } = useConfirm()
+const { isMdUp } = useBreakpoint()
 const { width: listWidth, onResizeStart, onResizeKey } =
   useResizablePanel('regin_memory_list_width', { min: 200, max: 640, def: 288 })
 
@@ -30,7 +32,7 @@ const query = ref('')
 const searchDraft = ref('')
 const sortKey = ref('recent')
 const SORT_OPTIONS = [
-  { value: 'recent', label: 'Recently updated' },
+  { value: 'recent', label: 'Recent' },
   { value: 'recalled', label: 'Most recalled' },
   { value: 'least_recalled', label: 'Least recalled' },
 ]
@@ -281,7 +283,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
         @select="selectCategory"
         @update:scope="setScope"
       />
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <input
           v-model="searchDraft"
           type="search"
@@ -309,8 +311,8 @@ onBeforeUnmount(() => headerObserver?.disconnect())
       <!-- When a memory is selected the list becomes a fixed, drag-resizable
            rail; otherwise it expands to fill the row. -->
       <div
-        :class="selectedId ? 'relative shrink-0 self-start sticky' : 'flex-1 min-w-0'"
-        :style="selectedId ? { width: listWidth + 'px', top: (headerH - 16) + 'px' } : null"
+        :class="selectedId ? 'max-md:hidden relative shrink-0 self-start sticky' : 'flex-1 min-w-0'"
+        :style="selectedId && isMdUp ? { width: listWidth + 'px', top: (headerH - 16) + 'px' } : null"
       >
         <!-- When pinned, the rail scrolls its own overflow so a long list stays
              reachable without growing past the viewport. The resize handle is a
@@ -346,20 +348,21 @@ onBeforeUnmount(() => headerObserver?.disconnect())
         </div>
         <!-- Drag handle sitting in the gutter on the rail's right edge. A
              <button> so it's keyboard focusable (←/→ resize). -->
-        <button
+        <Button
           v-if="selectedId"
-          type="button"
-          class="absolute top-0 -right-3 w-3 h-full p-0 bg-transparent border-0 cursor-col-resize group z-10 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+          variant="ghost"
+          class="max-md:hidden absolute top-0 -right-3 w-3 h-full p-0 hover:bg-transparent cursor-col-resize touch-none group z-10 select-none rounded focus-visible:ring-blue-400 focus-visible:ring-offset-0"
           title="Drag (or ←/→) to resize list"
           aria-label="Resize memory list"
-          @mousedown="onResizeStart"
+          @pointerdown="onResizeStart"
           @keydown="onResizeKey"
         >
           <span class="block mx-auto w-px h-full bg-slate-200 group-hover:bg-blue-400 transition-colors"></span>
-        </button>
+        </Button>
       </div>
       <MemoryDetail
         v-if="selectedId"
+        class="min-w-0 flex-1 max-md:w-full"
         :memory-id="selectedId"
         @changed="load"
         @navigate="id => selectedId = id"
@@ -417,10 +420,9 @@ onBeforeUnmount(() => headerObserver?.disconnect())
           <p v-if="!recallHits.length" class="text-sm text-slate-500">Nothing matched.</p>
           <ul v-else class="space-y-1.5">
             <li v-for="h in recallHits" :key="h.id">
-              <button
-                type="button"
-                class="relative w-full text-left rounded-md border pl-3.5 pr-2.5 py-2 overflow-hidden transition-all focus-visible:outline-2 focus-visible:outline-blue-500"
-                :class="selectedId === h.id ? 'border-blue-300 bg-blue-50/60' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'"
+              <Button
+                variant="ghost"
+                :class="['relative w-full flex flex-col items-stretch gap-0 h-auto pl-3.5 pr-2.5 py-2 text-left font-normal whitespace-normal rounded-md border overflow-hidden transition-all focus-visible:outline-2 focus-visible:outline-blue-500', selectedId === h.id ? 'border-blue-300 bg-blue-50/60 hover:bg-blue-50/60' : 'border-slate-200 bg-white hover:bg-white hover:border-slate-300 hover:shadow-sm']"
                 @click="selectMemory(h.id)"
               >
                 <span class="absolute inset-y-0 left-0 w-1" :class="kindBar(h.kind)" aria-hidden="true"></span>
@@ -433,7 +435,7 @@ onBeforeUnmount(() => headerObserver?.disconnect())
                   <span class="text-sm font-medium text-slate-800 truncate">{{ h.title || h.kind }}</span>
                 </div>
                 <p class="text-xs text-slate-500 leading-snug">{{ snippet(h.body) }}</p>
-              </button>
+              </Button>
             </li>
           </ul>
         </div>

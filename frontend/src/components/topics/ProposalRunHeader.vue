@@ -55,7 +55,7 @@ function proposalReviewColor(status) {
     <div class="topics-run-header-left">
       <Button
         variant="link"
-        class="topics-back-link"
+        class="topics-back-link min-h-9"
         @click="emit('back')"
       >← Back to runs</Button>
       <h2 class="topics-run-title" :title="selectedRun.topic_request || ''">{{ selectedRun.title || 'Untitled run' }}</h2>

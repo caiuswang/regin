@@ -10,24 +10,29 @@ import { ref, onMounted, onUnmounted } from 'vue'
 // full-width takeover on ≥xl `?agent=` deep links.
 export function useBreakpoint() {
   const canQuery = typeof window !== 'undefined' && !!window.matchMedia
+  const mqMd = canQuery ? window.matchMedia('(min-width: 768px)') : null
+  const mqLg = canQuery ? window.matchMedia('(min-width: 1024px)') : null
   const mqXl = canQuery ? window.matchMedia('(min-width: 1280px)') : null
   const mq2xl = canQuery ? window.matchMedia('(min-width: 1536px)') : null
+  const isMdUp = ref(mqMd ? mqMd.matches : false)
+  const isLgUp = ref(mqLg ? mqLg.matches : false)
   const isXl = ref(mqXl ? mqXl.matches : false)
   const is2xl = ref(mq2xl ? mq2xl.matches : false)
   const sync = () => {
+    isMdUp.value = mqMd ? mqMd.matches : false
+    isLgUp.value = mqLg ? mqLg.matches : false
     isXl.value = mqXl ? mqXl.matches : false
     is2xl.value = mq2xl ? mq2xl.matches : false
   }
+  const queries = [mqMd, mqLg, mqXl, mq2xl].filter(Boolean)
   onMounted(() => {
     if (!canQuery) return
     sync()
-    mqXl.addEventListener('change', sync)
-    mq2xl.addEventListener('change', sync)
+    for (const mq of queries) mq.addEventListener('change', sync)
   })
   onUnmounted(() => {
-    if (mqXl) mqXl.removeEventListener('change', sync)
-    if (mq2xl) mq2xl.removeEventListener('change', sync)
+    for (const mq of queries) mq.removeEventListener('change', sync)
   })
 
-  return { isXl, is2xl }
+  return { isMdUp, isLgUp, isXl, is2xl }
 }

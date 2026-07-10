@@ -4,11 +4,16 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
 
 const route = useRoute()
 const router = useRouter()
 const data = ref(null)
 const loading = ref(true)
+
+const MOBILE_PAGE = 50
+const mobileShown = ref(MOBILE_PAGE)
+const mobileRows = computed(() => data.value ? data.value.rows.slice(0, mobileShown.value) : [])
 
 async function load() {
   loading.value = true
@@ -17,6 +22,7 @@ async function load() {
   if (route.query.gave_up) params.set('gave_up', route.query.gave_up)
   params.set('limit', '200')
   data.value = await api.get('/ingest-errors?' + params.toString())
+  mobileShown.value = MOBILE_PAGE
   loading.value = false
 }
 
@@ -164,7 +170,7 @@ const totals = computed(() => {
       </table>
       </div>
       <ul v-if="data.rows.length" class="sm:hidden divide-y divide-gray-200">
-        <li v-for="(row, pos) in data.rows" :key="pos" class="p-3 text-sm">
+        <li v-for="(row, pos) in mobileRows" :key="pos" class="p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2 mb-1">
             <span v-if="row.gave_up" class="inline-block rounded bg-red-100 text-red-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide">dropped</span>
             <span v-else class="inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide">retried</span>
@@ -180,6 +186,13 @@ const totals = computed(() => {
           <div v-if="row.error" class="mt-1 text-xs text-gray-600 break-all">{{ row.error }}</div>
         </li>
       </ul>
+      <div
+        v-if="mobileRows.length < data.rows.length"
+        class="sm:hidden flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-gray-200 bg-gray-50 text-xs text-gray-500"
+      >
+        <span>Showing {{ mobileRows.length }} of {{ data.rows.length }} entries</span>
+        <Button variant="secondary" size="sm" @click="mobileShown += MOBILE_PAGE">Show more</Button>
+      </div>
       <p v-if="!data.rows.length" class="p-4 text-sm text-gray-400">
         No ingest errors recorded — all hooks have landed cleanly.
       </p>

@@ -216,7 +216,35 @@ function activityTs(run) {
         @click="clearFilters"
       >Clear</Button>
     </div>
-    <div class="overflow-x-auto">
+    <!-- Below md the 7-column table forces per-row horizontal panning, so the
+         runs render as stacked card rows instead; the table stays for ≥md. -->
+    <div class="md:hidden">
+      <div v-for="run in pagedRuns" :key="`card-${run.id}`" class="border-b border-border last:border-b-0">
+        <Button
+          variant="ghost"
+          class="h-auto w-full flex-col items-start gap-1.5 whitespace-normal rounded-none px-4 py-3 text-left font-normal"
+          @click="chooseRun(run.id)"
+        >
+          <span class="text-sm font-medium text-fg line-clamp-2">{{ run.title || 'Untitled run' }}</span>
+          <span class="flex flex-wrap items-center gap-1.5">
+            <Badge :color="proposalStateColor(run.state)" :label="run.state || 'completed'" />
+            <Badge :color="proposalReviewColor(run.review_state)" :label="(run.review_state || 'pending_review').replaceAll('_', ' ')" />
+            <Badge v-if="run.open_drift_note_count" color="yellow" :label="`wiki drift · ${run.open_drift_note_count}`" />
+          </span>
+          <span class="text-xs text-fg-muted">{{ run.provider }}<template v-if="run.agent"> · {{ run.agent }}</template><template v-if="fmtAgo(run.last_activity_at)"> · updated {{ fmtAgo(run.last_activity_at) }}</template></span>
+          <span v-if="run.error" class="text-xs text-danger line-clamp-2">{{ run.error }}</span>
+        </Button>
+        <div class="flex justify-end px-4 pb-2">
+          <Button variant="danger" size="sm" :disabled="busy" @click="onDelete(run)">Delete</Button>
+        </div>
+      </div>
+      <p v-if="!allRuns.length" class="px-4 py-6 text-sm text-fg-faint">No proposal runs yet. Generate one above.</p>
+      <p v-else-if="!pagedRuns.length" class="px-4 py-6 text-sm text-fg-faint">
+        No runs match the current filters.
+        <Button variant="link" class="ml-1 min-h-9" @click="clearFilters">Clear filters</Button>
+      </p>
+    </div>
+    <div class="hidden md:block overflow-x-auto">
     <table class="tbl tbl-workbench">
       <thead>
         <tr>
@@ -238,9 +266,9 @@ function activityTs(run) {
           @click="chooseRun(run.id)"
         >
           <td>
-            <button
-              type="button"
-              class="topics-row-button focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+            <Button
+              variant="ghost"
+              class="topics-row-button h-auto whitespace-normal rounded-none font-normal"
               @click.stop="chooseRun(run.id)"
             >
               <div class="topics-row-title line-clamp-2" :title="run.topic_request || run.title || ''">{{ run.title || 'Untitled run' }}</div>
@@ -256,7 +284,7 @@ function activityTs(run) {
                 />
               </div>
               <div v-if="run.error" class="topics-row-meta text-red-600 line-clamp-2">{{ run.error }}</div>
-            </button>
+            </Button>
           </td>
           <td><Badge :color="proposalStateColor(run.state)" :label="run.state || 'completed'" /></td>
           <td>{{ run.provider }}<span v-if="run.agent" class="text-xs text-slate-500"> · {{ run.agent }}</span></td>

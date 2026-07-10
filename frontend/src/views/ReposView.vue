@@ -103,7 +103,7 @@ async function removeRepo(repo) {
             <th>Path</th>
             <th>Branch</th>
             <th class="text-right">Patterns</th>
-            <th></th>
+            <th class="sticky right-0 bg-slate-50"></th>
           </tr>
         </thead>
         <tbody>
@@ -116,15 +116,15 @@ async function removeRepo(repo) {
             <td>
               <router-link
                 :to="`/repos/${r.name}`"
-                class="table-link focus-visible:outline-2 focus-visible:outline-blue-500"
+                class="table-link block py-2.5 -my-2.5 focus-visible:outline-2 focus-visible:outline-blue-500"
               >
                 {{ r.name }}
               </router-link>
             </td>
-            <td><code class="cell-code">{{ r.path }}</code></td>
+            <td><code class="cell-code whitespace-nowrap">{{ r.path }}</code></td>
             <td class="font-mono text-xs">{{ r.branch_name || '-' }}</td>
             <td class="text-right font-mono text-xs">{{ r.pattern_count }}</td>
-            <td class="text-right">
+            <td class="text-right sticky right-0 bg-white">
               <Button
                 variant="danger"
                 size="sm"
@@ -142,11 +142,11 @@ async function removeRepo(repo) {
     <Teleport to="body">
       <div
         v-if="showAdd"
-        class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
+        class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center cursor-pointer hover:bg-black/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         @click.self="closeAdd"
         @keydown.esc="closeAdd"
       >
-        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden cursor-default">
           <div class="px-5 pt-5 pb-3">
             <h2 class="text-base font-semibold text-gray-900 mb-1">Add repository</h2>
             <p class="text-sm text-gray-500">

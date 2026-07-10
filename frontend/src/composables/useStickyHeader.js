@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 
 // Track the rendered height of a sticky page header so dependent sticky
 // elements (tbody thead, side panels) can offset themselves correctly.
@@ -42,4 +42,12 @@ export function useStickyHeader(gateRef = null) {
   }
 
   return { stickyHeaderEl, stickyHeaderHeight }
+}
+
+// Views that pin a full header on desktop but only a compact strip on
+// phones track one measured height per element; this resolves which one is
+// actually pinned at the current breakpoint.
+export function useStickyChromeHeight(isDesktopRef, desktopHeightRef, compactHeightRef) {
+  return computed(() =>
+    (isDesktopRef.value ? desktopHeightRef.value : compactHeightRef.value))
 }

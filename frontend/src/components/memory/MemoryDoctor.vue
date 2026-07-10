@@ -101,11 +101,13 @@ const entries = (data) => Object.entries(data).sort((a, b) => b[1] - a[1])
       <li
         v-for="(c, i) in checks"
         :key="i"
-        class="flex items-start gap-2 text-xs"
+        class="flex items-start flex-wrap gap-2 text-xs"
         :class="LEVEL_CLS[c.level]"
       >
-        <span aria-hidden="true" class="shrink-0 leading-4">{{ LEVEL_ICON[c.level] }}</span>
-        <span>{{ c.text }}</span>
+        <span class="flex min-w-0 items-start gap-2">
+          <span aria-hidden="true" class="shrink-0 leading-4">{{ LEVEL_ICON[c.level] }}</span>
+          <span class="min-w-0">{{ c.text }}</span>
+        </span>
         <Button
           v-if="c.action === 'reflect'"
           variant="secondary"

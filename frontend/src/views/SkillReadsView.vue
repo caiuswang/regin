@@ -7,6 +7,7 @@ import Badge from '../components/Badge.vue'
 import CursorControls from '../components/CursorControls.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
+import { fmtAgo } from '../utils/traceFormatters'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useCursor } from '../composables/useCursor'
@@ -127,13 +128,13 @@ function shortTestName(nodeid) {
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Sessions <span class="text-gray-400 font-normal">(recent 50)</span></div>
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto lg:overflow-x-clip">
         <table v-if="sessions.length" class="tbl">
-          <thead><tr><th>Session</th><th class="text-right">Reads</th><th class="text-right">Skills</th><th>Plan</th><th>Last</th></tr></thead>
+          <thead><tr><th>Session</th><th class="text-right">Reads</th><th class="text-right">Skills</th><th class="hidden sm:table-cell">Plan</th><th>Last</th></tr></thead>
           <tbody>
             <tr v-for="s in sessions" :key="s.session_id" :class="{ 'bg-blue-50': sessionFilter === s.session_id }">
               <td>
-                <span v-if="s.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', s.session_id)"><code class="text-xs">{{ s.session_id.slice(0, 8) }}...</code></span>
+                <span v-if="s.session_id" class="text-blue-600 hover:underline cursor-pointer whitespace-nowrap" @click="filterBy('session', s.session_id)"><code class="text-xs">{{ s.session_id.slice(0, 8) }}...</code></span>
                 <span v-else class="text-gray-400 text-xs">unknown</span>
                 <template v-if="s.is_test">
                   <span
@@ -149,7 +150,7 @@ function shortTestName(nodeid) {
               </td>
               <td class="text-right">{{ s.total }}</td>
               <td class="text-right">{{ s.skills }}</td>
-              <td>
+              <td class="hidden sm:table-cell">
                 <router-link v-if="s.plan_filename" :to="`/plans/${s.plan_filename}`" class="text-blue-600 hover:underline text-xs"
                   :title="s.plan_filename"
                 >
@@ -157,7 +158,10 @@ function shortTestName(nodeid) {
                 </router-link>
                 <span v-else class="text-gray-300 text-xs">-</span>
               </td>
-              <td class="text-gray-400 text-xs">{{ fmtDate(s.last_seen) }}</td>
+              <td class="text-gray-400 text-xs whitespace-nowrap">
+                <span class="sm:hidden">{{ fmtAgo(s.last_seen) }}</span>
+                <span class="hidden sm:inline">{{ fmtDate(s.last_seen) }}</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -167,7 +171,7 @@ function shortTestName(nodeid) {
 
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Per-skill summary</div>
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto lg:overflow-x-clip">
         <table v-if="stats.length" class="tbl">
           <thead><tr><th>Skill</th><th class="text-right">Reads</th><th>Last seen</th></tr></thead>
           <tbody>
@@ -185,7 +189,7 @@ function shortTestName(nodeid) {
 
     <Card :no-padding="true">
       <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Recent events</div>
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto lg:overflow-x-clip">
       <table v-if="items.length" class="tbl hidden sm:table">
         <thead><tr><th>When</th><th>Skill</th><th>Source</th><th>Session</th><th>File / Args</th></tr></thead>
         <tbody>
@@ -240,19 +244,20 @@ function shortTestName(nodeid) {
 
 <style scoped>
 /* Make each table's column header pin under the sticky page header
-   while scrolling. See SessionTraceView for the same pattern. */
+   while scrolling. See SessionTraceView for the same pattern. Sticky th
+   needs the page scroller as its scrollport, so the table wrappers use
+   overflow-x: clip at >=lg (clip creates no scroll container); below lg
+   the wrappers must genuinely scroll — tablet-width tables can exceed
+   the card — so the th stays static there. */
 .sticky-page-root :deep(.card) {
   overflow: visible !important;
 }
-.sticky-page-root :deep(.tbl > thead > tr > th) {
-  position: sticky;
-  top: calc(var(--regin-trace-header-h, 0px) - 1rem);
-  z-index: 5;
-  background: var(--color-slate-50);
-}
 @media (min-width: 1024px) {
   .sticky-page-root :deep(.tbl > thead > tr > th) {
+    position: sticky;
     top: calc(var(--regin-trace-header-h, 0px) - 1.5rem);
+    z-index: 5;
+    background: var(--color-slate-50);
   }
 }
 </style>

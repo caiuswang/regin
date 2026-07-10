@@ -530,8 +530,8 @@ const skillBadge = {
             <th>Title</th>
             <th>Category</th>
             <th>Tags</th>
-            <th>Skill state</th>
-            <th>Skill scope</th>
+            <th class="hidden sm:table-cell">Skill state</th>
+            <th class="hidden sm:table-cell">Skill scope</th>
           </tr>
         </thead>
         <tbody>
@@ -547,6 +547,10 @@ const skillBadge = {
               <div v-if="d.header" class="text-[11px] text-slate-500 mt-0.5 font-mono">
                 {{ d.header }}
               </div>
+              <div v-if="data.skill_states[d.slug]" class="mt-1 sm:hidden">
+                <Badge :color="skillBadge[data.skill_states[d.slug]]?.color || 'gray'"
+                       :label="skillBadge[data.skill_states[d.slug]]?.label || data.skill_states[d.slug]" />
+              </div>
             </td>
             <td><Badge color="purple" :label="d.category" /></td>
             <td>
@@ -554,13 +558,13 @@ const skillBadge = {
                 <Badge v-for="tag in (d.tag_names || '').split(', ').filter(Boolean)" :key="tag" color="gray" :label="tag" />
               </span>
             </td>
-            <td class="whitespace-nowrap">
+            <td class="hidden sm:table-cell whitespace-nowrap">
               <template v-if="data.skill_states[d.slug]">
                 <Badge :color="skillBadge[data.skill_states[d.slug]]?.color || 'gray'"
                        :label="skillBadge[data.skill_states[d.slug]]?.label || data.skill_states[d.slug]" />
               </template>
             </td>
-            <td class="whitespace-nowrap">
+            <td class="hidden sm:table-cell whitespace-nowrap">
               <Badge v-if="skillBadge[data.skill_states[d.slug]]?.scope"
                      color="gray" :label="skillBadge[data.skill_states[d.slug]].scope" />
               <span v-else class="text-slate-400 text-[12px]">—</span>

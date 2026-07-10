@@ -109,7 +109,7 @@ function shortTestName(nodeid) {
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Sessions <span class="text-gray-400 font-normal">(recent 50)</span></div>
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto lg:overflow-x-clip">
         <table v-if="sessions.length" class="tbl">
           <thead><tr><th>Session</th><th class="text-right">Calls</th><th class="text-right">Tools</th><th>Last</th></tr></thead>
           <tbody>
@@ -141,7 +141,7 @@ function shortTestName(nodeid) {
 
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Per-tool summary</div>
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto lg:overflow-x-clip">
         <table v-if="stats.length" class="tbl">
           <thead><tr><th>Tool</th><th class="text-right">Calls</th><th>Last seen</th></tr></thead>
           <tbody>
@@ -163,7 +163,7 @@ function shortTestName(nodeid) {
 
     <Card :no-padding="true">
       <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Recent calls</div>
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto lg:overflow-x-clip">
       <table v-if="items.length" class="tbl hidden sm:table">
         <thead><tr><th>When</th><th>Tool</th><th>Session</th><th class="text-right">Duration</th><th>Input keys</th></tr></thead>
         <tbody>
@@ -217,19 +217,20 @@ function shortTestName(nodeid) {
    while scrolling. See SessionTraceView for the same pattern; the
    thead's top offset subtracts `.content-scroll`'s padding-top
    (1rem mobile / 1.5rem desktop) so it sits flush with the page
-   header's bottom edge. */
+   header's bottom edge. Sticky th needs the page scroller as its
+   scrollport, so the table wrappers use overflow-x: clip at >=lg
+   (clip creates no scroll container); below lg the wrappers must
+   genuinely scroll — tablet-width tables can exceed the card — so
+   the th stays static there. */
 .sticky-page-root :deep(.card) {
   overflow: visible !important;
 }
-.sticky-page-root :deep(.tbl > thead > tr > th) {
-  position: sticky;
-  top: calc(var(--regin-trace-header-h, 0px) - 1rem);
-  z-index: 5;
-  background: var(--color-slate-50);
-}
 @media (min-width: 1024px) {
   .sticky-page-root :deep(.tbl > thead > tr > th) {
+    position: sticky;
     top: calc(var(--regin-trace-header-h, 0px) - 1.5rem);
+    z-index: 5;
+    background: var(--color-slate-50);
   }
 }
 </style>

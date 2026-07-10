@@ -177,7 +177,7 @@ onMounted(load)
             :key="f.key"
             type="button"
             :class="[
-              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500',
+              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500 max-sm:min-h-9',
               verdictFilter === f.key
                 ? 'border-blue-200 bg-blue-50 text-blue-700'
                 : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700',

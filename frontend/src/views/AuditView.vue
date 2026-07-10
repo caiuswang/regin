@@ -43,9 +43,9 @@ onMounted(load)
           <tr v-for="e in entries" :key="e.id">
             <td class="text-slate-500 whitespace-nowrap text-xs">{{ e.created_at }}</td>
             <td class="font-medium">{{ e.username }}</td>
-            <td><span class="cell-code">{{ e.action }}</span></td>
+            <td class="whitespace-nowrap"><span class="cell-code">{{ e.action }}</span></td>
             <td class="font-mono text-xs">{{ e.target }}</td>
-            <td class="text-slate-500 text-xs truncate max-w-xs">{{ e.detail }}</td>
+            <td class="text-slate-500 text-xs truncate max-w-0 min-w-32" :title="e.detail">{{ e.detail }}</td>
           </tr>
         </tbody>
       </table>

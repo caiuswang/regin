@@ -13,6 +13,7 @@ import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import Tabs from '../ui/Tabs.vue'
+import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useResizablePanel } from '../../composables/useResizablePanel'
 import TaxonomyTree from './TaxonomyTree.vue'
 import TaxonomyGraph from './TaxonomyGraph.vue'
@@ -43,6 +44,7 @@ const scopeSelectOptions = computed(() => [
 function withScope(path) {
   return scope.value ? `${path}?scope=${encodeURIComponent(scope.value)}` : path
 }
+const { isMdUp } = useBreakpoint()
 const { width, onResizeStart, onResizeKey } =
   useResizablePanel('regin_memory_taxonomy_width', { min: 240, max: 600, def: 340 })
 
@@ -177,7 +179,7 @@ defineExpose({ reload })
       </div>
       <Button
         variant="ghost" size="sm"
-        class="gap-1.5 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
+        class="gap-1.5 max-md:h-9 focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2"
         :aria-label="collapsed ? 'Show navigator' : 'Hide navigator'"
         @click="collapsed = !collapsed"
       >
@@ -195,9 +197,9 @@ defineExpose({ reload })
     <!-- workspace: independently-scrolling panes, resizable divider -->
     <div v-else class="flex items-stretch h-[calc(100vh-15rem)] min-h-[26rem]">
       <div
-        v-show="!collapsed"
-        class="relative shrink-0 flex flex-col min-h-0"
-        :style="{ width: width + 'px' }"
+        v-show="!collapsed && (isMdUp || !selectedId)"
+        class="relative shrink-0 flex flex-col min-h-0 max-md:flex-1 max-md:min-w-0"
+        :style="isMdUp ? { width: width + 'px' } : null"
       >
         <div class="flex-1 min-h-0" :class="viewMode === 'tree' ? 'overflow-y-auto pr-1' : 'overflow-hidden'">
           <TaxonomyTree
@@ -217,16 +219,29 @@ defineExpose({ reload })
       <Button
         v-show="!collapsed"
         variant="ghost"
-        class="group relative shrink-0 w-3 h-auto self-stretch p-0 cursor-col-resize hover:bg-transparent focus-visible:outline-2 focus-visible:outline-ring rounded-none"
+        class="max-md:hidden group relative shrink-0 w-3 h-auto self-stretch p-0 cursor-col-resize touch-none hover:bg-transparent focus-visible:outline-2 focus-visible:outline-ring rounded-none"
         aria-label="Resize navigator"
-        @mousedown="onResizeStart"
+        @pointerdown="onResizeStart"
         @keydown="onResizeKey"
       >
         <span class="block mx-auto w-px h-full bg-border group-hover:bg-primary transition-colors motion-reduce:transition-none" />
       </Button>
 
-      <div class="flex-1 min-w-0 min-h-0">
+      <div
+        class="flex-1 min-w-0 min-h-0 flex flex-col"
+        :class="selectedId || collapsed ? '' : 'max-md:hidden'"
+      >
+        <Button
+          v-if="selectedId"
+          variant="ghost"
+          size="sm"
+          class="md:hidden self-start min-h-9 gap-1.5 mb-1"
+          @click="selectedId = null"
+        >
+          <Icon name="chevron-left" :size="14" /> Back to topics
+        </Button>
         <TaxonomyDetail
+          class="flex-1 min-h-0"
           :detail="detail"
           :ancestors="ancestors"
           :nodes="nodes"

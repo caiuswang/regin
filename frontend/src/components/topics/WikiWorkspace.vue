@@ -53,9 +53,15 @@ function chooseTopic(id) {
 </script>
 
 <template>
-  <div class="flex flex-col lg:flex-row lg:items-stretch border border-border rounded-lg lg:overflow-hidden bg-surface min-h-[28rem] h-[calc(100vh-18rem)]">
+  <!-- Below lg the fixed height + flex-col stack collapsed the detail to 0px
+       (the aside consumed the whole container), so small viewports show ONE
+       pane at a time keyed on ?topic= instead of the two-pane split. -->
+  <div class="flex flex-col lg:flex-row lg:items-stretch border border-border rounded-lg lg:overflow-hidden bg-surface min-h-[28rem] h-auto lg:h-[calc(100vh-18rem)]">
     <!-- left rail: filter + bucket tree -->
-    <aside class="w-full lg:w-72 lg:shrink-0 flex flex-col min-h-0 border-b lg:border-b-0 lg:border-r border-border bg-surface-2">
+    <aside
+      class="w-full lg:w-72 lg:shrink-0 flex-col min-h-0 border-b lg:border-b-0 lg:border-r border-border bg-surface-2"
+      :class="selectedId ? 'hidden lg:flex' : 'flex'"
+    >
       <div class="p-2 border-b border-border-subtle space-y-2">
         <div class="flex items-baseline justify-between px-1 text-[11px] text-fg-faint font-mono tabular-nums">
           <span>{{ roots.length }} buckets</span>
@@ -85,7 +91,10 @@ function chooseTopic(id) {
     </aside>
 
     <!-- right pane: the selected topic's wiki, or a placeholder -->
-    <div class="flex-1 min-w-0 min-h-0 overflow-y-auto">
+    <div
+      class="flex-1 min-w-0 min-h-0 lg:overflow-y-auto"
+      :class="selectedId ? '' : 'hidden lg:block'"
+    >
       <ApprovedTopicDetail
         v-if="selectedId"
         :repo="repo"

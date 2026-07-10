@@ -91,15 +91,17 @@ function runBulk(action) {
     <Teleport to="body">
       <div
         v-if="checked.size"
-        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-4 px-4 py-2.5 rounded-full bg-white shadow-lg ring-1 ring-slate-200 text-sm"
+        class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center justify-center flex-wrap w-max max-w-[calc(100vw-1rem)] gap-x-3 px-4 py-1.5 rounded-3xl bg-white shadow-lg ring-1 ring-slate-200 text-sm"
       >
-        <span class="font-medium text-blue-800">{{ checked.size }} selected</span>
-        <span class="flex items-center gap-4">
-          <Button variant="link" size="sm" class="font-medium text-emerald-700 hover:text-emerald-900 hover:no-underline" @click="runBulk('approve')">Approve</Button>
-          <Button variant="link" size="sm" class="font-medium text-slate-600 hover:text-slate-900 hover:no-underline" @click="runBulk('retire')">Retire</Button>
-          <Button variant="link" size="sm" class="font-medium text-emerald-700 hover:text-emerald-900 hover:no-underline" @click="runBulk('restore')">Restore</Button>
-          <Button variant="link" size="sm" class="font-medium text-red-600 hover:text-red-800 hover:no-underline" @click="runBulk('forget')">Forget</Button>
-          <Button variant="link" size="sm" class="text-slate-400 hover:text-slate-700 hover:no-underline" @click="checked = new Set()">Clear</Button>
+        <span class="font-medium text-blue-800 whitespace-nowrap">{{ checked.size }} selected</span>
+        <span class="flex items-center flex-wrap justify-center gap-x-2">
+          <Button variant="link" size="sm" class="min-h-9 px-1 font-medium text-emerald-700 hover:text-emerald-900 hover:no-underline" @click="runBulk('approve')">Approve</Button>
+          <Button variant="link" size="sm" class="min-h-9 px-1 font-medium text-slate-600 hover:text-slate-900 hover:no-underline" @click="runBulk('retire')">Retire</Button>
+          <Button variant="link" size="sm" class="min-h-9 px-1 font-medium text-emerald-700 hover:text-emerald-900 hover:no-underline" @click="runBulk('restore')">Restore</Button>
+          <span class="w-px h-5 bg-slate-200" aria-hidden="true"></span>
+          <Button variant="link" size="sm" class="min-h-9 px-1 font-medium text-red-600 hover:text-red-800 hover:no-underline" @click="runBulk('forget')">Forget</Button>
+          <span class="w-px h-5 bg-slate-200" aria-hidden="true"></span>
+          <Button variant="link" size="sm" class="min-h-9 px-1 text-slate-400 hover:text-slate-700 hover:no-underline" @click="checked = new Set()">Clear</Button>
         </span>
       </div>
     </Teleport>
@@ -141,9 +143,9 @@ function runBulk(action) {
           :aria-label="`Select ${m.title || m.kind}`"
           @update:model-value="toggle(m.id)"
         />
-        <button
-          type="button"
-          class="flex-1 min-w-0 text-left focus-visible:outline-2 focus-visible:outline-blue-500 rounded"
+        <Button
+          variant="ghost"
+          class="flex-1 min-w-0 flex-col items-stretch gap-0 h-auto p-0 text-left font-normal whitespace-normal hover:bg-transparent rounded focus-visible:ring-blue-500 focus-visible:ring-offset-0"
           @click="emit('select', m.id)"
         >
           <div class="flex items-center gap-2">
@@ -168,7 +170,7 @@ function runBulk(action) {
             <span class="text-[10px] font-mono text-slate-400 shrink-0">{{ timeLabel(m.updated_at) }}</span>
           </div>
           <p v-if="expanded && m.title" class="mt-1 text-xs text-slate-500 leading-snug">{{ snippet(m.body) }}</p>
-        </button>
+        </Button>
       </li>
     </ul>
   </div>

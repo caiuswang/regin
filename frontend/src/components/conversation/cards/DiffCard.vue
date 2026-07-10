@@ -31,14 +31,14 @@ defineEmits(['activate'])
       <span class="font-mono text-slate-700 min-w-0 truncate">
         <span class="font-semibold">{{ diffOpLabel(span.attributes?.edit_op) }}</span><span class="text-slate-500">({{ diffFileName(span) }})</span>
       </span>
-      <span class="flex-1 min-w-0 flex items-center gap-2">
+      <span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
         <span
           v-if="span.attributes?.added_lines"
-          class="font-mono text-[11px] text-emerald-600"
+          class="font-mono text-[11px] text-emerald-600 shrink-0"
         >+{{ span.attributes.added_lines }}</span>
         <span
           v-if="span.attributes?.removed_lines"
-          class="font-mono text-[11px] text-red-600"
+          class="font-mono text-[11px] text-red-600 shrink-0"
         >-{{ span.attributes.removed_lines }}</span>
       </span>
       <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>

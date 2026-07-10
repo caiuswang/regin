@@ -383,6 +383,7 @@ onMounted(async () => {
     color: var(--color-slate-600);
     margin-top: 0.2rem;
     max-width: 46rem;
+    overflow-wrap: anywhere;
 }
 .row-meta {
     display: flex;

@@ -5,6 +5,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { fmtLocalDateTime } from '../../utils/traceFormatters'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
+import ClampedText from '../ui/ClampedText.vue'
 import Select from '../ui/Select.vue'
 import ProposalReviewNoteCard from './ProposalReviewNoteCard.vue'
 
@@ -435,7 +436,9 @@ watch(
             </div>
           </template>
           <template v-else>
-            <p class="mt-1 whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+            <ClampedText :lines="6" class="mt-1">
+              <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+            </ClampedText>
             <div v-if="!readonly" class="mt-1 flex justify-end gap-2">
               <Button
                 variant="link"

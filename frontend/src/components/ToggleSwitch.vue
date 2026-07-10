@@ -23,7 +23,7 @@ function toggle() {
     :aria-busy="loading"
     :disabled="disabled || loading"
     @click="toggle"
-    class="inline-flex items-center gap-2 group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+    class="inline-flex items-center gap-2 py-2 -my-2 group focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
   >
     <span
       class="relative inline-block h-5 w-9 rounded-full transition-colors"

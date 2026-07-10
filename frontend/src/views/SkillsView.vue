@@ -113,10 +113,7 @@ const typeDescriptions = {
           <p class="card-group-meta">{{ typeDescriptions[typeName] }}</p>
         </div>
         <div class="overflow-x-auto">
-        <table class="tbl" style="table-layout:fixed;width:100%">
-          <colgroup>
-            <col style="width:30%"><col style="width:14%"><col style="width:10%"><col style="width:46%">
-          </colgroup>
+        <table class="tbl skills-tbl skills-tbl-global">
           <thead>
             <tr><th>Skill</th><th>{{ providerName }}</th><th>Scope</th><th>Source</th></tr>
           </thead>
@@ -165,10 +162,7 @@ const typeDescriptions = {
         </p>
       </div>
       <div class="overflow-x-auto">
-      <table class="tbl" style="table-layout:fixed;width:100%">
-        <colgroup>
-          <col style="width:30%"><col style="width:18%"><col style="width:22%"><col style="width:30%">
-        </colgroup>
+      <table class="tbl skills-tbl skills-tbl-project">
         <thead>
           <tr><th>Skill</th><th>Provider</th><th>Deployed at</th><th>Path</th></tr>
         </thead>
@@ -192,3 +186,24 @@ const typeDescriptions = {
     </Card>
   </div>
 </template>
+
+<style scoped>
+.skills-tbl { width: 100%; }
+/* Counter the global `code { overflow-wrap: anywhere }`: skill ids must keep
+   their natural width so auto layout can't crush the column to one char. */
+.skills-tbl td:first-child code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+@media (min-width: 768px) {
+  .skills-tbl { table-layout: fixed; }
+  .skills-tbl-global th:nth-child(1) { width: 30%; }
+  .skills-tbl-global th:nth-child(2) { width: 14%; }
+  .skills-tbl-global th:nth-child(3) { width: 10%; }
+  .skills-tbl-global th:nth-child(4) { width: 46%; }
+  .skills-tbl-project th:nth-child(1) { width: 30%; }
+  .skills-tbl-project th:nth-child(2) { width: 18%; }
+  .skills-tbl-project th:nth-child(3) { width: 22%; }
+  .skills-tbl-project th:nth-child(4) { width: 30%; }
+}
+</style>

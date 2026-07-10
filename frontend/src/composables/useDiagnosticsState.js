@@ -18,6 +18,6 @@ async function setEnabled(value) {
 }
 
 export function useDiagnosticsState() {
-  if (!loaded) { loaded = true; refresh() }
+  if (!loaded && api.getToken()) { loaded = true; refresh() }
   return { enabled, refresh, setEnabled }
 }

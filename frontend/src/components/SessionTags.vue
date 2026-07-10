@@ -5,6 +5,8 @@
 // an inline slug input. Purely presentational — mutations are emitted up to
 // SessionsView, which owns the API calls and row patching.
 import { ref, nextTick } from 'vue'
+import Button from './ui/Button.vue'
+import Icon from './ui/Icon.vue'
 
 defineProps({
   tags: { type: Array, default: () => [] },
@@ -75,14 +77,16 @@ function submitAdd() {
       :title="chipTitle(tag)"
     >
       {{ chipLabel(tag) }}
-      <button
+      <Button
         v-if="!tag.builtin"
-        type="button"
-        class="tag-chip__x focus-visible:outline-2 focus-visible:outline-blue-500"
+        variant="ghost"
+        class="tag-chip__x h-auto hover:bg-transparent focus-visible:outline-2 focus-visible:outline-blue-500"
         :aria-label="`Remove tag ${tag.slug}`"
         :title="`Remove tag ${tag.slug}`"
         @click.stop="emit('remove', tag.slug)"
-      >×</button>
+      >
+        <Icon name="x" :size="10" />
+      </Button>
     </span>
 
     <span v-if="adding" class="tag-add" @click.stop>
@@ -102,22 +106,24 @@ function submitAdd() {
            a keydown-Enter, and the return key blurs the field (→ cancelAdd)
            before it can submit. `@mousedown.prevent` submits without first
            blurring the input, so the tap lands the value on every device. -->
-      <button
-        type="button"
-        class="tag-add__confirm focus-visible:outline-2 focus-visible:outline-blue-500"
+      <Button
+        variant="ghost"
+        class="tag-add__confirm h-auto p-0 focus-visible:outline-2 focus-visible:outline-blue-500"
         aria-label="Save tag"
         title="Save tag"
         @mousedown.prevent="submitAdd"
-      >✓</button>
+      >
+        <Icon name="check" :size="12" />
+      </Button>
     </span>
-    <button
+    <Button
       v-else
-      type="button"
-      class="tag-add__btn focus-visible:outline-2 focus-visible:outline-blue-500"
+      variant="ghost"
+      class="tag-add__btn h-auto hover:bg-transparent focus-visible:outline-2 focus-visible:outline-blue-500"
       aria-label="Add a tag to this session"
       title="Add a tag"
       @click.stop="openAdd"
-    >+ tag</button>
+    >+ tag</Button>
   </span>
 </template>
 
@@ -167,12 +173,16 @@ function submitAdd() {
   text-transform: none;
   letter-spacing: normal;
 }
+/* Padded hit area (with compensating negative margin so the chip's visual
+   size is unchanged) — the bare 8×12 glyph was untappable on touch. */
 .tag-chip__x {
   color: currentColor;
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
+  margin: -0.5rem -0.35rem -0.5rem -0.25rem;
   opacity: 0.6;
+  padding: 0.5rem 0.35rem 0.5rem 0.25rem;
 }
 .tag-chip__x:hover {
   opacity: 1;

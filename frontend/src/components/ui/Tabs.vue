@@ -3,6 +3,7 @@
 // Reka TabsRoot gives roving-focus + arrow-key nav + role=tab/tablist.
 // `variant`: 'segmented' (pill group) or 'underline' (border-bottom).
 // v-model the active value; parent renders the panel for that value.
+import { ref, watch, nextTick, onMounted } from 'vue'
 import { TabsRoot, TabsList, TabsTrigger } from 'reka-ui'
 
 const model = defineModel({ type: [String, Number], default: '' })
@@ -10,11 +11,49 @@ defineProps({
   tabs: { type: Array, default: () => [] },
   variant: { type: String, default: 'segmented' },
 })
+
+const listRef = ref(null)
+const fade = ref(false)
+
+function listEl() {
+  return listRef.value?.$el
+}
+
+function syncFade() {
+  const el = listEl()
+  if (!el) return
+  fade.value = el.scrollWidth > el.clientWidth
+    && el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+// Horizontal reveal only — scrollIntoView({block:'nearest'}) would also
+// scroll ancestor containers vertically when the tablist sits below the
+// fold (e.g. tabs inside an expansion row).
+async function revealActive() {
+  await nextTick()
+  const el = listEl()
+  const active = el?.querySelector('[data-state="active"]')
+  if (el && active && el.scrollWidth > el.clientWidth) {
+    const listRect = el.getBoundingClientRect()
+    const rect = active.getBoundingClientRect()
+    if (rect.left < listRect.left) el.scrollLeft += rect.left - listRect.left - 8
+    else if (rect.right > listRect.right) el.scrollLeft += rect.right - listRect.right + 8
+  }
+  syncFade()
+}
+
+onMounted(revealActive)
+watch(model, revealActive)
 </script>
 
 <template>
   <TabsRoot v-model="model" :class="['ds-tabs', `ds-tabs-${variant}`]">
-    <TabsList class="ds-tablist">
+    <TabsList
+      ref="listRef"
+      class="ds-tablist"
+      :class="{ 'ds-tablist-fade': fade }"
+      @scroll.passive="syncFade"
+    >
       <TabsTrigger
         v-for="t in tabs"
         :key="String(t.value ?? t)"
@@ -32,6 +71,13 @@ defineProps({
    container rather than pushing the whole page sideways. */
 .ds-tablist { display: inline-flex; align-items: center; max-width: 100%; overflow-x: auto; }
 .ds-tab { flex-shrink: 0; white-space: nowrap; }
+
+/* Right-edge fade signalling more tabs off-screen; applied only while the
+   list actually overflows and isn't scrolled to its end. */
+.ds-tablist-fade {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+}
 
 /* Segmented (pill group) */
 .ds-tabs-segmented .ds-tablist {

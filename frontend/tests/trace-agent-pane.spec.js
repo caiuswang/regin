@@ -432,7 +432,10 @@ test.describe('Roster popover at 390px', () => {
 
   test('the popover closes when the page scrolls under it', async ({ page }) => {
     // The menu is fixed-position, measured only at open — a scroll would leave
-    // it visually detached from the button, so it dismisses instead.
+    // it visually detached from the button, so it dismisses instead. Scrolls
+    // landing within the first ~350ms are treated as the opening tap's own
+    // scroll-into-view settling and re-anchor rather than dismiss, so wait
+    // out that grace window before the deliberate scroll.
     const { traceId } = await seedScoped(page, { filler: 30 })
     await gotoTrace(page, traceId)
     await expect(agentsBtn(page)).toBeVisible({ timeout: 10_000 })
@@ -440,6 +443,7 @@ test.describe('Roster popover at 390px', () => {
     await agentsBtn(page).click()
     const pop = page.locator('[data-testid="trace-agents-popover"]')
     await expect(pop).toBeVisible()
+    await page.waitForTimeout(400)
 
     await page.locator('.content-scroll').evaluate((el) => { el.scrollTop = 200 })
     await expect(pop).toBeHidden()

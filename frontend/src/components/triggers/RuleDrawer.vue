@@ -222,14 +222,17 @@ function topSessionLink(sid) {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* minmax(0,…) tracks: plain 1fr floors at the tables' min-content width,
+   which grows the inner overflow-x-auto wrappers past the viewport instead
+   of letting them scroll. */
 .rule-drawer__grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   margin-bottom: 16px;
 }
 @media (min-width: 768px) {
-  .rule-drawer__grid { grid-template-columns: 1fr 1fr; }
+  .rule-drawer__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 .rule-drawer__table { margin-bottom: 4px; }
 .rule-drawer__empty {

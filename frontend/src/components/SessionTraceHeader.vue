@@ -437,7 +437,9 @@ function contextBadgeClass(pct) {
       <div class="flex flex-wrap justify-end items-center gap-1.5">
         <!-- Header-row actions the parent owns (e.g. the agents popover). -->
         <slot name="actions"></slot>
-        <button
+        <!-- Below lg the compact sticky strip owns the switcher; a second
+             visible copy here would double every mode button. -->
+        <Button
           v-for="opt in [
             { id: 'conversation', label: 'Conversation' },
             { id: 'timeline', label: 'Timeline' },
@@ -445,13 +447,14 @@ function contextBadgeClass(pct) {
             { id: 'messages', label: 'Messages' },
           ]"
           :key="opt.id"
-          type="button"
-          class="px-3 py-1 text-xs rounded-full border transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
+          variant="ghost"
+          size="sm"
+          class="hidden lg:inline-flex h-auto px-3 py-1 text-xs rounded-full border"
           :class="viewMode === opt.id
             ? 'bg-blue-50 border-blue-400 text-blue-700 font-medium'
             : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'"
           @click="$emit('update:viewMode', opt.id)"
-        >{{ opt.label }}</button>
+        >{{ opt.label }}</Button>
       </div>
       <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
         <span v-if="lastReloadedAt">updated {{ fmtLocalClock(lastReloadedAt.toISOString()) }}</span>

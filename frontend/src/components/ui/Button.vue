@@ -35,7 +35,18 @@ export const buttonVariants = cva(
     },
     compoundVariants: [
       // Link is text-only: strip the box sizing so it sits inline like an <a>.
-      { variant: 'link', size: ['sm', 'md', 'lg'], class: 'h-auto px-0' },
+      // On touch, pad the hit area to ~36px; the negative margin keeps the
+      // layout box (and therefore surrounding flow) unchanged.
+      {
+        variant: 'link',
+        size: ['sm', 'md', 'lg'],
+        class: 'h-auto px-0 pointer-coarse:py-2 pointer-coarse:-my-2',
+      },
+      {
+        variant: ['primary', 'secondary', 'danger', 'ghost'],
+        size: 'sm',
+        class: 'pointer-coarse:min-h-9',
+      },
     ],
     defaultVariants: { variant: 'secondary', size: 'md' },
   },

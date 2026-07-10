@@ -416,6 +416,7 @@ onMounted(loadSchemas)
 
             <tr v-if="expandedSchema === schemaKey(s)" class="expansion-row">
               <td :colspan="showAgentColumn ? 8 : 7">
+                <div class="expansion-clamp">
                 <SchemaExpansionPanel
                   :s="s"
                   :active-tab="activeTab(s)"
@@ -431,6 +432,7 @@ onMounted(loadSchemas)
                   @ignore="ignore($event)"
                   @discard="discard($event)"
                 />
+                </div>
               </td>
             </tr>
           </template>
@@ -484,7 +486,7 @@ onMounted(loadSchemas)
 .toolbar-search .input { width: 18rem; max-width: 100%; }
 
 /* Tables — column widths so expanded JSON can't reflow header cols. */
-.schemas-tbl { table-layout: fixed; }
+.schemas-tbl { table-layout: fixed; min-width: 44rem; }
 .caret-col { width: 1.5rem; }
 
 /* Direct-child selectors so these widths don't bleed into the
@@ -516,6 +518,13 @@ onMounted(loadSchemas)
   background: var(--color-slate-50);
   padding: 0 !important;
   border-bottom: 1px solid var(--color-slate-200);
+}
+/* Pin the panel to the scroller's visible box so its prose wraps at the
+   viewport instead of the full table width on phones. */
+.expansion-clamp {
+  position: sticky;
+  left: 0;
+  max-width: calc(100vw - 3rem);
 }
 .expansion-row:hover { background: transparent; }
 </style>

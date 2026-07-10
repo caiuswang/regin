@@ -44,7 +44,7 @@ const title = computed(() =>
   <div class="relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
     <span class="absolute inset-y-0 left-0 w-1" :class="railClass" aria-hidden="true"></span>
     <div
-      class="flex cursor-pointer items-center gap-3 py-3 pl-4 pr-3 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+      class="flex cursor-pointer flex-col gap-2 py-3 pl-4 pr-3 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500 sm:flex-row sm:items-center sm:gap-3"
       role="button"
       tabindex="0"
       :aria-expanded="expanded"
@@ -71,7 +71,7 @@ const title = computed(() =>
         </div>
       </div>
 
-      <div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+      <div class="flex min-w-0 flex-wrap items-center gap-1.5 sm:shrink-0 sm:justify-end">
         <span
           v-for="a in axisList"
           :key="a.axis"

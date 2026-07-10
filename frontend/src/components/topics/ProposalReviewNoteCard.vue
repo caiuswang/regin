@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { fmtLocalDateTime } from '../../utils/traceFormatters'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
+import ClampedText from '../ui/ClampedText.vue'
 
 const props = defineProps({
   thread: { type: Object, required: true },
@@ -61,7 +62,9 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
       :key="`review-note-${comment.id}`"
       class="border-l-2 border-indigo-300 pl-3"
     >
-      <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+      <ClampedText :lines="6">
+        <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+      </ClampedText>
     </article>
 
     <div v-if="showActions" class="flex justify-end gap-2">

@@ -23,7 +23,13 @@ function formatStat(counts) {
     const positive = Object.entries(counts).find(([k]) => k !== 'total')
     return positive ? `${positive[1]}/${counts.total}` : String(counts.total)
   }
-  return Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(' · ')
+  return Object.entries(counts).map(([k, v]) => `${k} ${formatValue(k, v)}`).join(' · ')
+}
+
+function formatValue(key, v) {
+  if (typeof v !== 'number') return v
+  if (/(share|percentile)$/.test(key)) return `${Math.round(v * 100)}%`
+  return +v.toFixed(2)
 }
 
 // Drop the leading scoreboard summary line (already shown as chips) and keep

@@ -31,18 +31,18 @@ function onInput(evt) {
   <div class="flex items-center justify-between px-4 py-2.5 border-t border-gray-200 bg-gray-50 text-xs text-gray-500 gap-3 flex-wrap">
     <span class="font-mono tabular-nums">{{ rangeStart }}–{{ rangeEnd }} <span class="text-gray-400">of</span> {{ total }}</span>
     <div class="flex items-center gap-1.5 flex-wrap">
-      <Button variant="secondary" size="sm" :disabled="!hasPrev || loading" @click="emit('prev')">&larr; Prev</Button>
+      <Button variant="secondary" size="sm" class="min-h-9" :disabled="!hasPrev || loading" @click="emit('prev')">&larr; Prev</Button>
       <span class="inline-flex items-center gap-1.5 whitespace-nowrap px-1">
         Page
         <input
           type="number" min="1" :max="pageCount" :value="displayPage"
           aria-label="Page number"
-          class="input w-12 px-1 py-0.5 text-center tabular-nums"
+          class="input inline-goto px-1 py-0.5 text-center tabular-nums"
           @change="onInput"
         >
         <span class="text-gray-400">of {{ pageCount }}</span>
       </span>
-      <Button variant="secondary" size="sm" :disabled="!hasNext || loading" @click="emit('next')">Next &rarr;</Button>
+      <Button variant="secondary" size="sm" class="min-h-9" :disabled="!hasNext || loading" @click="emit('next')">Next &rarr;</Button>
       <span class="ml-2 inline-flex items-center gap-1.5 whitespace-nowrap">Rows
         <span class="inline-block w-[4.75rem]">
           <Select
@@ -57,3 +57,7 @@ function onInput(evt) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.inline-goto { width: auto; max-width: 3rem; }
+</style>

@@ -125,7 +125,7 @@ async function deleteTopic() {
         <div class="topics-run-header-left">
           <Button
             variant="link"
-            class="topics-back-link"
+            class="topics-back-link min-h-9"
             @click="backToList"
           >← Back to topics</Button>
           <h2 class="topics-run-title">{{ selectedTopic.label }}</h2>

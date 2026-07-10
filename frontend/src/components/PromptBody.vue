@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref, watch, watchEffect, onUnmounted } from 'vue'
 import api from '../api'
+import Button from './ui/Button.vue'
+import ClampedText from './ui/ClampedText.vue'
+import Icon from './ui/Icon.vue'
 
 const props = defineProps({
   text: { type: String, default: '' },
@@ -116,7 +119,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-  <div class="text-[13.5px] whitespace-pre-wrap break-words text-purple-900 leading-relaxed">
+  <ClampedText :lines="8" class="text-[13.5px] whitespace-pre-wrap break-words text-purple-900 leading-relaxed">
     <template v-for="(seg, pos) in segments" :key="pos">
       <span v-if="seg.type === 'text'">{{ seg.value }}</span>
       <span
@@ -124,9 +127,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
         class="inline-flex items-center gap-1 align-middle mx-0.5"
       >
         <span class="font-mono text-[11px] text-purple-700">[Image #{{ seg.idx }}]</span>
-        <button
-          type="button"
-          class="inline-block rounded border border-purple-300 bg-white p-0.5 hover:border-purple-500 transition-colors focus-visible:outline-2 focus-visible:outline-purple-500 cursor-zoom-in"
+        <Button
+          variant="ghost"
+          class="h-auto rounded border border-purple-300 bg-white p-0.5 hover:border-purple-500 focus-visible:outline-2 focus-visible:outline-purple-500 cursor-zoom-in"
           :title="`Image #${seg.idx} — click to enlarge`"
           @click.stop="openLightbox(seg.idx)"
         >
@@ -136,7 +139,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
             loading="lazy"
             class="max-h-32 max-w-[16rem] object-contain block"
           />
-        </button>
+        </Button>
       </span>
     </template>
     <div v-if="trailingImages.length" class="mt-1 flex flex-wrap gap-2">
@@ -146,9 +149,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
         class="inline-flex items-center gap-1"
       >
         <span class="font-mono text-[11px] text-purple-700">[Image #{{ imageNum }}]</span>
-        <button
-          type="button"
-          class="rounded border border-purple-300 bg-white p-0.5 hover:border-purple-500 transition-colors focus-visible:outline-2 focus-visible:outline-purple-500 cursor-zoom-in"
+        <Button
+          variant="ghost"
+          class="h-auto rounded border border-purple-300 bg-white p-0.5 hover:border-purple-500 focus-visible:outline-2 focus-visible:outline-purple-500 cursor-zoom-in"
           :title="`Image #${imageNum} — click to enlarge`"
           @click.stop="openLightbox(imageNum)"
         >
@@ -158,15 +161,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
             loading="lazy"
             class="max-h-32 max-w-[16rem] object-contain block"
           />
-        </button>
+        </Button>
       </span>
     </div>
-  </div>
+  </ClampedText>
 
   <Teleport to="body">
     <div
       v-if="lightboxIdx !== null"
-      class="fixed inset-0 z-50 bg-black/75 hover:bg-black/80 flex items-center justify-center p-6 cursor-zoom-out focus-visible:outline-2 focus-visible:outline-white"
+      class="fixed inset-0 z-50 bg-black/75 hover:bg-black/80 flex items-center justify-center p-6 cursor-pointer focus-visible:outline-2 focus-visible:outline-white"
       role="button"
       tabindex="0"
       aria-label="Close image preview"
@@ -179,12 +182,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
         class="max-h-full max-w-full object-contain shadow-2xl"
         @click.stop
       />
-      <button
-        type="button"
-        class="absolute top-4 right-4 text-white/80 hover:text-white text-2xl leading-none px-2 py-1 cursor-pointer focus-visible:outline-2 focus-visible:outline-white"
+      <Button
+        variant="ghost"
+        size="icon"
+        class="absolute top-4 right-4 text-white/80 hover:bg-transparent hover:text-white focus-visible:outline-2 focus-visible:outline-white"
         title="Close (esc)"
         @click.stop="closeLightbox"
-      >×</button>
+      >
+        <Icon name="x" :size="22" />
+      </Button>
     </div>
   </Teleport>
 </template>
