@@ -1,13 +1,12 @@
 <script setup>
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
-import MarkdownContent from '../components/MarkdownContent.vue'
-import CopyButton from '../components/conversation/cards/CopyButton.vue'
+import SessionMessagesView from '../components/SessionMessagesView.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
-import SessionConversationView from '../components/SessionConversationView.vue'
+import TraceConversationRegion from '../components/TraceConversationRegion.vue'
 import SuppressButton from '../components/triggers/SuppressButton.vue'
 import { dropRetiredSpans } from '../utils/traceFormatters.js'
 import { useTraceScroll } from '../composables/useTraceScroll.js'
@@ -24,7 +23,9 @@ import { useTraceData } from '../composables/useTraceData.js'
 import { useTurns } from '../composables/useTurns.js'
 import { useLiveAgents } from '../composables/useLiveAgents.js'
 import { useTraceScope } from '../composables/useTraceScope.js'
+import { useBreakpoint } from '../composables/useBreakpoint.js'
 import TraceScopeBar from '../components/TraceScopeBar.vue'
+import TraceAgentPane from '../components/TraceAgentPane.vue'
 import TraceAgentsPopover from '../components/TraceAgentsPopover.vue'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
 import ToolTokenRollup from '../components/ToolTokenRollup.vue'
@@ -90,15 +91,34 @@ const {
   ensureTerminalSpansLoaded, ensureWorkflowSpansLoaded,
 } = useTraceData(route, { session, allSpans, selectedSpan })
 
+// Agent scope is a responsive presentation of one `?agent=` state: a right
+// companion pane at ≥xl (beside the still-visible feed), the full-feed
+// takeover + TraceScopeBar below it. The breakpoint alone decides — no new
+// state. See useBreakpoint / the redesign artifact.
+const { isXl, is2xl } = useBreakpoint()
+
+// ≥xl the user chooses how a scope is presented: the 'split' companion pane
+// (beside the main feed) or the 'full' only-subagent takeover (the same
+// full-width scoped feed the <xl view always uses — one scoped-feed
+// implementation, not two). Persisted, so re-entering a scope and deep links
+// honor the last choice. Below xl the takeover is the only mode; the toggle is
+// inert there.
+const scopeMode = useFilterState('regin.traceScope.mode', 'split',
+  v => v === 'split' || v === 'full')
+
 // Whole-session subagent roster (server-classified, window-independent) +
 // the per-agent Conversation scope. The header keeps showing MAIN-session
-// truth; the scope only re-projects the conversation spine.
+// truth; the scope only re-projects the conversation spine. `isTakeover`
+// tells the scope's scroll save/restore whether entering/exiting actually
+// replaces the feed — in split mode the main feed never moves, so exit must
+// not touch page scroll.
 const liveAgents = useLiveAgents(() => allSpans.value, () => session.value?.agent_roster)
 const traceScope = useTraceScope(route, router, {
   getAgents: () => liveAgents.agents,
   getRoster: () => session.value?.agent_roster,
   ensureSpanSubtreeLoaded,
   ensureTerminalSpansLoaded,
+  isTakeover: () => !isXl.value || scopeMode.value === 'full',
 })
 
 // View mode: 'conversation' | 'timeline' | 'terminal' | 'messages'.
@@ -111,6 +131,82 @@ const { viewMode, setViewMode } = useViewMode(route)
 // a span is selected. Persisted so the choice survives navigation.
 const detailRailOpen = useFilterState('regin.trace.detailRail', false,
   v => typeof v === 'boolean')
+
+// Render the scoped feed full-width (takeover) when a scope is active AND
+// either the viewport is below the split floor OR the user picked 'full'. Not
+// while the roster picker is open (that always fills the pane; the roster can
+// only open in split mode — full mode keeps the popover picker, see the
+// TraceAgentsPopover pane-mode bind).
+const scopeTakeover = computed(() => viewMode.value === 'conversation'
+  && !!traceScope.scopeId
+  && !traceScope.rosterOpen
+  && (!isXl.value || scopeMode.value === 'full'))
+
+// The span-detail rail (opt-in) and the agent pane both want the right edge.
+// ≥2xl: feed + pane + rail coexist as three columns. At xl the right slot is
+// shared and the rail wins when invoked — the pane yields (restored by
+// closing the rail, since the scope state is untouched).
+const detailRailShown = computed(() => !!selectedSpan.value
+  && viewMode.value !== 'messages'
+  && (viewMode.value !== 'conversation' || detailRailOpen.value))
+const paneVisible = computed(() => {
+  if (viewMode.value !== 'conversation' || !isXl.value) return false
+  if (!traceScope.active) return false
+  if (detailRailShown.value && !is2xl.value) return false
+  // The roster picker always fills the pane; a scope only does so in split mode.
+  if (traceScope.rosterOpen) return true
+  return scopeMode.value === 'split'
+})
+
+// Switching to 'full' remembers the main-feed scroll; collapsing back to
+// 'split' restores it, so maximizing and returning doesn't lose the reader's
+// place in the main thread.
+let savedMainScroll = null
+function getScroller() {
+  return document.querySelector('.content-scroll')
+    || document.scrollingElement || document.documentElement
+}
+function setScopeMode(mode) {
+  const scroller = getScroller()
+  if (mode === 'full') {
+    savedMainScroll = scroller ? scroller.scrollTop : null
+  }
+  scopeMode.value = mode
+  if (mode === 'split' && savedMainScroll != null) {
+    const top = savedMainScroll
+    savedMainScroll = null
+    nextTick(() => { if (scroller) scroller.scrollTop = top })
+  }
+}
+// The saved offset is only meaningful for the scope it was captured under —
+// exiting must drop it, or a later scope that lands directly in 'full' (the
+// persisted mode) would "restore" a stale offset on collapse.
+watch(() => traceScope.scopeId, (v) => { if (!v) savedMainScroll = null })
+
+// Agents button → pane roster (≥xl split). Below 2xl the rail and the pane
+// share the right slot, and the rail normally wins — but an explicit ask for
+// the roster is user intent to SEE it, so it closes the rail rather than
+// arming an invisible rosterOpen that would pop up whenever the rail is
+// later dismissed.
+function openAgentsRoster() {
+  if (!is2xl.value) detailRailOpen.value = false
+  traceScope.openRoster()
+}
+
+// Shared span/turn inputs the conversation feed + companion pane both consume,
+// bundled so the region tag doesn't re-spell a dozen binds (keeps this host's
+// template-directive budget in check).
+const feedProps = computed(() => ({
+  spans: allSpans.value,
+  turns: turns.value,
+  selectedSpan: selectedSpan.value,
+  traceId: session.value?.trace_id,
+  contextWindowTokens: session.value?.context_window_tokens,
+  workflowRunsById: workflowRunsById.value,
+  loadedSubtrees: subtreeLoaded.value,
+  serverNow: session.value?.server_now || '',
+  serverNowAt: session.value?.server_now_at || 0,
+}))
 
 // send_to_user messages (Messages tab). Null until first load so the tab
 // can distinguish "not fetched yet" from "fetched, empty". Refreshed by
@@ -139,18 +235,6 @@ async function goToMessage(span) {
   setTimeout(() => {
     if (highlightedMessageSpan.value === span.span_id) highlightedMessageSpan.value = null
   }, 2400)
-}
-
-// Pill colour for a non-progress message type (matches InboxMessageCard).
-const MESSAGE_TYPE_CLASS = {
-  result: 'bg-emerald-100 text-emerald-700',
-  summary: 'bg-indigo-100 text-indigo-700',
-  warning: 'bg-amber-100 text-amber-800',
-  blocker: 'bg-red-100 text-red-700',
-  note: 'bg-slate-100 text-slate-600',
-}
-function messageTypeClass(t) {
-  return MESSAGE_TYPE_CLASS[t] || 'bg-slate-100 text-slate-600'
 }
 
 // Header pivot metadata: plans this session authored, workflow runs it
@@ -522,13 +606,19 @@ const {
       @jump-to-task="jumpToTaskSpan"
     >
       <template #actions>
+        <!-- Pane roster mode only in the ≥xl SPLIT presentation. In 'full'
+             mode the popover picker is kept (as below xl): opening the pane
+             roster there would silently yank the takeover back to a split
+             the user explicitly maximized away from. -->
         <TraceAgentsPopover
           :running-agents="liveAgents.runningAgents"
           :finished-agents="liveAgents.finishedAgents"
           :running-count="liveAgents.runningCount"
           :server-now="session?.server_now || ''"
           :server-now-at="session?.server_now_at || 0"
+          :pane-mode="isXl && viewMode === 'conversation' && scopeMode === 'split'"
           @scope="traceScope.enter($event)"
+          @open-roster="openAgentsRoster()"
         />
       </template>
     </SessionTraceHeader>
@@ -551,12 +641,14 @@ const {
          tab shows one subagent's subtree. Other tabs are never scoped (the
          ?agent= param persists but only Conversation applies it). -->
     <TraceScopeBar
-      v-if="viewMode === 'conversation' && (traceScope.scopedAgent || traceScope.notFound)"
+      v-if="scopeTakeover && (traceScope.scopedAgent || traceScope.notFound)"
       :agent="traceScope.scopedAgent"
       :not-found="traceScope.notFound"
       :server-now="session?.server_now || ''"
       :server-now-at="session?.server_now_at || 0"
+      :can-collapse="isXl"
       @exit="traceScope.exit()"
+      @collapse="setScopeMode('split')"
     />
 
     <!-- Top indicator: only render when older history is available
@@ -593,33 +685,27 @@ const {
     </div>
 
     <div class="flex flex-col lg:flex-row gap-4 lg:items-start">
-      <!-- Conversation view: rendered outside Card so its sidebar can be sticky -->
+      <!-- Conversation view: feed (+ ≥xl companion pane) rendered outside Card
+           so the feed sidebar, the pane, and the detail rail can each be
+           sticky. The region owns the responsive scope layout (takeover <xl,
+           split ≥xl). -->
       <template v-if="viewMode === 'conversation'">
-        <!-- Deep-link limbo (`?agent=` set, roster not yet landed): mask the
-             feed rather than flash the full main conversation and then snap
-             to the scoped re-projection. -->
-        <div
-          v-if="traceScope.pending"
-          class="flex-1 min-w-0 text-slate-400 text-center py-8"
-          data-testid="trace-scope-pending"
-        >Loading agent scope…</div>
-        <SessionConversationView
-          v-else
-          :spans="allSpans"
-          :turns="turns"
-          :selected-span="selectedSpan"
-          :trace-id="session?.trace_id"
-          :context-window-tokens="session?.context_window_tokens"
-          :workflow-runs-by-id="workflowRunsById"
-          :loaded-subtrees="subtreeLoaded"
-          :scope-agent="traceScope.scopedAgent"
-          :scope-loading="traceScope.loadingSubtree"
-          class="flex-1 min-w-0"
+        <TraceConversationRegion
+          :trace-scope="traceScope"
+          :live-agents="liveAgents"
+          :is-xl="isXl"
+          :takeover="scopeTakeover"
+          :pane-visible="paneVisible"
+          :hide-toc="paneVisible && !is2xl"
+          :feed="feedProps"
+          :sticky-top="stickyHeaderHeight"
           @select-span="selectedSpan = $event"
           @fetch-content="fetchSpanContent"
           @load-subtree="ensureSpanSubtreeLoaded"
           @jump-live="jumpToLatestSpan"
           @enter-scope="traceScope.enter($event)"
+          @exit="traceScope.exit()"
+          @expand="setScopeMode('full')"
         />
       </template>
 
@@ -650,71 +736,11 @@ const {
 
           <!-- Messages view: send_to_user feed as a vertical timeline -->
           <template v-else-if="viewMode === 'messages'">
-            <div class="px-4 py-8 lg:px-8">
-              <div v-if="agentMessages == null" class="text-slate-500 text-sm py-16 text-center">
-                Loading messages…
-              </div>
-              <div v-else-if="!agentMessages.length" class="text-slate-500 text-sm py-16 text-center">
-                No send_to_user messages in this session.
-              </div>
-              <div v-else class="w-full">
-                <div
-                  v-if="sessionGoal"
-                  class="mb-8 rounded-lg border border-slate-200 bg-slate-50 px-5 py-4"
-                >
-                  <div class="flex items-center gap-1.5 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    <svg class="w-3.5 h-3.5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1" />
-                    </svg>
-                    Session goal
-                  </div>
-                  <div class="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap">{{ sessionGoal }}</div>
-                </div>
-                <ol class="relative ml-2 border-l-2 border-slate-100 space-y-7 pb-2">
-                  <li
-                    v-for="(m, i) in agentMessages"
-                    :key="m.id ?? m.span_id"
-                    :id="m.span_id ? `msg-${m.span_id}` : undefined"
-                    class="group relative pl-7 scroll-mt-28"
-                  >
-                    <span
-                      class="absolute -left-[9px] top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white border-2 transition-colors duration-200"
-                      :class="i === agentMessages.length - 1 ? 'border-blue-500' : 'border-slate-300'"
-                    >
-                      <span
-                        class="h-1.5 w-1.5 rounded-full"
-                        :class="i === agentMessages.length - 1 ? 'bg-blue-500' : 'bg-slate-300'"
-                      ></span>
-                    </span>
-                    <div class="flex items-baseline gap-2 mb-1.5">
-                      <span class="text-xs font-semibold text-slate-700">#{{ i + 1 }}</span>
-                      <span
-                        v-if="m.msg_type && m.msg_type !== 'progress'"
-                        class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                        :class="messageTypeClass(m.msg_type)"
-                      >{{ m.msg_type }}</span>
-                      <span v-if="m.title" class="text-xs font-semibold text-slate-800">{{ m.title }}</span>
-                      <span class="text-[11px] font-mono text-slate-500">
-                        {{ new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}
-                      </span>
-                      <CopyButton
-                        v-if="m.body"
-                        :text="m.body"
-                        tint="text-slate-400 hover:bg-slate-200/60 hover:text-slate-700"
-                      />
-                    </div>
-                    <div
-                      class="rounded-lg border bg-white px-4 py-3 shadow-sm transition-colors duration-200"
-                      :class="highlightedMessageSpan === m.span_id
-                        ? 'border-blue-400 ring-2 ring-blue-300'
-                        : 'border-slate-200 hover:border-slate-300'"
-                    >
-                      <MarkdownContent :markdown="m.body" />
-                    </div>
-                  </li>
-                </ol>
-              </div>
-            </div>
+            <SessionMessagesView
+              :messages="agentMessages"
+              :session-goal="sessionGoal"
+              :highlighted-span="highlightedMessageSpan"
+            />
           </template>
         </Card>
       </template>

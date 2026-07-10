@@ -25,6 +25,12 @@
 import { test, expect } from './auth-fixture.js'
 import { randomUUID } from 'node:crypto'
 
+// This suite exercises the <xl full-feed TAKEOVER form of agent scope (feed
+// swapped in place + TraceScopeBar). At ≥xl the scope renders as the companion
+// pane instead (covered by trace-agent-pane.spec.js), so pin a viewport below
+// the xl (1280px) split floor to keep testing the takeover path.
+test.use({ viewport: { width: 1152, height: 900 } })
+
 const MAIN_CMD = 'echo MAIN_ONLY_CMD_MARKER'
 const INT_FILE = 'src/AGENT_INTERNAL_MARKER.js'
 const REAL_TASK_PROMPT = 'REAL_TASK_PROMPT_MARKER — verify the acceptance items'

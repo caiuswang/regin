@@ -1,34 +1,25 @@
 <script setup>
 // Slim violet bar pinned with the sticky page header while the Conversation
-// tab is scoped to one subagent's subtree — the desktop sibling of
-// live/LiveScopeBar.vue, styled with the trace view's Tailwind idiom. The
-// header above keeps showing MAIN-session truth; this bar is the scope's own
-// signal. `agent` null + `notFound` renders the unknown-?agent= state.
-import { computed } from 'vue'
+// tab is scoped to one subagent's subtree in <xl TAKEOVER mode — the desktop
+// sibling of live/LiveScopeBar.vue. At ≥xl the scope renders as TraceAgentPane
+// instead and this bar is not shown. The header above keeps showing
+// MAIN-session truth; this bar is the scope's own signal. The agent identity
+// (glyph/type/desc/status/count/not-found) is the shared TraceScopeIdentity.
 import Button from './ui/Button.vue'
 import Icon from './ui/Icon.vue'
-import { agentStatusLabel } from '../utils/liveRows.js'
-import { useAgentElapsed } from '../composables/useAgentElapsed.js'
+import TraceScopeIdentity from './TraceScopeIdentity.vue'
 
-const props = defineProps({
+defineProps({
   // useLiveAgents roster entry, or null while unresolved / not found.
   agent: { type: Object, default: null },
   notFound: { type: Boolean, default: false },
   serverNow: { type: String, default: '' },
   serverNowAt: { type: Number, default: 0 },
+  // ≥xl only: this takeover is the user-chosen 'full' presentation of a scope
+  // that could instead be the split pane — offer a collapse-back control.
+  canCollapse: { type: Boolean, default: false },
 })
-const emit = defineEmits(['exit'])
-
-const elapsed = useAgentElapsed(
-  () => props.agent?.startTime || '',
-  () => props.serverNow,
-  () => props.serverNowAt,
-  () => !!props.agent?.running,
-)
-// One status phrasing across every scoped-agent surface (see liveRows).
-const status = computed(() => (props.agent
-  ? agentStatusLabel(props.agent, elapsed.value)
-  : ''))
+const emit = defineEmits(['exit', 'collapse'])
 </script>
 
 <template>
@@ -36,20 +27,23 @@ const status = computed(() => (props.agent
     class="mt-3 flex items-center gap-2 rounded-md border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12px] text-violet-800"
     data-testid="trace-scope-bar"
   >
-    <span class="text-violet-500" aria-hidden="true">◈</span>
-    <template v-if="agent">
-      <span class="font-semibold shrink-0">{{ agent.agentType }}</span>
-      <span class="flex-1 min-w-0 truncate text-violet-700/80">{{ agent.description ? `— ${agent.description}` : '' }}</span>
-      <span class="font-mono text-[11px] text-violet-600 shrink-0" data-testid="trace-scope-status">{{ status }}</span>
-      <span class="text-violet-300" aria-hidden="true">·</span>
-      <span class="font-mono text-[11px] text-violet-600 shrink-0">{{ agent.spanCount }} span<template v-if="agent.spanCount !== 1">s</template></span>
-    </template>
-    <span
-      v-else-if="notFound"
-      class="flex-1 min-w-0 text-violet-700/80"
-      data-testid="trace-scope-notfound"
-    >agent not found in this session</span>
-    <span v-else class="flex-1 min-w-0 text-violet-700/80">loading agent…</span>
+    <TraceScopeIdentity
+      :agent="agent"
+      :not-found="notFound"
+      :server-now="serverNow"
+      :server-now-at="serverNowAt"
+    />
+    <Button
+      v-if="canCollapse"
+      variant="ghost"
+      size="icon"
+      class="h-6 w-6 shrink-0 text-violet-500 hover:bg-violet-100 hover:text-violet-800"
+      data-testid="trace-scope-collapse"
+      aria-label="Back to split view"
+      @click="emit('collapse')"
+    >
+      <Icon name="minimize-2" :size="12" />
+    </Button>
     <Button
       variant="ghost"
       size="icon"

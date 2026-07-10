@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, provide, toRef } from 'vue'
 import PromptBody from './PromptBody.vue'
 import Icon from './ui/Icon.vue'
 import ConversationToc from './conversation/ConversationToc.vue'
@@ -35,9 +35,32 @@ const props = defineProps({
   // True while the scoped agent's subtree fetch is in flight — drives the
   // spinner-vs-unreachable split in the scoped empty state.
   scopeLoading: { type: Boolean, default: false },
+  // agent_id currently open in the companion pane (≥xl), forwarded to the
+  // subagent cards so the originating card shows the active-scope highlight.
+  // Distinct from `scopeAgent`: the ≥xl main feed stays UNSCOPED (full feed)
+  // and only highlights, while the pane renders the scoped projection.
+  scopedAgentId: { type: String, default: '' },
+  // The fixed follow-latest pill is a session-level affordance; the pane's
+  // embedded scoped instance suppresses it so there's one, on the main feed.
+  showFollowTail: { type: Boolean, default: true },
+  // Scroll container for the pin/follow-tail machinery. Defaults to the
+  // page-level `.content-scroll`; the ≥xl companion pane passes its own
+  // scrollable element so its embedded instance never attaches listeners to —
+  // or writes scrollTop / overflow-anchor on — the page scroller.
+  scrollerGetter: { type: Function, default: null },
+  // True while the companion pane is open on a viewport too narrow for three
+  // columns (xl but not 2xl): the TOC rail (user-resizable, shrink-0) yields
+  // so the feed column keeps a readable width beside the pane.
+  hideToc: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live', 'enter-scope'])
+
+// Active-scope highlight signal for the descendant SubagentCards (≥xl split):
+// provided rather than prop-threaded through the ConversationSpanCard
+// dispatcher. The pane's embedded scoped instance passes '', so only the main
+// feed's originating card lights up.
+provide('traceScopedAgentId', toRef(props, 'scopedAgentId'))
 
 const { copyText } = useCopy()
 
@@ -91,6 +114,7 @@ function resolvePinEl(spanId) {
     || null
 }
 function getConversationScroller() {
+  if (props.scrollerGetter) return props.scrollerGetter()
   return document.querySelector('.content-scroll')
     || document.scrollingElement
     || document.documentElement
@@ -373,7 +397,7 @@ function toolChipsForEntry(entry) {
   <div class="flex gap-4 items-start">
     <!-- ──────── LEFT RAIL: TURNS / PHASES TOC ──────── -->
     <ConversationToc
-      v-if="!scopeAgent"
+      v-if="!scopeAgent && !hideToc"
       :is-workflow="isWorkflow"
       :has-phase-spans="hasPhaseSpans"
       :phase-items="phaseItems"
@@ -683,7 +707,7 @@ function toolChipsForEntry(entry) {
          already parked at the bottom and not following; while scrolled up it
          surfaces a count of spans that arrived since. -->
     <button
-      v-if="followTail || !atBottom"
+      v-if="showFollowTail && (followTail || !atBottom)"
       type="button"
       class="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-lg transition-colors focus-visible:outline-2 focus-visible:outline-orange-400"
       :class="followTail

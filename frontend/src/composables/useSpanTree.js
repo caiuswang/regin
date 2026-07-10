@@ -131,18 +131,18 @@ function countToolish(descendants) {
  * subtrees still flag/fold normally. Turn usage / workflow projections are
  * main-session bookkeeping and go empty while scoped.
  *
- * @param {Ref<Array>|() => Array|Array} spansInput - flat spans list
- * @param {Ref<Array>|() => Array|Array} [turnsInput=null] - aligned turns[]
+ * @param {import('vue').Ref<Array>|() => Array|Array} spansInput - flat spans list
+ * @param {import('vue').Ref<Array>|() => Array|Array} [turnsInput=null] - aligned turns[]
  * @param {() => (Object|null)} [scopeInput=null] - per-agent scope getter
  * @returns {{
- *   spanById: ComputedRef<Map>,
- *   childrenByParent: ComputedRef<Map>,
- *   rootSpans: ComputedRef<Array>,
+ *   spanById: import('vue').ComputedRef<Map>,
+ *   childrenByParent: import('vue').ComputedRef<Map>,
+ *   rootSpans: import('vue').ComputedRef<Array>,
  *   childrenOf: (spanId: string) => Array,
  *   flattenDescendants: (spanId: string, depth?: number) => Array,
- *   entries: ComputedRef<Array>,
- *   promptGroups: ComputedRef<Array>,
- *   turnItems: ComputedRef<Array>,
+ *   entries: import('vue').ComputedRef<Array>,
+ *   promptGroups: import('vue').ComputedRef<Array>,
+ *   turnItems: import('vue').ComputedRef<Array>,
  * }}
  */
 export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {

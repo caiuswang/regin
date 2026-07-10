@@ -3189,3 +3189,28 @@ button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
     .live-disclosure-tw { transition: none; }
     .live-spinner { animation-duration: 2s; }
 }
+
+/* ── Trace agent scope (desktop companion pane) ───────────────────────────
+   Shared across SessionTraceView + TraceAgentPane + SubagentCard, so global
+   (scoped SFC styles don't reach children). Canonical stacking tokens exposed
+   as utilities: the pane header opts into --z-sticky and the roster popover
+   into --z-popover, instead of literal z-index values. */
+.z-sticky { z-index: var(--z-sticky); }
+.z-popover { z-index: var(--z-popover); }
+
+/* Active-scope outline on the originating SubagentCard while its scope is open
+   in the companion pane (≥xl). Agent violet, with a gentle pulse. */
+.trace-subagent-scoped {
+    outline: 2px solid var(--color-agent);
+    outline-offset: 1px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 0 0 4px var(--color-agent-soft);
+    animation: trace-scope-pulse 2s ease-in-out infinite;
+}
+@keyframes trace-scope-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px var(--color-agent-soft); }
+    50% { box-shadow: 0 0 0 6px var(--color-agent-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .trace-subagent-scoped { animation: none; }
+}

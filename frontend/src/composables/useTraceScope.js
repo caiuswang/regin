@@ -9,12 +9,22 @@ import { ref, computed, reactive, watch, nextTick } from 'vue'
 //
 // The page header keeps showing MAIN-session truth throughout — this only
 // re-projects the conversation spine. Scroll save/restore is owned here
-// because enter/exit are the only transitions that need it.
+// because enter/exit are the only transitions that need it — and it only
+// applies when the scope actually REPLACES the feed (`isTakeover`: the <xl
+// takeover or the ≥xl 'full' mode). In split mode the main feed never moves,
+// so touching page scroll on enter/exit would itself be the disruption.
 export function useTraceScope(route, router, {
   getAgents, getRoster, ensureSpanSubtreeLoaded, ensureTerminalSpansLoaded,
+  isTakeover = () => true,
 }) {
   const scopeId = ref(route.query.agent || null)
   const loadingSubtree = ref(false)
+  // The companion pane (≥xl) hosts two modes off one `?agent=` state machine:
+  // 'scope' (a scoped agent) and 'roster' (the running/finished picker, opened
+  // from the Agents button with no agent selected yet). `rosterOpen` is the
+  // only roster-vs-scope flag; picking an agent enters scope and clears it.
+  // Below xl the roster stays a separate popover, so this is inert there.
+  const rosterOpen = ref(false)
   let savedScrollTop = null
 
   // useLiveAgents-shaped entry for the scope bar / scoped feed; null until
@@ -53,7 +63,13 @@ export function useTraceScope(route, router, {
   }
 
   // Back/forward or an external ?agent= change re-enters/exits the scope.
-  watch(() => route.query.agent, (v) => { scopeId.value = v || null })
+  // A route-driven exit bypasses exit(), so drop the saved offset here too —
+  // otherwise a much-later takeover exit would restore a minutes-old scroll
+  // from a scope the user already backed out of.
+  watch(() => route.query.agent, (v) => {
+    scopeId.value = v || null
+    if (!scopeId.value) savedScrollTop = null
+  })
 
   async function loadScopedSubtree(id) {
     loadingSubtree.value = true
@@ -86,24 +102,35 @@ export function useTraceScope(route, router, {
   }
 
   function enter(agentId) {
+    rosterOpen.value = false
     if (!agentId || scopeId.value === agentId) return
-    if (!scopeId.value) savedScrollTop = getScroller().scrollTop
+    if (!scopeId.value && isTakeover()) savedScrollTop = getScroller().scrollTop
     scopeId.value = agentId
     syncQuery()
   }
 
+  function openRoster() { rosterOpen.value = true }
+
   async function exit() {
+    rosterOpen.value = false
+    // Restore only when the exiting presentation was a takeover — a split-mode
+    // exit closes the pane while the main feed sat untouched, so any saved
+    // offset (from a takeover entry before a mode flip) is discarded instead.
+    const restore = isTakeover() ? savedScrollTop : null
+    savedScrollTop = null
     scopeId.value = null
     syncQuery()
-    if (savedScrollTop == null) return
-    const top = savedScrollTop
-    savedScrollTop = null
+    if (restore == null) return
     await nextTick()
-    getScroller().scrollTop = top
+    getScroller().scrollTop = restore
   }
+
+  // The pane (≥xl) wants to be open whenever a scope is set OR the roster was
+  // explicitly opened. Closing rides exit(); no separate roster-close path.
+  const active = computed(() => !!scopeId.value || rosterOpen.value)
 
   return reactive({
     scopeId, scopedAgent, startSpanId, notFound, pending, loadingSubtree,
-    enter, exit,
+    rosterOpen, active, enter, openRoster, exit,
   })
 }

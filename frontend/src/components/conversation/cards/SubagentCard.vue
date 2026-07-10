@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, inject, ref } from 'vue'
 import MarkdownContent from '../../MarkdownContent.vue'
 import {
   fmtClock, fmtModel, fmtTokens, fmtDuration, fullLabel, toolRowDotClass,
@@ -25,6 +25,14 @@ const emit = defineEmits(['activate', 'enter-scope'])
 const prompt = computed(() => props.agentMerge.agentPrompt(props.span))
 const promptOwnerId = computed(() => props.agentMerge.agentPromptOwnerId(props.span))
 
+// agent_id currently open in the companion pane (≥xl split), provided by the
+// hosting SessionConversationView. Injected (not a prop) so the marker doesn't
+// thread through the ConversationSpanCard dispatcher's template. The scoped
+// feed inside the pane provides '' — only the main feed highlights.
+const scopedAgentId = inject('traceScopedAgentId', ref(''))
+const isScoped = computed(() => !!scopedAgentId.value
+  && props.span.attributes?.agent_id === scopedAgentId.value)
+
 // Select the agent's launch span (its task prompt) — falls back to the
 // subagent.start span itself for workflow agents (no launch span).
 function selectAgentPrompt() {
@@ -36,8 +44,12 @@ function selectAgentPrompt() {
   <div>
     <div
       tabindex="0"
-      class="flex items-center gap-2 text-xs cursor-pointer rounded-md px-2.5 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
-      :class="selectedSpan && selectedSpan.span_id === span.span_id ? '!bg-blue-50 !border-blue-300 ring-1 ring-blue-200' : ''"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs cursor-pointer rounded-md px-2.5 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
+      :class="[
+        selectedSpan && selectedSpan.span_id === span.span_id ? '!bg-blue-50 !border-blue-300 ring-1 ring-blue-200' : '',
+        isScoped ? 'trace-subagent-scoped' : '',
+      ]"
+      :data-testid="isScoped ? 'trace-subagent-scoped' : undefined"
       @click="$emit('activate', span)"
     >
       <!-- Fold toggle: collapses the agent's whole subtree to just this header.
@@ -55,8 +67,12 @@ function selectAgentPrompt() {
       <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
       <!-- Label: normal subagents read `subagent: <type> · <desc>`. Workflow
            agents have no agent_type, so the `subagent:` prefix would render
-           bare — show just the agent's label instead. -->
-      <span class="break-all flex-1 min-w-0 whitespace-pre-line text-sm font-semibold text-slate-800">
+           bare — show just the agent's label instead. Single-line ellipsis, not
+           break-all wrapping: under the ≥xl companion-pane squeeze a wrapping
+           label degenerated into a one-character-per-line column. min-w-32
+           keeps the ellipsized label legible; the row wraps trailing metric
+           chips to a second line instead of crushing it further. -->
+      <span class="truncate flex-1 min-w-32 text-sm font-semibold text-slate-800">
         <template v-if="span.attributes?.agent_type">{{ fullLabel(span) }}<template v-if="agentMerge.agentDescription(span)"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ agentMerge.agentDescription(span) }}</span></template></template>
         <template v-else>{{ agentMerge.agentDescription(span) || 'agent' }}</template>
       </span>
