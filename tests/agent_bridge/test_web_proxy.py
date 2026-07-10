@@ -223,8 +223,8 @@ def test_map_reachability_true_with_reachable_pane(flask_client, monkeypatch):
 def _mock_answer(monkeypatch, *, delivered=True, detail="selected option 2 in %7"):
     calls: list[tuple] = []
 
-    def _fake(trace_id, option_index, free_text=None):
-        calls.append((trace_id, option_index, free_text))
+    def _fake(trace_id, option_index, free_text=None, expect_chat=False):
+        calls.append((trace_id, option_index, free_text, expect_chat))
         return delivery.DeliveryResult(delivered, detail)
 
     monkeypatch.setattr(delivery, "deliver_answer", _fake)
@@ -282,7 +282,7 @@ def test_answer_option_records_label(flask_client, monkeypatch):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["delivered"] is True and isinstance(body["id"], int)
-    assert calls == [("T-a", 2, None)]  # option pick → no free text
+    assert calls == [("T-a", 2, None, False)]  # option pick → no free text, no chat
     rows = _rows("T-a")
     assert len(rows) == 1
     assert rows[0]["body"] == "Use Postgres"
@@ -297,9 +297,31 @@ def test_answer_free_text_records_and_passes_text(flask_client, monkeypatch):
         "/api/sessions/T-b/bridge-answer",
         json={"option_index": 4, "text": "my own answer"})
     assert resp.status_code == 200
-    assert calls == [("T-b", 4, "my own answer")]
+    assert calls == [("T-b", 4, "my own answer", False)]
     rows = _rows("T-b")
     assert len(rows) == 1 and rows[0]["body"] == "my own answer"
+
+
+def test_answer_chat_flag_passes_expect_chat(flask_client, monkeypatch):
+    """`chat=true` routes through with expect_chat=True and records the label."""
+    _enable(monkeypatch)
+    calls = _mock_answer(monkeypatch, detail="selected option 5 in %7")
+    resp = flask_client.post(
+        "/api/sessions/T-c/bridge-answer",
+        json={"option_index": 3, "chat": True, "label": "Chat about this"})
+    assert resp.status_code == 200
+    assert calls == [("T-c", 3, None, True)]  # chat → expect_chat=True
+    rows = _rows("T-c")
+    assert len(rows) == 1 and rows[0]["body"] == "Chat about this"
+
+
+def test_answer_chat_absent_defaults_false(flask_client, monkeypatch):
+    """No `chat` key (or a non-True value) leaves expect_chat False."""
+    _enable(monkeypatch)
+    calls = _mock_answer(monkeypatch)
+    flask_client.post("/api/sessions/T-d/bridge-answer",
+                      json={"option_index": 0, "label": "yes", "chat": "yes"})
+    assert calls == [("T-d", 0, None, False)]
 
 
 def test_answer_bridge_token_never_in_response(flask_client, monkeypatch):

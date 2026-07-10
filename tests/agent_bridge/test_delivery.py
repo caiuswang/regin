@@ -337,6 +337,51 @@ def test_answer_free_text_navigates_types_acks_submits(monkeypatch):
     assert len(_enters(calls)) == 2  # open the field + submit
 
 
+def test_answer_chat_present_navigates_and_dismisses(monkeypatch):
+    # expect_chat: the "Chat about this" entry (index 4) is present, so the
+    # menu is navigated to and dismissed with one Enter; no text typed.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="4. Type something.\n  5. Chat about this")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 4, expect_chat=True)
+
+    assert res.delivered is True
+    assert len(_downs(calls)) == 4
+    assert len(_enters(calls)) == 1  # dismiss the menu
+    assert not _literal_sends(calls)
+
+
+def test_answer_chat_with_message_navigates_types_acks_submits(monkeypatch):
+    # expect_chat + a message: navigate to the chat entry (index 4), Enter to
+    # dismiss the menu, type the message into the reopened composer, ack, submit.
+    # The capture must satisfy BOTH the chat-entry guard and the typed-text ack.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="5. Chat about this\nprompt> why these three?")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 4, "why these three?", expect_chat=True)
+
+    assert res.delivered is True
+    assert len(_downs(calls)) == 4
+    assert _literal_sends(calls)[0][-1] == "why these three?"
+    assert len(_enters(calls)) == 2  # dismiss the menu + submit the message
+
+
+def test_answer_chat_absent_refuses_without_navigating(monkeypatch):
+    # A build lacking the "Chat about this" entry must refuse, not over-walk
+    # the menu and answer the wrong entry.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="1. Red\n  2. Green\n  3. Type something.")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_answer("t1", 3, expect_chat=True)
+
+    assert res.delivered is False
+    assert "Chat about this" in res.detail
+    assert _downs(calls) == [] and _enters(calls) == []
+
+
 def test_answer_free_text_ack_failure_does_not_submit(monkeypatch):
     # The typed answer never echoes → not delivered, and the SUBMIT Enter is
     # withheld (only the field-opening Enter fires).

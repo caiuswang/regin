@@ -246,10 +246,24 @@ def _refuse(trace_id: str, detail: str) -> DeliveryResult:
 # Enter — one Enter, one submission, deterministic regardless of number-key
 # semantics. The auto-appended "Type something." free-text entry sits at index
 # = the number of listed options; selecting it opens a text field we then type
-# into and ack (like `deliver`) before the final Enter. Bound the walk so a bad
-# index can't spin the arrow loop.
+# into and ack (like `deliver`) before the final Enter. The "Chat about this"
+# entry (below the TUI's divider) sits one past that (index = options + 1):
+# selecting it dismisses the menu back to the composer, where an optional
+# message is typed as a conversational reply. Bound the walk so a bad index
+# can't spin the arrow loop.
 _ANSWER_MAX_NAV = 50
 _NAV_STEP_SEC = 0.03
+_CHAT_ENTRY_LABEL = "Chat about this"
+
+
+def _chat_entry_present(socket: str | None, pane: str) -> bool:
+    """True when the pane's live menu shows a 'Chat about this' entry.
+
+    Guards the chat verb against a claude build that predates the entry: over
+    such a version the frontend's chat index would over-navigate the menu, so
+    refuse rather than answer the wrong entry."""
+    r = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+    return _CHAT_ENTRY_LABEL in (r.stdout or "")
 
 
 def _navigate(socket: str | None, pane: str, steps: int) -> None:
@@ -291,13 +305,36 @@ def _send_answer(row: dict, option_index: int, free_text: str | None,
     return DeliveryResult(True, f"typed answer delivered to {pane}")
 
 
+def _reachable_answer_pane(trace_id: str, expect_chat: bool):
+    """Shared answer preflight: rate limit, reachable pane, identity, and the
+    chat-entry presence check. Returns (row, in_mode, refusal_detail); row is
+    None when refused (refusal_detail set), else refusal_detail is ""."""
+    if not _rate_ok(trace_id):
+        return None, False, "rate limit exceeded"
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return None, False, "no reachable session"
+    identity = _verify_identity(row)
+    if not identity["ok"]:
+        return None, False, identity["detail"]
+    if expect_chat and not _chat_entry_present(row.get("tmux_socket"),
+                                               row["pane_id"]):
+        return None, False, "no 'Chat about this' entry in menu"
+    return row, identity["in_mode"], ""
+
+
 def deliver_answer(trace_id: str, option_index: int,
-                   free_text: str | None = None) -> DeliveryResult:
+                   free_text: str | None = None,
+                   expect_chat: bool = False) -> DeliveryResult:
     """Answer a pending AskUserQuestion in `trace_id`'s reachable pane by
     selecting option `option_index` (0-based), or, when `free_text` is given,
-    the "Type something." entry at that index typed with `free_text`. Same
-    reachability / identity / rate guards as `deliver`; structured refusal
-    (never an exception) on every expected failure; audited."""
+    the "Type something." entry at that index typed with `free_text`. With
+    `expect_chat`, `option_index` targets the "Chat about this" entry: the pane
+    is first checked for that entry (refuse if a legacy build lacks it), then it
+    is selected — dismissing the menu — and any `free_text` is typed into the
+    reopened composer as a conversational reply. Same reachability / identity /
+    rate guards as `deliver`; structured refusal (never an exception) on every
+    expected failure; audited."""
     if not settings.agent_bridge.enabled:
         return _refuse(trace_id, "bridge disabled")
     if not isinstance(option_index, int) or option_index < 0 \
@@ -308,18 +345,13 @@ def deliver_answer(trace_id: str, option_index: int,
         clean = sanitize_text(free_text)
         if not clean:
             return _refuse(trace_id, "empty answer after sanitization")
-    if not _rate_ok(trace_id):
-        return _refuse(trace_id, "rate limit exceeded")
-    row = store.get_reachable_pane(trace_id)
+    row, in_mode, refusal = _reachable_answer_pane(trace_id, expect_chat)
     if row is None:
-        return _refuse(trace_id, "no reachable session")
-    identity = _verify_identity(row)
-    if not identity["ok"]:
-        return _refuse(trace_id, identity["detail"])
-    result = _send_answer(row, option_index, clean, identity["in_mode"])
+        return _refuse(trace_id, refusal)
+    result = _send_answer(row, option_index, clean, in_mode)
     log.write("bridge_answer_outcome", trace_id=trace_id,
               option_index=option_index, free_text=clean is not None,
-              delivered=result.delivered, detail=result.detail)
+              chat=expect_chat, delivered=result.delivered, detail=result.detail)
     return result
 
 

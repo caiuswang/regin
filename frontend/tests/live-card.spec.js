@@ -1578,12 +1578,14 @@ test.describe('Long-content invariant (acceptance #8b)', () => {
 // ---- answer a pending single-question ask from the QA sheet -----------------
 //
 // The QA sheet is read-only by default. When the span is a PENDING
-// single-question ask AND the bridge is reachable, each option becomes a
-// tappable button (POST bridge-answer → drives the pane's select TUI) and a
-// free-text input selects the auto-appended "Type something." entry. These
-// tests pin the browser-side contract (POST bodies + sheet close), not tmux.
+// single-question ask AND the bridge is reachable, it delegates to LiveQaAnswer:
+// picking an option / typing your own / "chat about this" all STAGE first and
+// only reach the pane on an explicit Confirm (select→confirm gate, so a mis-tap
+// can't answer the live agent). A note on a pick is delivered as free text
+// (`label — note`) since the terminal has no note field. These tests pin the
+// browser-side contract (POST bodies, staging, confirm) — not tmux.
 test.describe('Answer a pending ask from the QA sheet', () => {
-  async function seedPendingQuestion(page) {
+  async function seedPendingQuestion(page, { options } = {}) {
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)
     const now = new Date().toISOString()
@@ -1595,57 +1597,110 @@ test.describe('Answer a pending ask from the QA sheet', () => {
         attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`, is_test: true,
           questions: [{ question: 'ANSWERABLE_MARKER — which database?', header: 'DB',
             multiSelect: false,
-            options: [{ label: 'Postgres', description: 'relational' },
+            options: options || [{ label: 'Postgres', description: 'relational' },
               { label: 'SQLite', description: 'embedded' }] }] } },
     ])
     await bridgeReachableMap(page, traceId)
     return { traceId, sfx }
   }
 
-  test('tapping an option POSTs its index + label and closes the sheet', async ({ page }) => {
-    const { traceId } = await seedPendingQuestion(page)
-    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'selected option 2 in %3' })
-
+  async function openAnswerer(page, traceId) {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     const nowZone = page.locator('[data-testid="live-now"]')
     await expect(nowZone).toHaveAttribute('data-state', 'question', { timeout: 10_000 })
-
     await page.locator('[data-testid="live-now-options"]').click()
     const sheet = page.locator('[data-testid="live-sheet"]')
     await expect(sheet).toBeVisible()
-    // Answerable: options are buttons, and there is NO read-only note.
+    return sheet
+  }
+
+  test('selecting an option STAGES it and POSTs nothing until Confirm', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'selected option 2 in %3' })
+
+    const sheet = await openAnswerer(page, traceId)
     const picks = sheet.locator('[data-testid="live-qa-pick"]')
     await expect(picks).toHaveCount(2)
-    await expect(sheet).not.toContainText('read-only')
 
-    // Tap the second option → POST {option_index:1, label:'SQLite'}, no text.
+    // Tap the second option → staged, NOT sent.
     await picks.nth(1).click()
+    const confirm = sheet.locator('[data-testid="live-qa-confirm"]')
+    await expect(confirm).toBeVisible()
+    await expect(confirm).toContainText('SQLite')
+    await page.waitForTimeout(200)
+    expect(posts.length).toBe(0)  // nothing reached the pane on select
+
+    // Confirm → exactly one POST {option_index:1, label:'SQLite'}, no text.
+    await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
     await expect.poll(() => posts.length).toBe(1)
     expect(posts[0].option_index).toBe(1)
     expect(posts[0].label).toBe('SQLite')
     expect(posts[0].text).toBeUndefined()
-    // A delivered answer closes the sheet (the poll then retires the span).
+    expect(posts[0].chat).toBeUndefined()
     await expect(sheet).toBeHidden({ timeout: 5_000 })
   })
 
-  test('the free-text input answers the "Type something." entry (index = option count)', async ({ page }) => {
+  test('Cancel discards the staged option and POSTs nothing', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId)
+
+    const sheet = await openAnswerer(page, traceId)
+    await sheet.locator('[data-testid="live-qa-pick"]').first().click()
+    await expect(sheet.locator('[data-testid="live-qa-confirm"]')).toBeVisible()
+    await sheet.locator('[data-testid="live-qa-cancel"]').click()
+    await expect(sheet.locator('[data-testid="live-qa-confirm"]')).toBeHidden()
+    await page.waitForTimeout(200)
+    expect(posts.length).toBe(0)
+    await expect(sheet).toBeVisible()  // stays open to pick again
+  })
+
+  test('a note on a pick is delivered as free text at the "Type something." index', async ({ page }) => {
     const { traceId } = await seedPendingQuestion(page)
     const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'typed answer delivered to %3' })
 
-    await page.goto(`/live/${traceId}`)
-    await settle(page)
-    await page.locator('[data-testid="live-now-options"]').click()
-    const sheet = page.locator('[data-testid="live-sheet"]')
-    await expect(sheet).toBeVisible()
-
-    await sheet.locator('[data-testid="live-qa-free-input"]').fill('MySQL, actually')
-    await sheet.locator('[data-testid="live-qa-free-send"]').click()
+    const sheet = await openAnswerer(page, traceId)
+    await sheet.locator('[data-testid="live-qa-pick"]').first().click()  // Postgres
+    await sheet.locator('[data-testid="live-qa-note-input"]').fill('prod-grade')
+    await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
 
     await expect.poll(() => posts.length).toBe(1)
-    // Two listed options → the free-text entry is at index 2.
+    // Two options → free-text entry is index 2; the note rides as label — note.
+    expect(posts[0].option_index).toBe(2)
+    expect(posts[0].text).toBe('Postgres — prod-grade')
+    expect(posts[0].label).toBe('Postgres')
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('"Type your own" answers the "Type something." entry (index = option count)', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'typed answer delivered to %3' })
+
+    const sheet = await openAnswerer(page, traceId)
+    await sheet.locator('[data-testid="live-qa-stage-free"]').click()
+    await sheet.locator('[data-testid="live-qa-free-input"]').fill('MySQL, actually')
+    await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
     expect(posts[0].option_index).toBe(2)
     expect(posts[0].text).toBe('MySQL, actually')
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('"Chat about this" POSTs the chat entry (index = options+1) with chat:true', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'selected option 4 in %3' })
+
+    const sheet = await openAnswerer(page, traceId)
+    await sheet.locator('[data-testid="live-qa-stage-chat"]').click()
+    await sheet.locator('[data-testid="live-qa-chat-input"]').fill('why these three?')
+    await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    expect(posts[0].option_index).toBe(3)  // 2 options → chat entry at index 3
+    expect(posts[0].chat).toBe(true)
+    expect(posts[0].text).toBe('why these three?')
+    expect(posts[0].label).toBe('Chat about this')
     await expect(sheet).toBeHidden({ timeout: 5_000 })
   })
 
@@ -1653,15 +1708,25 @@ test.describe('Answer a pending ask from the QA sheet', () => {
     const { traceId } = await seedPendingQuestion(page)
     await stubBridgeAnswer(page, traceId, { delivered: false, detail: 'no reachable session' })
 
-    await page.goto(`/live/${traceId}`)
-    await settle(page)
-    await page.locator('[data-testid="live-now-options"]').click()
-    const sheet = page.locator('[data-testid="live-sheet"]')
-    await expect(sheet).toBeVisible()
-
+    const sheet = await openAnswerer(page, traceId)
     await sheet.locator('[data-testid="live-qa-pick"]').first().click()
+    await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
     await expect(sheet).toContainText('no reachable session')
     await expect(sheet).toBeVisible()  // not closed on failure
+  })
+
+  test('an option preview renders as a disclosure in the answerer', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page, {
+      options: [{ label: 'Postgres', description: 'relational', preview: 'CREATE TABLE t (id int);' },
+        { label: 'SQLite', description: 'embedded' }],
+    })
+    await stubBridgeAnswer(page, traceId)
+
+    const sheet = await openAnswerer(page, traceId)
+    const preview = sheet.locator('[data-testid="live-qa-preview"]')
+    await expect(preview).toHaveCount(1)  // only the option that has one
+    await preview.locator('summary').click()
+    await expect(preview).toContainText('CREATE TABLE t')
   })
 })
 

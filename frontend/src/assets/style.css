@@ -2571,6 +2571,51 @@ button.live-qa-pick .live-qa-optmark { color: var(--color-primary); font-weight:
 button.live-qa-pick:hover:not(:disabled) { background: var(--color-surface-2); }
 button.live-qa-pick:active:not(:disabled) { background: var(--color-emerald-50); }
 button.live-qa-pick:disabled { opacity: 0.55; cursor: default; }
+button.live-qa-pick:focus-visible { outline: 2px solid var(--color-ring); outline-offset: -2px; }
+button.live-qa-pick.live-qa-staged {
+    background: var(--color-emerald-50);
+    box-shadow: inset 3px 0 0 var(--color-primary);
+}
+/* Secondary verbs (type-your-own / chat) below the option list. */
+.live-qa-verbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+/* Select→confirm gate: nothing reaches the live agent until Confirm. */
+.live-qa-confirm {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface-2);
+}
+.live-qa-confirm-hd { font-size: 12.5px; color: var(--color-fg); margin-bottom: 8px; overflow-wrap: anywhere; }
+.live-qa-confirm-hd b { font-weight: 700; }
+.live-qa-confirm .live-qa-free-input { width: 100%; }
+.live-qa-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.live-qa-confirm-hint { margin: 6px 0 0; font-size: 11px; color: var(--color-fg-subtle); }
+/* Per-option preview disclosure (mirrors the desktop AskUserQuestionCard). */
+.live-qa-optwrap + .live-qa-optwrap { border-top: 1px solid var(--color-border-subtle); }
+.live-qa-preview { margin: 0 12px 8px 36px; }
+.live-qa-preview > summary {
+    cursor: pointer;
+    font-size: 10.5px;
+    color: var(--color-fg-subtle);
+    list-style: none;
+    user-select: none;
+}
+.live-qa-preview > summary:hover { color: var(--color-fg-muted); }
+.live-qa-preview > pre {
+    margin-top: 4px;
+    padding: 8px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--color-fg-muted);
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 240px;
+    overflow-y: auto;
+}
 .live-qa-answer { margin-top: 10px; }
 .live-qa-free-row { display: flex; gap: 8px; align-items: stretch; }
 .live-qa-free-input {

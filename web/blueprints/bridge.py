@@ -172,19 +172,21 @@ def api_session_bridge_key(trace_id):
 
 
 def _parse_answer(payload: dict):
-    """(option_index, text, body) from an answer payload, or (None, ...) when
-    `option_index` is missing/invalid. `text` is the sanitized free-form answer
-    (None when absent); `body` is the human-readable line recorded in the inbox
-    (the label, else the text, else the option ordinal)."""
+    """(option_index, text, chat, body) from an answer payload, or (None, ...)
+    when `option_index` is missing/invalid. `text` is the sanitized free-form
+    answer (None when absent); `chat` selects the "Chat about this" entry (menu
+    dismiss + optional composer message); `body` is the human-readable line
+    recorded in the inbox (the label, else the text, else the option ordinal)."""
     option_index = payload.get("option_index")
     if not isinstance(option_index, int) or option_index < 0:
-        return None, None, None
+        return None, None, None, None
     raw_text = payload.get("text")
     text = (delivery.sanitize_text(raw_text)
             if isinstance(raw_text, str) and raw_text.strip() else None)
     raw_label = payload.get("label")
     label = delivery.sanitize_text(raw_label) if isinstance(raw_label, str) else ""
-    return option_index, text, (text or label or f"option {option_index + 1}")
+    chat = payload.get("chat") is True
+    return option_index, text, chat, (text or label or f"option {option_index + 1}")
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-answer', methods=['POST'])
@@ -193,7 +195,9 @@ def api_session_bridge_answer(trace_id):
     """Answer a pending AskUserQuestion in the /live card's session by driving
     its select TUI (editor+ only). `option_index` (0-based) picks a listed
     option; an optional `text` selects the auto-appended "Type something."
-    entry at that index and types a free-form answer. Same JWT + `require_editor`
+    entry at that index and types a free-form answer; `chat=true` targets the
+    "Chat about this" entry (menu dismiss + optional composer message). Same
+    JWT + `require_editor`
     gate as `bridge-send` — driving a live agent terminal outranks every
     editor-gated mutation, so viewers get 403. The human-readable answer
     (`label`, else the free text) is recorded in the steering inbox for audit,
@@ -201,13 +205,13 @@ def api_session_bridge_answer(trace_id):
     """
     if not settings.agent_bridge.enabled:
         return jsonify({"delivered": False, "detail": "bridge disabled"})
-    option_index, text, body = _parse_answer(request.get_json(silent=True) or {})
+    option_index, text, chat, body = _parse_answer(request.get_json(silent=True) or {})
     if option_index is None:
         return jsonify({"error": "option_index required"}), 400
     user = get_current_user()
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
     row_id = store.record_bridge_message(trace_id, body, sender)
-    result = delivery.deliver_answer(trace_id, option_index, text)
+    result = delivery.deliver_answer(trace_id, option_index, text, expect_chat=chat)
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,
                     "detail": result.detail, "id": row_id})
