@@ -6,11 +6,13 @@ import SessionRow from '../components/SessionRow.vue'
 import SessionTags from '../components/SessionTags.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
+import Icon from '../components/ui/Icon.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
 import { useCopy } from '../composables/useCopy'
 import { useCursor } from '../composables/useCursor'
 import { useServerClock } from '../composables/useServerClock'
+import { useSessionFilterCollapse } from '../composables/useSessionFilterCollapse'
 import { useSessionTags } from '../composables/useSessionTags'
 import { useStickyHeader } from '../composables/useStickyHeader'
 import { fmtRelativeAge, isActiveWithClock, parseLocalIso, serverAgeMs } from '../utils/sessionActivity.js'
@@ -97,6 +99,13 @@ const range = ref(localStorage.getItem(RANGE_KEY) || 'today')
 const REPO_KEY = 'regin_sessions_repo'
 const repoFilter = ref(localStorage.getItem(REPO_KEY) || 'all')
 const repoOptions = ref([])
+
+// Collapse the facet row to reclaim vertical space for the list (seeded
+// collapsed on phones). Extracted to a composable so this view stays under
+// the vue-complexity surface-area threshold.
+const { filtersOpen, activeFilterCount } = useSessionFilterCollapse({
+  range, kind, tagFilter, activeFilter, repoFilter, activeTraceId,
+})
 
 async function loadRepoOptions() {
   try {
@@ -548,8 +557,25 @@ function timeTitle(s) {
            pill is also here — it carries an input rather than a select
            and shows a clear (×) when a value is committed. -->
       <div class="session-filters__row session-filters__row--facets">
-        <span class="facets-label">Filters</span>
+        <button
+          type="button"
+          class="facets-toggle focus-visible:outline-2 focus-visible:outline-blue-500"
+          :aria-expanded="filtersOpen"
+          :title="filtersOpen ? 'Hide filters' : 'Show filters'"
+          @click="filtersOpen = !filtersOpen"
+        >
+          <Icon name="filter" :size="12" />
+          <span>Filters</span>
+          <span v-if="activeFilterCount" class="facets-toggle__count">{{ activeFilterCount }}</span>
+          <Icon
+            name="chevron-down"
+            :size="12"
+            class="facets-toggle__chevron"
+            :class="{ 'facets-toggle__chevron--open': filtersOpen }"
+          />
+        </button>
 
+        <template v-if="filtersOpen">
         <label class="facet-pill" :class="{ 'facet-pill--active': range !== 'today' }">
           <span class="facet-pill__label">Range</span>
           <select
@@ -625,6 +651,7 @@ function timeTitle(s) {
             @click="clearTraceId"
           >×</button>
         </div>
+        </template>
       </div>
     </form>
     </div>
@@ -957,13 +984,41 @@ function timeTitle(s) {
   gap: 0.375rem;
 }
 
-.facets-label {
+.facets-toggle {
+  align-items: center;
+  background: var(--color-slate-50);
+  border: 1px solid var(--color-slate-200);
+  border-radius: 0.5rem;
+  color: var(--color-slate-600);
+  cursor: pointer;
+  display: inline-flex;
   font-size: 0.6875rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  gap: 0.3rem;
+  letter-spacing: 0.04em;
+  padding: 0.3rem 0.55rem;
   text-transform: uppercase;
-  color: var(--color-slate-500);
-  margin-right: 0.125rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.facets-toggle:hover {
+  border-color: var(--color-slate-300);
+  color: var(--color-slate-800);
+}
+.facets-toggle__count {
+  background: var(--color-blue-600);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.625rem;
+  line-height: 1;
+  min-width: 1rem;
+  padding: 0.15rem 0.3rem;
+  text-align: center;
+}
+.facets-toggle__chevron {
+  transition: transform 0.15s ease;
+}
+.facets-toggle__chevron--open {
+  transform: rotate(180deg);
 }
 
 /* Pill control: a labeled prefix + a control (select or input). The

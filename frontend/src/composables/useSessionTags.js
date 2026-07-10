@@ -46,15 +46,23 @@ export function useSessionTags() {
   // specific rejection (slug charset, builtin-reserved slug, …) so the caller
   // can tell the user WHY the mutation had no effect.
   async function addTag(traceId, slug) {
-    const res = await api.post(`/sessions/${traceId}/tags`, { tag: slug })
-    if (res && res.ok && Array.isArray(res.tags)) return { tags: res.tags }
-    return { error: (res && res.msg) || 'Could not add tag' }
+    try {
+      const res = await api.post(`/sessions/${traceId}/tags`, { tag: slug })
+      if (res && res.ok && Array.isArray(res.tags)) return { tags: res.tags }
+      return { error: (res && res.msg) || 'Could not add tag' }
+    } catch {
+      return { error: 'Could not add tag (network error)' }
+    }
   }
 
   async function removeTag(traceId, slug) {
-    const res = await api.del(`/sessions/${traceId}/tags/${encodeURIComponent(slug)}`)
-    if (res && res.ok && Array.isArray(res.tags)) return { tags: res.tags }
-    return { error: (res && res.msg) || 'Could not remove tag' }
+    try {
+      const res = await api.del(`/sessions/${traceId}/tags/${encodeURIComponent(slug)}`)
+      if (res && res.ok && Array.isArray(res.tags)) return { tags: res.tags }
+      return { error: (res && res.msg) || 'Could not remove tag' }
+    } catch {
+      return { error: 'Could not remove tag (network error)' }
+    }
   }
 
   return { customTags, loadCustomTags, patchRowTags, addTag, removeTag }

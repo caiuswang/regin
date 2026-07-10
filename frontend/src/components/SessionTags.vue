@@ -98,6 +98,17 @@ function submitAdd() {
         @keydown.esc.prevent="cancelAdd"
         @blur="cancelAdd"
       >
+      <!-- Explicit submit target: mobile soft keyboards don't reliably fire
+           a keydown-Enter, and the return key blurs the field (→ cancelAdd)
+           before it can submit. `@mousedown.prevent` submits without first
+           blurring the input, so the tap lands the value on every device. -->
+      <button
+        type="button"
+        class="tag-add__confirm focus-visible:outline-2 focus-visible:outline-blue-500"
+        aria-label="Save tag"
+        title="Save tag"
+        @mousedown.prevent="submitAdd"
+      >✓</button>
     </span>
     <button
       v-else
@@ -179,11 +190,32 @@ function submitAdd() {
   border-color: var(--color-gray-400);
   color: var(--color-gray-700);
 }
+.tag-add {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.15rem;
+}
 .tag-add__input {
   border: 1px solid var(--color-blue-300);
   border-radius: 0.25rem;
   font-size: 11px;
   padding: 0.1rem 0.3rem;
   width: 6rem;
+}
+.tag-add__confirm {
+  align-items: center;
+  border: 1px solid var(--color-blue-300);
+  border-radius: 0.25rem;
+  color: var(--color-blue-600);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 1.5rem;
+  min-width: 1.5rem;
+}
+.tag-add__confirm:hover {
+  background: var(--color-blue-50);
 }
 </style>
