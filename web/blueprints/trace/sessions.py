@@ -1049,11 +1049,14 @@ def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
         'description': facts['description'],
         'prompt_preview': facts['prompt_preview'],
         'waiting': bool(ask_ts and seen_ts and ask_ts >= seen_ts),
+        # Workflow-run ingest records completion as `state: done` on the start
+        # marker itself — those agents never get a subagent.stop span.
+        'declared_done': bool(latest and latest['attrs'].get('state') == 'done'),
     }
 
 
 def _roster_status(entry, interrupted_ids, now, ended) -> str:
-    if entry['stop']:
+    if entry['stop'] or entry.get('declared_done'):
         return 'finished'
     if entry['agent_id'] in interrupted_ids:
         return 'interrupted'

@@ -2356,7 +2356,7 @@ test.describe('Differentiated tail rows', () => {
 
     const phase = page.locator(`[data-testid="live-row"][data-span-id="phase-${sfx}"]`)
     await expect(phase).toHaveAttribute('data-kind', 'phase')
-    await expect(phase).toContainText('Phase 3 · verify')
+    await expect(phase).toContainText('Phase 2 · verify')
 
     const agent = page.locator(`[data-testid="live-row"][data-span-id="agent-${sfx}"]`)
     await expect(agent).toContainText('Agent · builder')

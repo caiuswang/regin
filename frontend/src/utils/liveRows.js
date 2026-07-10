@@ -37,11 +37,11 @@ export function rowKind(span) {
   return 'act'
 }
 
-// Centered phase-band label ("PHASE 3 · verify"). index is 0-based on the span.
+// Centered phase-band label ("PHASE 3 · verify"). index is stamped 1-based
+// at ingest (workflow_ingest._phase_spans enumerates from 1).
 export function phaseBandLabel(span) {
   const a = span?.attributes || {}
-  const idx = (a.index == null ? 0 : a.index) + 1
-  return `Phase ${idx}${a.title ? ` · ${a.title}` : ''}`
+  return `Phase ${a.index ?? 1}${a.title ? ` · ${a.title}` : ''}`
 }
 
 // Ask-user-question / permission spans get their own delicate 2-line row
@@ -270,7 +270,7 @@ const MAIN_BUILDERS = {
   prompt: a => ({ pre: 'You', text: stripMarkdown(a.text) }),
   assistant_response: a => ({ text: stripMarkdown(a.text) }),
   'assistant.thinking': a => ({ pre: 'Thinking', text: stripMarkdown(a.thinking_text), dim: true }),
-  'subagent.start': a => ({ text: `Agent ${a.agent_type || (a.agent_id || '').slice(0, 8)} started` }),
+  'subagent.start': a => ({ text: `Agent ${a.label || a.agent_type || (a.agent_id || '').slice(0, 8)} started` }),
   // Agent launch/done + task events are the four differentiated row kinds
   // : violet agent affordance, quiet checklist glyphs. `agent` tints the
   // dot/pre violet; `taskGlyph`/`struck` swap the dot for a checklist mark.
@@ -280,7 +280,7 @@ const MAIN_BUILDERS = {
     agent: true,
   }),
   'subagent.stop': a => ({
-    pre: `◆ ${a.agent_type || 'agent'} finished`,
+    pre: `◆ ${a.label || a.agent_type || 'agent'} finished`,
     text: a.result_preview || '',
     agent: true,
     agentDone: true,

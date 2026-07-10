@@ -404,3 +404,24 @@ def test_roster_denied_launch_not_treated_as_resolved(trace_db):
     finally:
         conn.close()
     assert _roster_by_id('tR6')['a1']['status'] == 'running'
+
+
+def test_roster_workflow_state_done_marker_is_finished(trace_db):
+    """A workflow-run trace records completion as `state: done` on the start
+    marker itself (no subagent.stop is ever ingested) — the roster must read
+    that as finished, not stale, even on an ended session."""
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tWF1', status='ended',
+                      last_seen='2026-01-01T01:00:00')
+        _seed_span(conn, 'tWF1', 'wfagent-a9', 'subagent.start',
+                   start='2026-01-01T00:10:00',
+                   attrs={'agent_id': 'a9', 'label': 'survey:tags',
+                          'agent_type': 'workflow-subagent', 'state': 'done'},
+                   agent_id_col='a9')
+        conn.commit()
+    finally:
+        conn.close()
+    entry = _roster_by_id('tWF1')['a9']
+    assert entry['status'] == 'finished'
+    assert entry['description'] == 'survey:tags'
