@@ -274,11 +274,19 @@ def _navigate(socket: str | None, pane: str, steps: int) -> None:
 
 
 def _send_answer(row: dict, option_index: int, free_text: str | None,
-                 in_mode: bool) -> DeliveryResult:
-    """Drive the ask's select TUI to option `option_index`; when `free_text`
-    is set, treat that index as the "Type something." entry, open it, type and
-    ack the text, then submit. A plain option pick leaves no capture-pane trace
-    (the menu vanishes), so it is best-effort like `_send_key`."""
+                 in_mode: bool, is_chat: bool = False) -> DeliveryResult:
+    """Drive the ask's select TUI to option `option_index` then submit.
+
+    The three verbs need different key sequences (empirically, claude v2.1.x):
+    - plain pick / `free_text is None`: Enter selects (or, at the chat entry,
+      dismisses the menu). Best-effort — the menu vanishes, no capture trace.
+    - "Type something." (`free_text`, not chat): the entry becomes an INLINE
+      field on the FIRST keystroke — typing directly rewrites the label. An
+      Enter *before* typing here DECLINES the question, so we must NOT open it
+      with Enter; type, ack, then Enter submits the custom answer.
+    - "Chat about this" (`free_text` + `is_chat`): Enter first DISMISSES the
+      menu into the composer, then the message is typed and Enter submits it.
+    """
     socket, pane = row.get("tmux_socket"), row["pane_id"]
     if in_mode:
         _tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
@@ -289,20 +297,22 @@ def _send_answer(row: dict, option_index: int, free_text: str | None,
         if r.returncode != 0:
             return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
         return DeliveryResult(True, f"selected option {option_index + 1} in {pane}")
-    # Free-text: Enter opens the "Type something." field, then type + ack + Enter.
-    _tmux(socket, "send-keys", "-t", pane, "Enter")
-    time.sleep(0.1)
+    if is_chat:
+        # Chat: this Enter dismisses the menu into the composer before typing.
+        _tmux(socket, "send-keys", "-t", pane, "Enter")
+        time.sleep(0.1)
     r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", free_text)
     if r.returncode != 0:
         return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
-    # Ack the typed answer landed in the field before submitting (same
-    # capture-pane check `_type_and_ack` applies to a steering message).
+    # Ack the typed text landed before submitting (same capture-pane check
+    # `_type_and_ack` applies to a steering message).
     time.sleep(0.3)
     capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
     if free_text[:30] not in (capture.stdout or ""):
         return DeliveryResult(False, "typed answer not visible in pane; not submitting")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
-    return DeliveryResult(True, f"typed answer delivered to {pane}")
+    kind = "chat message" if is_chat else "typed answer"
+    return DeliveryResult(True, f"{kind} delivered to {pane}")
 
 
 def _reachable_answer_pane(trace_id: str, expect_chat: bool):
@@ -348,7 +358,7 @@ def deliver_answer(trace_id: str, option_index: int,
     row, in_mode, refusal = _reachable_answer_pane(trace_id, expect_chat)
     if row is None:
         return _refuse(trace_id, refusal)
-    result = _send_answer(row, option_index, clean, in_mode)
+    result = _send_answer(row, option_index, clean, in_mode, is_chat=expect_chat)
     log.write("bridge_answer_outcome", trace_id=trace_id,
               option_index=option_index, free_text=clean is not None,
               chat=expect_chat, delivered=result.delivered, detail=result.detail)

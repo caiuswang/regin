@@ -323,8 +323,9 @@ def test_answer_option_zero_sends_no_down(monkeypatch):
 
 
 def test_answer_free_text_navigates_types_acks_submits(monkeypatch):
-    # Free-text at index 3 (the "Type something." entry): Down×3, Enter to
-    # open the field, literal type, ack, then a final Enter.
+    # Free-text at index 3 (the "Type something." entry): Down×3, then type
+    # DIRECTLY (no opening Enter — that would decline the question), ack, then a
+    # single Enter to submit the custom answer.
     calls = _install_tmux(monkeypatch, command="claude",
                           capture="prompt> my own answer")
     _set_row(monkeypatch, _pane_row())
@@ -334,7 +335,21 @@ def test_answer_free_text_navigates_types_acks_submits(monkeypatch):
     assert res.delivered is True
     assert len(_downs(calls)) == 3
     assert _literal_sends(calls)[0][-1] == "my own answer"
-    assert len(_enters(calls)) == 2  # open the field + submit
+    assert len(_enters(calls)) == 1  # submit only — NO field-opening Enter
+
+
+def test_answer_free_text_never_sends_declining_enter_before_typing(monkeypatch):
+    # Regression: an Enter BEFORE the literal type declines the ask. The literal
+    # send must come first, with no Enter between navigation and typing.
+    calls = _install_tmux(monkeypatch, command="claude", capture="prompt> hi")
+    _set_row(monkeypatch, _pane_row())
+
+    delivery.deliver_answer("t1", 2, "hi")
+
+    seq = [c for c in calls if c[-1] == "Enter" or ("-l" in c and "--" in c)]
+    # The literal send must precede the only Enter.
+    assert "-l" in seq[0] and seq[-1][-1] == "Enter"
+    assert sum(1 for c in seq if c[-1] == "Enter") == 1
 
 
 def test_answer_chat_present_navigates_and_dismisses(monkeypatch):
@@ -383,8 +398,9 @@ def test_answer_chat_absent_refuses_without_navigating(monkeypatch):
 
 
 def test_answer_free_text_ack_failure_does_not_submit(monkeypatch):
-    # The typed answer never echoes → not delivered, and the SUBMIT Enter is
-    # withheld (only the field-opening Enter fires).
+    # The typed answer never echoes → not delivered, and NO Enter is ever sent
+    # (free-text types directly onto the "Type something." entry — there is no
+    # field-opening Enter, and the submit Enter is withheld on ack failure).
     calls = _install_tmux(monkeypatch, command="claude",
                           capture="a different screen")
     _set_row(monkeypatch, _pane_row())
@@ -393,7 +409,7 @@ def test_answer_free_text_ack_failure_does_not_submit(monkeypatch):
 
     assert res.delivered is False
     assert "not visible" in res.detail
-    assert len(_enters(calls)) == 1  # field opened, but never submitted
+    assert len(_enters(calls)) == 0  # nothing submitted, nothing declined
 
 
 def test_answer_out_of_range_refuses_before_tmux(monkeypatch):
