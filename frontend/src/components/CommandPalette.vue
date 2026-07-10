@@ -234,6 +234,14 @@ const iconPathByGroup = {
 
 .palette-input::placeholder { color: var(--color-slate-400); }
 
+/* iOS Safari zooms the viewport in on focusing a field with computed
+   font-size < 16px and never zooms back — bump the search box to 16px on
+   touch devices. `any-pointer` (not `pointer`) so a touch device paired with
+   a trackpad/mouse, whose primary pointer reports as fine, is still covered. */
+@media (any-pointer: coarse) {
+  .palette-input { font-size: 16px; }
+}
+
 .palette-kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.6875rem;
