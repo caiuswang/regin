@@ -2634,6 +2634,20 @@ button.live-qa-pick.live-qa-staged {
 }
 .live-qa-free-input:focus { outline: none; border-color: var(--color-ring); }
 .live-qa-free-input:disabled { opacity: 0.6; }
+/* iOS Safari auto-zooms the viewport when a text field with font-size < 16px
+   gains focus and never zooms back out — the primary live surface is mobile,
+   so bump every tap-into-text field to 16px on touch devices, leaving the
+   compact desktop sizing untouched. `any-pointer: coarse` (not `pointer`)
+   deliberately: a touch device paired with a trackpad/mouse reports its
+   *primary* pointer as fine, so `pointer: coarse` would miss it and the field
+   would keep zooming. Placed after every base font-size rule it overrides
+   (composer at ~2366, qa-free-input above) so source order wins — media
+   queries add no specificity. */
+@media (any-pointer: coarse) {
+    .live-composer-ta,
+    .live-composer-steer .live-composer-ta,
+    .live-qa-free-input { font-size: 16px; }
+}
 .live-qa-answer-meta { margin: 6px 2px 0; font-size: 11.5px; color: var(--color-fg-subtle); }
 .live-qa-answer-meta.live-qa-failed { color: var(--color-danger); }
 .live-qa-note {
