@@ -3261,6 +3261,44 @@ test.describe('Scoped tail opens with the agent prompt (Slice C)', () => {
     await expect(first).toContainText('SYNTH_DESC_MARKER')
     await expect(first).toHaveAttribute('data-kind', 'msg')
   })
+
+  test('a workflow agent scope leads with the marker prompt and closes with its result', async ({ page }) => {
+    // Workflow-run markers carry the task prompt + result inline (no
+    // prompt-sa span, no subagent.stop) — the scoped tail must not degrade
+    // to the bare label and must surface the result at the end.
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const later = new Date(Date.now() + 2000).toISOString()
+    const agId = `ag-wf-${sfx}`
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'wf-run fixture', is_test: true } },
+      { trace_id: traceId, span_id: `substart-${sfx}`, parent_id: null, name: 'subagent.start',
+        start_time: now,
+        attributes: { agent_type: 'workflow-subagent', agent_id: agId,
+          label: 'survey:fixture', prompt: 'WF_LIVE_PROMPT_MARKER — dig into everything',
+          result_preview: 'WF_LIVE_RESULT_MARKER — findings', state: 'done', is_test: true } },
+      { trace_id: traceId, span_id: `int-read-${sfx}`, parent_id: null, name: 'tool.Read',
+        start_time: later, attributes: { file_path: 'src/z.js', agent_id: agId, is_test: true } },
+    ])
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-card"]')).toBeVisible({ timeout: 10_000 })
+
+    await openAgents(page)
+    // A state:done workflow agent rosters as finished — behind the toggle.
+    const finished = page.locator('[data-testid="live-agent-finished-toggle"]')
+    if (await finished.count()) await finished.click()
+    await page.locator('[data-testid="live-agent-card"]').first().click()
+    await expect(page.locator('[data-testid="live-scope-bar"]')).toBeVisible({ timeout: 5_000 })
+
+    const first = rows(page).first()
+    await expect(first).toContainText('WF_LIVE_PROMPT_MARKER')
+    await expect(first).toHaveAttribute('data-kind', 'msg')
+    await expect(rows(page).last()).toContainText('WF_LIVE_RESULT_MARKER')
+  })
 })
 
 // ---- auto-page on scope entry (useLiveScope.autoPageScope) -----------------

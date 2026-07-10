@@ -22,8 +22,9 @@ const MAX_AUTO_PAGE_ITERS = 20
 // agent with zero captured spans must stay in its empty-scope terminal state.
 function withLeadingPrompt(base, scopeId, agent) {
   if (!scopeId || !base.length || base.some(s => s.name === 'prompt')) return base
-  const text = agent?.startSpan?.attributes?.prompt_preview
-    || agent?.description || ''
+  const marker = agent?.startSpan?.attributes || {}
+  const text = marker.prompt_preview || marker.prompt
+    || agent?.promptPreview || agent?.description || ''
   if (!text) return base
   return [{
     span_id: `prompt-sa-synth-${scopeId}`,
@@ -34,6 +35,29 @@ function withLeadingPrompt(base, scopeId, agent) {
   }, ...base]
 }
 
+// Workflow-run markers carry the agent's result inline and never get a
+// subagent.stop span (partitionScope excludes markers from scopes anyway) —
+// close the scoped tail with a synthesized "finished" row so the result is
+// readable where the work ends. Synthetic id, never fetched: the /live sheet
+// renders from the local span object.
+function withTrailingResult(base, scopeId, agent) {
+  if (!scopeId || !base.length) return base
+  const marker = agent?.startSpan?.attributes || {}
+  if (!marker.result_preview && !marker.result_full) return base
+  return [...base, {
+    span_id: `result-sa-synth-${scopeId}`,
+    name: 'subagent.stop',
+    parent_id: null,
+    start_time: base[base.length - 1].start_time,
+    attributes: {
+      agent_id: scopeId,
+      agent_type: marker.agent_type || '',
+      label: marker.label || '',
+      result_preview: marker.result_preview || marker.result_full,
+    },
+  }]
+}
+
 // `loadOlder` / `getHasMoreOlder` come from useLiveTail — this composable
 // drives the paging loop but never owns the pages themselves (append-only
 // store stays a single source of truth in the tail).
@@ -42,8 +66,9 @@ export function useLiveScope(getSpans, getAgents, loadOlder, getHasMoreOlder) {
   const scopedAgent = computed(() => (scopeId.value
     ? getAgents().find(a => a.agentId === scopeId.value) || null
     : null))
-  const scopedSpans = computed(() => withLeadingPrompt(
-    partitionScope(getSpans(), scopeId.value), scopeId.value, scopedAgent.value))
+  const scopedSpans = computed(() => withTrailingResult(withLeadingPrompt(
+    partitionScope(getSpans(), scopeId.value), scopeId.value, scopedAgent.value,
+  ), scopeId.value, scopedAgent.value))
   // The main-timeline partition regardless of the active scope: the NOW zone
   // projects over THIS, never the raw tail — a subagent's assistant_response
   // (agent_id set) must not surface as the main session's "latest response".
