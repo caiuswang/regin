@@ -1,4 +1,4 @@
-"""Handler: SessionStart agent-bridge pane registry (slice 1).
+"""Handler: agent-bridge pane registry.
 
 Records the session's tmux pane identity triple — pane id (`$TMUX_PANE`),
 tmux server pid (`#{pid}`), pane shell pid (`#{pane_pid}`) — so the bridge
@@ -17,6 +17,17 @@ Opt-in and fail-soft by design:
   ALL mutable columns, so one row per session always holds the freshest
   coordinates (a partial merge could leave stale identity behind).
 
+Registration fires on SessionStart AND self-heals on the session's turn
+events (`handle_turn`, wired to UserPromptSubmit/PreToolUse). SessionStart
+is a single shot with silent fail-soft returns, so a session whose pane
+query blipped, whose DB write raced, or that only became bridge-capable
+after launch would otherwise lose the /live steer composer permanently
+with no recovery short of a re-`clear`. Re-running the idempotent
+registration on the next turn recovers it. It is deduped per
+`(trace_id, pane_id)` for this process, so the heal costs one tmux query
+per pane, not one per turn — and an env-less session (no REGIN_BRIDGE /
+not in tmux) stays a pure no-op on every turn, same as SessionStart.
+
 Env is read from `os.environ` — handler processes see the full
 environment; the hook payload does not carry env.
 """
@@ -33,6 +44,11 @@ from ..core import HookPayload, HookResponse
 _TMUX_QUERY_TIMEOUT_SEC = 2.0
 
 _schema_ready = False
+
+# (trace_id, pane_id) pairs registered in THIS process — lets the turn-event
+# self-heal skip a redundant tmux query once the pane is already recorded,
+# while still catching a resume that moved the session to a new pane.
+_registered_panes: set[tuple[str, str]] = set()
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS bridge_panes (
@@ -75,31 +91,56 @@ def handle_start(payload: HookPayload) -> HookResponse | None:
     try:
         _register_pane(payload)
     except Exception:
-        try:
-            from lib.activity_log import get_activity_logger
-            get_activity_logger('agent_bridge').error(
-                'bridge_pane_register_failed',
-                trace_id=payload.session_id, exc_info=True,
-            )
-        except Exception:
-            pass
+        _log_register_failure(payload)
     return HookResponse(suppress_output=True)
 
 
-def _register_pane(payload: HookPayload) -> None:
+def handle_turn(payload: HookPayload) -> HookResponse | None:
+    """Self-heal the SessionStart one-shot on a session's turn events.
+
+    A pure no-op when the pane is already registered this process, or when
+    the env is bridge-less (same fast returns as SessionStart) — so wiring
+    this to high-frequency events costs at most one tmux query per pane."""
+    try:
+        if _already_registered(payload):
+            return HookResponse(suppress_output=True)
+        _register_pane(payload)
+    except Exception:
+        _log_register_failure(payload)
+    return HookResponse(suppress_output=True)
+
+
+def _already_registered(payload: HookPayload) -> bool:
+    pane_id = (os.environ.get('TMUX_PANE') or '').strip()
+    trace_id = payload.session_id or ''
+    return bool(pane_id and trace_id) and (trace_id, pane_id) in _registered_panes
+
+
+def _log_register_failure(payload: HookPayload) -> None:
+    try:
+        from lib.activity_log import get_activity_logger
+        get_activity_logger('agent_bridge').error(
+            'bridge_pane_register_failed',
+            trace_id=payload.session_id, exc_info=True,
+        )
+    except Exception:
+        pass
+
+
+def _register_pane(payload: HookPayload) -> bool:
     # Guard order is pinned: flag → pane env → tmux query → upsert. With
     # the flag off this must be a pure no-op (no subprocess, no row).
     if not _env_truthy('REGIN_BRIDGE'):
-        return
+        return False
     pane_id = (os.environ.get('TMUX_PANE') or '').strip()
     if not pane_id:
-        return
+        return False
     trace_id = payload.session_id
     if not trace_id:
-        return
+        return False
     identity = _query_pane_identity(pane_id)
     if identity is None:
-        return
+        return False
     server_pid, pane_pid = identity
     # $TMUX = "<socket_path>,<server_pid>,<session_id>"; the first
     # comma-field is the absolute socket path. NULL when outside tmux or on
@@ -108,6 +149,8 @@ def _register_pane(payload: HookPayload) -> None:
     tmux_socket = (os.environ.get('TMUX') or '').split(',')[0] or None
     _upsert_pane(trace_id, pane_id, server_pid, pane_pid, tmux_socket,
                  payload.cwd)
+    _registered_panes.add((trace_id, pane_id))
+    return True
 
 
 def _query_pane_identity(pane_id: str) -> tuple[int, int] | None:

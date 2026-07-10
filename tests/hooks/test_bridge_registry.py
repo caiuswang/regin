@@ -179,6 +179,62 @@ def test_tmux_binary_missing_records_nothing(monkeypatch):
     assert _rows() == []
 
 
+def _turn_payload(session_id="s-bridge", cwd="/tmp/proj"):
+    raw = {"cwd": cwd, "session_id": session_id}
+    return HookPayload(event="UserPromptSubmit", cwd=cwd,
+                       session_id=session_id, raw=raw)
+
+
+def test_turn_noop_when_flag_unset(monkeypatch):
+    bridge_registry._registered_panes.clear()
+    monkeypatch.delenv("REGIN_BRIDGE", raising=False)
+    monkeypatch.setenv("TMUX_PANE", "%3")
+    _forbid_subprocess(monkeypatch)
+
+    resp = bridge_registry.handle_turn(_turn_payload())
+
+    assert resp is not None and resp.suppress_output is True
+    assert _rows() == []
+
+
+def test_turn_heals_missed_session_start(monkeypatch):
+    # SessionStart fired while the tmux query was failing → no row, nothing
+    # cached. The session would otherwise never get a /live composer.
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%7")
+    _mock_tmux(monkeypatch, returncode=1, stdout="")
+    bridge_registry.handle_start(_payload())
+    assert _rows() == []  # SessionStart registered nothing
+
+    # Next turn, tmux is healthy → the pane self-registers.
+    _mock_tmux(monkeypatch, server_pid=4242, pane_pid=777)
+    resp = bridge_registry.handle_turn(_turn_payload())
+
+    assert resp.suppress_output is True
+    rows = _rows()
+    assert len(rows) == 1
+    assert rows[0]["pane_id"] == "%7"
+    assert rows[0]["reachable"] == 1
+
+
+def test_turn_is_deduped_after_registration(monkeypatch):
+    # Once a pane is registered this process, later turns must NOT re-run the
+    # tmux subprocess — the heal costs one query per pane, not one per turn.
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%7")
+    _mock_tmux(monkeypatch, server_pid=4242, pane_pid=777)
+    bridge_registry.handle_start(_payload())
+    assert len(_rows()) == 1
+
+    _forbid_subprocess(monkeypatch)
+    resp = bridge_registry.handle_turn(_turn_payload())  # cached → no subprocess
+
+    assert resp.suppress_output is True
+    assert len(_rows()) == 1
+
+
 # The slice-1 pre-migration shape: 9 columns, NO tmux_socket. Matches the
 # original bridge_panes DDL before the delivery slice added the socket.
 _PRE_MIGRATION_DDL = """
