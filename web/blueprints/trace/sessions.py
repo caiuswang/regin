@@ -1017,10 +1017,13 @@ def _entry_agent_type(latest, stop, act) -> str:
 
 def _entry_marker_facts(latest, stop) -> dict:
     attrs = latest['attrs'] if latest else {}
+    # Workflow-run markers carry the full task prompt (no hook-truncated
+    # preview) — clip it to preview size rather than surfacing nothing.
+    preview = attrs.get('prompt_preview') or (attrs.get('prompt') or '')[:400]
     return {
         'start_span_id': latest['span_id'] if latest else None,
         'description': attrs.get('description') or attrs.get('label') or '',
-        'prompt_preview': attrs.get('prompt_preview') or '',
+        'prompt_preview': preview,
         'marker_seen': (stop or latest or {}).get('start_time'),
     }
 

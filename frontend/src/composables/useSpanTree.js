@@ -322,6 +322,17 @@ export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {
     let flat = flattenDescendants(sc.startSpanId)
     if (!flat.length) flat = scopedAttrFallback(sc.agentId)
     if (!flat.length) return []
+    // A workflow agent's start marker carries the run facts inline (task
+    // prompt + result) — lead with the real prompt, close with the result,
+    // mirroring the run projection's prompt → work → result reading order.
+    const startSpan = spanById.value.get(sc.startSpanId) || null
+    const marker = startSpan?.attributes || {}
+    if (marker.result_full || marker.result_preview) {
+      flat = [...flat, {
+        span: { ...startSpan, span_id: `${startSpan.span_id}::result`, name: 'workflow.agent_result' },
+        depth: 0, inAgent: false, inWorkflow: false,
+      }]
+    }
     const promptIdx = flat.findIndex((d) => d.span.name === 'prompt')
     if (promptIdx >= 0) {
       return [{
@@ -337,7 +348,7 @@ export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {
         name: 'prompt',
         parent_id: null,
         start_time: flat[0].span.start_time,
-        attributes: { text: sc.promptText || '', agent_id: sc.agentId },
+        attributes: { text: marker.prompt || sc.promptText || '', agent_id: sc.agentId },
       },
       descendants: flat,
     }]

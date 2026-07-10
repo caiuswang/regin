@@ -175,6 +175,38 @@ test.describe('Scoped feed (acceptance 2)', () => {
     await expect(userBadges(page)).toHaveCount(1)
     await expect(page.getByText('REAL_TASK_PROMPT_MARKER').first()).toBeVisible({ timeout: 10_000 })
   })
+
+  test('a workflow agent scope leads with the marker prompt and closes with its result', async ({ page }) => {
+    // Workflow-run (and enriched launching-session) markers carry the task
+    // prompt + result inline; the scope must not degrade to the bare label.
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const now = new Date().toISOString()
+    const later = new Date(Date.now() + 2000).toISOString()
+    const agId = `ag-wf-${sfx}`
+    const startId = `wfstart-${sfx}`
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: now, attributes: { text: 'scoping fixture prompt', is_test: true } },
+      { trace_id: traceId, span_id: startId, parent_id: `prompt-${sfx}`, name: 'subagent.start',
+        start_time: now,
+        attributes: { agent_type: 'workflow-subagent', agent_id: agId,
+          label: 'survey:fixture', prompt: 'WF_TASK_PROMPT_MARKER — investigate everything',
+          result_preview: 'WF_RESULT_MARKER — findings summary', is_test: true } },
+      { trace_id: traceId, span_id: `wf-read-${sfx}`, parent_id: startId, name: 'tool.Read',
+        start_time: later, attributes: { file_path: INT_FILE, agent_id: agId, is_test: true } },
+    ])
+    await gotoTrace(page, traceId)
+
+    const viewBtn = page.locator('[data-testid="trace-agent-view"]').first()
+    await expect(viewBtn).toBeVisible({ timeout: 10_000 })
+    await viewBtn.click()
+
+    // Leading USER card shows the real task prompt, not the label.
+    await expect(page.getByText('WF_TASK_PROMPT_MARKER').first()).toBeVisible({ timeout: 10_000 })
+    // The agent's result closes the scoped feed.
+    await expect(page.getByText('WF_RESULT_MARKER').first()).toBeVisible()
+  })
 })
 
 // ---- acceptance 3: scope bar + exit restores scroll --------------------------
