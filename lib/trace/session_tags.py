@@ -60,6 +60,21 @@ _MAX_PROMPT_TAGS = 8
 
 AUTO_TAG_SOURCE = "auto"
 
+# The one write path for derived (source='auto') tags. Conflict-ignore keeps
+# every ingest pass idempotent and means a hand-assigned ('manual') row is
+# never downgraded to 'auto'.
+SESSION_TAGS_AUTO_UPSERT_SQL = """
+    INSERT INTO session_tags (trace_id, tag, source)
+    VALUES (?, ?, 'auto')
+    ON CONFLICT(trace_id, tag) DO NOTHING
+"""
+
+
+def upsert_auto_tags(conn, trace_id: str, tags: list[str]) -> None:
+    """Stamp `trace_id` with each slug as an auto tag on `conn` (no commit)."""
+    for slug in tags:
+        conn.execute(SESSION_TAGS_AUTO_UPSERT_SQL, (trace_id, slug))
+
 
 def _first_nonblank_line(text: str) -> str | None:
     return next((ln for ln in text.splitlines() if ln.strip()), None)

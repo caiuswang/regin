@@ -42,16 +42,19 @@ export function useSessionTags() {
         : s)
   }
 
-  // Returns the new custom-slug list on success, or null on failure so the
-  // caller can leave the row untouched.
+  // Returns `{ tags }` on success or `{ error }` carrying the server's
+  // specific rejection (slug charset, builtin-reserved slug, …) so the caller
+  // can tell the user WHY the mutation had no effect.
   async function addTag(traceId, slug) {
     const res = await api.post(`/sessions/${traceId}/tags`, { tag: slug })
-    return res && res.ok ? res.tags : null
+    if (res && res.ok && Array.isArray(res.tags)) return { tags: res.tags }
+    return { error: (res && res.msg) || 'Could not add tag' }
   }
 
   async function removeTag(traceId, slug) {
     const res = await api.del(`/sessions/${traceId}/tags/${encodeURIComponent(slug)}`)
-    return res && res.ok ? res.tags : null
+    if (res && res.ok && Array.isArray(res.tags)) return { tags: res.tags }
+    return { error: (res && res.msg) || 'Could not remove tag' }
   }
 
   return { customTags, loadCustomTags, patchRowTags, addTag, removeTag }

@@ -10,16 +10,19 @@
 // different output shape (e.g. "1m05s" vs this view's "1m5s"), so reusing
 // them would change what the row renders.
 import { fmtTokens } from '../utils/traceFormatters.js'
-import { isActiveSession, parseLocalIso } from '../utils/sessionActivity.js'
+import { fmtRelativeAge, isActiveWithClock, parseLocalIso, serverAgeMs } from '../utils/sessionActivity.js'
 import { useCopy } from '../composables/useCopy.js'
 import Checkbox from './ui/Checkbox.vue'
 import SessionTags from './SessionTags.vue'
 
-defineProps({
+const props = defineProps({
   s: { type: Object, required: true },
   selected: { type: Boolean, default: false },
   isDeleting: { type: Boolean, default: false },
   isClosing: { type: Boolean, default: false },
+  // { local, utc, atMs } server-clock anchor from the list envelope
+  // (useServerClock) — keeps "ago" / active ages timezone-safe.
+  clock: { type: Object, default: null },
 })
 
 const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
@@ -32,7 +35,7 @@ function onToggle(checked) {
 
 // Active rule + local-ISO parsing shared via utils/sessionActivity.js
 // (one source for SessionsView, SessionRow, and the /live poll cadence).
-const isActive = isActiveSession
+const isActive = (s) => isActiveWithClock(s, props.clock)
 
 function titlePreview(title) {
   if (!title) return ''
@@ -107,26 +110,6 @@ function totalMs(s) {
   const b = parseLocalIso(s.last_seen)
   if (!a || !b) return 0
   return b.getTime() - a.getTime()
-}
-
-// Relative "time ago" for the Last seen column. Absolute started/last-seen
-// stay available via the cell's title tooltip (timeTitle).
-function fmtRelative(iso) {
-  const d = parseLocalIso(iso)
-  if (!d) return '-'
-  const diff = Date.now() - d.getTime()
-  if (diff < 0) return 'just now'
-  const sec = Math.floor(diff / 1000)
-  if (sec < 60) return `${sec}s ago`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const day = Math.floor(hr / 24)
-  if (day < 30) return `${day}d ago`
-  const mo = Math.floor(day / 30)
-  if (mo < 12) return `${mo}mo ago`
-  return `${Math.floor(mo / 12)}y ago`
 }
 
 function timeTitle(s) {
@@ -296,12 +279,17 @@ function activityMoreTitle(s) {
         <span :title="`agent work time${s.active_pct != null ? ` (${s.active_pct}%)` : ''}, idle ${fmtDuration(s.idle_ms)} excluded`">{{ fmtDuration(s.active_work_ms) }}</span>
       </template>
     </td>
-    <td class="text-gray-400 text-xs whitespace-nowrap" :title="timeTitle(s)">{{ fmtRelative(s.last_seen) }}</td>
+    <td class="text-gray-400 text-xs whitespace-nowrap" :title="timeTitle(s)">{{ fmtRelativeAge(serverAgeMs(s.last_seen, clock)) }}</td>
     <td class="text-right whitespace-nowrap">
+      <router-link
+        :to="`/live/${s.trace_id}`"
+        class="row-action text-xs text-emerald-600 hover:text-emerald-800 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"
+        :title="`Watch session ${s.trace_id.slice(0, 12)}… in the live view`"
+      >Live</router-link>
       <button
         v-if="s.status !== 'ended'"
         type="button"
-        class="row-action text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
+        class="row-action ml-3 text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
         :disabled="isClosing"
         @click="emit('close', s)"
         :title="`Mark session ${s.trace_id.slice(0, 12)}… as closed (keeps its trace data)`"

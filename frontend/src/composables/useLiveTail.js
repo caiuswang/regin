@@ -127,7 +127,11 @@ export function useLiveTail(getRouteId) {
   // Same rule as the Sessions table's green badge (utils/sessionActivity),
   // except a stale-but-'active' session is demoted: it slows the poll to
   // the 15s cadence and keeps the NOW zone out of the idle-composer state.
-  const active = computed(() => !stale.value && isActiveSession(meta.value))
+  // The recency fallback gets the server−server age so a viewer in another
+  // timezone can't misread a naive last_seen against their own clock.
+  const active = computed(() => !stale.value && isActiveSession(
+    meta.value, Date.now(),
+    Number.isFinite(lastSeenAgeMs.value) ? lastSeenAgeMs.value : null))
 
   // Consecutive mid-session poll failures. One blip is normal; two misses
   // (≥8s dark) surface a "connection lost" hint — without this the card

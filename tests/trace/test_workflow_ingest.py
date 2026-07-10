@@ -642,6 +642,51 @@ def test_terminal_ingest_sets_origin_workflow_and_vendor_claude(tmp_path):
     assert row["origin"] == "workflow"
 
 
+def _workflow_tag_rows():
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT trace_id, source, COUNT(*) AS n FROM session_tags "
+            "WHERE tag='workflow' GROUP BY trace_id ORDER BY trace_id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r["trace_id"]: (r["source"], r["n"]) for r in rows}
+
+
+@pytest.mark.parametrize("with_manifest", [True, False])
+def test_ingest_auto_tags_run_and_owner_with_workflow(tmp_path, with_manifest):
+    """Both ingest paths stamp the `workflow` auto tag on the run session AND
+    the launching session (the run dir's session-dir name), so the sessions
+    list's tag facet can select everything workflow-related — runs plus their
+    owners. Idempotent: a re-ingest leaves exactly one row per session."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen) "
+            "VALUES ('sess', '2026-01-01T00:00:00', '2026-01-01T00:00:05')")
+        conn.commit()
+    finally:
+        conn.close()
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=with_manifest))[0]
+    W.ingest_run(ref, deep=True, is_test=True)
+    W.ingest_run(ref, deep=True, is_test=True)
+    tagged = _workflow_tag_rows()
+    assert tagged[RUN_ID] == ("auto", 1)
+    assert tagged["sess"] == ("auto", 1)  # parent = session dir name
+
+
+def test_ingest_skips_owner_tag_when_parent_session_absent(tmp_path):
+    """An owner whose session row was never ingested (or was deleted) is NOT
+    tagged — an orphan session_tags row would inflate the facet count that
+    /api/session-tags computes without joining sessions."""
+    ref = W.discover_runs(_make_run(tmp_path, with_manifest=True))[0]
+    W.ingest_run(ref, deep=True, is_test=True)
+    tagged = _workflow_tag_rows()
+    assert tagged[RUN_ID] == ("auto", 1)
+    assert "sess" not in tagged
+
+
 def test_agent_tool_count_uses_captured_spans_not_manifest(tmp_path):
     """The agent header's `tool_calls` counts the captured `tool.*` spans (what
     the conversation renders), not the manifest's `toolCalls` — which

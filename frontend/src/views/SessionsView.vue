@@ -10,9 +10,10 @@ import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
 import { useCopy } from '../composables/useCopy'
 import { useCursor } from '../composables/useCursor'
+import { useServerClock } from '../composables/useServerClock'
 import { useSessionTags } from '../composables/useSessionTags'
 import { useStickyHeader } from '../composables/useStickyHeader'
-import { isActiveSession, parseLocalIso } from '../utils/sessionActivity.js'
+import { fmtRelativeAge, isActiveWithClock, parseLocalIso, serverAgeMs } from '../utils/sessionActivity.js'
 
 const { confirm } = useConfirm()
 const { flash } = useFlash()
@@ -173,6 +174,8 @@ const {
 // filtered set, not just the current page.
 const tagCounts = computed(() => extras.value?.tag_counts || {})
 
+const { serverClock } = useServerClock(extras)
+
 // Builtin category tags (ordered, with labels) come from the same envelope so
 // the facet never hard-codes them; the custom tags come from /session-tags.
 const builtinTags = computed(() => extras.value?.builtin_tags || [])
@@ -260,13 +263,13 @@ function toggleSelectAll(e) {
 
 // Active rule + local-ISO parsing shared via utils/sessionActivity.js
 // (one source for SessionsView, SessionRow, and the /live poll cadence).
-const isActive = isActiveSession
+const isActive = (s) => isActiveWithClock(s, serverClock.value)
 
 async function deleteSession(s) {
   const label = titlePreview(s.title) || s.trace_id.slice(0, 12) + '...'
   const active = isActive(s)
   const header = active
-    ? `⚠️  This session appears to still be ACTIVE (last span ${fmtDuration(Date.now() - parseLocalIso(s.last_seen).getTime())} ago). Deleting now will remove its trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n`
+    ? `⚠️  This session appears to still be ACTIVE (last span ${fmtDuration(Math.max(0, serverAgeMs(s.last_seen, serverClock.value) ?? 0))} ago). Deleting now will remove its trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n`
     : ''
   const msg = `${header}Delete "${label}"? This removes all spans, skill reads, plan sessions, and rule triggers for trace ${s.trace_id.slice(0, 12)}...`
   const ok = await confirm('Delete session', msg, true)
@@ -358,16 +361,16 @@ watch(tagFilter, (v) => {
 // chips re-render), and refresh the facet's custom-tag options so a brand-new
 // tag appears (or a now-unused one drops off).
 async function onAddTag(traceId, slug) {
-  const newTags = await addTag(traceId, slug)
-  if (!newTags) { flash('Could not add tag', 'error'); return }
-  patchRowTags(sessions, traceId, newTags)
+  const { tags, error } = await addTag(traceId, slug)
+  if (error) { flash(error, 'error'); return }
+  patchRowTags(sessions, traceId, tags)
   loadCustomTags()
 }
 
 async function onRemoveTag(traceId, slug) {
-  const newTags = await removeTag(traceId, slug)
-  if (newTags == null) { flash('Could not remove tag', 'error'); return }
-  patchRowTags(sessions, traceId, newTags)
+  const { tags, error } = await removeTag(traceId, slug)
+  if (error) { flash(error, 'error'); return }
+  patchRowTags(sessions, traceId, tags)
   loadCustomTags()
 }
 
@@ -472,26 +475,6 @@ function totalMs(s) {
   const b = parseLocalIso(s.last_seen)
   if (!a || !b) return 0
   return b.getTime() - a.getTime()
-}
-
-// Relative "time ago" for the Last seen column. Absolute started/last-seen
-// stay available via the cell's title tooltip (timeTitle).
-function fmtRelative(iso) {
-  const d = parseLocalIso(iso)
-  if (!d) return '-'
-  const diff = Date.now() - d.getTime()
-  if (diff < 0) return 'just now'
-  const sec = Math.floor(diff / 1000)
-  if (sec < 60) return `${sec}s ago`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const day = Math.floor(hr / 24)
-  if (day < 30) return `${day}d ago`
-  const mo = Math.floor(day / 30)
-  if (mo < 12) return `${mo}mo ago`
-  return `${Math.floor(mo / 12)}y ago`
 }
 
 function timeTitle(s) {
@@ -678,6 +661,7 @@ function timeTitle(s) {
               v-for="s in sessions"
               :key="s.trace_id"
               :s="s"
+              :clock="serverClock"
               :selected="isSelected(s.trace_id)"
               :is-deleting="deleting === s.trace_id"
               :is-closing="closing === s.trace_id"
@@ -796,7 +780,7 @@ function timeTitle(s) {
                 <div class="flex justify-between"><dt class="text-gray-400">Tools</dt><dd>{{ s.tool_calls }}</dd></div>
                 <div class="flex justify-between"><dt class="text-gray-400">Reads</dt><dd>{{ s.skill_reads }}</dd></div>
                 <div class="flex justify-between"><dt class="text-gray-400">Duration</dt><dd>{{ fmtDuration(totalMs(s)) }}</dd></div>
-                <div class="flex justify-between"><dt class="text-gray-400">Last seen</dt><dd :title="timeTitle(s)">{{ fmtRelative(s.last_seen) }}</dd></div>
+                <div class="flex justify-between"><dt class="text-gray-400">Last seen</dt><dd :title="timeTitle(s)">{{ fmtRelativeAge(serverAgeMs(s.last_seen, serverClock)) }}</dd></div>
                 <div class="flex justify-between col-span-2">
                   <dt class="text-gray-400">Repo</dt>
                   <dd v-if="s.repos && s.repos.length" :title="s.repos.map(r => r.name).join(', ')">
@@ -806,6 +790,11 @@ function timeTitle(s) {
                 </div>
               </dl>
               <div class="mt-2 flex justify-end gap-4">
+                <router-link
+                  :to="`/live/${s.trace_id}`"
+                  class="text-xs text-emerald-600 hover:text-emerald-800 hover:underline"
+                  :title="`Watch session ${s.trace_id.slice(0, 12)}… in the live view`"
+                >Live</router-link>
                 <Button
                   v-if="s.status !== 'ended'"
                   variant="link"

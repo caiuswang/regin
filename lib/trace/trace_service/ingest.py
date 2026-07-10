@@ -1307,8 +1307,8 @@ def _upsert_auto_tags(conn, tid: str, tags: list[str]) -> None:
     `_stamp_*_origins` stamper; callers are responsible for the
     first-sighting (`existing_set`) guard before calling this, since that
     guard's shape (which attribute names the surface) differs per stamper."""
-    for slug in tags:
-        conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
+    from lib.trace.session_tags import upsert_auto_tags
+    upsert_auto_tags(conn, tid, tags)
 
 
 def _stamp_llm_stage_origins(conn, normalised: list[tuple],
@@ -1392,13 +1392,6 @@ def _stamp_topic_proposal_origins(conn, normalised: list[tuple],
             _upsert_auto_tags(conn, tid, drafting_tags)
 
 
-_SESSION_TAGS_AUTO_UPSERT_SQL = """
-    INSERT INTO session_tags (trace_id, tag, source)
-    VALUES (?, ?, 'auto')
-    ON CONFLICT(trace_id, tag) DO NOTHING
-"""
-
-
 def _stamp_prompt_tags(conn, normalised: list[tuple], existing_set: set) -> None:
     """Auto-tag sessions from a `regin-tags:` marker on a prompt's first line.
 
@@ -1420,7 +1413,7 @@ def _stamp_prompt_tags(conn, normalised: list[tuple], existing_set: set) -> None
         if tid is None or (tid, span.get('span_id')) in existing_set:
             continue
         for slug in parse_prompt_tags(attrs.get('text')):
-            conn.execute(_SESSION_TAGS_AUTO_UPSERT_SQL, (tid, slug))
+            _upsert_auto_tags(conn, tid, [slug])
 
 
 def _refresh_server_side_peaks(conn, normalised: list[tuple]) -> None:

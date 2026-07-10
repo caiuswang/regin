@@ -532,6 +532,15 @@ def api_sessions():
     envelope['workflow_date_hidden_count'] = workflow_date_hidden_count
     envelope['tag_counts'] = tag_counts
     envelope['builtin_tags'] = builtin_meta()
+    # One server-clock instant in BOTH stored-timestamp formats (naive
+    # host-local and UTC-Z), so the frontend can age each row server−server
+    # against the anchor matching that row's format. Client−server arithmetic
+    # leaks the host↔viewer timezone offset: a viewer behind the host reads
+    # every recent naive stamp as future ("just now").
+    now = datetime.now(timezone.utc)
+    envelope['server_now'] = (
+        now.astimezone().replace(tzinfo=None).isoformat(timespec='microseconds'))
+    envelope['server_now_utc'] = now.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
     return jsonify(envelope)
 
 

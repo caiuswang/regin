@@ -1515,6 +1515,36 @@ def _set_session_origin(run_id: str) -> None:
         conn.close()
 
 
+def _tag_workflow_sessions(run_id: str, parent_trace_id: str | None) -> None:
+    """Auto-tag the run session AND its launching session with `workflow`.
+
+    The builtin category axis is origin-only, so the *owner* session (a
+    normal interactive session whose origin stays NULL) can't be reached
+    through it — a stored `session_tags` row is the one mechanism that lets
+    the tag facet select "everything workflow-related": the captured runs
+    plus the sessions that launched them. The parent is tagged only once its
+    session row exists (mirrors `_stamp_parent_link`'s skip-when-absent):
+    `/api/session-tags` counts raw tag rows without joining sessions, so an
+    orphan row would inflate the facet count. Re-ingests re-assert the tag
+    (conflict-ignore, never downgrading a manual row) — which also means a
+    hand-removed `workflow` tag returns on the next ingest pass; derived
+    tags mirror the runs on disk.
+    """
+    from lib.orm.engine import get_connection
+    from lib.trace.session_tags import upsert_auto_tags
+
+    conn = get_connection()
+    try:
+        upsert_auto_tags(conn, run_id, ["workflow"])
+        if parent_trace_id and conn.execute(
+                "SELECT 1 FROM sessions WHERE trace_id = ?",
+                (parent_trace_id,)).fetchone():
+            upsert_auto_tags(conn, parent_trace_id, ["workflow"])
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _workflow_block(block: object) -> tuple[str, str] | None:
     """``(tool_use_id, script)`` if ``block`` is a ``Workflow`` tool_use."""
     if not isinstance(block, dict):
@@ -1738,6 +1768,7 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
         name = manifest.get("workflowName")
         _set_session_title(run_ref.run_id, name or manifest.get("summary"))
         _set_session_origin(run_ref.run_id)
+        _tag_workflow_sessions(run_ref.run_id, run_ref.session_dir.name)
         _stamp_parent_link(run_ref, name, agent_ids)
         return result
     spans = build_flat_spans(run_ref, deep=deep, is_test=is_test)
@@ -1749,6 +1780,7 @@ def ingest_run(run_ref: RunRef, *, deep: bool = True,
     name = _parse_script_meta(run_ref.script_path)[0]
     _set_session_title(run_ref.run_id, name)
     _set_session_origin(run_ref.run_id)
+    _tag_workflow_sessions(run_ref.run_id, run_ref.session_dir.name)
     _stamp_parent_link(run_ref, name, started)
     return result
 

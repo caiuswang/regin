@@ -3,7 +3,7 @@
 // sheet. Fetches the recent-20 sessions once on mount (the sheet body is
 // v-if, so it remounts fresh on every open — no need to re-fetch on prop
 // change). Active sessions sort first, each group newest-last_seen-first;
-// isActiveSession/parseLocalIso are the ONE shared source for that rule
+// isActiveWithClock/parseLocalIso are the ONE shared source for that rule
 // (utils/sessionActivity.js) — do not reimplement here.
 // List query uses kind=real (Playwright/test fixtures excluded); a direct
 // /live/<test-session-id> deep-link still resolves via useLiveTail's own
@@ -14,7 +14,7 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import { fmtClock } from '../../utils/traceFormatters.js'
-import { isActiveSession, parseLocalIso } from '../../utils/sessionActivity.js'
+import { isActiveWithClock, parseLocalIso } from '../../utils/sessionActivity.js'
 
 const props = defineProps({
   currentId: { type: String, default: null },
@@ -24,12 +24,15 @@ const emit = defineEmits(['select'])
 const rows = ref([])
 const loading = ref(true)
 const error = ref(null)
+const clock = ref(null)
+
+const rowActive = (row) => isActiveWithClock(row, clock.value)
 
 const sortedRows = computed(() => {
   const list = [...rows.value]
   list.sort((a, b) => {
-    const aActive = isActiveSession(a) ? 1 : 0
-    const bActive = isActiveSession(b) ? 1 : 0
+    const aActive = rowActive(a) ? 1 : 0
+    const bActive = rowActive(b) ? 1 : 0
     if (aActive !== bActive) return bActive - aActive
     const at = parseLocalIso(a.last_seen)?.getTime() ?? 0
     const bt = parseLocalIso(b.last_seen)?.getTime() ?? 0
@@ -46,6 +49,9 @@ onMounted(async () => {
   try {
     const data = await api.get('/sessions?kind=real&size=20')
     rows.value = data.sessions || []
+    if (data.server_now) {
+      clock.value = { local: data.server_now, utc: data.server_now_utc, atMs: Date.now() }
+    }
   } catch (e) {
     error.value = e?.message || 'Failed to load sessions.'
   } finally {
@@ -72,7 +78,7 @@ onMounted(async () => {
     >
       <span
         class="live-status-dot"
-        :class="isActiveSession(row) ? 'live-status-running' : 'live-status-ended'"
+        :class="rowActive(row) ? 'live-status-running' : 'live-status-ended'"
         aria-hidden="true"
       ></span>
       <span
