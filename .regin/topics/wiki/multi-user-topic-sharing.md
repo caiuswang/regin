@@ -8,79 +8,69 @@ For the single-user proposal lifecycle, see [[topic-proposal-pipeline]]. For how
 
 | Artifact | Path | Travels via git? |
 | --- | --- | --- |
-| Approved graph | `.regin/topics/topic.json` | yes (force-added by pre-commit) |
-| Per-topic wiki bodies | `.regin/topics/wiki/<id>.md` | yes (tracked normally) |
+| Approved graph (single-file layout) | `.regin/topics/topic.json` | yes (force-added by pre-commit) |
+| Approved graph (split layout) | `.regin/topics/topics/<id>.json` + `_meta.json` | yes (force-added by pre-commit) |
+| Per-topic wiki bodies | `.regin/topics/wiki/<id>.md` | yes |
+| Exported proposal bundles | `.regin/topics/bundles/*.json` | yes |
 | Machine-local overlay | `.regin/topics/topic.local.json` | no (gitignored) |
 | In-flight proposal runs, revisions, feedback | `proposal_runs` / `proposal_revisions` / `proposal_feedback_*` tables | no, local SQLite only |
 | `GraphSnapshot` history | local SQLite | no, per-machine cache |
 | Per-run artefact dirs | `.regin/topics/proposals/<id>/` | no (gitignored) |
 
-`.gitignore` blanket-ignores `.regin/*` and then re-includes exactly `topic.json` and `wiki/*.md` (`.gitignore` lines 24-30). Everything else — including the overlay that holds locally-approved but not-yet-shared topics — stays on the machine that produced it.
+`.gitignore` blanket-ignores `.regin/*` and then re-includes exactly the shareable slices: `topic.json`, `topics/*.json` + `topics/_meta.json`, `wiki/*.md`, and `bundles/*.json`. Everything else — including the overlay that holds locally-approved but not-yet-shared topics — stays on the machine that produced it.
 
-## What lives where: shared base vs. local overlay
+The approved graph exists in one of two on-disk shapes. Reads are shape-agnostic: `load_graph` (lib/topics/core.py:173) prefers the split layout when `.regin/topics/topics/` holds `*.json` (`split_layout_active`, lib/topics/core.py:110) and otherwise falls back to the legacy single `topic.json`. Writes follow the shape already on disk via `write_graph_to_disk` (lib/topics/core.py:288). Both shapes travel via git identically; the split layout only shrinks the merge surface (see the last section).
 
-The effective approved graph a user sees is `merge(base, overlay)`:
-
-- **Base** is the git-tracked `.regin/topics/topic.json` — the shared layer that travels between users.
-- **Overlay** is the gitignored `.regin/topics/topic.local.json`. Proposal approval, `scan`, and `downgrade` write here first, so a freshly-approved topic is live for its author but invisible to teammates until promoted.
-
-`merge_graphs` (lib/topics/core.py) does a whole-topic override — an overlay entry fully replaces the base entry for the same id — and applies `deleted_topics` tombstones to drop base topics the overlay has retired. `load_graph_merged` (lib/topics/core.py) is the single "effective disk graph" reader the snapshot layer and drift detector compare against. `regin topics list` prints topic ids grouped by layer (shared in `topic.json`, local-added in the overlay, local-deleted tombstones) so a user can see exactly what is eligible for `topics promote`.
-
-## End-to-end flow: approval on A -> visibility on B
+## End-to-end flow: approval on A → visibility on B
 
 ```
    user A                        git                 user B
-  +-------------+              +------+            +--------------+
-  | approve     | pre-commit   |topic |  git pull  | post-merge   |
-  |  (apply)    | ----------->  |.json |  ------->   | hook         |
-  |   v         |  git add -f  |  +   |            |   v          |
-  | overlay     |              |wiki/ |            | regin topics |
-  |   v         |              |      |            | import       |
-  | promote <id>|              |      |            |   v          |
-  | -> topic.json|             |      |            | GraphSnapshot|
-  |   v         |              |      |            | (local cache)|
-  | snapshot DB |              |      |            +--------------+
-  +-------------+              +------+
+  ┌─────────────┐              ┌──────┐            ┌──────────────┐
+  │ approve     │ pre-commit   │topic │  git pull  │ post-merge   │
+  │  (apply)    │ ───────────► │.json │ ─────────► │ hook         │
+  │   ↓         │  git add -f  │  +   │            │   ↓          │
+  │ overlay     │              │wiki/ │            │ regin topics │
+  │   ↓         │              │  +   │            │ import       │
+  │ promote <id>│              │bundl.│            │   ↓          │
+  │ → topic.json│              │      │            │ GraphSnapshot│
+  │   ↓         │              │      │            │ (local cache)│
+  │ snapshot DB │              │      │            └──────────────┘
+  └─────────────┘              └──────┘
 ```
 
 ### Producer (user A)
 
-1. **Approve / draft locally.** A proposal approval, scan, or downgrade writes the gitignored `topic.local.json` overlay. The merged view `load_graph_merged()` (lib/topics/core.py) layers this on top of base `topic.json`, so the topic is live for A but invisible to anyone else.
-2. **Promote.** `regin topics promote <id>` (`cmd_topics_promote` in cli/commands/topics.py; `promote_topic` in lib/topics/scan.py) moves the entry from the overlay into the git-tracked `topic.json` (its wiki already sits under `.regin/topics/wiki/<id>.md`). The effective merged graph is unchanged for A; only the storage layer shifts so the topic now travels via git. `regin topics promote --all` (`promote_all_topics`) promotes every pending overlay change and tombstoned deletion in one pass.
-3. **Commit.** `git commit` runs the regin pre-commit hook (`_PRE_COMMIT_BODY` in lib/topics/scan.py) which runs `topics check`, refreshes refs with `topics scan --staged`, and `git add`s `.regin/topics/topic.json` and `.regin/topics/wiki/` so they are forced into the commit despite the `.regin/*` ignore.
+1. **Approve / draft locally.** A proposal approval, scan, or downgrade writes the gitignored `topic.local.json` overlay. The merged view `load_graph_merged()` (lib/topics/core.py:244) layers this on top of the base graph, so the topic is live for A but invisible to anyone else.
+2. **Promote.** `regin topics promote <id>` (`cmd_topics_promote` in cli/commands/topics.py:161; `promote_topic` in lib/topics/scan.py:346) moves the entry out of the overlay into the git-tracked base graph. Its wiki already lives under `.regin/topics/wiki/<id>.md`. The effective merged graph is unchanged for A; only the storage shifted. `regin topics promote --all` (`promote_all_topics`, lib/topics/scan.py:390) does the same for every pending overlay change in one pass.
+3. **Commit.** `git commit` runs the regin pre-commit hook (`_PRE_COMMIT_BODY` in lib/topics/scan.py:529) which runs `topics check`, refreshes refs with `topics scan --staged`, and force-`git add`s the approved graph (`topic.json` and/or the `topics/` split dir), `wiki/`, and `bundles/` so they are staged despite the `.regin/*` ignore. The `topic.local.json` overlay is never staged.
 
 ### Consumer (user B)
 
-1. **`git pull`.** The new `topic.json` and wiki `.md` files land on disk. B's local `GraphSnapshot` row (per-machine SQLite cache) is now stale.
-2. **`post-merge` / `post-checkout` hook runs `regin topics import`** (`_POST_MERGE_BODY` / `_POST_CHECKOUT_BODY` in lib/topics/scan.py). `cmd_topics_import` (cli/commands/topics.py) reads the merged disk graph, hashes it against the latest snapshot, and on drift inserts a new `GraphSnapshot` with `reason=git_pull` via `sync_snapshot_from_disk` (lib/topics/graph_io.py). It is idempotent — a no-op when disk already matches the snapshot — which is why the hook passes `--quiet`.
-3. **Visible everywhere.** B's next `regin topics route`, topic-router skill invocation, or WebUI topic view goes through `load_authoritative_graph` (lib/topics/graph_io.py) and now returns A's topic — no proposal/approval is re-run on B.
+1. **`git pull`.** The new graph files, wikis, and bundles land on disk. B's local `GraphSnapshot` row (per-machine SQLite cache) is now stale.
+2. **`post-merge` / `post-checkout` hook runs `regin topics import`** (`_POST_MERGE_BODY` / `_POST_CHECKOUT_BODY` in lib/topics/scan.py:547-557). The import reads disk, hashes it against the latest snapshot, and on drift inserts a new `GraphSnapshot` with `reason=git_pull`.
+3. **Visible everywhere.** B's next `regin topics route`, topic-router skill invocation, or WebUI topic view goes through `load_authoritative_graph` (lib/topics/graph_io.py:68) and now returns A's topic — no proposal/approval is re-run on B.
 
-If B never installed the hooks, the next call to `load_authoritative_graph` still detects disk-newer-than-snapshot and auto-seeds a fresh snapshot with `reason=auto_seed`. The hook just front-loads that work to pull time and makes drift visible to `regin doctor` (the "Topic graph sync (per repo)" group, backed by `check_graph_sync` in lib/topics/graph_io.py).
+If B never installed the hooks, the next call to `load_authoritative_graph` still detects disk-newer-than-snapshot and auto-seeds a fresh snapshot with `reason=auto_seed` (`_auto_seed_snapshot`, lib/topics/graph_io.py:130). The hook just front-loads that work to pull time and makes drift visible to `regin doctor` ("Topic graph sync (per repo)" group).
 
 ## Setup (one-time, per clone)
 
 ```bash
 regin topics install-hook        # installs pre-commit, post-commit, post-merge, post-checkout
 regin topics import --quiet      # manual sync if you pulled without the hook installed
-regin topics list                # see shared vs. local-overlay topics
 regin doctor                     # audit cross-machine drift across all registered repos
 ```
 
-`install_topic_hooks` (lib/topics/scan.py) writes all four hooks (the three sync hooks plus a `post-commit` that follows file renames into refs via `topics drift`) and overwrites any existing files at those paths.
-
-## The WebUI Import button
-
-The dashboard exposes the same sync as the CLI's `topics import`. The topics maintenance blueprint (web/blueprints/topics/maintenance.py) calls `import_from_disk(repo_path, reason="web")` (lib/topics/graph_io.py), then backfills on-disk proposal directories into the `proposal_runs` ORM table and rebuilds the dense wiki search index. The graph itself reseeds on any page read, but the embedding index does not — so the button does the part a passive view can't.
+`install_topic_hooks` (lib/topics/scan.py:582) writes all four hooks atomically and overwrites any existing files at those paths. Beyond the sync trio, it also installs a `post-commit` hook that runs `regin topics drift` to follow file renames a commit introduced into topic refs (a no-op unless `mechanical_autoapply` is on).
 
 ## Cross-state contracts
 
-- **In-flight proposals are immune to upstream pulls.** When B has a `downgrade(X)` proposal open and A's pull re-introduces X in `topic.json`, the live graph updates but `ProposalRevisionTopic` keeps the snapshot of X it was drafted against. Pinned by `tests/topics/test_cli_topics_import.py::test_import_preserves_in_flight_downgrade_proposal`. If B later applies that proposal, `audit_graph` re-validates against the *current* live graph, not the one at draft time.
-- **Snapshot writes commit last.** In `apply_diff`, disk is written before the SQL commit; a crash between them leaves disk != SQL, which `load_authoritative_graph` reconciles by re-seeding the snapshot from the merged disk graph on the next read.
-- **Embedding index isn't shipped.** `topics import` populates the graph + wiki bodies but not the dense embedding index used for semantic search. The WebUI Import button rebuilds it; on the CLI run `regin wiki index` for full search parity (apply paths refresh it automatically).
+- **In-flight proposals are immune to upstream pulls.** When B has a `downgrade(X)` proposal open and A's pull re-introduces X in the base graph, the live graph updates but `ProposalRevisionTopic` keeps the snapshot of X it was drafted against. Pinned by `tests/topics/test_cli_topics_import.py::test_import_preserves_in_flight_downgrade_proposal`. If B later applies that proposal, `audit_graph` re-validates against the *current* live graph, not the one at draft time.
+- **Snapshot writes commit last.** In `apply_diff`, disk is written before the SQL commit; a crash between them leaves disk≠SQL, which `load_authoritative_graph` reconciles by re-seeding the snapshot from disk on the next read (lib/topics/graph_io.py:68).
+- **Embedding index isn't shipped.** `topics import` populates the graph + wiki bodies but not the dense embedding index used for semantic search. Run `regin wiki index` for full search parity (apply paths refresh it automatically).
 
-## Known limitation: `topic.json` is one file
+## Layout & merge surface
 
-All approved topics share one JSON file, so two users approving on parallel branches see a merge conflict on `topic.json`. The structure is conflict-resolvable but gets annoying at larger team sizes. The not-yet-built escape hatch is to split into one file per topic under `.regin/topics/topics/<id>.json`, shrinking the merge surface to "did anyone else touch the same id". Wiki files are already per-topic, so they don't have this problem.
+The legacy layout keeps all approved topics in one `topic.json`, so two users approving on parallel branches collide on that single file. `regin topics migrate-split` (`cmd_topics_migrate_split` in cli/commands/topics.py:996) converts a repo to one file per topic under `.regin/topics/topics/<id>.json` plus a `_meta.json` sidecar for top-level fields (`write_split_graph`, lib/topics/core.py:308), shrinking the merge surface to "did anyone else touch the same id". Wiki files are already per-topic, so they never had this problem. The migration is one-way and the split layout is only readable by regin versions that understand the split dir — teammates must upgrade to a dual-read regin *before* the migrating commit reaches them, which is why the command prints that warning.
 
 ## When standalone-with-git isn't enough
 
@@ -90,7 +80,7 @@ The sharing model above covers **approved knowledge propagation**. It does not c
 - A team-wide audit log of who approved what.
 - Concurrent editing of the same proposal run.
 
-These require the shared-server model: one `regin serve` instance behind JWT auth (`lib/auth.py`, `@require_auth` / `@require_editor` / `@require_role`) and a shared backend via `REGIN_DATABASE_URL=mysql+pymysql://...`. The codebase supports this — see `docs/setup.md` — but the proposal/review tables (`ProposalRun`, `ProposalRevision`, `ProposalFeedbackThread`) are then physically shared, not just their git-exported approval outputs.
+These require the shared-server model: one `regin serve` instance behind JWT auth (`lib/auth.py`, `@require_auth` / `@require_editor` / `@require_role`) and a shared backend via `REGIN_DATABASE_URL=mysql+pymysql://…`. The codebase supports this — see `docs/setup.md` — but the proposal/review tables (`ProposalRun`, `ProposalRevision`, `ProposalFeedbackThread`) are then physically shared, not just their git-exported approval outputs.
 
 ## See also
 

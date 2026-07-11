@@ -53,6 +53,13 @@ from lib.trace.projection import _graft_orphans
 # the placeholder is otherwise dropped as stale.
 _SLASH_COMMAND_RE = re.compile(r'^/[\w:-]+$')
 
+# The suffix a byte-capped prompt anchor carries when its text was truncated at
+# post time (`hook_manager/.../span_posters.py::_truncate_utf8_with_marker`, cap
+# `_PROMPT_ANCHOR_TEXT_MAX_BYTES`). A resolved anchor ending in this marker is a
+# truncated view whose full text still lives on the live `promptlive-`
+# placeholder — the same rescue the slash-command echo gets.
+_PROMPT_ANCHOR_TRUNC_MARKER = '\n…[truncated]'
+
 
 def _attrs(span: dict) -> dict:
     a = span.get('attributes')
@@ -107,11 +114,27 @@ def _classify_supersessions(spans: list[dict], placeholders: dict) -> tuple[set,
         is_tool = (s.get('name') or '').startswith('tool.')
         for pid in pending_id_for_resolved(s, _attrs(s)):
             key = (s.get('trace_id'), pid)
-            drop.add(key)
-            ph = placeholders.get(key)
-            if is_tool and ph is not None and (ph.get('name') or '').startswith('tool.'):
-                inherit[s.get('span_id')] = ph
+            _record_supersession(s, is_tool, key, placeholders.get(key), drop, inherit)
     return drop, inherit
+
+
+def _record_supersession(
+    s: dict, is_tool: bool, key: tuple, ph: dict | None,
+    drop: set, inherit: dict,
+) -> None:
+    """Classify one (resolved span, superseded placeholder) pair.
+
+    A resolved prompt anchor that is only a truncated/echo view of its
+    placeholder (the placeholder holds the untruncated prompt) is NOT dropped
+    here — left for `_absorb_slash_command_expansions` to lift the full text
+    onto the anchor first. Gating on `_is_expansion_anchor` makes "skip the
+    drop" exactly "absorb will transfer", so a non-matching placeholder still
+    drops normally."""
+    if ph is not None and _is_expansion_anchor(s, ph, _attrs(ph).get('text') or ''):
+        return
+    drop.add(key)
+    if is_tool and ph is not None and (ph.get('name') or '').startswith('tool.'):
+        inherit[s.get('span_id')] = ph
 
 
 def _drop_superseded_placeholders(spans: list[dict]) -> list[dict]:
@@ -201,14 +224,34 @@ def _slash_echo_text(span: dict) -> str | None:
     return stripped if _SLASH_COMMAND_RE.match(stripped) else None
 
 
+def _anchor_match_prefix(span: dict) -> str | None:
+    """The text prefix a placeholder's fuller text must start with to be this
+    resolved anchor's expansion. Two anchor shapes qualify: a slash-command
+    anchor carrying only its bare `/command` echo, and a byte-capped anchor
+    whose text was truncated with `_PROMPT_ANCHOR_TRUNC_MARKER` (its pre-marker
+    head). Both are prefixes of the full prompt the placeholder holds. None when
+    `span` is not a resolved prompt anchor eligible for absorption."""
+    echo = _slash_echo_text(span)
+    if echo is not None:
+        return echo
+    text = _attrs(span).get('text')
+    if (span.get('name') == 'prompt' and isinstance(text, str)
+            and span.get('status_code') != 'PENDING'
+            and not is_pending_span_id(span.get('span_id'))
+            and text.endswith(_PROMPT_ANCHOR_TRUNC_MARKER)):
+        return text[:-len(_PROMPT_ANCHOR_TRUNC_MARKER)]
+    return None
+
+
 def _is_expansion_anchor(candidate: dict, placeholder: dict, ph_text: str) -> bool:
-    """True if `candidate` is a resolved slash-command anchor in the same trace
-    whose `/command` echo the placeholder's text expands, and whose id is not
-    below the placeholder's (the placeholder is minted just before its anchor)."""
+    """True if `candidate` is a resolved prompt anchor in the same trace whose
+    text (its `/command` echo or its truncated head) is a strict prefix of the
+    placeholder's fuller text, and whose id is not below the placeholder's (the
+    placeholder is minted just before its anchor)."""
     if candidate.get('trace_id') != placeholder.get('trace_id'):
         return False
-    echo = _slash_echo_text(candidate)
-    if echo is None or not ph_text.startswith(echo) or len(ph_text) <= len(echo):
+    prefix = _anchor_match_prefix(candidate)
+    if prefix is None or not ph_text.startswith(prefix) or len(ph_text) <= len(prefix):
         return False
     ph_id, sid = placeholder.get('id'), candidate.get('id')
     return ph_id is None or sid is None or sid >= ph_id
@@ -260,20 +303,23 @@ def _pair_slash_expansions(
 
 
 def _absorb_slash_command_expansions(spans: list[dict]) -> list[dict]:
-    """Move a slash-command placeholder's full expansion onto its surviving
-    resolved anchor, then drop the placeholder.
+    """Move a placeholder's full prompt text onto its surviving resolved anchor,
+    then drop the placeholder.
 
-    A slash command (`/goal-verified`) yields TWO prompt rows: a resolved
-    `prompt-<uuid>` anchor carrying only the collapsed echo, and a PENDING
-    `promptlive-` placeholder carrying the full expansion (turn_uuid is NULL on
-    both, so turn-pairing can't help). Left alone, `_drop_stale_blockers` would
-    drop the placeholder once a later prompt lands and the expansion would be
-    lost. Here we instead transfer the expansion onto a COPY of the resolved
-    anchor (status stays OK, so PENDING-excluding aggregate readers still see
-    it) and drop the placeholder — mirroring how `_inherit_turn_linkage`
-    returns `dict(survivor)` copies to keep the merge pure. A stray client-only
-    placeholder (`/workflows`) has no such anchor and is left untouched for the
-    existing stale-drop path."""
+    Two anchor shapes lose their full text to the merge and are rescued here.
+    A slash command (`/goal-verified`) yields a resolved `prompt-<uuid>` anchor
+    carrying only the collapsed echo plus a PENDING `promptlive-` placeholder
+    with the full expansion. A large prompt (e.g. an external-agent regenerate
+    task, >8 KiB) yields a resolved anchor whose text was byte-capped with the
+    `\n…[truncated]` marker at post time, while the live placeholder holds the
+    untruncated prompt. In both, turn_uuid is NULL on both rows so turn-pairing
+    can't help, and `_drop_stale_blockers` would drop the placeholder once a
+    later prompt lands — losing the full text. Here we instead transfer it onto
+    a COPY of the resolved anchor (status stays OK, so PENDING-excluding
+    aggregate readers still see it) and drop the placeholder — mirroring how
+    `_inherit_turn_linkage` returns `dict(survivor)` copies to keep the merge
+    pure. A stray client-only placeholder (`/workflows`) has no such anchor and
+    is left untouched for the existing stale-drop path."""
     placeholders = [s for s in spans if _is_live_prompt_placeholder(s)]
     if not placeholders:
         return spans

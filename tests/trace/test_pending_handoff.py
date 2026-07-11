@@ -231,6 +231,50 @@ def test_merge_slash_command_expansion_transferred_to_resolved_anchor():
     assert len(survivor['attributes']['text']) > len('/goal-verified')
 
 
+def test_merge_truncated_prompt_anchor_absorbs_full_placeholder_text():
+    """A large prompt (e.g. an external-agent regenerate task) yields a resolved
+    `prompt-<uuid>` anchor whose text was byte-capped with the `\n…[truncated]`
+    marker at post time, plus a PENDING `promptlive-` placeholder holding the
+    untruncated prompt. The anchor's first 512 chars hash identically to the
+    placeholder (same prefix), so the supersession sweep would otherwise drop
+    the placeholder and strand the 8 KiB view. Instead the anchor survives
+    carrying the FULL text, marker gone."""
+    full = '# Regin Topic Proposal Agent Task\n\n' + 'y' * 20000
+    head = full[:8182]                       # the byte-capped prefix
+    anchor_text = head + '\n…[truncated]'     # _PROMPT_ANCHOR_TRUNC_MARKER
+    ph = prompt_placeholder_id('t1', full)
+    rows = [
+        _row(ph, 'prompt', {'text': full, 'live_placeholder': True},
+             status='PENDING', id=1),
+        _row('prompt-cafebabe0001', 'prompt', {'text': anchor_text, 'chars': len(full)},
+             status='OK', id=2),
+        _row('prompt-next00000000', 'prompt', {'text': 'a later prompt'},
+             status='OK', id=3),
+    ]
+    merged = {s['span_id']: s for s in merge_spans(rows)}
+    assert ph not in merged                       # placeholder absorbed + dropped
+    survivor = merged['prompt-cafebabe0001']
+    assert survivor['status_code'] == 'OK'
+    assert survivor['attributes']['text'] == full     # full text, not the 8 KiB head
+    assert not survivor['attributes']['text'].endswith('…[truncated]')
+
+
+def test_merge_untruncated_prompt_placeholder_drops_normally():
+    """A normal short prompt (anchor == placeholder text, no marker) is NOT an
+    expansion anchor: the placeholder is dropped by the supersession sweep as
+    before and no absorb copy is made."""
+    text = 'just a short prompt'
+    ph = prompt_placeholder_id('t1', text)
+    rows = [
+        _row(ph, 'prompt', {'text': text}, status='PENDING', id=1),
+        _row('prompt-deadbeef0001', 'prompt', {'text': text}, status='OK', id=2),
+        _row('prompt-next00000000', 'prompt', {'text': 'later'}, status='OK', id=3),
+    ]
+    merged = {s['span_id']: s for s in merge_spans(rows)}
+    assert ph not in merged
+    assert merged['prompt-deadbeef0001']['attributes']['text'] == text
+
+
 def test_merge_two_distinct_slash_command_turns_do_not_cross_wire():
     """Two separate `/goal-verified` turns each pair their placeholder with
     their OWN nearest resolved anchor (by id), not the other turn's."""
