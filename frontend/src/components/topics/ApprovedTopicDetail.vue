@@ -175,7 +175,7 @@ async function deleteTopic() {
       <div class="space-y-5">
         <div>
           <p class="topics-detail-eyebrow">Intent</p>
-          <p class="text-sm text-slate-700 mt-1">{{ selectedTopic.intent }}</p>
+          <p class="text-sm text-slate-700 mt-1 break-words">{{ selectedTopic.intent }}</p>
         </div>
 
         <div v-if="selectedTopic.aliases?.length">

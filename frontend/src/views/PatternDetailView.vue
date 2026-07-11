@@ -527,7 +527,12 @@ const ruleEnforcementKebab = computed(() => {
 <style scoped>
 .pdv-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  /* minmax(0, 1fr) — a bare `1fr` is `minmax(auto, 1fr)`, whose auto floor is
+     the column's min-content; a wide markdown child (long token, code block)
+     then blows the track past the viewport and the whole page scrolls
+     sideways on a phone. The 0 floor lets the column shrink and the content
+     wrap/scroll within it instead. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.5rem;
 }
 @media (min-width: 1024px) {
