@@ -11,9 +11,11 @@ import WikiWorkspace from '../components/topics/WikiWorkspace.vue'
 import ProposalCreateCard from '../components/topics/ProposalCreateCard.vue'
 import ProposalRunsList from '../components/topics/ProposalRunsList.vue'
 import ProposalRunDetail from '../components/topics/ProposalRunDetail.vue'
+import { useFlash } from '../composables/useFlash'
 
 const route = useRoute()
 const router = useRouter()
+const { flash } = useFlash()
 
 const repo = computed(() => route.params.name)
 const workspace = computed(() => {
@@ -180,7 +182,7 @@ async function generateWiki() {
       error.value = result.msg || 'Wiki generation failed'
       return
     }
-    error.value = `Generated ${result.count} wiki files.`
+    flash(`Generated ${result.count} wiki files.`)
     await refreshSummaryAndWiki()
   } finally {
     stopBusy()
@@ -202,7 +204,7 @@ async function reindexWikis() {
       return
     }
     const c = result.counts || {}
-    error.value = `Reindexed wikis — indexed=${c.indexed ?? 0} skipped=${c.skipped ?? 0} removed=${c.removed ?? 0} missing=${c.missing ?? 0}.`
+    flash(`Reindexed wikis — indexed=${c.indexed ?? 0} skipped=${c.skipped ?? 0} removed=${c.removed ?? 0} missing=${c.missing ?? 0}.`)
   } catch (err) {
     error.value = err.message || String(err)
   } finally {
@@ -226,7 +228,7 @@ async function syncFromGit() {
     const indexNote = idx.error ? ' (wiki index skipped — embedding deps missing)' : ''
     const pb = result.proposal_backfill || {}
     const propNote = pb.imported ? ` + imported ${pb.imported} proposal run${pb.imported === 1 ? '' : 's'}` : ''
-    error.value = `Synced ${n} topic${n === 1 ? '' : 's'} from git${propNote} + rebuilt the wiki search index${indexNote}.`
+    flash(`Synced ${n} topic${n === 1 ? '' : 's'} from git${propNote} + rebuilt the wiki search index${indexNote}.`)
     await refreshSummaryAndWiki()
   } catch (err) {
     error.value = err.message || String(err)

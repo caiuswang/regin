@@ -302,12 +302,13 @@ const sessionBill = computed(() => {
          bill at ~1/10 the input rate. Reconciles to session_total / cost. -->
     <div
       v-if="rollupExpanded && sessionBill"
-      class="mt-2 pt-2 border-t border-slate-100 font-mono text-[11px]"
+      class="mt-2 pt-2 border-t border-slate-100 font-mono text-[11px] overflow-x-auto"
     >
       <!-- Fixed-width grid kept to its content (`w-max`) so the bill reads as a
            tidy left-aligned table instead of stretching label-to-far-edge across
            a wide viewport; tokens / % / cost each get their own right-aligned
-           column so they can't collide. -->
+           column so they can't collide. The `w-max` overflows a phone, so the
+           wrapper scrolls it horizontally rather than the whole content pane. -->
       <div class="grid w-max grid-cols-[15rem_4.5rem_2.75rem_4.5rem] gap-x-3 gap-y-0.5 items-baseline">
         <span class="text-[9px] uppercase tracking-wider text-slate-400">full session bill</span>
         <span class="text-[9px] uppercase tracking-wider text-slate-400 text-right">tokens</span>

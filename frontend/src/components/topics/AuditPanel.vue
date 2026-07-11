@@ -214,7 +214,7 @@ onMounted(refresh)
         <span class="text-xs">{{ byCode[code].length }} issue<span v-if="byCode[code].length !== 1">s</span></span>
       </div>
       <ul class="text-xs space-y-0.5">
-        <li v-for="(issue, i) in byCode[code]" :key="i">
+        <li v-for="(issue, i) in byCode[code]" :key="i" class="break-words">
           <span>{{ issue.message }}</span>
           <span v-if="issue.topic_ids?.length" class="text-slate-600">
             — topics: {{ issue.topic_ids.join(', ') }}

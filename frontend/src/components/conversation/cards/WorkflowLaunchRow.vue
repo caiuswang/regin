@@ -19,7 +19,7 @@ defineEmits(['activate'])
 <template>
   <div
     tabindex="0"
-    class="flex items-center gap-2 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-emerald-50/60 focus-visible:outline-2 focus-visible:outline-emerald-500"
+    class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-emerald-50/60 focus-visible:outline-2 focus-visible:outline-emerald-500"
     :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-emerald-50' : ''"
     @click="$emit('activate', span)"
   >

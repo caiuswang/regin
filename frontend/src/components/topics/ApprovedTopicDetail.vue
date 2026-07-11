@@ -192,6 +192,7 @@ async function deleteTopic() {
               v-for="edge in selectedTopic.related"
               :key="`${edge.type}:${edge.id}`"
               variant="secondary"
+              class="max-w-full h-auto whitespace-normal break-words text-left"
               @click="chooseTopic(edge.id)"
             >
               {{ edge.type }}: {{ edge.label }}

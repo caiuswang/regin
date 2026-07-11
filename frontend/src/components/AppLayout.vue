@@ -608,6 +608,11 @@ const userInitials = computed(() => {
 .content-scroll {
   flex: 1;
   overflow-y: auto;
+  /* Reserve the vertical-scrollbar gutter always, so content width is
+     identical between a short (non-scrolling) page and a tall one — otherwise
+     the centered content shifts by the scrollbar width as you move between
+     pages, reading as unstable left/right margins. */
+  scrollbar-gutter: stable;
   padding: 1.5rem 2rem;
 }
 
