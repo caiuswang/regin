@@ -188,6 +188,71 @@ def test_audit_no_shared_primary_ref_when_unique_or_reference():
     assert not [i for i in audit_graph(g) if i.code == "graph.shared_primary_ref"]
 
 
+# ── classify_draft_overlay: the deterministic pre-review gate ────────
+
+def _owned_graph():
+    """Approved graph where `owner` claims `shared.py` as its single primary."""
+    return {"version": 1, "repo": "r", "topics": {
+        "buck": {"label": "B", "intent": "x", "status": "active", "kind": "bucket"},
+        "owner": {"label": "O", "intent": "x", "status": "active",
+                  "parent_id": "buck", "refs": [{"path": "shared.py"}]},
+    }}
+
+
+def test_classify_draft_overlay_flags_new_shared_primary():
+    # a NEW draft topic claims a file an approved topic already owns primary
+    from lib.topics.diff import classify_draft_overlay
+    draft = [{"id": "newt", "label": "N", "intent": "x", "status": "active",
+              "parent_id": "buck", "refs": [{"path": "shared.py"}]}]
+    errors, boundary = classify_draft_overlay(_owned_graph(), draft)
+    assert errors == ()
+    assert any("shared.py" in i.message for i in boundary)
+
+
+def test_classify_draft_overlay_catches_new_vs_new_collision():
+    # two brand-new topics in the SAME draft both claim one file primary
+    from lib.topics.diff import classify_draft_overlay
+    current = {"version": 1, "repo": "r", "topics": {
+        "buck": {"label": "B", "intent": "x", "status": "active", "kind": "bucket"},
+    }}
+    draft = [
+        {"id": "a", "label": "A", "intent": "x", "status": "active",
+         "parent_id": "buck", "refs": [{"path": "f.py"}]},
+        {"id": "b", "label": "B2", "intent": "x", "status": "active",
+         "parent_id": "buck", "refs": [{"path": "f.py"}]},
+    ]
+    _errors, boundary = classify_draft_overlay(current, draft)
+    assert any("f.py" in i.message for i in boundary)
+
+
+def test_classify_draft_overlay_clean_when_owned_file_is_reference_tier():
+    # citing an owned file as reference (not primary) is not a collision
+    from lib.topics.diff import classify_draft_overlay
+    draft = [{"id": "newt", "label": "N", "intent": "x", "status": "active",
+              "parent_id": "buck",
+              "refs": [{"path": "shared.py", "tier": "reference"}]}]
+    errors, boundary = classify_draft_overlay(_owned_graph(), draft)
+    assert errors == ()
+    assert boundary == ()
+
+
+def test_classify_draft_overlay_ignores_preexisting_collision():
+    # a collision already present in the current graph that the draft does not
+    # touch is pre-existing rot, not something this draft introduced → no bounce
+    from lib.topics.diff import classify_draft_overlay
+    current = {"version": 1, "repo": "r", "topics": {
+        "buck": {"label": "B", "intent": "x", "status": "active", "kind": "bucket"},
+        "x": {"label": "X", "intent": "x", "status": "active",
+              "parent_id": "buck", "refs": [{"path": "dup.py"}]},
+        "y": {"label": "Y", "intent": "x", "status": "active",
+              "parent_id": "buck", "refs": [{"path": "dup.py"}]},
+    }}
+    draft = [{"id": "z", "label": "Z", "intent": "x", "status": "active",
+              "parent_id": "buck", "refs": [{"path": "unrelated.py"}]}]
+    _errors, boundary = classify_draft_overlay(current, draft)
+    assert boundary == ()
+
+
 def test_proposal_shape_preserves_parent_id_and_blurb():
     prop = {"id": "t", "label": "T", "intent": "i",
             "parent_id": "root-a", "blurb": "drill here"}

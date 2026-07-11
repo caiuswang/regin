@@ -507,14 +507,80 @@ def start_review_run(
     return True
 
 
+def _precheck_note_body(
+    errors: tuple[Any, ...], boundary: tuple[Any, ...],
+) -> str:
+    """Human-readable REGENERATE note listing the mechanically-detected issues
+    that skipped the agent review, one bullet per file/collision."""
+    lines = [
+        "Automated pre-review gate — this draft has mechanically-detectable "
+        "issues, so no agent review was run. Fix these and regenerate:",
+        "",
+    ]
+    for issue in boundary:
+        lines.append(f"- **shared primary ref**: {issue.message}")
+    for issue in errors:
+        lines.append(f"- **{issue.code}**: {issue.message}")
+    return "\n".join(lines)
+
+
+def _mechanical_precheck(
+    repo: Path, proposal_id: str, proposal: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Deterministic pre-review gate. If applying the draft would introduce a
+    blocking error or a new ``graph.shared_primary_ref`` boundary violation,
+    write a REGENERATE ``review_note`` naming the exact files and return it — so
+    the expensive agent reviewer is never spawned for a failure a graph audit
+    already proves. Returns ``None`` when the draft is clean (proceed to the
+    agent review). Best-effort: any failure returns ``None`` so the normal
+    review still runs."""
+    try:
+        from lib.topics.diff import classify_draft_overlay
+        from lib.topics.graph_io import load_authoritative_graph
+
+        graph = load_authoritative_graph(repo)
+        errors, boundary = classify_draft_overlay(
+            graph, proposal.get("topics") or [], repo_path=repo,
+        )
+    except Exception:  # noqa: BLE001 - a precheck must never break the run
+        log.error("proposal_review_precheck_failed", proposal_id=proposal_id,
+                  exc_info=True)
+        return None
+    if not errors and not boundary:
+        return None
+    # Past this point we have DECIDED to bounce. Write the note and return it
+    # unconditionally — a failure in the post-write logging must not fall
+    # through to the caller and spawn the agent on top of the note it wrote.
+    note = _write_review_note(
+        repo, proposal_id, "REGENERATE", _precheck_note_body(errors, boundary),
+    )
+    try:
+        log.write("proposal_review_precheck_bounced", proposal_id=proposal_id,
+                  errors=len(errors), boundary=len(boundary))
+    except Exception:  # noqa: BLE001 - the note is already written; log is cosmetic
+        pass
+    return note
+
+
 def maybe_generate_review_note(repo_path: str | Path, proposal_id: str) -> bool:
-    """Gated, best-effort trigger for the run-completion paths. Starts the
-    detached review job (returns ``True`` iff it started); a no-op (``False``)
-    unless ``auto_review_notes`` is set. Never raises into the run thread — a
+    """Gated, best-effort trigger for the run-completion paths. First runs a
+    deterministic pre-review gate (``_mechanical_precheck``): a draft that
+    introduces a blocking error or a shared-primary-ref boundary violation is
+    bounced with an auto REGENERATE note and the agent reviewer is skipped.
+    Otherwise starts the detached review job. Returns ``True`` iff a verdict was
+    produced (bounce note or launched job); a no-op (``False``) unless
+    ``auto_review_notes`` is set. Never raises into the run thread — a
     review-launch failure must not fail the proposal run."""
     if not settings.topic_evolution.auto_review_notes:
         return False
     try:
+        from lib.topics.proposals import load_proposal
+
+        repo = Path(repo_path)
+        proposal = load_proposal(repo, proposal_id)
+        if proposal.get("topics") and \
+                _mechanical_precheck(repo, proposal_id, proposal) is not None:
+            return True
         return start_review_run(repo_path, proposal_id)
     except Exception:  # noqa: BLE001 - a review note must never break the run
         log.error("proposal_review_note_failed", proposal_id=proposal_id,

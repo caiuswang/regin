@@ -206,6 +206,48 @@ def test_maybe_review_note_starts_job_when_enabled(fake_git_repo, monkeypatch):
     assert len(_review_notes(fake_git_repo, pid)) == 1
 
 
+def test_maybe_review_note_bounced_on_shared_primary(fake_git_repo, monkeypatch):
+    """Pre-review gate: a draft that introduces a shared-primary-ref boundary
+    violation is bounced with an auto REGENERATE note and the agent reviewer is
+    never spawned."""
+    monkeypatch.setattr(settings.topic_evolution, "auto_review_notes", True)
+    pid = _make_proposal(fake_git_repo)  # approved graph: t1 owns a.py primary
+    # A NEW draft topic also claims a.py primary → introduced collision.
+    monkeypatch.setattr(
+        "lib.topics.proposals.load_proposal",
+        lambda repo, p: {"topics": [
+            {"id": "t2", "label": "T2", "intent": "x", "status": "active",
+             "refs": [{"path": "a.py"}]},
+        ]},
+    )
+    spawned = {"called": False}
+    monkeypatch.setattr(
+        "lib.topics.proposal_review.start_review_run",
+        lambda *a, **k: spawned.__setitem__("called", True) or True,
+    )
+    assert maybe_generate_review_note(fake_git_repo, pid) is True
+    assert spawned["called"] is False              # agent NOT spawned
+    notes = _review_notes(fake_git_repo, pid)
+    assert len(notes) == 1
+    assert notes[0]["metadata"]["recommendation"] == "REGENERATE"
+    assert "a.py" in notes[0]["comments"][0]["body"]
+
+
+def test_maybe_review_note_spawns_when_draft_clean(fake_git_repo, monkeypatch):
+    """A clean draft (no introduced errors/collisions) passes the gate and the
+    agent reviewer is started as before."""
+    monkeypatch.setattr(settings.topic_evolution, "auto_review_notes", True)
+    pid = _make_proposal(fake_git_repo)  # refresh of t1, no new collision
+    spawned = {"called": False}
+    monkeypatch.setattr(
+        "lib.topics.proposal_review.start_review_run",
+        lambda *a, **k: spawned.__setitem__("called", True) or True,
+    )
+    assert maybe_generate_review_note(fake_git_repo, pid) is True
+    assert spawned["called"] is True               # agent spawned, not bounced
+    assert _review_notes(fake_git_repo, pid) == []  # no auto note written
+
+
 def test_maybe_review_note_no_note_when_no_agent(fake_git_repo, monkeypatch):
     """Gate on but no external agent configured → nothing to launch, no note,
     no crash (spawn_spec None)."""

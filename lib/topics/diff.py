@@ -398,6 +398,39 @@ def _apply_strategy(
     return deltas, introduced_pre
 
 
+def classify_draft_overlay(
+    current_graph: dict[str, Any],
+    draft_topics: list[dict[str, Any]],
+    *,
+    repo_path: Optional[Path | str] = None,
+) -> tuple[tuple[ValidationIssue, ...], tuple[ValidationIssue, ...]]:
+    """Overlay EVERY draft topic onto the current graph at once and return the
+    issues the draft *introduces*: ``(errors, boundary_warnings)``.
+
+    Unlike ``diff_against_graph`` (one proposed topic against the graph), this
+    applies the whole draft together, so a shared-primary collision between two
+    brand-new sibling topics in the *same* draft is caught too. Diffing against
+    the pre-state means only *newly* introduced issues surface — pre-existing
+    rot the draft doesn't touch is ignored, so a clean draft never bounces on
+    someone else's historic problem. ``boundary_warnings`` is the newly
+    introduced ``graph.shared_primary_ref`` set (the deterministic tiering
+    bounce); ``errors`` is every introduced blocking issue.
+    """
+    prospective = copy.deepcopy(current_graph)
+    topics = prospective.setdefault("topics", {})
+    for topic in draft_topics:
+        tid = topic.get("id") if isinstance(topic, dict) else None
+        if tid:
+            topics[tid] = topic
+    repo_pathobj = Path(repo_path) if repo_path else None
+    pre = audit_graph(current_graph, repo_path=repo_pathobj)
+    post = audit_graph(prospective, repo_path=repo_pathobj)
+    introduced, _resolved = diff_issues(pre, post)
+    errors = tuple(i for i in introduced if i.severity == "error")
+    boundary = tuple(i for i in introduced if i.code == "graph.shared_primary_ref")
+    return errors, boundary
+
+
 def _classify_issues(
     current_graph: dict[str, Any],
     prospective_graph: dict[str, Any],

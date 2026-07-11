@@ -202,55 +202,69 @@ def load_status(out_dir: Path) -> dict[str, Any] | None:
     return orm_load_proposal_status(repo_path, proposal_id)
 
 
-def _wiki_section_headings(repo: Path, topic_id: str, *, limit: int = 14) -> list[str]:
-    """The `## ` headings of a topic's wiki page — the concrete territory it
-    already documents — so a drafting agent can steer a new topic *around* it
-    instead of restating it. Best effort: a missing/unreadable page yields []."""
-    from lib.topics.wiki import wiki_dir
+def _rel_to_repo(repo: Path, path: Path) -> str:
+    """Repo-root-relative string for a path under `repo`, else the raw path."""
     try:
-        text = (wiki_dir(repo) / f"{topic_id}.md").read_text(encoding="utf-8")
-    except Exception:
-        return []
-    heads: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("## "):
-            heads.append(line[3:].strip())
-            if len(heads) >= limit:
-                break
-    return heads
+        return str(path.relative_to(repo))
+    except ValueError:
+        return str(path)
 
 
-def _existing_topics_summary(repo: Path) -> list[dict[str, Any]]:
-    """Existing approved topics, enriched enough that the agent can draft
-    *around* them rather than only avoiding an id/alias clash: id/label/aliases,
-    the topic's bucket (`parent_id`), a one-line `covers` (its blurb, or a
-    trimmed intent), and the `## ` section headings of its wiki (`wiki_sections`
-    — the territory already covered). The agent still explores the repo itself;
-    this is the boundary map, not an evidence pack.
+def _topic_position_entry(repo: Path, wdir: Path, jdir: Path,
+                          tid: str, topic: dict[str, Any]) -> dict[str, Any]:
+    """One `topics[]` entry for the boundary map: bucket + one-line `covers` +
+    the on-disk `wiki_path` / `json_path` (only when the file exists)."""
+    covers = (topic.get("blurb") or topic.get("intent") or "").strip()
+    if len(covers) > 240:
+        covers = covers[:237] + "..."
+    entry: dict[str, Any] = {
+        "id": tid,
+        "label": topic.get("label"),
+        "parent_id": topic.get("parent_id"),
+        "covers": covers,
+    }
+    wiki_file = wdir / f"{tid}.md"
+    if wiki_file.is_file():
+        entry["wiki_path"] = _rel_to_repo(repo, wiki_file)
+    json_file = jdir / f"{tid}.json"
+    if json_file.is_file():
+        entry["json_path"] = _rel_to_repo(repo, json_file)
+    return entry
+
+
+def _existing_topics_summary(repo: Path) -> dict[str, Any]:
+    """Boundary map for the drafting agent — WHERE each approved topic lives, not
+    its full text. Per topic: id/label, the bucket (`parent_id`), a one-line
+    `covers`, and the on-disk `wiki_path` / `json_path` the agent Reads when it
+    drafts something adjacent. Plus `primary_owners`: a file → the ONE topic that
+    already claims it as a *primary* ref, so the agent tiers a file it doesn't
+    own as `reference` instead of minting a second primary — the exact
+    shared-primary-ref boundary the pre-review gate would otherwise bounce.
+    Positions instead of inlined section dumps keeps the prompt small and lets
+    the agent pull only the neighbours its topic actually touches. Best effort: a
+    load failure yields empty maps.
     """
+    from lib.topics.core import topic_split_dir
+    from lib.topics.validation import _collect_primary_ref_owners
+    from lib.topics.wiki import wiki_dir
+
     try:
         graph = load_authoritative_graph(repo)
     except Exception:
-        return []
-    out: list[dict[str, Any]] = []
+        return {"topics": [], "primary_owners": {}}
+    wdir = wiki_dir(repo)
+    jdir = topic_split_dir(repo)
+    entries: list[dict[str, Any]] = []
+    owners: dict[str, list[str]] = {}
     for tid, topic in sorted((graph.get("topics") or {}).items()):
         if not isinstance(topic, dict):
             continue
-        covers = (topic.get("blurb") or topic.get("intent") or "").strip()
-        if len(covers) > 240:
-            covers = covers[:237] + "..."
-        entry: dict[str, Any] = {
-            "id": tid,
-            "label": topic.get("label"),
-            "aliases": topic.get("aliases", []),
-            "parent_id": topic.get("parent_id"),
-            "covers": covers,
-        }
-        sections = _wiki_section_headings(repo, tid)
-        if sections:
-            entry["wiki_sections"] = sections
-        out.append(entry)
-    return out
+        entries.append(_topic_position_entry(repo, wdir, jdir, tid, topic))
+        _collect_primary_ref_owners(tid, topic, owners)
+    primary_owners = {
+        path: tids[0] for path, tids in sorted(owners.items()) if len(tids) == 1
+    }
+    return {"topics": entries, "primary_owners": primary_owners}
 
 
 def _bucket_summary(repo: Path) -> list[dict[str, Any]]:

@@ -100,7 +100,7 @@ Output JSON shape:
   "overview": "Optional short markdown intro tying the proposed topics together"
 }}
 
-Existing approved topics — each entry's `covers` and `wiki_sections` show the territory it already owns. Do NOT propose a topic that duplicates or substantially restates one of these; when your topic is adjacent, scope it to what they don't cover and cross-link the sibling with `[[id]]` instead of re-explaining it. Explore the repo with your Read/Glob/Grep tools for everything else:
+Existing approved topics — a boundary map, not their full text. `topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). Explore the repo with your Read/Glob/Grep tools for everything else:
 ```json
 {json.dumps(pe._existing_topics_summary(repo), indent=2, sort_keys=True)}
 ```
