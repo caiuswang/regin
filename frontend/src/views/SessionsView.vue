@@ -7,6 +7,7 @@ import SessionTags from '../components/SessionTags.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import Icon from '../components/ui/Icon.vue'
+import Select from '../components/ui/Select.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
 import { useCopy } from '../composables/useCopy'
@@ -201,10 +202,11 @@ const builtinTags = computed(() => extras.value?.builtin_tags || [])
 const tagOptions = computed(() => {
   const opts = [{ value: '', label: 'All sessions' }]
   for (const t of builtinTags.value) {
-    opts.push({ value: t.slug, label: `${t.label} (${tagCounts.value[t.slug] || 0})` })
+    opts.push({ value: t.slug, label: t.label, count: tagCounts.value[t.slug] || 0 })
   }
+  if (customTags.value.length) opts.push({ separator: true })
   for (const t of customTags.value) {
-    opts.push({ value: t.slug, label: `#${t.slug} (${tagCounts.value[t.slug] ?? t.count})` })
+    opts.push({ value: t.slug, label: `#${t.slug}`, count: tagCounts.value[t.slug] ?? t.count })
   }
   return opts
 })
@@ -532,14 +534,13 @@ function timeTitle(s) {
             class="input search-input focus-visible:outline-2 focus-visible:outline-blue-500"
             aria-label="Search sessions"
           >
-          <select
+          <Select
             v-model="searchScope"
-            class="input search-scope focus-visible:outline-2 focus-visible:outline-blue-500"
+            :options="SCOPE_OPTIONS"
+            class="search-scope"
             aria-label="What to search"
             title="What `Search` matches against"
-          >
-            <option v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+          />
         </div>
         <Button type="submit" variant="primary">Search</Button>
         <Button
@@ -585,58 +586,32 @@ function timeTitle(s) {
         <template v-if="filtersOpen">
         <label class="facet-pill" :class="{ 'facet-pill--active': range !== 'today' }">
           <span class="facet-pill__label">Range</span>
-          <select
-            v-model="range"
-            class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Filter by last activity time range"
-          >
-            <option v-for="opt in RANGE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+          <Select bare v-model="range" :options="RANGE_OPTIONS" aria-label="Filter by last activity time range" />
         </label>
 
         <label class="facet-pill" :class="{ 'facet-pill--active': kind !== 'real' }">
           <span class="facet-pill__label">Kind</span>
-          <select
-            v-model="kind"
-            class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Filter by session kind (real vs test)"
-          >
-            <option v-for="opt in KIND_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+          <Select bare v-model="kind" :options="KIND_OPTIONS" aria-label="Filter by session kind (real vs test)" />
         </label>
 
         <label class="facet-pill" :class="{ 'facet-pill--active': tagFilter !== '' }">
           <span class="facet-pill__label">Tag</span>
-          <select
-            v-model="tagFilter"
-            class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Filter by session tag"
-          >
-            <option v-for="opt in tagOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+          <Select bare v-model="tagFilter" :options="tagOptions" aria-label="Filter by session tag" />
         </label>
 
         <label class="facet-pill" :class="{ 'facet-pill--active': activeFilter !== 'all' }">
           <span class="facet-pill__label">Status</span>
-          <select
-            v-model="activeFilter"
-            class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Filter by active status"
-          >
-            <option v-for="opt in ACTIVE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
+          <Select bare v-model="activeFilter" :options="ACTIVE_OPTIONS" aria-label="Filter by active status" />
         </label>
 
         <label class="facet-pill" :class="{ 'facet-pill--active': repoFilter !== 'all' }">
           <span class="facet-pill__label">Repo</span>
-          <select
+          <Select
+            bare
             v-model="repoFilter"
-            class="facet-pill__select focus-visible:outline-2 focus-visible:outline-blue-500"
+            :options="[{ value: 'all', label: 'All repos' }, ...repoOptions.map((n) => ({ value: n, label: n }))]"
             aria-label="Filter by repo"
-          >
-            <option value="all">All repos</option>
-            <option v-for="name in repoOptions" :key="name" :value="name">{{ name }}</option>
-          </select>
+          />
         </label>
 
         <div class="facet-pill facet-pill--input" :class="{ 'facet-pill--active': activeTraceId }">
@@ -965,7 +940,9 @@ function timeTitle(s) {
   border-bottom-right-radius: 0;
   border-right: 0;
 }
-.search-group .search-scope {
+/* :deep() — the class lands on the Select's trigger (a child component root),
+   out of reach of a plain scoped selector. */
+.search-group :deep(.search-scope) {
   min-width: 0;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -973,8 +950,6 @@ function timeTitle(s) {
   background: var(--color-slate-50);
   color: var(--color-slate-600);
   font-size: 0.8125rem;
-  padding-left: 0.5rem;
-  padding-right: 1.75rem;
 }
 /* Two-tier filter bar: a search row on top and a faceted filter row
  * below. Each row wraps independently so narrow viewports never push
@@ -1071,20 +1046,6 @@ function timeTitle(s) {
   color: var(--color-slate-500);
   border-right: 1px solid var(--color-slate-200);
   user-select: none;
-}
-
-.facet-pill__select {
-  background: transparent;
-  border: 0;
-  outline: 0;
-  padding: 0.25rem 1.5rem 0.25rem 0.625rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--color-slate-800);
-  cursor: pointer;
-  /* Restore native chevron — clipped by border-radius otherwise. */
-  appearance: auto;
-  -webkit-appearance: auto;
 }
 
 .facet-pill--input { padding-right: 0.125rem; }
