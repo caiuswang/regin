@@ -110,10 +110,10 @@ regin goal preflight "<the full goal string>" --session-id "$SID"
 If it ever comes back empty, omit the flag (you lose only the
 offered-recording, not the roadmap).
 
-For the **convention skills**, read the ones the file-keyed table in
-`CLAUDE.local.md` maps to the files you'll touch *before* writing code
-(convention guides backed by rule engines — reading first avoids the
-round-trip). For **reference components**, open the 1–2 real target files in the
+For the **convention skills**, read whatever your repo maps to the files you'll
+touch *before* writing code — a file-keyed convention table (e.g. in `CLAUDE.md`
+/ `CLAUDE.local.md`) or the project's own lint/style config (where those guides
+are backed by rule engines, reading first avoids the round-trip). For **reference components**, open the 1–2 real target files in the
 refine step (1.5) and mirror the closest existing module — don't invent new
 patterns.
 
@@ -212,7 +212,8 @@ Hand the work to a checker that did **not** build it:
     `scrollWidth<=clientWidth` holds — a desktop-only render passes the span
     gate but fails this item. Playwright driven as a Bash node script does NOT
     count; use the traced MCP browser tools so the render leaves a span.
-  - python: `.venv/bin/python -m pytest <relevant>`; radon grade ≥ C; grit clean.
+  - non-frontend: run the target repo's own test suite plus its lint/complexity
+    gates (e.g. `pytest`, a complexity-grade threshold, a linter); all green.
 - A gate that fails is a **wall**, not a note. Do not proceed past a red gate.
 
 **Agent-arm:** first arm the verifier with **how this subsystem has failed
@@ -332,8 +333,9 @@ wiki debt" means your change stranded no wiki — say so and move on.
 - **Globbed references reflect the current branch.** If preflight surfaces
   the wrong siblings, the branch may predate the component you meant — name
   the reference by hand.
-- **Preflight needs the repo's `.venv`.** Run it from the repo root with
-  `.venv/bin/python`, not the system interpreter.
+- **`regin` must be on PATH.** Preflight / gate / feedback shell out to the
+  `regin` CLI (the plugin's documented boundary); invoke it from PATH, not a
+  checkout-local interpreter.
 
 ## How this compounds
 

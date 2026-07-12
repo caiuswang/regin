@@ -58,8 +58,14 @@ that contract lives.
 
 ## Notes
 
-- The skills bundled here are the portability-fixed copies (bare `regin`, no
-  absolute-path fallbacks).
+- The skills bundled here are the portability-fixed copies: bare `regin` (no
+  absolute-path / `.venv/bin/python` fallbacks), and regin-repo-only
+  *conventions* genericized — the machine-gate floor reads "your repo's test +
+  lint/complexity gates" rather than regin's `pytest`/radon/grit, and the
+  convention-skill routing points at "your repo's file→convention mapping"
+  rather than regin's `CLAUDE.local.md` table. This is why the bundled copies
+  intentionally diverge from `.claude/skills/` (which stay regin-specific
+  because they run *in* the regin repo) — don't "sync" them back verbatim.
 - regin-repo-only skills (`generated/*`, `regin-python-conventions`,
   `frontend-style-convention`, `debug-hooks`) are deliberately **excluded** —
   they describe regin's own internals and aren't meant to run elsewhere.

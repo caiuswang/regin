@@ -20,8 +20,9 @@ lessons into the bar**:
 The rest of the bar — convention **skills**, **reference components**, **hard
 gates** — is *not* routed by a command in this arm: the hard gates are the
 universal floor (stated inline in step 1a), the convention skills come from the
-file-keyed table in `CLAUDE.local.md`, and the reference components come from
-the topic leaf's source refs (step 1b). So the *only* variable that differs
+file-keyed convention mapping your repo defines (e.g. a `CLAUDE.md` /
+`CLAUDE.local.md` table or its lint config), and the reference components come
+from the topic leaf's source refs (step 1b). So the *only* variable that differs
 from `goal-verified` is the way lessons enter the roadmap — same loop, same
 scaffold, different recall.
 
@@ -79,12 +80,12 @@ scaffold is fixed and tiny:
   1. the existing test suite stays green;
   2. an independent fresh-context reviewer checked the diff (`/code-review high`).
 
-  Then add the *area's* machine gates from the `CLAUDE.local.md` convention
-  table for the files you touch — e.g. `pytest` + radon ≥ C + grit for
-  `**/*.py`; `vite build` + Playwright + bundle engines for `**/*.vue`.
-- **Convention skills:** read the skills that same table maps to the files you
-  will edit *before* writing code (they are backed by rule engines, so reading
-  first avoids the round-trip).
+  Then add the *area's* machine gates your repo enforces for the files you
+  touch — e.g. its test runner + complexity/lint gates for backend code; its
+  build + a browser (Playwright) render + style checks for frontend.
+- **Convention skills:** read whatever your repo maps to the files you
+  will edit *before* writing code (where those guides are backed by lint/rule
+  engines, reading first avoids the round-trip).
 - **Reference components:** come from the tree leaf in step 1b (`index_fetch`
   source refs) — mirror them, don't invent new patterns.
 
@@ -175,9 +176,8 @@ Pass your **own** session id — the memory server is shared and long-lived, so 
 cannot infer the caller's session and refuses an empty `session_id`. The tool
 counts this session's `tool.mcp__memory__index_*` / `…__recall` spans and
 returns `GATE PASS` only when the count is > 0, else `GATE FAIL`. This is the
-same check the verifier re-runs in step 4. (Span fingerprints live in
-`lib/trace/span_gates.py`; add a `SpanGate` there to gate another unenforced
-step — it surfaces through both this tool and the `regin gate` CLI.)
+same check the verifier re-runs in step 4. (New gates are defined on the regin
+side; the same check surfaces through both this tool and the `regin gate` CLI.)
 
 - **`0` is a wall, exactly like a red machine gate.** Do not present the
   roadmap, do not build. Return to step 1b and walk the tree for real.
@@ -221,7 +221,8 @@ Hand the work to a checker that did **not** build it:
     `scrollWidth<=clientWidth` holds — a desktop-only render passes the span
     gate but fails this item. Playwright driven as a Bash node script does NOT
     count; use the traced MCP browser tools so the render leaves a span.
-  - python: `.venv/bin/python -m pytest <relevant>`; radon grade ≥ C; grit clean.
+  - non-frontend: run the target repo's own test suite plus its lint/complexity
+    gates (e.g. `pytest`, a complexity-grade threshold, a linter); all green.
 - **Recall-arm gate (re-checked here):** the verifier re-runs the gate against
   the builder's session — `mcp__memory__gate(name="recall-ran",
   session_id="<the build session's id>")` (or the `regin gate recall-ran
@@ -339,7 +340,7 @@ attributable.
 - **The reviewer must have fresh context.** A reviewer that watched the build
   inherits the blind spots. Use `/code-review` or a new agent.
 - **Don't run `goal preflight` for the bar in this arm.** Its area router was
-  retired; the scaffold is the inline gate floor + the `CLAUDE.local.md` table.
+  retired; the scaffold is the inline gate floor + your repo's convention mapping.
   The only place preflight legitimately appears here is the optional A/B in
   "Comparing the two arms" (`--with-lessons`, to diff the retired flat-recall
   leg against the walk) — a comparison probe, not part of the bar.
@@ -358,8 +359,9 @@ attributable.
 - **Tree dead-ends are data.** A right-bucket-but-`0 mem` leaf is a genuine
   knowledge gap; record it (it is exactly the kind of thing step 6's `--fail`
   should seed) and fill from code, not from a forced semantic guess.
-- **Preflight needs the repo's `.venv`.** Run from repo root with
-  `.venv/bin/python`.
+- **`regin` must be on PATH.** Where these steps shell out to the `regin` CLI
+  (gate, feedback, the optional A/B preflight), invoke it from PATH — the
+  plugin's documented boundary.
 
 ## How this compounds
 
