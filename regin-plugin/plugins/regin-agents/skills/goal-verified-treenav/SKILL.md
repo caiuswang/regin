@@ -215,8 +215,12 @@ Hand the work to a checker that did **not** build it:
     session — `mcp__memory__gate(name="ui-verified", session_id="<build sid>")`
     (or `regin gate ui-verified --session "$SID"`). `GATE FAIL` / `0` browser
     spans means the UI was never rendered, only diffed — a **DO-NOT-SHIP wall**,
-    however good the code looks. Playwright driven as a Bash node script does
-    NOT count; use the traced MCP browser tools so the render leaves a span.
+    however good the code looks. The gate proves *a* render happened, not which
+    viewport: the verifier must confirm the render covers **both desktop and
+    ~390px mobile** (where most layout breakages land) and that
+    `scrollWidth<=clientWidth` holds — a desktop-only render passes the span
+    gate but fails this item. Playwright driven as a Bash node script does NOT
+    count; use the traced MCP browser tools so the render leaves a span.
   - python: `.venv/bin/python -m pytest <relevant>`; radon grade ≥ C; grit clean.
 - **Recall-arm gate (re-checked here):** the verifier re-runs the gate against
   the builder's session — `mcp__memory__gate(name="recall-ran",
