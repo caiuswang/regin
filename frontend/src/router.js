@@ -107,6 +107,14 @@ router.beforeEach(async (to) => {
     await ready
     if (!features.experimental_conceal) return { name: 'dashboard' }
   }
+  // Trace (session list + transcripts) is admin-only — the backend enforces
+  // this via ADMIN_API_ENDPOINTS; redirect non-admins here so a deep link
+  // lands on the dashboard instead of a 403 error page.
+  if (to.path === '/trace' || to.path.startsWith('/trace/')) {
+    let role = null
+    try { role = JSON.parse(localStorage.getItem('regin_auth_user') || 'null')?.role } catch { /* ignore */ }
+    if (role !== 'admin') return { name: 'dashboard' }
+  }
   return true
 })
 

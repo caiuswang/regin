@@ -23,6 +23,10 @@ const oldPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 
+const ROLE_OPTIONS = ['admin', 'editor', 'viewer']
+const newUser = ref({ username: '', display_name: '', email: '', password: '', role: 'editor' })
+const creating = ref(false)
+
 onMounted(async () => {
   const meData = await api.get('/auth/me')
   if (meData.user) currentUser.value = meData.user
@@ -105,7 +109,28 @@ async function deleteUser(userId, username) {
   }
 }
 
-const ROLE_OPTIONS = ['admin', 'editor', 'viewer']
+async function createUser() {
+  if (!newUser.value.username || newUser.value.password.length < 4) {
+    flash('Username and a password of at least 4 characters are required', 'error')
+    return
+  }
+  creating.value = true
+  const result = await api.register(
+    newUser.value.username,
+    newUser.value.display_name || newUser.value.username,
+    newUser.value.password,
+    newUser.value.email || undefined,
+    newUser.value.role,
+  )
+  creating.value = false
+  if (result.ok) {
+    flash(result.msg || 'User created')
+    newUser.value = { username: '', display_name: '', email: '', password: '', role: 'editor' }
+    users.value = await api.get('/users')
+  } else {
+    flash(result.msg || 'Failed to create user', 'error')
+  }
+}
 
 const roleBadgeColor = (role) => {
   if (role === 'admin') return 'red'
@@ -175,6 +200,40 @@ const roleBadgeColor = (role) => {
 
     <!-- User Management (admin only) -->
     <template v-if="isAdmin">
+      <h2 class="section-heading">Create user</h2>
+      <Card>
+        <p class="text-sm text-slate-500 mb-4">
+          Only admins can add accounts. New users can sign in immediately with the
+          password you set here.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg">
+          <div>
+            <label class="field-label">Username</label>
+            <Input v-model="newUser.username" type="text" aria-label="New username" />
+          </div>
+          <div>
+            <label class="field-label">Display name</label>
+            <Input v-model="newUser.display_name" type="text" :placeholder="newUser.username"
+              aria-label="New display name" />
+          </div>
+          <div>
+            <label class="field-label">Email <span class="text-slate-400 font-normal">(optional)</span></label>
+            <Input v-model="newUser.email" type="email" aria-label="New email" />
+          </div>
+          <div>
+            <label class="field-label">Password</label>
+            <Input v-model="newUser.password" type="password" aria-label="New password" />
+          </div>
+          <div>
+            <label class="field-label">Role</label>
+            <Select v-model="newUser.role" :options="ROLE_OPTIONS" block aria-label="New role" />
+          </div>
+        </div>
+        <Button variant="primary" class="mt-4" :disabled="creating" @click="createUser">
+          Create user
+        </Button>
+      </Card>
+
       <h2 class="section-heading">Team members</h2>
       <Card :no-padding="true">
         <div class="overflow-x-auto">

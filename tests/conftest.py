@@ -249,21 +249,24 @@ def tmp_config_dir(tmp_path, monkeypatch) -> Path:
 
 @pytest.fixture
 def flask_client(tmp_db) -> Iterator:
-    """Flask test client wired to `tmp_db`, authenticated as an editor.
+    """Flask test client wired to `tmp_db`, authenticated as an admin.
 
     The app gates every /api/ route behind a valid JWT (see
-    `web.app._install_auth_gate`), so the default client carries an editor
-    token in `environ_base` — this models "a logged-in user is browsing"
-    and keeps read/editor-mutation tests working. Tests that need a
-    different identity pass their own `Authorization` header, which
-    overrides `environ_base` per request. Tests that assert
-    unauthenticated behaviour (401) use `anon_client` instead.
+    `web.app._install_auth_gate`), and the session/trace surface is
+    additionally admin-only (see `ADMIN_API_ENDPOINTS`), so the default
+    client carries an admin token in `environ_base` — this models "a
+    logged-in user is browsing" and keeps read/editor-mutation tests
+    working. The username stays `test-editor` so identity-derived
+    assertions (e.g. bridge sender `web:test-editor`) are unaffected.
+    Tests that assert role-specific denials pass their own editor/viewer
+    `Authorization` header, which overrides `environ_base` per request;
+    tests that assert unauthenticated behaviour (401) use `anon_client`.
     """
     from web.app import create_app
     from lib.auth import create_token
     app = create_app()
     app.config["TESTING"] = True
-    token = create_token(1, "test-editor", "editor")
+    token = create_token(1, "test-editor", "admin")
     with app.test_client() as client:
         client.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {token}"
         yield client

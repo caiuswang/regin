@@ -31,8 +31,9 @@ def client(trace_db):
     app = app_module.create_app()
     app.config['TESTING'] = True
     c = app.test_client()
+    # /api/sessions* + session tags are admin-only (ADMIN_API_ENDPOINTS).
     c.environ_base['HTTP_AUTHORIZATION'] = (
-        f"Bearer {create_token(1, 'test-editor', 'editor')}")
+        f"Bearer {create_token(1, 'test-editor', 'admin')}")
     c._db_path = trace_db
     return c
 

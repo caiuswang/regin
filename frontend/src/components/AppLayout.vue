@@ -22,6 +22,7 @@ const { unread: inboxUnread } = useInboxUnread()
 const router = useRouter()
 const route = useRoute()
 const user = ref(api.getStoredUser())
+const isAdmin = computed(() => user.value?.role === 'admin')
 const mode = ref('standalone')
 const navOpen = ref(false)
 const paletteOpen = ref(false)
@@ -71,7 +72,10 @@ const navGroups = computed(() => [
   {
     label: 'Observability',
     links: [
-      { to: '/trace', label: 'Trace', icon: 'trace' },
+      // Trace exposes every user's session list + full transcripts and
+      // sessions carry no per-user owner, so it is admin-only (matches the
+      // ADMIN_API_ENDPOINTS gate on /api/sessions*).
+      ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
       { to: '/live', label: 'Live', icon: 'live' },
       { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox', badge: () => inboxUnread.value },
       { to: '/memory', label: 'Memory', exact: true, icon: 'patterns' },

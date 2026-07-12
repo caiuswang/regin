@@ -117,17 +117,6 @@ const headline = computed(() => {
           {{ submitLabel }}
         </Button>
       </form>
-
-      <div v-if="mode === 'login'" class="login-switch">
-        <Button variant="link" class="min-h-9 px-3" @click="mode = 'register'">
-          Create an account
-        </Button>
-      </div>
-      <div v-if="mode === 'register'" class="login-switch">
-        <Button variant="link" class="min-h-9 px-3" @click="mode = 'login'">
-          Back to login
-        </Button>
-      </div>
     </div>
   </div>
 </template>

@@ -36,8 +36,9 @@ def client(trace_db):
     app = app_module.create_app()
     app.config['TESTING'] = True
     c = app.test_client()
-    # The app gates /api/ reads behind a valid JWT; authenticate as editor.
-    c.environ_base['HTTP_AUTHORIZATION'] = f"Bearer {create_token(1, 'test-editor', 'editor')}"
+    # The app gates /api/ reads behind a valid JWT, and /api/sessions* is
+    # admin-only (ADMIN_API_ENDPOINTS); authenticate as admin to browse.
+    c.environ_base['HTTP_AUTHORIZATION'] = f"Bearer {create_token(1, 'test-editor', 'admin')}"
     return c
 
 

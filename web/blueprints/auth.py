@@ -30,6 +30,30 @@ def api_auth_login():
     return jsonify(result)
 
 
+def _authorize_registration(data):
+    """Gate self-service registration once the system is bootstrapped.
+
+    Registration is open ONLY for first-run bootstrap (no users yet).
+    Once any account exists, creating users is admin-only — this endpoint
+    is network-public (see PUBLIC_API_ENDPOINTS), so without this branch
+    anyone could mint themselves an editor account.
+
+    Returns ``(error_response, None)`` to abort, or ``(None, role)`` to
+    proceed with the resolved role (``None`` = registrar's default).
+    """
+    if user_count() == 0:
+        return None, None
+    actor = get_current_user()
+    if actor is None:
+        return (jsonify({'error': 'Authentication required'}), 401), None
+    if actor['role'] != 'admin':
+        return (jsonify({'error': 'Admin role required to create users'}), 403), None
+    requested = (data.get('role') or '').strip().lower()
+    if requested and requested not in ('admin', 'editor', 'viewer'):
+        return (jsonify({'error': 'Invalid role'}), 400), None
+    return None, (requested or None)
+
+
 @auth_bp.route('/api/auth/register', methods=['POST'])
 def api_auth_register():
     data = request.get_json(silent=True) or {}
@@ -37,12 +61,17 @@ def api_auth_register():
     display_name = (data.get('display_name') or username).strip()
     password = data.get('password', '')
     email = data.get('email')
+
+    err, role = _authorize_registration(data)
+    if err is not None:
+        return err
+
     if not username or not password:
         return jsonify({'error': 'Username and password required'}), 400
     if len(password) < 4:
         return jsonify({'error': 'Password must be at least 4 characters'}), 400
     try:
-        user = register_user(username, display_name, password, email=email)
+        user = register_user(username, display_name, password, email=email, role=role)
         return jsonify({'ok': True, 'user': user,
                         'msg': f"Registered as {user['role']}"})
     except Exception as exc:

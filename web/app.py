@@ -245,6 +245,40 @@ PUBLIC_API_ENDPOINTS = frozenset({
 })
 
 
+# Endpoints that require the admin role on top of authentication. The session
+# list and its trace drill-in expose every user's activity, and sessions carry
+# no per-user owner to filter on, so the whole surface is admin-only — editors
+# and viewers are denied. Enforced centrally (deny-by-default) rather than via
+# per-route decorators so the policy lives in one auditable place.
+ADMIN_API_ENDPOINTS = frozenset({
+    "trace.api_sessions",
+    "trace.api_session_detail",
+    "trace.api_session_span_children",
+    "trace.api_session_map",
+    "trace.api_span_content",
+    "trace.api_span_rewind",
+    "trace.api_session_workflow_runs",
+    "trace.api_span_ancestors",
+    "trace.api_session_batch_delete",
+    "trace.api_session_delete",
+    "trace.api_session_tags",
+    "trace.api_session_tag_add",
+    "trace.api_session_tag_remove",
+    "trace.api_session_close",
+    "trace.api_session_materialize",
+    "trace.api_session_repair_spans",
+    # Session-scoped detail routes that live in sibling trace modules
+    # (turn_usage / agent_messages / prompt_images). agent-messages in
+    # particular returns the session goal text + every send_to_user message,
+    # and prompt-images serves the raw prompt image bytes — all as much a
+    # per-session content leak as the map/spans above.
+    "trace.api_session_tool_rollup",
+    "trace.api_session_turn_usage",
+    "trace.api_session_agent_messages",
+    "trace.api_get_prompt_image",
+})
+
+
 _LOOPBACK_ADDRS = frozenset({"127.0.0.1", "::1"})
 
 
@@ -272,12 +306,13 @@ def _install_auth_gate(app: Flask) -> None:
     """
     from lib.auth import get_current_user
 
-    missing = PUBLIC_API_ENDPOINTS - set(app.view_functions)
+    missing = (PUBLIC_API_ENDPOINTS | ADMIN_API_ENDPOINTS) - set(app.view_functions)
     if missing:
         raise RuntimeError(
-            "PUBLIC_API_ENDPOINTS references unknown endpoints: "
-            f"{sorted(missing)}. A renamed or removed view would silently "
-            "gate machine ingest; fix the allowlist."
+            "PUBLIC_API_ENDPOINTS / ADMIN_API_ENDPOINTS reference unknown "
+            f"endpoints: {sorted(missing)}. A renamed or removed view would "
+            "silently gate machine ingest or drop an admin guard; fix the "
+            "allowlist."
         )
 
     @app.before_request
@@ -292,8 +327,11 @@ def _install_auth_gate(app: Flask) -> None:
             return None
         if _inject_recall_loopback_ok():
             return None  # local auto-inject hook → warm dense models
-        if get_current_user() is None:
+        user = get_current_user()
+        if user is None:
             return jsonify({"error": "Authentication required"}), 401
+        if request.endpoint in ADMIN_API_ENDPOINTS and user.get("role") != "admin":
+            return jsonify({"error": "Admin role required"}), 403
         return None
 
 

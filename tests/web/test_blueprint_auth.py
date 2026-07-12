@@ -309,3 +309,99 @@ def test_gate_exempts_machine_ingest(anon_client, tmp_db):
     public — a 401 here would silently break trace ingestion."""
     resp = anon_client.post("/api/session-spans", json={})
     assert resp.status_code != 401
+
+
+# ── Registration is admin-only once bootstrapped ─────────────
+
+def test_register_open_only_for_first_user_bootstrap(anon_client, tmp_db):
+    """Zero users → registration is public and mints the first admin."""
+    resp = anon_client.post("/api/auth/register",
+                             json={"username": "root", "password": "longenough"})
+    assert resp.status_code == 200
+    assert resp.get_json()["user"]["role"] == "admin"
+
+
+def test_register_after_bootstrap_rejects_anonymous(anon_client, tmp_db):
+    """Once any account exists, an unauthenticated register is refused and
+    creates nothing — closing the open-registration hole."""
+    from lib.auth import list_users
+    register_user("root", "R", "pw12")
+    resp = anon_client.post("/api/auth/register",
+                             json={"username": "intruder", "password": "pw12"})
+    assert resp.status_code == 401
+    assert not any(u["username"] == "intruder" for u in list_users())
+
+
+def test_register_after_bootstrap_rejects_non_admin(flask_client, tmp_db):
+    from lib.auth import list_users
+    register_user("root", "R", "pw12")
+    resp = flask_client.post(
+        "/api/auth/register",
+        json={"username": "intruder", "password": "pw12"},
+        headers=_auth_header(2, "ed", "editor"),
+    )
+    assert resp.status_code == 403
+    assert not any(u["username"] == "intruder" for u in list_users())
+
+
+def test_register_admin_can_create_user_with_role(flask_client, tmp_db):
+    admin = register_user("root", "R", "pw12")  # admin by default
+    resp = flask_client.post(
+        "/api/auth/register",
+        json={"username": "newbie", "password": "pw12", "role": "viewer"},
+        headers=_auth_header(admin["id"], "root", "admin"),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["user"]["role"] == "viewer"
+
+
+def test_register_admin_rejects_invalid_role(flask_client, tmp_db):
+    admin = register_user("root", "R", "pw12")
+    resp = flask_client.post(
+        "/api/auth/register",
+        json={"username": "newbie", "password": "pw12", "role": "superuser"},
+        headers=_auth_header(admin["id"], "root", "admin"),
+    )
+    assert resp.status_code == 400
+
+
+# ── Session surface is admin-only (ADMIN_API_ENDPOINTS) ──────
+
+def test_sessions_list_forbidden_for_editor(flask_client, tmp_db):
+    resp = flask_client.get("/api/sessions",
+                             headers=_auth_header(2, "ed", "editor"))
+    assert resp.status_code == 403
+    assert "Admin" in resp.get_json()["error"]
+
+
+def test_sessions_list_forbidden_for_viewer(flask_client, tmp_db):
+    resp = flask_client.get("/api/sessions",
+                             headers=_auth_header(3, "vw", "viewer"))
+    assert resp.status_code == 403
+
+
+def test_session_detail_forbidden_for_non_admin(flask_client, tmp_db):
+    """Deep-linking a trace map must not leak content to a non-admin."""
+    resp = flask_client.get("/api/sessions/anything/map",
+                             headers=_auth_header(2, "ed", "editor"))
+    assert resp.status_code == 403
+
+
+def test_sessions_list_allowed_for_admin(flask_client, tmp_db):
+    # flask_client's default identity is admin.
+    resp = flask_client.get("/api/sessions")
+    assert resp.status_code == 200
+
+
+def test_session_agent_messages_forbidden_for_non_admin(flask_client, tmp_db):
+    """agent-messages returns the session goal text + every send_to_user
+    message — the sharpest per-session leak, so it must be admin-only."""
+    resp = flask_client.get("/api/sessions/whatever/agent-messages",
+                             headers=_auth_header(2, "ed", "editor"))
+    assert resp.status_code == 403
+
+
+def test_session_usage_detail_forbidden_for_non_admin(flask_client, tmp_db):
+    for path in ("/api/sessions/x/tool-rollup", "/api/sessions/x/turn-usage"):
+        resp = flask_client.get(path, headers=_auth_header(2, "ed", "editor"))
+        assert resp.status_code == 403, path

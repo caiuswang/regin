@@ -126,11 +126,16 @@ async function login(username, password) {
   return { ok: true, user: data.user }
 }
 
-async function register(username, displayName, password, email) {
+// `role` is honoured only for admin-created users (an authed admin calling
+// this post-bootstrap); the bootstrap first-run call sends no token and no
+// role. authHeaders() is empty when no token is stored, so the setup flow is
+// unaffected — but once logged in, the admin's JWT rides along so the backend
+// can authorize the create.
+async function register(username, displayName, password, email, role) {
   const res = await fetch('/api/auth/register', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, display_name: displayName, password, email }),
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ username, display_name: displayName, password, email, role }),
   })
   const data = await res.json()
   if (!res.ok) return { ok: false, msg: data.error || 'Registration failed' }
