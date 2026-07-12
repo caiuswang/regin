@@ -1,7 +1,7 @@
 # hook_manager — Unified hook dispatcher (Claude-event schema)
 
 A single Python entry point (`python -m hook_manager <EventName>`) that owns
-hook behavior across the 26 Claude Code hook events
+hook behavior across the 28 Claude Code hook events
 (https://code.claude.com/docs/en/hooks). Most events have concrete
 handlers today; the provider-kind hooks (`WorktreeCreate`, `WorktreeRemove`,
 `Elicitation`, `ElicitationResult`) are intentionally unwired — registering

@@ -1,12 +1,12 @@
 # PostToolUse payload schemas
 
-One JSON Schema per known tool. Validated at runtime by
+One JSON Schema per known tool (and per hook event). Validated at runtime by
 `lib/trace/payload_validation.py`; drift is recorded in
 `payload_schema_drift` and reviewed in the WebUI.
 
 ## Convention
 
-- File name: `<ToolName>.schema.json`. Special case: `_mcp_wildcard.schema.json` matches every `mcp__*` tool.
+- Layout: schemas live under a per-agent directory `<agent>/` (`claude/`, `kimi/`; the validator defaults to `claude`). Tool schemas are named `<agent>/<ToolName>.schema.json`; hook-event schemas live under `<agent>/_hooks/<EventName>.schema.json`. Special case: `<agent>/_mcp_wildcard.schema.json` matches every `mcp__*` tool.
 - Top-level required keys: `tool_name` (const), `tool_input`, `tool_response`.
 - `additionalProperties: true` at every level. Unknown-key drift is reported by the validator's recursive walker, not by jsonschema itself.
 - Property names use snake_case. The validator dedupes camelCase aliases via `_to_snake` so Codex-sourced payloads don't spam drift findings.

@@ -11,7 +11,7 @@ repo** via Claude Code's plugin system, instead of relying on hardcoded paths in
 plugin. That plugin's own `.claude-plugin/plugin.json` gives it the
 `regin-agents:` namespace; its `skills/` and `agents/` directories are
 auto-discovered by Claude Code (no manifest listing needed), its `.mcp.json`
-wires up the memory + send-to-user MCP servers, and `bin/regin-mcp.sh` is the
+wires up the memory + send-to-user + topics MCP servers, and `bin/regin-mcp.sh` is the
 `${CLAUDE_PLUGIN_ROOT}`-relative launcher those servers run through (see "The
 boundary" below).
 
@@ -48,7 +48,7 @@ declare system/pip dependencies. regin's skills depend on regin two ways:
 
 | Dependency | Bundled here? | Status |
 |---|---|---|
-| **`memory` / `send-to-user` MCP servers** (`index_*`, `recall`, `send_to_user`) | ✅ yes, via `.mcp.json` + `bin/regin-mcp.sh` | the recall arm + progress messages work as soon as the plugin is enabled (given `REGIN_HOME`) |
+| **`memory` / `send-to-user` / `topics` MCP servers** (`index_*`, `recall`, `send_to_user`, topic tools) | ✅ yes, via `.mcp.json` + `bin/regin-mcp.sh` | the recall arm + progress messages work as soon as the plugin is enabled (given `REGIN_HOME`) |
 | **`regin` CLI** (`regin gate recall-ran`, `regin route`, `regin goal feedback`, `regin topics wiki-debt`) | ❌ no | still requires `regin` installed on PATH in the target repo |
 
 So this prototype makes the **MCP-backed** half of the loop portable, and leaves

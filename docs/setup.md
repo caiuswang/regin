@@ -68,7 +68,7 @@ Set `mode` in `config/settings.local.json` to choose how auth/audit data is stor
 
 - `mode` can be `shared` or `standalone`. Default is `standalone`.
 - `database_url` is only needed when `mode` is `shared`.
-- `active_provider` selects the AI-agent integration backend (`claude`, `codex`, `generic`). Default is `claude`.
+- `active_provider` selects the AI-agent integration backend (`claude`, `codex`, `generic`, `kimi`). Default is `claude`.
 
 Repos are registered explicitly through the `/repos` page in the web UI, or from the CLI:
 
@@ -120,7 +120,7 @@ Each machine runs its own local instance. Shareable skills (the packaged, versio
 regin routes skills/hooks/session path conventions through provider adapters under `lib/providers/` instead of hard-coding Claude paths across modules.
 
 - `claude` is the default and fully supported.
-- `codex` and `generic` are scaffolded adapters (capability-gated stubs).
+- `codex` and `kimi` are functional adapters (skills/hooks/sessions/transcript capabilities enabled); `generic` is a capability-gated stub.
 - Provider capabilities are exposed via `GET /api/providers` and included in `regin doctor`.
 
 Provider-specific path overrides can be configured in `settings.local.json`:
@@ -226,7 +226,7 @@ regin users    <init-db|list|create|reset-password|set-role|delete>
 regin skills   <list|check|pull|push|undeploy>
 regin pattern  <promote|import|import-dir|embed|route|enable-rules|rules-doctor>
 regin rules    <check|index|deploy|list-disabled|disable|enable|run|list>
-regin topics   <bootstrap|scan|check|import|install-hook|router-skill|wiki|route|audit|audit-fix>
+regin topics   <bootstrap|scan|list|promote|drift|evolve|propose|proposal-*>
 regin trace    <backfill-tokens|resolve-repos|backfill-costs>
 ```
 
