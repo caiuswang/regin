@@ -202,6 +202,12 @@ Hand the work to a checker that did **not** build it:
 - **Machine gates** from the roadmap — run them for real, paste the output:
   - frontend: `cd frontend && npx vite build` and
     `cd frontend && ./node_modules/.bin/playwright test`; zero console errors.
+  - **UI goals (`.vue`) — `ui-verified` gate:** re-run it against the build
+    session — `mcp__memory__gate(name="ui-verified", session_id="<build sid>")`
+    (or `regin gate ui-verified --session "$SID"`). `GATE FAIL` / `0` browser
+    spans means the UI was never rendered, only diffed — a **DO-NOT-SHIP wall**,
+    however good the code looks. Playwright driven as a Bash node script does
+    NOT count; use the traced MCP browser tools so the render leaves a span.
   - python: `.venv/bin/python -m pytest <relevant>`; radon grade ≥ C; grit clean.
 - A gate that fails is a **wall**, not a note. Do not proceed past a red gate.
 

@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from lib.orm import SessionLocal
 from lib.orm.models import SessionSpan
-from lib.trace.span_gates import RECALL_ARM, span_count
+from lib.trace.span_gates import RECALL_ARM, UI_VERIFIED, span_count
 from cli.app import app
 
 
@@ -71,3 +71,29 @@ def test_recall_ran_json_output():
     payload = json.loads(result.stdout)
     assert payload == {
         "gate": "recall-ran", "session": "sid-json", "spans": 1, "pass": True}
+
+
+def test_ui_verified_counts_browser_spans_ignores_bash():
+    # Playwright run as a Bash-driven node script lands as opaque tool.Bash — the
+    # gate must NOT count it, or it would rubber-stamp a diff-only "done".
+    _seed("sid-ui", [
+        "tool.mcp__plugin_playwright_playwright__browser_navigate",    # match
+        "tool.mcp__plugin_playwright_playwright__browser_take_screenshot",  # match
+        "tool.Bash",                                                   # no match
+        "tool.mcp__memory__recall",                                    # no match
+    ])
+    assert span_count("sid-ui", UI_VERIFIED) == 2
+
+
+def test_ui_verified_passes_with_browser_spans():
+    _seed("sid-ui-pass", ["tool.mcp__plugin_playwright_playwright__browser_evaluate"])
+    result = runner.invoke(app, ["gate", "ui-verified", "--session", "sid-ui-pass"])
+    assert result.exit_code == 0
+    assert "GATE PASS" in result.stdout
+
+
+def test_ui_verified_fails_without_browser_spans():
+    _seed("sid-ui-fail", ["tool.Bash", "tool.Read", "tool.Edit"])
+    result = runner.invoke(app, ["gate", "ui-verified", "--session", "sid-ui-fail"])
+    assert result.exit_code == 1
+    assert "GATE FAIL" in result.stdout

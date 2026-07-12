@@ -52,7 +52,23 @@ TASK_RECALL = SpanGate(
     describe="task-scoped recall (goal-verified recall arm)",
 )
 
-GATES: dict[str, SpanGate] = {g.key: g for g in (RECALL_ARM, TASK_RECALL)}
+# The Playwright MCP browser tools each emit one `tool.mcp__…playwright…browser_*`
+# span (navigate / evaluate / take_screenshot / click …). This gate proves the
+# agent drove a real browser against the app before declaring a UI goal done —
+# the anti-skip for "verify in the browser, don't claim done from the diff".
+# Deliberately blind to Playwright run as a Bash-driven node script: those land
+# as opaque `tool.Bash` spans, so gating forces the verify path through the
+# traced MCP browser tools. Fleet-wide: the browser MCP is available in every
+# regin session, so any managed repo's `.vue` goals inherit this wall.
+UI_VERIFIED = SpanGate(
+    key="ui-verified",
+    like=("tool.mcp%playwright%browser_%",),
+    describe="browser verification (real render before a UI goal is declared done)",
+)
+
+GATES: dict[str, SpanGate] = {
+    g.key: g for g in (RECALL_ARM, TASK_RECALL, UI_VERIFIED)
+}
 
 
 def span_count(trace_id: str, gate: SpanGate) -> int:
