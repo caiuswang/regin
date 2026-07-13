@@ -40,11 +40,23 @@ Hooks and transcripts produce a stream of events: tool calls, model thoughts, fi
 
 Patterns, skills, and rules are guesses about what the agent needs; trace is how you find out which guesses were right.
 
+### Mobile remote control — *experimental*
+
+> ⚠️ **Experimental, not yet mature.** Rough edges, thin coverage, and breaking changes are expected — treat it as a preview, not something to depend on.
+
+The web UI ships a mobile-first `/live` view: a phone-sized card that tails a running session — the agent's current state, its recent steps, and any question it's blocked on. When the session's terminal is reachable over the **agent bridge** (an HTTP request relayed as guarded keystrokes into the live agent's tmux pane), that card doubles as a remote control: from your phone you can answer the agent's permission prompts and steer it while it runs. See [docs/agent-bridge-design.md](docs/agent-bridge-design.md) for the design.
+
+### Agent memory — cross-session learning
+
+Trace tells you what happened inside one session; **agent memory** is how the lessons from past sessions reach the next one. When a session discovers something worth keeping — a non-obvious root cause, a gotcha, a decision and the reasoning behind it — it's distilled into a lesson (explicitly, when the agent flags one, or automatically by a post-session distiller) and written to a cross-session store that lives *outside* any single prompt. On later tasks the relevant lessons are recalled and injected into context on demand, matched to what the agent is actually doing rather than pasted in wholesale.
+
+The store is curated, not an append-only log: lessons are ranked by usefulness, reinforced when they actually get recalled, de-duplicated and consolidated in an offline pass, and superseded or retired as they go stale — all browsable, searchable, and human-approvable from the web UI. The payoff is a harness that sharpens with use: the mistake one session made becomes the guidance the next session starts with. See [ARCHITECTURE.md](ARCHITECTURE.md#agent-memory-cross-session-experience) for internals.
+
 ### Topic wikis — per-repo knowledge
 
-Each registered repo gets its own topic wiki: a local store of repo-specific knowledge (architecture notes, gotchas, conventions, runbooks) that lives alongside the code rather than in the agent's prompt. Topics are embedded so relevant entries can be fetched on demand when the agent's current task touches them, instead of being statically pasted into context.
+Each registered repo gets its own topic wiki: a store of repo-specific knowledge (architecture notes, gotchas, conventions, runbooks) organized as a graph of topics that lives alongside the code rather than in the agent's prompt. Topics aren't prose you hand-maintain: a tool-using agent explores the repo and *proposes* draft topics, you review them — with an optional agentic review note that checks each draft against the live code — and approve them into the graph, and every approved topic carries a wiki page kept honest by content-drift detection that flags pages whose underlying files have moved on.
 
-The goal is simple: keep the knowledge each repo has accumulated *with* that repo, and let the agent pull in only the slices that matter for what it's doing right now.
+At task time, topics are routed to the agent by keyword match over the approved graph and pulled into context on demand — only the slices that touch what it's doing right now, instead of being statically pasted in. The goal is simple: keep the knowledge each repo has accumulated *with* that repo, as a reviewable, self-refreshing artifact rather than prose that quietly rots.
 
 ## What regin is not
 
