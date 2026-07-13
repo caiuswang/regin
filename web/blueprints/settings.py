@@ -56,10 +56,6 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
      "description": "Drafts scored at/above this skip the human review queue "
                     "and become active. The gray band stays 'proposed'."},
     # ── Recall ──
-    {"key": "recall_top_k", "group": "Recall", "type": "int", "min": 1, "step": 1,
-     "label": "Recall result count",
-     "description": "Default number of memories a deliberate recall returns "
-                    "(MCP tool / CLI / web probe)."},
     {"key": "recall_min_score", "group": "Recall", "type": "float",
      "min": 0, "max": 1, "step": 0.05, "label": "Min rerank score",
      "description": "Minimum cross-encoder confidence for a reranked hit to "

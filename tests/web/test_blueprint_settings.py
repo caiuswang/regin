@@ -225,7 +225,7 @@ def test_agent_memory_put_preserves_shared_fields_when_block_also_in_local(
     shared file wipes every shared-only field. See _scope_block_base."""
     isolated_settings_files["shared"].write_text(json.dumps({"agent_memory": {
         "auto_inject": False,
-        "recall_top_k": 9,
+        "inject_top_k": 9,
         "inject_skip_commands": ["/goal", "/review"],
     }}))
     # SAME block key present in local too — this is what triggered the wipe.
@@ -244,7 +244,7 @@ def test_agent_memory_put_preserves_shared_fields_when_block_also_in_local(
         isolated_settings_files["shared"].read_text())["agent_memory"]
     assert shared["scope_policy"] == "global"        # the change landed
     assert shared["auto_inject"] is False            # …and nothing was dropped
-    assert shared["recall_top_k"] == 9
+    assert shared["inject_top_k"] == 9
     assert shared["inject_skip_commands"] == ["/goal", "/review"]
     # the local override is left where it belongs, untouched
     local = json.loads(

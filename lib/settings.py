@@ -227,7 +227,6 @@ class AgentMemoryConfig(BaseModel):
     # `memory.recall` span on the session trace so the injection is
     # auditable per-prompt in the trace UI. Off → inject silently.
     trace_recall: bool = True
-    recall_top_k: int = 5
     # Minimum cross-encoder confidence for a hit to surface on reranked
     # surfaces. RRF/FTS-ordered results are rank-gated by top_k instead.
     # Calibrated against the live store (2026-06): the cross-encoder was
