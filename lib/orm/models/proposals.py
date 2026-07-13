@@ -469,9 +469,9 @@ class TopicRefDigest(Base, table=True):
     table tracks the live tree without churn.
 
     Lives in the ORM DB alongside `graph_snapshots`/`proposal_*` (NOT the
-    separate memory DB), so it must stay mirrored across all three schema
-    authorities: this model, `db/schema.sql`, and `web/startup.py`'s
-    `init_topic_proposal_schema` self-heal.
+    separate memory DB), so it must stay mirrored across the schema
+    authorities: this model and `db/schema.sql` — plus a new alembic
+    revision under `alembic/versions/` when a column is added.
     """
 
     __tablename__ = "topic_ref_digests"

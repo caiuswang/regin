@@ -192,9 +192,8 @@ def ensure_schema() -> None:
     upgraded install (or the live `db/regin.db` from slice 1) needs the
     additive ALTER — otherwise the socket-aware UPSERT/SELECT hit
     `OperationalError: no column named tmux_socket`. Same DDL as
-    `db/schema.sql` (fresh installs) and
-    `web/startup.py:init_bridge_panes_schema` (serve startup) — keep all
-    three in sync.
+    `db/schema.sql` (fresh installs); a new column also needs an alembic
+    revision under `alembic/versions/` — keep them in sync.
     """
     global _schema_ready
     if _schema_ready:

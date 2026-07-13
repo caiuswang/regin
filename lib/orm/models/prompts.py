@@ -40,7 +40,7 @@ class PromptTemplate(Base, table=True):
     # For skeleton rows: JSON array of custom session-tag slugs a run spawned
     # from this surface self-applies (as source='auto'). The editable override
     # of `PromptSurface.tags`; read at ingest by `_stamp_llm_stage_origins`.
-    # Mirror this column in db/schema.sql + web/startup.py.
+    # Mirror this column in db/schema.sql + a new alembic revision.
     tags: str = Field(
         sa_column=Column("tags", Text, nullable=False, server_default=text("'[]'")),
     )

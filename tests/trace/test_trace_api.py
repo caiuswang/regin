@@ -499,8 +499,7 @@ def test_ingest_is_idempotent_on_repeated_span_id(client, trace_db):
     """Previously the POST /api/session-spans handler used INSERT OR REPLACE
     but the table had no UNIQUE (trace_id, span_id) constraint, so duplicate
     POSTs of the same span produced two rows. Now the unique index is
-    installed by _init_session_spans_schema, and INSERT OR REPLACE actually
-    dedupes."""
+    part of db/schema.sql, and INSERT OR REPLACE actually dedupes."""
     trace_id = 'ingest-dedup'
     span = {
         'trace_id': trace_id,

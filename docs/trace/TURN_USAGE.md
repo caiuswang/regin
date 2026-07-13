@@ -209,10 +209,11 @@ CREATE TABLE turn_usage (
 CREATE INDEX idx_turn_usage_trace_ts ON turn_usage(trace_id, timestamp);
 ```
 
-The table is part of the baseline `db/schema.sql`; `web/startup.py`'s
-`init_turn_usage_schema` also creates it on first boot for older DBs.
-Legacy `session_spans` rows where `name='turn.usage'` are no longer
-migrated automatically — use `regin trace backfill-tokens` to repopulate.
+The table is part of the baseline `db/schema.sql` (built by `regin init`);
+an older DB is brought to the current shape by `regin migrate`
+(`alembic upgrade head`). Legacy `session_spans` rows where
+`name='turn.usage'` are no longer migrated automatically — use
+`regin trace backfill-tokens` to repopulate.
 
 ## Key files
 
@@ -225,8 +226,8 @@ migrated automatically — use `regin trace backfill-tokens` to repopulate.
 | `lib/hook_plugin.py` | `post_event('turn_usage', rows)` → `/api/turn-usage` |
 | `lib/trace/trace_service/` | `ingest.py::ingest_turn_usage` + `queries.py::fetch_turn_usage`; also rebuilds `sessions.*` aggregates |
 | `web/blueprints/trace/turn_usage.py` | `POST /api/turn-usage`, `GET /api/sessions/<id>/turn-usage`, derives `context_pct` at read time |
-| `web/startup.py` | `init_turn_usage_schema` creates the table on first boot for older DBs |
 | `db/schema.sql` | Canonical table DDL (used by `regin init`) |
+| `alembic/versions/` | Post-baseline schema changes; applied by `regin migrate` |
 | `cli/commands/trace.py` | `regin trace backfill-tokens` fills `turn_usage` from on-disk transcripts |
 | `frontend/src/views/SessionTraceView.vue` | Header ctx% badge + lazy Turns panel |
 

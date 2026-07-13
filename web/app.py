@@ -2,14 +2,21 @@
 
 This file is intentionally small: it is the app factory and nothing else.
 Every HTTP route lives in a blueprint under `web/blueprints/`; every
-shared helper lives in `web/helpers.py` (ingest validators), `lib/trace/projection.py`
-(pure span transforms), or `web/startup.py` (boot-time schema bootstrap).
+shared helper lives in `web/helpers.py` (ingest validators) or
+`lib/trace/projection.py` (pure span transforms).
 
-A few private names (`_normalize_is_test`, `_graft_orphans`,
-`_init_session_spans_schema`, …) are re-exported from their new homes so
-existing tests can keep reaching them as `app_module._foo`. If you need
-to modify one of those helpers, edit it in its own module — this file
-should never grow them back.
+Schema DDL is deliberately NOT run here: `create_app()` never creates or
+alters tables. Fresh installs get their schema from `regin init`
+(db/schema.sql, stamped at the alembic head); an existing DB is brought up
+to the current schema by the explicit `regin migrate` command
+(`alembic upgrade head`). Booting the server must not migrate the schema.
+(It does still best-effort seed builtin prompt rows — content, not schema
+— so a code upgrade's new prompt surfaces reach the install.)
+
+A few private names (`_normalize_is_test`, `_graft_orphans`, …) are
+re-exported from their new homes so existing tests can keep reaching them
+as `app_module._foo`. If you need to modify one of those helpers, edit it
+in its own module — this file should never grow them back.
 """
 
 import logging
@@ -21,7 +28,6 @@ import uuid
 from flask import Flask, g, jsonify, request, send_from_directory
 
 from lib.activity_log import configure_activity_log, get_activity_logger
-from lib.orm.engine import get_connection
 from lib.logging_setup import configure_logging
 
 
@@ -37,20 +43,6 @@ from lib.trace.projection import (  # noqa: F401
     _fetch_spans, _graft_orphans, _widen_envelopes,
     _persist_projection, _build_span_tree,
 )
-from web.startup import (
-    init_session_spans_schema as _init_session_spans_schema,
-    init_sessions_schema as _init_sessions_schema,
-    init_session_repos_schema as _init_session_repos_schema,
-    init_session_tags_schema as _init_session_tags_schema,
-    init_turn_usage_schema as _init_turn_usage_schema,
-    init_prompt_images_schema as _init_prompt_images_schema,
-    init_topic_proposal_schema as _init_topic_proposal_schema,
-    init_session_grades_schema as _init_session_grades_schema,
-    init_bridge_panes_schema as _init_bridge_panes_schema,
-    init_bridge_messages_schema as _init_bridge_messages_schema,
-    init_pattern_deployments_schema as _init_pattern_deployments_schema,
-    init_prompt_templates_schema as _init_prompt_templates_schema,
-)
 
 
 def create_app():
@@ -61,28 +53,12 @@ def create_app():
 
     _install_request_logging(app)
 
-    conn = get_connection()
-    try:
-        _init_session_spans_schema(conn)
-        _init_sessions_schema(conn)
-        _init_session_repos_schema(conn)
-        _init_session_tags_schema(conn)
-        _init_turn_usage_schema(conn)
-        _init_prompt_images_schema(conn)
-        _init_topic_proposal_schema(conn)
-        _init_session_grades_schema(conn)
-        _init_bridge_panes_schema(conn)
-        _init_bridge_messages_schema(conn)
-        _init_pattern_deployments_schema(conn)
-        _init_prompt_templates_schema(conn)
-    finally:
-        conn.close()
-
     # Seed/heal builtin prompt skeletons on startup, not only on init/rebuild:
     # inserts rows for newly registered surfaces and replaces stored bodies
     # still equal to a retired default (user edits survive), so a code upgrade
-    # that revises a builtin prompt reaches existing installs. Best-effort — a
-    # prompt-table hiccup must never block serve.
+    # that revises a builtin prompt reaches existing installs. This is content
+    # seeding, not schema DDL — the schema self-heal lives in `regin migrate`.
+    # Best-effort — a prompt-table hiccup must never block serve.
     try:
         from lib.prompt_templates import seed_builtin_skeletons
         seed_builtin_skeletons()

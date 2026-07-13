@@ -61,6 +61,7 @@ CLI mirror is `regin memory supersede <old-id> --body … `. Internals: *Agent M
 .venv/bin/python cli/regin.py doctor        # Environment + missing CLI tools
 .venv/bin/python cli/regin.py add-repo <path>
 .venv/bin/python cli/regin.py rebuild       # Rebuild DB from git-tracked files
+.venv/bin/python cli/regin.py migrate       # Sync an existing DB to the current schema
 .venv/bin/python cli/regin.py serve         # Web dashboard on :8321
 
 # Frontend (Vue 3 SPA in frontend/, Flask serves /api)
@@ -93,7 +94,7 @@ wouldn't confuse a future reader, delete it.
 
 - New code uses the SQLModel layer in `lib/orm/`. Call `SessionLocal()` / `AuthSessionLocal()`.
 - Raw `sqlite3` is reserved for the paginated trace reads in `lib/orm/engine.py` that can't be expressed cleanly in SQLModel.
-- **Schema drift gotcha**: `regin init` builds the DB from `db/schema.sql`, **not** Alembic. Any migration that adds tables/columns must also be folded into `db/schema.sql`, or fresh installs will diverge.
+- **Schema drift gotcha**: `regin init` builds the DB from `db/schema.sql` (the baseline — Alembic `0001` is a no-op anchor) and stamps it at the Alembic head. A schema change is therefore **two** edits: a new `alembic/versions/00NN_*.py` revision **and** the matching `db/schema.sql` change (plus the SQLModel field in `lib/orm/models/`), or fresh installs and migrated installs diverge. Booting the server does **not** touch the schema; an existing DB is brought up to head with `regin migrate` (`alembic upgrade head`).
 
 ### Activity logging
 

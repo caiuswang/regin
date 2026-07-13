@@ -73,26 +73,6 @@ def test_table_built_from_schema_sql(tmp_db):
         assert session.exec(select(TopicRefDigest)).all() == []
 
 
-def test_self_heal_recreates_table(tmp_db):
-    from web.startup import init_topic_proposal_schema
-    from lib.orm.engine import get_connection
-
-    conn = get_connection()
-    conn.execute("DROP TABLE topic_ref_digests")
-    conn.commit()
-    gone = conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='topic_ref_digests'"
-    ).fetchall()
-    assert gone == []
-
-    init_topic_proposal_schema(conn)
-    healed = conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='topic_ref_digests'"
-    ).fetchall()
-    assert healed, "self-heal path must recreate topic_ref_digests"
-    conn.close()
-
-
 # ── capture ───────────────────────────────────────────────────
 
 

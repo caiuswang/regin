@@ -3,8 +3,8 @@
 Append-only by convention: every grading run inserts new rows; readers
 take the latest row per (trace_id, axis). `ensure_schema()` keeps CLI
 paths working against older local DBs that predate the table — the same
-CREATE TABLE the web app runs at startup (`web/startup.py`) and `regin
-init` bakes from `db/schema.sql`.
+table `regin init` bakes from `db/schema.sql` and alembic migrations
+evolve.
 """
 
 from __future__ import annotations

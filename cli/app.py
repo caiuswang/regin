@@ -74,8 +74,8 @@ def _is_clean_exit(exc: BaseException) -> bool:
 
 
 # Flat top-level commands registered from their domain modules.
-db.register(app)      # init, rebuild, tags, search
-meta.register(app)    # doctor, migrate
+db.register(app)      # init, rebuild, migrate, tags, search
+meta.register(app)    # doctor
 repo.register(app)    # discover, sync, status
 route.register(app)   # route (experimental dense pattern routing)
 goal.register(app)    # goal preflight (loop-engineering roadmap)

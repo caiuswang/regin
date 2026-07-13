@@ -226,6 +226,12 @@ def cmd_init(
 
     _init_db()
 
+    # The fresh DB is built from schema.sql, which is kept equal to the alembic
+    # head — enroll it in the revision chain so `regin migrate` upgrades (not
+    # replays) it later.
+    from lib.db_migrate import stamp_head
+    stamp_head()
+
     # Seed a builtin skeleton row for every registered external-agent prompt
     # surface (bodies live in the Python registry, not schema.sql). Idempotent.
     from lib.prompt_templates import seed_builtin_skeletons
@@ -292,7 +298,34 @@ def cmd_rebuild(
     typer.echo("Rebuilding database from files...")
     stats = rebuild_from_files(preserve_local=not clean)
     _render_rebuild_stats(stats)
+    # Rebuild re-creates the schema from schema.sql (== alembic head); re-stamp
+    # so the rebuilt DB stays enrolled in the revision chain.
+    from lib.db_migrate import stamp_head
+    stamp_head()
     typer.echo("Done.")
+
+
+# ── migrate ───────────────────────────────────────────────────
+
+def cmd_migrate() -> None:
+    """Bring an existing DB up to the current schema via alembic.
+
+    Fresh installs are already at head (`regin init` stamps them); this
+    applies any alembic version files newer than an existing DB's stamp, or
+    one-time enrolls a pre-wiring DB into the revision chain. Safe to run
+    repeatedly; an up-to-date DB is a no-op.
+    """
+    if not db_exists():
+        typer.echo(f"No database at {DB_PATH}. Run `regin init` first.")
+        raise typer.Exit(1)
+    from lib.db_migrate import run_migrate
+    action = run_migrate()
+    if action == "upgraded":
+        typer.echo(f"Applied pending migrations to {DB_PATH}")
+    else:
+        typer.echo(
+            f"Enrolled existing DB into the alembic chain (already at head): {DB_PATH}"
+        )
 
 
 # ── tags ──────────────────────────────────────────────────────
@@ -386,5 +419,9 @@ def cmd_search(
 def register(app: typer.Typer) -> None:
     app.command("init", help="Initialize database and directories")(cmd_init)
     app.command("rebuild", help="Rebuild DB from git-tracked files")(cmd_rebuild)
+    app.command(
+        "migrate",
+        help="Reconcile an existing DB with the current code's schema",
+    )(cmd_migrate)
     app.command("tags", help="Manage tags")(cmd_tags)
     app.command("search", help="Search patterns")(cmd_search)

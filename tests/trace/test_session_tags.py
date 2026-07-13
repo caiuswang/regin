@@ -355,29 +355,6 @@ def test_seed_skeleton_carries_registry_tags(client):
     assert dream['tags'] == ['memory', 'dream']
 
 
-def test_prompt_templates_tags_column_migration_backfills(tmp_path):
-    # An existing install whose skeleton rows predate the `tags` column:
-    # the additive migration adds the column AND one-time backfills the
-    # registry tags for existing builtin rows (before any user could edit).
-    import sqlite3
-    from web.startup import init_prompt_templates_schema
-    p = tmp_path / 'old.db'
-    conn = sqlite3.connect(str(p))
-    conn.execute(
-        "CREATE TABLE prompt_templates (id INTEGER PRIMARY KEY, slug TEXT UNIQUE, "
-        "label TEXT, body TEXT NOT NULL, builtin INTEGER NOT NULL DEFAULT 0)")
-    conn.execute("INSERT INTO prompt_templates (slug, label, body, builtin) "
-                 "VALUES ('memory-reflect-dream', 'Dream', 'b', 1)")
-    conn.commit()
-    init_prompt_templates_schema(conn)
-    import json
-    row = conn.execute(
-        "SELECT tags FROM prompt_templates WHERE slug='memory-reflect-dream'"
-    ).fetchone()[0]
-    conn.close()
-    assert json.loads(row) == ['memory', 'dream']
-
-
 def test_llm_stage_session_auto_tagged_from_surface(client):
     from lib.trace.trace_service import ingest
     ingest.ingest_session_spans([_session_start_span(

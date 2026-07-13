@@ -5,10 +5,10 @@ incrementally-maintained aggregates (titles, counters, status) to keep
 the dashboard list read O(1). `skill_reads` and `plan_sessions` are
 narrower logs emitted by specific PostToolUse hooks.
 
-These model shapes match the schema declared in `web/startup.py`
-(which still owns the CREATE TABLE calls for now — B.5 will hand the
-responsibility to Alembic migrations). Any column added to a table
-there must be mirrored as a field here if queries want to read it.
+These model shapes match the schema in `db/schema.sql` (the baseline) as
+evolved by the alembic migrations under `alembic/versions/`. Any column
+added to a table there must be mirrored as a field here if queries want
+to read it.
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ class SessionSpan(Base, table=True):
     )
     # Owning agent: NULL = main agent, else the subagent id. Promoted from
     # attributes.agent_id so roster/phase reads group on an indexed column
-    # instead of json_extract-scanning. Mirrors db/schema.sql + web/startup.py.
+    # instead of json_extract-scanning. Mirrors db/schema.sql + the alembic migration that added it.
     agent_id: Optional[str] = Field(
         default=None,
         sa_column=Column("agent_id", String),
@@ -128,14 +128,14 @@ class SessionSpan(Base, table=True):
     # and promoted here at insert time so the serve-time ladder can value-join
     # a tool span to its `prompt-<uuid>` anchor without json_extract-scanning.
     # The value stays in attributes too; readers fall back to it for rows
-    # inserted before this promotion. Mirrors db/schema.sql + web/startup.py.
+    # inserted before this promotion. Mirrors db/schema.sql + the alembic migration that added it.
     source_prompt_id: Optional[str] = Field(
         default=None,
         sa_column=Column("source_prompt_id", String),
     )
     # Capture source: 'hook' (live hook events) or 'transcript' (the
     # transcript scan). The append-only store keeps both; lib/trace/merge.py
-    # selects winners at read time. Mirrors db/schema.sql + web/startup.py.
+    # selects winners at read time. Mirrors db/schema.sql + the alembic migration that added it.
     source: str = Field(
         default="hook",
         sa_column=Column("source", Text, nullable=False,
