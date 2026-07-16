@@ -3,7 +3,10 @@ import { computed } from 'vue'
 import { fmtLocalDateTime } from '../../utils/traceFormatters'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
+import Icon from '../ui/Icon.vue'
 import ClampedText from '../ui/ClampedText.vue'
+import MarkdownContent from '../MarkdownContent.vue'
+import { useCopy } from '../../composables/useCopy.js'
 
 const props = defineProps({
   thread: { type: Object, required: true },
@@ -12,6 +15,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['regenerate', 'dismiss'])
+
+const { copyText } = useCopy()
+
+// The reviewer writes the note as free-form markdown; copy hands back that same
+// source text (all comments joined), not the rendered HTML.
+const copyBody = computed(() =>
+  (props.thread.comments || []).map((c) => c.body).filter(Boolean).join('\n\n'))
 
 // Recommendation comes from the thread metadata the backend stamps
 // (`{recommendation: 'REGENERATE'|'ACCEPT'|'DISMISS'}`); fall back to a
@@ -54,7 +64,21 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
           opened in r{{ thread.revision_number }}
         </span>
       </div>
-      <div class="text-[11px] text-slate-400 whitespace-nowrap">{{ fmtLocalDateTime(thread.updated_at) }}</div>
+      <div class="flex items-center gap-1 whitespace-nowrap">
+        <Button
+          v-if="copyBody"
+          variant="ghost"
+          size="sm"
+          class="gap-1 px-1 py-0.5 text-[11px] text-slate-500 hover:text-slate-800"
+          title="Copy review note"
+          data-testid="review-note-copy"
+          @click.stop="copyText(copyBody)"
+        >
+          <Icon name="copy" :size="12" class="shrink-0" />
+          Copy
+        </Button>
+        <span class="text-[11px] text-slate-400">{{ fmtLocalDateTime(thread.updated_at) }}</span>
+      </div>
     </div>
 
     <article
@@ -63,7 +87,7 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
       class="border-l-2 border-indigo-300 pl-3"
     >
       <ClampedText :lines="6">
-        <p class="whitespace-pre-wrap break-words text-sm text-slate-800">{{ comment.body }}</p>
+        <MarkdownContent :markdown="comment.body || ''" class="text-sm text-slate-800" />
       </ClampedText>
     </article>
 
