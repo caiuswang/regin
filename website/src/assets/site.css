@@ -85,32 +85,53 @@
   --code-text: #e2e8f0;
   --code-inline-bg: #eef2f7;
   --code-inline-text: #0f172a;
+  /* Chrome living on the always-dark code panels; per-theme because the
+     panel's undertone is navy in light mode, moss in dark mode. */
+  --code-comment: #7d8db0;
+  --code-faint: #8494ad;
+  --code-chrome-edge: #354462;
+  --code-chrome-hover-ink: #dbe4f0;
+  --code-chrome-hover-edge: #495a7d;
+  --code-chrome-hover-bg: rgba(148, 163, 184, 0.12);
   --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 8px 24px rgba(15, 23, 42, 0.06);
   --header-bg: rgba(248, 250, 252, 0.85);
 }
 
+/* Night palette, re-derived in OKLCH around the brand hue (~152-155):
+   moss-black surfaces instead of generic slate-navy, a real three-step
+   elevation ladder (bg 0.17 / surface 0.213 / surface-2 0.253 L), code
+   panels sunk *below* the page (0.135 L) so the terminal wells stay the
+   signature surface, and the accent pulled off green-400 neon to a
+   calmer 0.135-chroma green. All pairs measured >=4.5:1 text, >=3:1
+   non-text (scratchpad palette.mjs; worst text pair 6.28:1). */
 [data-theme="dark"] {
-  --bg: #0b1120;
-  --surface: #111a2e;
-  --surface-2: #172136;
-  --text: #f1f5f9;
-  --body-ink: #cbd5e1;
-  --muted: #a5b4cb;
-  --faint: #8494ad;
-  --border: #25314c;
-  --border-strong: #354462;
-  --accent: #4ade80;
-  --accent-contrast: #052e16;
-  --accent-soft: #14321f;
-  --accent-soft-text: #86efac;
-  --warn-soft: #372a12;
-  --warn-text: #fcd34d;
-  --code-bg: #0d1526;
-  --code-text: #dbe4f0;
-  --code-inline-bg: #1c2740;
-  --code-inline-text: #e2e8f0;
+  --bg: #0b110d;
+  --surface: #141b16;
+  --surface-2: #1c251f;
+  --text: #eef1ef;
+  --body-ink: #cbd3cd;
+  --muted: #adb9b1;
+  --faint: #919e94;
+  --border: #2a362e;
+  --border-strong: #3d4c42;
+  --accent: #6bcd89;
+  --accent-contrast: #072311;
+  --accent-soft: #18301f;
+  --accent-soft-text: #a5e3b4;
+  --warn-soft: #31240e;
+  --warn-text: #e8cb7b;
+  --code-bg: #070c08;
+  --code-text: #d5ddd7;
+  --code-inline-bg: #1e2821;
+  --code-inline-text: #dae0dc;
+  --code-comment: #86998c;
+  --code-faint: #88998d;
+  --code-chrome-edge: #36473b;
+  --code-chrome-hover-ink: #d8e0da;
+  --code-chrome-hover-edge: #54695b;
+  --code-chrome-hover-bg: rgba(213, 221, 215, 0.1);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
-  --header-bg: rgba(11, 17, 32, 0.85);
+  --header-bg: rgba(11, 17, 13, 0.85);
 }
 
 * { box-sizing: border-box; }
@@ -401,7 +422,7 @@ code {
   font-size: 0.875em;
 }
 
-pre .cmt { color: #7d8db0; }
+pre .cmt { color: var(--code-comment); }
 
 /* ── Tables ───────────────────────────────────────────── */
 
@@ -514,10 +535,10 @@ td code, th code { white-space: nowrap; }
   right: 0.45rem;
   width: 2.5rem;
   height: 2.5rem;
-  color: #8494ad;
-  border-color: #354462;
+  color: var(--code-faint);
+  border-color: var(--code-chrome-edge);
 }
-.quickstart-copy:hover { color: #dbe4f0; background: rgba(148, 163, 184, 0.12); border-color: #495a7d; }
+.quickstart-copy:hover { color: var(--code-chrome-hover-ink); background: var(--code-chrome-hover-bg); border-color: var(--code-chrome-hover-edge); }
 .quickstart-caption { font-size: var(--text-sm); color: var(--muted); max-width: 62ch; margin: 0.6rem auto 0; }
 @media (max-width: 480px) {
   .quickstart code { white-space: pre-wrap; word-break: break-all; }
@@ -533,7 +554,7 @@ td code, th code { white-space: nowrap; }
   padding: 0.75rem 0.75rem 0.9rem;
 }
 .shot-frame img { display: block; width: 100%; height: auto; border-radius: 8px; }
-.shot-frame figcaption { font-size: var(--text-sm); color: #8494ad; max-width: 72ch; padding: 0.8rem 0.35rem 0; line-height: 1.55; }
+.shot-frame figcaption { font-size: var(--text-sm); color: var(--code-faint); max-width: 72ch; padding: 0.8rem 0.35rem 0; line-height: 1.55; }
 
 /* Scroll-driven timelines ignore blanket animation-duration overrides,
    so the reduced-motion opt-out must gate the declaration itself. */

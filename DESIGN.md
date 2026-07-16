@@ -3,7 +3,7 @@ name: regin
 description: Official website for regin — the harness layer for AI coding agents
 colors:
   harness-green: "#15803d"
-  harness-green-dark-mode: "#4ade80"
+  harness-green-dark-mode: "#6bcd89"
   green-tint: "#dcfce7"
   green-tint-ink: "#14532d"
   ink: "#0f172a"
@@ -16,11 +16,14 @@ colors:
   hairline-strong: "#cbd5e1"
   amber-tint: "#fef3c7"
   amber-ink: "#78350f"
-  night: "#0b1120"
-  night-surface: "#111a2e"
-  night-ink: "#f1f5f9"
-  night-ink-muted: "#a5b4cb"
+  night: "#0b110d"
+  night-surface: "#141b16"
+  night-surface-raised: "#1c251f"
+  night-code: "#070c08"
+  night-ink: "#eef1ef"
+  night-ink-muted: "#adb9b1"
   code-comment: "#7d8db0"
+  code-comment-dark-mode: "#86998c"
   code-chrome-ink: "#dbe4f0"
   code-chrome-edge: "#495a7d"
 typography:
@@ -153,22 +156,22 @@ The system explicitly rejects the three anti-references in PRODUCT.md: the gener
 Slate neutrals carry the interface; one deep green carries the meaning.
 
 ### Primary
-- **Harness Green** (#15803d light / #4ade80 dark): the color of the mechanism working — a passing check, a live hook. Used for links, the active nav state, the one primary CTA per view, and the focus ring. Chosen at green-700 in light mode because green-600 measured 3.1–3.3:1 against light surfaces; this shade measures 4.8–5.0:1.
-- **Green Tint** (#dcfce7, ink #14532d): quiet green wash for the active nav pill, info callouts, and icon chips; its dark-mode counterparts are #14321f / #86efac.
+- **Harness Green** (#15803d light / #6bcd89 dark): the color of the mechanism working — a passing check, a live hook. Used for links, the active nav state, the one primary CTA per view, and the focus ring. Chosen at green-700 in light mode because green-600 measured 3.1–3.3:1 against light surfaces; this shade measures 4.8–5.0:1. The dark shade is deliberately pulled off green-400 neon (oklch 0.77 / 0.135 chroma) — it still measures 8.0–9.7:1 on the night surfaces.
+- **Green Tint** (#dcfce7, ink #14532d): quiet green wash for the active nav pill, info callouts, and icon chips; its dark-mode counterparts are #18301f / #a5e3b4.
 
 ### Neutral
-- **Ink** (#0f172a): headings and emphasis on light surfaces; also the background of code blocks in both themes.
+- **Ink** (#0f172a): headings and emphasis on light surfaces; also the background of code blocks in the light theme (dark uses the night code well).
 - **Body Ink** (#1e293b light / #cbd5e1 dark): article and pillar prose — the reading tier sits one step above Muted so primary content anchors the page.
 - **Muted Ink** (#475569): leads, captions, table cells, nav resting state (7.2:1 on Fog).
 - **Faint Ink** (#64748b): footer text and tertiary metadata only — the floor of legibility (4.55:1); nothing smaller or lighter.
 - **Fog** (#f8fafc): the page background. A cool near-white — deliberately not cream.
 - **Surface** (#ffffff) and **Recessed Surface** (#f1f5f9): cards and table headers respectively.
 - **Hairline** (#e2e8f0) / **Strong Hairline** (#cbd5e1): borders; strong is reserved for interactive edges (ghost buttons).
-- **Night set** (#0b1120 page, #111a2e surface, #f1f5f9 ink, #a5b4cb muted): the dark theme, re-derived — softened toward GitHub/VSCode darks, never a pure inversion, never pure black.
-- **Code chrome** (#7d8db0 comments at 5.4:1, #dbe4f0 hover ink, #495a7d hover edge): fixed colors for text and controls living on the always-dark code panels; theme-independent because the panel is.
+- **Night set** (#0b110d page, #141b16 surface, #1c251f raised surface, #070c08 code wells, #eef1ef ink, #adb9b1 muted): the dark theme, re-derived in OKLCH around the brand hue (~155) — moss-black, not slate-navy, so the dark theme belongs to Harness Green rather than to generic dev-tool dark. Elevation is a real three-step lightness ladder (0.17 → 0.213 → 0.253 L) with code panels sunk *below* the page (0.135 L) to keep the terminal wells the signature surface. Never a pure inversion, never pure black.
+- **Code chrome** (#7d8db0 comments / #dbe4f0 hover ink / #495a7d hover edge in light; #86998c / #d8e0da / #54695b in dark): text and controls living on the always-dark code panels; per-theme because the panel's undertone is navy in light mode and moss in dark mode. Comments measure ≥5.4:1 light, 6.5:1 dark.
 
 ### Semantic
-- **Amber Tint** (#fef3c7, ink #78350f): warnings and security callouts only (dark: #372a12 / #fcd34d). Never decorative.
+- **Amber Tint** (#fef3c7, ink #78350f): warnings and security callouts only (dark: #31240e / #e8cb7b). Never decorative.
 
 ### Named Rules
 **The Green Budget Rule.** Harness Green appears only where the mechanism speaks: links, active nav, one primary CTA per view, focus rings. If green exceeds ~10% of a screen, something is misusing it.
