@@ -41,7 +41,7 @@ typography:
     letterSpacing: "-0.03em"
   section:
     fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.45rem, 1.15rem + 1.5vw, 1.8rem)"
+    fontSize: "clamp(1.5rem, 1.15rem + 1.5vw, 1.8rem)"
     fontWeight: 750
     lineHeight: 1.2
     letterSpacing: "-0.025em"
@@ -101,8 +101,9 @@ spacing:
   md: "1.25rem"
   lg: "1.5rem"
   xl: "2.5rem"
-  section: "3.5rem"
-  hero: "5rem"
+  2xl: "4rem"
+  section: "clamp(2.25rem, 1.5rem + 2.5vw, 3.5rem)"
+  hero: "clamp(3.25rem, 2.25rem + 3.5vw, 5rem)"
 components:
   button-primary:
     backgroundColor: "{colors.harness-green}"
@@ -188,7 +189,7 @@ Slate neutrals carry the interface; one deep green carries the meaning.
 Ten steps, all published as `--text-*` tokens in `site.css`; no literal font-size ships outside them.
 - **Display** (800, clamp(2.3rem, 6vw, 3.6rem), 1.08, -0.035em): the hero headline only — one per site, not per page.
 - **Headline** (800, clamp(1.9rem, 1.2rem + 3vw, 2.2rem), 1.15, -0.03em): doc page titles (`.page-title`).
-- **Section** (750, clamp(1.45rem, 1.15rem + 1.5vw, 1.8rem), 1.2, -0.025em): homepage section heads and the closing CTA.
+- **Section** (750, clamp(1.5rem, 1.15rem + 1.5vw, 1.8rem), 1.2, -0.025em): homepage section heads and the closing CTA — the 1.5rem floor keeps h2 ≥1.25× the fixed 1.2rem h3 on phones.
 - **Title** (700, 1.45rem, 1.25, -0.02em): article `h2`, separated by a hairline rule above.
 - **Subtitle** (650, 1.2rem, 1.3, -0.01em): every `h3` tier — article h3, card h3, closing-column h3; pillar titles take the same size at 700.
 - **Lead** (400, 1.125rem, 1.6): hero lead, page leads, and the brand wordmark size.
@@ -251,6 +252,7 @@ Wrapped in a bordered, rounded (12px) scroll container; Recessed Surface header 
 - **Do** contain overflow locally: code blocks and tables scroll inside their own containers; `scrollWidth ≤ clientWidth` holds on the page at every viewport.
 - **Do** honor `prefers-reduced-motion` with a near-instant alternative for every transition.
 - **Do** keep icon-only buttons labeled (`aria-label`) and all icons as inline SVG.
+- **Do** draw every layout-scale gap and padding from the `--space-*` tokens in `site.css` (the two section-scale steps are fluid clamps); micro spacing inside a component may stay literal, but a new section- or group-level literal is drift.
 
 ### Don't:
 - **Don't** build the "generic SaaS landing" (PRODUCT.md anti-reference): no gradient hero, no floating dashboard mockups, no logo marquee, no pricing-table energy.

@@ -60,9 +60,28 @@
   --text-lead: 1.125rem;
   --text-h3: 1.2rem;
   --text-h2: 1.45rem;
-  --text-section: clamp(1.45rem, 1.15rem + 1.5vw, 1.8rem);
+  /* Floor is 1.5rem, not 1.45: keeps section h2 ≥1.25× the fixed 1.2rem h3
+     at the clamp floor, where weight alone had to carry the h2/h3 split. */
+  --text-section: clamp(1.5rem, 1.15rem + 1.5vw, 1.8rem);
   --text-headline: clamp(1.9rem, 1.2rem + 3vw, 2.2rem);
   --text-display: clamp(2.3rem, 6vw, 3.6rem);
+
+  /* Spacing scale — every layout-scale gap/padding draws from these steps.
+     The two section-scale steps are fluid so inter-section air tightens on
+     phones without a breakpoint; micro spacing inside components stays
+     literal (optical values, not on this scale). */
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1.25rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-section: clamp(2.25rem, 1.5rem + 2.5vw, 3.5rem);
+  --space-hero: clamp(3.25rem, 2.25rem + 3.5vw, 5rem);
+
+  /* z ladder: sticky chrome < skip link (it must overlay the header it skips). */
+  --z-sticky: 50;
+  --z-skip-link: 100;
 
   --bg: #f8fafc;
   --surface: #ffffff;
@@ -195,8 +214,8 @@ a:hover { text-decoration: underline; }
   top: 0;
   background: var(--surface);
   color: var(--text);
-  padding: 0.5rem 1rem;
-  z-index: 100;
+  padding: var(--space-xs) var(--space-md);
+  z-index: var(--z-skip-link);
   border-radius: 0 0 8px 0;
 }
 .skip-link:focus { left: 0; }
@@ -206,7 +225,7 @@ a:hover { text-decoration: underline; }
 .site-header {
   position: sticky;
   top: 0;
-  z-index: 50;
+  z-index: var(--z-sticky);
   background: var(--header-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -216,7 +235,7 @@ a:hover { text-decoration: underline; }
 .header-inner {
   max-width: 72rem;
   margin: 0 auto;
-  padding: 0 1.25rem;
+  padding: 0 var(--space-md);
   height: 4rem;
   display: flex;
   align-items: center;
@@ -317,13 +336,13 @@ main { display: block; min-height: 100vh; }
 .container {
   max-width: 72rem;
   margin: 0 auto;
-  padding: 0 1.25rem;
+  padding: 0 var(--space-md);
 }
 
 .docs-layout {
   max-width: 72rem;
   margin: 0 auto;
-  padding: 2.5rem 1.25rem 4rem;
+  padding: var(--space-xl) var(--space-md) var(--space-2xl);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 3rem;
@@ -364,7 +383,7 @@ main { display: block; min-height: 100vh; }
 h1, h2, h3 { text-wrap: balance; }
 
 .page-title { font-size: var(--text-headline); font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin: 0 0 0.5rem; }
-.page-lead { font-size: var(--text-lead); color: var(--muted); margin: 0 0 2.5rem; max-width: 40rem; }
+.page-lead { font-size: var(--text-lead); color: var(--muted); margin: 0 0 var(--space-xl); max-width: 40rem; }
 
 article h2 {
   font-size: var(--text-h2);
@@ -440,7 +459,7 @@ td code, th code { white-space: nowrap; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 1.5rem;
+  padding: var(--space-lg);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .card h3 { margin-top: 0; }
@@ -450,7 +469,7 @@ td code, th code { white-space: nowrap; }
   gap: 0.75rem;
   border-radius: 12px;
   padding: 1rem 1.15rem;
-  margin: 1.25rem 0;
+  margin: var(--space-md) 0;
   font-size: var(--text-ui);
   border: 1px solid transparent;
 }
@@ -497,7 +516,7 @@ td code, th code { white-space: nowrap; }
 /* ── Landing page ─────────────────────────────────────── */
 
 .hero {
-  padding: 5rem 0 4rem;
+  padding: var(--space-hero) 0 var(--space-section);
   text-align: center;
 }
 .hero h1 {
@@ -505,29 +524,31 @@ td code, th code { white-space: nowrap; }
   font-weight: 800;
   letter-spacing: -0.035em;
   line-height: 1.08;
-  margin: 0 auto 1.25rem;
+  margin: 0 auto var(--space-md);
   max-width: 50rem;
 }
 .hero .lead {
   font-size: var(--text-lead);
   color: var(--muted);
   max-width: 42rem;
-  margin: 0 auto 2.25rem;
+  margin: 0 auto var(--space-xl);
 }
-.hero-ctas { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; }
+.hero-ctas { display: flex; gap: var(--space-sm); justify-content: center; flex-wrap: wrap; }
 
+/* lg, not xl: the buttons and the command are the same action, so the
+   quickstart belongs to the CTA cluster rather than starting a new group. */
 .quickstart-wrap {
   position: relative;
   display: inline-block;
   max-width: 100%;
-  margin: 2rem auto 0;
+  margin: var(--space-lg) auto 0;
 }
 .quickstart {
   max-width: 100%;
   text-align: left;
   margin: 0;
   font-size: var(--text-sm);
-  padding: 0.85rem 3.2rem 0.85rem 1.25rem;
+  padding: 0.85rem 3.5rem 0.85rem 1.25rem;
 }
 .quickstart-copy {
   position: absolute;
@@ -577,14 +598,17 @@ td code, th code { white-space: nowrap; }
 .pillar {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 1.75rem;
-  padding: 2.5rem 0;
+  gap: var(--space-lg);
+  padding: var(--space-xl) 0;
   border-top: 1px solid var(--border);
 }
+/* Halves the section-head→first-pillar compound gap so the intro stays
+   attached to the pillars it introduces. */
+.section-head + .pillar { padding-top: var(--space-lg); }
 /* Artifacts always take the wide 7fr track; only the side alternates.
    `of .pillar` keeps the count immune to non-pillar div siblings. */
 @media (min-width: 900px) {
-  .pillar { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 3.5rem; align-items: center; }
+  .pillar { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-section); align-items: center; }
   .pillar:nth-child(even of .pillar) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
   .pillar:nth-child(even of .pillar) .pillar-body { order: 2; }
 }
@@ -622,11 +646,11 @@ td code, th code { white-space: nowrap; }
 
 /* ── Secondary feature list ───────────────────────────── */
 
-.mini-list { list-style: none; margin: 2.5rem 0 0; padding: 0; }
+.mini-list { list-style: none; margin: var(--space-lg) 0 0; padding: 0; }
 .mini-row {
   display: flex;
   align-items: baseline;
-  gap: 1.25rem;
+  gap: var(--space-md);
   padding: 1.1rem 0.25rem;
   border-top: 1px solid var(--border);
   color: inherit;
@@ -647,28 +671,31 @@ td code, th code { white-space: nowrap; }
 .closing-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 2rem;
+  gap: var(--space-xl);
   border-top: 1px solid var(--border);
 }
-@media (min-width: 768px) { .closing-cols { grid-template-columns: 1fr 1fr; gap: 4rem; } }
+@media (min-width: 768px) { .closing-cols { grid-template-columns: 1fr 1fr; gap: var(--space-2xl); } }
 .closing-cta { text-align: center; border-top: 1px solid var(--border); }
 .closing-cta h2 { font-size: var(--text-section); font-weight: 750; letter-spacing: -0.025em; margin: 0 0 1.5rem; }
 
 .closing-cols h3 { margin: 0 0 0.6rem; }
 .closing-cols p { color: var(--muted); max-width: 65ch; margin: 0; }
 
-.section { padding: 3.5rem 0; }
-.section-head { max-width: 40rem; margin-bottom: 2.25rem; }
+.section { padding: var(--space-section) 0; }
+/* Coda sections carry a border-top; the shorter top padding binds the rule
+   to the content it introduces (instead of floating mid-void) and steps the
+   closing cadence down from the 2×section beat of the sections above. */
+.section.closing-cols, .section.closing-cta { padding-top: min(var(--space-xl), var(--space-section)); }
+.section-head { max-width: 40rem; margin-bottom: var(--space-xl); }
 .section-head h2 { font-size: var(--text-section); font-weight: 750; letter-spacing: -0.025em; line-height: 1.2; margin: 0 0 0.6rem; }
 .section-head p { color: var(--muted); max-width: 65ch; margin: 0; }
 
-.grid-2 { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
+.grid-2 { display: grid; grid-template-columns: 1fr; gap: var(--space-md); }
 @media (min-width: 640px) { .grid-2 { grid-template-columns: repeat(2, 1fr); } }
 
 footer.site-footer {
   border-top: 1px solid var(--border);
-  padding: 2.5rem 0 3rem;
-  margin-top: 2rem;
+  padding: var(--space-xl) 0 var(--space-section);
   font-size: var(--text-sm);
   color: var(--faint);
 }
