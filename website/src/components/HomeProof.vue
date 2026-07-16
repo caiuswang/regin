@@ -1,19 +1,23 @@
 <script setup>
 import traceShot from '../assets/shots/trace-dark.png'
+import traceShotMobile from '../assets/shots/trace-dark-mobile.png'
 </script>
 
 <template>
   <section class="section" aria-labelledby="proof-heading">
     <div class="section-head">
       <h2 id="proof-heading">This is regin tracing the session that built this page</h2>
-      <p>Not a mockup — the actual session viewer, open on the actual run. Six turns, every tool call recorded, every token attributed. When a session goes sideways, this is where you find out why.</p>
+      <p>Not a mockup — the actual session viewer, open on the actual run. Every tool call recorded and costed, every turn replayable. When a session goes sideways, this is where you find out why.</p>
     </div>
     <figure class="shot-frame">
-      <img
-        :src="traceShot" width="2880" height="1760" loading="lazy"
-        alt="The regin session viewer showing this website's build session: a 386-span trace with the turn list, conversation replay, per-tool token attribution, and a phase timeline."
-      />
-      <figcaption>Turn 6 of this page’s build — the agent confirms the design brief and regin logs the moment, alongside the timeline, cost rollup, and 15.7M cached tokens it took to get here.</figcaption>
+      <picture>
+        <source media="(max-width: 767px)" :srcset="traceShotMobile" width="1580" height="1420" />
+        <img
+          :src="traceShot" width="2016" height="1232" loading="lazy"
+          alt="The regin session viewer showing this website's build session: the turn list, conversation replay, per-tool cost attribution, and a phase timeline."
+        />
+      </picture>
+      <figcaption>Turn 8 of this page’s build: the design critique came back 30/40, and regin logged the moment the agent was told “fix first, then re-critique” — the instruction that produced the page you're reading.</figcaption>
     </figure>
   </section>
 </template>

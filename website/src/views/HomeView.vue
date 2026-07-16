@@ -1,18 +1,30 @@
 <script setup>
+import { ref } from 'vue'
 import SiteIcon from '../components/SiteIcon.vue'
+import Button from '../components/ui/Button.vue'
 import HomeProof from '../components/HomeProof.vue'
 import HomePillars from '../components/HomePillars.vue'
+
+const CLONE_CMD = 'git clone https://github.com/caiuswang/regin\ncd regin && ./scripts/setup.sh'
+const copied = ref(false)
+
+async function copyQuickstart() {
+  try {
+    await navigator.clipboard.writeText(CLONE_CMD)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch { /* clipboard unavailable (http or permission) — the text stays selectable */ }
+}
 </script>
 
 <template>
   <div class="container">
     <section class="hero">
-      <p class="eyebrow">Agent = Model + Harness</p>
-      <h1>The <span class="accent">harness layer</span> for AI coding agents</h1>
+      <h1>Agent = Model + Harness</h1>
       <p class="lead">
-        Everyone tunes the model. regin is the layer around it — guides that steer
-        your agent before it acts, rules that catch it as it acts, and the tracing
-        to know which of those bets paid off.
+        Everyone tunes the model. regin is the harness — the layer around your
+        coding agent that steers it before it acts, catches it as it acts, and
+        traces which of those bets paid off.
       </p>
       <div class="hero-ctas">
         <a href="https://github.com/caiuswang/regin" class="btn btn-primary focus-visible:ring">
@@ -21,8 +33,12 @@ import HomePillars from '../components/HomePillars.vue'
         </a>
         <RouterLink to="/getting-started" class="btn btn-ghost focus-visible:ring">Read the guide</RouterLink>
       </div>
-      <pre class="quickstart"><code>git clone https://github.com/caiuswang/regin
-cd regin &amp;&amp; ./scripts/setup.sh</code></pre>
+      <div class="quickstart-wrap">
+        <pre class="quickstart"><code>{{ CLONE_CMD }}</code></pre>
+        <Button variant="icon" class="quickstart-copy" :aria-label="copied ? 'Copied' : 'Copy quick-start commands'" @click="copyQuickstart">
+          <SiteIcon :name="copied ? 'check' : 'copy'" :size="15" />
+        </Button>
+      </div>
       <p class="quickstart-caption">Runs locally — Python + Node, one setup script. Early beta; pin a commit if you need stability.</p>
     </section>
 
@@ -32,13 +48,13 @@ cd regin &amp;&amp; ./scripts/setup.sh</code></pre>
         <p>A harness is what turns a non-deterministic model into a teammate you can trust on real work. It takes both halves:</p>
       </div>
       <div class="grid-2">
-        <div class="card duo-card">
-          <h3>Guides — feedforward</h3>
-          <p>Skills and docs that steer the agent <strong>before</strong> it acts: your conventions as local pattern guides, promoted to versioned skill bundles surfaced exactly when their triggers match.</p>
+        <div class="card">
+          <h3>Guides — steer it before it acts</h3>
+          <p>The feedforward half: skills and docs that carry your conventions as local pattern guides, promoted to versioned skill bundles surfaced exactly when their triggers match.</p>
         </div>
-        <div class="card duo-card">
-          <h3>Sensors — feedback</h3>
-          <p>Hooks that watch the agent <strong>as</strong> it acts and force corrections when it drifts: a rule isn't prose the agent is asked to remember — it's a hook that refuses the edit and says why, in the same turn.</p>
+        <div class="card">
+          <h3>Sensors — catch it as it acts</h3>
+          <p>The feedback half: hooks that watch every edit and force corrections when the agent drifts. A rule isn't prose it's asked to remember — it's a hook that refuses the edit and says why, in the same turn.</p>
         </div>
       </div>
     </section>

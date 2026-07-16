@@ -1,6 +1,7 @@
 <script setup>
 import SiteIcon from './SiteIcon.vue'
 import memoryShot from '../assets/shots/memory-dark.png'
+import memoryShotMobile from '../assets/shots/memory-dark-mobile.png'
 import { PILLARS, SECONDARY } from '../content/features.js'
 </script>
 
@@ -8,13 +9,15 @@ import { PILLARS, SECONDARY } from '../content/features.js'
   <section class="section" aria-labelledby="pillars-heading">
     <div class="section-head">
       <h2 id="pillars-heading">The three layers that do the work</h2>
-      <p>Each one is ordinary on its own. Together they close the loop: enforce the spec, watch what happened, remember what it cost.</p>
+      <p>Guides steer; these three are how the harness senses, corrects, and remembers — rules enforce the spec, the trace shows what happened, memory keeps what it taught.</p>
     </div>
 
     <div v-for="pillar in PILLARS" :key="pillar.title" class="pillar">
       <div class="pillar-body">
-        <span class="icon-wrap"><SiteIcon :name="pillar.icon" :size="22" /></span>
-        <h3>{{ pillar.title }}</h3>
+        <h3 class="pillar-title">
+          <span class="pillar-glyph"><SiteIcon :name="pillar.icon" :size="18" /></span>
+          {{ pillar.title }}
+        </h3>
         <p>{{ pillar.body }}</p>
         <RouterLink :to="pillar.link.to" class="more">
           {{ pillar.link.label }}
@@ -34,7 +37,10 @@ import { PILLARS, SECONDARY } from '../content/features.js'
         </template>
         <template v-else>
           <figure class="shot-frame shot-frame-sm">
-            <img :src="memoryShot" width="2880" height="1760" loading="lazy" :alt="pillar.shotAlt" />
+            <picture>
+              <source media="(max-width: 767px)" :srcset="memoryShotMobile" width="1280" height="1280" />
+              <img :src="memoryShot" width="2016" height="1232" loading="lazy" :alt="pillar.shotAlt" />
+            </picture>
             <figcaption>{{ pillar.shotCaption }}</figcaption>
           </figure>
         </template>
