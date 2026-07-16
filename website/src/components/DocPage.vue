@@ -9,6 +9,7 @@ defineProps({
 <template>
   <div class="docs-layout">
     <article>
+      <slot name="subnav" />
       <h1 class="page-title">{{ title }}</h1>
       <p v-if="lead" class="page-lead">{{ lead }}</p>
       <slot />

@@ -272,17 +272,19 @@ a:hover { text-decoration: underline; }
   gap: 0.25rem;
 }
 
-.main-nav a {
+/* One state grammar for both navs (.subnav is the in-page section rail);
+   each declares only its own size and padding. */
+.main-nav a, .subnav a {
   color: var(--muted);
   font-weight: 500;
-  font-size: var(--text-ui);
-  padding: 0.45rem 0.8rem;
   border-radius: 8px;
+  text-decoration: none;
   transition: color 0.2s ease, background-color 0.2s ease;
 }
-.main-nav a:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
-.main-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
-[data-theme="dark"] .main-nav a[aria-current="page"] { color: var(--accent-soft-text); }
+.main-nav a { font-size: var(--text-ui); padding: 0.45rem 0.8rem; }
+.main-nav a:hover, .subnav a:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
+.main-nav a[aria-current="page"], .main-nav a.in-section, .subnav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
+[data-theme="dark"] .main-nav a[aria-current="page"], [data-theme="dark"] .main-nav a.in-section, [data-theme="dark"] .subnav a[aria-current="page"] { color: var(--accent-soft-text); }
 
 .icon-btn {
   display: inline-flex;
@@ -306,7 +308,9 @@ a:hover { text-decoration: underline; }
 
 .nav-toggle { display: none; }
 
-@media (max-width: 767px) {
+/* Collapse below 960px: six links + brand + toggle measure past the header
+   at tablet widths, and a cramped nav misleads more than a menu button. */
+@media (max-width: 959px) {
   .nav-toggle { display: inline-flex; }
   .main-nav {
     display: none;
@@ -377,6 +381,18 @@ main { display: block; min-height: 100vh; }
   transition: color 0.2s ease, border-color 0.2s ease;
 }
 .toc li a:hover { color: var(--text); border-left-color: var(--border-strong); text-decoration: none; }
+
+/* ── Section subnav (topic-wiki pages) ────────────────── */
+
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0 0 var(--space-lg);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+.subnav a { font-size: var(--text-sm); padding: 0.3rem 0.65rem; }
 
 /* ── Typography ───────────────────────────────────────── */
 
@@ -657,6 +673,9 @@ td code, th code { white-space: nowrap; }
   transition: background-color 0.2s ease;
 }
 .mini-row:hover { background: var(--surface-2); text-decoration: none; }
+/* Inside doc articles the blanket article-link underline would stripe the
+   whole row; the row's hover fill is the affordance instead. */
+article .mini-row { text-decoration: none; }
 .mini-title { font-weight: 650; color: var(--text); white-space: nowrap; }
 .mini-body { color: var(--muted); flex: 1; min-width: 12rem; }
 .mini-row svg { color: var(--faint); flex-shrink: 0; align-self: center; }

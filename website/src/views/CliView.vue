@@ -4,6 +4,7 @@ import CodeBlock from '../components/CodeBlock.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
 import { CORE_COMMANDS, COMMAND_GROUPS, TROUBLESHOOTING } from '../content/cli.js'
+import { COMMAND_COLUMNS } from '../content/columns.js'
 
 const TOC = [
   { id: 'invoking', label: 'Invoking the CLI' },
@@ -12,10 +13,6 @@ const TOC = [
   { id: 'troubleshooting', label: 'Troubleshooting' },
 ]
 
-const CMD_COLUMNS = [
-  { key: 'cmd', label: 'Command', code: true },
-  { key: 'desc', label: 'What it does' },
-]
 const GROUP_COLUMNS = [
   { key: 'group', label: 'Group', code: true },
   { key: 'sub', label: 'Subcommands' },
@@ -42,7 +39,7 @@ const FIX_COLUMNS = [
     </Callout>
 
     <h2 id="core-commands">Core commands</h2>
-    <DataTable :columns="CMD_COLUMNS" :rows="CORE_COMMANDS" />
+    <DataTable :columns="COMMAND_COLUMNS" :rows="CORE_COMMANDS" />
 
     <h2 id="command-groups">Grouped subcommands</h2>
     <p>Run any group with <code>--help</code> for the full list and flags.</p>

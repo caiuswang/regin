@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import SiteIcon from './SiteIcon.vue'
 import Button from './ui/Button.vue'
 
@@ -8,8 +9,15 @@ const NAV = [
   { to: '/getting-started', label: 'Getting Started' },
   { to: '/configuration', label: 'Configuration' },
   { to: '/architecture', label: 'Architecture' },
+  { to: '/topics', label: 'Topic Wikis' },
   { to: '/cli', label: 'CLI' },
 ]
+
+const route = useRoute()
+
+function inSection(item) {
+  return item.to !== '/' && route.path !== item.to && route.path.startsWith(`${item.to}/`)
+}
 
 const menuOpen = ref(false)
 const isDark = ref(false)
@@ -54,6 +62,7 @@ onBeforeUnmount(() => {
       <nav id="site-nav" class="main-nav" :class="{ open: menuOpen }" aria-label="Main">
         <RouterLink
           v-for="item in NAV" :key="item.to" :to="item.to"
+          :class="{ 'in-section': inSection(item) }"
           @click="menuOpen = false"
         >{{ item.label }}</RouterLink>
       </nav>

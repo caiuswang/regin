@@ -41,7 +41,7 @@ export const SECONDARY = [
   {
     title: 'Topic wikis',
     body: 'Per-repo knowledge as a reviewable graph, kept honest by drift detection.',
-    to: '/architecture#topics',
+    to: '/topics',
   },
   {
     title: 'Mobile remote control',

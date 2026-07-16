@@ -6,6 +6,7 @@
         <RouterLink to="/getting-started">Getting Started</RouterLink>
         <RouterLink to="/configuration">Configuration</RouterLink>
         <RouterLink to="/architecture">Architecture</RouterLink>
+        <RouterLink to="/topics">Topic Wikis</RouterLink>
         <RouterLink to="/cli">CLI Reference</RouterLink>
       </nav>
     </div>

@@ -5,6 +5,11 @@ const routes = [
   { path: '/getting-started', name: 'getting-started', component: () => import('./views/GettingStartedView.vue'), meta: { title: 'Getting Started' } },
   { path: '/configuration', name: 'configuration', component: () => import('./views/ConfigurationView.vue'), meta: { title: 'Configuration' } },
   { path: '/architecture', name: 'architecture', component: () => import('./views/ArchitectureView.vue'), meta: { title: 'Architecture' } },
+  { path: '/topics', name: 'topics', component: () => import('./views/TopicsView.vue'), meta: { title: 'Topic Wikis' } },
+  { path: '/topics/routing', name: 'topics-routing', component: () => import('./views/TopicsRoutingView.vue'), meta: { title: 'Topic Routing' } },
+  { path: '/topics/proposals', name: 'topics-proposals', component: () => import('./views/TopicsProposalsView.vue'), meta: { title: 'Topic Proposals' } },
+  { path: '/topics/evolution', name: 'topics-evolution', component: () => import('./views/TopicsEvolutionView.vue'), meta: { title: 'Drift & Evolution' } },
+  { path: '/topics/memory', name: 'topics-memory', component: () => import('./views/TopicsMemoryView.vue'), meta: { title: 'Topics × Memory' } },
   { path: '/cli', name: 'cli', component: () => import('./views/CliView.vue'), meta: { title: 'CLI Reference' } },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('./views/NotFoundView.vue'), meta: { title: 'Page not found' } },
 ]

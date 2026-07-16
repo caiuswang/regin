@@ -4,6 +4,7 @@ import CodeBlock from '../components/CodeBlock.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
 import { CORE_SETTINGS, ENV_VARS, NESTED_BLOCKS } from '../content/settings.js'
+import { SETTING_COLUMNS } from '../content/columns.js'
 
 const TOC = [
   { id: 'files', label: 'Files & precedence' },
@@ -12,11 +13,6 @@ const TOC = [
   ...NESTED_BLOCKS.map((b) => ({ id: b.id, label: b.title })),
 ]
 
-const SETTING_COLUMNS = [
-  { key: 'key', label: 'Key', code: true },
-  { key: 'def', label: 'Default', code: true },
-  { key: 'desc', label: 'Description' },
-]
 const ENV_COLUMNS = [
   { key: 'key', label: 'Variable', code: true },
   { key: 'desc', label: 'Effect' },
