@@ -22,37 +22,64 @@ colors:
   night-ink-muted: "#a5b4cb"
 typography:
   display:
-    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
     fontSize: "clamp(2.3rem, 6vw, 3.6rem)"
     fontWeight: 800
     lineHeight: 1.08
     letterSpacing: "-0.035em"
   headline:
-    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "2.2rem"
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(1.9rem, 1.2rem + 3vw, 2.2rem)"
     fontWeight: 800
     lineHeight: 1.15
     letterSpacing: "-0.03em"
+  section:
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(1.45rem, 1.15rem + 1.5vw, 1.8rem)"
+    fontWeight: 750
+    lineHeight: 1.2
+    letterSpacing: "-0.025em"
   title:
-    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.45rem"
     fontWeight: 700
     lineHeight: 1.25
     letterSpacing: "-0.02em"
+  subtitle:
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.2rem"
+    fontWeight: 650
+    lineHeight: 1.3
+    letterSpacing: "-0.01em"
+  lead:
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.125rem"
+    fontWeight: 400
+    lineHeight: 1.6
   body:
-    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "16px"
+    fontFamily: "Atkinson Hyperlegible Next, AHN Fallback, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1rem"
     fontWeight: 400
     lineHeight: 1.65
+  ui:
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.9375rem"
+    fontWeight: 500
+    lineHeight: 1.5
+  caption:
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.55
   label:
-    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.75rem"
     fontWeight: 700
     lineHeight: 1.4
     letterSpacing: "0.12em"
   mono:
     fontFamily: "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
-    fontSize: "0.85rem"
+    fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: 1.7
 rounded:
@@ -112,7 +139,7 @@ A well-thumbed engineer's handbook: structured, legible, and generous with expla
 The system explicitly rejects the three anti-references in PRODUCT.md: the generic SaaS landing (gradient hero, floating mockups, logo marquee), AI-hype maximalism (glow, particles, sparkle), and cold dev-tool austerity (terminal-dark density with no warmth). It is light-first with a full dark theme, flat with hairline borders, and spends its single accent — Harness Green — only where the mechanism speaks.
 
 **Key Characteristics:**
-- One typeface (Inter) in many weights; JetBrains Mono for everything the machine says
+- One typeface (Atkinson Hyperlegible Next, variable 400–800) in many weights; JetBrains Mono for everything the machine says
 - One accent color with a strict budget; slate neutrals do all other work
 - Flat surfaces separated by 1px hairlines; shadow only on things that float
 - Measured accessibility: every text/background pair verified ≥4.5:1 in both themes
@@ -127,8 +154,9 @@ Slate neutrals carry the interface; one deep green carries the meaning.
 - **Green Tint** (#dcfce7, ink #14532d): quiet green wash for the active nav pill, info callouts, and icon chips; its dark-mode counterparts are #14321f / #86efac.
 
 ### Neutral
-- **Ink** (#0f172a): all primary text on light surfaces; also the background of code blocks in both themes.
-- **Muted Ink** (#475569): body prose, table cells, nav resting state (7.2:1 on Fog).
+- **Ink** (#0f172a): headings and emphasis on light surfaces; also the background of code blocks in both themes.
+- **Body Ink** (#1e293b light / #cbd5e1 dark): article and pillar prose — the reading tier sits one step above Muted so primary content anchors the page.
+- **Muted Ink** (#475569): leads, captions, table cells, nav resting state (7.2:1 on Fog).
 - **Faint Ink** (#64748b): footer text and tertiary metadata only — the floor of legibility (4.55:1); nothing smaller or lighter.
 - **Fog** (#f8fafc): the page background. A cool near-white — deliberately not cream.
 - **Surface** (#ffffff) and **Recessed Surface** (#f1f5f9): cards and table headers respectively.
@@ -144,22 +172,30 @@ Slate neutrals carry the interface; one deep green carries the meaning.
 
 ## 3. Typography
 
-**Display/Body Font:** Inter (with ui-sans-serif, system-ui fallback), loaded non-blocking
+**Display/Body Font:** Atkinson Hyperlegible Next (with metric-matched "AHN Fallback" Arial override, then ui-sans-serif, system-ui), loaded non-blocking as a single variable file (wght 400–800)
 **Mono Font:** JetBrains Mono (with ui-monospace, Menlo fallback)
 
-**Character:** One family, many weights — the handbook voice. Inter at 800 with tight tracking does the talking at the top of a page; the same face at 400/1.65 explains below. Mono is reserved for what the machine says: commands, settings keys, file paths.
+**Character:** One family, many weights — the handbook voice, in a face designed for it. Atkinson Hyperlegible Next was commissioned by the Braille Institute to maximize letterform distinction; choosing it makes The Measured Pair Rule typographic — legibility as the brand gesture, not decoration. It is warm and humanist where the generic dev-tool stack is cold-neutral. At 800 with tight tracking it does the talking at the top of a page; at 400/1.65 it explains below. Mono is reserved for what the machine says: commands, settings keys, file paths. Because the family loads as a variable font, the intermediate 650/750 weights are true instances.
 
 ### Hierarchy
+Ten steps, all published as `--text-*` tokens in `site.css`; no literal font-size ships outside them.
 - **Display** (800, clamp(2.3rem, 6vw, 3.6rem), 1.08, -0.035em): the hero headline only — one per site, not per page.
-- **Headline** (800, 2.2rem, 1.15, -0.03em): doc page titles (`.page-title`).
-- **Title** (700, 1.45rem, 1.25, -0.02em): section headings (`h2`), separated by a hairline rule above.
-- **Body** (400, 16px, 1.65): prose, capped at a 72ch measure.
-- **Label** (700, 0.75rem, 0.12em tracked uppercase): the eyebrow and TOC heading — used once per page at most, never as scaffolding above every section.
-- **Mono** (400, 0.85rem, 1.7): code blocks (light text on Ink in both themes) and inline code chips.
+- **Headline** (800, clamp(1.9rem, 1.2rem + 3vw, 2.2rem), 1.15, -0.03em): doc page titles (`.page-title`).
+- **Section** (750, clamp(1.45rem, 1.15rem + 1.5vw, 1.8rem), 1.2, -0.025em): homepage section heads and the closing CTA.
+- **Title** (700, 1.45rem, 1.25, -0.02em): article `h2`, separated by a hairline rule above.
+- **Subtitle** (650, 1.2rem, 1.3, -0.01em): every `h3` tier — article h3, card h3, closing-column h3; pillar titles take the same size at 700.
+- **Lead** (400, 1.125rem, 1.6): hero lead, page leads, and the brand wordmark size.
+- **Body** (400, 1rem, 1.65): prose, capped at a 72ch measure. Set in `--body-ink` (#1e293b / #cbd5e1) — a step above Muted so reading text anchors the page.
+- **UI** (500, 0.9375rem): nav links, buttons, callouts, tables.
+- **Caption** (400, 0.875rem): figcaptions, artifact captions, TOC, footer.
+- **Label** (700, 0.75rem, 0.12em tracked uppercase): the eyebrow and TOC heading — used once per page at most, never as scaffolding above every section. Pills (beta, experimental) share the size at 0.08em tracking.
+- **Mono** (400, 0.875rem, 1.7): all code blocks — hero quick start included — and inline chips at 0.875em.
 
 ### Named Rules
 **The 72ch Rule.** Article prose never exceeds a 72-character measure, whatever the viewport.
 **The Machine Voice Rule.** Anything the user would type or the system would emit — commands, keys, paths, values — is set in mono, always. Prose never wears mono for emphasis.
+**The One Ramp Rule.** Every font-size on the site is a `--text-*` token; a size that isn't in the ramp is a bug, not a variation.
+**Dark compensation.** Light-on-dark body text gets `-webkit-font-smoothing: antialiased` plus +0.01em tracking, scoped to `[data-theme="dark"]` only — the light theme renders unsmoothed so 400-weight body keeps its ink.
 
 ## 4. Elevation
 
@@ -190,11 +226,11 @@ Crisp and instructive — the sharp edges of a good diagram. Every element label
 
 ### Navigation
 - **Style:** sticky, blurred header (4rem tall) with hairline underline; brand mark + "beta" pill left, links right.
-- **Links:** Muted Ink at 0.925rem/500; hover lifts to Ink on Recessed Surface; the active page holds a Green Tint pill (`aria-current="page"`).
+- **Links:** Muted Ink at 0.9375rem/500; hover lifts to Ink on Recessed Surface; the active page holds a Green Tint pill (`aria-current="page"`).
 - **Mobile:** below 768px the nav collapses behind a labeled icon button (`aria-expanded`) into a full-width sheet with the Float shadow; links close it on tap.
 
 ### Code Blocks (signature component)
-The site's proof-of-work surface. Ink-dark panels (12px radius, 1px border) in both themes, JetBrains Mono at 0.85rem/1.7, light slate text, horizontal scroll contained inside the block — the page itself never scrolls sideways. Inline code sits in a Recessed chip (6px radius) at 0.85em.
+The site's proof-of-work surface. Ink-dark panels (12px radius, 1px border) in both themes, JetBrains Mono at 0.875rem/1.7, light slate text, horizontal scroll contained inside the block — the page itself never scrolls sideways. Inline code sits in a Recessed chip (6px radius) at 0.875em.
 
 ### Tables
 Wrapped in a bordered, rounded (12px) scroll container; Recessed Surface header row; hairline row separators; keys and defaults in mono chips.
