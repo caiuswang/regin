@@ -45,11 +45,25 @@ def generate_wiki(repo_path: str | Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     index_path = out_dir / "index.md"
-    index_path.write_text(render_index(graph))
+    index_path.write_text(render_index(graph, wiki_root=out_dir))
     return [index_path]
 
 
-def render_index(graph: dict[str, Any]) -> str:
+def _index_row(topic_id: str, topic: dict[str, Any], wiki_root: Path | None) -> str:
+    """One index line. A topic whose `wiki/<id>.md` was never authored (bucket
+    topics, never-drafted leaves) renders as plain text with a `no wiki yet`
+    marker instead of a link to a file that doesn't exist — the index must
+    never emit a dead link. When `wiki_root` is None the file can't be checked,
+    so every row links (preserves the pure-render callers)."""
+    label = topic.get("label", topic_id)
+    intent = topic.get("intent", "")
+    slug = slugify(topic_id)
+    if wiki_root is not None and not (wiki_root / f"{slug}.md").exists():
+        return f"- **{label}** — no wiki yet · {intent}"
+    return f"- [{label}]({slug}.md) - {intent}"
+
+
+def render_index(graph: dict[str, Any], wiki_root: Path | None = None) -> str:
     lines = [
         f"# Topic Wiki: {graph.get('repo', 'repo')}",
         "",
@@ -59,7 +73,7 @@ def render_index(graph: dict[str, Any]) -> str:
         "",
     ]
     for topic_id, topic in sorted(graph.get("topics", {}).items()):
-        lines.append(f"- [{topic.get('label', topic_id)}]({slugify(topic_id)}.md) - {topic.get('intent', '')}")
+        lines.append(_index_row(topic_id, topic, wiki_root))
     if not graph.get("topics"):
         lines.append("- No approved topics.")
     lines.append("")

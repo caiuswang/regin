@@ -20,6 +20,29 @@ def test_render_index_links_topics():
     assert "[Web](web.md) - Web API." in content
 
 
+def test_render_index_marks_missing_wiki_without_dead_link(tmp_path):
+    """A topic with no `wiki/<id>.md` on disk must NOT get a link to a file that
+    doesn't exist; it renders as plain text with a `no wiki yet` marker."""
+    (tmp_path / "web.md").write_text("# Web")  # has a wiki
+    graph = {
+        "repo": "repo",
+        "topics": {
+            "web": {"label": "Web", "intent": "Web API."},
+            "agent-memory": {"label": "Agent memory", "intent": "Memory bucket."},
+        },
+    }
+
+    content = render_index(graph, wiki_root=tmp_path)
+
+    assert "[Web](web.md) - Web API." in content
+    assert "(agent-memory.md)" not in content  # no dead link
+    assert "**Agent memory** — no wiki yet · Memory bucket." in content
+    # No index row links to a file absent from wiki_root.
+    for slug in ("web", "agent-memory"):
+        if f"]({slug}.md)" in content:
+            assert (tmp_path / f"{slug}.md").exists()
+
+
 def test_render_topic_page_groups_refs_by_role():
     content = render_topic_page("web", {
         "label": "Web",

@@ -281,6 +281,7 @@ def test_delete_removes_base_topic_and_wiki(fake_git_repo):
     wiki_dir.mkdir(parents=True, exist_ok=True)
     topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a"), "b": _topic("b")})))
     (wiki_dir / "a.md").write_text("# A\n\nnarrative\n")
+    (wiki_dir / "b.md").write_text("# B\n\nnarrative\n")
     resolve_or_create_repo(str(fake_git_repo))
     load_authoritative_graph(fake_git_repo)  # seed snapshot
 
