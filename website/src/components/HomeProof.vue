@@ -1,6 +1,8 @@
 <script setup>
 import traceShot from '../assets/shots/trace-dark.png'
 import traceShotMobile from '../assets/shots/trace-dark-mobile.png'
+import traceShotWebp from '../assets/shots/trace-dark.webp'
+import traceShotMobileWebp from '../assets/shots/trace-dark-mobile.webp'
 </script>
 
 <template>
@@ -11,7 +13,9 @@ import traceShotMobile from '../assets/shots/trace-dark-mobile.png'
     </div>
     <figure class="shot-frame">
       <picture>
+        <source media="(max-width: 767px)" type="image/webp" :srcset="traceShotMobileWebp" width="1580" height="1420" />
         <source media="(max-width: 767px)" :srcset="traceShotMobile" width="1580" height="1420" />
+        <source type="image/webp" :srcset="traceShotWebp" width="2016" height="1232" />
         <img
           :src="traceShot" width="2016" height="1232" loading="lazy"
           alt="The regin session viewer showing this website's build session: the turn list, conversation replay, per-tool cost attribution, and a phase timeline."

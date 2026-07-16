@@ -2,6 +2,8 @@
 import SiteIcon from './SiteIcon.vue'
 import memoryShot from '../assets/shots/memory-dark.png'
 import memoryShotMobile from '../assets/shots/memory-dark-mobile.png'
+import memoryShotWebp from '../assets/shots/memory-dark.webp'
+import memoryShotMobileWebp from '../assets/shots/memory-dark-mobile.webp'
 import { PILLARS, SECONDARY } from '../content/features.js'
 </script>
 
@@ -38,7 +40,9 @@ import { PILLARS, SECONDARY } from '../content/features.js'
         <template v-else>
           <figure class="shot-frame shot-frame-sm">
             <picture>
+              <source media="(max-width: 767px)" type="image/webp" :srcset="memoryShotMobileWebp" width="1280" height="1280" />
               <source media="(max-width: 767px)" :srcset="memoryShotMobile" width="1280" height="1280" />
+              <source type="image/webp" :srcset="memoryShotWebp" width="2016" height="1232" />
               <img :src="memoryShot" width="2016" height="1232" loading="lazy" :alt="pillar.shotAlt" />
             </picture>
             <figcaption>{{ pillar.shotCaption }}</figcaption>

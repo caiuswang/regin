@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import SiteIcon from './SiteIcon.vue'
 import Button from './ui/Button.vue'
 
@@ -12,17 +12,39 @@ const NAV = [
 ]
 
 const menuOpen = ref(false)
+const isDark = ref(false)
+const headerEl = ref(null)
+const navToggleEl = ref(null)
 
 function toggleTheme() {
-  const root = document.documentElement
-  const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'
-  root.setAttribute('data-theme', next)
-  try { localStorage.setItem('regin-site-theme', next) } catch { /* private mode */ }
+  isDark.value = !isDark.value
+  document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
+  try { localStorage.setItem('regin-site-theme', isDark.value ? 'dark' : 'light') } catch { /* private mode */ }
 }
+
+function onDocumentKeydown(event) {
+  if (event.key !== 'Escape' || !menuOpen.value) return
+  menuOpen.value = false
+  navToggleEl.value?.$el.focus()
+}
+
+function onDocumentClick(event) {
+  if (menuOpen.value && !headerEl.value?.contains(event.target)) menuOpen.value = false
+}
+
+onMounted(() => {
+  isDark.value = document.documentElement.getAttribute('data-theme') === 'dark'
+  document.addEventListener('keydown', onDocumentKeydown)
+  document.addEventListener('click', onDocumentClick)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onDocumentKeydown)
+  document.removeEventListener('click', onDocumentClick)
+})
 </script>
 
 <template>
-  <header class="site-header">
+  <header ref="headerEl" class="site-header">
     <div class="header-inner">
       <RouterLink to="/" class="brand">
         <SiteIcon name="layers" :size="22" />
@@ -35,11 +57,12 @@ function toggleTheme() {
           @click="menuOpen = false"
         >{{ item.label }}</RouterLink>
       </nav>
-      <Button variant="icon" class="theme-toggle" aria-label="Toggle color theme" @click="toggleTheme">
+      <Button variant="icon" class="theme-toggle" aria-label="Dark theme" :aria-pressed="isDark" @click="toggleTheme">
         <SiteIcon name="sun" :size="18" class="icon-sun" />
         <SiteIcon name="moon" :size="18" class="icon-moon" />
       </Button>
       <Button
+        ref="navToggleEl"
         variant="icon" class="nav-toggle" aria-label="Toggle navigation menu"
         :aria-expanded="menuOpen" aria-controls="site-nav" @click="menuOpen = !menuOpen"
       >

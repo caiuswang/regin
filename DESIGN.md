@@ -20,6 +20,9 @@ colors:
   night-surface: "#111a2e"
   night-ink: "#f1f5f9"
   night-ink-muted: "#a5b4cb"
+  code-comment: "#7d8db0"
+  code-chrome-ink: "#dbe4f0"
+  code-chrome-edge: "#495a7d"
 typography:
   display:
     fontFamily: "Atkinson Hyperlegible Next, ui-sans-serif, system-ui, sans-serif"
@@ -162,6 +165,7 @@ Slate neutrals carry the interface; one deep green carries the meaning.
 - **Surface** (#ffffff) and **Recessed Surface** (#f1f5f9): cards and table headers respectively.
 - **Hairline** (#e2e8f0) / **Strong Hairline** (#cbd5e1): borders; strong is reserved for interactive edges (ghost buttons).
 - **Night set** (#0b1120 page, #111a2e surface, #f1f5f9 ink, #a5b4cb muted): the dark theme, re-derived — softened toward GitHub/VSCode darks, never a pure inversion, never pure black.
+- **Code chrome** (#7d8db0 comments at 5.4:1, #dbe4f0 hover ink, #495a7d hover edge): fixed colors for text and controls living on the always-dark code panels; theme-independent because the panel is.
 
 ### Semantic
 - **Amber Tint** (#fef3c7, ink #78350f): warnings and security callouts only (dark: #372a12 / #fcd34d). Never decorative.
