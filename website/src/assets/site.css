@@ -85,6 +85,18 @@ a:hover { text-decoration: underline; }
   outline-offset: 2px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .skip-link {
   position: absolute;
   left: -9999px;
@@ -418,10 +430,10 @@ td code, th code { white-space: nowrap; }
 }
 .quickstart-copy {
   position: absolute;
-  top: 0.55rem;
-  right: 0.55rem;
-  width: 2rem;
-  height: 2rem;
+  top: 0.45rem;
+  right: 0.45rem;
+  width: 2.5rem;
+  height: 2.5rem;
   color: #8494ad;
   border-color: #354462;
 }
@@ -468,9 +480,12 @@ td code, th code { white-space: nowrap; }
   padding: 2.5rem 0;
   border-top: 1px solid var(--border);
 }
+/* Artifacts always take the wide 7fr track; only the side alternates.
+   `of .pillar` keeps the count immune to non-pillar div siblings. */
 @media (min-width: 900px) {
   .pillar { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 3.5rem; align-items: center; }
-  .pillar:nth-of-type(even) .pillar-body { order: 2; }
+  .pillar:nth-child(even of .pillar) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+  .pillar:nth-child(even of .pillar) .pillar-body { order: 2; }
 }
 .pillar-title {
   display: flex;
@@ -535,6 +550,9 @@ td code, th code { white-space: nowrap; }
   border-top: 1px solid var(--border);
 }
 @media (min-width: 768px) { .closing-cols { grid-template-columns: 1fr 1fr; gap: 4rem; } }
+.closing-cta { text-align: center; border-top: 1px solid var(--border); }
+.closing-cta h2 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 1.5rem; }
+
 .closing-cols h3 { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.6rem; }
 .closing-cols p { color: var(--muted); max-width: 65ch; margin: 0; }
 

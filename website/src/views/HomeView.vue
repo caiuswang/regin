@@ -38,6 +38,7 @@ async function copyQuickstart() {
         <Button variant="icon" class="quickstart-copy" :aria-label="copied ? 'Copied' : 'Copy quick-start commands'" @click="copyQuickstart">
           <SiteIcon :name="copied ? 'check' : 'copy'" :size="15" />
         </Button>
+        <span class="sr-only" aria-live="polite">{{ copied ? 'Copied to clipboard' : '' }}</span>
       </div>
       <p class="quickstart-caption">Runs locally — Python + Node, one setup script. Early beta; pin a commit if you need stability.</p>
     </section>
@@ -54,7 +55,7 @@ async function copyQuickstart() {
         </div>
         <div class="card">
           <h3>Sensors — catch it as it acts</h3>
-          <p>The feedback half: hooks that watch every edit and force corrections when the agent drifts. A rule isn't prose it's asked to remember — it's a hook that refuses the edit and says why, in the same turn.</p>
+          <p>The feedback half: hooks that watch every edit and force corrections when the agent drifts. A rule isn't prose the agent is asked to remember — it's a hook that refuses the edit and says why, in the same turn.</p>
         </div>
       </div>
     </section>
@@ -70,6 +71,17 @@ async function copyQuickstart() {
       <div>
         <h3>Supported agents</h3>
         <p><strong>Claude only, today.</strong> The rule layer needs hooks deep enough to intercept tool calls, edits, and prompts in flight — Claude is currently the only widely-available agent with a hook system that mature. Codex and Kimi exist as provider adapters, not yet wired through the rule layer.</p>
+      </div>
+    </section>
+
+    <section class="section closing-cta" aria-labelledby="cta-heading">
+      <h2 id="cta-heading">Still here? Then it's probably time to run it.</h2>
+      <div class="hero-ctas">
+        <a href="https://github.com/caiuswang/regin" class="btn btn-primary focus-visible:ring">
+          <SiteIcon name="github" :size="17" />
+          Clone on GitHub
+        </a>
+        <RouterLink to="/getting-started" class="btn btn-ghost focus-visible:ring">Read the guide first</RouterLink>
       </div>
     </section>
   </div>

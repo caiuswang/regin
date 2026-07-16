@@ -9,8 +9,8 @@ export const PILLARS = [
     body: 'Conventions written in prose get forgotten by the next session. regin’s rule engines live inside hooks, so every edit is checked in flight — the agent gets pushed back on-spec in the same turn, or the action is refused outright. Force, not suggestion.',
     link: { to: '/architecture#rule-engines', label: 'How the rule engines work' },
     artifact: 'code',
-    code: 'PostToolUse ▸ rule-check:\n2 violation(s) in SiteHeader.vue\n- focus_visible_styling_coverage (warn):\n  interactive element at line 15\n  lacks explicit focus-visible styling\nFix these before claiming\nthe edit is complete.',
-    codeCaption: 'A real refusal from the session that built this page — the hook caught the missing focus ring and the agent had to fix it before moving on.',
+    code: 'PostToolUse ▸ rule-check:\n2 violation(s) in SiteHeader.vue\n- focus_visible_styling_coverage (warn):\n  interactive element at line 15\n  lacks focus-visible styling\n- prefer_button_primitive (warn):\n  use the <Button> primitive,\n  not a raw <button>\nFix these before claiming\nthe edit is complete.',
+    codeCaption: 'A real push-back from the session that built this page — the hook flagged both problems and the agent had to fix them before moving on.',
   },
   {
     icon: 'activity',
@@ -19,7 +19,7 @@ export const PILLARS = [
     link: { to: '/architecture#tracing', label: 'Trace internals' },
     artifact: 'stats',
     stats: ['552 spans', '8 turns', '16 tools', '$5.59 of $55.14 tool-attributed'],
-    statsCaption: 'This page’s own build session, captured at turn 8. The split is the point: $5.59 was attributable to specific tool calls, the rest is shared context — and a live session keeps counting, so the screenshots nearby already show slightly different totals.',
+    statsCaption: 'This page’s own build session, captured at turn 8 — the same moment as the trace above. The split is the point: $5.59 was attributable to specific tool calls; the rest is shared context. A live session keeps counting, so captures taken moments apart drift upward.',
   },
   {
     icon: 'database',
