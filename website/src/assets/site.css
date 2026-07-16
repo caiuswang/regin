@@ -254,6 +254,8 @@ main { display: block; }
 
 /* ── Typography ───────────────────────────────────────── */
 
+h1, h2, h3 { text-wrap: balance; }
+
 .page-title { font-size: 2.2rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin: 0 0 0.5rem; }
 .page-lead { font-size: 1.1rem; color: var(--muted); margin: 0 0 2.5rem; max-width: 46rem; }
 
@@ -402,6 +404,107 @@ td code, th code { white-space: nowrap; }
   margin: 0 auto 2.25rem;
 }
 .hero-ctas { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; }
+
+.quickstart {
+  display: inline-block;
+  max-width: 100%;
+  text-align: left;
+  margin: 2rem auto 0;
+  font-size: 0.8rem;
+  padding: 0.85rem 1.25rem;
+}
+.quickstart-caption { font-size: 0.8rem; color: var(--faint); margin: 0.6rem 0 0; }
+
+/* ── Proof screenshots ────────────────────────────────── */
+
+.shot-frame {
+  margin: 0;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.75rem 0.75rem 0.9rem;
+}
+.shot-frame img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.shot-frame figcaption { font-size: 0.825rem; color: #8494ad; padding: 0.8rem 0.35rem 0; line-height: 1.55; }
+
+@supports (animation-timeline: view()) {
+  .shot-frame {
+    animation: shot-rise both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 55%;
+  }
+  @keyframes shot-rise {
+    from { opacity: 0.35; transform: translateY(18px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* ── Pillars ──────────────────────────────────────────── */
+
+.pillar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.75rem;
+  padding: 2.5rem 0;
+  border-top: 1px solid var(--border);
+}
+@media (min-width: 900px) {
+  .pillar { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 3.5rem; align-items: center; }
+  .pillar:nth-of-type(even) .pillar-body { order: 2; }
+}
+.pillar-body h3 { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 0.6rem; }
+.pillar-body p { margin: 0 0 1rem; }
+.pillar-body .icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-soft-text);
+  margin-bottom: 1rem;
+}
+.pillar-body .more { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; font-weight: 600; }
+
+.artifact-log { margin: 0; font-size: 0.8rem; }
+.artifact-caption { font-size: 0.825rem; color: var(--faint); margin: 0.75rem 0 0; line-height: 1.55; }
+.artifact-stats { list-style: none; display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0; padding: 0; }
+.artifact-stats code { font-size: 0.9rem; padding: 0.45rem 0.8rem; border-radius: 8px; }
+.shot-frame-sm { padding: 0.5rem 0.5rem 0.65rem; }
+
+/* ── Secondary feature list ───────────────────────────── */
+
+.mini-list { list-style: none; margin: 2.5rem 0 0; padding: 0; }
+.mini-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1.25rem;
+  padding: 1.1rem 0.25rem;
+  border-top: 1px solid var(--border);
+  color: inherit;
+  transition: background-color 0.2s ease;
+}
+.mini-row:hover { background: var(--surface-2); text-decoration: none; }
+.mini-title { font-weight: 650; color: var(--text); white-space: nowrap; }
+.mini-body { color: var(--muted); flex: 1; min-width: 12rem; }
+.mini-row svg { color: var(--faint); flex-shrink: 0; align-self: center; }
+@media (max-width: 639px) {
+  .mini-row { flex-wrap: wrap; gap: 0.35rem 1rem; }
+  .mini-body { flex-basis: 100%; }
+}
+
+/* ── Closing columns ──────────────────────────────────── */
+
+.closing-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem;
+  border-top: 1px solid var(--border);
+}
+@media (min-width: 768px) { .closing-cols { grid-template-columns: 1fr 1fr; gap: 4rem; } }
+.closing-cols h3 { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.6rem; }
+.closing-cols p { color: var(--muted); margin: 0; }
 
 .section { padding: 3.5rem 0; }
 .section-head { max-width: 40rem; margin-bottom: 2.25rem; }
