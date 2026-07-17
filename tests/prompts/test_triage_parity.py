@@ -1,65 +1,88 @@
 """Characterization test: the editable drift-triage skeleton renders
-byte-identical to the pre-refactor hardcoded f-string.
+byte-identical to a frozen reference of the evidence-pointer body.
 
-``_reference_triage_prompt`` below is a **frozen copy** of what
-``agent_spawn._triage_prompt`` produced before the dynamic-prompt-template
-refactor. It is fully self-contained (the triage builder had no shared helpers),
-so the only thing under test is the migrated template body + the context wiring
-in the new ``_triage_prompt``. If the two ever diverge, the migration dropped or
-mangled text — edit the surface body and this reference together.
+``_reference_triage_prompt`` below is a **frozen copy** of the pointer-form
+default body (single topic, ``VERDICT:`` answer format). It pins the template
+at the ``render_surface`` level with a hand-built context — the runtime
+context assembly (``agent_spawn._triage_prompt`` over
+``drift_judge.evidence_context``) is covered by the topics suites. If the two
+ever diverge, the body edit dropped or mangled text — edit the surface body
+and this reference together (and register the superseded body's sha256 as a
+retired default in ``lib/prompts/surfaces/triage.py``).
 """
 
 from __future__ import annotations
 
-import lib.topics.agent_spawn as asp
+from lib.prompts import render_surface
+from lib.prompts.surfaces.triage import SURFACE_ID
 
 
-def _reference_triage_prompt(topic_id: str, wiki_md: str,
-                             drifted_paths: list[str]) -> str:
-    paths = "\n".join(f"- {p}" for p in drifted_paths) or "- (this topic's refs)"
-    wiki_block = wiki_md.strip() or "(no wiki on file)"
+def _reference_triage_prompt(topic_id: str, wiki_pointer: str,
+                             changed_refs: str, repo_root: str) -> str:
     return (
-        "A topic's ref files changed since its wiki was written. Decide whether "
-        "the change is MATERIAL (the wiki narrative below is now inaccurate or "
-        "incomplete and should be re-drafted) or TRIVIAL (formatting, comments, "
-        "renames, or edits that don't change what the wiki says).\n\n"
-        "Use your Read/Glob/Grep tools to read the changed files as they exist "
-        "NOW, then compare against the wiki.\n\n"
+        "A topic's ref files changed since its wiki was written. Decide "
+        "whether the change is MATERIAL (the wiki narrative is now inaccurate "
+        "or incomplete and should be re-drafted) or TRIVIAL (formatting, "
+        "comments, renames, or edits that don't change what the wiki says).\n\n"
+        "The evidence below is a set of pointers: the topic's current wiki "
+        "path, and each changed ref with the baseline commit its digest was "
+        "captured at, any wiki-cited identifiers that vanished from it, and a "
+        "one-line change summary. All paths are relative to the repo root "
+        f"{repo_root}. Pull the evidence yourself before judging:\n"
+        "- Read the wiki file — it is the narrative you are judging.\n"
+        f"- Run `git -C {repo_root} diff <baseline> -- <path>` for the real "
+        f"old→new change, and `git -C {repo_root} log --oneline "
+        "<baseline>..HEAD -- <path>` for the commits (and their intent) "
+        "behind it.\n"
+        "- Read/Glob/Grep anything else you need; do not rubber-stamp the "
+        "summaries.\n\n"
         f"<topic_id>{topic_id}</topic_id>\n\n"
-        f"<changed_refs>\n{paths}\n</changed_refs>\n\n"
-        f"<current_wiki>\n{wiki_block}\n</current_wiki>\n\n"
-        "<task>\nRead the changed refs, then answer with exactly one line:\n"
+        f"<wiki>{wiki_pointer}</wiki>\n\n"
+        f"<changed_refs>\n{changed_refs}\n</changed_refs>\n\n"
+        "<task>\nAnswer with exactly one line:\n"
         "VERDICT: MATERIAL|TRIVIAL\n</task>"
     )
 
 
-def _run(topic_id: str, wiki_md: str, drifted_paths: list[str]) -> tuple[str, str]:
-    expected = _reference_triage_prompt(topic_id, wiki_md, drifted_paths)
-    actual = asp._triage_prompt(topic_id, wiki_md, drifted_paths)
+def _run(topic_id: str, wiki_pointer: str, changed_refs: str,
+         repo_root: str) -> tuple[str, str]:
+    expected = _reference_triage_prompt(topic_id, wiki_pointer,
+                                        changed_refs, repo_root)
+    actual = render_surface(SURFACE_ID, {
+        "topic_id": topic_id, "wiki_pointer": wiki_pointer,
+        "changed_refs": changed_refs, "repo_root": repo_root,
+    })
     return expected, actual
 
 
-def test_parity_empty_paths_empty_wiki():
-    # Edge case: 0 drifted paths and empty wiki — both fall back to placeholders.
-    expected, actual = _run("auth", "", [])
-    assert actual == expected
-    assert "- (this topic's refs)" in actual
-    assert "(no wiki on file)" in actual
-
-
-def test_parity_single_path_with_wiki():
+def test_parity_no_paths_no_wiki():
     expected, actual = _run(
-        "trace-merge", "  # Trace merge\nMerges spans at read time.  ",
-        ["lib/trace/merge.py"],
+        "auth", "(no wiki on file)", "- (no changed paths recorded)",
+        "/repos/auth",
     )
     assert actual == expected
+    assert "(no wiki on file)" in actual
+    assert "- (no changed paths recorded)" in actual
 
 
-def test_parity_many_paths_with_wiki():
+def test_parity_single_annotated_ref():
     expected, actual = _run(
-        "topic-graph",
-        "# Topic graph\nThe append-only store plus serve-time merge.",
-        ["lib/topics/graph_io.py", "lib/topics/core.py", "db/schema.sql"],
+        "trace-merge", ".regin/topics/wiki/trace-merge.md",
+        "- lib/trace/merge.py — wiki cites `merge_spans`, no longer present"
+        " — baseline abc123 — 1 file changed, 4 insertions(+)",
+        "/repos/regin",
+    )
+    assert actual == expected
+    assert "git -C /repos/regin diff" in actual
+
+
+def test_parity_multiline_refs():
+    refs = ("- lib/topics/graph_io.py — baseline abc123 — 2 files changed\n"
+            "- db/schema.sql — no baseline recorded "
+            "(read the file as it is now)")
+    expected, actual = _run(
+        "topic-graph", ".regin/topics/wiki/topic-graph.md", refs,
+        "/repos/regin",
     )
     assert actual == expected
     assert "<changed_refs>" in actual

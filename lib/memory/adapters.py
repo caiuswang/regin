@@ -211,11 +211,12 @@ def resolve_proposal_reviewer() -> ExternalAgentLLM:
 
 
 def resolve_drift_judge() -> ExternalAgentLLM:
-    """The LLM behind the batched content-drift judge. Its prompt hands over
-    evidence pointers (baseline commit, wiki path) rather than embedded
-    content, so beyond the reviewer's read-only tools it needs the read-only
-    git commands the prompt instructs — diff/log/show against the baseline —
-    or the pointers are dead weight."""
+    """The LLM behind content-drift materiality judging — the batched judge
+    and its per-item triage fallback. Both prompts hand over evidence
+    pointers (baseline commit, wiki path) rather than embedded content, so
+    beyond the reviewer's read-only tools they need the read-only git
+    commands the prompts instruct — diff/log/show against the baseline — or
+    the pointers are dead weight."""
     from lib.prompts.surfaces.triage import JUDGE_BATCH_SURFACE_ID
     return ExternalAgentLLM(
         extra_args=["--allowedTools",

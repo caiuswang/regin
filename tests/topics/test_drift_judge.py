@@ -342,29 +342,21 @@ def test_judge_failure_falls_back_to_per_item_triage(fake_git_repo,
     _enable_spawn(monkeypatch)
     spawns = _spy_spawns(monkeypatch)
 
-    class _Exploding:
+    class _Flaky:
         calls = 0
 
         def complete(self, prompt, **kw):
-            _Exploding.calls += 1
-            raise RuntimeError("judge exploded")
-
-    class _Triage:
-        calls = 0
-
-        def complete(self, prompt, **kw):
-            _Triage.calls += 1
+            _Flaky.calls += 1
+            if _Flaky.calls == 1:
+                raise RuntimeError("judge exploded")
             return "VERDICT: TRIVIAL"           # per-item triage format
 
     monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
-                        lambda: _Exploding())
-    monkeypatch.setattr("lib.memory.adapters.resolve_proposal_reviewer",
-                        lambda: _Triage())
+                        lambda: _Flaky())
 
     spawned = maybe_spawn_refresh_agents(repo)
 
     # batch call failed → each item triaged individually, both TRIVIAL
     assert spawned == 0
     assert spawns == []
-    assert _Exploding.calls == 1
-    assert _Triage.calls == 2
+    assert _Flaky.calls == 3                    # 1 failed batch + 2 triages

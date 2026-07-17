@@ -58,9 +58,12 @@ class _StubReviewer:
 
 def _set_triage(monkeypatch, answer) -> _StubReviewer:
     """Install (and return) a single shared stub instance, so callers can
-    inspect `.seen_cwds` after the code under test runs."""
+    inspect `.seen_cwds` after the code under test runs. The batch judge and
+    the per-item triage share `resolve_drift_judge`, so one stub covers both:
+    a triage-format answer is unparseable as batch verdicts → per-item
+    fallback → the same stub answers."""
     reviewer = _StubReviewer(answer)
-    monkeypatch.setattr("lib.memory.adapters.resolve_proposal_reviewer",
+    monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
                         lambda: reviewer)
     return reviewer
 
@@ -70,11 +73,8 @@ def _configure(monkeypatch, *, spawn: bool, configured: bool):
     monkeypatch.setattr(
         "lib.topics.proposal_external.external_agent_configured",
         lambda: configured)
-    # Default: the batch judge is unavailable (None → per-item fallback) and
-    # triage judges MATERIAL, so spawn-path tests are deterministic and never
-    # shell out to a real agent. Triage tests override with _set_triage.
-    monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
-                        lambda: _StubReviewer(None))
+    # Default: triage judges MATERIAL so spawn-path tests are deterministic and
+    # never shell out to a real agent. Triage tests override with _set_triage.
     _set_triage(monkeypatch, "VERDICT: MATERIAL")
 
 
@@ -212,16 +212,11 @@ def test_triage_passes_repo_path_as_cwd(fake_git_repo, monkeypatch, spy):
     _write_wiki(repo, "t1")
     emit_refresh_proposal(repo, "t1", ["a.py"])
 
-    judge = _StubReviewer(None)
-    monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
-                        lambda: judge)
-
     maybe_spawn_refresh_agents(repo)
 
-    # Both judged calls — the batched judge (unavailable → fallback), then
-    # the per-item triage — must be repo-scoped.
-    assert judge.seen_cwds == [repo]
-    assert reviewer.seen_cwds == [repo]
+    # Two judged calls — the batched judge (whose triage-format answer parses
+    # to nothing → fallback), then the per-item triage — both repo-scoped.
+    assert reviewer.seen_cwds == [repo, repo]
 
 
 def test_triage_passes_its_own_surface_id(fake_git_repo, monkeypatch, spy):
@@ -240,16 +235,12 @@ def test_triage_passes_its_own_surface_id(fake_git_repo, monkeypatch, spy):
     _write_wiki(repo, "t1")
     emit_refresh_proposal(repo, "t1", ["a.py"])
 
-    judge = _StubReviewer(None)
-    monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
-                        lambda: judge)
-
     maybe_spawn_refresh_agents(repo)
 
-    # Batched judge under its own surface id; when it yields nothing, the
-    # per-item triage runs under its own id — never the reviewer's.
-    assert judge.seen_surface_ids == [JUDGE_BATCH_SURFACE_ID]
-    assert reviewer.seen_surface_ids == [TRIAGE_SURFACE_ID]
+    # Batched judge first (its own surface id), then — its triage-format
+    # answer parses to nothing — the per-item triage under its own id.
+    assert reviewer.seen_surface_ids == [JUDGE_BATCH_SURFACE_ID,
+                                         TRIAGE_SURFACE_ID]
 
 
 def test_triage_material_spawns(fake_git_repo, monkeypatch, spy):

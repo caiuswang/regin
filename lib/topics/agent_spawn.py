@@ -155,8 +155,11 @@ def _topic_request(proposal: dict[str, Any]) -> str:
             f"topic id and structured fields stable.")
 
 
-def _triage_prompt(topic_id: str, wiki_md: str, drifted_paths: list[str]) -> str:
-    """Build the drift-triage agent's task prompt.
+def _triage_prompt(repo_path: str | Path, topic_id: str,
+                   metadata: dict[str, Any]) -> str:
+    """Build the drift-triage agent's task prompt: the same evidence pointers
+    the batched judge assembles (`drift_judge.evidence_context`), one topic
+    per call.
 
     The body is the editable ``topic-proposal-drift-triage`` surface
     (``lib/prompts/surfaces/triage.py``); this function only assembles the
@@ -165,51 +168,33 @@ def _triage_prompt(topic_id: str, wiki_md: str, drifted_paths: list[str]) -> str
     """
     from lib.prompts import render_surface
     from lib.prompts.surfaces.triage import SURFACE_ID
+    from lib.topics.drift_judge import evidence_context
+    from lib.topics.ref_digest import repo_id_for_path
 
-    context = {
-        "topic_id": topic_id,
-        "changed_refs": "\n".join(f"- {p}" for p in drifted_paths)
-        or "- (this topic's refs)",
-        "current_wiki": wiki_md.strip() or "(no wiki on file)",
-    }
+    item = {"drifted_paths": metadata.get("drifted_paths") or [],
+            "missing_anchors": metadata.get("missing_anchors") or {}}
+    context = {"topic_id": topic_id,
+               **evidence_context(repo_path, topic_id, item,
+                                  repo_id_for_path(repo_path))}
     return render_surface(SURFACE_ID, context)
 
 
 def _triage_inputs(repo_path: str | Path,
-                   proposal: dict[str, Any]) -> "tuple[str, str, list] | None":
-    """`(topic_id, wiki_md, drifted_paths)` for the triage prompt, or None when
-    there is nothing to judge: the stub names no topic, or the topic has no
-    wiki on file yet. With no wiki there is no narrative to compare the changed
-    code against — materiality is undecidable — so the caller skips triage and
-    lets the draft proceed (fail open). Paths whose drift was judged by
-    vanished wiki anchors carry that evidence inline, so the triage agent
-    sees WHICH cited identifiers the wiki lost, not just that bytes moved."""
+                   proposal: dict[str, Any]) -> "tuple[str, dict] | None":
+    """`(topic_id, metadata)` for the triage prompt, or None when there is
+    nothing to judge: the stub names no topic, or the topic has no wiki on
+    file yet. With no wiki there is no narrative to compare the changed code
+    against — materiality is undecidable — so the caller skips triage and
+    lets the draft proceed (fail open)."""
     from lib.topics.wiki import topic_wiki_page
 
     topics = proposal.get("topics") or [{}]
     topic_id = topics[0].get("id") or ""
     if not topic_id:
         return None
-    wiki_path = topic_wiki_page(repo_path, topic_id)
-    if not wiki_path.is_file():
+    if not topic_wiki_page(repo_path, topic_id).is_file():
         return None
-    drifted = _annotated_drift_paths(proposal.get("metadata") or {})
-    wiki_md = wiki_path.read_text(encoding="utf-8", errors="replace")
-    return topic_id, wiki_md, drifted
-
-
-def _annotated_drift_paths(metadata: dict[str, Any]) -> list[str]:
-    """Drifted paths with their vanished-anchor evidence appended inline."""
-    missing = metadata.get("missing_anchors") or {}
-    out = []
-    for path in metadata.get("drifted_paths") or []:
-        gone = missing.get(path)
-        if gone:
-            cited = ", ".join(f"`{a}`" for a in gone)
-            out.append(f"{path} (wiki cites {cited} — no longer present)")
-        else:
-            out.append(path)
-    return out
+    return topic_id, proposal.get("metadata") or {}
 
 
 def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:
@@ -220,7 +205,7 @@ def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:
     answer, or any error all yield True, so a real drift is never silently
     dropped."""
     try:
-        from lib.memory.adapters import resolve_proposal_reviewer
+        from lib.memory.adapters import resolve_drift_judge
         from lib.prompts.surfaces.triage import SURFACE_ID as TRIAGE_SURFACE_ID
 
         inputs = _triage_inputs(repo_path, proposal)
@@ -233,8 +218,8 @@ def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:
         # but was dead. Passing the triage surface's own id here fixes both the
         # trace mislabel and that dead binding in one change — intentional, not
         # a side effect to guard against.
-        answer = resolve_proposal_reviewer().complete(
-            _triage_prompt(*inputs), max_tokens=512, cwd=repo_path,
+        answer = resolve_drift_judge().complete(
+            _triage_prompt(repo_path, *inputs), max_tokens=512, cwd=repo_path,
             surface_id=TRIAGE_SURFACE_ID)
         if not answer or not str(answer).strip():
             return True  # no agent / empty → fail open (spawn)

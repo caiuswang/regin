@@ -85,17 +85,32 @@ def _path_evidence(repo_path: str | Path, item: dict[str, Any],
     return "\n".join(parts) or "- (no changed paths recorded)"
 
 
-def _topic_block(repo_path: str | Path, item: dict[str, Any],
-                 repo_id: Optional[int]) -> str:
-    topic_id = item["topic_id"]
+def evidence_context(repo_path: str | Path, topic_id: str,
+                     item: dict[str, Any],
+                     repo_id: Optional[int]) -> dict[str, str]:
+    """The evidence pointers for one topic's drift, shared by the batched
+    judge's topic blocks and the per-item triage fallback so both judge the
+    same facts: per-path baseline commits + change summaries, and the wiki
+    path. `item` carries `drifted_paths` / `missing_anchors`."""
     bases = ({d["path"]: d.get("captured_commit")
               for d in digests_for_topic(repo_id, topic_id)}
              if repo_id is not None else {})
+    return {
+        "changed_refs": _path_evidence(repo_path, item, bases),
+        "wiki_pointer": _wiki_pointer(repo_path, topic_id),
+        "repo_root": str(Path(repo_path).resolve()),
+    }
+
+
+def _topic_block(repo_path: str | Path, item: dict[str, Any],
+                 repo_id: Optional[int]) -> str:
+    topic_id = item["topic_id"]
+    evidence = evidence_context(repo_path, topic_id, item, repo_id)
     return (
         f"### topic `{topic_id}`\n\n"
         f"Wiki (the narrative under judgment — Read it): "
-        f"{_wiki_pointer(repo_path, topic_id)}\n"
-        f"Changed refs:\n{_path_evidence(repo_path, item, bases)}"
+        f"{evidence['wiki_pointer']}\n"
+        f"Changed refs:\n{evidence['changed_refs']}"
     )
 
 
@@ -166,4 +181,4 @@ def _ask_judge(repo_path: str | Path,
         surface_id=JUDGE_BATCH_SURFACE_ID)
 
 
-__all__ = ["judge_drift_batch"]
+__all__ = ["judge_drift_batch", "evidence_context"]
