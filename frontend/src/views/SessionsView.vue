@@ -502,9 +502,7 @@ function timeTitle(s) {
 </script>
 
 <template>
-  <div v-if="loading" class="empty-state">Loading sessions…</div>
   <div
-    v-else
     class="sticky-page-root"
     :style="{ '--regin-trace-header-h': stickyHeaderHeight ? stickyHeaderHeight + 'px' : '0px' }"
   >
@@ -640,6 +638,7 @@ function timeTitle(s) {
     <!-- /sticky page header -->
 
     <div class="split-card">
+      <div v-if="loading && !sessions.length" class="empty-state">Loading sessions…</div>
       <div v-if="sessions.length" class="hidden sm:block overflow-x-auto">
         <table class="tbl sessions-tbl">
           <thead>
@@ -826,10 +825,10 @@ function timeTitle(s) {
           </div>
         </li>
       </ul>
-      <p v-if="!sessions.length && activeSearch" class="p-4 text-sm text-gray-400">
+      <p v-if="!sessions.length && !loading && activeSearch" class="p-4 text-sm text-gray-400">
         No sessions match {{ searchScope }} <code>{{ activeSearch }}</code>.
       </p>
-      <p v-else-if="!sessions.length" class="p-4 text-sm text-gray-400">No session traces yet. Install the File Edit Trace hook in Settings and start a Claude Code session.</p>
+      <p v-else-if="!sessions.length && !loading" class="p-4 text-sm text-gray-400">No session traces yet. Install the File Edit Trace hook in Settings and start a Claude Code session.</p>
 
       <CursorControls
         v-if="sessions.length"
