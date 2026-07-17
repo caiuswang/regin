@@ -91,6 +91,33 @@ def test_seed_heals_unedited_stale_builtin(tmp_db, monkeypatch):
     assert seed_builtin_skeletons() == 0
 
 
+_JUDGE_BATCH_SLUG = "topic-proposal-drift-judge-batch"
+
+# The judge-batch surface's last-shipped default verbatim (embedded git-diff
+# fences + truncated wiki excerpt) — its sha256 is registered in
+# lib/prompts/surfaces/triage.py; an un-edited install still storing it must
+# heal to the evidence-pointer body.
+_JUDGE_BATCH_LAST_DEFAULT = """Several topics' ref files changed since their wikis were written. For EACH topic below, decide whether its change is MATERIAL (that topic's wiki narrative is now inaccurate or incomplete and should be re-drafted) or TRIVIAL (formatting, comments, internal refactors, or edits that don't change what the wiki says).
+
+Each topic block carries the evidence recorded at detection time: the changed ref paths, any wiki-cited identifiers that vanished from them, a git diff of each ref against the wiki's baseline commit (when available), and the current wiki. Judge from the evidence — and use your Read/Glob/Grep tools to pull anything more you need; do not rubber-stamp the summary.
+
+{{topic_blocks}}
+
+<task>
+Answer with exactly one line per topic, nothing else:
+<topic_id>: MATERIAL|TRIVIAL — <one-sentence reason>
+</task>"""
+
+
+def test_seed_heals_stale_judge_batch_row(tmp_db):
+    seed_builtin_skeletons()
+    _write_body_verbatim(_JUDGE_BATCH_SLUG, _JUDGE_BATCH_LAST_DEFAULT)
+    assert seed_builtin_skeletons() == 1
+    row = get_template_by_slug(_JUDGE_BATCH_SLUG)
+    assert row["body"] == get_surface(_JUDGE_BATCH_SLUG).default_body()
+    assert "evidence pointers" in row["body"]
+
+
 def test_seed_leaves_user_edited_body_alone(tmp_db, monkeypatch):
     _register_fake_retired(monkeypatch, _LIVE_SLUG, _FAKE_OLD_DEFAULT)
     seed_builtin_skeletons()

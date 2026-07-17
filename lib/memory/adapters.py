@@ -210,6 +210,22 @@ def resolve_proposal_reviewer() -> ExternalAgentLLM:
     )
 
 
+def resolve_drift_judge() -> ExternalAgentLLM:
+    """The LLM behind the batched content-drift judge. Its prompt hands over
+    evidence pointers (baseline commit, wiki path) rather than embedded
+    content, so beyond the reviewer's read-only tools it needs the read-only
+    git commands the prompt instructs — diff/log/show against the baseline —
+    or the pointers are dead weight."""
+    from lib.prompts.surfaces.triage import JUDGE_BATCH_SURFACE_ID
+    return ExternalAgentLLM(
+        extra_args=["--allowedTools",
+                    "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),"
+                    "Bash(git show:*)"],
+        surface_id=JUDGE_BATCH_SURFACE_ID,
+    )
+
+
 __all__ = ["SkillRouterEmbedding", "ExternalAgentLLM", "SpawnSpec",
            "resolve_distiller", "resolve_dreamer", "resolve_topic_classifier",
-           "resolve_retitler", "resolve_proposal_reviewer"]
+           "resolve_retitler", "resolve_proposal_reviewer",
+           "resolve_drift_judge"]

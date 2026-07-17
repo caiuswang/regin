@@ -3,12 +3,13 @@ per drifted topic.
 
 The mechanical tiers (wiki anchors, cosine, hash) decide cheaply whether a
 change *might* have invalidated a wiki; this judge reads what actually
-changed and decides whether each pending refresh is worth drafting. Its
-evidence beats the per-stub triage's: each digest row stamps the repo HEAD at
-capture (`captured_commit`), so the judge sees `git diff <base> -- <path>` —
-the real old→new change — plus the vanished wiki anchors and the current
-wiki, and it keeps the triage prompt's agentic contract (it may Read/Grep
-further).
+changed and decides whether each pending refresh is worth drafting. The
+prompt hands it evidence *pointers*, not pre-extracted content: the wiki's
+path, each ref's baseline commit (`captured_commit`, the repo HEAD stamped at
+digest capture) with a one-line change summary, and the vanished wiki
+anchors. The judge pulls the rest itself — Read the wiki, `git diff <base>`,
+`git log <base>..HEAD` — so nothing is truncated into the prompt and the
+commit messages behind a change are in reach.
 
 Consumed by `lib/topics/agent_spawn.maybe_spawn_refresh_agents`, which falls
 back to the per-item triage when this judge is unavailable or its answer is
@@ -29,8 +30,6 @@ from lib.topics.wiki import topic_wiki_page
 
 log = get_activity_logger("topics")
 
-DIFF_CHARS_PER_PATH = 2500
-WIKI_EXCERPT_CHARS = 1200
 
 # Tolerant of the ways LLMs decorate a line — bullets, bold, backticks,
 # trailing punctuation, a missing em-dash before the reason — because every
@@ -44,32 +43,26 @@ _VERDICT_LINE = re.compile(
     re.IGNORECASE | re.MULTILINE)
 
 
-def _diff_excerpt(repo_path: str | Path, base: Optional[str],
-                  path: str) -> Optional[str]:
-    """`git diff <base> -- <path>` (worktree vs the captured baseline),
-    truncated; None when there is no baseline or git can't produce it."""
-    if not base:
-        return None
-    lines = _git(repo_path, ["diff", base, "--", path])
-    if not lines:
-        return None
-    text = "\n".join(lines)
-    if len(text) > DIFF_CHARS_PER_PATH:
-        text = text[:DIFF_CHARS_PER_PATH].rstrip() + "\n…(diff truncated)"
-    return text
+def _stat_line(repo_path: str | Path, base: str,
+               path: str) -> Optional[str]:
+    """One-line `git diff --shortstat <base> -- <path>` magnitude summary;
+    None when git can't produce it (unreachable baseline, or no change)."""
+    lines = _git(repo_path, ["diff", "--shortstat", base, "--", path])
+    return lines[0].strip() if lines else None
 
 
-def _wiki_excerpt(repo_path: str | Path, topic_id: str) -> str:
+def _wiki_pointer(repo_path: str | Path, topic_id: str) -> str:
     page = topic_wiki_page(repo_path, topic_id)
-    if not page.is_file():
-        return "(no wiki on file)"
     try:
-        text = page.read_text(encoding="utf-8", errors="replace").strip()
+        if not page.is_file() or not page.read_text(
+                encoding="utf-8", errors="replace").strip():
+            return "(no wiki on file)"
     except OSError:
         return "(wiki unreadable)"
-    if len(text) > WIKI_EXCERPT_CHARS:
-        text = text[:WIKI_EXCERPT_CHARS].rstrip() + "\n…(truncated)"
-    return text or "(no wiki on file)"
+    try:
+        return page.relative_to(Path(repo_path)).as_posix()
+    except ValueError:
+        return str(page)
 
 
 def _path_evidence(repo_path: str | Path, item: dict[str, Any],
@@ -80,23 +73,29 @@ def _path_evidence(repo_path: str | Path, item: dict[str, Any],
         gone = missing.get(path)
         cited = (f" — wiki cites {', '.join(f'`{a}`' for a in gone)}, "
                  f"no longer present" if gone else "")
-        parts.append(f"#### {path}{cited}")
-        diff = _diff_excerpt(repo_path, bases.get(path), path)
-        parts.append(f"```diff\n{diff}\n```" if diff
-                     else "(no baseline diff available — read the file as it is now)")
-    return "\n".join(parts) or "(no changed paths recorded)"
+        base = bases.get(path)
+        if base:
+            stat = _stat_line(repo_path, base, path)
+            change = f" — baseline {base} — " + (
+                stat if stat else
+                "no diff available (read the file as it is now)")
+        else:
+            change = " — no baseline recorded (read the file as it is now)"
+        parts.append(f"- {path}{cited}{change}")
+    return "\n".join(parts) or "- (no changed paths recorded)"
 
 
-def _topic_block(repo_path: str | Path, item: dict[str, Any]) -> str:
+def _topic_block(repo_path: str | Path, item: dict[str, Any],
+                 repo_id: Optional[int]) -> str:
     topic_id = item["topic_id"]
-    repo_id = repo_id_for_path(repo_path)
     bases = ({d["path"]: d.get("captured_commit")
               for d in digests_for_topic(repo_id, topic_id)}
              if repo_id is not None else {})
     return (
         f"### topic `{topic_id}`\n\n"
-        f"Changed refs:\n{_path_evidence(repo_path, item, bases)}\n\n"
-        f"Current wiki:\n```markdown\n{_wiki_excerpt(repo_path, topic_id)}\n```"
+        f"Wiki (the narrative under judgment — Read it): "
+        f"{_wiki_pointer(repo_path, topic_id)}\n"
+        f"Changed refs:\n{_path_evidence(repo_path, item, bases)}"
     )
 
 
@@ -149,15 +148,20 @@ def judge_drift_batch(repo_path: str | Path, items: list[dict[str, Any]]
 
 def _ask_judge(repo_path: str | Path,
                items: list[dict[str, Any]]) -> "str | None":
-    from lib.memory.adapters import resolve_proposal_reviewer
+    from lib.memory.adapters import resolve_drift_judge
     from lib.prompts import render_surface
     from lib.prompts.surfaces.triage import JUDGE_BATCH_SURFACE_ID
 
-    blocks = "\n\n".join(_topic_block(repo_path, item) for item in items)
-    prompt = render_surface(JUDGE_BATCH_SURFACE_ID, {"topic_blocks": blocks})
+    repo_id = repo_id_for_path(repo_path)
+    blocks = "\n\n".join(_topic_block(repo_path, item, repo_id)
+                         for item in items)
+    prompt = render_surface(JUDGE_BATCH_SURFACE_ID, {
+        "topic_blocks": blocks,
+        "repo_root": str(Path(repo_path).resolve()),
+    })
     # One verdict line per topic — scale the answer budget with the batch so
     # a verbose judge can't truncate the tail into fail-open spawns.
-    return resolve_proposal_reviewer().complete(
+    return resolve_drift_judge().complete(
         prompt, max_tokens=max(1024, 256 * len(items)), cwd=repo_path,
         surface_id=JUDGE_BATCH_SURFACE_ID)
 

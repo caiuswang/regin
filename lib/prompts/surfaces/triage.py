@@ -6,7 +6,8 @@ the ``VERDICT: MATERIAL|TRIVIAL`` line are literal text)."""
 
 from __future__ import annotations
 
-from lib.prompts.registry import PromptVariable, register_surface
+from lib.prompts.registry import (PromptVariable, register_retired_default,
+                                  register_surface)
 
 SURFACE_ID = "topic-proposal-drift-triage"
 
@@ -37,7 +38,10 @@ JUDGE_BATCH_SURFACE_ID = "topic-proposal-drift-judge-batch"
 
 _JUDGE_BATCH_DEFAULT_BODY = """Several topics' ref files changed since their wikis were written. For EACH topic below, decide whether its change is MATERIAL (that topic's wiki narrative is now inaccurate or incomplete and should be re-drafted) or TRIVIAL (formatting, comments, internal refactors, or edits that don't change what the wiki says).
 
-Each topic block carries the evidence recorded at detection time: the changed ref paths, any wiki-cited identifiers that vanished from them, a git diff of each ref against the wiki's baseline commit (when available), and the current wiki. Judge from the evidence — and use your Read/Glob/Grep tools to pull anything more you need; do not rubber-stamp the summary.
+Each topic block is a set of evidence pointers recorded at detection time: the path of the topic's current wiki, each changed ref with the baseline commit its digest was captured at, any wiki-cited identifiers that vanished from it, and a one-line change summary. All paths are relative to the repo root {{repo_root}}. Pull the evidence yourself before judging:
+- Read the wiki file — it is the narrative you are judging.
+- Run `git -C {{repo_root}} diff <baseline> -- <path>` for the real old→new change, and `git -C {{repo_root}} log --oneline <baseline>..HEAD -- <path>` for the commits (and their intent) behind it.
+- Read/Glob/Grep anything else you need; do not rubber-stamp the summaries.
 
 {{topic_blocks}}
 
@@ -54,15 +58,31 @@ register_surface(
     default_body=_JUDGE_BATCH_DEFAULT_BODY,
     description=(
         "One prompt judging every pending content-drift refresh in a sweep — "
-        "per-topic git diffs + vanished wiki anchors + current wiki — instead "
-        "of one triage call per topic."
+        "per-topic evidence pointers (wiki path, baseline commits, vanished "
+        "anchors, change summaries) the agent pulls itself — instead of one "
+        "triage call per topic."
     ),
     applies_to=("external-agent",),
     variables=(
-        PromptVariable("topic_blocks", "One markdown block per pending topic: changed refs with vanished-anchor notes and git-diff excerpts, plus the current wiki."),
+        PromptVariable("topic_blocks", "One markdown block per pending topic: the wiki path, and each changed ref with its baseline commit, vanished-anchor notes, and a one-line change summary."),
+        PromptVariable("repo_root", "Absolute path of the repo under judgment — anchors the relative pointers and `git -C` commands regardless of the agent's own cwd."),
     ),
     tags=("topic-proposal-agent", "drift-triage"),
 )
+
+# Retired default-body hashes: an un-edited stale row still hashing to one of
+# these is healed to the current default by `seed_builtin_skeletons`, so a
+# body change reaches existing installs instead of being pinned to the stale
+# seed. Append a line each time the body changes.
+for _sha in (
+    # embedded per-path git-diff fences + truncated wiki excerpt, before the
+    # evidence-pointer form (wiki path + baseline commit + shortstat)
+    "de70600633bbf90d237d6493986243d217ba7d985b3945a1a058d69c88afbb85",
+    # first evidence-pointer draft: bare `git diff`/`git log` with no
+    # `-C {{repo_root}}` anchor (breaks under an agent-config cwd override)
+    "a6347c28ff965d02377e2da7e53ccebd32a521fa104e157411efb5c1191a1df6",
+):
+    register_retired_default(JUDGE_BATCH_SURFACE_ID, sha256=_sha)
 
 
 register_surface(

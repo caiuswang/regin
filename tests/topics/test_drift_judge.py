@@ -36,7 +36,7 @@ class _StubJudge:
 
 def _set_judge(monkeypatch, answer) -> _StubJudge:
     judge = _StubJudge(answer)
-    monkeypatch.setattr("lib.memory.adapters.resolve_proposal_reviewer",
+    monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
                         lambda: judge)
     return judge
 
@@ -99,10 +99,15 @@ def test_capture_stamps_head_commit(fake_git_repo):
     assert digest["captured_commit"] == head
 
 
-def test_judge_prompt_carries_git_diff(fake_git_repo, monkeypatch):
+def test_judge_prompt_carries_evidence_pointers(fake_git_repo, monkeypatch):
+    """The prompt hands the judge addresses — baseline commit, wiki path,
+    shortstat — not embedded diff/wiki content it would have to truncate."""
     repo = fake_git_repo
     (repo / "a.py").write_text("def original_symbol():\n    return 1\n")
     _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    root = wiki_dir(repo)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "t1.md").write_text("narrative " * 400)
     _commit_all(repo, "baseline")
     capture_ref_digests(repo, "t1")
     (repo / "a.py").write_text("def renamed_symbol():\n    return 1\n")
@@ -110,12 +115,68 @@ def test_judge_prompt_carries_git_diff(fake_git_repo, monkeypatch):
 
     verdicts = judge_drift_batch(
         repo, [{"topic_id": "t1", "drifted_paths": ["a.py"],
-                "missing_anchors": {}}])
+                "missing_anchors": {"a.py": ["original_symbol"]}}])
 
     assert verdicts == {"t1": {"verdict": "trivial",
                                "reason": "rename only"}}
-    assert "-def original_symbol" in judge.last_prompt
-    assert "+def renamed_symbol" in judge.last_prompt
+    (digest,) = digests_for_topic(repo_id_for_path(repo), "t1")
+    assert f"baseline {digest['captured_commit']}" in judge.last_prompt
+    assert "1 file changed" in judge.last_prompt
+    rel_wiki = (root / "t1.md").relative_to(repo).as_posix()
+    assert rel_wiki in judge.last_prompt
+    assert "wiki cites `original_symbol`" in judge.last_prompt
+    # the git instructions are anchored to the repo root, so they survive an
+    # agent-config cwd override
+    assert f"git -C {Path(repo).resolve()}" in judge.last_prompt
+    # pointers, not contents: no diff hunks, no inlined wiki body
+    assert "-def original_symbol" not in judge.last_prompt
+    assert "narrative narrative" not in judge.last_prompt
+
+
+def test_judge_prompt_degrades_without_baseline_or_wiki(fake_git_repo,
+                                                        monkeypatch):
+    repo = fake_git_repo
+    _seed(repo, {"t1": _topic([{"path": "a.py"}]),
+                 "t2": _topic([{"path": "b.py"}])})
+    root = wiki_dir(repo)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "t2.md").write_text("   \n")        # exists but effectively empty
+    judge = _set_judge(monkeypatch, "t1: MATERIAL — new module\n"
+                                    "t2: MATERIAL — new module")
+
+    verdicts = judge_drift_batch(
+        repo, [{"topic_id": "t1", "drifted_paths": ["a.py"],
+                "missing_anchors": {}},
+               {"topic_id": "t2", "drifted_paths": ["b.py"],
+                "missing_anchors": {}}])
+
+    assert verdicts is not None
+    assert "no baseline recorded (read the file as it is now)" \
+        in judge.last_prompt
+    assert judge.last_prompt.count("(no wiki on file)") == 2
+    assert "t2.md" not in judge.last_prompt
+
+
+def test_judge_prompt_flags_unproducible_diff(fake_git_repo, monkeypatch):
+    """A recorded baseline whose diff git can't produce (unreachable commit,
+    or no textual change) must still tell the judge to read the current
+    file, not hand it a bare hash."""
+    repo = fake_git_repo
+    (repo / "a.py").write_text("x\n")
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _commit_all(repo, "baseline")
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("y\n")
+    monkeypatch.setattr("lib.topics.drift_judge._stat_line",
+                        lambda repo_path, base, path: None)
+    judge = _set_judge(monkeypatch, "t1: TRIVIAL — n/a")
+
+    judge_drift_batch(repo, [{"topic_id": "t1", "drifted_paths": ["a.py"],
+                              "missing_anchors": {}}])
+
+    (digest,) = digests_for_topic(repo_id_for_path(repo), "t1")
+    assert (f"baseline {digest['captured_commit']} — no diff available "
+            f"(read the file as it is now)") in judge.last_prompt
 
 
 # ── verdict parsing ───────────────────────────────────────────
@@ -281,21 +342,29 @@ def test_judge_failure_falls_back_to_per_item_triage(fake_git_repo,
     _enable_spawn(monkeypatch)
     spawns = _spy_spawns(monkeypatch)
 
-    class _Flaky:
+    class _Exploding:
         calls = 0
 
         def complete(self, prompt, **kw):
-            _Flaky.calls += 1
-            if _Flaky.calls == 1:
-                raise RuntimeError("judge exploded")
+            _Exploding.calls += 1
+            raise RuntimeError("judge exploded")
+
+    class _Triage:
+        calls = 0
+
+        def complete(self, prompt, **kw):
+            _Triage.calls += 1
             return "VERDICT: TRIVIAL"           # per-item triage format
 
+    monkeypatch.setattr("lib.memory.adapters.resolve_drift_judge",
+                        lambda: _Exploding())
     monkeypatch.setattr("lib.memory.adapters.resolve_proposal_reviewer",
-                        lambda: _Flaky())
+                        lambda: _Triage())
 
     spawned = maybe_spawn_refresh_agents(repo)
 
     # batch call failed → each item triaged individually, both TRIVIAL
     assert spawned == 0
     assert spawns == []
-    assert _Flaky.calls == 3                    # 1 failed batch + 2 triages
+    assert _Exploding.calls == 1
+    assert _Triage.calls == 2
