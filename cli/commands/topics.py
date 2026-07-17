@@ -264,6 +264,44 @@ def cmd_topics_evolve(
 
 
 @topics_app.command(
+    "drift-dismiss",
+    help="Dismiss a topic's content drift with the reason on the record "
+         "(the drift judge calls this for a TRIVIAL verdict)")
+def cmd_topics_drift_dismiss(
+    topic_id: str = typer.Argument(..., help="Topic whose drift is trivial"),
+    reason: str = typer.Option(..., "--reason",
+                               help="One-sentence why the wiki is unaffected"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.content_drift import judge_dismiss_drift
+
+    result = judge_dismiss_drift(_repo_path(repo), topic_id, reason)
+    print(f"{topic_id}: dismissed — threads {len(result['threads_dismissed'])}"
+          f" (commented {result['threads_commented']}), "
+          f"digests recaptured {result['digests_captured']}, "
+          f"standalone stub ignored: {result['proposal_ignored']}")
+
+
+@topics_app.command(
+    "drift-note",
+    help="Attach a review note to a topic's open content-drift threads "
+         "(the drift judge calls this for a MATERIAL verdict)")
+def cmd_topics_drift_note(
+    topic_id: str = typer.Argument(..., help="Topic whose drift is material"),
+    note: str = typer.Option(..., "--note",
+                             help="What the wiki redraft must cover"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+) -> None:
+    from lib.topics.content_drift import judge_note_drift
+
+    commented = judge_note_drift(_repo_path(repo), topic_id, note)
+    if commented:
+        print(f"{topic_id}: note attached to {commented} open drift thread(s)")
+    else:
+        print(f"{topic_id}: no open drift threads — note not recorded")
+
+
+@topics_app.command(
     "cascade-stale",
     help="Cascade a topic's staleness to its linked memories "
          "(veracity true->unknown)")

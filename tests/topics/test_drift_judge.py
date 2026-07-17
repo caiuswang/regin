@@ -99,10 +99,9 @@ def test_capture_stamps_head_commit(fake_git_repo):
     assert digest["captured_commit"] == head
 
 
-def test_judge_prompt_carries_evidence_pointers(fake_git_repo, monkeypatch):
-    """The prompt hands the judge addresses — baseline commit, wiki path,
-    shortstat — not embedded diff/wiki content it would have to truncate."""
-    repo = fake_git_repo
+def _drifted_t1_prompt(repo: Path, monkeypatch) -> str:
+    """Seed one drifted topic with a wiki + captured baseline, run the batch
+    judge with a stub, and return the prompt the judge saw."""
     (repo / "a.py").write_text("def original_symbol():\n    return 1\n")
     _seed(repo, {"t1": _topic([{"path": "a.py"}])})
     root = wiki_dir(repo)
@@ -112,25 +111,37 @@ def test_judge_prompt_carries_evidence_pointers(fake_git_repo, monkeypatch):
     capture_ref_digests(repo, "t1")
     (repo / "a.py").write_text("def renamed_symbol():\n    return 1\n")
     judge = _set_judge(monkeypatch, "t1: TRIVIAL — rename only")
-
     verdicts = judge_drift_batch(
         repo, [{"topic_id": "t1", "drifted_paths": ["a.py"],
                 "missing_anchors": {"a.py": ["original_symbol"]}}])
-
     assert verdicts == {"t1": {"verdict": "trivial",
                                "reason": "rename only"}}
+    return judge.last_prompt
+
+
+def test_judge_prompt_carries_evidence_pointers(fake_git_repo, monkeypatch):
+    """The prompt hands the judge addresses — baseline commit, wiki path,
+    shortstat, feedback commands — anchored to the repo root."""
+    repo = fake_git_repo
+    prompt = _drifted_t1_prompt(repo, monkeypatch)
+
     (digest,) = digests_for_topic(repo_id_for_path(repo), "t1")
-    assert f"baseline {digest['captured_commit']}" in judge.last_prompt
-    assert "1 file changed" in judge.last_prompt
-    rel_wiki = (root / "t1.md").relative_to(repo).as_posix()
-    assert rel_wiki in judge.last_prompt
-    assert "wiki cites `original_symbol`" in judge.last_prompt
-    # the git instructions are anchored to the repo root, so they survive an
-    # agent-config cwd override
-    assert f"git -C {Path(repo).resolve()}" in judge.last_prompt
-    # pointers, not contents: no diff hunks, no inlined wiki body
-    assert "-def original_symbol" not in judge.last_prompt
-    assert "narrative narrative" not in judge.last_prompt
+    assert f"baseline {digest['captured_commit']}" in prompt
+    assert "1 file changed" in prompt
+    rel_wiki = (wiki_dir(repo) / "t1.md").relative_to(repo).as_posix()
+    assert rel_wiki in prompt
+    assert "wiki cites `original_symbol`" in prompt
+    assert f"git -C {Path(repo).resolve()}" in prompt
+    assert "topics drift-dismiss" in prompt
+    assert "topics drift-note" in prompt
+
+
+def test_judge_prompt_embeds_no_content(fake_git_repo, monkeypatch):
+    """Pointers, not contents: no diff hunks, no inlined wiki body."""
+    prompt = _drifted_t1_prompt(fake_git_repo, monkeypatch)
+
+    assert "-def original_symbol" not in prompt
+    assert "narrative narrative" not in prompt
 
 
 def test_judge_prompt_degrades_without_baseline_or_wiki(fake_git_repo,
@@ -281,21 +292,16 @@ def test_one_judge_call_splits_material_from_trivial(fake_git_repo,
     assert all(d["topic_id"] != "t2" for d in detect_drifted_topics(repo))
 
 
-def test_batched_trivial_dismisses_origin_run_note(fake_git_repo, monkeypatch):
-    """A TRIVIAL verdict from the BATCHED judge must retire an origin-run
-    drift note (not just standalone stubs): thread dismissed, baseline
-    advanced, no regenerate spawned."""
+def _seed_origin_drift_note(repo: Path) -> None:
+    """One topic whose drift landed as an open note on its origin run."""
     import json as _json
 
     from lib.orm import SessionLocal
     from lib.orm.models import TopicAudit
-    from lib.topics.proposal_orm import orm_open_content_drift_threads
     from lib.topics.proposal_orm.runs import orm_save_proposal
 
-    repo = fake_git_repo
     (repo / "a.py").write_text("x\n")
     _seed(repo, {"t1": _topic([{"path": "a.py"}])})
-    repo_id = repo_id_for_path(repo)
     orm_save_proposal(str(repo), "origin-1", {
         "provider": "external-agent", "scope": "all", "status": "applied",
         "topics": [{"id": "t1", "label": "T", "aliases": [], "intent": "i",
@@ -306,7 +312,7 @@ def test_batched_trivial_dismisses_origin_run_note(fake_git_repo, monkeypatch):
     }, wiki="original narrative")
     with SessionLocal() as s:
         s.add(TopicAudit(
-            repo_id=repo_id, kind="provenance",
+            repo_id=repo_id_for_path(repo), kind="provenance",
             recorded_at="2024-01-01T00:00:00Z", severity="info",
             code="topic_create", message="m",
             topic_ids_json=_json.dumps(["t1"]), paths_json="[]",
@@ -316,6 +322,17 @@ def test_batched_trivial_dismisses_origin_run_note(fake_git_repo, monkeypatch):
     capture_ref_digests(repo, "t1")
     (repo / "a.py").write_text("changed\n")
     assert emit_refresh_proposal(repo, "t1", ["a.py"]) == "origin-1"
+
+
+def test_batched_trivial_dismisses_origin_run_note(fake_git_repo, monkeypatch):
+    """A TRIVIAL verdict from the BATCHED judge must retire an origin-run
+    drift note (not just standalone stubs): thread dismissed, baseline
+    advanced, no regenerate spawned."""
+    from lib.orm import SessionLocal
+    from lib.topics.proposal_orm import orm_open_content_drift_threads
+
+    repo = fake_git_repo
+    _seed_origin_drift_note(repo)
 
     _enable_spawn(monkeypatch)
     spawns = _spy_spawns(monkeypatch)
@@ -333,6 +350,50 @@ def test_batched_trivial_dismisses_origin_run_note(fake_git_repo, monkeypatch):
     assert orm_open_content_drift_threads(
         repo, kind="content_drift", topic_id="t1") == []
     assert detect_drifted_topics(repo) == []   # baseline advanced
+    # the verdict reason landed on the thread before it was dismissed
+    from lib.orm.models import ProposalFeedbackComment
+    from sqlmodel import select
+    with SessionLocal() as s:
+        bodies = [c.body for c in s.exec(select(ProposalFeedbackComment))]
+    assert "comment-only churn" in bodies
+
+
+def test_judge_feedback_commands_record_reasons(fake_git_repo):
+    """The lib layer behind `topics drift-note` / `drift-dismiss`: a note
+    lands as a comment and keeps the thread open; a dismissal records the
+    reason, closes both surfaces, advances the baseline, and is idempotent."""
+    from lib.topics.content_drift import judge_dismiss_drift, judge_note_drift
+    from lib.topics.proposal_orm import orm_open_content_drift_threads
+
+    repo = fake_git_repo
+    _seed_origin_drift_note(repo)
+
+    assert judge_note_drift(repo, "t1", "redraft must cover the new CLI") == 1
+    assert orm_open_content_drift_threads(
+        repo, kind="content_drift", topic_id="t1") != []
+
+    result = judge_dismiss_drift(repo, "t1", "formatting only")
+    assert result["threads_commented"] == 1
+    assert orm_open_content_drift_threads(
+        repo, kind="content_drift", topic_id="t1") == []
+    assert detect_drifted_topics(repo) == []
+    assert judge_dismiss_drift(repo, "t1", "again")["threads_commented"] == 0
+
+
+def test_judge_note_on_standalone_stub_reports_zero(fake_git_repo):
+    """A standalone content-drift stub carries no feedback thread, so a
+    MATERIAL note has nowhere to land — the command reports 0 instead of
+    failing, and dismissal still retires the stub with no comment."""
+    from lib.topics.content_drift import judge_dismiss_drift, judge_note_drift
+
+    repo = fake_git_repo
+    _seed_two_drifted_stubs(repo)
+
+    assert judge_note_drift(repo, "t1", "note with no thread") == 0
+    result = judge_dismiss_drift(repo, "t2", "formatting only")
+    assert result["threads_commented"] == 0
+    assert result["proposal_ignored"] is True
+    assert all(d["topic_id"] != "t2" for d in detect_drifted_topics(repo))
 
 
 def test_judge_failure_falls_back_to_per_item_triage(fake_git_repo,

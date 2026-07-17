@@ -432,6 +432,44 @@ def dismiss_content_drift(repo_path: str | Path, topic_id: str, *,
             "threads_dismissed": dismissed, "proposal_ignored": proposal_ignored}
 
 
+def judge_note_drift(repo_path: str | Path, topic_id: str, note: str, *,
+                     author_kind: str = "agent") -> int:
+    """Append a drift-judge review note to every open content-drift thread
+    for the topic, leaving them open — the regenerate carry-forward rail then
+    surfaces the note to the redrafting agent. Returns the number of threads
+    commented (0 when none are open, e.g. a standalone stub with no origin
+    run)."""
+    from lib.topics.proposal_orm import (orm_add_feedback_comment,
+                                         orm_open_content_drift_threads)
+
+    commented = 0
+    for thread in orm_open_content_drift_threads(
+            repo_path, kind=CONTENT_DRIFT_THREAD_KIND, topic_id=topic_id):
+        if orm_add_feedback_comment(
+                repo_path, thread["run_id"], thread["thread_id"],
+                body=note, author_kind=author_kind) is not None:
+            commented += 1
+    if commented:
+        log.write("content_drift_noted", topic_id=topic_id,
+                  threads_commented=commented)
+    return commented
+
+
+def judge_dismiss_drift(repo_path: str | Path, topic_id: str,
+                        reason: str = "", *,
+                        author_kind: str = "agent") -> dict[str, Any]:
+    """Dismiss a topic's content drift *with its reason on the record*: the
+    reason lands as a comment on every open drift thread first, then
+    `dismiss_content_drift` retires both surfaces and advances the baseline.
+    Idempotent — once the threads are closed a second call comments nothing
+    and re-dismissing is a no-op."""
+    commented = judge_note_drift(repo_path, topic_id, reason,
+                                 author_kind=author_kind) if reason else 0
+    result = dismiss_content_drift(repo_path, topic_id)
+    result["threads_commented"] = commented
+    return result
+
+
 def run_content_evolution(repo_path: str | Path, *,
                           embedder=None) -> dict[str, Any]:
     """One content-drift evolve pass: detect drifted topics, cascade staleness
@@ -479,5 +517,6 @@ def run_content_evolution(repo_path: str | Path, *,
 
 
 __all__ = ["detect_drifted_topics", "dismiss_content_drift",
+           "judge_dismiss_drift", "judge_note_drift",
            "emit_refresh_proposal", "run_content_evolution",
            "CONTENT_DRIFT_THREAD_KIND"]

@@ -17,6 +17,10 @@ from lib.prompts import render_surface
 from lib.prompts.surfaces.triage import SURFACE_ID
 
 
+_DISMISS_CMD = "/venv/python /srv/regin/cli/regin.py topics drift-dismiss"
+_NOTE_CMD = "/venv/python /srv/regin/cli/regin.py topics drift-note"
+
+
 def _reference_triage_prompt(topic_id: str, wiki_pointer: str,
                              changed_refs: str, repo_root: str) -> str:
     return (
@@ -39,7 +43,15 @@ def _reference_triage_prompt(topic_id: str, wiki_pointer: str,
         f"<topic_id>{topic_id}</topic_id>\n\n"
         f"<wiki>{wiki_pointer}</wiki>\n\n"
         f"<changed_refs>\n{changed_refs}\n</changed_refs>\n\n"
-        "<task>\nAnswer with exactly one line:\n"
+        "<task>\n"
+        "First put your verdict on the record by running the matching "
+        "feedback command — it attaches your reasoning to the topic's review "
+        "thread where humans will see it:\n"
+        f"- TRIVIAL: {_DISMISS_CMD} {topic_id} --reason \"<one-sentence why "
+        f"the wiki is unaffected>\" --repo {repo_root}\n"
+        f"- MATERIAL: {_NOTE_CMD} {topic_id} --note \"<what changed and what "
+        f"the redraft must cover>\" --repo {repo_root}\n\n"
+        "Then answer with exactly one line:\n"
         "VERDICT: MATERIAL|TRIVIAL\n</task>"
     )
 
@@ -51,6 +63,7 @@ def _run(topic_id: str, wiki_pointer: str, changed_refs: str,
     actual = render_surface(SURFACE_ID, {
         "topic_id": topic_id, "wiki_pointer": wiki_pointer,
         "changed_refs": changed_refs, "repo_root": repo_root,
+        "dismiss_cmd": _DISMISS_CMD, "note_cmd": _NOTE_CMD,
     })
     return expected, actual
 

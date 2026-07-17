@@ -30,7 +30,11 @@ The evidence below is a set of pointers: the topic's current wiki path, and each
 </changed_refs>
 
 <task>
-Answer with exactly one line:
+First put your verdict on the record by running the matching feedback command — it attaches your reasoning to the topic's review thread where humans will see it:
+- TRIVIAL: {{dismiss_cmd}} {{topic_id}} --reason "<one-sentence why the wiki is unaffected>" --repo {{repo_root}}
+- MATERIAL: {{note_cmd}} {{topic_id}} --note "<what changed and what the redraft must cover>" --repo {{repo_root}}
+
+Then answer with exactly one line:
 VERDICT: MATERIAL|TRIVIAL
 </task>"""
 
@@ -47,7 +51,11 @@ Each topic block is a set of evidence pointers recorded at detection time: the p
 {{topic_blocks}}
 
 <task>
-Answer with exactly one line per topic, nothing else:
+For EACH topic, first put your verdict on the record by running the matching feedback command — it attaches your reasoning to the topic's review thread where humans will see it:
+- TRIVIAL: {{dismiss_cmd}} <topic_id> --reason "<one-sentence why the wiki is unaffected>" --repo {{repo_root}}
+- MATERIAL: {{note_cmd}} <topic_id> --note "<what changed and what the redraft must cover>" --repo {{repo_root}}
+
+Then answer with exactly one line per topic, nothing else:
 <topic_id>: MATERIAL|TRIVIAL — <one-sentence reason>
 </task>"""
 
@@ -67,6 +75,8 @@ register_surface(
     variables=(
         PromptVariable("topic_blocks", "One markdown block per pending topic: the wiki path, and each changed ref with its baseline commit, vanished-anchor notes, and a one-line change summary."),
         PromptVariable("repo_root", "Absolute path of the repo under judgment — anchors the relative pointers and `git -C` commands regardless of the agent's own cwd."),
+        PromptVariable("dismiss_cmd", "CLI prefix the judge runs to dismiss a TRIVIAL topic's drift with its reason on the record (`… topics drift-dismiss`)."),
+        PromptVariable("note_cmd", "CLI prefix the judge runs to attach a MATERIAL topic's review note to its drift thread (`… topics drift-note`)."),
     ),
     tags=("topic-proposal-agent", "drift-triage"),
 )
@@ -82,6 +92,8 @@ for _sha in (
     # first evidence-pointer draft: bare `git diff`/`git log` with no
     # `-C {{repo_root}}` anchor (breaks under an agent-config cwd override)
     "a6347c28ff965d02377e2da7e53ccebd32a521fa104e157411efb5c1191a1df6",
+    # pointer form before the drift-dismiss / drift-note feedback commands
+    "f4e51de51f5b7a5c384e1432facdb8c2f497491c1e6c76f8791022d3ffeda4ee",
 ):
     register_retired_default(JUDGE_BATCH_SURFACE_ID, sha256=_sha)
 
@@ -103,6 +115,8 @@ register_surface(
         PromptVariable("changed_refs", "One pointer line per changed ref: path, baseline commit, vanished-anchor notes, one-line change summary."),
         PromptVariable("wiki_pointer", "Repo-relative path of the topic's wiki, or `(no wiki on file)` / `(wiki unreadable)`."),
         PromptVariable("repo_root", "Absolute path of the repo under judgment — anchors the relative pointers and `git -C` commands regardless of the agent's own cwd."),
+        PromptVariable("dismiss_cmd", "CLI prefix the judge runs to dismiss a TRIVIAL topic's drift with its reason on the record (`… topics drift-dismiss`)."),
+        PromptVariable("note_cmd", "CLI prefix the judge runs to attach a MATERIAL topic's review note to its drift thread (`… topics drift-note`)."),
     ),
     tags=("topic-proposal-agent", "drift-triage"),
 )
@@ -111,6 +125,8 @@ for _sha in (
     # embedded full-wiki excerpt + bare path bullets, before the
     # evidence-pointer form (wiki path + baseline commit + shortstat)
     "a184d215c6a027d9288ddd6c84b7cdf55ac5d2417949179d3eac23a0de6c0ef5",
+    # pointer form before the drift-dismiss / drift-note feedback commands
+    "25b4347140aa73b609b4f0a456808aa57139d6162635fc4bf3fdb619350a3df0",
 ):
     register_retired_default(SURFACE_ID, sha256=_sha)
 

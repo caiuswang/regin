@@ -168,12 +168,14 @@ def _triage_prompt(repo_path: str | Path, topic_id: str,
     """
     from lib.prompts import render_surface
     from lib.prompts.surfaces.triage import SURFACE_ID
-    from lib.topics.drift_judge import evidence_context
+    from lib.topics.drift_judge import evidence_context, feedback_cmd
     from lib.topics.ref_digest import repo_id_for_path
 
     item = {"drifted_paths": metadata.get("drifted_paths") or [],
             "missing_anchors": metadata.get("missing_anchors") or {}}
     context = {"topic_id": topic_id,
+               "dismiss_cmd": feedback_cmd("drift-dismiss"),
+               "note_cmd": feedback_cmd("drift-note"),
                **evidence_context(repo_path, topic_id, item,
                                   repo_id_for_path(repo_path))}
     return render_surface(SURFACE_ID, context)
@@ -234,19 +236,17 @@ def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:
 
 
 def _dismiss_trivial(repo_path: str | Path, proposal_id: str,
-                     proposal: dict[str, Any]) -> None:
-    """Retire a stub the agent judged TRIVIAL: ignore its topics (the same
-    terminal a human reaches by clicking "ignore", so it leaves
-    `pending_review`) and re-fingerprint the now-accepted content so the same
-    change can't re-fire the drift on the next pass."""
-    from lib.topics.proposals import ignore_proposed_topic
-    from lib.topics.ref_digest import capture_ref_digests
+                     proposal: dict[str, Any], reason: str = "") -> None:
+    """Retire a stub the agent judged TRIVIAL — the safety net behind the
+    judge's own `drift-dismiss` command: the verdict reason lands on the
+    drift threads, both surfaces are dismissed, and the baseline advances.
+    A no-op (beyond re-capture) when the agent already dismissed it."""
+    from lib.topics.content_drift import judge_dismiss_drift
 
     for topic in proposal.get("topics", []):
         tid = topic.get("id")
         if tid:
-            ignore_proposed_topic(repo_path, proposal_id, tid)
-            capture_ref_digests(repo_path, tid)  # advance the drift baseline
+            judge_dismiss_drift(repo_path, tid, reason)
     log.write("drift_dismissed_trivial", repo_path=str(repo_path),
               proposal_id=proposal_id)
 
@@ -261,6 +261,13 @@ def _verdict_material(repo_path: str | Path, proposal: dict[str, Any],
     topics = proposal.get("topics") or [{}]
     verdict = verdicts.get(topics[0].get("id") or "")
     return verdict is None or verdict.get("verdict") != "trivial"
+
+
+def _verdict_reason(proposal: dict[str, Any],
+                    verdicts: "dict[str, dict[str, str]] | None") -> str:
+    topics = proposal.get("topics") or [{}]
+    verdict = (verdicts or {}).get(topics[0].get("id") or "") or {}
+    return verdict.get("reason") or ""
 
 
 def _spawn_one(repo_path: str | Path, proposal_id: str,
@@ -278,7 +285,8 @@ def _spawn_one(repo_path: str | Path, proposal_id: str,
     if proposal.get("status") != "pending_review":
         return False
     if not _verdict_material(repo_path, proposal, verdicts):
-        _dismiss_trivial(repo_path, proposal_id, proposal)
+        _dismiss_trivial(repo_path, proposal_id, proposal,
+                         _verdict_reason(proposal, verdicts))
         return False
     start_external_proposal_run(
         repo_path, run_id=proposal_id,
@@ -300,18 +308,22 @@ def _proposal_for_drift_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _dismiss_drift_thread(repo_path: str | Path, item: dict[str, Any]) -> None:
-    """Retire an origin-run drift note the agent judged TRIVIAL: resolve the
-    thread (so it stops riding into regenerate) and re-fingerprint the topic so
-    the same change can't re-fire the drift on the next pass."""
+def _dismiss_drift_thread(repo_path: str | Path, item: dict[str, Any],
+                          reason: str = "") -> None:
+    """Retire an origin-run drift note the agent judged TRIVIAL — the safety
+    net behind the judge's own `drift-dismiss` command: the verdict reason
+    lands on the thread, both surfaces are dismissed, and the baseline
+    advances. A no-op (beyond re-capture) when the agent already dismissed
+    it."""
+    from lib.topics.content_drift import judge_dismiss_drift
     from lib.topics.proposal_orm import orm_set_feedback_thread_resolution
-    from lib.topics.ref_digest import capture_ref_digests
 
-    orm_set_feedback_thread_resolution(
-        repo_path, item["run_id"], item["thread_id"],
-        resolution_state="dismissed")
     if item.get("topic_id"):
-        capture_ref_digests(repo_path, item["topic_id"])
+        judge_dismiss_drift(repo_path, item["topic_id"], reason)
+    else:
+        orm_set_feedback_thread_resolution(
+            repo_path, item["run_id"], item["thread_id"],
+            resolution_state="dismissed")
     log.write("drift_dismissed_trivial", repo_path=str(repo_path),
               proposal_id=item["run_id"], topic_id=item.get("topic_id"))
 
@@ -330,9 +342,10 @@ def _spawn_one_via_regenerate(repo_path: str | Path, item: dict[str, Any],
     status = load_proposal_status(repo_path, item["run_id"]) or {}
     if status.get("state") in _ACTIVE_RUN_STATES:
         return False
-    if not _verdict_material(repo_path, _proposal_for_drift_item(item),
-                             verdicts):
-        _dismiss_drift_thread(repo_path, item)
+    proposal = _proposal_for_drift_item(item)
+    if not _verdict_material(repo_path, proposal, verdicts):
+        _dismiss_drift_thread(repo_path, item,
+                              _verdict_reason(proposal, verdicts))
         return False
     start_external_regenerate_run(repo_path, item["run_id"])
     return True

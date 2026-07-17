@@ -215,13 +215,17 @@ def resolve_drift_judge() -> ExternalAgentLLM:
     and its per-item triage fallback. Both prompts hand over evidence
     pointers (baseline commit, wiki path) rather than embedded content, so
     beyond the reviewer's read-only tools they need the read-only git
-    commands the prompts instruct — diff/log/show against the baseline — or
-    the pointers are dead weight."""
+    commands the prompts instruct — diff/log/show against the baseline — and
+    the drift-dismiss / drift-note feedback commands that put their verdicts
+    on the review record."""
     from lib.prompts.surfaces.triage import JUDGE_BATCH_SURFACE_ID
+    from lib.topics.drift_judge import feedback_cmd
     return ExternalAgentLLM(
         extra_args=["--allowedTools",
                     "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),"
-                    "Bash(git show:*)"],
+                    "Bash(git show:*),"
+                    f"Bash({feedback_cmd('drift-dismiss')}:*),"
+                    f"Bash({feedback_cmd('drift-note')}:*)"],
         surface_id=JUDGE_BATCH_SURFACE_ID,
     )
 

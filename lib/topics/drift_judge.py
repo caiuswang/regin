@@ -20,10 +20,13 @@ never raises into the evolve caller.
 from __future__ import annotations
 
 import re
+import shlex
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
+from lib.settings import settings
 from lib.topics.drift import _git
 from lib.topics.ref_digest import digests_for_topic, repo_id_for_path
 from lib.topics.wiki import topic_wiki_page
@@ -83,6 +86,16 @@ def _path_evidence(repo_path: str | Path, item: dict[str, Any],
             change = " — no baseline recorded (read the file as it is now)"
         parts.append(f"- {path}{cited}{change}")
     return "\n".join(parts) or "- (no changed paths recorded)"
+
+
+def feedback_cmd(subcommand: str) -> str:
+    """The quoted prefix of the drift-feedback CLI call the judge appends a
+    topic id and reason to. Built like the drafting agent's finish command —
+    server interpreter + regin CLI path — so it works regardless of whether
+    `regin` is on the agent's PATH."""
+    cli = settings.project_root / "cli" / "regin.py"
+    return " ".join(shlex.quote(p) for p in
+                    (sys.executable, str(cli), "topics", subcommand))
 
 
 def evidence_context(repo_path: str | Path, topic_id: str,
@@ -173,6 +186,8 @@ def _ask_judge(repo_path: str | Path,
     prompt = render_surface(JUDGE_BATCH_SURFACE_ID, {
         "topic_blocks": blocks,
         "repo_root": str(Path(repo_path).resolve()),
+        "dismiss_cmd": feedback_cmd("drift-dismiss"),
+        "note_cmd": feedback_cmd("drift-note"),
     })
     # One verdict line per topic — scale the answer budget with the batch so
     # a verbose judge can't truncate the tail into fail-open spawns.
@@ -181,4 +196,4 @@ def _ask_judge(repo_path: str | Path,
         surface_id=JUDGE_BATCH_SURFACE_ID)
 
 
-__all__ = ["judge_drift_batch", "evidence_context"]
+__all__ = ["judge_drift_batch", "evidence_context", "feedback_cmd"]
