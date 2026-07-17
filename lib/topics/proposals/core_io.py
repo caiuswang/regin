@@ -124,10 +124,9 @@ def load_proposal_status(repo_path: str | Path, proposal_id: str) -> dict[str, A
 def save_proposal(repo_path: str | Path, proposal_id: str, proposal: dict[str, Any]) -> None:
     """ORM-only — Phase E disk-write cleanup landed.
 
-    The disk topics.json file is no longer written. Tests that planted
-    state via `paths["topics"].write_text(...)` have migrated to call
-    this function; legacy disk files (from before this cleanup) are
-    still readable via `load_proposal`'s disk fallback.
+    The disk topics.json file is no longer written; legacy files (from
+    before the cleanup) stay readable via `load_proposal`'s disk
+    fallback.
     """
     from lib.topics.proposal_orm import orm_save_proposal
     orm_save_proposal(repo_path, proposal_id, proposal)

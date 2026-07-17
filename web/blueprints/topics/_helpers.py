@@ -75,10 +75,10 @@ def _proposal_review_state_from_payload(proposal: dict | None) -> str:
 def _proposal_provider_for_row(proposal: dict | None, row: dict) -> str:
     """Infer the provider label for a run row.
 
-    Use the proposal's stored provider when topics.json is on disk;
-    otherwise fall back to "external-agent" when status.json names an
-    agent (the external-agent flow writes status.json before the agent
-    finishes drafting topics.json), else "unknown".
+    Use the proposal's stored provider when the run has a draft
+    (`has_topics`); otherwise fall back to "external-agent" when the
+    run's status names an agent (the external-agent flow records status
+    before the agent finishes drafting), else "unknown".
     """
     if proposal:
         return _proposal_provider_from_payload(proposal)
@@ -107,8 +107,9 @@ def _proposal_run_updated_at(row: dict) -> float | None:
 def _load_run_proposal(repo_path: str, row: dict) -> dict | None:
     """Load the proposal payload for a run row, or None when absent.
 
-    Only runs that advertise topics.json (`has_topics`) have a payload;
-    a missing/unreadable file (OSError) is treated the same as absent.
+    Only runs that advertise a draft (`has_topics`) have a payload;
+    a missing/unreadable legacy file (OSError) is treated the same as
+    absent.
     """
     if not row.get("has_topics"):
         return None

@@ -579,8 +579,6 @@ def test_topics_proposal_regenerate_endpoint(stub_proposal_provider, flask_clien
         (proposal_dir / "wiki.md").write_text("# Regenerated wiki\n")
         return {
             "dir": proposal_dir,
-            "evidence": proposal_dir / "evidence.json",
-            "topics": proposal_dir / "topics.json",
             "wiki": proposal_dir / "wiki.md",
         }
 
@@ -679,8 +677,6 @@ def test_topics_external_agent_regenerate_endpoint_returns_without_blocking(flas
         called["proposal_id"] = proposal_id
         return {
             "dir": proposal_dir,
-            "evidence": proposal_dir / "evidence.json",
-            "topics": proposal_dir / "topics.json",
             "wiki": proposal_dir / "wiki.md",
         }
 

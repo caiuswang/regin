@@ -80,7 +80,6 @@ def api_repo_topic_proposals_create(name):
         "proposal": {
             "id": paths["dir"].name,
             "path": str(paths["dir"]),
-            "topics": str(paths["topics"]),
             "wiki": str(paths["wiki"]),
             "status": load_proposal_status(repo_path, paths["dir"].name),
         },

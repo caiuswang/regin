@@ -94,11 +94,9 @@ def _write_proposal_artifacts(
     """Write runtime artefacts (wiki.md) + persist proposal state to ORM.
 
     Proposal state (topics list, scope, metadata) goes to the ORM via
-    `orm_save_proposal`; `topics.json` is not written (Phase E2
-    source-of-truth flip). `topics_path` stays in the return dict for
-    callers that probe the proposal-dir layout.
+    `orm_save_proposal`; nothing else is written to disk (Phase E2
+    source-of-truth flip).
     """
-    topics_path = out_dir / "topics.json"
     wiki_path = out_dir / "wiki.md"
     wiki_body = wiki.strip()
     if not wiki_body:
@@ -114,7 +112,7 @@ def _write_proposal_artifacts(
             append_revision=append_revision,
             revision_kind=revision_kind,
         )
-    return {"dir": out_dir, "topics": topics_path, "wiki": wiki_path}
+    return {"dir": out_dir, "wiki": wiki_path}
 
 
 def _draft_proposal(

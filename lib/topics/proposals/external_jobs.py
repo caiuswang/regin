@@ -200,7 +200,6 @@ def start_external_proposal_run(
     ).start()
     return {
         "dir": out_dir,
-        "topics": out_dir / "topics.json",
         "wiki": out_dir / "wiki.md",
     }
 
@@ -416,7 +415,6 @@ def start_external_regenerate_run(
     ).start()
     return {
         "dir": proposal_dir,
-        "topics": proposal_dir / "topics.json",
         "wiki": wiki_path,
     }
 
