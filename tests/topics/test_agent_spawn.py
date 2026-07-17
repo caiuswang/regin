@@ -350,6 +350,108 @@ def test_origin_drift_trivial_dismisses_note(fake_git_repo, monkeypatch,
     assert _open_drift_threads(repo, "origin-run-1") == []
 
 
+def _drift_thread_states(repo: Path, run_id: str) -> list[str]:
+    from lib.topics.proposals.feedback import list_proposal_feedback_threads
+    return [t["resolution_state"]
+            for t in list_proposal_feedback_threads(repo, run_id)
+            if t.get("kind") == "content_drift"]
+
+
+def test_origin_drift_material_dismisses_note_after_handoff(
+        fake_git_repo, monkeypatch, spy, regen_spy):
+    _configure(monkeypatch, spawn=True, configured=True)
+    repo = fake_git_repo
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _seed_origin_run(repo, "origin-run-1", "t1")
+    _write_wiki(repo, "t1")
+    emit_refresh_proposal(repo, "t1", ["a.py"])
+    assert len(_open_drift_threads(repo, "origin-run-1")) == 1
+
+    assert maybe_spawn_refresh_agents(repo) == 1
+    assert len(regen_spy) == 1
+    # the drift event is processed: the thread lands dismissed, not open
+    assert _open_drift_threads(repo, "origin-run-1") == []
+    assert _drift_thread_states(repo, "origin-run-1") == ["dismissed"]
+
+
+def test_material_handoff_stops_re_judging_next_sweep(
+        fake_git_repo, monkeypatch, spy, regen_spy):
+    from lib.topics.content_drift import run_content_evolution
+    from lib.topics.ref_digest import capture_ref_digests
+    monkeypatch.setattr(settings.topic_evolution, "evolution_enabled", True)
+    _configure(monkeypatch, spawn=True, configured=True)
+    repo = fake_git_repo
+    (repo / "a.py").write_text("v1\n")
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _seed_origin_run(repo, "origin-run-1", "t1")
+    _write_wiki(repo, "t1")
+    capture_ref_digests(repo, "t1")
+    (repo / "a.py").write_text("changed\n")
+
+    first = run_content_evolution(repo)
+    assert first["spawned"] == 1
+    assert _drift_thread_states(repo, "origin-run-1") == ["dismissed"]
+
+    # the handoff advanced the baseline: the same drift is not re-detected,
+    # not re-judged, and no duplicate note stacks on the thread
+    second = run_content_evolution(repo)
+    assert second["drifted"] == 0
+    assert second["spawned"] == 0
+    assert len(regen_spy) == 1
+    assert _drift_thread_states(repo, "origin-run-1") == ["dismissed"]
+
+
+class _InlineThread:
+    """Run the regenerate job synchronously so the test can observe it."""
+
+    def __init__(self, target=None, kwargs=None, daemon=None):
+        del daemon
+        self._target, self._kwargs = target, kwargs or {}
+
+    def start(self):
+        self._target(**self._kwargs)
+
+
+def _captured_drift_threads(captured: dict) -> list[dict]:
+    prior = captured.get("prior_draft") or {}
+    return [t for t in prior.get("feedback_threads", [])
+            if t.get("kind") == "content_drift"]
+
+
+def _comment_bodies(thread: dict) -> str:
+    return " ".join(c.get("body", "") for c in thread.get("comments", []))
+
+
+def test_material_note_rides_regenerate_before_dismissal(
+        fake_git_repo, monkeypatch, spy):
+    _configure(monkeypatch, spawn=True, configured=True)
+    repo = fake_git_repo
+    _seed(repo, {"t1": _topic([{"path": "a.py"}])})
+    _seed_origin_run(repo, "origin-run-1", "t1")
+    _write_wiki(repo, "t1")
+    (topic_dir(repo) / "proposals" / "origin-run-1").mkdir(
+        parents=True, exist_ok=True)
+    emit_refresh_proposal(repo, "t1", ["a.py"])
+    from lib.topics.content_drift import judge_note_drift
+    assert judge_note_drift(repo, "t1", "cover the new enable switch") == 1
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "lib.topics.proposals.external_jobs._external_regenerate_job",
+        lambda **kw: captured.update(kw))
+    monkeypatch.setattr(
+        "lib.topics.proposals.external_jobs.threading.Thread", _InlineThread)
+
+    assert maybe_spawn_refresh_agents(repo) == 1
+    # the kickoff resolved its inputs before the dismissal: the open note and
+    # the judge's comment ride in prior_draft even though the thread is now
+    # dismissed in the DB
+    drift = _captured_drift_threads(captured)
+    assert len(drift) == 1
+    assert "cover the new enable switch" in _comment_bodies(drift[0])
+    assert _drift_thread_states(repo, "origin-run-1") == ["dismissed"]
+
+
 def test_evolve_folds_in_spawn(fake_git_repo, monkeypatch, spy):
     from lib.topics.content_drift import run_content_evolution
     from lib.topics.ref_digest import capture_ref_digests

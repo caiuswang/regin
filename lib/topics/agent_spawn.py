@@ -328,14 +328,37 @@ def _dismiss_drift_thread(repo_path: str | Path, item: dict[str, Any],
               proposal_id=item["run_id"], topic_id=item.get("topic_id"))
 
 
+def _retire_handed_off_drift(repo_path: str | Path,
+                             item: dict[str, Any]) -> None:
+    """Close out an origin-run drift note once its regenerate is triggered.
+    Safe only because `start_external_regenerate_run` resolves the
+    carry-forward inputs synchronously before returning — the open note and
+    the judge's MATERIAL comment already ride in `prior_draft` when this
+    dismisses the thread. Left open instead, the note outlives a dead
+    background draft (the CLI evolve path can't await it), so every later
+    sweep re-judges the same drift and stacks a duplicate note."""
+    from lib.topics.content_drift import dismiss_content_drift
+    from lib.topics.proposal_orm import orm_set_feedback_thread_resolution
+
+    if item.get("topic_id"):
+        dismiss_content_drift(repo_path, item["topic_id"])
+    else:
+        orm_set_feedback_thread_resolution(
+            repo_path, item["run_id"], item["thread_id"],
+            resolution_state="dismissed")
+    log.write("drift_note_retired_after_handoff", repo_path=str(repo_path),
+              proposal_id=item["run_id"], topic_id=item.get("topic_id"))
+
+
 def _spawn_one_via_regenerate(repo_path: str | Path, item: dict[str, Any],
                               verdicts: "dict[str, dict[str, str]] | None" = None
                               ) -> bool:
     """Drive one origin-run drift note to a refresh revision by regenerating
     that run — but only after the drift is judged MATERIAL (batched judge
     when available, else per-item triage). A TRIVIAL verdict dismisses the
-    note instead. Skips a run that is already mid-flight. Returns whether it
-    triggered a regenerate."""
+    note instead; a MATERIAL one is dismissed too, but only after the
+    regenerate kickoff has the note in hand. Skips a run that is already
+    mid-flight. Returns whether it triggered a regenerate."""
     from lib.topics.proposals import load_proposal_status
     from lib.topics.proposals.external_jobs import start_external_regenerate_run
 
@@ -348,6 +371,7 @@ def _spawn_one_via_regenerate(repo_path: str | Path, item: dict[str, Any],
                               _verdict_reason(proposal, verdicts))
         return False
     start_external_regenerate_run(repo_path, item["run_id"])
+    _retire_handed_off_drift(repo_path, item)
     return True
 
 

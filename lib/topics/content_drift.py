@@ -276,10 +276,12 @@ def _append_drift_note_to_origin(repo_path: str | Path, origin_run_id: str,
     coherent revision history. Returns the origin run id.
 
     Idempotent: while a prior drift note for this topic is still open (not yet
-    addressed by a refresh / resolved by a human), re-detecting the same drift
-    is a no-op rather than a second stacked note. A `wiki_range` anchor means
-    the auto-addressed sweep closes the note once the wiki actually changes, so
-    the next genuine drift opens a fresh note → a fresh revision."""
+    handed to a regenerate / resolved by a human), re-detecting the same drift
+    is a no-op rather than a second stacked note. The evolve sweep retires the
+    note (dismissed, baseline advanced) as soon as its regenerate is handed
+    off; the `wiki_range` anchor keeps the auto-addressed sweep as the fallback
+    close for a note whose wiki changes via a manual regenerate, so the next
+    genuine drift opens a fresh note → a fresh revision either way."""
     from lib.topics.proposal_orm import (
         orm_create_feedback_thread,
         orm_open_content_drift_threads,
@@ -436,7 +438,8 @@ def judge_note_drift(repo_path: str | Path, topic_id: str, note: str, *,
                      author_kind: str = "agent") -> int:
     """Append a drift-judge review note to every open content-drift thread
     for the topic, leaving them open — the regenerate carry-forward rail then
-    surfaces the note to the redrafting agent. Returns the number of threads
+    surfaces the note to the redrafting agent, and the evolve sweep dismisses
+    the thread once that handoff happens. Returns the number of threads
     commented (0 when none are open, e.g. a standalone stub with no origin
     run)."""
     from lib.topics.proposal_orm import (orm_add_feedback_comment,
