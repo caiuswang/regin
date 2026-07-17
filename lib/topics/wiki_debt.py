@@ -16,11 +16,10 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
-from lib.topics import slugify
 from lib.topics.content_drift import detect_drifted_topics, emit_refresh_proposal
 from lib.topics.drift import _git
 from lib.topics.graph_io import load_authoritative_graph
-from lib.topics.wiki import wiki_dir
+from lib.topics.wiki import topic_wiki_page
 
 log = get_activity_logger("topics")
 
@@ -78,23 +77,30 @@ def _narrow(paths: list[str], changed: Optional[set]) -> list[str]:
     return paths if changed is None else [p for p in paths if p in changed]
 
 
-def _topic_debt(topic_id: str, topic: dict[str, Any], *, changed: Optional[set],
-                drifted_all: list[str], wiki_root) -> Optional[dict[str, Any]]:
+def _topic_debt(repo_path, topic_id: str, topic: dict[str, Any], *,
+                changed: Optional[set],
+                drift_row: dict[str, Any]) -> Optional[dict[str, Any]]:
     """One topic's debt row, or None when it is out of scope or healthy.
     `missing` (no wiki yet) beats `drifted` (a covered ref changed since the
     wiki was digested)."""
     changed_refs = _narrow(_topic_ref_paths(topic), changed)
     if changed is not None and not changed_refs:
         return None  # untouched by this diff — out of scope
-    drifted = _narrow(drifted_all, changed)
-    if not (wiki_root / f"{slugify(topic_id)}.md").exists():
+    drifted = _narrow(drift_row.get("drifted_paths", []), changed)
+    if not topic_wiki_page(repo_path, topic_id).exists():
         status = "missing"
     elif drifted:
         status = "drifted"
     else:
         return None  # healthy — nothing to report
-    return {"topic_id": topic_id, "status": status,
-            "drifted_paths": drifted, "changed_refs": changed_refs}
+    row = {"topic_id": topic_id, "status": status,
+           "drifted_paths": drifted, "changed_refs": changed_refs}
+    missing_anchors = {p: v for p, v in
+                       (drift_row.get("missing_anchors") or {}).items()
+                       if p in drifted}
+    if missing_anchors:
+        row["missing_anchors"] = missing_anchors
+    return row
 
 
 def wiki_debt(repo_path, *,
@@ -109,17 +115,15 @@ def wiki_debt(repo_path, *,
     raises — returns `[]` on any failure."""
     try:
         graph = load_authoritative_graph(repo_path)
-        wiki_root = wiki_dir(repo_path)
-        drift_map = {item["topic_id"]: item["drifted_paths"]
+        drift_map = {item["topic_id"]: item
                      for item in detect_drifted_topics(repo_path)}
         changed = (None if changed_since is None
                    else (_changed_files(repo_path, changed_since) or set()))
 
         out: list[dict[str, Any]] = []
         for topic_id, topic in graph.get("topics", {}).items():
-            row = _topic_debt(topic_id, topic, changed=changed,
-                              drifted_all=drift_map.get(topic_id, []),
-                              wiki_root=wiki_root)
+            row = _topic_debt(repo_path, topic_id, topic, changed=changed,
+                              drift_row=drift_map.get(topic_id, {}))
             if row is not None:
                 out.append(row)
         return out
@@ -151,7 +155,8 @@ def emit_wiki_debt_proposals(repo_path, *,
         if row["status"] == "drifted":
             try:
                 proposal_id = emit_refresh_proposal(
-                    repo_path, row["topic_id"], row["drifted_paths"])
+                    repo_path, row["topic_id"], row["drifted_paths"],
+                    missing_anchors=row.get("missing_anchors"))
             except Exception:  # noqa: BLE001 - one emit must not sink the batch
                 log.error("wiki_debt_emit_failed",
                           topic_id=row["topic_id"], exc_info=True)

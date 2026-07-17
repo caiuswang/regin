@@ -2,15 +2,22 @@
 its wiki, and emit a human-gated refresh proposal.
 
 Phase 0 fingerprints each topic ref at wiki-write time (`TopicRefDigest`).
-Here we compare those digests to the files as they are now:
+Here we compare those digests to the files as they are now. A hash-changed
+ref is only a *candidate*; materiality is judged by the first applicable
+tier:
 
-  * **hash path (default)** — a ref whose content hash changed since the wiki
-    was digested is a drift candidate. Coarse but always available (digests are
-    captured hash-only on accept).
-  * **cosine filter (refinement)** — when BOTH the stored and a freshly-computed
-    embedding exist, a high cosine (≥ `content_drift_cosine`) *spares* a
-    hash-changed ref as a trivial edit; only a materially-changed ref
-    (cosine below the floor) stays flagged.
+  * **wiki anchors (primary)** — when the digest row carries a non-empty
+    set of wiki-cited identifier tokens that grounded to this ref at capture
+    (`lib/topics/wiki_anchors.py`), the drift is material only if one of
+    them vanished from the file. Every claim still grounding → spared,
+    however much the bytes changed. An *empty* stored set (the wiki cites
+    nothing in this ref) decides nothing — it falls through, or the ref
+    would be permanently exempt from drift.
+  * **cosine filter** — rows the anchor tier didn't decide, with BOTH a
+    stored and a freshly-computed embedding: a high cosine
+    (≥ `content_drift_cosine`) spares the change as trivial.
+  * **bare hash change (fallback)** — rows with neither signal (captured
+    before anchors existed, topic had no wiki) flag on the hash alone.
 
 A drifted topic does not get its `status` mutated — `"stale"` isn't a valid
 topic status, and the approved graph is human-approved. The drift signal lives in
@@ -96,57 +103,118 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+def _missing_anchors(content: str,
+                     digest: dict[str, Any]) -> Optional[list[str]]:
+    """The wiki-cited anchors stored on this digest that no longer appear in
+    the ref's current content as whole identifiers (token-exact, mirroring
+    `anchors_in_content` at capture — a substring survivor like `foo` inside
+    `foo_v2` counts as vanished). None when the row predates anchor capture
+    or the topic had no wiki then — the caller falls through to the older
+    signals; an empty list means every wiki claim still grounds."""
+    from lib.topics.wiki_anchors import content_identifier_tokens
+
+    anchors = digest.get("anchors")
+    if anchors is None:
+        return None
+    present = content_identifier_tokens(content)
+    return [a for a in anchors if a not in present]
+
+
 def _ref_is_material_drift(content: str, digest: dict[str, Any],
                            embedder, threshold: float) -> bool:
     """Whether a hash-changed ref is a *material* drift. The hash already
     differs (caller checked). When both a stored vector and an embedder are
     available, a high cosine spares it as a trivial edit; otherwise the
-    hash-change alone stands."""
-    stored_vec = digest.get("embedding")
-    if (stored_vec is None or embedder is None
+    hash-change alone stands. The stored vector is parsed lazily from its
+    JSON here — most rows never reach this tier, so `digests_for_topic`
+    doesn't pay to materialize every embedding up front."""
+    import json
+
+    raw_vec = digest.get("embedding_json")
+    if (raw_vec is None or embedder is None
             or getattr(embedder, "model_id", None) is None):
         return True
     vecs = embedder.embed([content])
     if not vecs:
         return True
-    return _cosine(list(vecs[0]), stored_vec) < threshold
+    return _cosine(list(vecs[0]), json.loads(raw_vec)) < threshold
+
+
+def _judge_ref(repo_root: Path, ref: Any, stored: dict[str, dict[str, Any]],
+               embedder, threshold: float
+               ) -> Optional[tuple[str, Optional[list[str]]]]:
+    """`(path, missing_anchors)` when one ref materially drifted, else None.
+    A ref whose digest stores a non-empty anchor set is decided by that set
+    alone: material iff a wiki-cited anchor vanished. An empty stored set
+    (the wiki cites nothing grounding here) decides nothing — sparing on it
+    would permanently exempt the ref — and falls through, like anchor-less
+    legacy rows, to the cosine filter and then the bare hash change
+    (`missing_anchors` is None for those)."""
+    changed = _changed_content(repo_root, ref, stored)
+    if changed is None:
+        return None
+    path, content, digest = changed
+    missing = _missing_anchors(content, digest)
+    if missing:
+        return path, missing
+    if missing is not None and digest.get("anchors"):
+        return None                               # every cited claim grounds
+    if _ref_is_material_drift(content, digest, embedder, threshold):
+        return path, None
+    return None
+
+
+def _changed_content(repo_root: Path, ref: Any,
+                     stored: dict[str, dict[str, Any]]
+                     ) -> Optional[tuple[str, str, dict[str, Any]]]:
+    """`(path, content, digest)` for a judgeable, hash-changed ref; None when
+    the ref is reference-tier, undigested, unchanged, or deleted (deletion is
+    Phase 2's cascade, not content drift)."""
+    if not isinstance(ref, dict) or ref.get("tier") in NON_DRIFTING_REF_TIERS:
+        return None
+    path = ref.get("path")
+    digest = stored.get(path)
+    if not path or digest is None:
+        return None
+    content = _read(repo_root, path)
+    if content is None:
+        return None
+    if _content_hash(content) == digest["content_hash"]:
+        return None
+    return path, content, digest
 
 
 def _drifted_paths_for_topic(repo_root: Path, repo_id: int, topic_id: str,
                              topic: dict[str, Any], embedder,
-                             threshold: float) -> list[str]:
-    """Ref paths of one topic whose content materially drifted from its stored
-    digest. Empty when the topic was never digested (can't judge), nothing
-    changed, or every change was spared by the cosine filter. Deleted refs are
-    skipped — that is Phase 2's deletion cascade, not content drift."""
+                             threshold: float
+                             ) -> tuple[list[str], dict[str, list[str]]]:
+    """`(drifted_paths, missing_anchors_by_path)` for one topic — the ref
+    paths whose content materially drifted from their stored digest. Empty
+    when the topic was never digested (can't judge), nothing changed, or
+    every change was spared as immaterial."""
     stored = {d["path"]: d for d in digests_for_topic(repo_id, topic_id)}
     if not stored:
-        return []
+        return [], {}
     drifted: list[str] = []
+    missing_by_path: dict[str, list[str]] = {}
     for ref in topic.get("refs", []):
-        if not isinstance(ref, dict):
+        judged = _judge_ref(repo_root, ref, stored, embedder, threshold)
+        if judged is None:
             continue
-        if ref.get("tier") in NON_DRIFTING_REF_TIERS:
-            continue                              # reference-only → not drift
-        path = ref.get("path")
-        digest = stored.get(path)
-        if not path or digest is None:
-            continue
-        content = _read(repo_root, path)
-        if content is None:                       # deleted → Phase 2, not here
-            continue
-        if _content_hash(content) == digest["content_hash"]:
-            continue                              # unchanged
-        if _ref_is_material_drift(content, digest, embedder, threshold):
-            drifted.append(path)
-    return drifted
+        path, missing = judged
+        drifted.append(path)
+        if missing:
+            missing_by_path[path] = missing
+    return drifted, missing_by_path
 
 
 def detect_drifted_topics(repo_path: str | Path, *,
                           embedder=None) -> list[dict[str, Any]]:
     """Topics whose ref files materially drifted from their stored digests.
-    Returns `[{topic_id, drifted_paths}]`; empty when nothing drifted or the
-    repo is unregistered. Never raises."""
+    Returns `[{topic_id, drifted_paths}]`, plus a `missing_anchors`
+    `{path: [tokens]}` key on rows where the drift was judged by vanished
+    wiki-cited anchors; empty when nothing drifted or the repo is
+    unregistered. Never raises."""
     try:
         repo_id = repo_id_for_path(repo_path)
         if repo_id is None:
@@ -156,10 +224,13 @@ def detect_drifted_topics(repo_path: str | Path, *,
         threshold = settings.topic_evolution.content_drift_cosine
         out: list[dict[str, Any]] = []
         for topic_id, topic in graph.get("topics", {}).items():
-            paths = _drifted_paths_for_topic(
+            paths, missing = _drifted_paths_for_topic(
                 repo_root, repo_id, topic_id, topic, embedder, threshold)
             if paths:
-                out.append({"topic_id": topic_id, "drifted_paths": paths})
+                row = {"topic_id": topic_id, "drifted_paths": paths}
+                if missing:
+                    row["missing_anchors"] = missing
+                out.append(row)
         return out
     except Exception:  # noqa: BLE001 - detection must not break the caller
         log.error("content_drift_detect_failed", exc_info=True)
@@ -172,8 +243,19 @@ def _refresh_proposal_id(topic_id: str) -> str:
     return f"{REFRESH_PROVIDER}-{topic_id}"
 
 
-def _drift_note_body(topic_id: str, drifted_paths: list[str]) -> str:
-    listed = "\n".join(f"- `{p}`" for p in drifted_paths) or "- (this topic's refs)"
+def _drift_note_body(topic_id: str, drifted_paths: list[str],
+                     missing_anchors: Optional[dict[str, list[str]]] = None
+                     ) -> str:
+    missing_anchors = missing_anchors or {}
+    lines = []
+    for p in drifted_paths:
+        gone = missing_anchors.get(p)
+        if gone:
+            cited = ", ".join(f"`{a}`" for a in gone)
+            lines.append(f"- `{p}` — the wiki cites {cited}, no longer present")
+        else:
+            lines.append(f"- `{p}`")
+    listed = "\n".join(lines) or "- (this topic's refs)"
     return (
         f"The code under **{topic_id}** changed since its wiki was last "
         f"written. Re-check that the wiki's existing explanation still matches "
@@ -184,8 +266,9 @@ def _drift_note_body(topic_id: str, drifted_paths: list[str]) -> str:
 
 
 def _append_drift_note_to_origin(repo_path: str | Path, origin_run_id: str,
-                                 topic_id: str,
-                                 drifted_paths: list[str]) -> str:
+                                 topic_id: str, drifted_paths: list[str],
+                                 missing_anchors: Optional[dict[str, list[str]]] = None
+                                 ) -> str:
     """Append (idempotently) an agent-authored content-drift note onto the
     proposal run that originally brought this topic into the graph. The open
     note rides the regenerate rail into the next draft — so the refresh lands
@@ -207,6 +290,9 @@ def _append_drift_note_to_origin(repo_path: str | Path, origin_run_id: str,
         proposal_id=origin_run_id, topic_id=topic_id)
     if existing:
         return origin_run_id
+    metadata: dict[str, Any] = {"drifted_paths": drifted_paths}
+    if missing_anchors:
+        metadata["missing_anchors"] = missing_anchors
     orm_create_feedback_thread(
         repo_path, origin_run_id,
         proposal_topic_id=topic_id,
@@ -214,9 +300,9 @@ def _append_drift_note_to_origin(repo_path: str | Path, origin_run_id: str,
         anchor_kind="wiki_range",
         anchor={"topic_id": topic_id, "section": "wiki-preview"},
         quoted_text=None,
-        body=_drift_note_body(topic_id, drifted_paths),
+        body=_drift_note_body(topic_id, drifted_paths, missing_anchors),
         created_by="agent",
-        metadata={"drifted_paths": drifted_paths},
+        metadata=metadata,
     )
     log.write("content_drift_note_appended", repo_path=str(repo_path),
               proposal_id=origin_run_id, topic_id=topic_id,
@@ -225,7 +311,9 @@ def _append_drift_note_to_origin(repo_path: str | Path, origin_run_id: str,
 
 
 def emit_refresh_proposal(repo_path: str | Path, topic_id: str,
-                          drifted_paths: list[str]) -> Optional[str]:
+                          drifted_paths: list[str],
+                          missing_anchors: Optional[dict[str, list[str]]] = None
+                          ) -> Optional[str]:
     """Record a content-drift refresh for a drifted topic; returns the
     proposal-run id that now carries it, or None when the topic is unknown.
 
@@ -248,21 +336,26 @@ def emit_refresh_proposal(repo_path: str | Path, topic_id: str,
     origin_run_id = orm_find_origin_proposal_run_for_topic(repo_path, topic_id)
     if origin_run_id is not None:
         return _append_drift_note_to_origin(
-            repo_path, origin_run_id, topic_id, drifted_paths)
+            repo_path, origin_run_id, topic_id, drifted_paths, missing_anchors)
 
     proposal_id = _refresh_proposal_id(topic_id)
     snapshot = dict(topic)
     snapshot["id"] = topic_id
     snapshot.setdefault("status", "active")
+    metadata: dict[str, Any] = {"kind": "refresh",
+                                "drifted_paths": drifted_paths}
+    if missing_anchors:
+        metadata["missing_anchors"] = missing_anchors
     proposal = {
         "provider": REFRESH_PROVIDER,
         "scope": "all",
         "status": "pending_review",
         "topics": [snapshot],
-        "metadata": {"kind": "refresh", "drifted_paths": drifted_paths},
+        "metadata": metadata,
     }
     orm_save_proposal(repo_path, proposal_id, proposal,
-                      wiki=_drift_note_body(topic_id, drifted_paths))
+                      wiki=_drift_note_body(topic_id, drifted_paths,
+                                            missing_anchors))
     return proposal_id
 
 
@@ -362,7 +455,8 @@ def run_content_evolution(repo_path: str | Path, *,
         for item in batch:
             tid = item["topic_id"]
             staled += cascade_topic_stale(store, tid, reason="content_drift")
-            if emit_refresh_proposal(repo_path, tid, item["drifted_paths"]):
+            if emit_refresh_proposal(repo_path, tid, item["drifted_paths"],
+                                     missing_anchors=item.get("missing_anchors")):
                 proposals += 1
         # Optionally hand the fresh refresh proposals to the drafting agent
         # (doubly gated, off by default), then prune the stale end of the

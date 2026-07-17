@@ -813,9 +813,11 @@ def test_apply_endpoint_captures_drift_baseline(
     stub_proposal_provider, flask_client, fake_git_repo, monkeypatch,
 ):
     """End-to-end through the real /apply endpoint: with evolution on, applying
-    fingerprints the topic's refs so a later code change is detectable as
+    fingerprints the topic's refs so a later code change can be judged for
     drift. Pre-fix the modern path captured nothing — drift could never be
     judged, nor a refresh ever resolve it."""
+    import hashlib
+
     from lib.topics.content_drift import detect_drifted_topics
     from lib.topics.ref_digest import digests_for_topic, repo_id_for_path
 
@@ -833,8 +835,18 @@ def test_apply_endpoint_captures_drift_baseline(
     digests = digests_for_topic(repo_id, topic_id)
     assert digests, "apply did not fingerprint the topic's refs"
 
-    # The captured baseline is real: mutate a ref and it registers as drift.
+    # The captured baseline is real: the stored hash is of the ref's actual
+    # content, and anchors were captured (the wiki was persisted first).
     ref_path = digests[0]["path"]
+    expected = hashlib.sha256(
+        (fake_git_repo / ref_path).read_bytes()).hexdigest()
+    assert digests[0]["content_hash"] == expected
+    assert digests[0]["anchors"] is not None
+
+    # The stub wiki cites nothing grounding in this ref (empty anchor set),
+    # so the anchor tier can't judge and a mutation falls back to the hash
+    # tier — the baseline captured by /apply detects it as drift.
+    assert digests[0]["anchors"] == []
     (fake_git_repo / ref_path).write_text("MUTATED AFTER APPLY\n")
     drifted = [d["topic_id"] for d in detect_drifted_topics(fake_git_repo)]
     assert topic_id in drifted

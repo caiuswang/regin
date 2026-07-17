@@ -181,20 +181,35 @@ def _triage_inputs(repo_path: str | Path,
     there is nothing to judge: the stub names no topic, or the topic has no
     wiki on file yet. With no wiki there is no narrative to compare the changed
     code against — materiality is undecidable — so the caller skips triage and
-    lets the draft proceed (fail open)."""
-    from lib.topics import slugify
-    from lib.topics.wiki import wiki_dir
+    lets the draft proceed (fail open). Paths whose drift was judged by
+    vanished wiki anchors carry that evidence inline, so the triage agent
+    sees WHICH cited identifiers the wiki lost, not just that bytes moved."""
+    from lib.topics.wiki import topic_wiki_page
 
     topics = proposal.get("topics") or [{}]
     topic_id = topics[0].get("id") or ""
     if not topic_id:
         return None
-    wiki_path = wiki_dir(repo_path) / f"{slugify(topic_id)}.md"
+    wiki_path = topic_wiki_page(repo_path, topic_id)
     if not wiki_path.is_file():
         return None
-    drifted = (proposal.get("metadata") or {}).get("drifted_paths") or []
+    drifted = _annotated_drift_paths(proposal.get("metadata") or {})
     wiki_md = wiki_path.read_text(encoding="utf-8", errors="replace")
     return topic_id, wiki_md, drifted
+
+
+def _annotated_drift_paths(metadata: dict[str, Any]) -> list[str]:
+    """Drifted paths with their vanished-anchor evidence appended inline."""
+    missing = metadata.get("missing_anchors") or {}
+    out = []
+    for path in metadata.get("drifted_paths") or []:
+        gone = missing.get(path)
+        if gone:
+            cited = ", ".join(f"`{a}`" for a in gone)
+            out.append(f"{path} (wiki cites {cited} — no longer present)")
+        else:
+            out.append(path)
+    return out
 
 
 def _drift_is_material(repo_path: str | Path, proposal: dict[str, Any]) -> bool:

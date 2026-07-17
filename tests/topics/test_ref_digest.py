@@ -57,7 +57,7 @@ def test_settings_defaults_off():
     cfg = settings.topic_evolution
     assert cfg.evolution_enabled is False
     assert cfg.mechanical_autoapply is False
-    assert cfg.content_drift_cosine == 0.6
+    assert cfg.content_drift_cosine == 0.995
     assert cfg.drift_proposal_batch_max == 3
     assert cfg.auto_proposal_expire_days == 14
 

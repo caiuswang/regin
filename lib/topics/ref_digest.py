@@ -27,6 +27,7 @@ from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.orm.models import Repo, TopicRefDigest
 from lib.topics.graph_io import load_authoritative_graph
+from lib.topics.wiki_anchors import anchors_in_content, wiki_anchor_tokens
 
 log = get_activity_logger("topics")
 
@@ -68,10 +69,33 @@ def _embed_one(embedder, text: str) -> tuple[Optional[str], Optional[str]]:
     return json.dumps(list(vecs[0])), embedder.model_id
 
 
+# Sentinel for "the wiki exists but couldn't be read right now": a capture
+# during a transient FS error must PRESERVE the row's existing anchor set —
+# writing NULL would silently revert the topic to noisy hash-only judging.
+_WIKI_UNREADABLE = object()
+
+
+def _wiki_tokens_for_topic(repo_path: str | Path, topic_id: str):
+    """Cited-identifier tokens from the topic's per-topic wiki; None when the
+    topic genuinely has no wiki yet (anchors can't be judged, so capture
+    stores NULL and detection keeps its hash-only behavior); or
+    `_WIKI_UNREADABLE` on a transient read failure."""
+    from lib.topics.wiki import topic_wiki_page
+
+    page = topic_wiki_page(repo_path, topic_id)
+    if not page.is_file():
+        return None
+    try:
+        text = page.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return _WIKI_UNREADABLE
+    return wiki_anchor_tokens(text)
+
+
 def _upsert(session, *, repo_id: int, topic_id: str, path: str,
             role: Optional[str], content_hash: str,
             embedding_json: Optional[str], model_id: Optional[str],
-            now: str) -> None:
+            anchors_json: Optional[str], now: str) -> None:
     """Insert a digest row or update the existing one for its unique key."""
     existing = session.exec(
         select(TopicRefDigest).where(
@@ -82,11 +106,19 @@ def _upsert(session, *, repo_id: int, topic_id: str, path: str,
         session.add(TopicRefDigest(
             repo_id=repo_id, topic_id=topic_id, path=path, role=role,
             content_hash=content_hash, embedding_json=embedding_json,
-            embedding_model_id=model_id, captured_at=now))
+            embedding_model_id=model_id,
+            anchors_json=(None if anchors_json is _WIKI_UNREADABLE
+                          else anchors_json),
+            captured_at=now))
         return
     existing.role = role
     existing.content_hash = content_hash
     existing.captured_at = now
+    # Anchors overwrite even to NULL (a vanished wiki reverts the row to
+    # hash-only judging) — but a transiently unreadable wiki preserves the
+    # existing set. Embeddings only overwrite when freshly computed.
+    if anchors_json is not _WIKI_UNREADABLE:
+        existing.anchors_json = anchors_json
     if embedding_json is not None:
         existing.embedding_json = embedding_json
         existing.embedding_model_id = model_id
@@ -94,7 +126,7 @@ def _upsert(session, *, repo_id: int, topic_id: str, path: str,
 
 
 def _capture_topic(session, repo_root: Path, repo_id: int, topic_id: str,
-                   topic: dict[str, Any], embedder, now: str) -> int:
+                   topic: dict[str, Any], embedder, wiki_tokens, now: str) -> int:
     """Capture every resolvable ref of one topic. Returns rows written."""
     written = 0
     for ref in topic.get("refs", []):
@@ -107,9 +139,14 @@ def _capture_topic(session, repo_root: Path, repo_id: int, topic_id: str,
         if content is None:
             continue
         embedding_json, model_id = _embed_one(embedder, content)
+        if wiki_tokens is None or wiki_tokens is _WIKI_UNREADABLE:
+            anchors_json = wiki_tokens
+        else:
+            anchors_json = json.dumps(anchors_in_content(wiki_tokens, content))
         _upsert(session, repo_id=repo_id, topic_id=topic_id, path=path,
                 role=ref.get("role"), content_hash=_content_hash(content),
-                embedding_json=embedding_json, model_id=model_id, now=now)
+                embedding_json=embedding_json, model_id=model_id,
+                anchors_json=anchors_json, now=now)
         written += 1
     return written
 
@@ -129,9 +166,10 @@ def capture_ref_digests(repo_path: str | Path, topic_id: str, *,
             return 0
         now = datetime.now().isoformat()
         repo_root = Path(repo_path)
+        wiki_tokens = _wiki_tokens_for_topic(repo_path, topic_id)
         with SessionLocal() as session:
             written = _capture_topic(session, repo_root, repo_id, topic_id,
-                                     topic, embedder, now)
+                                     topic, embedder, wiki_tokens, now)
             session.commit()
         log.write("topic_ref_digests_captured", topic_id=topic_id,
                   rows=written, embedded=embedder is not None)
@@ -158,9 +196,9 @@ def capture_all_digests(repo_path: str | Path, *, embedder=None) -> dict[str, in
 
 def digests_for_topic(repo_id: int, topic_id: str) -> list[dict[str, Any]]:
     """Stored digest rows for one topic, as plain dicts (read helper for
-    drift detection and tests). `embedding` is the parsed stored vector (or
-    None when the digest was captured hash-only) so the cosine drift filter
-    can read it without a second query."""
+    drift detection and tests). `embedding_json` is the raw stored vector
+    JSON (None when captured hash-only); `anchors` is the parsed wiki-anchor
+    list, or None for rows captured without a wiki."""
     with SessionLocal() as session:
         rows = session.exec(
             select(TopicRefDigest).where(
@@ -169,7 +207,11 @@ def digests_for_topic(repo_id: int, topic_id: str) -> list[dict[str, Any]]:
     return [{
         "path": r.path, "role": r.role, "content_hash": r.content_hash,
         "embedding_model_id": r.embedding_model_id,
-        "embedding": json.loads(r.embedding_json) if r.embedding_json else None,
+        # Raw JSON, not the parsed vector: most detect-sweep rows never reach
+        # the cosine tier, so the (large) embedding parses lazily there.
+        "embedding_json": r.embedding_json,
+        "anchors": (json.loads(r.anchors_json)
+                    if r.anchors_json is not None else None),
         "captured_at": r.captured_at,
     } for r in rows]
 

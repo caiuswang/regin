@@ -765,6 +765,9 @@ CREATE TABLE IF NOT EXISTS topic_ref_digests (
     embedding_json      TEXT,
     embedding_model_id  TEXT,
     captured_at         TEXT NOT NULL,
+    -- JSON list of wiki-cited identifier tokens present in the ref at capture
+    -- (lib/topics/wiki_anchors.py); NULL = pre-anchor row or topic had no wiki.
+    anchors_json        TEXT,
     UNIQUE (repo_id, topic_id, path)
 );
 CREATE INDEX IF NOT EXISTS ix_topic_ref_digests_repo_id ON topic_ref_digests(repo_id);

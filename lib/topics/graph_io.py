@@ -236,11 +236,12 @@ def _write_wiki_pages(repo_path: str | Path, wiki_pages: Optional[dict[str, str]
     """Write per-topic wiki bodies under the repo's `wiki/` directory."""
     if not wiki_pages:
         return
-    wiki_dir = topic_dir(repo_path) / "wiki"
+    from lib.topics.wiki import topic_wiki_page
+
     for topic_id, body in wiki_pages.items():
         if not isinstance(body, str):
             continue
-        _atomic_write(wiki_dir / f"{topic_id}.md", body)
+        _atomic_write(topic_wiki_page(repo_path, topic_id), body)
 
 
 def export_overlay_to_disk(

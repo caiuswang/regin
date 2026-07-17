@@ -498,6 +498,10 @@ class TopicRefDigest(Base, table=True):
         default=None, sa_column=Column("embedding_model_id", String))
     captured_at: str = Field(
         sa_column=Column("captured_at", Text, nullable=False))
+    # JSON list of wiki-cited identifier tokens present in the ref at capture
+    # (lib/topics/wiki_anchors.py); NULL = pre-anchor row or topic had no wiki.
+    anchors_json: Optional[str] = Field(
+        default=None, sa_column=Column("anchors_json", Text))
 
 
 __all__ = [

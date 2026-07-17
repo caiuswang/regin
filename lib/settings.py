@@ -765,7 +765,11 @@ class TopicEvolutionConfig(BaseModel):
     proposals (off by default even when evolution is on — spawning is a cost).
 
     `content_drift_cosine` is the similarity floor below which a topic's
-    ref files are judged to have drifted from its wiki narrative.
+    ref files are judged to have drifted from its wiki narrative. It only
+    applies to digest rows carrying an embedding but no wiki-anchor set;
+    the default is calibrated to the SkillRouter embedder, whose cosines
+    compress into 0.97–1.0 (trivial edits ≥ 0.999, material rewrites
+    ~0.97), so anything much lower spares every change.
     `drift_proposal_batch_max` caps proposals emitted per evolve pass so a
     large commit can't spawn an unbounded number of drafting agents.
     `auto_proposal_expire_days` retires unreviewed, never-routed
@@ -775,7 +779,7 @@ class TopicEvolutionConfig(BaseModel):
     evolution_enabled: bool = False
     mechanical_autoapply: bool = False
     auto_spawn_agents: bool = False
-    content_drift_cosine: float = 0.6
+    content_drift_cosine: float = 0.995
     drift_proposal_batch_max: int = 3
     auto_proposal_expire_days: int = 14
     # When set, every completed proposal run (initial draft or regenerate)

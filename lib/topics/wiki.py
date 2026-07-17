@@ -13,6 +13,14 @@ def wiki_dir(repo_path: str | Path) -> Path:
     return topic_dir(repo_path) / "wiki"
 
 
+def topic_wiki_page(repo_path: str | Path, topic_id: str) -> Path:
+    """The per-topic wiki page path. The single authority for the
+    `wiki/<slug>.md` naming scheme — writers and readers that derive it
+    independently can silently diverge (a raw-id write is unreadable to a
+    slugified read), so resolve it here."""
+    return wiki_dir(repo_path) / f"{slugify(topic_id)}.md"
+
+
 def generate_wiki(repo_path: str | Path) -> list[Path]:
     """Regenerate `wiki/index.md` only.
 
