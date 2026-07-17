@@ -28,6 +28,8 @@ def _clean_channels(monkeypatch):
     for key in ("webhook_url", "telegram_bot_token", "telegram_chat_id",
                 "lark_webhook_url", "lark_secret"):
         monkeypatch.setattr(settings.agent_messages, key, None)
+    for key in ("webhook_enabled", "telegram_enabled", "lark_enabled"):
+        monkeypatch.setattr(settings.agent_messages, key, True)
 
 
 @pytest.fixture
@@ -199,6 +201,37 @@ def test_one_failure_one_success_aggregates_sent(monkeypatch):
     # webhook sent, telegram failed → aggregate is 'sent'
     assert registry.maybe_dispatch(_msg()) == "sent"
     assert seen == ["http://hook.test/x"]
+
+
+def test_disabled_channel_is_excluded_from_fanout(monkeypatch, captured):
+    # Telegram stays fully configured but muted — only the webhook delivers.
+    _cfg(monkeypatch, webhook_url="http://hook.test/x",
+         telegram_bot_token="BOT:1", telegram_chat_id="42",
+         telegram_enabled=False)
+    assert registry.maybe_dispatch(_msg()) == "sent"
+    assert [url for url, _ in captured] == ["http://hook.test/x"]
+
+
+def test_all_channels_disabled_returns_none(monkeypatch, captured):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x", webhook_enabled=False,
+         telegram_bot_token="BOT:1", telegram_chat_id="42",
+         telegram_enabled=False,
+         lark_webhook_url="https://open.feishu.cn/hook/abc",
+         lark_enabled=False)
+    assert registry.maybe_dispatch(_msg()) is None
+    assert captured == []
+
+
+def test_muted_channel_stays_configured_but_not_active(monkeypatch):
+    _cfg(monkeypatch, telegram_bot_token="BOT:1", telegram_chat_id="42",
+         telegram_enabled=False)
+    assert {c.channel_id for c in registry.configured_channels()} == {"telegram"}
+    assert registry.active_channels() == []
+
+
+def test_should_dispatch_false_when_only_channel_disabled(monkeypatch):
+    _cfg(monkeypatch, webhook_url="http://hook.test/x", webhook_enabled=False)
+    assert registry.should_dispatch("blocker") is False
 
 
 def test_should_dispatch_reflects_gates(monkeypatch):

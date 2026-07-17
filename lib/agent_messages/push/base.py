@@ -4,7 +4,8 @@ A *push channel* takes one agent→human message and delivers it
 out-of-band (webhook, Telegram, …) so a long-running / background agent
 reaches the user even when nobody is watching the inbox. Channels are
 plugged in via `lib/agent_messages/push/registry.py`; the store fans a
-message out to every configured channel whose severity gate it clears.
+message out to every enabled + configured channel whose severity gate it
+clears.
 
 Adding a channel is a `PushChannel` subclass that implements
 `is_configured` + `deliver`, plus one entry in the registry. Everything
@@ -125,6 +126,14 @@ class PushChannel:
     @property
     def cfg(self):
         return settings.agent_messages
+
+    def is_enabled(self) -> bool:
+        """The channel's mute switch, distinct from being configured.
+
+        Reads `{channel_id}_enabled` off `settings.agent_messages` — the
+        subclass field prefix must match `channel_id` for this to resolve;
+        unknown ids default to enabled so a missing flag never mutes."""
+        return bool(getattr(self.cfg, f"{self.channel_id}_enabled", True))
 
     def is_configured(self) -> bool:
         """True when this channel has enough config to attempt delivery."""

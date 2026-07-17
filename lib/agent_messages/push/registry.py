@@ -2,9 +2,9 @@
 
 Holds the list of known channels and the single `maybe_dispatch` entry
 point the store calls after persisting a message. A message is delivered
-to *every* configured channel whose per-channel severity gate it clears;
-each channel's outcome is captured independently so one failing transport
-never blocks the others.
+to *every* active (enabled + configured) channel whose per-channel
+severity gate it clears; each channel's outcome is captured independently
+so one failing transport never blocks the others.
 
 **Register a new channel here** — append its class to `_CHANNEL_CLASSES`.
 That is the only wiring step beyond the `PushChannel` subclass itself.
@@ -34,13 +34,18 @@ def all_channels() -> list[PushChannel]:
 
 
 def configured_channels() -> list[PushChannel]:
-    """Channels with enough config to attempt delivery."""
+    """Channels with enough config to attempt delivery (even if muted)."""
     return [c for c in all_channels() if c.is_configured()]
 
 
+def active_channels() -> list[PushChannel]:
+    """Configured channels whose enable switch is on — the fan-out set."""
+    return [c for c in configured_channels() if c.is_enabled()]
+
+
 def should_dispatch(msg_type: str | None) -> bool:
-    """True when at least one configured channel would deliver this type."""
-    return any(c.clears_gate(msg_type) for c in configured_channels())
+    """True when at least one active channel would deliver this type."""
+    return any(c.clears_gate(msg_type) for c in active_channels())
 
 
 def _aggregate(statuses: list[str]) -> str:
@@ -57,14 +62,15 @@ def _aggregate(statuses: list[str]) -> str:
 
 
 def maybe_dispatch(msg: dict) -> str | None:
-    """Deliver `msg` to every configured channel that clears its gate.
+    """Deliver `msg` to every active channel that clears its gate.
 
     Returns an aggregate status ('sent' | 'failed' | 'skipped') for
-    `agent_messages.webhook_status`, or None when no channel is configured
-    at all (so the caller leaves the column NULL). Never raises — each
-    channel's transport error is caught and logged per channel.
+    `agent_messages.webhook_status`, or None when no channel is active
+    (unconfigured or muted via its enable switch), so the caller leaves
+    the column NULL. Never raises — each channel's transport error is
+    caught and logged per channel.
     """
-    channels = configured_channels()
+    channels = active_channels()
     if not channels:
         return None
     pm = build_push_message(msg)
@@ -85,4 +91,4 @@ def maybe_dispatch(msg: dict) -> str | None:
 
 
 __all__ = ["maybe_dispatch", "should_dispatch", "all_channels",
-           "configured_channels"]
+           "configured_channels", "active_channels"]

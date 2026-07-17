@@ -183,6 +183,10 @@ _AGENT_MEMORY_FIELDS: list[dict] = [
 
 
 _AGENT_MESSAGES_FIELDS: list[dict] = [
+    {"key": "webhook_enabled", "group": "Webhook", "type": "bool",
+     "label": "Enabled",
+     "description": "Mute switch for this channel — turn it off to stop "
+                    "deliveries without deleting the URL below."},
     {"key": "webhook_url", "group": "Webhook", "type": "string",
      "label": "Webhook URL",
      "description": "POST high-severity send_to_user messages here (ntfy / Slack "
@@ -196,6 +200,10 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
     {"key": "webhook_timeout_seconds", "group": "Webhook", "type": "float",
      "min": 0, "step": 0.5, "label": "Webhook timeout (s)",
      "description": "How long to wait on the webhook POST before giving up."},
+    {"key": "telegram_enabled", "group": "Telegram", "type": "bool",
+     "label": "Enabled",
+     "description": "Mute switch for this channel — turn it off to stop "
+                    "deliveries without deleting the token/chat id below."},
     {"key": "telegram_bot_token", "group": "Telegram", "type": "string",
      "label": "Bot token",
      "description": "Token from @BotFather. Empty = Telegram off. Stored "
@@ -213,6 +221,10 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
     {"key": "telegram_timeout_seconds", "group": "Telegram", "type": "float",
      "min": 0, "step": 0.5, "label": "Telegram timeout (s)",
      "description": "How long to wait on the Telegram API call before giving up."},
+    {"key": "lark_enabled", "group": "Lark / Feishu", "type": "bool",
+     "label": "Enabled",
+     "description": "Mute switch for this channel — turn it off to stop "
+                    "deliveries without deleting the webhook URL below."},
     {"key": "lark_webhook_url", "group": "Lark / Feishu", "type": "string",
      "label": "Custom-bot webhook URL",
      "description": "Incoming-webhook URL of a Lark group custom bot (group "

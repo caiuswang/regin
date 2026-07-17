@@ -400,3 +400,23 @@ def test_agent_messages_get_exposes_retention_fields(
     assert fields["retention_keep_pinned"]["value"] is True
 
 
+def test_agent_messages_channel_enable_switches(
+        flask_client, isolated_settings_files):
+    """Each push channel's mute switch defaults on and a PUT toggle persists
+    to the block's local scope without clearing the channel's URL/token."""
+    body = flask_client.get("/api/settings/agent-messages").get_json()
+    fields = {f["key"]: f for f in body["fields"]}
+    for key in ("webhook_enabled", "telegram_enabled", "lark_enabled"):
+        assert fields[key]["value"] is True
+
+    resp = flask_client.put(
+        "/api/settings/agent-messages",
+        json={"telegram_enabled": False},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    local = json.loads(isolated_settings_files["local"].read_text())
+    assert local["agent_messages"]["telegram_enabled"] is False
+
+

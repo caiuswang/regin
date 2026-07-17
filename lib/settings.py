@@ -667,7 +667,12 @@ class AgentMessagesConfig(BaseModel):
 
     base_url: str = "http://127.0.0.1:8321"
 
+    # Each channel also carries a `{channel}_enabled` switch so a fully
+    # configured channel can be muted without deleting its URL/token.
+    # Default True: a configured channel delivers unless explicitly muted.
+
     # ── Generic webhook channel (ntfy / Slack incoming hook / phone) ──
+    webhook_enabled: bool = True
     webhook_url: str | None = None
     webhook_min_severity: _SEVERITY = "warning"
     webhook_timeout_seconds: float = 5.0
@@ -675,6 +680,7 @@ class AgentMessagesConfig(BaseModel):
     # ── Telegram channel (Bot API sendMessage) ──
     # Create a bot via @BotFather for the token; `chat_id` is your user or
     # group id (talk to the bot once, then read it from getUpdates).
+    telegram_enabled: bool = True
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     telegram_min_severity: _SEVERITY = "warning"
@@ -685,6 +691,7 @@ class AgentMessagesConfig(BaseModel):
     # webhook URL into `lark_webhook_url`. If you enable the bot's
     # "signature verification", put that secret in `lark_secret` (the
     # channel then signs each request); leave it None otherwise.
+    lark_enabled: bool = True
     lark_webhook_url: str | None = None
     lark_secret: str | None = None
     lark_min_severity: _SEVERITY = "warning"

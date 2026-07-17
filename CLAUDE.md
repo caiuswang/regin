@@ -32,7 +32,7 @@ place instead of stacking — use it for one advancing progress line), and `link
 URLs). High-severity messages can fan out to one or more **push channels** (all off by
 default) — a generic webhook (`settings.agent_messages.webhook_url`), Telegram
 (`telegram_bot_token` + `telegram_chat_id`), and/or Lark/Feishu (`lark_webhook_url`), each
-with its own severity gate. Channels live
+with its own severity gate and `{channel}_enabled` mute switch. Channels live
 in `lib/agent_messages/push/` and are pluggable. Internals: *Agent Messages* in `ARCHITECTURE.md`.
 
 `type=lesson` is special: besides landing in the inbox, the message is captured into the
