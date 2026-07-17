@@ -33,6 +33,38 @@ VERDICT: MATERIAL|TRIVIAL
 </task>"""
 
 
+JUDGE_BATCH_SURFACE_ID = "topic-proposal-drift-judge-batch"
+
+_JUDGE_BATCH_DEFAULT_BODY = """Several topics' ref files changed since their wikis were written. For EACH topic below, decide whether its change is MATERIAL (that topic's wiki narrative is now inaccurate or incomplete and should be re-drafted) or TRIVIAL (formatting, comments, internal refactors, or edits that don't change what the wiki says).
+
+Each topic block carries the evidence recorded at detection time: the changed ref paths, any wiki-cited identifiers that vanished from them, a git diff of each ref against the wiki's baseline commit (when available), and the current wiki. Judge from the evidence — and use your Read/Glob/Grep tools to pull anything more you need; do not rubber-stamp the summary.
+
+{{topic_blocks}}
+
+<task>
+Answer with exactly one line per topic, nothing else:
+<topic_id>: MATERIAL|TRIVIAL — <one-sentence reason>
+</task>"""
+
+
+register_surface(
+    JUDGE_BATCH_SURFACE_ID,
+    label="Topic proposal — batched drift judge",
+    area="topic-proposal",
+    default_body=_JUDGE_BATCH_DEFAULT_BODY,
+    description=(
+        "One prompt judging every pending content-drift refresh in a sweep — "
+        "per-topic git diffs + vanished wiki anchors + current wiki — instead "
+        "of one triage call per topic."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("topic_blocks", "One markdown block per pending topic: changed refs with vanished-anchor notes and git-diff excerpts, plus the current wiki."),
+    ),
+    tags=("topic-proposal-agent", "drift-triage"),
+)
+
+
 register_surface(
     SURFACE_ID,
     label="Topic proposal — drift triage",
@@ -51,4 +83,4 @@ register_surface(
     tags=("topic-proposal-agent", "drift-triage"),
 )
 
-__all__ = ["SURFACE_ID"]
+__all__ = ["SURFACE_ID", "JUDGE_BATCH_SURFACE_ID"]

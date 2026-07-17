@@ -266,11 +266,24 @@ def _dismiss_trivial(repo_path: str | Path, proposal_id: str,
               proposal_id=proposal_id)
 
 
-def _spawn_one(repo_path: str | Path, proposal_id: str) -> bool:
+def _verdict_material(repo_path: str | Path, proposal: dict[str, Any],
+                      verdicts: "dict[str, dict[str, str]] | None") -> bool:
+    """Materiality for one drift item: the batched judge's verdict when it
+    ran (a topic its answer didn't cover counts material — fail open),
+    otherwise the per-item triage."""
+    if verdicts is None:
+        return _drift_is_material(repo_path, proposal)
+    topics = proposal.get("topics") or [{}]
+    verdict = verdicts.get(topics[0].get("id") or "")
+    return verdict is None or verdict.get("verdict") != "trivial"
+
+
+def _spawn_one(repo_path: str | Path, proposal_id: str,
+               verdicts: "dict[str, dict[str, str]] | None" = None) -> bool:
     """Hand one pending, not-yet-spawned content-drift proposal to the agent
-    runner — but only after an agentic triage judges the drift MATERIAL. A
-    TRIVIAL verdict dismisses the stub instead of drafting it. Returns whether
-    it spawned."""
+    runner — but only after the drift is judged MATERIAL (batched judge when
+    available, else per-item triage). A TRIVIAL verdict dismisses the stub
+    instead of drafting it. Returns whether it spawned."""
     from lib.topics.proposals import load_proposal
     from lib.topics.proposals.external_jobs import start_external_proposal_run
 
@@ -279,7 +292,7 @@ def _spawn_one(repo_path: str | Path, proposal_id: str) -> bool:
     proposal = load_proposal(repo_path, proposal_id)
     if proposal.get("status") != "pending_review":
         return False
-    if not _drift_is_material(repo_path, proposal):
+    if not _verdict_material(repo_path, proposal, verdicts):
         _dismiss_trivial(repo_path, proposal_id, proposal)
         return False
     start_external_proposal_run(
@@ -318,47 +331,88 @@ def _dismiss_drift_thread(repo_path: str | Path, item: dict[str, Any]) -> None:
               proposal_id=item["run_id"], topic_id=item.get("topic_id"))
 
 
-def _spawn_one_via_regenerate(repo_path: str | Path,
-                              item: dict[str, Any]) -> bool:
+def _spawn_one_via_regenerate(repo_path: str | Path, item: dict[str, Any],
+                              verdicts: "dict[str, dict[str, str]] | None" = None
+                              ) -> bool:
     """Drive one origin-run drift note to a refresh revision by regenerating
-    that run — but only after triage judges the drift MATERIAL. A TRIVIAL
-    verdict dismisses the note instead. Skips a run that is already mid-flight.
-    Returns whether it triggered a regenerate."""
+    that run — but only after the drift is judged MATERIAL (batched judge
+    when available, else per-item triage). A TRIVIAL verdict dismisses the
+    note instead. Skips a run that is already mid-flight. Returns whether it
+    triggered a regenerate."""
     from lib.topics.proposals import load_proposal_status
     from lib.topics.proposals.external_jobs import start_external_regenerate_run
 
     status = load_proposal_status(repo_path, item["run_id"]) or {}
     if status.get("state") in _ACTIVE_RUN_STATES:
         return False
-    if not _drift_is_material(repo_path, _proposal_for_drift_item(item)):
+    if not _verdict_material(repo_path, _proposal_for_drift_item(item),
+                             verdicts):
         _dismiss_drift_thread(repo_path, item)
         return False
     start_external_regenerate_run(repo_path, item["run_id"])
     return True
 
 
-def _spawn_standalone_refreshes(repo_path: str | Path, cap: int,
-                                spawned: int) -> int:
+def _spawn_standalone_refreshes(repo_path: str | Path, cap: int, spawned: int,
+                                verdicts: "dict[str, dict[str, str]] | None"
+                                ) -> int:
     """Spawn fresh drafts for the legacy standalone content-drift proposals
     (topics with no origin run). Returns the updated spawned count."""
     for proposal_id in _content_drift_run_ids(repo_path):
         if cap and cap > 0 and spawned >= cap:
             break
-        if _spawn_one(repo_path, proposal_id):
+        if _spawn_one(repo_path, proposal_id, verdicts):
             spawned += 1
     return spawned
 
 
-def _spawn_origin_refreshes(repo_path: str | Path, cap: int,
-                            spawned: int) -> int:
+def _spawn_origin_refreshes(repo_path: str | Path, cap: int, spawned: int,
+                            verdicts: "dict[str, dict[str, str]] | None"
+                            ) -> int:
     """Regenerate origin runs carrying an open drift note (topics whose whole
     lifecycle stays in their original proposal). Returns the updated count."""
     for item in _origin_drift_items(repo_path):
         if cap and cap > 0 and spawned >= cap:
             break
-        if _spawn_one_via_regenerate(repo_path, item):
+        if _spawn_one_via_regenerate(repo_path, item, verdicts):
             spawned += 1
     return spawned
+
+
+def _standalone_judge_item(repo_path: str | Path,
+                           proposal_id: str) -> "dict[str, Any] | None":
+    """One pending, not-yet-spawned standalone stub as a judge item, or None
+    when it is spawned, terminal, or unloadable."""
+    from lib.topics.proposals import load_proposal
+
+    if _already_spawned(repo_path, proposal_id):
+        return None
+    try:
+        proposal = load_proposal(repo_path, proposal_id)
+    except Exception:  # noqa: BLE001 - a bad stub must not break the sweep
+        return None
+    if proposal.get("status") != "pending_review":
+        return None
+    topics = proposal.get("topics") or [{}]
+    metadata = proposal.get("metadata") or {}
+    return {
+        "run_id": proposal_id,
+        "topic_id": topics[0].get("id"),
+        "drifted_paths": metadata.get("drifted_paths") or [],
+        "missing_anchors": metadata.get("missing_anchors") or {},
+    }
+
+
+def _pending_judge_items(repo_path: str | Path) -> list[dict[str, Any]]:
+    """Every pending drift item from both surfaces, shaped for the batched
+    judge: origin-run notes as returned by `_origin_drift_items`, plus
+    pending, not-yet-spawned standalone stubs."""
+    items = list(_origin_drift_items(repo_path))
+    for proposal_id in _content_drift_run_ids(repo_path):
+        item = _standalone_judge_item(repo_path, proposal_id)
+        if item is not None:
+            items.append(item)
+    return [item for item in items if item.get("topic_id")]
 
 
 def maybe_spawn_refresh_agents(repo_path: str | Path) -> int:
@@ -372,12 +426,16 @@ def maybe_spawn_refresh_agents(repo_path: str | Path) -> int:
     if not cfg.auto_spawn_agents:
         return 0
     try:
+        from lib.topics.drift_judge import judge_drift_batch
         from lib.topics.proposal_external import external_agent_configured
         if not external_agent_configured():
             return 0
         cap = cfg.drift_proposal_batch_max
-        spawned = _spawn_origin_refreshes(repo_path, cap, 0)
-        spawned = _spawn_standalone_refreshes(repo_path, cap, spawned)
+        # One judge pass over every pending item; None (judge unavailable /
+        # failed) makes the loops fall back to the per-item triage.
+        verdicts = judge_drift_batch(repo_path, _pending_judge_items(repo_path))
+        spawned = _spawn_origin_refreshes(repo_path, cap, 0, verdicts)
+        spawned = _spawn_standalone_refreshes(repo_path, cap, spawned, verdicts)
         if spawned:
             log.write("refresh_agents_spawned", repo_path=str(repo_path),
                       spawned=spawned)

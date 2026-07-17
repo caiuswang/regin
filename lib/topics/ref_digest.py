@@ -92,10 +92,20 @@ def _wiki_tokens_for_topic(repo_path: str | Path, topic_id: str):
     return wiki_anchor_tokens(text)
 
 
+def _head_commit(repo_path: str | Path) -> Optional[str]:
+    """Current repo HEAD, or None outside a git repo — the drift judge's
+    diff base, stamped per row at capture."""
+    from lib.topics.drift import _git
+
+    lines = _git(repo_path, ["rev-parse", "HEAD"])
+    return lines[0].strip() if lines else None
+
+
 def _upsert(session, *, repo_id: int, topic_id: str, path: str,
             role: Optional[str], content_hash: str,
             embedding_json: Optional[str], model_id: Optional[str],
-            anchors_json: Optional[str], now: str) -> None:
+            anchors_json: Optional[str], captured_commit: Optional[str],
+            now: str) -> None:
     """Insert a digest row or update the existing one for its unique key."""
     existing = session.exec(
         select(TopicRefDigest).where(
@@ -109,11 +119,14 @@ def _upsert(session, *, repo_id: int, topic_id: str, path: str,
             embedding_model_id=model_id,
             anchors_json=(None if anchors_json is _WIKI_UNREADABLE
                           else anchors_json),
+            captured_commit=captured_commit,
             captured_at=now))
         return
     existing.role = role
     existing.content_hash = content_hash
     existing.captured_at = now
+    if captured_commit is not None:
+        existing.captured_commit = captured_commit
     # Anchors overwrite even to NULL (a vanished wiki reverts the row to
     # hash-only judging) — but a transiently unreadable wiki preserves the
     # existing set. Embeddings only overwrite when freshly computed.
@@ -126,7 +139,8 @@ def _upsert(session, *, repo_id: int, topic_id: str, path: str,
 
 
 def _capture_topic(session, repo_root: Path, repo_id: int, topic_id: str,
-                   topic: dict[str, Any], embedder, wiki_tokens, now: str) -> int:
+                   topic: dict[str, Any], embedder, wiki_tokens,
+                   captured_commit: Optional[str], now: str) -> int:
     """Capture every resolvable ref of one topic. Returns rows written."""
     written = 0
     for ref in topic.get("refs", []):
@@ -146,7 +160,8 @@ def _capture_topic(session, repo_root: Path, repo_id: int, topic_id: str,
         _upsert(session, repo_id=repo_id, topic_id=topic_id, path=path,
                 role=ref.get("role"), content_hash=_content_hash(content),
                 embedding_json=embedding_json, model_id=model_id,
-                anchors_json=anchors_json, now=now)
+                anchors_json=anchors_json, captured_commit=captured_commit,
+                now=now)
         written += 1
     return written
 
@@ -167,9 +182,11 @@ def capture_ref_digests(repo_path: str | Path, topic_id: str, *,
         now = datetime.now().isoformat()
         repo_root = Path(repo_path)
         wiki_tokens = _wiki_tokens_for_topic(repo_path, topic_id)
+        captured_commit = _head_commit(repo_path)
         with SessionLocal() as session:
             written = _capture_topic(session, repo_root, repo_id, topic_id,
-                                     topic, embedder, wiki_tokens, now)
+                                     topic, embedder, wiki_tokens,
+                                     captured_commit, now)
             session.commit()
         log.write("topic_ref_digests_captured", topic_id=topic_id,
                   rows=written, embedded=embedder is not None)
@@ -212,6 +229,7 @@ def digests_for_topic(repo_id: int, topic_id: str) -> list[dict[str, Any]]:
         "embedding_json": r.embedding_json,
         "anchors": (json.loads(r.anchors_json)
                     if r.anchors_json is not None else None),
+        "captured_commit": r.captured_commit,
         "captured_at": r.captured_at,
     } for r in rows]
 

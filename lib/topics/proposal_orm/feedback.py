@@ -273,19 +273,21 @@ def orm_open_content_drift_threads(
             query = query.where(ProposalFeedbackThread.run_id == proposal_id)
         if topic_id is not None:
             query = query.where(ProposalFeedbackThread.proposal_topic_id == topic_id)
-        out: list[dict[str, Any]] = []
-        for thread in s.exec(query):
-            try:
-                meta = json.loads(thread.metadata_json or "{}")
-            except json.JSONDecodeError:
-                meta = {}
-            out.append({
-                "run_id": thread.run_id,
-                "topic_id": thread.proposal_topic_id,
-                "thread_id": thread.id,
-                "drifted_paths": meta.get("drifted_paths") or [],
-            })
-        return out
+        return [_drift_thread_row(thread) for thread in s.exec(query)]
+
+
+def _drift_thread_row(thread: ProposalFeedbackThread) -> dict[str, Any]:
+    try:
+        meta = json.loads(thread.metadata_json or "{}")
+    except json.JSONDecodeError:
+        meta = {}
+    return {
+        "run_id": thread.run_id,
+        "topic_id": thread.proposal_topic_id,
+        "thread_id": thread.id,
+        "drifted_paths": meta.get("drifted_paths") or [],
+        "missing_anchors": meta.get("missing_anchors") or {},
+    }
 
 
 # States a user may set by hand. "addressed" is reserved for the auto-resolve

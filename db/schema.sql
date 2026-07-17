@@ -768,6 +768,9 @@ CREATE TABLE IF NOT EXISTS topic_ref_digests (
     -- JSON list of wiki-cited identifier tokens present in the ref at capture
     -- (lib/topics/wiki_anchors.py); NULL = pre-anchor row or topic had no wiki.
     anchors_json        TEXT,
+    -- Repo HEAD when the digest was captured — the git base the drift judge
+    -- diffs against; NULL = pre-stamp row (judge gets no diff evidence).
+    captured_commit     TEXT,
     UNIQUE (repo_id, topic_id, path)
 );
 CREATE INDEX IF NOT EXISTS ix_topic_ref_digests_repo_id ON topic_ref_digests(repo_id);

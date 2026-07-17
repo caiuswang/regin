@@ -211,7 +211,9 @@ def test_triage_passes_repo_path_as_cwd(fake_git_repo, monkeypatch, spy):
 
     maybe_spawn_refresh_agents(repo)
 
-    assert reviewer.seen_cwds == [repo]
+    # Two judged calls — the batched judge (whose triage-format answer parses
+    # to nothing → fallback), then the per-item triage — both repo-scoped.
+    assert reviewer.seen_cwds == [repo, repo]
 
 
 def test_triage_passes_its_own_surface_id(fake_git_repo, monkeypatch, spy):
@@ -219,6 +221,7 @@ def test_triage_passes_its_own_surface_id(fake_git_repo, monkeypatch, spy):
     reviewer LLM was constructed with (regression: it used to call `.complete()`
     with no `surface_id` override at all, so triage sessions were traced —
     and agent-bound — as `topic-proposal-review` runs)."""
+    from lib.prompts.surfaces.triage import JUDGE_BATCH_SURFACE_ID
     from lib.prompts.surfaces.triage import SURFACE_ID as TRIAGE_SURFACE_ID
 
     _configure(monkeypatch, spawn=True, configured=True)
@@ -231,7 +234,10 @@ def test_triage_passes_its_own_surface_id(fake_git_repo, monkeypatch, spy):
 
     maybe_spawn_refresh_agents(repo)
 
-    assert reviewer.seen_surface_ids == [TRIAGE_SURFACE_ID]
+    # Batched judge first (its own surface id), then — its triage-format
+    # answer parses to nothing — the per-item triage under its own id.
+    assert reviewer.seen_surface_ids == [JUDGE_BATCH_SURFACE_ID,
+                                         TRIAGE_SURFACE_ID]
 
 
 def test_triage_material_spawns(fake_git_repo, monkeypatch, spy):

@@ -502,6 +502,10 @@ class TopicRefDigest(Base, table=True):
     # (lib/topics/wiki_anchors.py); NULL = pre-anchor row or topic had no wiki.
     anchors_json: Optional[str] = Field(
         default=None, sa_column=Column("anchors_json", Text))
+    # Repo HEAD when the digest was captured — the git base the drift judge
+    # diffs against; NULL = pre-stamp row (judge gets no diff evidence).
+    captured_commit: Optional[str] = Field(
+        default=None, sa_column=Column("captured_commit", Text))
 
 
 __all__ = [
