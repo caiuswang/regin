@@ -798,8 +798,8 @@ def _emit_session_end(trace_id: str, *, reason: str) -> None:
 
 
 def _prior_proposal_for_prompt(proposal: dict[str, Any] | None) -> dict[str, Any]:
-    """Drop agent self-`notes` from the prior draft before it goes into a
-    regenerate prompt.
+    """Drop agent self-`notes` and every wiki body from the prior draft before
+    it goes into a regenerate prompt.
 
     `notes` is the previous pass's editorial about its own choices (e.g.
     "these three topics replace the prior trace-span-repair draft"). It is
@@ -807,12 +807,26 @@ def _prior_proposal_for_prompt(proposal: dict[str, Any] | None) -> dict[str, Any
     repeating that reasoning. After a restore it is doubly wrong: the notes
     describe a draft the user just discarded, while run-level `notes` are
     never reverted to the restored revision's.
+
+    Wiki bodies (the run-level `wiki` and each topic's `wiki`) are stripped
+    because the prompt hands the agent a *pointer* to the on-disk prior
+    `wiki.md` instead — the agent Reads what it needs rather than having every
+    narrative embedded (and the same content embedded twice).
     """
-    clean = {k: v for k, v in (proposal or {}).items() if k != "notes"}
+    clean = {k: v for k, v in (proposal or {}).items()
+             if k not in ("notes", "wiki")}
     metadata = clean.get("metadata")
     if isinstance(metadata, dict) and "notes" in metadata:
         clean["metadata"] = {k: v for k, v in metadata.items() if k != "notes"}
+    if isinstance(clean.get("topics"), list):
+        clean["topics"] = [_topic_without_wiki(t) for t in clean["topics"]]
     return clean
+
+
+def _topic_without_wiki(topic: Any) -> Any:
+    if not isinstance(topic, dict):
+        return topic
+    return {k: v for k, v in topic.items() if k != "wiki"}
 
 
 def _sibling_refresh_section(repo: Path, out_dir: Path) -> str:
@@ -866,18 +880,27 @@ drifted files.
 """
 
 
-def _prior_reference_block(prior_draft: dict[str, Any] | None) -> str:
+def _prior_reference_block(repo: Path, out_dir: Path,
+                           prior_draft: dict[str, Any] | None) -> str:
     """The regenerate-only 'Prior draft reference' block, or '' on a fresh run.
 
     The static guidance is the editable ``topic-proposal-regenerate`` surface
     (``lib/prompts/surfaces/regenerate.py``); this builder assembles only the
     runtime context it interpolates and passes the result as the
     ``prior_reference`` variable of the drafting skeleton. A broken user edit
-    degrades to the built-in default inside ``render_surface``."""
+    degrades to the built-in default inside ``render_surface``.
+
+    The prior wiki is handed over as an absolute-path *pointer* to the on-disk
+    ``proposals/<id>/wiki.md`` (and wiki bodies are stripped from the prior
+    proposal JSON) — the agent Reads the narrative itself instead of having it
+    embedded in the prompt. The pointer is probed against the live file at
+    prompt-build time, so a stale or vanished wiki degrades to the placeholder
+    rather than dangling."""
     if not prior_draft:
         return ""
     from lib.prompts import render_surface
     from lib.prompts.surfaces.regenerate import SURFACE_ID
+    from lib.topics.wiki import wiki_read_pointer
 
     feedback_reference = ""
     feedback_block = format_review_feedback_for_prompt(prior_draft.get("feedback_threads") or [])
@@ -889,7 +912,8 @@ def _prior_reference_block(prior_draft: dict[str, Any] | None) -> str:
         "prior_proposal_json": json.dumps(
             _prior_proposal_for_prompt(prior_draft.get("proposal")),
             indent=2, sort_keys=True),
-        "prior_wiki_markdown": str(prior_draft.get("wiki") or ""),
+        "prior_wiki_pointer": wiki_read_pointer(
+            repo, out_dir / "wiki.md", absolute=True),
     })
 
 
@@ -918,7 +942,7 @@ def _instructions(
     )
     context = {
         "topic_request": topic_request or default_request,
-        "prior_reference": _prior_reference_block(prior_draft),
+        "prior_reference": _prior_reference_block(repo, out_dir, prior_draft),
         "custom_instructions": _format_template_section(prompt_templates),
         "temp_output_path": str(temp_output_path),
         "output_file": str(out_dir / OUTPUT_FILE),

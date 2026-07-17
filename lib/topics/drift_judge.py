@@ -29,7 +29,7 @@ from lib.activity_log import get_activity_logger
 from lib.settings import settings
 from lib.topics.drift import _git
 from lib.topics.ref_digest import digests_for_topic, repo_id_for_path
-from lib.topics.wiki import topic_wiki_page
+from lib.topics.wiki import topic_wiki_page, wiki_read_pointer
 
 log = get_activity_logger("topics")
 
@@ -55,17 +55,7 @@ def _stat_line(repo_path: str | Path, base: str,
 
 
 def _wiki_pointer(repo_path: str | Path, topic_id: str) -> str:
-    page = topic_wiki_page(repo_path, topic_id)
-    try:
-        if not page.is_file() or not page.read_text(
-                encoding="utf-8", errors="replace").strip():
-            return "(no wiki on file)"
-    except OSError:
-        return "(wiki unreadable)"
-    try:
-        return page.relative_to(Path(repo_path)).as_posix()
-    except ValueError:
-        return str(page)
+    return wiki_read_pointer(repo_path, topic_wiki_page(repo_path, topic_id))
 
 
 def _path_evidence(repo_path: str | Path, item: dict[str, Any],

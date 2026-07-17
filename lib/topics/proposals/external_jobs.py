@@ -41,7 +41,7 @@ class _RegenerateInputs:
 
 
 def _resolve_regenerate_inputs_from_proposal(
-    repo: Path, proposal_id: str, prior_proposal: dict[str, Any], wiki_path: Path,
+    repo: Path, proposal_id: str, prior_proposal: dict[str, Any],
 ) -> _RegenerateInputs:
     feedback_threads = [
         thread
@@ -56,7 +56,6 @@ def _resolve_regenerate_inputs_from_proposal(
     return _RegenerateInputs(
         prior_draft={
             "proposal": prior_proposal,
-            "wiki": wiki_path.read_text() if wiki_path.exists() else "",
             "feedback_threads": feedback_threads,
         },
         previous_revision_id=prior_proposal.get("revision", {}).get("id"),
@@ -104,14 +103,13 @@ def _resolve_regenerate_inputs(repo: Path, proposal_id: str) -> _RegenerateInput
     """ORM-backed lookup post-Phase-E: prefer the proposal dict if its
     topics list is present; otherwise fall back to the run's status row
     for the queued/failed external-agent path."""
-    wiki_path = topic_dir(repo) / "proposals" / proposal_id / "wiki.md"
     try:
         prior_proposal = load_proposal(repo, proposal_id)
     except TopicGraphError:
         prior_proposal = None
     if prior_proposal and prior_proposal.get("topics"):
         inputs = _resolve_regenerate_inputs_from_proposal(
-            repo, proposal_id, prior_proposal, wiki_path,
+            repo, proposal_id, prior_proposal,
         )
     else:
         inputs = _resolve_regenerate_inputs_from_status(repo, proposal_id)

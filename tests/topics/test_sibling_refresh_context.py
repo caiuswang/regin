@@ -1,6 +1,7 @@
 """Sibling-aware content-drift refresh: each refresh agent run is given the
-OTHER pending content-drift siblings' current on-disk wiki excerpt +
-drifted_paths so cross-references stay consistent across the batch.
+OTHER pending content-drift siblings' drifted_paths + a pointer to their
+current on-disk wiki page (no embedded content) so cross-references stay
+consistent across the batch.
 
 Covers the helper `_sibling_refresh_context` and its injection into the
 drafting prompt via `_instructions` (0 siblings, N≥1 siblings, sibling with
@@ -101,7 +102,7 @@ def test_siblings_block_lists_others_and_excludes_self(fake_git_repo):
     assert "a.py" not in block
 
 
-def test_siblings_block_includes_wiki_excerpt(fake_git_repo):
+def test_siblings_block_points_at_wiki_not_content(fake_git_repo):
     repo = fake_git_repo
     _seed(repo, {
         "t1": _topic([{"path": "a.py"}]),
@@ -112,23 +113,8 @@ def test_siblings_block_includes_wiki_excerpt(fake_git_repo):
     _write_wiki(repo, "t2", "# T2\n\nthe distinctive t2 narrative\n")
 
     block = _sibling_refresh_context(repo, _proposal_id("t1"))
-    assert "the distinctive t2 narrative" in block
-
-
-def test_siblings_excerpt_truncated(fake_git_repo):
-    repo = fake_git_repo
-    _seed(repo, {
-        "t1": _topic([{"path": "a.py"}]),
-        "t2": _topic([{"path": "b.py"}]),
-    })
-    emit_refresh_proposal(repo, "t1", ["a.py"])
-    emit_refresh_proposal(repo, "t2", ["b.py"])
-    _write_wiki(repo, "t2", "x" * 5000)
-
-    block = _sibling_refresh_context(repo, _proposal_id("t1"))
-    assert "…(truncated)" in block
-    # excerpt bounded well under the raw 5000 chars
-    assert block.count("x") <= 900
+    assert ".regin/topics/wiki/t2.md" in block
+    assert "the distinctive t2 narrative" not in block
 
 
 def test_prompt_section_emitted_with_siblings(fake_git_repo):
@@ -192,4 +178,4 @@ def test_sibling_without_wiki_included_no_raise(fake_git_repo):
     block = _sibling_refresh_context(repo, _proposal_id("t1"))
     assert "t2" in block
     assert "b.py" in block
-    assert "(no wiki on file yet)" in block
+    assert "(no wiki on file)" in block

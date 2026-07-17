@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 from lib.prompts import get_surface
+from lib.topics.wiki import wiki_read_pointer
 import lib.topics.proposal_external as pe
 
 
@@ -37,15 +38,12 @@ Write each topic's wiki and the notes as a standalone description of the reposit
 
 A regenerate REVISES the page in place; it does not accrete. Keep each wiki's scope and length close to the prior draft — correct what the current code no longer matches and cut detail that has gone stale, rather than appending new file-by-file descriptions because some files changed. A drift note asking you to refresh a topic is a request to re-verify and tighten its existing narrative, not to grow it.
 
-Previous proposal JSON:
+Previous proposal JSON (structural fields only — each topic's `wiki` body is omitted):
 ```json
 {json.dumps(pe._prior_proposal_for_prompt(prior_draft.get('proposal')), indent=2, sort_keys=True)}
 ```
 
-Previous wiki markdown:
-```markdown
-{str(prior_draft.get('wiki') or '')}
-```
+Previous wiki markdown (not embedded here — Read it yourself with your Read tool at this path): {wiki_read_pointer(repo, out_dir / 'wiki.md', absolute=True)}
 """
     custom = pe._format_template_section(prompt_templates)
     sibling_section = pe._sibling_refresh_section(repo, out_dir)

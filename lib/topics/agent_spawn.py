@@ -77,49 +77,30 @@ def _already_spawned(repo_path: str | Path, proposal_id: str) -> bool:
     return (out_dir / STATUS_FILE).exists()
 
 
-SIBLING_WIKI_EXCERPT_CHARS = 800
-
-
-def _sibling_wiki_excerpt(repo_path: str | Path, topic_id: str) -> str:
-    """First ~800 chars of a sibling's current on-disk wiki, or "" when it has
-    no wiki file yet. Never raises — a missing/unreadable file just yields ""."""
-    from lib.topics import slugify
-    from lib.topics.wiki import wiki_dir
-    wiki_path = wiki_dir(repo_path) / f"{slugify(topic_id)}.md"
-    if not wiki_path.is_file():
-        return ""
-    try:
-        text = wiki_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
-    text = text.strip()
-    if len(text) > SIBLING_WIKI_EXCERPT_CHARS:
-        return text[:SIBLING_WIKI_EXCERPT_CHARS].rstrip() + "\n…(truncated)"
-    return text
-
-
 def _sibling_block(repo_path: str | Path, proposal: dict[str, Any]) -> str:
     """Format one sibling refresh proposal as a markdown block: its topic id,
-    label, drifted_paths, and a short current-wiki excerpt."""
+    label, drifted_paths, and an absolute-path pointer to its current wiki page
+    the drafting agent can Read regardless of its own working directory."""
+    from lib.topics.wiki import topic_wiki_page, wiki_read_pointer
     topics = proposal.get("topics") or [{}]
     topic = topics[0]
     topic_id = topic.get("id") or "(unknown)"
     label = topic.get("label") or topic_id
     paths = (proposal.get("metadata") or {}).get("drifted_paths") or []
     paths_md = "\n".join(f"  - {p}" for p in paths) or "  - (this topic's refs)"
-    excerpt = _sibling_wiki_excerpt(repo_path, topic_id)
-    excerpt_md = excerpt or "(no wiki on file yet)"
+    pointer = wiki_read_pointer(
+        repo_path, topic_wiki_page(repo_path, topic_id), absolute=True)
     return (
         f"### {label} (`{topic_id}`)\n\n"
         f"Drifted files:\n{paths_md}\n\n"
-        f"Current wiki excerpt:\n```markdown\n{excerpt_md}\n```"
+        f"Current wiki (Read it): {pointer}"
     )
 
 
 def _sibling_refresh_context(repo_path: str | Path, self_proposal_id: str) -> str:
     """A markdown block describing the OTHER content-drift refresh proposals
     pending in this same batch — each sibling's topic id, label, drifted_paths,
-    and a short current-wiki excerpt — so the drafting agent keeps its
+    and a pointer to its current wiki page — so the drafting agent keeps its
     cross-references consistent with siblings being rewritten alongside it.
 
     Returns "" when there are no siblings (and so naturally for user/external

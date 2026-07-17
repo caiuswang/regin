@@ -157,8 +157,11 @@ def test_scoped_directive_lists_topics_and_paths():
     assert "ONLY the topics listed above" in directive
 
 
-def test_prior_reference_block_embeds_scoped_directive():
-    block = _prior_reference_block({
+def test_prior_reference_block_embeds_scoped_directive(tmp_path):
+    repo = tmp_path / "repo"
+    out_dir = repo / ".regin" / "topics" / "proposals" / "p1"
+    out_dir.mkdir(parents=True)
+    block = _prior_reference_block(repo, out_dir, {
         "proposal": {"version": 1, "topics": []},
         "wiki": "prior wiki",
         "scope_topic_ids": ["beta"],

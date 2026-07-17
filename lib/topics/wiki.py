@@ -21,6 +21,32 @@ def topic_wiki_page(repo_path: str | Path, topic_id: str) -> Path:
     return wiki_dir(repo_path) / f"{slugify(topic_id)}.md"
 
 
+def wiki_read_pointer(repo_path: str | Path, page: Path,
+                      *, absolute: bool = False) -> str:
+    """A path an agent can Read to get `page`'s content, or a placeholder
+    (`(no wiki on file)` when the file is missing/empty, `(wiki unreadable)`
+    on an OS error) when there is nothing readable there.
+
+    The single source of truth for the "hand the agent a pointer, not the
+    embedded body" contract every topic-agent prompt now uses. Repo-relative
+    posix by default; pass ``absolute=True`` for a prompt whose agent may run
+    under a working directory other than the repo root, where a repo-relative
+    path would not resolve.
+    """
+    try:
+        if not page.is_file() or not page.read_text(
+                encoding="utf-8", errors="replace").strip():
+            return "(no wiki on file)"
+    except OSError:
+        return "(wiki unreadable)"
+    if absolute:
+        return str(page.resolve())
+    try:
+        return page.relative_to(Path(repo_path)).as_posix()
+    except ValueError:
+        return str(page)
+
+
 def generate_wiki(repo_path: str | Path) -> list[Path]:
     """Regenerate `wiki/index.md` only.
 
