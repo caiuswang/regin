@@ -17,7 +17,7 @@ from sqlmodel import select
 from lib.orm import SessionLocal
 from lib.orm.models import TopicRefDigest
 from lib.settings import settings
-from lib.topics.core import topic_path
+from lib.topics.core import write_split_graph
 from lib.topics.ref_digest import (
     capture_all_digests,
     capture_ref_digests,
@@ -34,10 +34,8 @@ class _FakeEmbedder:
 
 
 def _write_graph(repo: Path, topics: dict) -> None:
-    path = topic_path(repo)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(
-        {"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
 
 
 def _topic(refs: list[dict]) -> dict:

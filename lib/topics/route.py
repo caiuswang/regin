@@ -441,7 +441,7 @@ category: reference
 
 # Topic Router
 
-Use the approved topic graph — git-tracked `.regin/topics/topic.json` merged with the
+Use the approved topic graph — git-tracked `.regin/topics/topics/` merged with the
 machine-local `.regin/topics/topic.local.json` overlay — as the source of topic context
 for this repo. `regin topics route` reads the merged graph for you.
 

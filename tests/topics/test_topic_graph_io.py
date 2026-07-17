@@ -1,7 +1,7 @@
 """graph_io helpers: load_authoritative_graph + reconcile_if_drifted.
 
 These bridge the Phase A→D source-of-truth flip. The helper falls back
-to `topic.json` on disk when no snapshot exists; once a snapshot lives
+to the on-disk graph when no snapshot exists; once a snapshot lives
 in `graph_snapshots`, it wins.
 """
 
@@ -12,7 +12,7 @@ import json
 import pytest
 
 from lib.topics.apply import apply_diff
-from lib.topics.core import topic_path
+from lib.topics.core import load_graph, topic_dir, write_split_graph
 from lib.topics.diff import diff_against_graph
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.snapshots import resolve_or_create_repo
@@ -26,6 +26,7 @@ def repo_dir(fake_git_repo):
     base = {
         "version": 1,
         "repo": "demo",
+        "updated_at": "2026-01-01T00:00:00Z",
         "topics": {
             "disk-only": {
                 "label": "D", "intent": "d", "status": "active",
@@ -34,7 +35,7 @@ def repo_dir(fake_git_repo):
             },
         },
     }
-    topic_path(fake_git_repo).write_text(json.dumps(base))
+    write_split_graph(fake_git_repo, base)
     return fake_git_repo
 
 
@@ -45,7 +46,7 @@ def test_no_repo_row_falls_back_to_disk(repo_dir):
 
 def test_repo_row_without_snapshot_auto_seeds(repo_dir):
     """Phase E3: outcome 2 (Repo row, no snapshot) now auto-seeds a
-    snapshot from `topic.json` rather than falling back forever."""
+    snapshot from the on-disk graph rather than falling back forever."""
     from lib.orm import SessionLocal
     from lib.orm.models import GraphSnapshot
     from sqlmodel import select
@@ -79,7 +80,7 @@ def test_snapshot_wins_over_identical_disk(repo_dir):
     the authoritative source.
     """
     repo = resolve_or_create_repo(str(repo_dir))
-    base_graph = json.loads(topic_path(repo_dir).read_text())
+    base_graph = load_graph(repo_dir)
     apply_diff(
         repo.id,
         diff_against_graph(
@@ -105,7 +106,7 @@ def test_auto_seed_ingests_wikis_from_disk(repo_dir):
     from lib.orm.models import GraphSnapshot
     from sqlmodel import select
 
-    wiki_dir = topic_path(repo_dir).parent / "wiki"
+    wiki_dir = topic_dir(repo_dir) / "wiki"
     wiki_dir.mkdir(parents=True, exist_ok=True)
     (wiki_dir / "disk-only.md").write_text("# Disk-only topic\n\nBody.\n")
     (wiki_dir / "orphan.md").write_text("stale — topic gone from graph\n")
@@ -138,7 +139,7 @@ def test_sync_snapshot_from_disk_ingests_wikis(repo_dir):
     # Bootstrap: register repo + create the first snapshot via apply_diff,
     # because sync_snapshot_from_disk is a no-op when no prior snapshot exists.
     repo = resolve_or_create_repo(str(repo_dir))
-    base_graph = json.loads(topic_path(repo_dir).read_text())
+    base_graph = load_graph(repo_dir)
     apply_diff(
         repo.id,
         diff_against_graph(
@@ -150,7 +151,7 @@ def test_sync_snapshot_from_disk_ingests_wikis(repo_dir):
     )
     # Simulate a downstream git pull: a new wiki body lands on disk
     # for an existing topic that scan/import then snapshots.
-    wiki_dir = topic_path(repo_dir).parent / "wiki"
+    wiki_dir = topic_dir(repo_dir) / "wiki"
     wiki_dir.mkdir(parents=True, exist_ok=True)
     (wiki_dir / "snap-only.md").write_text("# Snap-only\n\nFresh from upstream.\n")
 
@@ -181,11 +182,25 @@ def test_check_graph_sync_no_snapshot_after_repo_registered(repo_dir):
     assert result["repo_id"] == repo.id
 
 
+def test_check_graph_sync_legacy_only_repo_is_legacy_unsupported(fake_git_repo):
+    import json
+
+    from lib.topics.graph_io import check_graph_sync
+
+    repo = resolve_or_create_repo(str(fake_git_repo))
+    legacy = fake_git_repo / ".regin" / "topics" / "topic.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps({"version": 1, "repo": "demo", "topics": {}}))
+    result = check_graph_sync(str(fake_git_repo))
+    assert result["state"] == "legacy_unsupported"
+    assert result["repo_id"] == repo.id
+
+
 def test_check_graph_sync_in_sync_after_apply(repo_dir):
     from lib.topics.graph_io import check_graph_sync
 
     repo = resolve_or_create_repo(str(repo_dir))
-    base_graph = json.loads(topic_path(repo_dir).read_text())
+    base_graph = load_graph(repo_dir)
     apply_diff(
         repo.id,
         diff_against_graph(
@@ -200,7 +215,7 @@ def test_check_graph_sync_in_sync_after_apply(repo_dir):
 
 
 def test_check_graph_sync_disk_newer_after_external_write(repo_dir):
-    """Simulates a `git pull` that updates `topic.json`: doctor must
+    """Simulates a `git pull` that updates the on-disk graph: doctor must
     flag the drift so the user knows to run `regin topics import`.
 
     Seeds via `load_authoritative_graph` (synchronous) instead of
@@ -215,13 +230,13 @@ def test_check_graph_sync_disk_newer_after_external_write(repo_dir):
     load_authoritative_graph(str(repo_dir))
 
     # Tamper with disk to simulate an upstream-pushed change.
-    disk = json.loads(topic_path(repo_dir).read_text())
+    disk = load_graph(repo_dir)
     disk["topics"]["y"] = {
         "label": "Y", "intent": "y", "status": "active",
         "aliases": [], "refs": [], "edges": [],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    topic_path(repo_dir).write_text(json.dumps(disk))
+    write_split_graph(repo_dir, disk)
 
     result = check_graph_sync(str(repo_dir))
     assert result["state"] == "disk_newer"
@@ -230,7 +245,7 @@ def test_check_graph_sync_disk_newer_after_external_write(repo_dir):
 def test_disk_drift_re_seeds_snapshot(repo_dir):
     """Phase E3 drift-detect: a direct disk write outside apply_diff
     propagates to the snapshot on the next load. The merged disk
-    (topic.json + topic.local.json) stays the source of truth at
+    (base graph + topic.local.json) stays the source of truth at
     quiescent states — anything that edits it outside the sanctioned
     writers (manual edits, CLI plumbing) is treated as an explicit
     override and the snapshot re-seeds to honour it.
@@ -238,7 +253,7 @@ def test_disk_drift_re_seeds_snapshot(repo_dir):
     from lib.topics.core import topic_local_path
 
     repo = resolve_or_create_repo(str(repo_dir))
-    base_graph = json.loads(topic_path(repo_dir).read_text())
+    base_graph = load_graph(repo_dir)
     apply_diff(
         repo.id,
         diff_against_graph(

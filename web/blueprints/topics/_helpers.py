@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from lib.orm import SessionLocal
 from lib.orm.models import Repo
-from lib.topics import TopicGraphError, bootstrap, topic_detail, topic_path, topic_summary
+from lib.topics import TopicGraphError, bootstrap, topic_detail, topic_dir, topic_summary
 from lib.topics.proposal_providers import list_proposal_providers
 from lib.topics.proposals import (
     list_proposal_feedback_threads, list_proposal_revisions, list_proposal_runs,
@@ -30,13 +30,17 @@ def _error(exc: Exception, status: int = 400):
 
 
 def _ensure_topic_graph(repo_path: str):
-    from lib.topics.core import graph_exists
-    if not graph_exists(repo_path):
+    from lib.topics.core import graph_exists, topic_path
+    # A stray legacy topic.json means a retired-layout repo, not an empty
+    # one — bootstrapping would silently mask its graph with an empty split
+    # graph (and the pre-commit hook would then propagate the loss). Skip,
+    # and let the endpoint's read raise the "layout retired" error instead.
+    if not graph_exists(repo_path) and not topic_path(repo_path).exists():
         bootstrap(repo_path)
 
 
 def _proposal_wiki(repo_path: str, proposal_id: str) -> str:
-    wiki_path = topic_path(repo_path).parent / "proposals" / proposal_id / "wiki.md"
+    wiki_path = topic_dir(repo_path) / "proposals" / proposal_id / "wiki.md"
     return wiki_path.read_text() if wiki_path.exists() else ""
 
 

@@ -322,13 +322,13 @@ def audit_graph(
         issues.append(ValidationIssue(
             severity="error",
             code="graph.schema_drift",
-            message="topic.json version must be 1",
+            message="topic graph version must be 1",
         ))
     if not isinstance(graph.get("repo"), str) or not graph.get("repo"):
         issues.append(ValidationIssue(
             severity="error",
             code="graph.invalid_repo",
-            message="topic.json repo must be a non-empty string",
+            message="topic graph repo must be a non-empty string",
         ))
 
     topics = graph.get("topics")
@@ -336,7 +336,7 @@ def audit_graph(
         issues.append(ValidationIssue(
             severity="error",
             code="graph.invalid_topics",
-            message="topic.json topics must be an object",
+            message="topic graph topics must be an object",
         ))
         return issues
 

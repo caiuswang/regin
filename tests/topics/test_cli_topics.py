@@ -15,7 +15,7 @@ def test_cmd_topics_bootstrap_prints_paths(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
         topics_cmd,
         "bootstrap",
-        lambda repo, seeds=False, force=False: {"topic": tmp_path / "topic.json"},
+        lambda repo, seeds=False, force=False: {"topic": tmp_path / ".regin" / "topics" / "topics"},
     )
 
     topics_cmd.cmd_topics_bootstrap(repo=str(tmp_path), seeds=False, force=False)

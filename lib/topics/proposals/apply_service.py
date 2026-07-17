@@ -239,7 +239,7 @@ def _restore_pruned_inbound_edges_after_apply(
     from lib.topics.proposals import _restore_pruned_edges
     graph = load_authoritative_graph(repo_path)
     _restore_pruned_edges(graph.get("topics", {}), pruned)
-    # Route the edge-restore to the overlay; base topic.json stays clean.
+    # Route the edge-restore to the overlay; the base graph stays clean.
     export_overlay_to_disk(repo_path, graph)
 
 

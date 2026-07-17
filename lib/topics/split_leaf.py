@@ -10,12 +10,12 @@ The pipeline has three seams, each isolated for testing:
    sibling topic ids under the leaf's bucket, builds node bodies (inheriting the
    leaf's globs/refs), and the per-memory assignment map.
 3. **apply_split** (mutation) — re-runs the safety gate (`check_split`) and
-   refuses unless it passes, then writes the new nodes to `topic.json`, syncs
+   refuses unless it passes, then writes the new nodes to the base graph, syncs
    the snapshot, and relinks memories (link new destination, unlink the leaf for
    every moved memory). Conservation/provenance are the gate's job; this only
    executes a plan the gate already cleared.
 
-Mutation uses the canonical topic.json writer + `import_from_disk` (the proven
+Mutation uses the canonical graph writer + `import_from_disk` (the proven
 path). Routing through `apply.apply_diff` is the production-hardening follow-up.
 """
 

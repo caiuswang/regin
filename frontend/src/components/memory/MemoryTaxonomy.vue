@@ -1,5 +1,5 @@
 <script setup>
-// The authoritative topic taxonomy (.regin/topics/topic.json) as a navigable
+// The authoritative topic taxonomy (.regin/topics/topics/) as a navigable
 // surface — the WebUI mirror of the index_root / index_expand / index_fetch
 // MCP walk. Orchestrates two interchangeable left views (an accessible
 // keyboard tree and a radial graph) against a shared, independently-scrolling
@@ -191,7 +191,7 @@ defineExpose({ reload })
     <p v-if="loading" class="text-sm text-fg-faint">Loading…</p>
     <p v-else-if="loadError" class="text-sm text-danger">{{ loadError }}</p>
     <p v-else-if="!roots.length" class="text-sm text-fg-faint">
-      No approved topic graph (<code class="text-[12px]">.regin/topics/topic.json</code>).
+      No approved topic graph (<code class="text-[12px]">.regin/topics/topics/</code>).
     </p>
 
     <!-- workspace: independently-scrolling panes, resizable divider -->

@@ -1,7 +1,7 @@
 """CLI tests for `regin topics import` — the post-pull sync command.
 
 Covers the multi-user-via-git use case: each user keeps their own
-local SQLite, but approved `topic.json` + `.regin/topics/wiki/*.md`
+local SQLite, but the approved split graph + `.regin/topics/wiki/*.md`
 travel through git, and `regin topics import` makes a teammate's
 approved state routable locally.
 """
@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from cli.commands import topics as topics_cmd
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo
-from lib.topics.core import topic_path
+from lib.topics.core import topic_dir, write_split_graph
 
 
 runner = CliRunner()
@@ -32,15 +32,14 @@ def _seed_repo(path) -> Repo:
 
 
 def _write_topic_graph(repo_dir, topics: dict) -> None:
-    target = topic_path(repo_dir)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({
-        "version": 1, "repo": repo_dir.name, "topics": topics,
-    }))
+    write_split_graph(repo_dir, {
+        "version": 1, "repo": repo_dir.name,
+        "updated_at": "2026-01-01T00:00:00Z", "topics": topics,
+    })
 
 
 def _write_wiki(repo_dir, topic_id: str, body: str) -> None:
-    wiki_dir = topic_path(repo_dir).parent / "wiki"
+    wiki_dir = topic_dir(repo_dir) / "wiki"
     wiki_dir.mkdir(parents=True, exist_ok=True)
     (wiki_dir / f"{topic_id}.md").write_text(body)
 
@@ -64,7 +63,7 @@ _TOPIC = {
 
 
 def test_import_errors_when_repo_unregistered(fake_git_repo):
-    """User wrote topic.json but never ran `add-repo` — surface the
+    """User wrote a topic graph but never ran `add-repo` — surface the
     config error instead of silently no-opping."""
     _write_topic_graph(fake_git_repo, _TOPIC)
 
@@ -75,13 +74,29 @@ def test_import_errors_when_repo_unregistered(fake_git_repo):
 
 
 def test_import_no_topic_file_exits_zero(fake_git_repo):
-    """Repo registered but topic.json absent (fresh clone, hook ran
+    """Repo registered but the graph absent (fresh clone, hook ran
     before bootstrap). Graceful no-op so the post-merge hook never
     breaks `git pull`."""
     _seed_repo(fake_git_repo)
     result = runner.invoke(topics_cmd.topics_app, ["import", "--repo", str(fake_git_repo)])
     assert result.exit_code == 0
     assert "nothing to import" in result.stdout
+
+
+def test_import_legacy_only_repo_prints_retired_hint(fake_git_repo):
+    """A legacy-only repo must surface the retired-layout hint (even with
+    --quiet, which the post-merge hook passes) instead of the silent
+    'nothing to import' no-op."""
+    import json
+
+    _seed_repo(fake_git_repo)
+    legacy = fake_git_repo / ".regin" / "topics" / "topic.json"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps({"version": 1, "repo": "demo", "topics": {}}))
+    result = runner.invoke(
+        topics_cmd.topics_app, ["import", "--repo", str(fake_git_repo), "--quiet"])
+    assert result.exit_code == 0
+    assert "Legacy single-file layout retired" in result.stdout
 
 
 def test_import_seeds_when_no_prior_snapshot(fake_git_repo):
@@ -123,7 +138,7 @@ def test_import_idempotent_when_in_sync(fake_git_repo):
 
 
 def test_import_writes_new_snapshot_on_drift(fake_git_repo):
-    """A `git pull` that updates topic.json must produce a new
+    """A `git pull` that updates the graph must produce a new
     snapshot row tagged with the caller-supplied reason (e.g. git_pull
     from the hook)."""
     repo = _seed_repo(fake_git_repo)
@@ -160,7 +175,7 @@ def test_import_preserves_in_flight_downgrade_proposal(fake_git_repo):
     copy of X's data — an upstream `git pull` that re-introduces X (or
     introduces a modified X) must not mutate the proposal's stored copy.
 
-    Pins the design: proposals are local-only, `topic.json` is the
+    Pins the design: proposals are local-only, the split graph is the
     git-shipped surface. Downgrade routes through the local overlay and
     leaves a `deleted_topics` tombstone, so an upstream re-introduction
     of the same topic id stays MASKED locally until the proposal is
@@ -179,9 +194,9 @@ def test_import_preserves_in_flight_downgrade_proposal(fake_git_repo):
     resolve_or_create_repo(str(fake_git_repo))
     # Seed an approved graph containing topic `x` directly on disk +
     # let auto-seed create the initial snapshot.
-    target = topic_path(fake_git_repo)
-    target.write_text(json.dumps({
+    write_split_graph(fake_git_repo, {
         "version": 1, "repo": fake_git_repo.name,
+        "updated_at": "2026-01-01T00:00:00Z",
         "topics": {
             "x": {
                 "label": "Original X", "intent": "the original",
@@ -190,7 +205,7 @@ def test_import_preserves_in_flight_downgrade_proposal(fake_git_repo):
                 "commands": [], "include_globs": [], "exclude_globs": [],
             },
         },
-    }))
+    })
     load_authoritative_graph(str(fake_git_repo))
 
     # Downgrade X to a proposal. P stores X's data; X removed from disk.
@@ -218,10 +233,11 @@ def test_import_preserves_in_flight_downgrade_proposal(fake_git_repo):
         "aliases_json": proposed[0].aliases_json,
     }
 
-    # Simulate upstream pull: topic.json arrives with X back, under a
+    # Simulate upstream pull: the graph arrives with X back, under a
     # different label, plus a brand-new topic y.
-    target.write_text(json.dumps({
+    write_split_graph(fake_git_repo, {
         "version": 1, "repo": fake_git_repo.name,
+        "updated_at": "2026-01-02T00:00:00Z",
         "topics": {
             "x": {
                 "label": "Upstream-overridden X", "intent": "different",
@@ -236,7 +252,7 @@ def test_import_preserves_in_flight_downgrade_proposal(fake_git_repo):
                 "commands": [], "include_globs": [], "exclude_globs": [],
             },
         },
-    }))
+    })
 
     result = runner.invoke(topics_cmd.topics_app, [
         "import", "--repo", str(fake_git_repo), "--reason", "git_pull",

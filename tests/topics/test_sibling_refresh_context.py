@@ -9,7 +9,6 @@ no wiki file).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -17,7 +16,7 @@ import pytest
 from lib.topics import topic_dir
 from lib.topics.agent_spawn import _sibling_refresh_context
 from lib.topics.content_drift import emit_refresh_proposal
-from lib.topics.core import topic_path
+from lib.topics.core import write_split_graph
 from lib.topics.proposal_external import _instructions
 from lib.topics.snapshots import resolve_or_create_repo
 
@@ -31,9 +30,8 @@ def _topic(refs: list[dict]) -> dict:
 
 
 def _seed(repo: Path, topics: dict) -> None:
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
     resolve_or_create_repo(str(repo))
 
 

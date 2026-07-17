@@ -56,8 +56,8 @@ from lib.topics.proposals import (
 
 def _ensure_bootstrap(repo):
     """Bootstrap the topic graph idempotently — bootstrap() raises if already done."""
-    from lib.topics import topic_path
-    if not topic_path(repo).exists():
+    from lib.topics import graph_exists
+    if not graph_exists(repo):
         bootstrap(repo)
 
 

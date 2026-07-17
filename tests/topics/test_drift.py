@@ -1,14 +1,13 @@
 """Phase 1 — mechanical drift detector (rename-follow).
 
 Covers the pure rename parser, git rename detection (range + history chase),
-topic-ref rewrite into the overlay (never topic.json), memory-body rewrite
+topic-ref rewrite into the overlay (never the approved base graph), memory-body rewrite
 (veracity untouched), the gated orchestrator, and reflect's rename-follow
 upgrade (rename → rewrite, genuine deletion → flag).
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from lib.memory.models import MemoryInput
 from lib.memory.reflect import ReflectResult, _flag_stale_references
 from lib.settings import settings
 from lib.topics import drift
-from lib.topics.core import load_local_graph, topic_path
+from lib.topics.core import load_local_graph, topic_split_dir, write_split_graph
 
 
 def _commit(repo: Path, msg: str) -> None:
@@ -31,9 +30,12 @@ def _git_mv(repo: Path, old: str, new: str) -> None:
 
 
 def _write_graph(repo: Path, topics: dict) -> None:
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
+
+
+def _base_files(repo: Path) -> dict[str, str]:
+    return {p.name: p.read_text() for p in sorted(topic_split_dir(repo).glob("*.json"))}
 
 
 def _topic(refs: list[dict]) -> dict:
@@ -109,12 +111,12 @@ def test_rewrite_topic_refs_writes_overlay_not_base(fake_git_repo):
     (repo / "old.py").write_text("p\n")
     _commit(repo, "add")
     _write_graph(repo, {"t1": _topic([{"path": "old.py", "role": "implementation"}])})
-    base_bytes = topic_path(repo).read_bytes()
+    base_before = _base_files(repo)
 
     touched = drift.rewrite_topic_refs(repo, {"old.py": "new.py"})
     assert touched == ["t1"]
-    # topic.json (human-approved) is byte-for-byte untouched.
-    assert topic_path(repo).read_bytes() == base_bytes
+    # the base graph (human-approved) is byte-for-byte untouched.
+    assert _base_files(repo) == base_before
     # the overlay carries the rewritten path with role preserved.
     overlay = load_local_graph(repo)
     refs = overlay["topics"]["t1"]["refs"]

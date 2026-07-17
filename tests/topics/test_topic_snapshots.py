@@ -160,10 +160,7 @@ def test_apply_diff_prunes_snapshot_history(fresh_repo, fake_git_repo, monkeypat
     monkeypatch.setattr(_apply.settings, "topic_snapshot_keep", 2)
 
     for i in range(5):
-        path = fake_git_repo / ".regin/topics/topic.json"
-        graph = json.loads(path.read_text()) if path.exists() else {
-            "version": 1, "repo": "demo", "topics": {},
-        }
+        graph = {"version": 1, "repo": "demo", "topics": {}}
         topic = {"id": f"t{i}", "label": f"T{i}", "intent": str(i), "status": "active",
                  "aliases": [], "refs": [], "edges": [],
                  "commands": [], "include_globs": [], "exclude_globs": []}
@@ -181,10 +178,7 @@ def test_apply_diff_prune_disabled_when_keep_is_zero(fresh_repo, fake_git_repo, 
     monkeypatch.setattr(_settings, "topic_snapshot_keep", 0)
 
     for i in range(4):
-        path = fake_git_repo / ".regin/topics/topic.json"
-        graph = json.loads(path.read_text()) if path.exists() else {
-            "version": 1, "repo": "demo", "topics": {},
-        }
+        graph = {"version": 1, "repo": "demo", "topics": {}}
         topic = {"id": f"k{i}", "label": f"K{i}", "intent": str(i), "status": "active",
                  "aliases": [], "refs": [], "edges": [],
                  "commands": [], "include_globs": [], "exclude_globs": []}

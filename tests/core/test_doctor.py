@@ -134,10 +134,8 @@ def test_topic_sync_items_flags_disk_drift(fake_git_repo):
     no background indexer) instead of `apply_diff` to avoid racing
     with the `_bg_reindex` thread `apply_diff` spawns.
     """
-    import json as _json
-
     from lib.topics import bootstrap
-    from lib.topics.core import topic_path
+    from lib.topics.core import load_graph, write_split_graph
     from lib.topics.graph_io import load_authoritative_graph
     from lib.topics.snapshots import resolve_or_create_repo
 
@@ -146,14 +144,14 @@ def test_topic_sync_items_flags_disk_drift(fake_git_repo):
     # Seed the initial GraphSnapshot synchronously.
     load_authoritative_graph(str(fake_git_repo))
 
-    # Simulate an upstream change landing in topic.json without an apply.
-    disk = _json.loads(topic_path(fake_git_repo).read_text())
+    # Simulate an upstream change landing in the graph without an apply.
+    disk = load_graph(fake_git_repo)
     disk["topics"]["y"] = {
         "label": "Y", "intent": "y", "status": "active",
         "aliases": [], "refs": [], "edges": [],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    topic_path(fake_git_repo).write_text(_json.dumps(disk))
+    write_split_graph(fake_git_repo, disk)
 
     items = doctor._topic_sync_items()
     assert len(items) == 1

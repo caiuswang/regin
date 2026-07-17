@@ -16,7 +16,7 @@ from lib.topics import (
     bootstrap,
     scan,
     topic_detail,
-    topic_path,
+    topic_dir,
     topic_summary,
     update_topic,
 )
@@ -98,7 +98,7 @@ def api_repo_topic_proposal_detail(name, proposal_id):
         return jsonify({"error": "not found"}), 404
     except TopicGraphError as exc:
         return _error(exc, 404)
-    wiki_path = topic_path(repo_path).parent / "proposals" / proposal_id / "wiki.md"
+    wiki_path = topic_dir(repo_path) / "proposals" / proposal_id / "wiki.md"
     wiki = wiki_path.read_text() if wiki_path.exists() else ""
     return jsonify({
         "proposal": proposal,

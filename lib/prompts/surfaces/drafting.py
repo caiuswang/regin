@@ -24,7 +24,7 @@ User topic request:
 {{topic_request}}{{prior_reference}}{{custom_instructions}}
 
 Rules:
-- Do not modify `.regin/topics/topic.json` or approved topic data.
+- Do not modify `.regin/topics/topics/` or approved topic data.
 - Write final JSON to the temp output file `{{temp_output_path}}`.
 - Do not write `{{output_file}}` directly; regin will validate and copy the temp output into that canonical artifact.
 - You may also print the same JSON as a fenced `json` block.

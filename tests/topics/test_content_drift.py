@@ -23,7 +23,7 @@ from lib.topics.content_drift import (
     emit_refresh_proposal,
     run_content_evolution,
 )
-from lib.topics.core import topic_path
+from lib.topics.core import write_split_graph
 from lib.topics.proposals import (
     dismiss_content_drift_thread,
     ignore_proposed_topic,
@@ -57,9 +57,8 @@ def _topic(refs: list[dict]) -> dict:
 
 
 def _write_graph(repo: Path, topics: dict) -> None:
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
 
 
 def _register(repo: Path) -> int:

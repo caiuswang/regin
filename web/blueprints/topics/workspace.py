@@ -15,7 +15,6 @@ from lib.topics import (
     bootstrap,
     scan,
     topic_detail,
-    topic_path,
     topic_summary,
     update_topic,
 )

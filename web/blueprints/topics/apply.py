@@ -125,7 +125,7 @@ def api_repo_topic_proposal_apply(name, proposal_id, proposed_topic_id):
 def api_repo_topic_audit(name):
     """List the live graph's validation issues, grouped by code.
 
-    Reads the approved graph from `topic.json` (still authoritative
+    Reads the approved graph from disk (still authoritative
     through Phase D); same machinery the diff layer uses to compute
     pre-existing rot. Powers the Audit workspace tab in Phase C.
     """
@@ -307,7 +307,7 @@ def api_repo_topic_snapshot_restore(name, snapshot_id):
                 return jsonify({"error": "not found"}), 404
         restored = restore_snapshot(snapshot_id)
         # After restore, write to the overlay so legacy readers see the new
-        # state without mutating the git-tracked base topic.json. The split
+        # state without mutating the git-tracked base graph. The split
         # keeps merge(base, overlay) hash-equal to the restored snapshot.
         from lib.topics.graph_io import export_overlay_to_disk
         restored_graph = json.loads(restored.graph_json)

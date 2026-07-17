@@ -13,7 +13,7 @@ import types
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo
 from lib.settings import settings
-from lib.topics import bootstrap, load_graph_merged
+from lib.topics import bootstrap, load_graph, load_graph_merged, topic_meta_path, write_split_graph
 from lib.topics.proposals import load_proposal
 
 
@@ -138,8 +138,7 @@ def test_diff_endpoint_surfaces_pre_existing_warnings_not_errors(stub_proposal_p
 
     # Plant a duplicate-alias collision in the approved graph that has
     # NOTHING to do with the proposal we're diffing.
-    graph_path = fake_git_repo / ".regin/topics/topic.json"
-    graph = json.loads(graph_path.read_text())
+    graph = load_graph(fake_git_repo)
     graph["topics"]["existing-a"] = {
         "label": "A", "intent": "a", "status": "active",
         "aliases": ["shared"], "refs": [], "edges": [],
@@ -150,7 +149,7 @@ def test_diff_endpoint_surfaces_pre_existing_warnings_not_errors(stub_proposal_p
         "aliases": ["shared"], "refs": [], "edges": [],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    graph_path.write_text(json.dumps(graph))
+    write_split_graph(fake_git_repo, graph)
 
     resp = flask_client.post(
         f"/api/repos/{name}/topics/proposals/{proposal_id}/topics/{topic_id}/diff",
@@ -183,7 +182,7 @@ def test_apply_endpoint_commits_snapshot_and_provenance(stub_proposal_provider, 
         snaps = list(s.exec(select(GraphSnapshot).where(GraphSnapshot.is_latest == 1)))
     assert len(snaps) == 1
     # Disk export ran.
-    assert (fake_git_repo / ".regin/topics/topic.json").exists()
+    assert topic_meta_path(fake_git_repo).exists()
 
 
 def test_apply_endpoint_requires_ready_review_state(stub_proposal_provider, flask_client, fake_git_repo):
@@ -241,14 +240,13 @@ def test_apply_endpoint_returns_400_on_unresolvable_errors(stub_proposal_provide
     approved_shape = _approved_topic_from_proposal(refreshed_topic, existing_topic_ids=set())
     assert clashing_alias in approved_shape["aliases"]
 
-    graph_path = fake_git_repo / ".regin/topics/topic.json"
-    graph = json.loads(graph_path.read_text())
+    graph = load_graph(fake_git_repo)
     graph["topics"]["clasher"] = {
         "label": "C", "intent": "c", "status": "active",
         "aliases": [clashing_alias], "refs": [], "edges": [],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    graph_path.write_text(json.dumps(graph))
+    write_split_graph(fake_git_repo, graph)
 
     resp = flask_client.post(
         f"/api/repos/{name}/topics/proposals/{proposal_id}/topics/{topic_id}/apply",
@@ -275,14 +273,13 @@ def test_apply_endpoint_resolves_with_options(stub_proposal_provider, flask_clie
     refreshed_topic = next(t for t in load_proposal(str(fake_git_repo), proposal_id)["topics"] if t["id"] == topic_id)
     assert "forced-alias" in _approved_topic_from_proposal(refreshed_topic, existing_topic_ids=set())["aliases"]
 
-    graph_path = fake_git_repo / ".regin/topics/topic.json"
-    graph = json.loads(graph_path.read_text())
+    graph = load_graph(fake_git_repo)
     graph["topics"]["clasher"] = {
         "label": "C", "intent": "c", "status": "active",
         "aliases": ["forced-alias"], "refs": [], "edges": [],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    graph_path.write_text(json.dumps(graph))
+    write_split_graph(fake_git_repo, graph)
 
     resp = flask_client.post(
         f"/api/repos/{name}/topics/proposals/{proposal_id}/topics/{topic_id}/apply",
@@ -521,8 +518,7 @@ def test_audit_endpoint_returns_graph_issues_grouped_by_code(stub_proposal_provi
     bootstrap(fake_git_repo)
 
     # Plant a duplicate-alias collision.
-    graph_path = fake_git_repo / ".regin/topics/topic.json"
-    graph = json.loads(graph_path.read_text())
+    graph = load_graph(fake_git_repo)
     graph["topics"]["x"] = {
         "label": "X", "intent": "x", "status": "active",
         "aliases": ["dup"], "refs": [], "edges": [],
@@ -533,7 +529,7 @@ def test_audit_endpoint_returns_graph_issues_grouped_by_code(stub_proposal_provi
         "aliases": ["dup"], "refs": [], "edges": [],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    graph_path.write_text(json.dumps(graph))
+    write_split_graph(fake_git_repo, graph)
 
     resp = flask_client.get(f"/api/repos/{name}/topics/audit")
     assert resp.status_code == 200
@@ -743,16 +739,14 @@ def test_forward_edge_survives_stage_then_restore_round_trip(monkeypatch):
 
 def _drift_graph(repo, topic_id="t1", path="svc.py") -> None:
     """Write an approved graph with one topic referencing `path`."""
-    from lib.topics.core import topic_path
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": {
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                             "updated_at": "2026-01-01T00:00:00Z", "topics": {
         topic_id: {
             "label": "T", "intent": "t", "status": "active", "aliases": [],
             "refs": [{"path": path}], "edges": [], "commands": [],
             "include_globs": [], "exclude_globs": [],
         },
-    }}))
+    }})
 
 
 def _resolved_for(topic_id: str):

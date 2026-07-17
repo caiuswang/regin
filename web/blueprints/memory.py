@@ -385,7 +385,7 @@ def api_memory_topic(topic_id):
 
 @memory_bp.route("/api/memory/taxonomy")
 def api_memory_taxonomy():
-    """The authoritative topic taxonomy (`.regin/topics/topic.json`) as a
+    """The authoritative topic taxonomy (`.regin/topics/topics/`) as a
     navigable tree — the WebUI mirror of the `index_root`/`index_expand` MCP
     walk. The graph is small (~30 nodes), so the whole tree ships in one
     payload and the frontend drills client-side: `{roots, nodes}` where each

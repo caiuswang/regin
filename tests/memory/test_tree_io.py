@@ -3,7 +3,7 @@ agent-memory store, mirrored onto the authoritative topic graph.
 
 No `Repo` row is registered for the test's `tmp_path`, so
 `load_authoritative_graph` falls straight to its disk-only fallback —
-no git init, no `add-repo` needed, just a `.regin/topics/topic.json` on
+no git init, no `add-repo` needed, just a split topic graph on
 disk (written via `lib.topics.core.save_graph`).
 """
 

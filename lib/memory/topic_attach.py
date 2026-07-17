@@ -2,7 +2,7 @@
 
 `reflect()` abstracts a higher-order rule from a cluster of related memories.
 Instead of minting an orphan `memory_topic` (disconnected from the
-human-approved graph in `.regin/topics/topic.json`), this module proposes that
+human-approved graph in `.regin/topics/topics/`), this module proposes that
 the rule either **merge** onto an existing authoritative node — when the
 cluster is clearly about that node — or seed a **create** candidate. Both land
 in the same topic-proposal review queue external-agent proposals use, so a

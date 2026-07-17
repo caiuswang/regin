@@ -7,7 +7,7 @@ It commits the new state to two stores in one logical transaction:
   1. ORM: insert `GraphSnapshot` (with `is_latest=1`) + `TopicAudit`
      provenance rows, after flipping the prior snapshot to
      `is_latest=0`.
-  2. Filesystem: rewrite `topic.json` (and per-topic wiki files when
+  2. Filesystem: rewrite the on-disk graph (and per-topic wiki files when
      Phase C+ produces them) atomically.
 
 Cross-store atomicity protocol:
@@ -23,7 +23,7 @@ Cross-store atomicity protocol:
 - SQL commits LAST. If the process dies after a successful disk
   write but before the SQL commit, the next read sees disk-ahead-of-SQL.
   `graph_io.reconcile_if_drifted` re-exports from SQL on demand —
-  but Phase A keeps `topic.json` as the source of truth, so the
+  but Phase A keeps the on-disk graph as the source of truth, so the
   divergence simply means the disk has slightly fresher data than the
   ORM. That's a no-op for Phase A readers.
 
@@ -583,7 +583,7 @@ def apply_diff(
 
         # Step 4: filesystem write (atomic). The approved graph lands in the
         # gitignored `topic.local.json` overlay — the git-tracked base
-        # `topic.json` is never touched by apply. The split keeps
+        # graph is never touched by apply. The split keeps
         # `merge(base, overlay)` hash-equal to the snapshot below, so the
         # drift detector stays quiet. If this fails, the surrounding
         # transaction rolls back — readers stay on the prior state.

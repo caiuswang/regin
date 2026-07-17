@@ -59,7 +59,7 @@ User topic request:
 {topic_request or "No specific topic request was provided. Propose the most useful uncovered topics from the repository."}{prior_reference}{custom}
 
 Rules:
-- Do not modify `.regin/topics/topic.json` or approved topic data.
+- Do not modify `.regin/topics/topics/` or approved topic data.
 - Write final JSON to the temp output file `{temp_output_path}`.
 - Do not write `{out_dir / pe.OUTPUT_FILE}` directly; regin will validate and copy the temp output into that canonical artifact.
 - You may also print the same JSON as a fenced `json` block.

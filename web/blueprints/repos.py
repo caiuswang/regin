@@ -158,12 +158,12 @@ def api_repo_detail(name):
         ).all()
         slug_prefix = f"wiki/{repo.name}/"
 
-        # Approved topics live on disk in topic.json — read directly so the
+        # Approved topics live on disk in the split graph — read directly so the
         # repo page can tell the user "you have N topics but no indexed
         # wikis, press Re-index Wikis" when the dense index is empty.
         try:
             approved_topic_count = len(topic_summary(repo.path)["topics"])
-        except Exception:  # noqa: BLE001 — topic.json may be absent on a brand-new repo
+        except Exception:  # noqa: BLE001 — the graph may be absent on a brand-new repo
             approved_topic_count = 0
 
         return jsonify({

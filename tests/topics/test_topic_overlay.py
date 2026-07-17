@@ -1,7 +1,7 @@
 """topic.local.json overlay: merge semantics + write-routing invariants.
 
 Covers the overlay primitives introduced when proposal approval / scan /
-downgrade stopped writing the git-tracked base `topic.json` and started
+downgrade stopped writing the git-tracked base graph and started
 writing the gitignored `topic.local.json` overlay instead. The effective
 graph is `merge(base, overlay)`; all readers funnel through
 `load_authoritative_graph`, which compares the merged disk against the
@@ -21,7 +21,9 @@ from lib.topics.core import (
     save_graph,
     save_local_graph,
     topic_local_path,
-    topic_path,
+    topic_meta_path,
+    topic_split_dir,
+    write_split_graph,
 )
 from lib.topics import (
     TopicGraphError,
@@ -45,7 +47,12 @@ def _topic(tid: str, **overrides) -> dict:
 
 
 def _base(name: str = "demo", topics: dict | None = None) -> dict:
-    return {"version": 1, "repo": name, "topics": topics or {}}
+    return {"version": 1, "repo": name,
+            "updated_at": "2026-01-01T00:00:00Z", "topics": topics or {}}
+
+
+def _base_files(repo) -> dict[str, str]:
+    return {p.name: p.read_text() for p in sorted(topic_split_dir(repo).glob("*.json"))}
 
 
 # ── merge_graphs unit semantics ─────────────────────────────────────────
@@ -107,15 +114,15 @@ def test_save_then_load_local_graph_round_trips(fake_git_repo):
 def test_apply_leaves_base_untouched_and_writes_overlay(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
     base = _base()
-    topic_path(fake_git_repo).write_text(json.dumps(base))
-    before = topic_path(fake_git_repo).read_text()
+    write_split_graph(fake_git_repo, base)
+    before = _base_files(fake_git_repo)
     repo = resolve_or_create_repo(str(fake_git_repo))
 
     fresh = {"id": "svc", **_topic("svc")}
     apply_diff(repo.id, diff_against_graph(fresh, base, strategy="create"), reason="accept")
 
     # Base byte-identical; overlay carries the new topic.
-    assert topic_path(fake_git_repo).read_text() == before
+    assert _base_files(fake_git_repo) == before
     assert "svc" not in load_graph(fake_git_repo)["topics"]
     assert "svc" in load_local_graph(fake_git_repo)["topics"]
     assert "svc" in load_graph_merged(fake_git_repo)["topics"]
@@ -127,7 +134,7 @@ def test_apply_keeps_merged_disk_hash_equal_to_snapshot(fake_git_repo):
     """
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
     base = _base()
-    topic_path(fake_git_repo).write_text(json.dumps(base))
+    write_split_graph(fake_git_repo, base)
     repo = resolve_or_create_repo(str(fake_git_repo))
 
     fresh = {"id": "svc", **_topic("svc")}
@@ -143,7 +150,7 @@ def test_second_identical_apply_adds_no_auto_seed_snapshot(fake_git_repo):
     extra is_latest snapshot (the count stays 1 latest)."""
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
     base = _base()
-    topic_path(fake_git_repo).write_text(json.dumps(base))
+    write_split_graph(fake_git_repo, base)
     repo = resolve_or_create_repo(str(fake_git_repo))
 
     fresh = {"id": "svc", **_topic("svc")}
@@ -166,7 +173,7 @@ def test_overlay_tombstone_removes_base_topic_without_resurrection(fake_git_repo
 
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
     base = _base(topics={"a": _topic("a"), "b": _topic("b")})
-    topic_path(fake_git_repo).write_text(json.dumps(base))
+    write_split_graph(fake_git_repo, base)
     resolve_or_create_repo(str(fake_git_repo))
 
     # Prospective drops "a"; export must tombstone it in the overlay.
@@ -177,7 +184,7 @@ def test_overlay_tombstone_removes_base_topic_without_resurrection(fake_git_repo
     merged = load_graph_merged(fake_git_repo)
     assert "a" not in merged["topics"]
     assert "b" in merged["topics"]
-    # Base file still carries both — only the overlay tombstone hides "a".
+    # Base graph still carries both — only the overlay tombstone hides "a".
     assert set(load_graph(fake_git_repo)["topics"]) == {"a", "b"}
 
 
@@ -186,7 +193,7 @@ def test_overlay_tombstone_removes_base_topic_without_resurrection(fake_git_repo
 
 def test_promote_moves_overlay_topic_into_base_and_clears_overlay(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a")})))
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
     save_local_graph(fake_git_repo, {"topics": {"b": _topic("b")}, "deleted_topics": []})
 
     before = load_graph_merged(fake_git_repo)
@@ -202,7 +209,7 @@ def test_promote_moves_overlay_topic_into_base_and_clears_overlay(fake_git_repo)
 
 def test_promote_tombstone_removes_topic_from_base(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a"), "b": _topic("b")})))
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a"), "b": _topic("b")}))
     save_local_graph(fake_git_repo, {"topics": {}, "deleted_topics": ["a"]})
 
     before = load_graph_merged(fake_git_repo)
@@ -216,7 +223,7 @@ def test_promote_tombstone_removes_topic_from_base(fake_git_repo):
 
 def test_promote_unknown_topic_raises(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base()))
+    write_split_graph(fake_git_repo, _base())
     save_local_graph(fake_git_repo, {"topics": {}, "deleted_topics": []})
 
     try:
@@ -229,12 +236,12 @@ def test_promote_unknown_topic_raises(fake_git_repo):
 
 def test_promote_bootstraps_base_when_absent(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    # No base topic.json — only an overlay entry.
+    # No base graph on disk — only an overlay entry.
     save_local_graph(fake_git_repo, {"topics": {"x": _topic("x")}, "deleted_topics": []})
 
     promote_topic(fake_git_repo, "x")
 
-    assert topic_path(fake_git_repo).exists()
+    assert topic_meta_path(fake_git_repo).exists()
     assert "x" in load_graph(fake_git_repo)["topics"]
 
 
@@ -243,9 +250,7 @@ def test_promote_bootstraps_base_when_absent(fake_git_repo):
 
 def test_promote_all_moves_adds_and_removes_in_one_pass(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(
-        json.dumps(_base(topics={"a": _topic("a"), "old": _topic("old")}))
-    )
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a"), "old": _topic("old")}))
     save_local_graph(
         fake_git_repo,
         {"topics": {"b": _topic("b"), "c": _topic("c")}, "deleted_topics": ["old"]},
@@ -265,7 +270,7 @@ def test_promote_all_moves_adds_and_removes_in_one_pass(fake_git_repo):
 
 def test_promote_all_is_noop_on_empty_overlay(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a")})))
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
     save_local_graph(fake_git_repo, {"topics": {}, "deleted_topics": []})
 
     assert promote_all_topics(fake_git_repo) == {"added": [], "removed": []}
@@ -279,7 +284,7 @@ def test_promote_all_is_noop_on_empty_overlay(fake_git_repo):
 def test_delete_removes_base_topic_and_wiki(fake_git_repo):
     wiki_dir = fake_git_repo / ".regin" / "topics" / "wiki"
     wiki_dir.mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a"), "b": _topic("b")})))
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a"), "b": _topic("b")}))
     (wiki_dir / "a.md").write_text("# A\n\nnarrative\n")
     (wiki_dir / "b.md").write_text("# B\n\nnarrative\n")
     resolve_or_create_repo(str(fake_git_repo))
@@ -306,7 +311,7 @@ def test_delete_prunes_inbound_edges(fake_git_repo):
         "a": _topic("a"),
         "b": _topic("b", edges=[{"target": "a", "type": "related"}]),
     })
-    topic_path(fake_git_repo).write_text(json.dumps(base))
+    write_split_graph(fake_git_repo, base)
     resolve_or_create_repo(str(fake_git_repo))
     load_authoritative_graph(fake_git_repo)
 
@@ -318,23 +323,23 @@ def test_delete_prunes_inbound_edges(fake_git_repo):
 
 def test_delete_overlay_only_topic_leaves_base_untouched(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a")})))
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
     save_local_graph(fake_git_repo, {"topics": {"b": _topic("b")}, "deleted_topics": []})
     resolve_or_create_repo(str(fake_git_repo))
     load_authoritative_graph(fake_git_repo)
-    base_before = topic_path(fake_git_repo).read_text()
+    base_before = _base_files(fake_git_repo)
 
     delete_topic(fake_git_repo, "b")
 
     assert "b" not in load_graph_merged(fake_git_repo)["topics"]
     assert "a" in load_graph(fake_git_repo)["topics"]
-    # base file byte-untouched: an overlay-only delete never rewrites it.
-    assert topic_path(fake_git_repo).read_text() == base_before
+    # base graph byte-untouched: an overlay-only delete never rewrites it.
+    assert _base_files(fake_git_repo) == base_before
 
 
 def test_delete_unknown_topic_raises(fake_git_repo):
     (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
-    topic_path(fake_git_repo).write_text(json.dumps(_base(topics={"a": _topic("a")})))
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
     resolve_or_create_repo(str(fake_git_repo))
     load_authoritative_graph(fake_git_repo)
 

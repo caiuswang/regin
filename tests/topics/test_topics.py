@@ -15,7 +15,9 @@ from lib import topics
 def test_bootstrap_creates_empty_graph(fake_git_repo):
     paths = topics.bootstrap(fake_git_repo)
 
-    graph = json.loads(paths["topic"].read_text())
+    assert paths["topic"] == topics.topic_split_dir(fake_git_repo)
+    assert topics.topic_meta_path(fake_git_repo).exists()
+    graph = topics.load_graph(fake_git_repo)
     assert graph["repo"] == fake_git_repo.name
     assert graph["topics"] == {}
 

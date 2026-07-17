@@ -15,7 +15,7 @@ the implementation level.
 
 | Artifact | Wire format | Shared via git? |
 | --- | --- | --- |
-| Approved graph | `.regin/topics/topic.json`, or `.regin/topics/topics/<topic_id>.json` + `_meta.json` after `migrate-split` | yes (force-added by `pre-commit`) |
+| Approved graph | `.regin/topics/topics/<topic_id>.json` + `_meta.json` | yes (force-added by `pre-commit`) |
 | Per-topic wiki | `.regin/topics/wiki/<topic_id>.md` | yes (normal tracked file) |
 | In-flight proposals (drafts, revisions, feedback threads) | `.regin/topics/bundles/<id>.json` | opt-in, via `proposal-export` |
 | Per-run artefact dirs `.regin/topics/proposals/<id>/` | — | no, `.regin/` is gitignored |
@@ -86,10 +86,10 @@ a re-exported bundle after another round of edits.
 ```
 
 1. **User A approves.** `apply_diff` writes a new `GraphSnapshot` row
-   (ORM, authoritative) and atomically exports `topic.json` + per-topic
+   (ORM, authoritative) and atomically exports the split graph + per-topic
    wikis to disk.
 2. **`pre-commit` hook stages the approval into the commit.** `.regin/`
-   is `.gitignore`d by design, so the hook `git add -f`s `topic.json`
+   is `.gitignore`d by design, so the hook `git add -f`s the split dir
    to override the ignore; wiki `.md` files under `.regin/topics/wiki/`
    are tracked normally.
 3. **User B pulls.** The new approved-graph files land on disk; B's
@@ -132,7 +132,7 @@ caches snapshot content (e.g. a long-running `regin serve` process).
 The only state interaction the design introduces: an in-flight
 `downgrade(X)` proposal carries its own copy of `X`'s payload inside
 `ProposalRevisionTopic`. An upstream pull that re-introduces (or
-modifies) `X` in `topic.json` updates the live graph but **must not**
+modifies) `X` in the approved graph updates the live graph but **must not**
 mutate the proposal's stored copy. This is pinned by
 `tests/topics/test_cli_topics_import.py::test_import_preserves_in_flight_downgrade_proposal`.
 
@@ -141,31 +141,18 @@ apply path goes through the normal `audit_graph` diff check so the
 proposed change is validated against the *current* live graph — not
 the graph at the time the proposal was first drafted.
 
-## Shrinking merge conflicts: the split per-topic layout
+## The split per-topic layout
 
-By default `topic.json` is one JSON file containing every approved
-topic, so two users approving topics on parallel branches merge-conflict
-on the same file. The split layout stores one file per topic instead —
+The approved graph is stored one file per topic —
 `.regin/topics/topics/<topic_id>.json` plus a `_meta.json` sidecar for
-the top-level fields (`repo`, `version`, `updated_at`) — shrinking the
-merge surface to "did someone else touch the same topic id".
-
-Convert a repo once:
-
-```bash
-regin topics migrate-split --repo <path>
-```
-
-This writes the split dir, deletes the legacy `topic.json`, patches the
-repo's `.gitignore` re-include block (idempotently) so the per-topic
-files travel via git, and re-installs the git hooks so `pre-commit`
-stages the split dir. Commit the result.
-
-Reads are dual-format: regin auto-detects the layout (split wins if both
-exist) and every writer follows whatever layout the repo is on — there
-is no setting to flip. **Order matters on teams**: teammates must
-upgrade to a dual-read regin *before* the migration commit reaches
-them; an older regin cannot read the split layout.
+the top-level fields (`repo`, `version`, `updated_at`) — so two users
+approving topics on parallel branches only merge-conflict when they
+touch the same topic id. This is the only layout regin reads or
+writes; `bootstrap` creates it and patches the `.gitignore` re-include
+block so the per-topic files travel via git. A repo still carrying the
+retired single-file `topic.json` fails loud on load (`regin doctor`
+reports `legacy_unsupported`) — restore the split layout from git or
+re-bootstrap.
 
 ## When you do want a shared database
 

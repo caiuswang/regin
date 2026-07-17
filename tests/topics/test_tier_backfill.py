@@ -7,10 +7,9 @@ git-tracked base graph.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from lib.topics.core import load_graph, slugify, topic_path
+from lib.topics.core import load_graph, slugify, topic_split_dir, write_split_graph
 from lib.topics.tier_backfill import backfill_reference_tiers
 from lib.topics.wiki import wiki_dir
 
@@ -24,9 +23,12 @@ def _topic(refs: list[dict]) -> dict:
 
 
 def _write_graph(repo: Path, topics: dict) -> None:
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
+
+
+def _base_files(repo: Path) -> dict[str, str]:
+    return {p.name: p.read_text() for p in sorted(topic_split_dir(repo).glob("*.json"))}
 
 
 def _write_wiki(repo: Path, topic_id: str, body: str) -> None:
@@ -62,14 +64,14 @@ def test_dry_run_writes_nothing(fake_git_repo):
     repo = fake_git_repo
     _write_graph(repo, {"t1": _topic([{"path": "lib/example.py"}])})
     _write_wiki(repo, "t1", "# T1\n\nno file names here\n")
-    before = topic_path(repo).read_text()
+    before = _base_files(repo)
 
     result = backfill_reference_tiers(repo)   # apply defaults to False
 
     assert result["applied"] is False
     assert result["demotions"] == [{"topic_id": "t1", "path": "lib/example.py"}]
     # graph on disk is byte-for-byte unchanged
-    assert topic_path(repo).read_text() == before
+    assert _base_files(repo) == before
 
 
 def test_mentioned_by_full_path_stays_primary(fake_git_repo):

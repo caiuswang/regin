@@ -8,7 +8,6 @@ importance is never touched.
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -17,7 +16,7 @@ from lib.memory.models import MemoryInput
 from lib.memory.topic_cascade import cascade_topic_stale, restore_topic_memories
 from lib.settings import settings
 from lib.topics import drift
-from lib.topics.core import topic_path
+from lib.topics.core import write_split_graph
 
 
 def _linked_mem(store, *, veracity: str = "true", topic: str = "t1",
@@ -35,9 +34,8 @@ def _commit(repo: Path, msg: str) -> None:
 
 
 def _write_graph(repo: Path, topics: dict) -> None:
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
 
 
 def _topic(refs: list[dict]) -> dict:

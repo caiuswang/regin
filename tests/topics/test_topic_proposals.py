@@ -31,7 +31,8 @@ from lib.topics.proposal_drafting import (
     format_review_feedback_for_prompt,
     validate_proposal,
 )
-from lib.topics import TopicGraphError, bootstrap, load_graph, load_graph_merged, save_graph, utc_now
+from lib.topics import (TopicGraphError, bootstrap, load_graph, load_graph_merged,
+                        save_graph, topic_split_dir, utc_now)
 
 
 def test_create_proposal_run_writes_artifacts(stub_proposal_provider, fake_git_repo):
@@ -58,11 +59,13 @@ def test_create_proposal_run_does_not_mutate_approved_topic_graph(stub_proposal_
     subprocess.check_call(["git", "-C", str(fake_git_repo), "add", "."])
     subprocess.check_call(["git", "-C", str(fake_git_repo), "commit", "-q", "-m", "service"])
     bootstrap(fake_git_repo, seeds=True)
-    before = (fake_git_repo / ".regin/topics/topic.json").read_text()
+    before = {p.name: p.read_text()
+              for p in sorted(topic_split_dir(fake_git_repo).glob("*.json"))}
 
     create_proposal_run(fake_git_repo, run_id="run1")
 
-    after = (fake_git_repo / ".regin/topics/topic.json").read_text()
+    after = {p.name: p.read_text()
+             for p in sorted(topic_split_dir(fake_git_repo).glob("*.json"))}
     assert after == before
 
 

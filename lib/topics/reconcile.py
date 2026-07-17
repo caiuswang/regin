@@ -19,12 +19,12 @@ Two deliberate constraints, both grounded in how the graph actually evolves:
   The approved graph is legitimately *downstream* of the frozen proposal
   snapshot — ``topics scan`` refreshes refs from current files and topics get
   re-parented by hand — so content divergence is expected, not staleness.
-* **Never writes the approved ``status`` enum.** ``topic.json`` is
+* **Never writes the approved ``status`` enum.** The approved graph is
   human-approved and mutating a topic's ``status`` fails graph validation, so
   the stale signal lives entirely in the mutable proposal DB record plus an
   out-of-band ``topic_audits`` row.
 
-Best-effort like the rest of ``lib/topics``: it mutates no ``topic.json`` and
+Best-effort like the rest of ``lib/topics``: it mutates no approved graph and
 returns cleanly when the repo isn't registered.
 """
 
@@ -54,7 +54,7 @@ ACCEPTED_ABSENT_CODE = "proposal.accepted_topic_absent"
 
 
 def _graph_topic_ids(repo_path) -> set[str]:
-    """Ids in the *effective* approved graph: base ``topic.json`` merged with
+    """Ids in the *effective* approved graph: the base graph merged with
     the ``topic.local.json`` overlay. The overlay matters — a topic accepted
     into the local layer (not yet promoted) must not be flagged absent."""
     graph = load_graph_merged(repo_path)
@@ -131,7 +131,7 @@ def find_stale_acceptances(repo_path) -> list[dict[str, Any]]:
 def record_reconcile_audit(repo_path, stale: list[dict[str, Any]], *, fixed: bool) -> int:
     """Write one out-of-band ``topic_audits`` row per stale acceptance
     (``kind='reconcile'``), so the ghost-acceptance signal is auditable without
-    ever touching ``topic.json``'s human-approved ``status`` enum.
+    ever touching the graph's human-approved ``status`` enum.
     ``fix_action`` records whether ``--fix`` cleared the marker (``unaccepted``)
     or it is still pending (``unaccept``). Returns rows written; 0 when there is
     nothing to record or the repo is unknown."""

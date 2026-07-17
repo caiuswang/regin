@@ -305,7 +305,9 @@ def _version(cmd: list[str]) -> str:
 _TOPIC_SYNC_HINTS = {
     "no_snapshot": "run `regin topics import` (next read will auto-seed)",
     "disk_newer": "run `regin topics import` — or install hooks via `regin topics install-hook`",
-    "disk_unreadable": "topic.json is corrupted; restore from git or re-bootstrap",
+    "disk_unreadable": "approved graph is corrupted; restore from git or re-bootstrap",
+    "legacy_unsupported": "retired single-file topic.json found; restore the split "
+                          "layout (.regin/topics/topics/) from git or re-bootstrap",
 }
 
 
@@ -355,7 +357,7 @@ def _topic_sync_items() -> list[dict]:
 def _topics_pending_promote_items() -> list[dict]:
     """One item per registered repo counting local-overlay changes
     (added/overridden topics + deletion tombstones) that `regin topics
-    promote` has not yet folded into the git-tracked topic.json —
+    promote` has not yet folded into the git-tracked base graph —
     invisible to teammates until promoted."""
     from sqlmodel import select
 

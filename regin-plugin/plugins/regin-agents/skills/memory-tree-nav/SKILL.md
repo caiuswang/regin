@@ -1,11 +1,11 @@
 ---
 name: memory-tree-nav
-description: "Navigate regin's cross-session agent memory by its topic taxonomy instead of blind semantic search. Use when you want to orient in what the project knows about an area, browse memories by subsystem, or do coarse-to-fine recall by reading topic labels and drilling down — not guessing keywords. Triggers: \"what does regin know about X\", \"browse memories for the trace/eval/memory subsystem\", \"find lessons under topic Y\", \"explore the knowledge tree\", or any recall where you'd rather route by structure than by embedding similarity. Backed by the memory MCP tools index_root / index_expand / index_fetch over the parent_id tree in .regin/topics/topic.json."
+description: "Navigate regin's cross-session agent memory by its topic taxonomy instead of blind semantic search. Use when you want to orient in what the project knows about an area, browse memories by subsystem, or do coarse-to-fine recall by reading topic labels and drilling down — not guessing keywords. Triggers: \"what does regin know about X\", \"browse memories for the trace/eval/memory subsystem\", \"find lessons under topic Y\", \"explore the knowledge tree\", or any recall where you'd rather route by structure than by embedding similarity. Backed by the memory MCP tools index_root / index_expand / index_fetch over the parent_id tree in .regin/topics/topics/."
 ---
 
 # Memory Tree Navigation
 
-regin's agent memory is mounted on the **approved topic graph** (`.regin/topics/topic.json`): every memory links to one or more topic nodes, and the nodes form a `parent_id` tree of ~11 top-level buckets (agent-memory, session-trace, eval-grading, rule-engines, webui, …) each fanning out to leaf topics.
+regin's agent memory is mounted on the **approved topic graph** (`.regin/topics/topics/`, one JSON file per topic + `_meta.json`): every memory links to one or more topic nodes, and the nodes form a `parent_id` tree of ~11 top-level buckets (agent-memory, session-trace, eval-grading, rule-engines, webui, …) each fanning out to leaf topics.
 
 This skill walks that tree **coarse-to-fine** — you read node labels/blurbs and decide where to drill — instead of routing a query through embedding cosine. Use it when you'd rather navigate by structure than guess keywords, or to *complement* `recall` when a query feels familiar but semantic search misses.
 
@@ -49,7 +49,7 @@ index_fetch("session-trace-design", top_k=3)   # → read the 3 trace lessons + 
 The tree only helps if memories are linked to nodes and nodes have good blurbs.
 
 - **Link a memory to a topic node**: `store.link_authoritative_topic(memory_id, topic_node_id, source="manual")` (the store is `lib.memory.get_store()`); unlink with `unlink_authoritative_topic`. Links live in the `MemoryAuthoritativeTopic` table (memory DB), keyed by string topic-id across the two-DB bridge.
-- **Edit the taxonomy** (add a bucket, set `parent_id`, write a `blurb`): edit `.regin/topics/topic.json` and validate with `lib.topics.validation.audit_graph` (must return 0 errors). Keep depth ≤3-4 and top-level buckets ≤~15 — `index_root` is read on every walk, so an inflated top level is a cost.
+- **Edit the taxonomy** (add a bucket, set `parent_id`, write a `blurb`): edit the topic's file under `.regin/topics/topics/` and validate with `lib.topics.validation.audit_graph` (must return 0 errors). Keep depth ≤3-4 and top-level buckets ≤~15 — `index_root` is read on every walk, so an inflated top level is a cost.
 - **Blurb craft**: a blurb is a *router card*, not a description. Write "what task should drill in here / what's under me", e.g. "改 lint 规则或引擎时进来", not "this is the rule engine module".
 
 ## Underlying code

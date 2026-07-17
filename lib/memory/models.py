@@ -382,7 +382,7 @@ class MemoryTopicMember(MemoryBase, table=True):
 
 class MemoryAuthoritativeTopic(MemoryBase, table=True):
     """A memory's link to a node in the *authoritative* topic graph
-    (``.regin/topics/topic.json``), keyed by that node's string id.
+    (``.regin/topics/topics/``), keyed by that node's string id.
 
     Distinct from ``MemoryTopicMember``: that ties a memory to an emergent
     ``memory_topics`` cluster (minted by ``reflect()``); this ties it to a
@@ -408,7 +408,7 @@ class MemoryAuthoritativeTopic(MemoryBase, table=True):
 class TopicWikiRecall(MemoryBase, table=True):
     """Usage counter for a per-topic wiki (`.regin/topics/wiki/<id>.md`),
     keyed by the authoritative topic node's string id — the wiki analog of
-    `Memory.recall_count`. Lives in the memory DB (not `topic.json`, which
+    `Memory.recall_count`. Lives in the memory DB (not the approved graph, which
     proposals rewrite wholesale) and bridges to the topics graph by string
     id, like `MemoryAuthoritativeTopic`.
 

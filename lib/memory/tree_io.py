@@ -1,6 +1,6 @@
 """Git-shareable markdown export/import for the agent-memory store.
 
-Mirrors how `.regin/topics/topic.json` + `.regin/topics/wiki/*.md` already
+Mirrors how `.regin/topics/topics/` + `.regin/topics/wiki/*.md` already
 share the topic taxonomy: memories are written as one markdown file per
 authoritative topic node, nested into the same directory shape the topic
 tree has (`node_path`), so a team can review and merge curated lessons via

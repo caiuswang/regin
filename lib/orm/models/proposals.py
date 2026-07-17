@@ -1,7 +1,7 @@
 """Topic-proposal tables: runs, topics, feedback, snapshots, audits.
 
 Phase A of the topic-proposal refactor introduces these four tables but
-does not yet flip the source of truth — `topic.json` on disk stays
+does not yet flip the source of truth — the on-disk graph stays
 authoritative until Phase D. Existing accept/merge/replace start
 writing `GraphSnapshot` + `TopicAudit(kind="provenance")` rows so
 history and provenance are available before any reader migrates.
@@ -295,7 +295,7 @@ class GraphSnapshot(Base, table=True):
     """Versioned snapshot of the approved graph for a repo.
 
     From Phase D, the row with `is_latest=1` IS the live graph; until
-    then it's history-only and `topic.json` on disk stays authoritative.
+    then it's history-only and the on-disk graph stays authoritative.
     `apply_diff` enforces a single `is_latest=1` row per repo by flipping
     the prior one in the same transaction that inserts the new one.
     """

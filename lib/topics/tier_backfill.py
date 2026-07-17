@@ -15,7 +15,7 @@ Conservative by construction:
     safe error is "leave it primary" (keeps drifting, same as today), never
     "wrongly silence a file the wiki documents";
   * dry-run by default — a write happens only on `apply=True`, into the
-    git-tracked base `topic.json` so the change reviews as a plain diff.
+    git-tracked base graph so the change reviews as a plain diff.
 
 Operates on the base graph (shared / committed), not the machine-local overlay;
 promote an overlay topic first to include it. Never raises — a backfill must not

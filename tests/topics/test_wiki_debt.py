@@ -8,11 +8,10 @@ between a git ref and HEAD.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from subprocess import DEVNULL, check_call
 
-from lib.topics.core import topic_path
+from lib.topics.core import write_split_graph
 from lib.topics.proposals import load_proposal
 from lib.topics.ref_digest import capture_ref_digests
 from lib.topics.snapshots import resolve_or_create_repo
@@ -29,9 +28,8 @@ def _topic(refs: list[dict]) -> dict:
 
 
 def _write_graph(repo: Path, topics: dict) -> None:
-    p = topic_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"version": 1, "repo": repo.name, "topics": topics}))
+    write_split_graph(repo, {"version": 1, "repo": repo.name,
+                            "updated_at": "2026-01-01T00:00:00Z", "topics": topics})
 
 
 def _write_wiki(repo: Path, topic_id: str) -> None:

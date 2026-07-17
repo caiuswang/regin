@@ -1160,8 +1160,7 @@ def _read_topic_signature(repo: Path) -> str | None:
     # `updated_at` field (rewritten on every save_graph) and any whitespace
     # / key-order changes. Only flips when a topic, edge, or alias actually
     # changed — so a concurrent no-op save no longer trips the integrity check.
-    # Reads through load_graph so both disk layouts (legacy topic.json and
-    # the per-topic split dir) are fingerprinted.
+    # Reads through load_graph so the split dir is fingerprinted.
     from lib.topics.core import load_graph
     try:
         graph = load_graph(repo)

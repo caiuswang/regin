@@ -53,7 +53,7 @@ def ensure_bundles_travel(repo_path: str | Path) -> str:
     """Best-effort: patch the target repo's `.gitignore` re-include block
     so bundle JSONs aren't ignored. Returns the patch action
     (patched | already_patched | no_block)."""
-    from lib.topics.split_migrate import patch_gitignore_lines
+    from lib.topics.scan import patch_gitignore_lines
     return patch_gitignore_lines(repo_path, BUNDLE_GITIGNORE_LINES)
 
 

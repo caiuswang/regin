@@ -92,6 +92,9 @@ def topic_dir(repo_path: str | Path) -> Path:
 
 
 def topic_path(repo_path: str | Path) -> Path:
+    """Path of the retired single-file layout. Kept only so readers can
+    detect a stray legacy ``topic.json`` and fail loud instead of
+    treating the repo as graph-less."""
     return topic_dir(repo_path) / TOPIC_FILE
 
 
@@ -109,15 +112,15 @@ def topic_meta_path(repo_path: str | Path) -> Path:
 
 def split_layout_active(repo_path: str | Path) -> bool:
     """True when the repo carries the split per-topic layout
-    (``.regin/topics/topics/`` with at least one ``*.json``). The split
-    layout wins over a stray legacy ``topic.json`` when both exist."""
+    (``.regin/topics/topics/`` with at least one ``*.json``) — the only
+    layout regin reads; a stray legacy ``topic.json`` is ignored here
+    and rejected by ``load_graph``."""
     d = topic_split_dir(repo_path)
     return d.is_dir() and any(d.glob("*.json"))
 
 
 def graph_exists(repo_path: str | Path) -> bool:
-    """True when an approved graph is on disk in either layout."""
-    return split_layout_active(repo_path) or topic_path(repo_path).exists()
+    return split_layout_active(repo_path)
 
 
 def empty_graph(repo_path: str | Path) -> dict[str, Any]:
@@ -132,14 +135,16 @@ def empty_graph(repo_path: str | Path) -> dict[str, Any]:
 def bootstrap(repo_path: str | Path, *, force: bool = False, seeds: bool = False) -> dict[str, Path]:
     repo = Path(repo_path)
     topic_dir(repo).mkdir(parents=True, exist_ok=True)
-    existing = topic_split_dir(repo) if split_layout_active(repo) else topic_path(repo)
-    if existing.exists() and not force:
-        raise TopicGraphError(f"{existing} already exists")
+    if split_layout_active(repo) and not force:
+        raise TopicGraphError(f"{topic_split_dir(repo)} already exists")
 
     graph = empty_graph(repo)
     if seeds:
         graph["topics"] = seed_topics(repo)
-    return {"topic": write_graph_to_disk(repo, graph)}
+    written = write_graph_to_disk(repo, graph)
+    from lib.topics.scan import patch_gitignore
+    patch_gitignore(repo)
+    return {"topic": written}
 
 
 def seed_topics(repo_path: str | Path) -> dict[str, Any]:
@@ -173,10 +178,14 @@ def seed_topics(repo_path: str | Path) -> dict[str, Any]:
 def load_graph(repo_path: str | Path) -> dict[str, Any]:
     if split_layout_active(repo_path):
         return _load_split_graph(repo_path)
-    path = topic_path(repo_path)
-    if not path.exists():
-        raise TopicGraphError(f"missing topic graph: {path}")
-    return read_json(path)
+    legacy = topic_path(repo_path)
+    if legacy.exists():
+        raise TopicGraphError(
+            f"legacy single-file layout retired: {legacy} exists but regin no "
+            "longer reads it — restore the split layout "
+            "(.regin/topics/topics/) from git, or re-bootstrap"
+        )
+    raise TopicGraphError(f"missing topic graph: {topic_split_dir(repo_path)}")
 
 
 def _load_split_graph(repo_path: str | Path) -> dict[str, Any]:
@@ -207,7 +216,7 @@ def load_local_graph(repo_path: str | Path) -> dict[str, Any]:
     """Read the machine-local overlay (``topic.local.json``).
 
     The overlay is gitignored and holds topics produced by proposal
-    approval / scan rather than hand-curated into ``topic.json``. A
+    approval / scan rather than hand-curated into the base graph. A
     missing overlay is normal and returns an empty shell — never raises.
     """
     path = topic_local_path(repo_path)
@@ -225,7 +234,7 @@ def save_local_graph(repo_path: str | Path, overlay: dict[str, Any]) -> None:
 
 
 def merge_graphs(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Overlay ``topic.local.json`` onto base ``topic.json``.
+    """Overlay ``topic.local.json`` onto the base graph.
 
     Whole-topic override: an overlay topic entry fully replaces the base
     entry for the same id. ``deleted_topics`` tombstones drop base topics
@@ -242,7 +251,7 @@ def merge_graphs(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any
 
 
 def load_graph_merged(repo_path: str | Path) -> dict[str, Any]:
-    """Effective graph: base ``topic.json`` merged with the local overlay."""
+    """Effective graph: base graph merged with the local overlay."""
     return merge_graphs(load_graph(repo_path), load_local_graph(repo_path))
 
 
@@ -286,15 +295,9 @@ def _atomic_write(path: Path, data: str) -> None:
 
 
 def write_graph_to_disk(repo_path: str | Path, graph: dict[str, Any]) -> Path:
-    """The one approved-graph serializer. Format follows the disk: a repo
-    already on the split layout gets per-topic files, anything else keeps
-    the legacy single ``topic.json``. Returns the path written (the split
-    dir or the legacy file)."""
-    if split_layout_active(repo_path):
-        return write_split_graph(repo_path, graph)
-    target = topic_path(repo_path)
-    _atomic_write(target, _dumps(graph))
-    return target
+    """The one approved-graph serializer. Always writes the split layout;
+    returns the split dir."""
+    return write_split_graph(repo_path, graph)
 
 
 def _split_topic_filename(tid: Any) -> str:

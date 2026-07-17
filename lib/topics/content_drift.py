@@ -13,7 +13,7 @@ Here we compare those digests to the files as they are now:
     (cosine below the floor) stays flagged.
 
 A drifted topic does not get its `status` mutated — `"stale"` isn't a valid
-topic status, and `topic.json` is human-approved. The drift signal lives in
+topic status, and the approved graph is human-approved. The drift signal lives in
 (a) the emitted single-topic refresh **proposal** (`pending_review`) and
 (b) the `topic_drift` markers the Phase 2 cascade stamps on linked memories.
 

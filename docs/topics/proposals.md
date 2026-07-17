@@ -1,6 +1,6 @@
 # Topic Proposals
 
-Topic proposals are reviewable drafts for `.regin/topics/topic.json`. They let
+Topic proposals are reviewable drafts for the approved topic graph (`.regin/topics/topics/`). They let
 you ask regin to suggest new topic graph entries without changing the approved
 topic graph until a human accepts or merges each proposed topic.
 
@@ -186,7 +186,7 @@ richer Claude/Codex tool timeline.
 
 External agents are treated as draft generators only:
 
-- They must not modify `.regin/topics/topic.json`.
+- They must not modify `.regin/topics/topics/` (the approved graph).
 - regin snapshots the approved topic graph before running and fails the run if
   it changes.
 - Generated refs and evidence paths must stay inside the repo and must exist in
@@ -204,7 +204,7 @@ External agents are treated as draft generators only:
 After a proposal completes, review it from the Topics page in the WebUI: edit,
 comment on, regenerate, then accept, merge, ignore, or delete each proposed
 topic. Accepting or merging is the only path that writes the approved
-`topic.json`, and it is gated by a pre/post graph audit.
+graph, and it is gated by a pre/post graph audit.
 
 To hand an in-flight proposal to a teammate for review without a shared
 server, see "Sharing an in-flight proposal" in

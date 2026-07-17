@@ -249,10 +249,19 @@ def test_propose_buckets_fail_loud_without_llm():
 # ── gated apply (end-to-end) ────────────────────────────────────
 
 def _seed_repo(tmp_path, graph) -> str:
-    d = tmp_path / ".regin" / "topics"
-    d.mkdir(parents=True)
-    (d / "topic.json").write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
+    from lib.topics.core import write_split_graph
+    write_split_graph(tmp_path, graph)
     return str(tmp_path)
+
+
+def _disk_graph(tmp_path) -> dict:
+    from lib.topics.core import load_graph
+    return load_graph(tmp_path)
+
+
+def _base_files(tmp_path) -> dict:
+    from lib.topics.core import topic_split_dir
+    return {p.name: p.read_text() for p in sorted(topic_split_dir(tmp_path).glob("*.json"))}
 
 
 def test_apply_group_end_to_end(tmp_path):
@@ -262,7 +271,7 @@ def test_apply_group_end_to_end(tmp_path):
 
     result = apply_group(repo, plan, g)
 
-    disk = json.loads((tmp_path / ".regin" / "topics" / "topic.json").read_text())
+    disk = _disk_graph(tmp_path)
     assert disk["topics"]["alpha"]["kind"] == "bucket"
     assert disk["topics"]["t0"]["parent_id"] == "alpha"
     assert disk["topics"]["t2"]["parent_id"] == "beta"
@@ -281,7 +290,7 @@ def test_apply_group_refuses_ungated_plan(tmp_path):
 
     with pytest.raises(ValueError, match="gate failed"):
         apply_group(repo, plan, g)
-    disk = json.loads((tmp_path / ".regin" / "topics" / "topic.json").read_text())
+    disk = _disk_graph(tmp_path)
     assert "alpha" not in disk["topics"]              # nothing written
     assert disk["topics"]["t0"]["parent_id"] is None  # not reparented
 
@@ -293,7 +302,7 @@ def test_cli_group_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
 
     g = _flat_graph(4)
     repo = _seed_repo(tmp_path, g)
-    before = (tmp_path / ".regin" / "topics" / "topic.json").read_text()
+    before = _base_files(tmp_path)
 
     answer = ('[{"label": "Data", "intent": "c", "topic_ids": ["t0", "t1"]}, '
               '{"label": "Rules", "intent": "c", "topic_ids": ["t2", "t3"]}]')
@@ -306,7 +315,7 @@ def test_cli_group_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "gate: PASS" in out
     assert "(dry-run" in out
-    after = (tmp_path / ".regin" / "topics" / "topic.json").read_text()
+    after = _base_files(tmp_path)
     assert after == before                            # dry-run wrote nothing
 
 

@@ -17,7 +17,7 @@ from sqlmodel import func, select
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo, TopicAudit
 from lib.topics.apply import ApplyOptions, apply_diff, resolve_diff_with_options
-from lib.topics.core import load_graph_merged, topic_local_path, topic_path
+from lib.topics.core import load_graph_merged, topic_local_path, write_split_graph
 from lib.topics.diff import GraphDiff, compute_topic_delta, diff_against_graph
 from lib.topics.snapshots import latest_snapshot, resolve_or_create_repo
 
@@ -30,20 +30,19 @@ def fresh_repo(fake_git_repo) -> Repo:
 
 
 def _base_graph(name: str = "demo") -> dict:
-    return {"version": 1, "repo": name, "topics": {}}
+    return {"version": 1, "repo": name,
+            "updated_at": "2026-01-01T00:00:00Z", "topics": {}}
 
 
 def _seed_base(repo_path, graph: dict) -> None:
-    """Write `graph` verbatim as the git-tracked base `topic.json`.
+    """Write `graph` verbatim as the git-tracked base split layout.
 
     apply now writes only the gitignored `topic.local.json` overlay, so the
     effective graph is `merge(base, overlay)`. Seeding the same in-memory
     `base` these diffs are built from (mirrors `bootstrap` + curation in a
     real repo) keeps the merged disk hash-equal to the stored snapshot.
     """
-    target = topic_path(repo_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(graph))
+    write_split_graph(repo_path, graph)
 
 
 def _topic(tid: str, *, aliases=(), refs=(), edges=()) -> dict:

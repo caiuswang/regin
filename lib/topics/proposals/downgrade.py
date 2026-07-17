@@ -390,7 +390,7 @@ def _downgrade_via_fresh_proposal(
 def downgrade_topic_to_proposal(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     # Downgrade routes through the local overlay (export_overlay_to_disk),
     # so removing the topic records a `deleted_topics` tombstone rather than
-    # touching the git-tracked base topic.json. Re-applying the proposal
+    # touching the git-tracked base graph. Re-applying the proposal
     # clears the tombstone (export_overlay recomputes it from scratch).
     # FOLLOW-UP: rejecting/discarding the proposal does NOT yet clear the
     # tombstone, so the topic stays masked locally until re-apply or a

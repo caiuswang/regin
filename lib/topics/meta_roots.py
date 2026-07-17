@@ -1,7 +1,7 @@
 """Global meta-roots — a cross-repo taxonomy overlay for memories that are
 **not** about any one repo's code.
 
-The authoritative topic graph (`.regin/topics/topic.json`) is per-repo and
+The authoritative topic graph (`.regin/topics/topics/`) is per-repo and
 models a repo's *code subsystems*. But two important classes of memory have
 no home there:
 
@@ -17,7 +17,7 @@ This module supplies a small, bundled set of global *bucket* roots
 repo's own roots — from *any* repo.
 
 It is a **read-time overlay only**: it is applied where the graph is read
-for navigation/recall, never written into a repo's `topic.json` or its
+for navigation/recall, never written into a repo's approved graph or its
 versioned snapshots. So the per-repo drift detection, routing, scan, and
 proposal machinery never see these nodes and stay untouched.
 """

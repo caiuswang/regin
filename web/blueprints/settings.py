@@ -264,7 +264,7 @@ _TOPIC_EVOLUTION_FIELDS: list[dict] = [
     {"key": "mechanical_autoapply", "group": "General", "type": "bool",
      "label": "Auto-apply mechanical drift (rename-follow)",
      "description": "On commit, follow git renames into topic refs (written to "
-                    "the local overlay, never topic.json) and memory paths, and "
+                    "the local overlay, never the approved graph) and memory paths, and "
                     "cascade deleted refs onto linked memories."},
     {"key": "auto_spawn_agents", "group": "General", "type": "bool",
      "label": "Auto-spawn the drafting agent for refresh proposals",

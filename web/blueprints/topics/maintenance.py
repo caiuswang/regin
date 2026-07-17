@@ -16,7 +16,6 @@ from lib.topics import (
     delete_topic,
     scan,
     topic_detail,
-    topic_path,
     topic_summary,
     update_topic,
 )

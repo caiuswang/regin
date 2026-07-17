@@ -1,9 +1,9 @@
 """Snapshot orchestration for the approved graph.
 
 `GraphSnapshot` is the source of truth for the approved graph from
-Phase D onwards; in Phase A it sits alongside `topic.json` on disk and
+Phase D onwards; in Phase A it sits alongside the on-disk graph and
 gets written by `apply_diff` for every accept/merge/replace. Until the
-flip, callers still read `topic.json` — these helpers are write-side
+flip, callers still read the disk graph — these helpers are write-side
 machinery and a forward-compatible read API.
 
 Pruning: callers may opt to keep the last N snapshots plus all pinned

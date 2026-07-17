@@ -1,5 +1,6 @@
-"""Split per-topic graph layout: dual-format reads, the layout-following
-unified writer, `_meta.json` sidecar semantics, and `migrate-split`."""
+"""Split per-topic graph layout: the only layout. Reader/writer semantics,
+`_meta.json` sidecar, the legacy-retirement guard, and bootstrap's git
+integration (gitignore re-include block, pre-commit staging)."""
 
 import json
 import subprocess
@@ -8,6 +9,7 @@ import pytest
 
 from lib.topics.core import (
     TopicGraphError,
+    bootstrap,
     load_graph,
     save_graph,
     topic_meta_path,
@@ -17,11 +19,7 @@ from lib.topics.core import (
     write_split_graph,
 )
 from lib.topics.graph_io import _graph_hash
-from lib.topics.split_migrate import (
-    SPLIT_GITIGNORE_LINES,
-    migrate_to_split,
-    patch_gitignore,
-)
+from lib.topics.scan import SPLIT_GITIGNORE_LINES, patch_gitignore
 
 
 def _topic(label: str) -> dict:
@@ -57,20 +55,13 @@ _WIKI_STYLE_GITIGNORE = """\
 .regin/*
 !.regin/topics/
 .regin/topics/*
-!.regin/topics/topic.json
 !.regin/topics/wiki/
 .regin/topics/wiki/*
 !.regin/topics/wiki/*.md
 """
 
 
-# ── dual-read ─────────────────────────────────────────────────
-
-
-def test_load_graph_legacy_only(tmp_path):
-    graph = _graph({"alpha": _topic("Alpha")})
-    _write_legacy(tmp_path, graph)
-    assert load_graph(tmp_path) == graph
+# ── read side ─────────────────────────────────────────────────
 
 
 def test_load_graph_split_only(tmp_path):
@@ -79,7 +70,13 @@ def test_load_graph_split_only(tmp_path):
     assert load_graph(tmp_path) == graph
 
 
-def test_split_wins_when_both_present(tmp_path):
+def test_load_graph_legacy_only_raises_retired(tmp_path):
+    _write_legacy(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    with pytest.raises(TopicGraphError, match="legacy single-file layout retired"):
+        load_graph(tmp_path)
+
+
+def test_split_wins_when_stray_legacy_present(tmp_path):
     _write_legacy(tmp_path, _graph({"legacy-only": _topic("Legacy")}))
     _write_split_by_hand(tmp_path, _graph({"split-only": _topic("Split")}))
     loaded = load_graph(tmp_path)
@@ -111,16 +108,23 @@ def test_meta_sidecar_round_trip(tmp_path):
     assert loaded["updated_at"] == "2026-01-01T00:00:00Z"
 
 
-# ── writer follows the disk layout ────────────────────────────
+# ── write side ────────────────────────────────────────────────
 
 
-def test_save_on_legacy_repo_keeps_single_file(tmp_path):
-    _write_legacy(tmp_path, _graph({"alpha": _topic("Alpha")}))
-    graph = load_graph(tmp_path)
-    graph["topics"]["beta"] = _topic("Beta")
-    save_graph(tmp_path, graph)
-    assert set(json.loads(topic_path(tmp_path).read_text())["topics"]) == {"alpha", "beta"}
-    assert not topic_split_dir(tmp_path).exists()
+def test_write_graph_on_empty_repo_writes_split(tmp_path):
+    target = write_graph_to_disk(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    assert target == topic_split_dir(tmp_path)
+    assert (target / "alpha.json").exists()
+    assert topic_meta_path(tmp_path).exists()
+    assert not topic_path(tmp_path).exists()
+
+
+def test_write_never_touches_stray_legacy_file(tmp_path):
+    _write_legacy(tmp_path, _graph({"legacy-only": _topic("Legacy")}))
+    before = topic_path(tmp_path).read_text()
+    write_graph_to_disk(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    assert (topic_split_dir(tmp_path) / "alpha.json").exists()
+    assert topic_path(tmp_path).read_text() == before
 
 
 def test_save_on_split_repo_updates_and_deletes_per_topic_files(tmp_path):
@@ -139,25 +143,18 @@ def test_save_on_split_repo_updates_and_deletes_per_topic_files(tmp_path):
     assert json.loads((split_dir / "gamma.json").read_text())["label"] == "Gamma"
 
 
-def test_write_graph_on_empty_repo_writes_legacy(tmp_path):
-    target = write_graph_to_disk(tmp_path, _graph({"alpha": _topic("Alpha")}))
-    assert target == topic_path(tmp_path)
-    assert target.exists()
-    assert not topic_split_dir(tmp_path).exists()
-
-
-def test_graph_hash_equal_across_layouts(tmp_path):
+def test_graph_hash_stable_across_writer_and_hand_written(tmp_path):
     graph = _graph({"alpha": _topic("Alpha"), "beta": _topic("Beta")})
-    legacy_repo = tmp_path / "legacy"
-    split_repo = tmp_path / "split"
-    _write_legacy(legacy_repo, graph)
-    write_split_graph(split_repo, graph)
-    assert (_graph_hash(load_graph(legacy_repo))
-            == _graph_hash(load_graph(split_repo))
+    hand_repo = tmp_path / "hand"
+    writer_repo = tmp_path / "writer"
+    _write_split_by_hand(hand_repo, graph)
+    write_split_graph(writer_repo, graph)
+    assert (_graph_hash(load_graph(hand_repo))
+            == _graph_hash(load_graph(writer_repo))
             == _graph_hash(graph))
 
 
-# ── migrate-split ─────────────────────────────────────────────
+# ── bootstrap + git integration ───────────────────────────────
 
 
 def _ignored(repo, rel_path: str) -> bool:
@@ -167,49 +164,36 @@ def _ignored(repo, rel_path: str) -> bool:
     ).returncode == 0
 
 
-@pytest.fixture
-def migrated_repo(fake_git_repo):
-    """`fake_git_repo` with a two-topic legacy graph migrated to split."""
+def test_bootstrap_writes_split_and_patches_gitignore(fake_git_repo):
     (fake_git_repo / ".gitignore").write_text(_WIKI_STYLE_GITIGNORE)
-    _write_legacy(fake_git_repo,
-                  _graph({"alpha": _topic("Alpha"), "beta": _topic("Beta")}))
-    result = migrate_to_split(fake_git_repo)
-    return fake_git_repo, result
+    paths = bootstrap(fake_git_repo, seeds=True)
+    assert paths["topic"] == topic_split_dir(fake_git_repo)
+    assert topic_meta_path(fake_git_repo).exists()
+    assert not topic_path(fake_git_repo).exists()
+    gitignore_lines = (fake_git_repo / ".gitignore").read_text().splitlines()
+    assert [line for line in SPLIT_GITIGNORE_LINES
+            if line not in gitignore_lines] == []
+    assert not _ignored(fake_git_repo, ".regin/topics/topics/overview.json")
+    assert not _ignored(fake_git_repo, ".regin/topics/topics/_meta.json")
+    assert _ignored(fake_git_repo, ".regin/topics/topic.local.json")
 
 
-def test_migrate_split_writes_files_and_removes_legacy(migrated_repo):
-    repo, result = migrated_repo
-    split_dir = topic_split_dir(repo)
-    assert (split_dir / "alpha.json").exists()
-    assert (split_dir / "beta.json").exists()
-    assert topic_meta_path(repo).exists()
-    assert not topic_path(repo).exists()
-    assert result["topic_count"] == 2
-    assert set(load_graph(repo)["topics"]) == {"alpha", "beta"}
+def test_bootstrap_refuses_existing_split_without_force(tmp_path):
+    _write_split_by_hand(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    with pytest.raises(TopicGraphError, match="already exists"):
+        bootstrap(tmp_path)
+    bootstrap(tmp_path, force=True)
+    assert not (topic_split_dir(tmp_path) / "alpha.json").exists()
 
 
-def test_migrate_split_patches_gitignore(migrated_repo):
-    repo, result = migrated_repo
-    assert result["gitignore"] == "patched"
-    gitignore_lines = (repo / ".gitignore").read_text().splitlines()
-    missing = [line for line in SPLIT_GITIGNORE_LINES
-               if line not in gitignore_lines]
-    assert missing == []
+def test_hook_stages_split_dir_not_legacy_file(fake_git_repo):
+    from lib.topics.scan import install_topic_hooks
 
-
-def test_migrate_split_hook_stages_both_layouts(migrated_repo):
-    repo, _ = migrated_repo
-    hook_body = (repo / ".git" / "hooks" / "pre-commit").read_text()
+    install_topic_hooks(fake_git_repo)
+    hook_body = (fake_git_repo / ".git" / "hooks" / "pre-commit").read_text()
     assert 'git add -f "$ROOT/.regin/topics/topics"' in hook_body
-    assert 'git add -f "$ROOT/.regin/topics/topic.json"' in hook_body
     assert 'git add -f "$ROOT/.regin/topics/bundles"' in hook_body
-
-
-def test_migrate_split_files_travel_via_git(migrated_repo):
-    repo, _ = migrated_repo
-    assert not _ignored(repo, ".regin/topics/topics/alpha.json")
-    assert not _ignored(repo, ".regin/topics/topics/_meta.json")
-    assert _ignored(repo, ".regin/topics/topic.local.json")
+    assert "topic.json" not in hook_body
 
 
 def test_patch_gitignore_is_idempotent(tmp_path):
@@ -224,32 +208,6 @@ def test_patch_gitignore_without_reinclude_block(tmp_path):
     (tmp_path / ".gitignore").write_text("*.pyc\n")
     assert patch_gitignore(tmp_path) == "no_block"
     assert (tmp_path / ".gitignore").read_text() == "*.pyc\n"
-
-
-def test_migrate_refuses_without_legacy_file(tmp_path):
-    with pytest.raises(TopicGraphError, match="nothing to migrate"):
-        migrate_to_split(tmp_path)
-
-
-def test_migrate_refuses_when_already_split(fake_git_repo):
-    repo = fake_git_repo
-    (repo / ".gitignore").write_text(_WIKI_STYLE_GITIGNORE)
-    _write_legacy(repo, _graph({"alpha": _topic("Alpha")}))
-    migrate_to_split(repo)
-    with pytest.raises(TopicGraphError, match="already on the split layout"):
-        migrate_to_split(repo)
-
-
-def test_cmd_migrate_split_prints_upgrade_warning(fake_git_repo, capsys):
-    from cli.commands.topics import cmd_topics_migrate_split
-
-    repo = fake_git_repo
-    (repo / ".gitignore").write_text(_WIKI_STYLE_GITIGNORE)
-    _write_legacy(repo, _graph({"alpha": _topic("Alpha")}))
-    cmd_topics_migrate_split(repo=str(repo))
-    out = capsys.readouterr().out
-    assert "Wrote 1 topic file(s)" in out
-    assert "teammates must upgrade" in out
 
 
 # ── existing single-writer flows on a split repo ──────────────
@@ -296,6 +254,18 @@ def test_ensure_topic_graph_noops_on_split_repo(tmp_path):
     assert not topic_path(tmp_path).exists()
 
 
+def test_ensure_topic_graph_never_bootstraps_over_legacy_repo(tmp_path):
+    """Auto-bootstrapping an empty split graph over a legacy-only repo would
+    silently mask its graph (and the hook would propagate the loss)."""
+    from web.blueprints.topics._helpers import _ensure_topic_graph
+
+    _write_legacy(tmp_path, _graph({"alpha": _topic("Alpha")}))
+    _ensure_topic_graph(str(tmp_path))
+    assert not topic_split_dir(tmp_path).exists()
+    with pytest.raises(TopicGraphError, match="legacy single-file layout retired"):
+        load_graph(tmp_path)
+
+
 def test_non_dict_meta_sidecar_raises_topic_graph_error(tmp_path):
     _write_split_by_hand(tmp_path, _graph({"alpha": _topic("Alpha")}))
     (topic_split_dir(tmp_path) / "_meta.json").write_text("[1]")
@@ -304,8 +274,6 @@ def test_non_dict_meta_sidecar_raises_topic_graph_error(tmp_path):
 
 
 def test_split_writer_rejects_sidecar_and_traversal_ids(tmp_path):
-    from lib.topics.core import write_split_graph
-
     for bad_id in ("_meta", "../escape", ".hidden"):
         with pytest.raises(TopicGraphError, match="invalid topic id"):
             write_split_graph(tmp_path, _graph({bad_id: _topic("Evil")}))

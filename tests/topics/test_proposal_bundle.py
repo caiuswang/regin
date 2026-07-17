@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from lib.topics import bootstrap
+from lib.topics import bootstrap, topic_split_dir
 from lib.topics.proposals import (
     create_proposal_feedback_thread,
     create_proposal_run,
@@ -82,7 +82,8 @@ def test_export_import_round_trip_reproduces_reader_output(
         list_proposal_revisions(fake_git_repo, "run1"))
     threads_before = _portable_threads(
         list_proposal_feedback_threads(fake_git_repo, "run1"))
-    graph_before = (fake_git_repo / ".regin/topics/topic.json").read_text()
+    graph_before = {p.name: p.read_text()
+                    for p in sorted(topic_split_dir(fake_git_repo).glob("*.json"))}
     wiki_before = (
         fake_git_repo / ".regin/topics/proposals/run1/wiki.md").read_text()
 
@@ -102,7 +103,8 @@ def test_export_import_round_trip_reproduces_reader_output(
     assert _portable_threads(
         list_proposal_feedback_threads(fake_git_repo, "run1")) == threads_before
     # Import only seeds review state — approved graph and disk wiki intact.
-    assert (fake_git_repo / ".regin/topics/topic.json").read_text() == graph_before
+    assert {p.name: p.read_text()
+            for p in sorted(topic_split_dir(fake_git_repo).glob("*.json"))} == graph_before
     assert (fake_git_repo / ".regin/topics/proposals/run1/wiki.md"
             ).read_text() == wiki_before
 
@@ -244,7 +246,9 @@ def test_gitignore_reincludes_bundle_json(fake_git_repo):
     assert not ignored(".regin/topics/bundles/20260101T000000Z.json")
     assert ignored(".regin/topics/bundles/notes.txt")
     assert ignored(".regin/topics/proposals/run1/topics.json")
-    assert not ignored(".regin/topics/topic.json")
+    assert not ignored(".regin/topics/topics/alpha.json")
+    assert not ignored(".regin/topics/topics/_meta.json")
+    assert ignored(".regin/topics/topic.json")
 
 
 def test_export_refuses_invalid_ids(fake_git_repo):

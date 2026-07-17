@@ -1,6 +1,6 @@
 """Read-only helpers over the authoritative topic graph's `parent_id` tree.
 
-The approved graph (`.regin/topics/topic.json`) carries an optional
+The approved graph (`.regin/topics/topics/`) carries an optional
 `parent_id` on every node — null for the ~dozen top-level taxonomy buckets,
 a parent id for each leaf topic. These pure functions turn that flat node
 map into a navigable tree the memory MCP `index_*` tools walk coarse-to-fine.
@@ -24,7 +24,7 @@ def _topics(graph: dict) -> dict[str, Any]:
 
 def is_bucket(node: dict) -> bool:
     """A top-level taxonomy node — the only valid `parent_id` targets and the
-    only nodes shown as roots. Marked `kind: "bucket"` in topic.json."""
+    only nodes shown as roots. Marked `kind: "bucket"` in the graph."""
     return node.get("kind") == "bucket"
 
 

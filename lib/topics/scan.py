@@ -1,8 +1,9 @@
 """Filesystem scanning and validation for the approved topic graph.
 
-Reads from + writes to the same `topic.json` file that `core` owns,
-but adds the scan + validate operations that refresh refs on approved
-topics from the working tree.
+Reads from + writes to the same on-disk graph that `core` owns, but
+adds the scan + validate operations that refresh refs on approved
+topics from the working tree, plus the git integration (hooks,
+`.gitignore` re-include block).
 """
 
 from __future__ import annotations
@@ -55,12 +56,12 @@ def validate(repo_path: str | Path) -> ValidationResult:
         return ValidationResult([str(exc)], [])
 
     if graph.get("version") != SCHEMA_VERSION:
-        errors.append("topic.json version must be 1")
+        errors.append("topic graph version must be 1")
     if not isinstance(graph.get("repo"), str) or not graph.get("repo"):
-        errors.append("topic.json repo must be a non-empty string")
+        errors.append("topic graph repo must be a non-empty string")
     topics = graph.get("topics")
     if not isinstance(topics, dict):
-        errors.append("topic.json topics must be an object")
+        errors.append("topic graph topics must be an object")
         return ValidationResult(errors, warnings)
 
     aliases: dict[str, str] = {}
@@ -177,7 +178,7 @@ def scan(
     # would re-stamp the overlay into every commit, churning with no
     # real change. Scan-refreshed refs are machine-local, so the touched
     # topics (whole entries, including their base content) are written to
-    # the gitignored `topic.local.json` overlay — `topic.json` is left
+    # the gitignored `topic.local.json` overlay — the base graph is left
     # untouched.
     if updated_topics:
         overlay = load_local_graph(repo)
@@ -324,7 +325,7 @@ def update_topic(repo_path: str | Path, topic_id: str, patch: dict[str, Any]) ->
         if key in allowed:
             topic[key] = value
     # Single-topic edits route to the local overlay (whole-topic override),
-    # leaving the git-tracked base `topic.json` untouched.
+    # leaving the git-tracked base graph untouched.
     overlay = load_local_graph(repo_path)
     overlay["topics"][topic_id] = topic
     save_local_graph(repo_path, overlay)
@@ -345,7 +346,7 @@ def update_topic(repo_path: str | Path, topic_id: str, patch: dict[str, Any]) ->
 
 def promote_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     """Make the local overlay's view of `topic_id` permanent in the
-    git-tracked base `topic.json`, then drop it from the overlay.
+    git-tracked base graph, then drop it from the overlay.
 
     This is the only sanctioned path (besides `bootstrap`) that mutates
     the base graph. It promotes either an overlay-added/overridden topic
@@ -390,7 +391,7 @@ def promote_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
 def promote_all_topics(repo_path: str | Path) -> dict[str, Any]:
     """Promote every pending change in the local overlay into the base graph
     in a single pass: all overlay-added/overridden topics are copied into the
-    git-tracked `topic.json`, and all tombstoned deletions are removed from it.
+    git-tracked base graph, and all tombstoned deletions are removed from it.
 
     Equivalent to calling `promote_topic` for each id in the overlay, but it
     reads, mutates, and writes the two graphs once instead of per topic.
@@ -455,7 +456,7 @@ def delete_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     """Permanently remove an approved topic from the graph.
 
     A hard delete (the inverse of `promote` / `bootstrap`): the topic is
-    removed wherever it lives — the git-tracked base `topic.json` and the
+    removed wherever it lives — the git-tracked base graph and the
     local overlay — any tombstone for its id is cleared, inbound edges
     that would dangle are pruned from sibling topics in both stores, and
     its per-topic `wiki/<id>.md` is removed. The snapshot is re-synced to
@@ -535,22 +536,21 @@ _PRE_COMMIT_BODY = """
 # topic.local.json overlay is never staged. `|| true` keeps a missing
 # path (and `set -eu`) from failing the whole hook — notably on the
 # last line, whose status is the script's exit code.
-[ -f "$ROOT/.regin/topics/topic.json" ] && git add -f "$ROOT/.regin/topics/topic.json" || true
 [ -d "$ROOT/.regin/topics/topics" ] && git add -f "$ROOT/.regin/topics/topics" || true
 [ -d "$ROOT/.regin/topics/wiki" ] && git add -f "$ROOT/.regin/topics/wiki" || true
 [ -d "$ROOT/.regin/topics/bundles" ] && git add -f "$ROOT/.regin/topics/bundles" || true
 """
 
 # After git pull / merge, mirror upstream's approved topics into the
-# local snapshot DB. `|| true` keeps a stale topic.json from breaking
-# the user's git workflow.
+# local snapshot DB. `|| true` keeps a broken graph on disk from
+# breaking the user's git workflow.
 _POST_MERGE_BODY = """
 "$PY" "$ROOT/cli/regin.py" topics import --repo "$ROOT" --reason git_pull --quiet || true
 """
 
 # $3 is git's "branch_flag" — 1 for branch checkout, 0 for file
 # checkout. We only care about branch switches; the file-checkout case
-# can't have changed topic.json on disk.
+# can't have changed the approved graph on disk.
 _POST_CHECKOUT_BODY = """
 [ "${3:-0}" = "1" ] || exit 0
 "$PY" "$ROOT/cli/regin.py" topics import --repo "$ROOT" --reason git_pull --quiet || true
@@ -571,6 +571,47 @@ _HOOK_BODIES: dict[str, str] = {
 }
 
 
+# Appended to the repo's existing `.regin` re-include block. Order matters
+# inside gitignore (later rules win): un-ignore the dir, ignore its
+# contents, then un-ignore exactly the JSON payload.
+SPLIT_GITIGNORE_LINES = (
+    "!.regin/topics/topics/",
+    ".regin/topics/topics/*",
+    "!.regin/topics/topics/*.json",
+    "!.regin/topics/topics/_meta.json",
+)
+_GITIGNORE_ANCHOR = ".regin/topics/*"
+
+
+def patch_gitignore_lines(repo_path: str | Path, lines_to_add: tuple[str, ...]) -> str:
+    """Idempotently insert re-include lines after the repo's
+    ``.regin/topics/*`` ignore anchor.
+
+    Returns ``"patched"``, ``"already_patched"``, or ``"no_block"`` (no
+    ``.gitignore`` or no wiki-style re-include block to extend — nothing
+    written; the caller surfaces a manual-edit hint).
+    """
+    gitignore = Path(repo_path) / ".gitignore"
+    if not gitignore.exists():
+        return "no_block"
+    lines = gitignore.read_text().splitlines()
+    if _GITIGNORE_ANCHOR not in lines:
+        return "no_block"
+    missing = [line for line in lines_to_add if line not in lines]
+    if not missing:
+        return "already_patched"
+    at = lines.index(_GITIGNORE_ANCHOR) + 1
+    lines[at:at] = missing
+    gitignore.write_text("\n".join(lines) + "\n")
+    return "patched"
+
+
+def patch_gitignore(repo_path: str | Path) -> str:
+    """Idempotently extend the repo's ``.regin`` re-include block so the
+    split dir's JSON files travel via git."""
+    return patch_gitignore_lines(repo_path, SPLIT_GITIGNORE_LINES)
+
+
 def _write_hook(hooks_dir: Path, name: str, body: str) -> Path:
     hook_path = hooks_dir / name
     hook_path.write_text(_HOOK_PRELUDE + body)
@@ -586,8 +627,8 @@ def install_topic_hooks(repo_path: str | Path) -> dict[str, Path]:
     those paths — same behaviour as the prior single-hook installer,
     kept for consistency.
 
-    `pre-commit` stamps the approved `topic.json` + per-topic wiki files
-    into the commit;
+    `pre-commit` stamps the approved graph (split dir) + per-topic wiki
+    files into the commit;
     `post-merge` and `post-checkout` call `regin topics import` so a
     teammate's git-shipped approved graph lands in the local snapshot
     DB without a shared database.

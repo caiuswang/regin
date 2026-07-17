@@ -14,14 +14,14 @@ The pipeline has three seams, each isolated for testing (mirroring
    `{topic_id: bucket_id}` reparent map. Any flat topic the proposer omitted
    keeps its current parent (never enters the assignment).
 3. **apply_group** (mutation) — re-runs the safety gate (`check_group`) and
-   refuses unless it passes, then writes the new bucket nodes to `topic.json`
+   refuses unless it passes, then writes the new bucket nodes to the base graph
    AND sets `parent_id` on each grouped topic, syncing the snapshot. No memory
    relinking — grouping only reshapes the taxonomy skeleton.
 
 `check_group` (the gate) is pure and DB-free — pass a graph dict — and lives in
 this module because grouping, unlike splitting, needs no live-store adapter.
 
-Mutation uses the canonical topic.json writer + `import_from_disk` (the proven
+Mutation uses the canonical graph writer + `import_from_disk` (the proven
 path), mirroring `split_leaf._write_nodes`.
 """
 

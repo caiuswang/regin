@@ -343,7 +343,7 @@ def cmd_retitle(
 @memory_app.command("export-tree")
 def cmd_export_tree(
     repo: Optional[str] = typer.Option(
-        None, "--repo", help="Repo whose topic.json graph to file memories "
+        None, "--repo", help="Repo whose approved topic graph to file memories "
              "under; default: project root"),
     out_dir: Optional[str] = typer.Option(
         None, "--out-dir",
@@ -702,7 +702,7 @@ def _classify_agentic(rows, graph, stats=None):
 def cmd_link_topics(
     repo: Optional[str] = typer.Option(
         None, "--repo",
-        help="Repo whose topic.json graph to match against; "
+        help="Repo whose approved topic graph to match against; "
              "default: project root"),
     scope: Optional[str] = typer.Option(
         None, "--scope", help="Only link memories in this scope"),
@@ -725,7 +725,7 @@ def cmd_link_topics(
         help="Use the deterministic ref-path heuristic instead of the LLM "
              "(single topic, no agent required)"),
 ) -> None:
-    """Link active memories to authoritative topic.json nodes.
+    """Link active memories to authoritative topic-graph nodes.
 
     Agentic by default: an LLM reads each memory's *subject* and returns the
     genuinely related topic node(s) — zero, one, or several (multi-topic),

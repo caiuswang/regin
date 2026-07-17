@@ -97,9 +97,8 @@ def test_propose_clusters_fail_loud_without_llm():
 # ── gated apply (end-to-end) ────────────────────────────────────
 
 def _seed_repo(tmp_path, graph) -> str:
-    d = tmp_path / ".regin" / "topics"
-    d.mkdir(parents=True)
-    (d / "topic.json").write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n")
+    from lib.topics.core import write_split_graph
+    write_split_graph(tmp_path, graph)
     return str(tmp_path)
 
 
@@ -117,7 +116,8 @@ def test_apply_split_end_to_end(tmp_path):
 
     result = apply_split(store, repo, plan, g)
 
-    disk = json.loads((tmp_path / ".regin" / "topics" / "topic.json").read_text())
+    from lib.topics.core import load_graph
+    disk = load_graph(tmp_path)
     assert "span-capture" in disk["topics"]
     assert "merge-path" in disk["topics"]
     assert store.memories_for_topic_node("heavy") == []          # leaf shed all

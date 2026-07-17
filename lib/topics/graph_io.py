@@ -1,7 +1,7 @@
 """ORM ↔ filesystem adapter for the approved graph.
 
 Two-direction bridge that lets the rest of the codebase migrate at its
-own pace from `topic.json`-on-disk to `GraphSnapshot`-in-ORM:
+own pace from graph-on-disk to `GraphSnapshot`-in-ORM:
 
 - `load_graph_from_snapshot(repo_id)` returns the same dict shape
   `lib.topics.core.load_graph(repo_path)` returns, sourced from the
@@ -9,14 +9,13 @@ own pace from `topic.json`-on-disk to `GraphSnapshot`-in-ORM:
   (Phase D mass-replaces them).
 
 - `export_graph_to_disk(repo_id, graph, wiki_pages)` writes the graph
-  to `topic.json` + per-topic wiki files atomically. Called by
+  to the split dir + per-topic wiki files atomically. Called by
   `apply_diff` after each snapshot commit. Until Phase D, this keeps
   the disk copy faithful for legacy readers (CLI, hook, topic-router
   skill, pre-commit hook).
 
 Atomicity: writes go to a `.tmp` sibling, then fsync, then rename. On
-POSIX, the rename is atomic — per file. The legacy single-file layout
-therefore never exposes a partial graph; the split layout is atomic per
+POSIX, the rename is atomic — per file. The split layout is atomic per
 topic file only, so a crash mid-write can leave a mixed old/new dir
 that the next read treats as disk truth. SQL commits LAST in the
 cross-store protocol,
@@ -43,6 +42,7 @@ from lib.topics.core import (
     _atomic_write,
     graph_exists,
     load_graph_merged,
+    topic_dir,
     topic_path,
     write_graph_to_disk,
 )
@@ -71,14 +71,14 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
     Three resolution outcomes:
 
       1. Repo row registered + has `is_latest=1` snapshot → decode it.
-         If `topic.json` on disk has diverged from the snapshot (e.g.
+         If the on-disk graph has diverged from the snapshot (e.g.
          a test/CLI wrote disk directly without going through
          apply_diff), the snapshot is re-seeded from the disk content
          and the fresh state returned. This drift-detect path keeps
          the snapshot as the source of truth while allowing disk
          writes by legacy / test paths to propagate.
       2. Repo row registered but no snapshot yet → auto-seed a
-         snapshot from `topic.json` and return its graph.
+         snapshot from the on-disk graph and return its graph.
       3. No Repo row at all (e.g. test fixture that never called
          `add-repo`) → disk fallback. Kept because tests use this
          path.
@@ -95,7 +95,7 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
     if snap is not None:
         snap_graph = graph_from_snapshot(snap)
         if graph_exists(repo_path):
-            # Compare the MERGED disk graph (topic.json + topic.local.json)
+            # Compare the MERGED disk graph (base + topic.local.json)
             # against the snapshot so the overlay is never invisible to the
             # drift detector — otherwise an overlay-only write would look
             # like base drift and get stomped on re-seed.
@@ -107,7 +107,7 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
                 # Disk diverged — re-seed snapshot from disk so legacy
                 # paths' writes propagate to the source of truth.
                 try:
-                    _auto_seed_snapshot(repo.id, disk_graph, topic_path(repo_path))
+                    _auto_seed_snapshot(repo.id, disk_graph, repo_path)
                     log.info("re-seeded snapshot for repo=%s from drifted disk", repo.name)
                 except IntegrityError:
                     pass
@@ -116,9 +116,8 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
 
     # Outcome 2: no snapshot yet — auto-seed from disk (base + overlay).
     disk_graph = _load_merged_disk(repo_path)
-    target = topic_path(repo_path)
     try:
-        seed_id = _auto_seed_snapshot(repo.id, disk_graph, target)
+        seed_id = _auto_seed_snapshot(repo.id, disk_graph, repo_path)
         log.info("auto-seeded snapshot id=%s for repo=%s from disk", seed_id, repo.name)
     except IntegrityError:
         with SessionLocal() as s:
@@ -127,7 +126,7 @@ def load_authoritative_graph(repo_path: str | Path) -> dict[str, Any]:
     return disk_graph
 
 
-def _auto_seed_snapshot(repo_id: int, graph: dict[str, Any], target: Path) -> int:
+def _auto_seed_snapshot(repo_id: int, graph: dict[str, Any], repo_path: str | Path) -> int:
     """Insert a `reason='auto_seed'` snapshot for outcome (2) above.
 
     Caller has just confirmed no `is_latest=1` snapshot exists for the
@@ -136,14 +135,13 @@ def _auto_seed_snapshot(repo_id: int, graph: dict[str, Any], target: Path) -> in
     when a prior snapshot exists with `is_latest=0` (which is
     unreachable from this code path but kept defensively).
 
-    `target` is the on-disk `topic.json` path; per-topic wiki files
-    under its sibling `wiki/` directory are ingested into
-    `wiki_pages_json` so a rollback to this snapshot restores them.
+    Per-topic wiki files under the repo's `wiki/` directory are ingested
+    into `wiki_pages_json` so a rollback to this snapshot restores them.
     """
     import json as _json
     from datetime import datetime, timezone
 
-    wiki_pages = _read_wiki_pages_from_disk(target, graph)
+    wiki_pages = _read_wiki_pages_from_disk(repo_path, graph)
     with SessionLocal() as s:
         # Demote ALL is_latest rows in one statement (defensive: a
         # transient duplicate can exist when snapshots are written in
@@ -181,7 +179,7 @@ def _graph_hash(graph: dict[str, Any]) -> str:
 
 
 def _load_merged_disk(repo_path: str | Path) -> dict[str, Any]:
-    """Effective on-disk graph: base ``topic.json`` + ``topic.local.json``.
+    """Effective on-disk graph: base split dir + ``topic.local.json``.
 
     The single definition of "disk" for the snapshot reader/drift detector,
     so the gitignored overlay is always part of the comparison.
@@ -189,15 +187,15 @@ def _load_merged_disk(repo_path: str | Path) -> dict[str, Any]:
     return load_graph_merged(repo_path)
 
 
-def _read_wiki_pages_from_disk(target: Path, graph: dict[str, Any]) -> dict[str, str]:
+def _read_wiki_pages_from_disk(repo_path: str | Path, graph: dict[str, Any]) -> dict[str, str]:
     """Collect per-topic wiki bodies for a snapshot's `wiki_pages_json`.
 
     Returns `{topic_id: markdown}` for every `<topic_id>.md` under the
-    sibling `wiki/` directory whose stem matches a topic id in `graph`.
+    repo's `wiki/` directory whose stem matches a topic id in `graph`.
     Stale `.md` files for topics no longer in the graph are skipped so
     a rollback never resurrects pruned content.
     """
-    wiki_dir = target.parent / "wiki"
+    wiki_dir = topic_dir(repo_path) / "wiki"
     if not wiki_dir.is_dir():
         return {}
     topic_ids = set((graph.get("topics") or {}).keys())
@@ -219,7 +217,7 @@ def export_graph_to_disk(
     wiki_pages: Optional[dict[str, str]] = None,
 ) -> Path:
     """Write `graph` to disk atomically, in whichever layout the repo is on
-    (legacy single `topic.json`, or one file per topic under `topics/`).
+    (one file per topic under `topics/` + `_meta.json`).
 
     `wiki_pages` is the `{topic_id: markdown}` shape from `GraphSnapshot.wiki_pages_json`.
     Phase A always passes `{}` because the per-topic wiki generator is
@@ -229,16 +227,16 @@ def export_graph_to_disk(
     Returns the path that was written (file or split dir), for logging.
     """
     target = write_graph_to_disk(repo_path, graph)
-    _write_wiki_pages(topic_path(repo_path), wiki_pages)
+    _write_wiki_pages(repo_path, wiki_pages)
     log.debug("exported graph for %s (%d topics)", target, len(graph.get("topics", {})))
     return target
 
 
-def _write_wiki_pages(target: Path, wiki_pages: Optional[dict[str, str]]) -> None:
-    """Write per-topic wiki bodies next to `topic.json` under `wiki/`."""
+def _write_wiki_pages(repo_path: str | Path, wiki_pages: Optional[dict[str, str]]) -> None:
+    """Write per-topic wiki bodies under the repo's `wiki/` directory."""
     if not wiki_pages:
         return
-    wiki_dir = target.parent / "wiki"
+    wiki_dir = topic_dir(repo_path) / "wiki"
     for topic_id, body in wiki_pages.items():
         if not isinstance(body, str):
             continue
@@ -252,7 +250,7 @@ def export_overlay_to_disk(
 ) -> Path:
     """Persist a prospective graph to the local overlay, leaving the base alone.
 
-    Splits `prospective_graph` against the git-tracked base `topic.json`:
+    Splits `prospective_graph` against the git-tracked base graph:
 
     - topics that are new or differ from the base → written to
       `topic.local.json` (whole-topic override)
@@ -261,7 +259,7 @@ def export_overlay_to_disk(
     - topics identical to the base → omitted, keeping the overlay minimal
 
     `merge(base, overlay)` then reconstructs `prospective_graph` exactly,
-    so `_load_merged_disk` and the snapshot stay hash-equal. `topic.json`
+    so `_load_merged_disk` and the snapshot stay hash-equal. The base graph
     is never touched. Per-topic wiki bodies still write under `wiki/`
     (already gitignored), matching `export_graph_to_disk`.
 
@@ -286,7 +284,7 @@ def export_overlay_to_disk(
     )
     save_local_graph(repo_path, overlay)
 
-    _write_wiki_pages(topic_path(repo_path), wiki_pages)
+    _write_wiki_pages(repo_path, wiki_pages)
     local_path = topic_local_path(repo_path)
     log.debug(
         "exported overlay for %s (%d topics, %d tombstones)",
@@ -301,7 +299,7 @@ def reconcile_if_drifted(  # unused until Phase D readers switch to snapshots
     *,
     session: Optional[Session] = None,
 ) -> bool:
-    """Re-export `topic.json` if it doesn't match the latest snapshot.
+    """Re-export the on-disk graph if it doesn't match the latest snapshot.
 
     Called by readers in a dev/test setting to detect crash-between-commits
     states (file written, SQL rolled back, or vice-versa). Returns True
@@ -359,7 +357,7 @@ def sync_snapshot_from_disk(
     reason: str = "manual_edit",
     session: Optional[Session] = None,
 ) -> Optional[int]:
-    """Capture the current `topic.json` state as a new snapshot row.
+    """Capture the current on-disk graph state as a new snapshot row.
 
     Used by writers that don't route through `apply_diff` — e.g.
     `scan` refreshing refs on approved topics.
@@ -371,7 +369,6 @@ def sync_snapshot_from_disk(
     Returns the new snapshot id, or None when skipped.
     """
     p = str(Path(repo_path).resolve())
-    target = topic_path(repo_path)
     if not graph_exists(repo_path):
         return None
 
@@ -395,7 +392,7 @@ def sync_snapshot_from_disk(
             return None
         from datetime import datetime, timezone
 
-        wiki_pages = _read_wiki_pages_from_disk(target, graph)
+        wiki_pages = _read_wiki_pages_from_disk(repo_path, graph)
         # Demote ALL is_latest rows, not just the `prior` found above — a
         # transient second latest row (from rapid cross-session writes)
         # would otherwise survive the single-row demote and collide with
@@ -432,7 +429,7 @@ def sync_snapshot_from_disk(
 
 
 def check_graph_sync(repo_path: str | Path) -> dict:
-    """Return sync state between on-disk `topic.json` (+ wiki bodies)
+    """Return sync state between the on-disk graph (+ wiki bodies)
     and the latest `is_latest=1` GraphSnapshot row.
 
     Surfaced by `regin doctor` so multi-user users can see whether
@@ -440,12 +437,13 @@ def check_graph_sync(repo_path: str | Path) -> dict:
 
     States:
     - `unregistered` — no Repo row for this path
-    - `no_disk_file` — Repo registered, no on-disk graph in either
-      layout (no `topic.json` and no split `topics/` dir with files)
+    - `legacy_unsupported` — only a retired single-file `topic.json`
+      is on disk; regin no longer reads it
+    - `no_disk_file` — Repo registered, no split `topics/` dir with files
     - `no_snapshot` — Repo registered, disk present, no snapshot yet
       (first read will auto-seed; running `regin topics import` makes
       it explicit and tagged with `reason=manual`/`git_pull`)
-    - `disk_unreadable` — `topic.json` exists but can't be parsed
+    - `disk_unreadable` — the graph exists but can't be parsed
     - `disk_newer` — disk content (graph or wikis) differs from the
       latest snapshot; `regin topics import` reconciles
     - `in_sync` — disk and snapshot agree; nothing to do
@@ -453,13 +451,14 @@ def check_graph_sync(repo_path: str | Path) -> dict:
     from sqlmodel import select
 
     p = str(Path(repo_path).resolve())
-    target = topic_path(repo_path)
 
     with SessionLocal() as s:
         repo = s.exec(select(Repo).where(Repo.path == p)).first()
         if repo is None or repo.id is None:
             return {"state": "unregistered"}
         if not graph_exists(repo_path):
+            if topic_path(repo_path).exists():
+                return {"state": "legacy_unsupported", "repo_id": repo.id}
             return {"state": "no_disk_file", "repo_id": repo.id}
         snap = s.exec(
             select(GraphSnapshot)
@@ -476,7 +475,7 @@ def check_graph_sync(repo_path: str | Path) -> dict:
         return {"state": "disk_unreadable", "repo_id": repo.id, "error": str(exc)}
 
     snap_graph = json.loads(snap.graph_json)
-    disk_wikis = _read_wiki_pages_from_disk(target, disk_graph)
+    disk_wikis = _read_wiki_pages_from_disk(repo_path, disk_graph)
     snap_wikis = json.loads(snap.wiki_pages_json or "{}")
     if _graph_hash(disk_graph) == _graph_hash(snap_graph) and disk_wikis == snap_wikis:
         return {"state": "in_sync", "repo_id": repo.id, "snapshot_id": snap.id}
@@ -494,7 +493,7 @@ def import_from_disk(repo_path: str | Path, *, reason: str = "manual") -> dict[s
     """Sync the on-disk graph (+ wikis) into a snapshot — the shared core
     of `regin topics import` and the WebUI Import button.
 
-    Bridges a teammate's git-shipped `topic.json` + `wiki/*.md` into the
+    Bridges a teammate's git-shipped split dir + `wiki/*.md` into the
     local snapshot DB so they become routable/viewable. Idempotent: a
     no-op when already in sync. Returns a status dict the UI can render.
     """

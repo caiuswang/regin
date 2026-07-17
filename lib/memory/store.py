@@ -35,7 +35,7 @@ from lib.memory.engine import MemorySessionLocal, memory_db_path
 # link — the "unfiled" bucket surfaced by BOTH the WebUI taxonomy tree and the
 # MCP index_* walk, so an untopiced memory is visibly pending instead of being
 # invisible to every subtree. Double-underscore so it can never collide with a
-# real topic.json id. Shared here (next to `orphaned_memory_ids`, the query that
+# real approved-graph id. Shared here (next to `orphaned_memory_ids`, the query that
 # defines "orphan") so the two surfaces can never drift on id/label/blurb.
 ORPHAN_NODE_ID = "__orphaned__"
 ORPHAN_LABEL = "Orphaned (unfiled)"
@@ -911,7 +911,7 @@ class SqliteMemoryStore:
                        MemoryTopic.status == "active")).all()
         return [{"id": t.id, "name": t.name} for t in rows]
 
-    # ── Authoritative-topic links (topic.json node ids) ──────────────
+    # ── Authoritative-topic links (approved-graph node ids) ──────────
 
     def link_authoritative_topic(self, memory_id: str, topic_node_id: str,
                                  *, source: str = "manual") -> bool:
@@ -1418,7 +1418,7 @@ class SqliteMemoryStore:
                            topic_node_id: Optional[str],
                            scope: Optional[str]) -> list[tuple[str, float]]:
         """Multiply the score of candidates linked to `topic_node_id` (an
-        authoritative topic.json node) by `1 + topic_boost_weight`. A soft
+        authoritative approved-graph node) by `1 + topic_boost_weight`. A soft
         boost next to quality/intent — it reorders, never filters, so an
         unlinked but strongly-relevant memory still surfaces. A no-op when no
         topic routed or the weight is 0."""

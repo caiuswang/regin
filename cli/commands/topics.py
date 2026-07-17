@@ -81,7 +81,7 @@ def _repo_path(repo: str | None) -> Path:
     )
 
 
-@topics_app.command("bootstrap", help="Create .regin/topics/topic.json for a repo")
+@topics_app.command("bootstrap", help="Create the approved topic graph (.regin/topics/topics/) for a repo")
 def cmd_topics_bootstrap(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
     seeds: bool = typer.Option(False, "--seeds", help="Create a few starter topics"),
@@ -111,7 +111,7 @@ def cmd_topics_scan(
 
 @topics_app.command(
     "list",
-    help="Show topic ids by layer: shared (topic.json) vs local overlay",
+    help="Show topic ids by layer: shared (base graph) vs local overlay",
 )
 def cmd_topics_list(
     repo: str | None = typer.Option(None, "--repo", help="Repository path or registered name"),
@@ -130,13 +130,13 @@ def cmd_topics_list(
     deleted_topics = sorted(overlay.get("deleted_topics") or [])
 
     if not local_only:
-        print(f"Shared ({len(base_topics)}) — in topic.json, travel via git:")
+        print(f"Shared ({len(base_topics)}) — in the base graph, travel via git:")
         for tid in base_topics:
             print(f"  {tid}")
     print(f"Local-added ({len(overlay_topics)}) — in topic.local.json, eligible for `topics promote`:")
     for tid in overlay_topics:
         print(f"  {tid}")
-    print(f"Local-deleted ({len(deleted_topics)}) — tombstones, will remove from topic.json on promote:")
+    print(f"Local-deleted ({len(deleted_topics)}) — tombstones, will remove from the base graph on promote:")
     for tid in deleted_topics:
         print(f"  {tid}")
 
@@ -148,15 +148,15 @@ def _print_promote_all(result: dict) -> None:
         print("Nothing to promote: local overlay has no pending changes.")
         return
     if added:
-        print(f"Added to topic.json ({len(added)}): {', '.join(added)}")
+        print(f"Added to the base graph ({len(added)}): {', '.join(added)}")
     if removed:
-        print(f"Removed from topic.json ({len(removed)}): {', '.join(removed)}")
+        print(f"Removed from the base graph ({len(removed)}): {', '.join(removed)}")
     print("Cleared the overlay. Commit .regin/topics/ (+ wikis) to share it.")
 
 
 @topics_app.command(
     "promote",
-    help="Promote local-overlay topic changes into the git-tracked topic.json",
+    help="Promote local-overlay topic changes into the git-tracked base graph",
 )
 def cmd_topics_promote(
     topic_id: str | None = typer.Argument(
@@ -169,7 +169,7 @@ def cmd_topics_promote(
     ),
 ) -> None:
     """Move an approved/edited topic out of the machine-local overlay and
-    into the shared base `topic.json` so it travels via git. The topic is
+    into the shared base graph so it travels via git. The topic is
     already live locally; this only makes it shareable. Pass `--all` to
     promote every pending overlay change in one pass instead of an id.
     """
@@ -186,8 +186,8 @@ def cmd_topics_promote(
         raise typer.Exit(1)
 
     where = "added to" if single["action"] == "added" else "removed from"
-    print(f"Promoted '{single['topic_id']}': {where} topic.json; cleared from overlay.")
-    print("Commit .regin/topics/topic.json (+ its wiki) to share it.")
+    print(f"Promoted '{single['topic_id']}': {where} the base graph; cleared from overlay.")
+    print("Commit .regin/topics/topics/ (+ its wiki) to share it.")
 
 
 @topics_app.command(
@@ -838,22 +838,22 @@ def _resolve_repo_id_for_import(repo_path: Path) -> int:
     return repo_row.id
 
 
-def _read_disk_state(repo_path: Path, target: Path) -> tuple[dict, dict[str, str]]:
+def _read_disk_state(repo_path: Path) -> tuple[dict, dict[str, str]]:
     """Return (merged graph, wikis) from disk, or exit(1) on read failure.
 
-    The graph is the effective merge of base ``topic.json`` and the local
+    The graph is the effective merge of the base graph and the local
     ``topic.local.json`` overlay, matching what `load_authoritative_graph`
     captures into a snapshot — so the import sync compares like for like.
     """
-    from lib.topics.core import TopicGraphError, load_graph_merged
+    from lib.topics.core import TopicGraphError, load_graph_merged, topic_split_dir
     from lib.topics.graph_io import _read_wiki_pages_from_disk
 
     try:
         disk_graph = load_graph_merged(repo_path)
     except (OSError, json.JSONDecodeError, TopicGraphError) as exc:
-        print(f"Failed to read {target}: {exc}")
+        print(f"Failed to read {topic_split_dir(repo_path)}: {exc}")
         raise typer.Exit(1)
-    return disk_graph, _read_wiki_pages_from_disk(target, disk_graph)
+    return disk_graph, _read_wiki_pages_from_disk(repo_path, disk_graph)
 
 
 def _snap_matches_disk(snap, disk_graph: dict, disk_wikis: dict[str, str]) -> bool:
@@ -919,7 +919,7 @@ def cmd_topics_reconcile(
           f"proposal rows.")
 
 
-@topics_app.command("import", help="Sync disk topic.json + wikis into a new GraphSnapshot")
+@topics_app.command("import", help="Sync the on-disk graph + wikis into a new GraphSnapshot")
 def cmd_topics_import(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
     reason: str = typer.Option(
@@ -934,24 +934,29 @@ def cmd_topics_import(
 ) -> None:
     """Sync the on-disk approved graph into a new GraphSnapshot.
 
-    Idempotent: no-op when the disk `topic.json` + per-topic wikis
+    Idempotent: no-op when the on-disk graph + per-topic wikis
     already match the latest snapshot. Use after `git pull` (manually
     or via the post-merge hook installed by `regin topics install-hook`)
     so a teammate's approved topics become routable locally — multi-user
     sharing without a shared database.
     """
-    from lib.topics.core import graph_exists, topic_path
+    from lib.topics.core import graph_exists, topic_dir, topic_path, topic_split_dir
     from lib.topics.graph_io import load_authoritative_graph, sync_snapshot_from_disk
 
     repo_path = _repo_path(repo)
-    target = topic_path(repo_path)
     if not graph_exists(repo_path):
-        if not quiet:
-            print(f"No topic graph under {target.parent} — nothing to import")
+        # Not gated by --quiet: the post-merge hook runs quiet, and a
+        # legacy-only repo would otherwise fail totally silently.
+        if topic_path(repo_path).exists():
+            print(f"Legacy single-file layout retired: {topic_path(repo_path)} — "
+                  "restore the split layout (.regin/topics/topics/) from git; "
+                  "nothing imported")
+        elif not quiet:
+            print(f"No topic graph under {topic_dir(repo_path)} — nothing to import")
         return
 
     repo_id = _resolve_repo_id_for_import(repo_path)
-    disk_graph, disk_wikis = _read_disk_state(repo_path, target)
+    disk_graph, disk_wikis = _read_disk_state(repo_path)
     topic_count = len(disk_graph.get("topics") or {})
     snap = _latest_snapshot_row(repo_id)
 
@@ -960,7 +965,7 @@ def cmd_topics_import(
         # the Phase 0 auto-seed path (which ingests wikis) takes over.
         load_authoritative_graph(str(repo_path))
         print(
-            f"Seeded snapshot from {target.name} (reason=auto_seed, "
+            f"Seeded snapshot from {topic_split_dir(repo_path).name}/ (reason=auto_seed, "
             f"{topic_count} topics, {len(disk_wikis)} wikis)"
         )
         return
@@ -978,45 +983,6 @@ def cmd_topics_import(
         f"Imported snapshot id={snap_id} (reason={reason}, "
         f"{topic_count} topics, {len(disk_wikis)} wikis)"
     )
-
-
-_GITIGNORE_RESULT_LINES = {
-    "patched": "Patched .gitignore: split-dir re-include lines added",
-    "already_patched": ".gitignore already re-includes the split dir",
-    "no_block": "No .regin re-include block in .gitignore — add the "
-                "!.regin/topics/topics/ lines manually (see docs/topics/multi-user.md)",
-}
-
-
-@topics_app.command(
-    "migrate-split",
-    help="Convert topic.json to one file per topic under .regin/topics/topics/ "
-         "(smaller team merge surface)",
-)
-def cmd_topics_migrate_split(
-    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
-) -> None:
-    """One-way layout migration for the git-carried approved graph. Reads
-    are dual-format, so migrated repos keep working locally — but only on
-    regin versions that understand the split dir, hence the warning."""
-    from lib.topics.split_migrate import migrate_to_split
-
-    try:
-        result = migrate_to_split(_repo_path(repo))
-    except TopicGraphError as exc:
-        print(f"Migrate failed: {exc}")
-        raise typer.Exit(1)
-    print(f"Wrote {result['topic_count']} topic file(s) + _meta.json under "
-          f"{result['split_dir']}")
-    print(f"Removed legacy {result['removed_legacy']}")
-    print(_GITIGNORE_RESULT_LINES[result["gitignore"]])
-    if result["hooks"]:
-        print(f"Re-installed git hooks: {', '.join(sorted(result['hooks']))}")
-    else:
-        print("Skipped git hook install (no .git directory)")
-    print("\nWARNING: teammates must upgrade to a dual-read regin BEFORE this "
-          "commit reaches them — older versions cannot read the split layout.")
-    print("Commit .gitignore + .regin/topics/topics/ to share the new layout.")
 
 
 @topics_app.command(
@@ -1051,7 +1017,7 @@ def cmd_topics_rebuild_query_df(
     print(f"query_df.json rebuilt from {count} routed prompt(s)")
 
 
-@topics_app.command("wiki", help="Generate derived wiki files from approved topic.json")
+@topics_app.command("wiki", help="Generate derived wiki files from the approved graph")
 def cmd_topics_wiki(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
 ) -> None:
@@ -1178,7 +1144,7 @@ def cmd_topics_wiki_stats(
     "backfill-tiers",
     help="Tag refs a topic's wiki never mentions as tier=reference so they stop "
          "emitting content-drift debt. Dry-run by default; --apply writes the "
-         "git-tracked topic.json (review the diff before committing). Never "
+         "git-tracked base graph (review the diff before committing). Never "
          "overrides an existing tier, so it is safe to re-run.")
 def cmd_topics_backfill_tiers(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
@@ -1186,7 +1152,7 @@ def cmd_topics_backfill_tiers(
         None, "--topic", help="Only backfill this topic id (default: all)."),
     apply: bool = typer.Option(
         False, "--apply",
-        help="Write tier=reference into topic.json (default: dry-run/report)."),
+        help="Write tier=reference into the base graph (default: dry-run/report)."),
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     from lib.topics.tier_backfill import backfill_reference_tiers
@@ -1202,7 +1168,7 @@ def cmd_topics_backfill_tiers(
         for row in demotions:
             print(f"{verb} reference  {row['topic_id']}  {row['path']}")
         topics_n = len({row["topic_id"] for row in demotions})
-        where = ("written to topic.json — review `git diff` before committing"
+        where = ("written to the base graph — review `git diff` before committing"
                  if result["applied"] else "dry-run — pass --apply to write")
         print(f"\n{len(demotions)} ref(s) across {topics_n} topic(s) ({where})")
     else:

@@ -11,7 +11,7 @@ orthogonal.
 
 Two surfaces, both writing only the safe side of the trust boundary:
   * topic refs   -> rewritten into the gitignored `topic.local.json` overlay,
-    never the human-approved `topic.json`;
+    never the human-approved base graph;
   * memory bodies -> the named path is rewritten, veracity untouched.
 
 Everything is gated on `settings.topic_evolution.mechanical_autoapply` (off by
@@ -149,7 +149,7 @@ def _rewrite_topic(topic: dict[str, Any], renames: dict[str, str]) -> bool:
 def rewrite_topic_refs(repo_path: str | Path,
                        renames: dict[str, str]) -> list[str]:
     """Follow `renames` into every topic's refs, persisting touched topics to
-    the gitignored `topic.local.json` overlay (never `topic.json`). Returns
+    the gitignored `topic.local.json` overlay (never the base graph). Returns
     the touched topic ids."""
     from lib.topics.core import load_local_graph, save_local_graph
     from lib.topics.graph_io import (load_authoritative_graph,

@@ -14,7 +14,7 @@ from sqlmodel import select
 
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo
-from lib.topics import bootstrap
+from lib.topics import bootstrap, load_graph, write_split_graph
 from lib.topics.bulk_fix import AUTO_FIXABLE_CODES, compose_fix
 from lib.topics.validation import audit_graph
 
@@ -122,8 +122,7 @@ def test_audit_fix_endpoint_clears_dead_refs_and_orphan_edges(flask_client, fake
     subprocess.check_call(["git", "-C", str(fake_git_repo), "commit", "-q", "-m", "real"])
     name = _seed_repo(fake_git_repo)
     bootstrap(fake_git_repo)
-    graph_path = fake_git_repo / ".regin/topics/topic.json"
-    graph = json.loads(graph_path.read_text())
+    graph = load_graph(fake_git_repo)
     graph["topics"]["alpha"] = {
         "label": "A", "intent": "a", "status": "active",
         "aliases": [], "refs": [
@@ -133,7 +132,7 @@ def test_audit_fix_endpoint_clears_dead_refs_and_orphan_edges(flask_client, fake
         "edges": [{"target": "ghost", "type": "related"}],
         "commands": [], "include_globs": [], "exclude_globs": [],
     }
-    graph_path.write_text(json.dumps(graph))
+    write_split_graph(fake_git_repo, graph)
 
     # First confirm /audit reports the issues + the auto-fixable list.
     audit_resp = flask_client.get(f"/api/repos/{name}/topics/audit")

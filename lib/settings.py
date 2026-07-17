@@ -328,7 +328,7 @@ class AgentMemoryConfig(BaseModel):
     topics_enabled: bool = True
     # reflect()→synthesis: instead of minting an orphan `memory_topic`, feed
     # the synthesised rule into the *authoritative* topic-proposal review
-    # queue (`.regin/topics/topic.json`). The cluster summary is embedded and
+    # queue (`.regin/topics/topics/`). The cluster summary is embedded and
     # cosine-matched against each authoritative node; at/above
     # `reflect_topic_attach_cosine` it proposes a MERGE onto that node (and
     # links the synthesised memory to it now, since the node already exists),
@@ -354,7 +354,7 @@ class AgentMemoryConfig(BaseModel):
     recall_recency_half_life_days: float = 30.0
     # Topic-router ↔ memory bridge (auto-inject hook). When on, the hook
     # routes the prompt through the authoritative topic graph
-    # (`.regin/topics/topic.json`, keyword match) once per prompt and uses the
+    # (`.regin/topics/topics/`, keyword match) once per prompt and uses the
     # hit two ways: (1) a bounded `topic_boost_weight` multiplier on memories
     # linked to that node (see `memory_authoritative_topics`) — a soft boost
     # next to quality/intent, never a hard filter; (2) a *pointer-only*
@@ -753,7 +753,7 @@ class TopicEvolutionConfig(BaseModel):
     here defaults **off**: `evolution_enabled` only unlocks the machinery,
     and `mechanical_autoapply` separately gates the one tier that writes
     without review — ref renames into the gitignored `topic.local.json`
-    overlay, never the human-approved `topic.json`. `auto_spawn_agents`
+    overlay, never the human-approved base graph. `auto_spawn_agents`
     separately gates launching the external drafting agent for refresh
     proposals (off by default even when evolution is on — spawning is a cost).
 
