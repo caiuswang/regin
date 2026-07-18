@@ -117,14 +117,14 @@ const emptyMode = computed(() => {
           <span class="trigger-toolbar__field-label">Range</span>
           <span class="inline-block w-20">
             <Select :model-value="filters.range" :options="ranges" block aria-label="Range"
-              @change="setFilter('range', $event.target.value)" />
+              @update:model-value="setFilter('range', $event)" />
           </span>
         </label>
         <label class="trigger-toolbar__field">
           <span class="trigger-toolbar__field-label">Sort</span>
           <span class="inline-block w-32">
             <Select :model-value="filters.sort" :options="sorts" block aria-label="Sort"
-              @change="setFilter('sort', $event.target.value)" />
+              @update:model-value="setFilter('sort', $event)" />
           </span>
         </label>
         <router-link to="/trace/triggers/raw"
