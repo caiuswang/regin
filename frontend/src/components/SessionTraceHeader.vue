@@ -128,7 +128,12 @@ const contextPeakPct = computed(() => {
   const peak = s?.peak_main_context_tokens ?? s?.peak_context_tokens
   const live = s?.live_context_tokens
   if (!win || win <= 0 || !Number.isFinite(peak) || !Number.isFinite(live)) return null
-  if (peak - live <= 0) return null
+  // Only flag a genuine compaction reset: the peak must sit meaningfully above
+  // the live context (same 1%-of-window bar as the +sub chip). An exact `> 0`
+  // test let peak≈live jitter toggle this chip null↔value on every live poll —
+  // on mobile that added/removed a wrapped header line and jerked the whole
+  // page (scroll up/down) each reload cycle.
+  if (peak - live <= win * 0.01) return null
   return Math.round(peak * 1000.0 / win) / 10
 })
 
@@ -466,7 +471,13 @@ function contextBadgeClass(pct) {
           @click="$emit('reload')"
         >
           <span :class="reloading ? 'animate-spin inline-block' : 'inline-block'">↻</span>
-          {{ reloading ? 'Reloading…' : 'Reload' }}
+          <!-- Label stays constant width: a "Reload"→"Reloading…" swap widened
+               this button, and as a flex sibling of the metrics column that
+               squeezed the metrics into an extra wrapped line — on mobile,
+               scrolled to the top of a live session, the header grew/shrank
+               ~15px every poll and jerked the page. The spinning icon +
+               disabled state already signal the in-progress reload. -->
+          Reload
         </Button>
       </div>
     </div>
