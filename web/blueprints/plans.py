@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import func, literal_column, text
+from sqlalchemy import func, text
 from sqlmodel import select
 
 from lib.orm import SessionLocal
-from lib.orm.models import PlanSession, Repo, SessionRepo, SessionSpan, SkillRead
+from lib.orm.models import (
+    PlanSession, Repo, Session as SessionModel, SessionRepo, SkillRead,
+)
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace.plans import get_plan, list_plans
 
@@ -235,11 +237,12 @@ def api_plan_sessions():
                 .where(Repo.name == repo_filter)
             ))
         if not include_tests:
-            # Exclude sessions that are marked as test via any span's is_test attribute.
+            # `sessions.is_test` is the same marker the spans carry, latched at
+            # ingest. Reading it here rather than re-deriving it turns a full
+            # json_extract scan of session_spans — which ran on every request,
+            # with no UI able to pass include_tests — into an indexed lookup.
             test_trace_ids = (
-                select(SessionSpan.trace_id)
-                .where(literal_column("json_extract(attributes, '$.is_test')") == 1)
-                .distinct()
+                select(SessionModel.trace_id).where(SessionModel.is_test == 1)
             )
             stmt = stmt.where(PlanSession.session_id.not_in(test_trace_ids))
 

@@ -13,9 +13,22 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from lib.trace.is_test import _IS_TEST_CASE, _IS_TEST_WHERE
 from lib.trace.workflow_labels import attach_workflow_agent_attrs
 from lib.utils.pagination import CursorPage, keyset_page
+
+
+# Test-session exclusion, parameterised by the caller's session-id column.
+#
+# This reads the precomputed `sessions.is_test` rather than re-deriving the
+# marker from span attributes. The two are the same value: ingest latches
+# `is_test = MAX(sessions.is_test, excluded.is_test)` from the very span
+# attribute the old subquery scanned. Re-deriving it cost a full
+# `json_extract` scan of session_spans (~0.5s at 336k rows) on every feed,
+# stats and sessions query — three per first page — to reproduce a column
+# that was already written at ingest time.
+_TEST_EXCLUSION = (
+    "{col} NOT IN (SELECT trace_id FROM sessions WHERE is_test = 1)"
+)
 
 
 # ── Skill reads ──────────────────────────────────────────────
@@ -36,10 +49,7 @@ def list_skill_reads_page(
     """
     from lib.orm.engine import get_connection
 
-    test_exclusion = "" if include_tests else """session_id NOT IN (
-        SELECT DISTINCT trace_id FROM session_spans
-        WHERE json_extract(attributes, '$.is_test') = 1
-    )"""
+    test_exclusion = "" if include_tests else _TEST_EXCLUSION.format(col="session_id")
 
     conditions: list[str] = []
     params: list = []
@@ -74,9 +84,7 @@ def list_skill_reads_page(
             stats = [dict(r) for r in stats_rows]
 
             sessions_where = (
-                'WHERE ' + test_exclusion.replace(
-                    'session_id NOT IN', 'sr.session_id NOT IN'
-                )
+                'WHERE ' + _TEST_EXCLUSION.format(col="sr.session_id")
             ) if test_exclusion else ''
             sessions_rows = conn.execute(f"""
                 WITH plan_latest AS (
@@ -85,28 +93,18 @@ def list_skill_reads_page(
                                PARTITION BY session_id ORDER BY started_at DESC
                            ) AS rn
                     FROM plan_sessions
-                ),
-                test_markers AS (
-                    SELECT trace_id,
-                           {_IS_TEST_CASE} AS is_test,
-                           MAX(json_extract(attributes, '$.test_name')) AS test_name
-                    FROM session_spans
-                    WHERE {_IS_TEST_WHERE}
-                       OR json_extract(attributes, '$.test_name') IS NOT NULL
-                    GROUP BY trace_id
                 )
                 SELECT COALESCE(sr.session_id, '') as session_id,
                        COUNT(*) as total,
                        COUNT(DISTINCT sr.skill_id) as skills,
                        MIN(sr.read_at) as first_seen, MAX(sr.read_at) as last_seen,
                        pl.plan_filename as plan_filename,
-                       COALESCE(tm.is_test, 0) as is_test,
-                       tm.test_name as test_name
+                       COALESCE(s.is_test, 0) as is_test,
+                       s.test_name as test_name
                 FROM skill_reads sr
                 LEFT JOIN plan_latest pl
                        ON pl.session_id = sr.session_id AND pl.rn = 1
-                LEFT JOIN test_markers tm
-                       ON tm.trace_id = sr.session_id
+                LEFT JOIN sessions s ON s.trace_id = sr.session_id
                 {sessions_where}
                 GROUP BY COALESCE(sr.session_id, '')
                 ORDER BY last_seen DESC LIMIT 50
@@ -134,10 +132,7 @@ def list_mcp_calls_page(
     """
     from lib.orm.engine import get_connection
 
-    test_exclusion = "" if include_tests else """trace_id NOT IN (
-        SELECT DISTINCT trace_id FROM session_spans
-        WHERE json_extract(attributes, '$.is_test') = 1
-    )"""
+    test_exclusion = "" if include_tests else _TEST_EXCLUSION.format(col="trace_id")
 
     # Exclude live PENDING placeholders — the append-only store keeps a
     # pending tool span alongside its resolved twin, which would double-count
@@ -194,33 +189,20 @@ def list_mcp_calls_page(
                                    "session_spans.status_code != 'PENDING'"]
             if test_exclusion:
                 session_conditions.append(
-                    test_exclusion.replace(
-                        'trace_id NOT IN',
-                        'session_spans.trace_id NOT IN',
-                    )
+                    _TEST_EXCLUSION.format(col="session_spans.trace_id")
                 )
             session_where = " WHERE " + " AND ".join(session_conditions)
 
             sessions_rows = conn.execute(f"""
-                WITH test_markers AS (
-                    SELECT trace_id,
-                           {_IS_TEST_CASE} AS is_test,
-                           MAX(json_extract(attributes, '$.test_name')) AS test_name
-                    FROM session_spans
-                    WHERE {_IS_TEST_WHERE}
-                       OR json_extract(attributes, '$.test_name') IS NOT NULL
-                    GROUP BY trace_id
-                )
                 SELECT COALESCE(session_spans.trace_id, '') as session_id,
                        COUNT(*) as total,
                        COUNT(DISTINCT json_extract(session_spans.attributes, '$.tool_name')) as tools,
                        MIN(session_spans.start_time) as first_seen,
                        MAX(session_spans.start_time) as last_seen,
-                       COALESCE(tm.is_test, 0) as is_test,
-                       tm.test_name as test_name
+                       COALESCE(s.is_test, 0) as is_test,
+                       s.test_name as test_name
                 FROM session_spans
-                LEFT JOIN test_markers tm
-                       ON tm.trace_id = session_spans.trace_id
+                LEFT JOIN sessions s ON s.trace_id = session_spans.trace_id
                 {session_where}
                 GROUP BY COALESCE(session_spans.trace_id, '')
                 ORDER BY last_seen DESC LIMIT 50

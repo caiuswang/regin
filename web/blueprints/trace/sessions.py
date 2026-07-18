@@ -24,7 +24,6 @@ from lib.trace import trace_service
 from web.helpers import (
     _is_non_blank_str, _is_iso_timestamp, _normalize_is_test,
     _ingest_max_batch_size, _ingest_max_attributes_bytes,
-    _IS_TEST_WHERE, _IS_TEST_CASE,
 )
 # NOTE: `_INGEST_DEDUP_WINDOW_SEC` is looked up at *call* time via the
 # module (not imported by value) so tests can monkeypatch
