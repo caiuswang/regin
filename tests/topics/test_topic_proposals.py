@@ -69,7 +69,7 @@ def test_create_proposal_run_does_not_mutate_approved_topic_graph(stub_proposal_
     assert after == before
 
 
-def test_create_external_agent_proposal_run_writes_status_and_trace(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_create_external_agent_proposal_run_writes_status_and_trace(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     (fake_git_repo / "service").mkdir()
     (fake_git_repo / "service" / "api.py").write_text("import os\n")
     (fake_git_repo / "service" / "model.py").write_text("import sys\n")
@@ -129,7 +129,7 @@ def test_create_external_agent_proposal_run_writes_status_and_trace(monkeypatch,
     assert "session.end" in span_names
 
 
-def test_drafting_agent_env_carries_llm_surface(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_drafting_agent_env_carries_llm_surface(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     (fake_git_repo / "service").mkdir()
     (fake_git_repo / "service" / "api.py").write_text("import os\n")
     subprocess.check_call(["git", "-C", str(fake_git_repo), "add", "."])
@@ -162,7 +162,7 @@ def test_drafting_agent_env_carries_llm_surface(monkeypatch, fake_git_repo, tmp_
     assert surface_sidecar.read_text() == "topic-proposal-drafting"
 
 
-def test_external_agent_run_rejects_stale_temp_output_from_prior_attempt(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_external_agent_run_rejects_stale_temp_output_from_prior_attempt(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     (fake_git_repo / "service").mkdir()
     (fake_git_repo / "service" / "api.py").write_text("import os\n")
     subprocess.check_call(["git", "-C", str(fake_git_repo), "add", "."])
@@ -237,7 +237,7 @@ def test_write_status_clears_old_error_when_run_completes(fake_git_repo, tmp_db)
     assert status["error_detail"] is None
 
 
-def test_external_agent_permission_prompt_fails_clearly(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_external_agent_permission_prompt_fails_clearly(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     bootstrap(fake_git_repo)
     script = tmp_path / "agent.py"
     script.write_text("print('Do you want to allow this command?')\n")
@@ -254,7 +254,7 @@ def test_external_agent_permission_prompt_fails_clearly(monkeypatch, fake_git_re
     assert not (fake_git_repo / ".regin/topics/proposals/run1/topics.json").exists()
 
 
-def test_external_agent_permission_block_text_fails_even_with_json(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_external_agent_permission_block_text_fails_even_with_json(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     bootstrap(fake_git_repo)
     script = tmp_path / "agent.py"
     script.write_text(
@@ -276,7 +276,7 @@ def test_external_agent_permission_block_text_fails_even_with_json(monkeypatch, 
     assert not (fake_git_repo / ".regin/topics/proposals/run1/topics.json").exists()
 
 
-def test_external_agent_nonzero_exit_includes_output_in_status(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_external_agent_nonzero_exit_includes_output_in_status(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     bootstrap(fake_git_repo)
     script = tmp_path / "agent.py"
     script.write_text(
@@ -304,7 +304,7 @@ def test_external_agent_nonzero_exit_includes_output_in_status(monkeypatch, fake
     assert status["stderr_tail"] is None
 
 
-def test_external_agent_failure_status_bounds_detailed_output(monkeypatch, fake_git_repo, tmp_path, tmp_db):
+def test_external_agent_failure_status_bounds_detailed_output(monkeypatch, fake_git_repo, tmp_path, tmp_db, allow_subprocess_spawn):
     bootstrap(fake_git_repo)
     script = tmp_path / "agent.py"
     script.write_text(

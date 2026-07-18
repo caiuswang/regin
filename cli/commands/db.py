@@ -12,7 +12,8 @@ from typing import Optional
 import typer
 
 from cli.deps import require_db
-from lib.orm.engine import DB_PATH, init_db as _init_db, db_exists
+import lib.orm.engine as _engine
+from lib.orm.engine import init_db as _init_db, db_exists
 from lib.providers import get_active_provider
 from lib.settings import settings
 
@@ -48,11 +49,11 @@ def _prune_empty_parents(path: str, depth: int = 2) -> None:
 
 def _load_recorded_deployment_paths() -> list[str]:
     """Read deployment directories from the current SQLite DB, if any."""
-    if not os.path.exists(DB_PATH):
+    if not os.path.exists(_engine.DB_PATH):
         return []
 
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(_engine.DB_PATH)
     except sqlite3.Error:
         return []
 
@@ -180,7 +181,10 @@ def _remove_primary_db() -> None:
 
     dispose_engine()
     for suffix in ("", "-wal", "-shm", "-journal"):
-        _remove_path(DB_PATH + suffix)
+        # Call-time lookup: a module-level `from … import DB_PATH` would bind
+        # the real path before `tmp_db` patches it, pointing this deletion at
+        # the developer's production database.
+        _remove_path(_engine.DB_PATH + suffix)
 
 
 def _force_reset_state() -> tuple[int, bool, bool, int]:
@@ -208,7 +212,7 @@ def cmd_init(
     ),
 ) -> None:
     if db_exists() and not force:
-        print(f"Database already exists at {DB_PATH}")
+        print(f"Database already exists at {_engine.DB_PATH}")
         print("Use --force to reinitialize.")
         return
 
@@ -254,7 +258,7 @@ def cmd_init(
             print(f"Removed {removed_hook_routes} hook_manager routing entr"
                   f"{'y' if removed_hook_routes == 1 else 'ies'} from Claude settings.")
 
-    print(f"Initialized database at {DB_PATH}")
+    print(f"Initialized database at {_engine.DB_PATH}")
     print(f"Pattern directory ready at {settings.patterns_dir}")
 
 
@@ -316,15 +320,15 @@ def cmd_migrate() -> None:
     repeatedly; an up-to-date DB is a no-op.
     """
     if not db_exists():
-        typer.echo(f"No database at {DB_PATH}. Run `regin init` first.")
+        typer.echo(f"No database at {_engine.DB_PATH}. Run `regin init` first.")
         raise typer.Exit(1)
     from lib.db_migrate import run_migrate
     action = run_migrate()
     if action == "upgraded":
-        typer.echo(f"Applied pending migrations to {DB_PATH}")
+        typer.echo(f"Applied pending migrations to {_engine.DB_PATH}")
     else:
         typer.echo(
-            f"Enrolled existing DB into the alembic chain (already at head): {DB_PATH}"
+            f"Enrolled existing DB into the alembic chain (already at head): {_engine.DB_PATH}"
         )
 
 

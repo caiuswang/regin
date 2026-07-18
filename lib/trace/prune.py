@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import sqlite3
 
+import lib.orm.engine as _engine
 from lib.activity_log import get_activity_logger
-from lib.orm.engine import DB_PATH, get_connection
+from lib.orm.engine import get_connection
 
 log = get_activity_logger("trace_ingest")
 
@@ -129,7 +130,11 @@ def _vacuum() -> bool:
     """Reclaim freed pages to the OS. Runs on its own autocommit connection
     (VACUUM cannot run inside a transaction). Returns False if the DB is busy
     (e.g. `regin serve` holds a write lock) rather than aborting the prune."""
-    conn = sqlite3.connect(DB_PATH, isolation_level=None)
+    # Resolved at call time. `from … import DB_PATH` binds the real path at
+    # import, which the tests' `tmp_db` monkeypatch of `lib.orm.engine.DB_PATH`
+    # cannot reach — the first test to prune with vacuum=True would VACUUM the
+    # developer's production database.
+    conn = sqlite3.connect(_engine.DB_PATH, isolation_level=None)
     try:
         conn.execute("VACUUM")
         return True

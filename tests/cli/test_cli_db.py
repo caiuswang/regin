@@ -35,7 +35,11 @@ def test_cmd_init_force_clears_db_rows_deployments_and_jwt_secret(
         },
     }))
 
-    monkeypatch.setattr(db_cmd, "DB_PATH", str(tmp_db))
+    # `db_cmd` no longer holds its own `DB_PATH`; it resolves
+    # `lib.orm.engine.DB_PATH` at call time, which the autouse `tmp_db`
+    # fixture already points at this tmp file. Patching a module-level copy
+    # here was what let `cmd_init --force` delete the real DB whenever a
+    # caller forgot it.
     monkeypatch.setattr(settings, "patterns_dir", str(patterns_dir))
     monkeypatch.setattr(db_cmd, "HOOK_MANAGER_CONFIG_PATH", str(hook_manager_cfg))
     monkeypatch.setattr(db_cmd, "CLAUDE_SETTINGS_PATH", str(claude_settings))

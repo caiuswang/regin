@@ -25,9 +25,14 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
+
+from conftest_support import (
+    ExternalAgentSpawnBlocked, SpawnGuard, spawning_modules,
+)
 
 
 # ── DB isolation (applies to every testpath) ──────────────────
@@ -142,34 +147,6 @@ def _block_ingest_transport(monkeypatch):
 
 # ── External agent spawns ─────────────────────────────────────
 
-class _SpawnGuard:
-    """Drop-in for the `subprocess` module that refuses to launch an agent.
-
-    Delegates every other attribute (`PIPE`, `TimeoutExpired`, …) to the real
-    module, so the guarded call sites' exception handling still resolves.
-    `AssertionError` is deliberately outside what they catch, so an attempted
-    spawn fails the test loudly instead of being swallowed as
-    "agent unavailable" and silently degrading to the heuristic path.
-    """
-
-    def __getattr__(self, name):
-        return getattr(subprocess, name)
-
-    @staticmethod
-    def _refuse(cmd, *_args, **_kwargs):
-        raise AssertionError(
-            f"test attempted to spawn an external agent: {cmd!r}. "
-            "Stub the provider seam instead — a real spawn runs a coding "
-            "agent in the working tree and costs API credit."
-        )
-
-    run = _refuse
-    Popen = _refuse
-    call = _refuse
-    check_call = _refuse
-    check_output = _refuse
-
-
 @pytest.fixture(autouse=True)
 def _no_external_agent_spawn(monkeypatch):
     """Make an external-agent spawn impossible, two layers deep.
@@ -179,18 +156,37 @@ def _no_external_agent_spawn(monkeypatch):
     proposals). Each already documents "none configured → return None", so
     this reproduces a pristine checkout rather than inventing a new state.
 
-    Layer 2 — a subprocess guard scoped to the three call sites, for the case
-    where a test configures its own agent and then reaches a code path that
-    spawns for real.
+    Layer 2 — a subprocess guard scoped to every module that launches one,
+    for the case where a test configures its own agent (several fixtures do)
+    and then reaches a code path that spawns for real. Layer 1 alone is not
+    enough: any test that sets `topic_proposal_external_agents` overrides it.
+
+    Layer 3 — a `threading.excepthook`, because two of these spawn on a
+    daemon thread (`proposal_review._spawn_review_agent`,
+    `external_jobs`). An exception raised there never reaches pytest, so
+    without this the guard could fire and the test would still pass.
     """
     from lib.settings import settings
     monkeypatch.setattr(settings, "topic_proposal_external_agents", {})
 
-    from lib.grader import adapters as grader_adapters
-    from lib.memory import adapters as memory_adapters
-    from lib.topics import proposal_review
-    for module in (memory_adapters, grader_adapters, proposal_review):
-        monkeypatch.setattr(module, "subprocess", _SpawnGuard())
+    for module in spawning_modules():
+        monkeypatch.setattr(module, "subprocess", SpawnGuard())
+
+    escaped: list[str] = []
+    prior_hook = threading.excepthook
+
+    def _record(args):
+        if issubclass(args.exc_type, ExternalAgentSpawnBlocked):
+            escaped.append(str(args.exc_value))
+        return prior_hook(args)
+
+    monkeypatch.setattr(threading, "excepthook", _record)
+    yield
+    assert not escaped, (
+        "an external-agent spawn was blocked on a background thread; the "
+        "calling test would otherwise have passed silently:\n  "
+        + "\n  ".join(escaped)
+    )
 
 
 @pytest.fixture
@@ -204,8 +200,5 @@ def allow_subprocess_spawn(_no_external_agent_spawn, monkeypatch):
     else. Depends on the guard fixture so it is applied afterwards and
     therefore wins.
     """
-    from lib.grader import adapters as grader_adapters
-    from lib.memory import adapters as memory_adapters
-    from lib.topics import proposal_review
-    for module in (memory_adapters, grader_adapters, proposal_review):
+    for module in spawning_modules():
         monkeypatch.setattr(module, "subprocess", subprocess)

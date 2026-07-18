@@ -241,8 +241,13 @@ def api_plan_sessions():
             # ingest. Reading it here rather than re-deriving it turns a full
             # json_extract scan of session_spans — which ran on every request,
             # with no UI able to pass include_tests — into an indexed lookup.
-            test_trace_ids = (
-                select(SessionModel.trace_id).where(SessionModel.is_test == 1)
+            # `is_not(None)` guards the NOT IN NULL trap: `sessions` is a
+            # legacy rowid table, so its TEXT PRIMARY KEY permits NULL, and
+            # one NULL would make the predicate NULL for every row — blanking
+            # the plans feed with no error.
+            test_trace_ids = select(SessionModel.trace_id).where(
+                SessionModel.is_test == 1,
+                SessionModel.trace_id.is_not(None),
             )
             stmt = stmt.where(PlanSession.session_id.not_in(test_trace_ids))
 

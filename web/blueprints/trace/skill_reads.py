@@ -101,7 +101,7 @@ def _never_fired_skills(stats: list[dict]) -> list[str]:
     try:
         from lib.skills import skill_registry
         deployed = set(skill_registry.all_ids())
-    except (ImportError, OSError):
+    except Exception:  # noqa: BLE001 - one diagnostic panel must not 500 the page
         get_activity_logger("trace").error(
             'never_fired_registry_unavailable', exc_info=True)
         return []

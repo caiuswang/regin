@@ -120,7 +120,7 @@ function shortTestName(nodeid) {
                 <template v-if="s.is_test">
                   <span
                     class="ml-2 inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                    title="Test session (span attributes carry is_test=true)"
+                    title="Test session (sessions.is_test = 1)"
                   >test</span>
                   <span
                     v-if="s.test_name"

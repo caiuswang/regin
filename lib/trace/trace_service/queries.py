@@ -26,8 +26,23 @@ from lib.utils.pagination import CursorPage, keyset_page
 # `json_extract` scan of session_spans (~0.5s at 336k rows) on every feed,
 # stats and sessions query — three per first page — to reproduce a column
 # that was already written at ingest time.
+#
+# `trace_id IS NOT NULL` is load-bearing, not defensive noise. `sessions`
+# is a legacy (non-STRICT) rowid table, so its `TEXT PRIMARY KEY` does NOT
+# imply NOT NULL — SQLite accepts a NULL there. A single NULL in the
+# sub-select makes `NOT IN` evaluate to NULL for every row, silently
+# blanking the skill-reads, mcp-calls and plans feeds with no error. The
+# old span-scan could not hit this because `session_spans.trace_id` is
+# declared NOT NULL.
+#
+# Known, accepted divergence from the old span scan: a PENDING placeholder
+# span is written to `session_spans` but excluded from the sessions counter
+# upsert, so a trace whose *only* is_test span is pending marks the old
+# query and not this one. It closes as soon as any non-pending span lands.
 _TEST_EXCLUSION = (
-    "{col} NOT IN (SELECT trace_id FROM sessions WHERE is_test = 1)"
+    "{col} NOT IN ("
+    "SELECT trace_id FROM sessions WHERE is_test = 1 AND trace_id IS NOT NULL"
+    ")"
 )
 
 
