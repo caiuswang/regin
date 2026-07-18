@@ -68,7 +68,15 @@ CLI mirror is `regin memory supersede <old-id> --body … `. Internals: *Agent M
 cd frontend && npx vite                                  # dev on :5173, proxies /api → :8321
 cd frontend && npx vite build                            # → web/static/dist/
 cd frontend && ./node_modules/.bin/playwright test       # E2E
+
+# Frontend introspection (requires vite on :5173)
+node scripts/dom-measure.mjs --route <path> --explain <selector>   # computed styles, ancestor chain, what clips/scrolls it
+node scripts/gen-design-manifest.mjs                               # regenerate frontend/design-system.json
 ```
+
+On the dev server, `Ctrl+Shift+G` then clicking an element copies its component stack
+and a ready-to-run `dom-measure --explain` command — paste that instead of describing
+a UI defect in prose (`frontend/src/dev/grab.js`).
 
 Use the `.venv` interpreter; do **not** invoke bare `python` — the system interpreter lacks the project's deps.
 
