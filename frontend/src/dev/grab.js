@@ -121,9 +121,14 @@ function buildPayload(el) {
   const text = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80)
   const reveal = revealHints(el)
 
+  // A leading wait is not optional on these pages: every data-driven view
+  // fetches after mount, so a command that navigates and measures
+  // immediately reports "not found" for an element that simply had not
+  // rendered yet.
   const cmd = [
     'node scripts/dom-measure.mjs',
     `--route '${route}'`,
+    `--reveal 'wait:3000'`,
     ...reveal,
     `--explain '${selector}'`,
   ].join(' \\\n  ')

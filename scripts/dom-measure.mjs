@@ -63,7 +63,11 @@ const ROOT = resolve(HERE, '..')
 function parseArgs(argv) {
   const opts = {
     route: '/', base: 'http://localhost:5173', token: null,
-    user: '1', username: 'pw', role: 'editor',
+    // admin by default: the router gates every /trace/* route on
+    // `regin_auth_user.role === 'admin'` and silently redirects everyone
+    // else to the dashboard, so a lower role makes the whole trace surface
+    // unmeasurable — and looks like the element is missing, not blocked.
+    user: '1', username: 'pw', role: 'admin',
     reveal: [], rect: [], explain: [], shot: null, viewport: '1280x1100',
     timeout: 5000, headed: false, tokens: null, nth: null,
   }
@@ -125,11 +129,19 @@ const [vw, vh] = opts.viewport.split('x').map(Number)
 const browser = await chromium.launch({ headless: !opts.headed })
 const page = await browser.newPage({ viewport: { width: vw, height: vh } })
 
-// inject the auth token before any page script runs (Vue router guard only
-// checks the key exists; the running server verifies the signature)
-await page.addInitScript((t) => {
-  try { localStorage.setItem('regin_auth_token', t) } catch {}
-}, token)
+// Inject auth before any page script runs. Two keys are required, not one:
+// the guard checks `regin_auth_token` exists, but /trace/* additionally
+// reads the role off `regin_auth_user` and bounces non-admins to the
+// dashboard. Injecting only the token made every trace route measure the
+// dashboard instead — indistinguishable from "the element isn't there".
+await page.addInitScript(([t, u]) => {
+  try {
+    localStorage.setItem('regin_auth_token', t)
+    localStorage.setItem('regin_auth_user', u)
+  } catch { /* storage unavailable; the guard will bounce to /login */ }
+}, [token, JSON.stringify({
+  id: Number(opts.user), username: opts.username, role: opts.role,
+})])
 
 const warnings = []
 const url = opts.base.replace(/\/$/, '') + opts.route
