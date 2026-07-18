@@ -6,6 +6,7 @@ import SessionRow from '../components/SessionRow.vue'
 import SessionTags from '../components/SessionTags.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
+import Input from '../components/ui/Input.vue'
 import Icon from '../components/ui/Icon.vue'
 import Select from '../components/ui/Select.vue'
 import { useConfirm } from '../composables/useConfirm'
@@ -525,13 +526,13 @@ function timeTitle(s) {
            trace-id (whichever was last edited). -->
       <div class="session-filters__row">
         <div class="search-group">
-          <input
+          <Input
             v-model="searchInput"
             type="search"
             placeholder="Search sessions…"
-            class="input search-input focus-visible:outline-2 focus-visible:outline-blue-500"
+            class="search-input focus-visible:outline-2 focus-visible:outline-blue-500"
             aria-label="Search sessions"
-          >
+          />
           <Select
             v-model="searchScope"
             :options="SCOPE_OPTIONS"

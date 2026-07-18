@@ -9,6 +9,7 @@ import StatCard from '../components/StatCard.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import SchemaExpansionPanel from '../components/SchemaExpansionPanel.vue'
 import Button from '../components/ui/Button.vue'
+import Input from '../components/ui/Input.vue'
 import Tabs from '../components/ui/Tabs.vue'
 
 const { confirm } = useConfirm()
@@ -350,9 +351,9 @@ onMounted(loadSchemas)
 
     <div class="toolbar">
       <div class="toolbar-search">
-        <input
+        <Input
           type="search"
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500"
+          class="focus-visible:outline-2 focus-visible:outline-blue-500"
           :placeholder="kindFilter === 'hook_event' ? 'Search event name…' : 'Search tool name…'"
           v-model="search"
         />

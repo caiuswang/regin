@@ -6,6 +6,7 @@ import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
+import Input from '../components/ui/Input.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import PatternFolderImportModal from '../components/PatternFolderImportModal.vue'
 import PatternCreateForm from '../components/PatternCreateForm.vue'
@@ -341,13 +342,13 @@ const skillBadge = {
             >{{ reindexing ? 'Starting…' : 'Re-embed' }}</button>
           </template>
         </span>
-        <input
+        <Input
           v-if="denseOn"
           v-model="denseQuery"
           type="search"
           aria-label="Dense search query"
           placeholder="describe what the pattern should do…"
-          class="input dense-input focus-visible:outline-2 focus-visible:outline-blue-500"
+          class="dense-input focus-visible:outline-2 focus-visible:outline-blue-500"
           @keyup.enter="runDenseSearch"
         />
         <Button
@@ -498,9 +499,9 @@ const skillBadge = {
             <p class="modal-text">{{ conflictMsg }}</p>
             <div v-if="conflictRenaming" class="mt-3">
               <label class="block text-sm font-medium text-slate-700 mb-1">New slug</label>
-              <input v-model="conflictNewSlug" type="text" aria-label="New slug" placeholder="e.g. debug-hooks-v2"
-                class="input font-mono focus-visible:outline-2 focus-visible:outline-blue-500"
-                @keydown.enter.prevent="conflictRename">
+              <Input v-model="conflictNewSlug" type="text" aria-label="New slug" placeholder="e.g. debug-hooks-v2"
+                class="font-mono focus-visible:outline-2 focus-visible:outline-blue-500"
+                @keydown.enter.prevent="conflictRename" />
             </div>
           </div>
           <div class="modal-footer">

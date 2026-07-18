@@ -4,6 +4,7 @@ import api from '../api'
 import Card from './Card.vue'
 import Button from './ui/Button.vue'
 import Checkbox from './ui/Checkbox.vue'
+import Input from './ui/Input.vue'
 import Select from './ui/Select.vue'
 import { useFlash } from '../composables/useFlash'
 
@@ -123,11 +124,11 @@ onMounted(load)
                 <span v-if="a.builtin" class="badge badge-purple">built-in</span>
               </span>
             </Checkbox>
-            <input
+            <Input
               v-model="a.description"
-              class="input aspect-desc focus-visible:outline-2 focus-visible:outline-blue-500"
+              class="aspect-desc focus-visible:outline-2 focus-visible:outline-blue-500"
               placeholder="what the judge should check"
-            >
+            />
             <Button
               variant="secondary"
               size="sm"
@@ -141,18 +142,18 @@ onMounted(load)
         </div>
 
         <div class="field add-aspect">
-          <input
+          <Input
             v-model="draft.label"
-            class="input focus-visible:outline-2 focus-visible:outline-blue-500"
+            class="focus-visible:outline-2 focus-visible:outline-blue-500"
             placeholder="new aspect name (e.g. Test coverage)"
             @keyup.enter="addAspect"
-          >
-          <input
+          />
+          <Input
             v-model="draft.description"
-            class="input aspect-desc focus-visible:outline-2 focus-visible:outline-blue-500"
+            class="aspect-desc focus-visible:outline-2 focus-visible:outline-blue-500"
             placeholder="what it checks"
             @keyup.enter="addAspect"
-          >
+          />
           <Button
             variant="secondary"
             size="sm"

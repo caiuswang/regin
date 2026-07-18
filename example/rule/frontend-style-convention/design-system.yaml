@@ -16,8 +16,8 @@
   rationale: |
     One Button primitive (components/ui/Button.vue) is the single source of
     truth for variant/size/state styling and the focus ring. Raw <button>
-    elements re-derive styling by hand and drift (the audit found ~356 with
-    11 visual variants and 3 focus-ring styles).
+    elements re-derive styling by hand and drift into divergent variants and
+    focus-ring treatments.
   fix_hint: |
     Replace with <Button variant="primary|secondary|danger|ghost|link"
     size="sm|md|lg|icon">. Import from components/ui/Button.vue.
@@ -40,9 +40,10 @@
   triggers:
     - "src/**/*.vue"
   rationale: |
-    The audit found 35 raw <select> across 3 divergent styling patterns
-    (.input / .topics-input / bare inline) with no disabled handling.
-    components/ui/Select.vue gives one consistent, accessible control.
+    Raw <select> elements drift across divergent styling patterns
+    (.input / .topics-input / bare inline) with no consistent disabled
+    handling. components/ui/Select.vue gives one consistent, accessible
+    control.
   fix_hint: |
     Replace with <Select v-model="x" :options="opts" placeholder="…" />.
     options accept strings or { value, label, disabled }.
@@ -51,6 +52,56 @@
   options:
     tags: [select]
     replacement: "the <Select> primitive (components/ui/Select.vue)"
+    skip_path_includes:
+      - "/components/ui/"
+
+- id: prefer_input_primitive
+  checker: prefer_ds_primitive
+  summary: Use the <Input> primitive instead of a raw text <input>
+  severity: warn
+  category: interaction
+  check_kind: template-ast
+  selector_scope: input
+  triggers:
+    - "src/**/*.vue"
+  rationale: |
+    components/ui/Input.vue is the single token-backed text field (`.input`
+    class, focus ring, aria-invalid error state). Raw text <input>s restyle
+    ad-hoc and skip the error affordance. Non-text inputs (checkbox/radio via
+    prefer_checkbox_radio_primitive, file uploads, etc.) are excluded.
+  fix_hint: |
+    Replace with <Input v-model="x" type="text|search|number|email"
+    placeholder="…" :error="…" />. Import from components/ui/Input.vue.
+  design_token_refs:
+    - focus-ring
+  options:
+    tags: [input]
+    exclude_input_types: [checkbox, radio, file, submit, button, image, reset, range, color, hidden]
+    replacement: "the <Input> primitive (components/ui/Input.vue)"
+    skip_path_includes:
+      - "/components/ui/"
+
+- id: prefer_textarea_primitive
+  checker: prefer_ds_primitive
+  summary: Use the <Textarea> primitive instead of a raw <textarea>
+  severity: warn
+  category: interaction
+  check_kind: template-ast
+  selector_scope: textarea
+  triggers:
+    - "src/**/*.vue"
+  rationale: |
+    components/ui/Textarea.vue shares the token-backed `.input` look, the
+    focus ring, and the aria-invalid error state with Input. Raw <textarea>s
+    restyle by hand and drift.
+  fix_hint: |
+    Replace with <Textarea v-model="x" :rows="4" placeholder="…" />.
+    Import from components/ui/Textarea.vue.
+  design_token_refs:
+    - focus-ring
+  options:
+    tags: [textarea]
+    replacement: "the <Textarea> primitive (components/ui/Textarea.vue)"
     skip_path_includes:
       - "/components/ui/"
 

@@ -7,6 +7,7 @@ import Badge from '../components/Badge.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
+import Input from '../components/ui/Input.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -244,9 +245,9 @@ function ruleRate(checks, fired) {
           <p class="text-xs text-slate-500 mb-4">If active, the deployed skill is redeployed immediately.</p>
           <div class="mb-3 max-w-sm">
             <label class="field-label">Name</label>
-            <input type="text" v-model="editName"
+            <Input type="text" v-model="editName"
               aria-label="Experiment name"
-              :class="['input focus-visible:outline-2 focus-visible:outline-blue-500', editErrors.name ? 'is-invalid' : '']">
+              :class="['focus-visible:outline-2 focus-visible:outline-blue-500', editErrors.name ? 'is-invalid' : '']" />
             <p v-if="editErrors.name" class="field-error">{{ editErrors.name }}</p>
           </div>
           <div class="mb-3">

@@ -7,6 +7,7 @@ import Badge from '../components/Badge.vue'
 import StatCard from '../components/StatCard.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import Button from '../components/ui/Button.vue'
+import Input from '../components/ui/Input.vue'
 import Select from '../components/ui/Select.vue'
 
 const { enabled: diagEnabled, setEnabled: setDiag } = useDiagnosticsState()
@@ -177,9 +178,9 @@ onMounted(load)
       </label>
       <label class="field">
         <span class="field-label">Tool</span>
-        <input
+        <Input
           type="search" placeholder="exact name…"
-          class="input focus-visible:outline-2 focus-visible:outline-blue-500"
+          class="focus-visible:outline-2 focus-visible:outline-blue-500"
           v-model="toolFilter" @change="load"
         />
       </label>
