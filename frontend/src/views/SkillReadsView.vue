@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import SkillRoiTable from '../components/SkillRoiTable.vue'
 import CursorControls from '../components/CursorControls.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
@@ -39,6 +40,9 @@ const skillFilter = computed(() => extras.value.skill_filter || null)
 const sessionFilter = computed(() => extras.value.session_filter || null)
 const stats = computed(() => extras.value.stats || [])
 const sessions = computed(() => extras.value.sessions || [])
+const neverFired = computed(() => extras.value.never_fired || [])
+const totalUses = computed(() => stats.value.reduce((n, r) => n + (r.total || 0), 0))
+const showEvents = ref(false)
 
 onMounted(load)
 watch(() => route.query, load)
@@ -125,6 +129,18 @@ function shortTestName(nodeid) {
     </div>
     <!-- /sticky page header -->
 
+    <Card :no-padding="true" class="mb-4">
+      <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">
+        Skill usage
+        <span class="text-gray-400 font-normal">
+          ({{ stats.length }} skills, {{ totalUses }} uses)
+        </span>
+      </div>
+      <div class="overflow-x-auto lg:overflow-x-clip">
+        <SkillRoiTable :rows="stats" />
+      </div>
+    </Card>
+
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
       <Card :no-padding="true">
         <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Sessions <span class="text-gray-400 font-normal">(recent 50)</span></div>
@@ -139,7 +155,7 @@ function shortTestName(nodeid) {
                 <template v-if="s.is_test">
                   <span
                     class="ml-2 inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                    title="Test session (span attributes carry is_test=true)"
+                    title="Test session (sessions.is_test = 1)"
                   >test</span>
                   <span
                     v-if="s.test_name"
@@ -170,26 +186,35 @@ function shortTestName(nodeid) {
       </Card>
 
       <Card :no-padding="true">
-        <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Per-skill summary</div>
-        <div class="overflow-x-auto lg:overflow-x-clip">
-        <table v-if="stats.length" class="tbl">
-          <thead><tr><th>Skill</th><th class="text-right">Reads</th><th>Last seen</th></tr></thead>
-          <tbody>
-            <tr v-for="s in stats" :key="s.skill_id">
-              <td><router-link :to="`/skills/${s.skill_id}`" class="text-blue-600 hover:underline"><code class="text-xs">{{ s.skill_id }}</code></router-link></td>
-              <td class="text-right">{{ s.total }}</td>
-              <td class="text-gray-400 text-xs">{{ fmtDate(s.last_seen) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-else class="p-4 text-sm text-gray-400">No trace logs yet.</p>
+        <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">
+          Never fired
+          <span class="text-gray-400 font-normal">
+            ({{ neverFired.length }} deployed, 0 uses)
+          </span>
         </div>
+        <p v-if="skillFilter || sessionFilter" class="p-4 text-sm text-gray-400">
+          Clear the filter to see skills that have never been used.
+        </p>
+        <div v-else-if="neverFired.length" class="p-3 flex flex-wrap gap-1.5">
+          <code v-for="id in neverFired" :key="id" class="never-chip">{{ id }}</code>
+        </div>
+        <p v-else class="p-4 text-sm text-gray-400">
+          Every deployed skill has been used at least once.
+        </p>
       </Card>
     </div>
 
     <Card :no-padding="true">
-      <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm">Recent events</div>
-      <div class="overflow-x-auto lg:overflow-x-clip">
+      <div class="px-4 py-2.5 bg-gray-50 border-b border-gray-200 font-semibold text-sm flex items-center gap-2">
+        <span>Recent events</span>
+        <span class="text-gray-400 font-normal">(raw log)</span>
+        <Button variant="ghost" size="sm" class="ml-auto"
+          :aria-expanded="showEvents ? 'true' : 'false'"
+          @click="showEvents = !showEvents">
+          {{ showEvents ? 'Hide' : 'Show' }}
+        </Button>
+      </div>
+      <div v-if="showEvents" class="overflow-x-auto lg:overflow-x-clip">
       <table v-if="items.length" class="tbl hidden sm:table">
         <thead><tr><th>When</th><th>Skill</th><th>Source</th><th>Session</th><th>File / Args</th></tr></thead>
         <tbody>
@@ -213,7 +238,7 @@ function shortTestName(nodeid) {
         </tbody>
       </table>
       </div>
-      <ul v-if="items.length" class="sm:hidden divide-y divide-gray-200">
+      <ul v-if="showEvents && items.length" class="sm:hidden divide-y divide-gray-200">
         <li v-for="r in items" :key="r.id" class="p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2 mb-1">
             <router-link :to="`/skills/${r.skill_id}`" class="text-blue-600 hover:underline"><code class="text-xs">{{ r.skill_id }}</code></router-link>
@@ -229,9 +254,9 @@ function shortTestName(nodeid) {
           </div>
         </li>
       </ul>
-      <p v-if="!items.length" class="p-4 text-sm text-gray-400">No events match the current filter.</p>
+      <p v-if="showEvents && !items.length" class="p-4 text-sm text-gray-400">No events match the current filter.</p>
       <CursorControls
-        v-if="items.length"
+        v-if="showEvents && items.length"
         :count="items.length"
         :has-next="hasNext"
         :loading-more="loadingMore"
@@ -251,6 +276,14 @@ function shortTestName(nodeid) {
    the card — so the th stays static there. */
 .sticky-page-root :deep(.card) {
   overflow: visible !important;
+}
+.never-chip {
+  font-size: 0.6875rem;
+  color: var(--color-slate-600);
+  background: var(--color-slate-50);
+  border: 1px solid var(--color-slate-200);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.35rem;
 }
 @media (min-width: 1024px) {
   .sticky-page-root :deep(.tbl > thead > tr > th) {

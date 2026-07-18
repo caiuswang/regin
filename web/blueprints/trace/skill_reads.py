@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from flask import request, jsonify, Response
 
 from lib import hook_plugin as _hp
+from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.orm.models import (
     PlanSession, PromptImage, RuleTrigger, Session as SessionModel,
@@ -89,6 +90,24 @@ def api_ingest_skill_read():
         return jsonify({'ok': True, 'skipped_duplicate': False})
 
 
+def _never_fired_skills(stats: list[dict]) -> list[str]:
+    """Deployed skills with no recorded read, invoke or launch.
+
+    The complement of the leaderboard: a skill that is costing context
+    budget in every session while never being reached. Registry lookup
+    failures degrade to an empty list — this panel is diagnostic, and a
+    missing registry should not take the whole dashboard down.
+    """
+    try:
+        from lib.skills import skill_registry
+        deployed = set(skill_registry.all_ids())
+    except (ImportError, OSError):
+        get_activity_logger("trace").error(
+            'never_fired_registry_unavailable', exc_info=True)
+        return []
+    return sorted(deployed - {row['skill_id'] for row in stats})
+
+
 @trace_bp.route('/api/skill-reads')
 def api_skill_reads():
     """Keyset-paginated skill-read dashboard.
@@ -118,6 +137,13 @@ def api_skill_reads():
     if cursor_token is None:
         envelope['stats'] = stats
         envelope['sessions'] = sessions
+        # "Deployed but never used" is a statement about the whole corpus, so
+        # it is only meaningful when nothing is filtered — under a `skill=`
+        # chip the complement of a one-row leaderboard is every other skill.
+        envelope['never_fired'] = (
+            [] if (skill_filter or session_filter)
+            else _never_fired_skills(stats)
+        )
     envelope['skill_filter'] = skill_filter
     envelope['session_filter'] = session_filter
     envelope['include_tests'] = include_tests

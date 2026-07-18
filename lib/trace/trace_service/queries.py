@@ -31,6 +31,43 @@ _TEST_EXCLUSION = (
 )
 
 
+# `skill_reads.read_at` is written as `datetime.now().isoformat()` — local
+# time, `T`-separated. SQLite's `datetime('now')` is UTC and space-separated,
+# so a naive comparison is wrong twice over: it shifts the window by the UTC
+# offset, and on the boundary day the `T` (0x54) sorts above the space (0x20),
+# pulling in reads from earlier that day. Normalise the cutoff to match.
+_LOCAL_CUTOFF = "replace(datetime('now','localtime','-{days} days'),' ','T')"
+
+
+def _skill_roi_rows(conn, where: str, params: list) -> list[dict]:
+    """Per-skill adoption rollup: how a skill was reached, how far it spread,
+    and whether its use is growing.
+
+    Split by `source` because the three are not interchangeable signals — a
+    skill that is only ever `read` is being pulled in as reference material,
+    while `invoke`/`launch` mean it was deliberately run.
+    """
+    w0 = _LOCAL_CUTOFF.format(days=7)
+    w14 = _LOCAL_CUTOFF.format(days=14)
+    rows = conn.execute(f"""
+        SELECT skill_id,
+               COUNT(*) AS total,
+               SUM(source = 'invoke') AS invokes,
+               SUM(source = 'read')   AS reads,
+               SUM(source = 'launch') AS launches,
+               COUNT(DISTINCT session_id) AS sessions,
+               SUM(read_at >= {w0}) AS recent,
+               SUM(read_at >= {w14} AND read_at < {w0}) AS prior,
+               MIN(read_at) AS first_seen,
+               MAX(read_at) AS last_seen
+        FROM skill_reads
+        {where}
+        GROUP BY skill_id
+        ORDER BY recent DESC, total DESC
+    """, params).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ── Skill reads ──────────────────────────────────────────────
 
 def list_skill_reads_page(
@@ -49,19 +86,28 @@ def list_skill_reads_page(
     """
     from lib.orm.engine import get_connection
 
-    test_exclusion = "" if include_tests else _TEST_EXCLUSION.format(col="session_id")
+    def build_where(prefix: str = "") -> tuple[str, list]:
+        """Every card on the page answers for the same filtered set.
 
-    conditions: list[str] = []
-    params: list = []
-    if skill_filter:
-        conditions.append("skill_id = ?")
-        params.append(skill_filter)
-    if session_filter:
-        conditions.append("session_id = ?")
-        params.append(session_filter)
-    if test_exclusion:
-        conditions.append(test_exclusion)
-    where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        The summaries used to apply only the test exclusion, so an active
+        `skill=` chip narrowed the event feed while the summary cards kept
+        reporting totals for all skills — two different populations shown
+        side by side under one filter.
+        """
+        conditions: list[str] = []
+        params: list = []
+        if skill_filter:
+            conditions.append(f"{prefix}skill_id = ?")
+            params.append(skill_filter)
+        if session_filter:
+            conditions.append(f"{prefix}session_id = ?")
+            params.append(session_filter)
+        if not include_tests:
+            conditions.append(_TEST_EXCLUSION.format(col=f"{prefix}session_id"))
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        return where, params
+
+    where, params = build_where()
     base_sql = f"SELECT * FROM skill_reads{where}"
 
     conn = get_connection()
@@ -75,17 +121,9 @@ def list_skill_reads_page(
         stats: list[dict] = []
         sessions: list[dict] = []
         if cursor_token is None:
-            stats_where = f" WHERE {test_exclusion}" if test_exclusion else ""
-            stats_rows = conn.execute(f"""
-                SELECT skill_id, COUNT(*) as total, MAX(read_at) as last_seen
-                FROM skill_reads{stats_where}
-                GROUP BY skill_id ORDER BY last_seen DESC
-            """).fetchall()
-            stats = [dict(r) for r in stats_rows]
+            stats = _skill_roi_rows(conn, where, params)
 
-            sessions_where = (
-                'WHERE ' + _TEST_EXCLUSION.format(col="sr.session_id")
-            ) if test_exclusion else ''
+            sessions_where, sessions_params = build_where("sr.")
             sessions_rows = conn.execute(f"""
                 WITH plan_latest AS (
                     SELECT session_id, plan_filename,
@@ -108,7 +146,7 @@ def list_skill_reads_page(
                 {sessions_where}
                 GROUP BY COALESCE(sr.session_id, '')
                 ORDER BY last_seen DESC LIMIT 50
-            """).fetchall()
+            """, sessions_params).fetchall()
             sessions = [dict(r) for r in sessions_rows]
         return page, stats, sessions
     finally:
