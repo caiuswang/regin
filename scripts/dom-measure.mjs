@@ -42,6 +42,13 @@
  *                         the bug ("z-index does nothing", "it's cut off",
  *                         "position:fixed anchors to the wrong box").
  *   --nth <i>             explain the i-th match instead of the first
+ *   --rules <selector>    repeatable; which CSS rule actually WON for each
+ *                         layout property, with source file:line and the
+ *                         declarations it beat (CDP getMatchedStylesForNode)
+ *   --rules-props <list>  comma-separated properties for --rules, or "all"
+ *   --overlaps <selector> repeatable; sweep a table/container across ALL rows
+ *                         for text spill, child overlap, sticky-header drift
+ *                         and squished columns
  *   --tokens [substr]     dump resolved CSS custom properties (optionally
  *                         filtered by substring) as they compute at runtime
  *   --shot <path>         also write a full-page screenshot here
@@ -54,7 +61,8 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
 
-import { explainElement, resolveTokens } from './lib/dom-introspect.mjs'
+import { explainElement, resolveTokens, scanOverlaps } from './lib/dom-introspect.mjs'
+import { matchedRules } from './lib/matched-rules.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -70,6 +78,7 @@ function parseArgs(argv) {
     user: '1', username: 'pw', role: 'admin',
     reveal: [], rect: [], explain: [], shot: null, viewport: '1280x1100',
     timeout: 5000, headed: false, tokens: null, nth: null,
+    rules: [], rulesProps: null, overlaps: [],
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -85,6 +94,9 @@ function parseArgs(argv) {
       case '--rect': opts.rect.push(next()); break
       case '--explain': opts.explain.push(next()); break
       case '--nth': opts.nth = Number(next()); break
+      case '--rules': opts.rules.push(next()); break
+      case '--rules-props': opts.rulesProps = next(); break
+      case '--overlaps': opts.overlaps.push(next()); break
       // Optional value: a bare --tokens dumps everything, so only consume
       // the next argv entry when it isn't another flag.
       case '--tokens':
@@ -267,6 +279,31 @@ for (const sel of opts.explain) {
   }
 }
 
+// ---- which CSS rule won -----------------------------------------------------
+const ruleReports = []
+for (const sel of opts.rules) {
+  try {
+    const props = opts.rulesProps
+      ? (opts.rulesProps === 'all' ? 'all' : opts.rulesProps.split(',').map((p) => p.trim()))
+      : null
+    ruleReports.push(await matchedRules(page, sel, { props }))
+  } catch (e) {
+    warnings.push(`rules "${sel}" failed: ${e.message.split('\n')[0]}`)
+  }
+}
+
+// ---- overlap sweep ----------------------------------------------------------
+const overlapReports = []
+for (const sel of opts.overlaps) {
+  try {
+    const loc = page.locator(sel).first()
+    await loc.waitFor({ state: 'attached', timeout: opts.timeout })
+    overlapReports.push({ selector: sel, ...(await loc.evaluate(scanOverlaps, { maxRows: 400 })) })
+  } catch (e) {
+    warnings.push(`overlaps "${sel}" failed: ${e.message.split('\n')[0]}`)
+  }
+}
+
 // ---- resolved design tokens ------------------------------------------------
 let tokens = null
 if (opts.tokens !== null) {
@@ -285,5 +322,7 @@ await browser.close()
 
 const payload = { url, rects, pairs, warnings, shot: opts.shot || null }
 if (opts.explain.length) payload.explained = explained
+if (opts.rules.length) payload.rules = ruleReports
+if (opts.overlaps.length) payload.overlaps = overlapReports
 if (tokens) payload.tokens = tokens
 console.log(JSON.stringify(payload, null, 2))

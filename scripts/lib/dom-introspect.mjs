@@ -257,6 +257,151 @@ export function explainElement(el, opts) {
 }
 
 /**
+ * Sweep a container (usually a table) for the collision shapes that produce
+ * "the cells overlap each other", across **every** row rather than the
+ * handful a single --explain can cover.
+ *
+ * Four distinct failures, because they need different fixes:
+ *  - textSpill      content wider than its box, reaching into the next cell.
+ *                   Measured with a Range, since a fixed-width box keeps its
+ *                   rect no matter how far the text spills.
+ *  - childOverlap   two elements inside one cell painted over each other.
+ *  - headerDrift    a sticky thead th rendering away from its own thead —
+ *                   the header floats onto the body rows.
+ *  - squished       a column crushed so narrow it renders ~one char per line.
+ */
+export function scanOverlaps(root, opts) {
+  const maxRows = (opts && opts.maxRows) || 400
+  const out = { headerDrift: [], textSpill: [], childOverlap: [], squished: [] }
+
+  /**
+   * Rightmost pixel of text that is actually *painted* inside `cell`, or
+   * null when there is none.
+   *
+   * Deliberately not `range.selectNodeContents(cell)`: that unions the rects
+   * of every descendant, so one wide inner element inflates the measurement
+   * even when its own container clips it — observed reporting a 9346px
+   * "spill" for a cell that renders fine. Walking text nodes and skipping any
+   * that sit inside a clipping ancestor measures what the eye sees.
+   */
+  const visibleTextRight = (cell) => {
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT)
+    let right = null
+    while (walker.nextNode()) {
+      const node = walker.currentNode
+      if (!node.nodeValue || !node.nodeValue.trim()) continue
+      let clipped = false
+      for (let p = node.parentElement; p && p !== cell; p = p.parentElement) {
+        const pcs = getComputedStyle(p)
+        if (/hidden|clip|auto|scroll/.test(pcs.overflow + pcs.overflowX)
+            || pcs.textOverflow === 'ellipsis') { clipped = true; break }
+      }
+      if (clipped) continue
+      const r = document.createRange()
+      r.selectNodeContents(node)
+      const rect = r.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) continue
+      right = right === null ? rect.right : Math.max(right, rect.right)
+    }
+    // The cell itself clipping means overflow is cut, not painted over a
+    // neighbour — truncation is a different (and lesser) problem.
+    const cs = getComputedStyle(cell)
+    if (/hidden|clip|auto|scroll/.test(cs.overflow + cs.overflowX)) return null
+    return right
+  }
+
+  const describe = (n) => {
+    const cls = (n.getAttribute && n.getAttribute('class') || '').trim()
+    return n.tagName.toLowerCase() + (cls ? '.' + cls.split(/\s+/).slice(0, 3).join('.') : '')
+  }
+  const tables = root.tagName === 'TABLE' ? [root] : [...root.querySelectorAll('table')]
+
+  for (const [ti, table] of tables.entries()) {
+    const headers = [...table.querySelectorAll('thead th')]
+    const label = (i) => (headers[i] && headers[i].textContent.trim()) || `col${i}`
+
+    const thead = table.querySelector('thead')
+    for (const th of headers) {
+      const tb = th.getBoundingClientRect()
+      if (!thead || tb.width === 0) continue
+      const drift = Math.round(tb.y - thead.getBoundingClientRect().y)
+      if (Math.abs(drift) > 1) {
+        out.headerDrift.push({
+          table: ti, header: th.textContent.trim().slice(0, 24), drift,
+          position: getComputedStyle(th).position,
+          top: getComputedStyle(th).top,
+        })
+      }
+    }
+
+    const rows = [...table.querySelectorAll('tbody tr')].slice(0, maxRows)
+    rows.forEach((row, ri) => {
+      const cells = [...row.children]
+      cells.forEach((cell, i) => {
+        const box = cell.getBoundingClientRect()
+        if (box.width === 0) return
+
+        const reach = visibleTextRight(cell)
+        const next = cells[i + 1] ? cells[i + 1].getBoundingClientRect() : null
+        const spill = reach === null ? 0
+          : (next ? reach - next.left : reach - box.right)
+        if (spill > 1) {
+          out.textSpill.push({
+            table: ti, row: ri, column: label(i), into: next ? label(i + 1) : '(edge)',
+            spill: Math.round(spill), boxWidth: Math.round(box.width),
+            textReach: Math.round(reach - box.left),
+            text: cell.textContent.trim().slice(0, 30),
+          })
+        }
+
+        const cs = getComputedStyle(cell)
+        const lh = parseFloat(cs.lineHeight) || 16
+        if (box.width < 40 && box.height > lh * 3) {
+          out.squished.push({
+            table: ti, row: ri, column: label(i),
+            width: Math.round(box.width), height: Math.round(box.height),
+          })
+        }
+
+        const kids = [...cell.children].filter((k) => k.getBoundingClientRect().width > 0)
+        for (let k = 0; k + 1 < kids.length; k++) {
+          const a = kids[k].getBoundingClientRect()
+          const b = kids[k + 1].getBoundingClientRect()
+          // Same visual line only; stacked children legitimately share an x.
+          if (Math.abs(a.y - b.y) < Math.min(a.height, b.height)) {
+            const ov = a.right - b.left
+            if (ov > 1) {
+              out.childOverlap.push({
+                table: ti, row: ri, column: label(i), overlap: Math.round(ov),
+                between: `${describe(kids[k])} / ${describe(kids[k + 1])}`,
+              })
+            }
+          }
+        }
+      })
+    })
+  }
+
+  // Collapse per-column so a 400-row table reports a finding once, with its
+  // worst case, instead of 400 near-identical lines.
+  const worstPerColumn = (list, key) => {
+    const best = new Map()
+    for (const item of list) {
+      const k = `${item.table}|${item.column}`
+      if (!best.has(k) || item[key] > best.get(k)[key]) best.set(k, item)
+    }
+    return [...best.values()].sort((a, b) => b[key] - a[key])
+  }
+  return {
+    headerDrift: out.headerDrift.slice(0, 10),
+    textSpill: worstPerColumn(out.textSpill, 'spill').slice(0, 10),
+    childOverlap: worstPerColumn(out.childOverlap, 'overlap').slice(0, 10),
+    squished: worstPerColumn(out.squished, 'height').slice(0, 10),
+    scanned: { tables: tables.length },
+  }
+}
+
+/**
  * Resolved values of the CSS custom properties in effect at the document
  * root, optionally narrowed to names containing `filter`.
  *
