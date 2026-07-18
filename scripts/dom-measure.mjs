@@ -35,6 +35,15 @@
  *                           text:<string>         scroll the text into view
  *                           eval:<js>             run arbitrary JS in the page
  *   --rect <selector>     repeatable; measure first match of each
+ *   --explain <selector>  repeatable; full diagnosis of the first match —
+ *                         computed styles, the ancestor chain, and which
+ *                         ancestor clips / scrolls / opens a stacking
+ *                         context. Use when a rect alone doesn't explain
+ *                         the bug ("z-index does nothing", "it's cut off",
+ *                         "position:fixed anchors to the wrong box").
+ *   --nth <i>             explain the i-th match instead of the first
+ *   --tokens [substr]     dump resolved CSS custom properties (optionally
+ *                         filtered by substring) as they compute at runtime
  *   --shot <path>         also write a full-page screenshot here
  *   --viewport <WxH>      viewport (default 1280x1100)
  *   --timeout <ms>        per-step timeout (default 5000)
@@ -45,6 +54,8 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
 
+import { explainElement, resolveTokens } from './lib/dom-introspect.mjs'
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 
@@ -53,8 +64,8 @@ function parseArgs(argv) {
   const opts = {
     route: '/', base: 'http://localhost:5173', token: null,
     user: '1', username: 'pw', role: 'editor',
-    reveal: [], rect: [], shot: null, viewport: '1280x1100',
-    timeout: 5000, headed: false,
+    reveal: [], rect: [], explain: [], shot: null, viewport: '1280x1100',
+    timeout: 5000, headed: false, tokens: null, nth: null,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -68,6 +79,13 @@ function parseArgs(argv) {
       case '--role': opts.role = next(); break
       case '--reveal': opts.reveal.push(next()); break
       case '--rect': opts.rect.push(next()); break
+      case '--explain': opts.explain.push(next()); break
+      case '--nth': opts.nth = Number(next()); break
+      // Optional value: a bare --tokens dumps everything, so only consume
+      // the next argv entry when it isn't another flag.
+      case '--tokens':
+        opts.tokens = (argv[i + 1] && !argv[i + 1].startsWith('--')) ? next() : ''
+        break
       case '--shot': opts.shot = next(); break
       case '--viewport': opts.viewport = next(); break
       case '--timeout': opts.timeout = Number(next()); break
@@ -194,10 +212,66 @@ for (let i = 0; i + 1 < rects.length; i++) {
   })
 }
 
+// ---- explain: computed styles + ancestor chain for one element -------------
+const explained = []
+for (const sel of opts.explain) {
+  try {
+    const all = page.locator(sel)
+    await all.first().waitFor({ state: 'attached', timeout: opts.timeout })
+    const matchCount = await all.count()
+    const index = opts.nth ?? 0
+    const out = await all.nth(index).evaluate(explainElement, { maxDepth: 12 })
+    out.selector = sel
+    out.matchCount = matchCount
+    out.index = index
+
+    // A selector's first DOM match is often a hidden one (an unmounted tab,
+    // a template row) while the element the user can actually see sits
+    // later. Without this, the agent concludes "it's hidden" and starts
+    // hunting for a reveal step that was never needed.
+    if (out.rendered === false && matchCount > 1) {
+      const limit = Math.min(matchCount, 20)
+      for (let i = 0; i < limit; i++) {
+        if (i === index) continue
+        const box = await all.nth(i).boundingBox().catch(() => null)
+        if (box && box.width > 0) {
+          out.hint = `match #${index} is not rendered, but match #${i} is `
+                   + `(${Math.round(box.width)}×${Math.round(box.height)} at `
+                   + `${Math.round(box.x)},${Math.round(box.y)}). `
+                   + `Re-run with --nth ${i}, or use a more specific selector.`
+          break
+        }
+      }
+      if (!out.hint) {
+        out.hint = `none of the first ${limit} matches are rendered — the `
+                 + `whole subtree is hidden, so the missing reveal step is a `
+                 + `tab/panel above it, not this element.`
+      }
+    }
+    explained.push(out)
+  } catch (e) {
+    warnings.push(`explain "${sel}" failed: ${e.message.split('\n')[0]}`)
+    explained.push({ selector: sel, found: false })
+  }
+}
+
+// ---- resolved design tokens ------------------------------------------------
+let tokens = null
+if (opts.tokens !== null) {
+  try {
+    tokens = await page.evaluate(resolveTokens, opts.tokens || null)
+  } catch (e) {
+    warnings.push(`tokens failed: ${e.message.split('\n')[0]}`)
+  }
+}
+
 if (opts.shot) {
   await page.screenshot({ path: opts.shot, fullPage: true })
 }
 
 await browser.close()
 
-console.log(JSON.stringify({ url, rects, pairs, warnings, shot: opts.shot || null }, null, 2))
+const payload = { url, rects, pairs, warnings, shot: opts.shot || null }
+if (opts.explain.length) payload.explained = explained
+if (tokens) payload.tokens = tokens
+console.log(JSON.stringify(payload, null, 2))
