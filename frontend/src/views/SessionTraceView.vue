@@ -907,15 +907,17 @@ const {
          no instructional text. `pb-20` below lg keeps the last rows
          scrollable clear of the fixed "Follow latest" pill. -->
     <div class="mt-8 mb-4 pb-20 lg:pb-0 flex items-center justify-center text-slate-400">
-      <span v-if="reloading" class="inline-flex items-center gap-2 text-[12px]">
-        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+      <!-- Fixed-height, same-font-size row so the reload↔idle swap can't change
+           the footer height: "Loading" and "End of timeline" share text-[11px]
+           and the spinner sits inside the h-4 line. Otherwise, parked at the
+           bottom of a live session, the tiny per-poll height change clamped the
+           scroll and the feed twitched up/down every few seconds. -->
+      <span class="inline-flex items-center justify-center gap-2 h-4 text-[11px] tracking-wider uppercase">
+        <svg v-if="reloading" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
           <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
           <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        <span>Loading</span>
-      </span>
-      <span v-else class="text-[11px] tracking-wider uppercase">
-        End of timeline
+        {{ reloading ? 'Loading' : 'End of timeline' }}
       </span>
     </div>
   </div>
