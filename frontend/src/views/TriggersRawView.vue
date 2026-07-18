@@ -247,15 +247,24 @@ async function resetTriggers() {
 .sticky-page-root :deep(.card) {
   overflow: visible !important;
 }
+/* `top: 0`, not the page-header height: each table sits in its own
+   `.overflow-x-auto` wrapper, and `overflow-x: auto` forces `overflow-y`
+   to `auto` too — so that wrapper, not `.content-scroll`, is the sticky
+   scrollport. Offsetting by the page header parked the header
+   `--regin-trace-header-h - 1rem` (98px) *below* its own thead, on top of
+   the first body rows. Measured drift was 98-128px at every viewport, so
+   the header never actually pinned to the page header; it only overlapped
+   content.
+
+   Widening the override to the wrapper would resolve sticky against
+   `.content-scroll` and make the offset correct, but it also removes the
+   horizontal scroller: measured 155px of page overflow at 1024px and
+   411px at 768px. Correct rendering with no pinning beats pinning that
+   never worked plus overflow. */
 .sticky-page-root :deep(.tbl > thead > tr > th) {
   position: sticky;
-  top: calc(var(--regin-trace-header-h, 0px) - 1rem);
+  top: 0;
   z-index: 5;
   background: var(--color-slate-50);
-}
-@media (min-width: 1024px) {
-  .sticky-page-root :deep(.tbl > thead > tr > th) {
-    top: calc(var(--regin-trace-header-h, 0px) - 1.5rem);
-  }
 }
 </style>
