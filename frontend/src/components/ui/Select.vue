@@ -8,7 +8,7 @@
 // { value, label, disabled, count }, or { separator: true } to rule a group.
 import { computed } from 'vue'
 import {
-  SelectRoot, SelectTrigger, SelectValue, SelectIcon, SelectPortal,
+  SelectRoot, SelectTrigger, SelectIcon, SelectPortal,
   SelectContent, SelectViewport, SelectItem, SelectItemIndicator, SelectItemText,
   SelectSeparator,
 } from 'reka-ui'
@@ -54,6 +54,18 @@ const model = computed({
   get: () => (props.modelValue == null ? undefined : toReka(props.modelValue)),
   set: (v) => emit('update:modelValue', v === EMPTY ? '' : v),
 })
+
+// Render the trigger label ourselves from modelValue + options rather than
+// Reka's <SelectValue>: SelectValue mirrors the selected item from Reka's
+// internal collection, which goes empty for one frame during the
+// open→select→close transition — collapsing a width:auto trigger to the
+// chevron and reflowing any sibling row (the facet-pill "blink"). A
+// props-derived label never empties, so the trigger width stays stable.
+const selectedItem = computed(() =>
+  items.value.find((o) => !o.separator && o.value === props.modelValue) || null,
+)
+const isPlaceholder = computed(() => props.modelValue == null || selectedItem.value == null)
+const displayLabel = computed(() => (selectedItem.value ? selectedItem.value.label : props.placeholder))
 </script>
 
 <template>
@@ -62,7 +74,7 @@ const model = computed({
       v-bind="$attrs"
       :class="cn('input ds-select-trigger', block && 'is-block', bare && 'ds-select-trigger--bare', $props.class)"
     >
-      <SelectValue class="ds-select-value" :placeholder="placeholder" />
+      <span class="ds-select-value" :data-placeholder="isPlaceholder ? '' : undefined">{{ displayLabel }}</span>
       <SelectIcon class="ds-select-chevron">
         <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M6 8l4 4 4-4" stroke="currentColor" stroke-width="1.5"
