@@ -16,7 +16,9 @@ from __future__ import annotations
 import lib.memory.distill as distill
 
 # --- Frozen pre-refactor literals (do NOT edit to match the surface) ---------
-_FROZEN_DISTILL_PROMPT = """<role>
+_FROZEN_DISTILL_PROMPT = """# Distill a coding session into memory lessons
+
+<role>
 You distill a finished coding-agent session into a few REUSABLE memories
 for future sessions. Your job is to ABSTRACT the transferable rule behind
 what went wrong (or a hard-won, non-obvious fact) — never to narrate what

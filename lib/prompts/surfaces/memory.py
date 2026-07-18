@@ -39,7 +39,9 @@ SUPERSEDE_CHECK_SURFACE_ID = "memory-supersede-check"
 # blocks + a static `_OUTPUT_FORMAT`. Here the head and output contract are the
 # static body; `grader_block` / `notable_block` carry their own leading "\n\n"
 # separators (empty when the digest is empty) so the spacing is byte-identical.
-_DEFAULT_BODY_DISTILL = """<role>
+_DEFAULT_BODY_DISTILL = """# Distill a coding session into memory lessons
+
+<role>
 You distill a finished coding-agent session into a few REUSABLE memories
 for future sessions. Your job is to ABSTRACT the transferable rule behind
 what went wrong (or a hard-won, non-obvious fact) — never to narrate what
@@ -193,7 +195,9 @@ _DEFAULT_BODY_EXPAND = (
 # working row's fate, judges every suspect pair, and may propose a synthesis.
 # The evidence pack is built mechanically and bounded; the agent may pull
 # deeper evidence via the read-only memory CLI (`dream_allowed_tools`).
-_DEFAULT_BODY_DREAM = """<role>
+_DEFAULT_BODY_DREAM = """# Consolidate agent memory (reflect / dream pass)
+
+<role>
 You are the consolidation ("dream") pass over a coding agent's cross-session
 memory store. In ONE pass you decide the fate of each fresh working-tier
 memory, judge each suspect pair for contradiction, and may abstract a
@@ -427,6 +431,19 @@ _RETIRED_SLUG_HASHES = {
 for _slug, _hashes in _RETIRED_SLUG_HASHES.items():
     for _sha in _hashes:
         register_retired_default(_slug, sha256=_sha)
+
+# Active-surface body heals (distinct from the dead-slug deletes above): an
+# un-edited seed still hashing to one of these is healed by
+# `seed_builtin_skeletons` to the current titled default. These two prompts
+# spawn captured `claude --print` sessions, so leading them with a `#` header
+# instead of a raw `<role>` keeps their rows legible in the session list.
+for _slug, _sha in (
+    (DISTILL_SURFACE_ID,
+     "c5445de7c3cda9db9d9d80d8a5510bcda812efc3ac9fb80d0f87e775d95c8d7e"),
+    (DREAM_SURFACE_ID,
+     "959f3c5f5a0c34f349691dde23f871b1c093f7b64abffc49b63f586aec3779a4"),
+):
+    register_retired_default(_slug, sha256=_sha)
 
 __all__ = [
     "DISTILL_SURFACE_ID",

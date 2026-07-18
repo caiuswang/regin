@@ -43,7 +43,9 @@ _ASPECT_VERDICTS = {SATISFIED, NEEDS_REVISION, FAIL}
 # skeleton in /prompt-templates and build_combined_prompt() picks it up via
 # render_surface; these stay in-file only as the registry's lazy default.
 
-_ROLE = """<role>
+_ROLE = """# Grade an AI coding-agent session
+
+<role>
 You are a strict, independent judge for AI coding-agent sessions. You grade
 ONLY the dimensions requested below, each on its own, deciding every verdict
 from what the session's own recorded tool calls show — never from the

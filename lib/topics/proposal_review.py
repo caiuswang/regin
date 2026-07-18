@@ -123,10 +123,17 @@ def _is_sibling(tid: str, topic: Any, drafted: set[str], buckets: set[str]) -> b
     )
 
 
-def _sibling_lines(proposal: dict[str, Any], graph: dict[str, Any]) -> str:
+def _sibling_lines(repo: Path, proposal: dict[str, Any],
+                   graph: dict[str, Any]) -> str:
     """One bullet per approved topic sharing a bucket with a drafted topic
     (the drafted topics themselves excluded), each with a pointer to its wiki
-    page so the reviewer can open it and judge whether the draft restates it."""
+    page so the reviewer can open it and judge whether the draft restates it.
+
+    The pointer goes through `wiki_read_pointer` (the single authority for the
+    `wiki/<slug>.md` scheme) rather than a hand-built path, so a slugified id
+    resolves correctly and a topic with no wiki on disk degrades to a
+    placeholder instead of a dangling path the reviewer would try to open."""
+    from lib.topics.wiki import topic_wiki_page, wiki_read_pointer
     drafted, buckets = _drafted_ids_and_buckets(proposal)
     if not buckets:
         return ""
@@ -135,7 +142,8 @@ def _sibling_lines(proposal: dict[str, Any], graph: dict[str, Any]) -> str:
         if not _is_sibling(tid, topic, drafted, buckets):
             continue
         intent = (topic.get("intent") or topic.get("blurb") or "").strip()
-        lines.append(f"- {tid}: {intent}\n  wiki: .regin/topics/wiki/{tid}.md")
+        pointer = wiki_read_pointer(repo, topic_wiki_page(repo, tid))
+        lines.append(f"- {tid}: {intent}\n  wiki: {pointer}")
     return "\n".join(lines)
 
 
@@ -172,7 +180,7 @@ def _review_context(repo: Path, proposal_id: str,
     open_feedback = _open_feedback_lines(
         list_proposal_feedback_threads(repo, proposal_id)
     )
-    sibling_block = _sibling_block(_sibling_lines(proposal, _safe_graph(repo)))
+    sibling_block = _sibling_block(_sibling_lines(repo, proposal, _safe_graph(repo)))
     return open_feedback, sibling_block
 
 

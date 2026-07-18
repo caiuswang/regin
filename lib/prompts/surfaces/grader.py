@@ -29,7 +29,7 @@ operating on the resolved base body — see ``lib/grader/prompts.py``.
 
 from __future__ import annotations
 
-from lib.prompts.registry import register_surface
+from lib.prompts.registry import register_retired_default, register_surface
 
 CORRECTNESS_SURFACE_ID = "grader-correctness"
 PROCESS_SURFACE_ID = "grader-process"
@@ -128,6 +128,18 @@ register_surface(
     variables=(),
     tags=("grader", "combined"),
 )
+
+# Retired role-body hashes: an un-edited stale seed still hashing to one of
+# these is healed to the current default by `seed_builtin_skeletons`, so the
+# body change reaches existing installs instead of being pinned to the seed
+# (`render_surface` prefers the stored row). A reviewer-edited row never
+# matches and is left alone. Append a line each time `_ROLE` changes.
+for _sha in (
+    # `<role>`-first body, before the leading `# Grade an AI coding-agent
+    # session` title that keeps the judge session legible in the session list
+    "e3a91aca499b9951fb77311e9ff8dbf08dd932f77305203853a4bb6620058dd9",
+):
+    register_retired_default(COMBINED_ROLE_SURFACE_ID, sha256=_sha)
 
 register_surface(
     COMBINED_CORRECTNESS_SURFACE_ID,
