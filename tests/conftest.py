@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import sqlite3
 from pathlib import Path
 from typing import Iterator
 
@@ -18,62 +17,23 @@ import pytest
 
 # ── Span ingest isolation ─────────────────────────────────────
 
-_TEST_TRACE_IDS: set[str] = set()
-
-
 @pytest.fixture(autouse=True)
 def _mark_test_spans(monkeypatch):
-    """Stamp REGIN_TRACE_TEST=1 so spans emitted during a test land in
-    the DB tagged `is_test=1` and stay out of the user's default
-    sessions view, and record every trace_id posted so
-    `_end_test_sessions_at_teardown` can close them at suite end.
+    """Stamp REGIN_TRACE_TEST=1 so any span a test builds carries
+    `is_test=True` (see `hook_plugin.build_span`).
 
-    We don't block POSTs — tests that want to assert on persisted spans
-    rely on them actually landing. See the matching fixture in
-    `hook_manager/tests/conftest.py` for the full rationale.
+    This is now a *labelling* fixture only. It used to also let ingest
+    POSTs through to whatever dev server was listening, on the rationale
+    that "tests which assert on persisted spans rely on them actually
+    landing" — that rationale was false. Every test under `tests/` and
+    `hook_manager/tests/` stubs the post seam itself; the only tests that
+    genuinely need a span to land are `tests/trace/integration/`, which
+    drive a separate `claude` process over tmux and read back over HTTP,
+    so the in-process seam was never load-bearing for them. Meanwhile the
+    pass-through wrote thousands of rows into the developer's real DB.
+    The transport is severed in the root `conftest.py`.
     """
     monkeypatch.setenv('REGIN_TRACE_TEST', '1')
-    from lib import hook_plugin
-    original = hook_plugin.post_event
-
-    def _recording(endpoint, data, agent_type=None):
-        rows = data if isinstance(data, list) else [data]
-        for row in rows:
-            tid = isinstance(row, dict) and row.get('trace_id')
-            if isinstance(tid, str) and tid:
-                _TEST_TRACE_IDS.add(tid)
-        return original(endpoint, data, agent_type)
-
-    monkeypatch.setattr(hook_plugin, 'post_event', _recording)
-
-
-@pytest.fixture(scope='session', autouse=True)
-def _end_test_sessions_at_teardown():
-    """At suite teardown, emit `session.end` for every trace_id posted
-    during the run so the resulting sessions rows flip from 'active'
-    to 'ended' instead of cluttering the (include_tests=true) view as
-    perpetually-active test sessions."""
-    yield
-    if not _TEST_TRACE_IDS:
-        return
-    import os as _os
-    from lib import hook_plugin
-    # Per-test monkeypatch reverts before this teardown runs, so re-set
-    # REGIN_TRACE_TEST=1 so the closing session.end spans land tagged
-    # (otherwise teardown would create fresh is_test=0 sessions).
-    _os.environ['REGIN_TRACE_TEST'] = '1'
-    try:
-        for tid in sorted(_TEST_TRACE_IDS):
-            try:
-                hook_plugin.post_span(
-                    trace_id=tid,
-                    name='session.end',
-                    attributes={'reason': 'test_teardown'},
-                )
-            except Exception:
-                pass
-    finally:
-        _os.environ.pop('REGIN_TRACE_TEST', None)
 
 
 # ── Rule-engine setup ─────────────────────────────────────────
@@ -120,87 +80,12 @@ def configured_grit_engine(tmp_path, monkeypatch):
 
 
 # ── DB fixtures ───────────────────────────────────────────────
-
-@pytest.fixture(autouse=True)
-def tmp_db(tmp_path, monkeypatch) -> Path:
-    """Isolated SQLite file applied to every test (autouse).
-
-    `lib.orm.engine.DB_PATH` and the `lib.orm` engine cache point at a fresh
-    file under the test's `tmp_path`. Schema.sql is applied so any
-    table the code might touch exists.
-
-    Autouse because forgetting to declare this fixture leaks rows
-    into the developer's real DB — that bit us pre-Phase-A when
-    `fake_git_repo` didn't depend on it. The cost is small (~3ms
-    schema seed per test); the safety is absolute: no test can
-    write to the prod DB by accident.
-
-    The legacy `trace_db` fixture in `tests/test_trace_ingest.py`
-    predates this and applies a narrower schema to a separate tmp
-    file; it stacks harmlessly on top of `tmp_db` (its patch wins
-    inside the trace tests).
-    """
-    db_path = tmp_path / "test.db"
-
-    # Apply the full schema so any table the code might touch exists.
-    schema_path = (
-        Path(__file__).resolve().parent.parent / "db" / "schema.sql"
-    )
-    if schema_path.exists():
-        conn = sqlite3.connect(str(db_path))
-        try:
-            conn.executescript(schema_path.read_text())
-            conn.commit()
-        finally:
-            conn.close()
-
-    import lib.orm.engine as _db_module
-    monkeypatch.setattr(_db_module, "DB_PATH", str(db_path))
-
-    # Invalidate any cached SQLAlchemy engine so the next SessionLocal
-    # picks up the new URL.
-    from lib.orm import engine as _engine_module
-    _engine_module.dispose_engine()
-
-    yield db_path
-
-    _engine_module.dispose_engine()
-
-
-@pytest.fixture(autouse=True)
-def tmp_memory_db(tmp_path, monkeypatch) -> Path:
-    """Isolated agent-memory DB per test (autouse), mirroring `tmp_db`'s
-    guarantee for the main DB: no test can write the real
-    `db/regin_memory.db` by accident. The memory engine self-initializes
-    its schema on first use, so pointing the setting at a tmp file is the
-    whole setup. Dense recall is pinned off so no test loads the
-    SkillRouter models implicitly — tests that exercise the dense leg
-    inject a stub EmbeddingProvider instead. The auto-inject server leg
-    is pinned off too so no test makes a live HTTP call to a dev server
-    that happens to be on :8321 — its own tests stub `urlopen`."""
-    db_path = tmp_path / "memory_test.db"
-    from lib.settings import AgentMemoryConfig, settings
-    # Reset the whole block to pristine model defaults rather than mutating the
-    # live instance, so a developer's customized `config/settings.json` (e.g.
-    # `auto_inject: false`, a tuned `recall_min_score`, extra
-    # `inject_skip_commands`) can't leak into tests that read the singleton and
-    # silently turn the recall path off. Then layer the test-only DB + the
-    # dense/server-off pins on top.
-    fresh = AgentMemoryConfig()
-    fresh.db_path = db_path
-    fresh.dense_enabled = False
-    fresh.inject_dense_via_server = False
-    monkeypatch.setattr(settings, "agent_memory", fresh)
-
-    import lib.memory as memory
-    from lib.memory.engine import dispose_memory_engine
-    dispose_memory_engine()
-    memory.reset_store()
-
-    yield db_path
-
-    dispose_memory_engine()
-    memory.reset_store()
+#
+# `tmp_db` / `tmp_memory_db` moved to the repo-root `conftest.py` so that
+# `hook_manager/tests` — the second testpath, which had no DB isolation at
+# all — is covered by the same guarantee. They remain available here by
+# normal conftest inheritance, so `flask_client(tmp_db)` and
+# `fake_git_repo(tmp_path, tmp_db)` below still resolve.
 
 
 @pytest.fixture(autouse=True)

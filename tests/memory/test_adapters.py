@@ -14,7 +14,7 @@ from lib.memory.adapters import ExternalAgentLLM
 from lib.settings import TopicProposalExternalAgent, settings
 
 
-def test_complete_falls_back_to_caller_cwd(tmp_path, monkeypatch):
+def test_complete_falls_back_to_caller_cwd(tmp_path, monkeypatch, allow_subprocess_spawn):
     monkeypatch.setattr(settings, "topic_proposal_external_agents", {
         "claude": TopicProposalExternalAgent(command="pwd"),
     })
@@ -22,7 +22,7 @@ def test_complete_falls_back_to_caller_cwd(tmp_path, monkeypatch):
     assert out.strip() == str(tmp_path.resolve())
 
 
-def test_complete_config_cwd_overrides_caller_cwd(tmp_path, monkeypatch):
+def test_complete_config_cwd_overrides_caller_cwd(tmp_path, monkeypatch, allow_subprocess_spawn):
     configured = tmp_path / "configured"
     configured.mkdir()
     other = tmp_path / "other"
@@ -34,7 +34,7 @@ def test_complete_config_cwd_overrides_caller_cwd(tmp_path, monkeypatch):
     assert out.strip() == str(configured.resolve())
 
 
-def test_complete_expands_tilde_in_configured_cwd(tmp_path, monkeypatch):
+def test_complete_expands_tilde_in_configured_cwd(tmp_path, monkeypatch, allow_subprocess_spawn):
     """`TopicProposalExternalAgent.cwd` is a pydantic `Path`, which does not
     expand `~` on its own — subprocess.run would otherwise receive the
     literal string and fail to find the directory."""
@@ -50,7 +50,7 @@ def test_complete_expands_tilde_in_configured_cwd(tmp_path, monkeypatch):
     assert out.strip() == str((home / "configured").resolve())
 
 
-def test_complete_with_no_cwd_or_config_inherits_none(monkeypatch):
+def test_complete_with_no_cwd_or_config_inherits_none(monkeypatch, allow_subprocess_spawn):
     """No caller cwd, no config override → cwd=None (unchanged behavior for
     resolve_distiller / resolve_topic_classifier, which never pass cwd)."""
     monkeypatch.setattr(settings, "topic_proposal_external_agents", {

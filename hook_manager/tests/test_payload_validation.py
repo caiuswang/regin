@@ -20,7 +20,7 @@ import pytest
 
 from hook_manager.core import _normalize_payload
 from hook_manager.handlers.post_tool_trace import _TOOL_BUILDERS
-from lib.orm.engine import DB_PATH
+import lib.orm.engine as _engine
 from lib.trace.payload_validation import (
     DriftFinding, _load_schema, validate, validate_event,
 )
@@ -130,7 +130,11 @@ def test_nested_camelcase_does_not_drift():
 
 @pytest.fixture
 def clean_drift_table():
-    conn = sqlite3.connect(DB_PATH)
+    # Resolved at call time, not import time: the autouse `tmp_db` fixture
+    # monkeypatches `lib.orm.engine.DB_PATH`, and a `from … import DB_PATH`
+    # would bind the real path before that patch ever runs — which is how
+    # this fixture came to be DELETEing from the developer's live DB.
+    conn = sqlite3.connect(_engine.DB_PATH)
     conn.execute('DELETE FROM payload_schema_drift')
     conn.commit()
     yield conn
