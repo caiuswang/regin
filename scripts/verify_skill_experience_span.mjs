@@ -102,7 +102,7 @@ try {
 
   // 2. open the trace, conversation view (where MemoryRecallRow renders)
   await page.goto(`${opts.base}/trace/sessions/${opts.sid}?view=conversation`,
-    { waitUntil: 'networkidle' })
+    { waitUntil: 'load' })
   await page.waitForTimeout(2000)
 
   // 3. assert the skill-experience row rendered

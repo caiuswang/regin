@@ -24,6 +24,7 @@ from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.agent_messages.push import registry as push
+from lib.notifications.notify import notify_counts_changed
 from lib.orm import SessionLocal
 from lib.orm.models.agent_messages import (
     AgentMessage, DEFAULT_MESSAGE_TYPE, MESSAGE_TYPES,
@@ -161,6 +162,12 @@ def record_message(*, trace_id: str, body: str, msg_type: Optional[str] = None,
             _set_webhook_status(data["id"], status)
             data["webhook_status"] = status
     _enforce_retention()
+    if not is_test:
+        # Test rows are outside the badge's scope (`unread_count` defaults to
+        # include_tests=False), so they can't move the number. Retention runs
+        # first because it hard-deletes: notifying before the prune would push
+        # a count the very next read contradicts.
+        notify_counts_changed()
     return data
 
 
@@ -188,6 +195,7 @@ def dismiss_keyed(trace_id: str, msg_key: str) -> int:
         row.dismissed_at = now
         session.add(row)
         session.commit()
+    notify_counts_changed()
     return 1
 
 
@@ -383,6 +391,8 @@ def prune_messages(*, older_than_days: Optional[int] = None,
         log.write("messages_pruned", count=len(to_delete),
                   older_than_days=older_than_days, dismissed_only=dismissed_only,
                   keep=keep)
+        if to_delete:
+            notify_counts_changed()
     return len(to_delete)
 
 

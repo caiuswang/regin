@@ -16,6 +16,7 @@ from __future__ import annotations
 from flask import request, jsonify
 
 from lib.agent_messages import store
+from lib.notifications import hub
 from web.blueprints.trace import trace_bp
 
 
@@ -105,7 +106,8 @@ def api_agent_messages_inbox():
 
 @trace_bp.route('/api/agent-messages/unread-count')
 def api_agent_messages_unread_count():
-    """Just the badge number — cheap enough to poll."""
+    """Just the badge number. The badge is pushed over the event stream;
+    this serves the client's first paint and its stream-down fallback."""
     return jsonify({'count': store.unread_count(
         include_tests=_bool_arg('include_tests'))})
 
@@ -115,7 +117,9 @@ def api_agent_messages_read():
     """Mark a batch of messages read. Body: {ids: [int, …]}."""
     payload = request.get_json(silent=True) or {}
     ids = [i for i in (payload.get('ids') or []) if isinstance(i, int)]
-    return jsonify({'marked': store.mark_read(ids)})
+    marked = store.mark_read(ids)
+    hub.broadcast_counts()
+    return jsonify({'marked': marked})
 
 
 @trace_bp.route('/api/agent-messages/read-all', methods=['POST'])
@@ -124,17 +128,23 @@ def api_agent_messages_read_all():
     page. Body: {include_tests?: bool} (scope matches the unread badge)."""
     payload = request.get_json(silent=True) or {}
     include_tests = bool(payload.get('include_tests', False))
-    return jsonify({'marked': store.mark_all_read(include_tests=include_tests)})
+    marked = store.mark_all_read(include_tests=include_tests)
+    hub.broadcast_counts()
+    return jsonify({'marked': marked})
 
 
 @trace_bp.route('/api/agent-messages/<int:message_id>/ack', methods=['POST'])
 def api_agent_messages_ack(message_id):
-    return jsonify({'acked': store.ack(message_id)})
+    acked = store.ack(message_id)
+    hub.broadcast_counts()
+    return jsonify({'acked': acked})
 
 
 @trace_bp.route('/api/agent-messages/<int:message_id>/dismiss', methods=['POST'])
 def api_agent_messages_dismiss(message_id):
-    return jsonify({'dismissed': store.dismiss(message_id)})
+    dismissed = store.dismiss(message_id)
+    hub.broadcast_counts()
+    return jsonify({'dismissed': dismissed})
 
 
 @trace_bp.route('/api/agent-messages/<int:message_id>/pin', methods=['POST'])

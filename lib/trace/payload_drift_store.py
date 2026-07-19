@@ -13,6 +13,7 @@ from typing import Iterable
 
 from sqlalchemy import text as sa_text
 
+from lib.notifications.notify import notify_counts_changed
 from lib.orm import SessionLocal
 from lib.trace.payload_validation import DriftFinding
 
@@ -49,6 +50,14 @@ def _client_version_for(agent: str) -> str | None:
     return build_provider(agent).client_version()
 
 
+def pending_drift_count() -> int:
+    """Findings awaiting a human decision — the nav badge number."""
+    with SessionLocal() as session:
+        return session.execute(sa_text(
+            "SELECT COUNT(*) FROM payload_schema_drift WHERE status = 'pending'"
+        )).scalar() or 0
+
+
 def record_findings(findings: Iterable[DriftFinding], payload: dict) -> int:
     """Insert or bump each finding. Returns rows written. Never raises."""
     items = list(findings)
@@ -74,4 +83,6 @@ def record_findings(findings: Iterable[DriftFinding], payload: dict) -> int:
             session.commit()
     except Exception:
         return 0
+    if written:
+        notify_counts_changed()
     return written

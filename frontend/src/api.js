@@ -30,12 +30,23 @@ function authHeaders() {
   return token ? { 'Authorization': `Bearer ${token}` } : {}
 }
 
+// Subscribers torn down on 401. The app shell stays mounted on /login, so
+// anything holding a socket or a timer has to be told the credential is gone
+// — otherwise it keeps retrying against an endpoint that can only 401 back.
+const unauthorizedHandlers = new Set()
+
+function onUnauthorized(handler) {
+  unauthorizedHandlers.add(handler)
+}
+
 // Centralized 401 handling: the token is gone or expired, so drop it and
 // bounce to login. Guard against a redirect loop — the app shell stays
-// mounted on /login and keeps polling (e.g. the schema-drift badge), so a
-// 401 there must not reload the page.
+// mounted on /login, so a 401 there must not reload the page.
 function handleUnauthorized() {
   clearAuth()
+  for (const handler of unauthorizedHandlers) {
+    try { handler() } catch { /* a torn-down subscriber must not block login */ }
+  }
   if (window.location.pathname !== '/login') {
     window.location.href = '/login'
   }
@@ -68,8 +79,8 @@ async function getBlobUrl(path) {
   return URL.createObjectURL(await res.blob())
 }
 
-async function post(path, body) {
-  return _mutate('POST', path, body)
+async function post(path, body, options) {
+  return _mutate('POST', path, body, options)
 }
 
 async function patch(path, body) {
@@ -84,7 +95,7 @@ async function del(path, body) {
   return _mutate('DELETE', path, body)
 }
 
-async function _mutate(method, path, body) {
+async function _mutate(method, path, body, options = {}) {
   const headers = { ...authHeaders() }
   if (body != null) headers['Content-Type'] = 'application/json'
 
@@ -92,6 +103,7 @@ async function _mutate(method, path, body) {
     method,
     headers,
     body: body != null ? JSON.stringify(body) : undefined,
+    signal: options.signal,
   })
   if (res.status === 401) {
     handleUnauthorized()
@@ -160,5 +172,5 @@ async function checkAuth() {
 export default {
   get, post, put, patch, del, delete: del, getBlobUrl,
   login, register, logout, checkAuth,
-  getToken, getStoredUser, clearAuth,
+  getToken, getStoredUser, clearAuth, onUnauthorized,
 }

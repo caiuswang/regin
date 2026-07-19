@@ -153,6 +153,9 @@ def create_app():
     from web.blueprints.bridge import bridge_bp
     app.register_blueprint(bridge_bp)
 
+    from web.blueprints.notifications import notifications_bp
+    app.register_blueprint(notifications_bp)
+
     # Auth gate installed last so it can validate its allowlist against the
     # fully-registered route table.
     _install_auth_gate(app)
@@ -218,6 +221,10 @@ PUBLIC_API_ENDPOINTS = frozenset({
     "bridge.api_bridge_post_message",
     "bridge.api_bridge_list_sessions",
     "bridge.api_bridge_list_messages",
+    # Badge stream: EventSource cannot send an Authorization header, so the
+    # route is guarded by the single-use ticket it redeems instead — like the
+    # bridge entries above, its own credential is the sole guard, intended.
+    "notifications.api_notifications_stream",
 })
 
 
@@ -273,6 +280,16 @@ def _inject_recall_loopback_ok() -> bool:
     return (request.remote_addr or "") in _LOOPBACK_ADDRS
 
 
+def _notify_trigger_loopback_ok() -> bool:
+    """The badge-push trigger is fired by producer processes (hooks, the MCP
+    server) that write inbox/drift rows and hold no JWT. Like the recall
+    bypass above it is loopback-only, and it carries no payload and returns
+    no data — it only tells the web process to recompute two counters."""
+    if request.endpoint != "notifications.api_internal_notify":
+        return False
+    return (request.remote_addr or "") in _LOOPBACK_ADDRS
+
+
 def _install_auth_gate(app: Flask) -> None:
     """Require a valid JWT for every /api/ route outside PUBLIC_API_ENDPOINTS.
 
@@ -303,6 +320,8 @@ def _install_auth_gate(app: Flask) -> None:
             return None
         if _inject_recall_loopback_ok():
             return None  # local auto-inject hook → warm dense models
+        if _notify_trigger_loopback_ok():
+            return None  # local producer process → badge push fan-out
         user = get_current_user()
         if user is None:
             return jsonify({"error": "Authentication required"}), 401

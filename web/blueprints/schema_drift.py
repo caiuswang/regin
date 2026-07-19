@@ -19,9 +19,10 @@ from sqlalchemy import text
 
 from lib import audit
 from lib.auth import get_current_user, require_editor
+from lib.notifications import hub
 from lib.orm import SessionLocal
 from lib.providers import build_provider, get_active_provider, is_provider_id
-from lib.trace.payload_drift_store import _sha256
+from lib.trace.payload_drift_store import _sha256, pending_drift_count
 from lib.trace.payload_validation import (
     _BASELINE_DIR, _load_schema, _overlay_dir,
     baseline_schema_path, effective_baseline_path, overlay_schema_path,
@@ -306,12 +307,9 @@ def api_schema_drift_detail(drift_id: int):
 
 @schema_drift_bp.route('/api/schema-drift/summary', methods=['GET'])
 def api_schema_drift_summary():
-    """Lightweight pending count for the nav badge."""
-    with SessionLocal() as session:
-        pending = session.execute(text(
-            "SELECT COUNT(*) FROM payload_schema_drift WHERE status = 'pending'"
-        )).scalar() or 0
-    return jsonify({'pending': pending})
+    """Lightweight pending count for the nav badge: first paint, and the
+    fallback when the event stream is unavailable."""
+    return jsonify({'pending': pending_drift_count()})
 
 
 # ── Mutations ───────────────────────────────────────────────────────
@@ -428,6 +426,7 @@ def api_schema_drift_ignore(drift_id: int):
         return jsonify({'ok': False, 'error': 'not found'}), 404
     _set_status(drift_id, 'ignored')
     _audit('schema_drift_ignore', drift)
+    hub.broadcast_counts()
     return jsonify({'ok': True})
 
 
@@ -443,6 +442,7 @@ def api_schema_drift_delete(drift_id: int):
         ), {'id': drift_id})
         session.commit()
     _audit('schema_drift_delete', drift)
+    hub.broadcast_counts()
     return jsonify({'ok': True})
 
 
@@ -470,6 +470,7 @@ def api_schema_drift_ratify(drift_id: int):
         return jsonify({'ok': False, 'error': str(exc)}), 404
     _set_status(drift_id, 'ratified')
     _audit('schema_drift_ratify', drift, {'schema_file': f"{drift['tool_name']}.schema.json"})
+    hub.broadcast_counts()
     return jsonify({'ok': True})
 
 

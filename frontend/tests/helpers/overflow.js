@@ -44,7 +44,9 @@ export async function contentOverflow(page) {
 export async function settle(page) {
   await page.waitForLoadState('domcontentloaded')
   // Give data-driven views a beat to fetch + render their tables/grids.
-  await page.waitForLoadState('networkidle').catch(() => {})
+  // Not `networkidle`: the badge event stream stays open for the life of the
+  // page, so the origin is never idle and this would burn the full timeout.
+  await page.waitForLoadState('load').catch(() => {})
   await page.waitForTimeout(300)
 }
 

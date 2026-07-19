@@ -46,7 +46,7 @@ regin = "cli.regin:main"
 [tool.setuptools]
 packages = [
     "cli", "cli.commands",
-    "lib", "lib.orm", "lib.orm.models",
+    "lib", "lib.orm", "lib.orm.models", "lib.notifications",
     "lib.patterns", "lib.skills", "lib.topics", "lib.trace", "lib.trace.trace_service",
     "lib.sync", "lib.tags", "lib.rules", "lib.tokens",
     "lib.utils", "lib.rule_engines", "lib.languages", "lib.providers",

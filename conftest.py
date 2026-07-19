@@ -19,6 +19,9 @@ writing to the developer's real `db/regin.db`:
 - `_no_external_agent_spawn`  — `subprocess.run`/`Popen` launching a real
   coding agent. `test_reflect_endpoint` reached this with `dry_run=True`,
   because dry_run gates memory writes, not the LLM call.
+- `_block_notify_transport`   — the badge-push loopback POST fired by every
+  `record_message` / drift write, which reaches the dev server on
+  `settings.web_port` for the same reason `_block_ingest_transport` exists.
 """
 
 from __future__ import annotations
@@ -143,6 +146,27 @@ def _block_ingest_transport(monkeypatch):
     # Point the inherited env at an unroutable port so a child's own
     # `post_event` fails fast instead of finding the dev server.
     monkeypatch.setenv('REGIN_INGEST_BASE_URL', 'http://127.0.0.1:1')
+
+
+@pytest.fixture(autouse=True)
+def _block_notify_transport(monkeypatch):
+    """Sever the badge-push loopback POST for the whole suite.
+
+    Every inbox write and every drift write pings the dashboard so it can
+    recompute the nav badges. That ping is addressed by port, not by DB path,
+    so an unguarded run hits whatever `regin serve` the developer has up —
+    the same escape `_block_ingest_transport` closes for span ingest.
+
+    Patched at the transport (`_post_notify`), not at `notify_counts_changed`:
+    producers import the latter by value, so rebinding the name on the module
+    would leave their bindings pointing at the real function.
+    """
+    from lib.notifications import notify
+    monkeypatch.setattr(notify, '_post_notify', lambda _port: None)
+    # In-process patching cannot reach a child process, and several tests
+    # spawn one that runs the real hook handlers. Point its port at a closed
+    # one so the child's own probe fails instead of finding the dev server.
+    monkeypatch.setenv('REGIN_WEB_PORT', '1')
 
 
 # ── External agent spawns ─────────────────────────────────────
