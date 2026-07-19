@@ -170,6 +170,56 @@ test.describe('Detail pages — no horizontal overflow', () => {
       `repo detail: pane overflows (${m.scrollWidth} > ${m.clientWidth}); offenders: ${m.offenders.join(', ')}`
     ).toBeLessThanOrEqual(m.clientWidth + 1)
   })
+
+  // /memory is in STATIC_ROUTES, but that visit never selects a memory, so
+  // MemoryDetail's aside — where the supersede links live — never mounts. A
+  // long-titled supersede link sizes a <Button> (base: inline-flex
+  // justify-center) to its full text and pushes the pane sideways.
+  test('memory detail: long supersede-link titles do not widen the pane', async ({ page }) => {
+    await page.goto('/memory')
+    await settle(page)
+    const box = page.getByPlaceholder('Search title, body, tags…')
+    if (!(await box.count())) test.skip(true, 'memory search box not present')
+
+    // Pick a memory whose detail actually renders a supersede block, and
+    // prefer the longest title — the widest thing the aside has to hold.
+    const target = await page.evaluate(async () => {
+      const headers = { Authorization: `Bearer ${localStorage.getItem('regin_auth_token')}` }
+      const list = await (await fetch('/api/memory?status=active&page=0&size=100', { headers })).json()
+      let best = null
+      for (const m of (list.items || []).filter(m => m.title)) {
+        const rel = await (await fetch(`/api/memory/${m.id}/related`, { headers })).json()
+        if (!rel.superseded_by && !(rel.supersedes || []).length) continue
+        const width = Math.max(...[rel.superseded_by, ...(rel.supersedes || [])]
+          .filter(Boolean).map(x => (x.title || x.kind || '').length))
+        if (!best || width > best.width) best = { title: m.title, width }
+      }
+      return best
+    })
+    if (!target) test.skip(true, 'no memory with supersede links in dev DB')
+
+    await box.fill(target.title)
+    await box.press('Enter')
+    await settle(page)
+    const hit = page.locator('button', { hasText: target.title }).first()
+    if (!(await hit.count())) test.skip(true, 'memory list did not surface the target')
+    await hit.click()
+    await settle(page)
+
+    // Guard against a vacuous pass: the supersede block must have rendered.
+    const links = page.locator('aside li button, aside div > button').filter({ hasText: /\S/ })
+    expect(await links.count(), 'supersede block never rendered — test would pass vacuously')
+      .toBeGreaterThan(0)
+
+    const m = await contentOverflow(page)
+    test.skip(!m.pane, 'content pane not present')
+    expect(
+      m.scrollWidth,
+      `memory detail: pane overflows (${m.scrollWidth} > ${m.clientWidth}); offenders: ${m.offenders.join(', ')}`
+    ).toBeLessThanOrEqual(m.clientWidth + 1)
+    const squished = await squishedColumns(page)
+    expect(squished, `memory detail squished: ${squished.join(' | ')}`).toEqual([])
+  })
 })
 
 // Markdown / long-id detail pages: these render user markdown (wide tables,

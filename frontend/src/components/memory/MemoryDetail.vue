@@ -237,8 +237,8 @@ function timeLabel(iso) {
 
           <div v-if="related?.superseded_by">
             <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Superseded by</p>
-            <Button variant="link" size="sm" class="text-left text-slate-600 hover:text-blue-600 hover:no-underline" @click="emit('navigate', related.superseded_by.id)">
-              {{ related.superseded_by.title || related.superseded_by.kind }}
+            <Button variant="link" size="sm" class="max-w-full min-w-0 justify-start text-left text-slate-600 hover:text-blue-600 hover:no-underline" @click="emit('navigate', related.superseded_by.id)">
+              <span class="truncate">{{ related.superseded_by.title || related.superseded_by.kind }}</span>
             </Button>
           </div>
 
@@ -246,8 +246,8 @@ function timeLabel(iso) {
             <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Supersedes</p>
             <ul class="space-y-0.5">
               <li v-for="s in related.supersedes" :key="s.id">
-                <Button variant="link" size="sm" class="text-left text-slate-600 hover:text-blue-600 hover:no-underline" @click="emit('navigate', s.id)">
-                  {{ s.title || s.kind }}
+                <Button variant="link" size="sm" class="max-w-full min-w-0 justify-start text-left text-slate-600 hover:text-blue-600 hover:no-underline" @click="emit('navigate', s.id)">
+                  <span class="truncate">{{ s.title || s.kind }}</span>
                 </Button>
               </li>
             </ul>
