@@ -48,25 +48,21 @@ def test_gate_supports_task_recall_gate():
     assert "GATE PASS" in out
 
 
-def test_gate_supports_ui_verified_gate():
-    # Auto-registered via shared GATES — the MCP tool needs no per-gate code.
-    _seed("sid-ui", ["tool.mcp__plugin_playwright_playwright__browser_navigate"])
-    out = gate("ui-verified", "sid-ui")
-    assert "GATE PASS" in out
-
-
-def test_ui_verified_ignores_bash_run_playwright():
-    _seed("sid-ui-bash", ["tool.Bash", "tool.Read"])
-    out = gate("ui-verified", "sid-ui-bash")
-    assert "GATE FAIL" in out
-    assert "spans this session: 0" in out
-
-
 def test_unknown_gate_name_lists_valid_gates():
     out = gate("bogus", "sid-pass")
     assert "unknown gate" in out
     assert "recall-ran" in out
-    assert "ui-verified" in out
+    assert "task-recall-ran" in out
+    assert "GATE PASS" not in out
+
+
+def test_retired_ui_verified_gate_is_not_resurrected():
+    # Removed because it counted Playwright MCP spans: in a session without
+    # that MCP it was indistinguishable from a skip, so it could only be
+    # passed by arguing around a red gate. Reviving it needs a fingerprint
+    # that does not depend on an optional tool being installed.
+    out = gate("ui-verified", "sid-pass")
+    assert "unknown gate" in out
     assert "GATE PASS" not in out
 
 

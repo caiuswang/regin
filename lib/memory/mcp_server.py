@@ -322,9 +322,14 @@ def gate(name: str, session_id: str) -> str:
     A gate turns an *unenforced* skill step into a checkable invariant: the
     step's tool leaves spans, and the gate asserts they exist for the session.
     `recall-ran` is goal-verified-treenav's anti-skip (did the memory-tree-nav
-    recall arm fire?); `task-recall-ran` is goal-verified's; `ui-verified` proves
-    a UI goal was rendered in a real browser (Playwright MCP spans) before being
-    declared done, not asserted from the diff.
+    recall arm fire?); `task-recall-ran` is goal-verified's.
+
+    Gates here assert a *tool left a fingerprint*, so only add one when the
+    tool is guaranteed present. A `ui-verified` gate was removed for failing
+    that test: it counted Playwright MCP spans, and in a session without that
+    MCP it read identically to a genuine skip — unpassable, and the only way
+    past it was to argue around a red gate. Verify UI with the Playwright
+    suite or `scripts/dom-measure.mjs --overflow` instead.
 
     `session_id` is REQUIRED and must be the *caller's* session id (read it from
     `$CLAUDE_CODE_SESSION_ID`). This server is shared and long-lived, so its own
@@ -332,7 +337,7 @@ def gate(name: str, session_id: str) -> str:
     the caller's — which is why the gate cannot infer the session itself.
 
     Args:
-        name: Gate key, e.g. "recall-ran", "task-recall-ran", or "ui-verified".
+        name: Gate key, e.g. "recall-ran" or "task-recall-ran".
         session_id: The caller's Claude Code session/trace id.
 
     Returns:

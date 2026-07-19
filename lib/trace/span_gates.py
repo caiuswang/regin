@@ -52,22 +52,23 @@ TASK_RECALL = SpanGate(
     describe="task-scoped recall (goal-verified recall arm)",
 )
 
-# The Playwright MCP browser tools each emit one `tool.mcp__…playwright…browser_*`
-# span (navigate / evaluate / take_screenshot / click …). This gate proves the
-# agent drove a real browser against the app before declaring a UI goal done —
-# the anti-skip for "verify in the browser, don't claim done from the diff".
-# Deliberately blind to Playwright run as a Bash-driven node script: those land
-# as opaque `tool.Bash` spans, so gating forces the verify path through the
-# traced MCP browser tools. Fleet-wide: the browser MCP is available in every
-# regin session, so any managed repo's `.vue` goals inherit this wall.
-UI_VERIFIED = SpanGate(
-    key="ui-verified",
-    like=("tool.mcp%playwright%browser_%",),
-    describe="browser verification (real render before a UI goal is declared done)",
-)
+# A `ui-verified` gate lived here: it counted Playwright *MCP* browser spans to
+# prove a UI goal was rendered rather than asserted from the diff. Removed —
+# its premise ("the browser MCP is available in every regin session") turned out
+# to be false, and a gate that cannot distinguish "you skipped the render" from
+# "the instrument was absent" fails identically in both cases. That is worse
+# than no gate: the only way past it is for the agent to talk itself out of a
+# red gate, which is a habit that does not stay confined to one gate.
+#
+# The invariant it stood for now has a real enforcer that needs no MCP: the
+# no-horizontal-overflow cases in `frontend/tests/responsive.spec.js` (detectors
+# in `tests/helpers/overflow.js`) assert it at mobile/tablet/desktop widths on
+# every run, and `scripts/dom-measure.mjs --overflow [--baseline]` reports the
+# same measurement interactively. Prefer extending those over reviving a
+# tool-presence proxy.
 
 GATES: dict[str, SpanGate] = {
-    g.key: g for g in (RECALL_ARM, TASK_RECALL, UI_VERIFIED)
+    g.key: g for g in (RECALL_ARM, TASK_RECALL)
 }
 
 
