@@ -48,6 +48,18 @@ def test_gate_supports_task_recall_gate():
     assert "GATE PASS" in out
 
 
+def test_recall_ran_fails_hard_from_the_mcp_tool():
+    # The counterpart to the CLI's INCONCLUSIVE: one FastMCP instance serves
+    # `gate` alongside `recall`/`index_*`, so reaching this tool proves the
+    # arm's tools were loaded. 0 spans here IS a proven skip, and this is the
+    # path the skills tell you to use — so the wall stays a wall where it can
+    # be justified.
+    out = gate("recall-ran", "sid-mcp-skip")
+    assert "GATE FAIL" in out
+    assert "WERE available" in out
+    assert "INCONCLUSIVE" not in out
+
+
 def test_unknown_gate_name_lists_valid_gates():
     out = gate("bogus", "sid-pass")
     assert "unknown gate" in out

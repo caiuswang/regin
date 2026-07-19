@@ -16,7 +16,7 @@ import json as _json
 
 import typer
 
-from lib.trace.span_gates import GATES, span_count
+from lib.trace.span_gates import GATES, PASS, STATUS_EXIT, span_count, verdict
 
 
 gate_app = typer.Typer(
@@ -60,20 +60,27 @@ def _run_gate(key: str, session: str, json: bool) -> None:
 
     gate = GATES[key]
     n = span_count(session, gate)
-    passed = n > 0
+    # The CLI can only vouch for capabilities that running regin itself
+    # demonstrates; it cannot see which MCP servers the caller's session
+    # loaded. Gates whose tool is an MCP server therefore resolve to
+    # INCONCLUSIVE here rather than a false accusation of skipping.
+    status, message = verdict(gate, n, gate.capability_self_evident)
+    passed = status == PASS
     get_activity_logger("gate").read(
-        "gate_checked", gate=key, session=session, spans=n, passed=passed)
+        "gate_checked", gate=key, session=session, spans=n,
+        passed=passed, status=status)
 
     if json:
-        print(_json.dumps(
-            {"gate": key, "session": session, "spans": n, "pass": passed}))
+        print(_json.dumps({
+            "gate": key, "session": session, "spans": n,
+            "pass": passed, "status": status,
+            "capability_proven": gate.capability_self_evident,
+        }))
     else:
         print(f"{gate.describe} spans this session: {n}")
-        print("GATE PASS — arm ran" if passed else
-              "GATE FAIL — no spans for this gate; you skipped the step. "
-              "Go back and run it.")
+        print(message)
 
-    raise typer.Exit(0 if passed else 1)
+    raise typer.Exit(STATUS_EXIT[status])
 
 
 def register(app: typer.Typer) -> None:

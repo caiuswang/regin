@@ -344,7 +344,7 @@ def gate(name: str, session_id: str) -> str:
         "<gate description> spans this session: N" plus a PASS/FAIL verdict
         line, mirroring the `regin gate` CLI.
     """
-    from lib.trace.span_gates import GATES, span_count
+    from lib.trace.span_gates import GATES, PASS, span_count, verdict
 
     spec = GATES.get(name)
     if spec is None:
@@ -357,16 +357,23 @@ def gate(name: str, session_id: str) -> str:
         )
 
     n = span_count(session_id, spec)
-    passed = n > 0
+    # Reaching this function proves the memory MCP server is loaded in the
+    # caller's session, and one FastMCP instance serves `gate` alongside
+    # `recall` / `index_*` — so the recall arm's tools were demonstrably
+    # available here. That makes 0 spans a genuine skip rather than an absent
+    # instrument, and this path can always say so. Gates whose capability is
+    # something else entirely (a different MCP server) would not inherit this
+    # proof and must not be assumed available just because they were called
+    # from here.
+    capability_proven = spec.capability_self_evident or spec.served_by_memory_mcp
+    status, message = verdict(spec, n, capability_proven)
 
     from lib.activity_log import get_activity_logger
     get_activity_logger("gate").read(
-        "gate_checked", gate=name, session=session_id, spans=n, passed=passed)
+        "gate_checked", gate=name, session=session_id, spans=n,
+        passed=status == PASS, status=status)
 
-    verdict = ("GATE PASS — arm ran" if passed else
-               "GATE FAIL — no spans for this gate; you skipped the step. "
-               "Go back and run it.")
-    return f"{spec.describe} spans this session: {n}\n{verdict}"
+    return f"{spec.describe} spans this session: {n}\n{message}"
 
 
 if __name__ == "__main__":
