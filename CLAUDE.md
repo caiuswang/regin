@@ -69,8 +69,10 @@ cd frontend && npx vite                                  # dev on :5173, proxies
 cd frontend && npx vite build                            # → web/static/dist/
 cd frontend && ./node_modules/.bin/playwright test       # E2E
 
-# Frontend introspection (requires vite on :5173)
+# Frontend introspection (requires vite on :5173) — `--help` lists every flag
 node scripts/dom-measure.mjs --route <path> --explain <selector>   # computed styles, ancestor chain, what clips/scrolls it
+node scripts/dom-measure.mjs --route <path> --overflow             # does .content-scroll scroll sideways? names the offenders
+node scripts/dom-measure.mjs --route <path> --overflow --baseline  # same, before/after your uncommitted change, with deltas
 node scripts/gen-design-manifest.mjs                               # regenerate frontend/design-system.json
 ```
 
