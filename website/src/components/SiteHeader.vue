@@ -7,6 +7,7 @@ import Button from './ui/Button.vue'
 const NAV = [
   { to: '/', label: 'Introduction' },
   { to: '/getting-started', label: 'Getting Started' },
+  { to: '/dashboard', label: 'Dashboard' },
   { to: '/configuration', label: 'Configuration' },
   { to: '/architecture', label: 'Architecture' },
   { to: '/topics', label: 'Topic Wikis' },

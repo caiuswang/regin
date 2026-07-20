@@ -2,6 +2,7 @@
 import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import DataTable from '../components/DataTable.vue'
+import Callout from '../components/Callout.vue'
 
 const TOC = [
   { id: 'overview', label: 'How it works' },
@@ -40,6 +41,13 @@ const MODULES = [
     <p>regin manages three asset classes — patterns (markdown procedure guides), rule engines, and trace (session + span data) — and deploys them into the active provider's skills directory so the agent reads them at the right moment.</p>
     <CodeBlock :code="'Pattern guides (SKILL.md)  +  Rule engines (.grit, …)\n            |                          |\n            v                          v\n   SQLite tracking  +  Flask API  +  hook_manager\n                        |\n                        v\n               Vue 3 SPA (frontend/)\n                        |\n                        v\n   Active provider skills dir (~/.claude/skills/)'" />
     <DataTable :columns="MODULE_COLUMNS" :rows="MODULES" />
+    <Callout tone="warn">
+      The feedback and observability layers below (rule gates, session tracing,
+      memory injection) run <em>inside</em> <code>hook_manager</code>, so they stay
+      dormant until you install that dispatcher into the agent's settings file. New
+      instances do this on
+      <RouterLink to="/getting-started#activate-hooks">Getting Started → Activate the hooks</RouterLink>.
+    </Callout>
 
     <h2 id="feedforward">Patterns &amp; skills — the feedforward layer</h2>
     <p>Raw → refined, in two stages. <strong>Patterns</strong> are local procedure guides you write or import — opinionated, local to your machine, edited as your codebase evolves. When one earns its keep, <code>pattern promote</code> packages it as a <strong>skill</strong>: versioned, publishable, deployed across machines, and surfaced to the agent only when its trigger conditions match. Both are advisory: they shape what the agent <em>tends</em> to do.</p>

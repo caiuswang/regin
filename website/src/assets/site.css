@@ -592,6 +592,10 @@ td code, th code { white-space: nowrap; }
 }
 .shot-frame img { display: block; width: 100%; height: auto; border-radius: 8px; }
 .shot-frame figcaption { font-size: var(--text-sm); color: var(--code-faint); max-width: 72ch; padding: 0.8rem 0.35rem 0; line-height: 1.55; }
+/* Caption sits on the always-dark frame bg, so `article strong`'s dark
+   `--text` would vanish in the light theme — keep bold text on the caption's
+   own light color. */
+.shot-frame figcaption strong { color: #e9eef5; }
 
 /* Scroll-driven timelines ignore blanket animation-duration overrides,
    so the reduced-motion opt-out must gate the declaration itself. */

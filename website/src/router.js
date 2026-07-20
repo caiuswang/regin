@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 const routes = [
   { path: '/', name: 'home', component: () => import('./views/HomeView.vue'), meta: { title: '' } },
   { path: '/getting-started', name: 'getting-started', component: () => import('./views/GettingStartedView.vue'), meta: { title: 'Getting Started' } },
+  { path: '/dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue'), meta: { title: 'The Dashboard' } },
   { path: '/configuration', name: 'configuration', component: () => import('./views/ConfigurationView.vue'), meta: { title: 'Configuration' } },
   { path: '/architecture', name: 'architecture', component: () => import('./views/ArchitectureView.vue'), meta: { title: 'Architecture' } },
   { path: '/topics', name: 'topics', component: () => import('./views/TopicsView.vue'), meta: { title: 'Topic Wikis' } },

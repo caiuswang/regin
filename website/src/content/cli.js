@@ -28,4 +28,5 @@ export const TROUBLESHOOTING = [
   { symptom: 'Login not working after a DB rebuild', fix: 'Accounts are local — re-create with regin users create <name> <pass> --role admin.' },
   { symptom: 'Forgot the admin password', fix: 'regin users reset-password <name> <newpass> (no old password needed).' },
   { symptom: 'Port already in use', fix: 'regin serve --port 8322.' },
+  { symptom: 'Dashboard is empty — no traces, rules never fire', fix: 'The hook dispatcher isn’t wired into your agent (not a CLI step). Install it at Settings → Hook Installers — see Getting Started → Activate the hooks.' },
 ]

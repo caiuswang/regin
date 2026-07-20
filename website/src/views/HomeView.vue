@@ -40,7 +40,7 @@ async function copyQuickstart() {
         </Button>
         <span class="sr-only" aria-live="polite">{{ copied ? 'Copied to clipboard' : '' }}</span>
       </div>
-      <p class="quickstart-caption">Runs locally — Python + Node, one setup script. Early beta; pin a commit if you need stability.</p>
+      <p class="quickstart-caption">Runs locally — Python + Node, one setup script, then <RouterLink to="/getting-started#activate-hooks">install the hooks</RouterLink> to wire it into your agent. Early beta; pin a commit if you need stability.</p>
     </section>
 
     <section class="section" aria-labelledby="mechanisms-heading">
