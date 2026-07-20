@@ -1,0 +1,25 @@
+name: Deploy Website
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-website.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via rsync
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete --exclude='node_modules' --exclude='dist' --exclude='.git'
+          path: website/
+          remote_path: /var/www/regin-website/
+          remote_host: ${{ secrets.REGIN_SERVER_HOST }}
+          remote_user: ${{ secrets.REGIN_SERVER_USER }}
+          remote_key: ${{ secrets.REGIN_SSH_PRIVATE_KEY }}
