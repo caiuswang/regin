@@ -29,6 +29,22 @@ class SpanGate:
     like: tuple[str, ...] = ()
     exact: tuple[str, ...] = ()
     describe: str = ""
+    # What must be installed for the gated step to be *runnable* at all. A
+    # count of 0 only means "you skipped it" once this is known present —
+    # otherwise it may just mean the tool was never there, and reporting the
+    # two identically is what made the retired `ui-verified` gate unpassable.
+    capability: str = ""
+    # True when running regin proves the capability (the span comes from a
+    # regin CLI command, so anyone who can invoke the gate could have invoked
+    # the step). False when the capability is an MCP server that may or may
+    # not be loaded in the caller's session.
+    capability_self_evident: bool = False
+    # True when the gated tools are served by the *memory* MCP server, which
+    # also serves `mcp__memory__gate`. Reaching that tool then proves this
+    # gate's capability — one FastMCP instance, so if the gate was callable
+    # the step's tools were too. Only that path may honour this flag; the CLI
+    # cannot see which MCP servers a session loaded.
+    served_by_memory_mcp: bool = False
 
 
 # The memory MCP server emits one span per index_root / index_expand /
@@ -39,6 +55,15 @@ RECALL_ARM = SpanGate(
     like=("tool.mcp__memory__index_%",),
     exact=("tool.mcp__memory__recall",),
     describe="memory-tree-nav / recall arm (goal-verified-treenav step 1b)",
+    capability="the memory MCP server (the index_*/recall tools)",
+    # Not self-evident from the CLI: `regin gate` runs fine in a session that
+    # never loaded the memory MCP, and there 0 spans proves nothing. It IS
+    # self-evident from `mcp__memory__gate`, because one FastMCP instance
+    # serves the gate and the index_*/recall tools alike — reaching the gate
+    # means the arm's tools were reachable too. That path passes
+    # capability_proven=True explicitly.
+    capability_self_evident=False,
+    served_by_memory_mcp=True,
 )
 
 # `regin memory recall-for-task` emits one `memory.recall.task` span per call
@@ -50,25 +75,70 @@ TASK_RECALL = SpanGate(
     key="task-recall-ran",
     exact=("memory.recall.task",),
     describe="task-scoped recall (goal-verified recall arm)",
+    capability="the regin CLI (`regin memory recall-for-task`)",
+    # Self-evident everywhere: the span comes from a regin CLI command, so any
+    # caller able to reach this gate could have run the step. 0 spans is a
+    # genuine skip, never an absent instrument.
+    capability_self_evident=True,
 )
 
-# The Playwright MCP browser tools each emit one `tool.mcp__…playwright…browser_*`
-# span (navigate / evaluate / take_screenshot / click …). This gate proves the
-# agent drove a real browser against the app before declaring a UI goal done —
-# the anti-skip for "verify in the browser, don't claim done from the diff".
-# Deliberately blind to Playwright run as a Bash-driven node script: those land
-# as opaque `tool.Bash` spans, so gating forces the verify path through the
-# traced MCP browser tools. Fleet-wide: the browser MCP is available in every
-# regin session, so any managed repo's `.vue` goals inherit this wall.
-UI_VERIFIED = SpanGate(
-    key="ui-verified",
-    like=("tool.mcp%playwright%browser_%",),
-    describe="browser verification (real render before a UI goal is declared done)",
-)
+# A `ui-verified` gate lived here: it counted Playwright *MCP* browser spans to
+# prove a UI goal was rendered rather than asserted from the diff. Removed —
+# its premise ("the browser MCP is available in every regin session") turned out
+# to be false, and a gate that cannot distinguish "you skipped the render" from
+# "the instrument was absent" fails identically in both cases. That is worse
+# than no gate: the only way past it is for the agent to talk itself out of a
+# red gate, which is a habit that does not stay confined to one gate.
+#
+# The invariant it stood for now has a real enforcer that needs no MCP: the
+# no-horizontal-overflow cases in `frontend/tests/responsive.spec.js` (detectors
+# in `tests/helpers/overflow.js`) assert it at mobile/tablet/desktop widths on
+# every run, and `scripts/dom-measure.mjs --overflow [--baseline]` reports the
+# same measurement interactively. Prefer extending those over reviving a
+# tool-presence proxy.
 
 GATES: dict[str, SpanGate] = {
-    g.key: g for g in (RECALL_ARM, TASK_RECALL, UI_VERIFIED)
+    g.key: g for g in (RECALL_ARM, TASK_RECALL)
 }
+
+
+#: Exit code / status for a gate whose spans are absent but whose capability
+#: could not be shown to have been present. Distinct from FAIL on purpose: it
+#: means "no evidence either way", and it must never read as PASS.
+INCONCLUSIVE = "INCONCLUSIVE"
+PASS = "PASS"
+FAIL = "FAIL"
+
+STATUS_EXIT = {PASS: 0, FAIL: 1, INCONCLUSIVE: 2}
+
+
+def verdict(gate: SpanGate, count: int, capability_proven: bool) -> tuple[str, str]:
+    """Resolve (status, human message) for a gate result.
+
+    Shared by the `regin gate` CLI and the `mcp__memory__gate` MCP tool so the
+    two can't drift into disagreeing about what 0 spans means.
+
+    `capability_proven` answers "do we know the gated step was even runnable
+    here?". When it is False and no spans exist, the honest answer is
+    INCONCLUSIVE, not FAIL: telling an agent "you skipped the step, go back
+    and run it" when the tool was never installed is an instruction it cannot
+    follow, and the only way past an unfollowable gate is to argue around a
+    red one. That is the failure that retired the `ui-verified` gate.
+    """
+    if count > 0:
+        return PASS, "GATE PASS — arm ran"
+    if capability_proven:
+        return FAIL, (
+            "GATE FAIL — no spans for this gate, and its tools WERE available "
+            f"({gate.capability}); the step was skipped. Go back and run it."
+        )
+    return INCONCLUSIVE, (
+        "GATE INCONCLUSIVE — no spans, but this path cannot show that "
+        f"{gate.capability} was present, so 0 proves nothing. Re-check from a "
+        "context that establishes the capability (for recall-ran, the "
+        "`mcp__memory__gate` tool: reaching it proves the arm's tools were "
+        "loaded). Do NOT record this as a pass."
+    )
 
 
 def span_count(trace_id: str, gate: SpanGate) -> int:

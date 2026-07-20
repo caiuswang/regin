@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="regin — harness infrastructure for AI coding agents. Pattern guides, enforced rules, session tracing, and cross-session agent memory." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="regin — the harness layer for AI coding agents" />
+    <meta property="og:description" content="Agent = Model + Harness. Guides that steer your agent before it acts, rules that catch it as it acts, and the tracing to know which bets paid off." />
+    <meta property="og:site_name" content="regin" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="regin — the harness layer for AI coding agents" />
+    <meta name="twitter:description" content="Agent = Model + Harness. Guides that steer your agent before it acts, rules that catch it as it acts, and the tracing to know which bets paid off." />
+    <title>regin — harness infrastructure for AI coding agents</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2315803d' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2 2 7l10 5 10-5-10-5z'/%3E%3Cpath d='M2 17l10 5 10-5'/%3E%3Cpath d='M2 12l10 5 10-5'/%3E%3C/svg%3E" />
+    <!-- Fonts are self-hosted variable files declared in site.css; preload
+         only the latin Atkinson Hyperlegible Next (wght 400-800) — it carries
+         the hero and all body text, so it should race the stylesheet. -->
+    <link rel="preload" href="/fonts/ahn-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <script>
+      (function () {
+        var theme
+        try { theme = localStorage.getItem('regin-site-theme') } catch (e) { theme = null }
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        }
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

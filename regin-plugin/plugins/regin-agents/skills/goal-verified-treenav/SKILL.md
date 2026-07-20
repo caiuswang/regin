@@ -175,9 +175,18 @@ so it needs no `regin` CLI:
 Pass your **own** session id — the memory server is shared and long-lived, so it
 cannot infer the caller's session and refuses an empty `session_id`. The tool
 counts this session's `tool.mcp__memory__index_*` / `…__recall` spans and
-returns `GATE PASS` only when the count is > 0, else `GATE FAIL`. This is the
-same check the verifier re-runs in step 4. (New gates are defined on the regin
-side; the same check surfaces through both this tool and the `regin gate` CLI.)
+returns `GATE PASS` when the count is > 0, else `GATE FAIL`.
+
+**Use the MCP tool, not the CLI, for this gate.** One FastMCP instance serves
+`gate` alongside `recall` / `index_*`, so reaching the tool *proves* the arm's
+tools were loaded in your session — which is what makes `0` mean "you skipped
+it" rather than "the tools weren't there". The `regin gate recall-ran` CLI
+cannot establish that, so it reports a third verdict, `GATE INCONCLUSIVE`
+(exit 2), when it sees no spans. **INCONCLUSIVE is not a pass** — it is "no
+evidence either way"; re-check through the MCP tool before going further. This
+is the same check the verifier re-runs in step 4. (New gates are defined on the
+regin side and must declare a `capability`: a gate that can't tell a skipped
+step from an absent tool is unpassable rather than strict.)
 
 - **`0` is a wall, exactly like a red machine gate.** Do not present the
   roadmap, do not build. Return to step 1b and walk the tree for real.
@@ -211,16 +220,16 @@ Hand the work to a checker that did **not** build it:
 - **Machine gates** from the roadmap — run for real, paste output:
   - frontend: `cd frontend && npx vite build` and `… playwright test`; zero
     console errors.
-  - **UI goals (`.vue`) — `ui-verified` gate:** re-run it against the build
-    session — `mcp__memory__gate(name="ui-verified", session_id="<build sid>")`
-    (or `regin gate ui-verified --session "$SID"`). `GATE FAIL` / `0` browser
-    spans means the UI was never rendered, only diffed — a **DO-NOT-SHIP wall**,
-    however good the code looks. The gate proves *a* render happened, not which
-    viewport: the verifier must confirm the render covers **both desktop and
-    ~390px mobile** (where most layout breakages land) and that
-    `scrollWidth<=clientWidth` holds — a desktop-only render passes the span
-    gate but fails this item. Playwright driven as a Bash node script does NOT
-    count; use the traced MCP browser tools so the render leaves a span.
+  - **UI goals — render it, don't assert it from the diff.** The goal is not
+    "a browser was opened", it is "the invariant holds at the widths where it
+    breaks". Prove it with a *failing-without-the-fix* test rather than a
+    screenshot: add or extend a case in the repo's browser suite and confirm it
+    goes red when the fix is stashed — an assertion that passes on the broken
+    build is worth nothing. Cover **both desktop and ~390px mobile**; most
+    layout breakage lands only on the narrow one. Measure the app's real
+    scroll container, not `documentElement` — a wrapper with
+    `overflow-x:hidden` above it keeps the document from ever scrolling
+    sideways, so a documentElement check passes on a visibly broken page.
   - non-frontend: run the target repo's own test suite plus its lint/complexity
     gates (e.g. `pytest`, a complexity-grade threshold, a linter); all green.
 - **Recall-arm gate (re-checked here):** the verifier re-runs the gate against

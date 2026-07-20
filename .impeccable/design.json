@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-16T00:00:00Z",
+  "title": "Design System: regin",
+  "extensions": {
+    "colorMeta": {
+      "harness-green": { "role": "primary", "displayName": "Harness Green", "canonical": "#15803d", "tonalRamp": ["#052e16", "#14532d", "#166534", "#15803d", "#16a34a", "#22c55e", "#4ade80", "#86efac"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#0f172a", "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#f1f5f9"] },
+      "fog": { "role": "neutral", "displayName": "Fog", "canonical": "#f8fafc", "tonalRamp": ["#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f1f5f9", "#f8fafc"] },
+      "night": { "role": "neutral", "displayName": "Night", "canonical": "#0b1120", "tonalRamp": ["#0b1120", "#111a2e", "#172136", "#25314c", "#354462", "#8494ad", "#a5b4cb", "#f1f5f9"] },
+      "amber-tint": { "role": "semantic", "displayName": "Amber Tint", "canonical": "#fef3c7", "tonalRamp": ["#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fcd34d", "#fef3c7"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The hero headline only — one per site, not per page." },
+      "headline": { "displayName": "Headline", "purpose": "Doc page titles (.page-title)." },
+      "title": { "displayName": "Title", "purpose": "Section h2s, hairline-ruled above." },
+      "body": { "displayName": "Body", "purpose": "Prose at a 72ch measure." },
+      "label": { "displayName": "Label", "purpose": "Eyebrow / TOC heading; once per page at most." },
+      "mono": { "displayName": "Machine Voice", "purpose": "Commands, keys, paths — everything the machine says." }
+    },
+    "shadows": [
+      { "name": "float", "value": "0 1px 3px rgba(15,23,42,0.08), 0 8px 24px rgba(15,23,42,0.06)", "purpose": "Only on elements that genuinely float: the sticky header and the opened mobile menu. Cards stay flat." }
+    ],
+    "motion": [
+      { "name": "state-shift", "value": "200ms ease (color / background-color / border-color only)", "purpose": "Hover and theme transitions; never transforms or layout properties. prefers-reduced-motion collapses to ~instant." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "nav", "value": "768px" },
+      { "name": "toc", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one primary CTA per view; white on Harness Green.",
+      "html": "<button class=\"ds-btn-primary\">Get started</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 0.5rem; background: #15803d; color: #fff; font-weight: 600; font-size: 0.95rem; padding: 0.7rem 1.4rem; border: 1px solid transparent; border-radius: 10px; cursor: pointer; transition: background-color 0.2s ease; } .ds-btn-primary:hover { background: #14532d; } .ds-btn-primary:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action; ink text with a strong hairline border.",
+      "html": "<button class=\"ds-btn-ghost\">How it works</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; gap: 0.5rem; background: transparent; color: #0f172a; font-weight: 600; font-size: 0.95rem; padding: 0.7rem 1.4rem; border: 1px solid #cbd5e1; border-radius: 10px; cursor: pointer; transition: background-color 0.2s ease; } .ds-btn-ghost:hover { background: #f1f5f9; } .ds-btn-ghost:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Square labeled icon control (theme toggle, mobile menu).",
+      "html": "<button class=\"ds-btn-icon\" aria-label=\"Toggle color theme\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z\"/></svg></button>",
+      "css": ".ds-btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.4rem; height: 2.4rem; border-radius: 8px; border: 1px solid #e2e8f0; background: transparent; color: #475569; cursor: pointer; transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease; } .ds-btn-icon:hover { color: #0f172a; background: #f1f5f9; border-color: #cbd5e1; } .ds-btn-icon:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }"
+    },
+    {
+      "name": "Nav Link (active)",
+      "kind": "nav",
+      "refersTo": "nav-link-active",
+      "description": "Top-nav item; the current page holds a green-tint pill.",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\" class=\"ds-nav-link\" aria-current=\"page\">Introduction</a><a href=\"#\" class=\"ds-nav-link\">Getting Started</a><a href=\"#\" class=\"ds-nav-link\">Configuration</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 0.25rem; } .ds-nav-link { color: #475569; font-weight: 500; font-size: 0.925rem; padding: 0.45rem 0.8rem; border-radius: 8px; text-decoration: none; transition: color 0.2s ease, background-color 0.2s ease; } .ds-nav-link:hover { color: #0f172a; background: #f1f5f9; } .ds-nav-link[aria-current=\"page\"] { color: #15803d; background: #dcfce7; } .ds-nav-link:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }"
+    },
+    {
+      "name": "Feature Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat bordered card opening with a green-tint icon chip. No shadow (The Float Rule).",
+      "html": "<div class=\"ds-card\"><span class=\"ds-card-chip\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/></svg></span><h3>Rule engines</h3><p>Real hooks that intercept edits in flight and push the agent back on-spec.</p></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.5rem; max-width: 22rem; font-family: inherit; } .ds-card h3 { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 650; color: #0f172a; } .ds-card p { margin: 0; font-size: 0.92rem; line-height: 1.65; color: #475569; } .ds-card-chip { display: inline-flex; align-items: center; justify-content: center; width: 2.6rem; height: 2.6rem; border-radius: 10px; background: #dcfce7; color: #14532d; margin-bottom: 1rem; }"
+    },
+    {
+      "name": "Info Callout",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Tinted advisory block with inline SVG icon; never a side-stripe.",
+      "html": "<div class=\"ds-callout\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z\"/><path d=\"M12 16v-4\"/><path d=\"M12 8h.01\"/></svg><p>Settings edited in the web UI take effect immediately.</p></div>",
+      "css": ".ds-callout { display: flex; gap: 0.75rem; border-radius: 12px; padding: 1rem 1.15rem; font-size: 0.925rem; background: #dcfce7; color: #14532d; max-width: 32rem; } .ds-callout svg { flex-shrink: 0; margin-top: 0.15rem; } .ds-callout p { margin: 0; line-height: 1.6; }"
+    },
+    {
+      "name": "Code Block",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "The Machine Voice: ink-dark panel, mono, self-contained horizontal scroll.",
+      "html": "<pre class=\"ds-code\"><code>.venv/bin/python cli/regin.py serve\n# Open http://localhost:8321 and log in</code></pre>",
+      "css": ".ds-code { background: #0f172a; color: #e2e8f0; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem 1.25rem; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 0.85rem; line-height: 1.7; max-width: 34rem; margin: 0; }"
+    },
+    {
+      "name": "Beta Pill",
+      "kind": "chip",
+      "refersTo": "nav-link-active",
+      "description": "Maturity honesty as a brand element, worn next to the logo.",
+      "html": "<span class=\"ds-pill\">beta</span>",
+      "css": ".ds-pill { display: inline-block; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.15rem 0.5rem; border-radius: 999px; background: #dcfce7; color: #14532d; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Workshop Manual",
+    "overview": "A well-thumbed engineer's handbook: structured, legible, and generous with explanation. The warmth in this system comes from craft and clarity — plain language, patient pacing, real screenshots of the working tool — never from ornament, gradients, or trend styling. Pages read like a knowledgeable colleague walking you through a sharp idea, one section at a time, with the diagram already drawn. The system explicitly rejects the generic SaaS landing, AI-hype maximalism, and cold dev-tool austerity. It is light-first with a full dark theme, flat with hairline borders, and spends its single accent — Harness Green — only where the mechanism speaks.",
+    "keyCharacteristics": [
+      "One typeface (Inter) in many weights; JetBrains Mono for everything the machine says",
+      "One accent color with a strict budget; slate neutrals do all other work",
+      "Flat surfaces separated by 1px hairlines; shadow only on things that float",
+      "Measured accessibility: every text/background pair verified ≥4.5:1 in both themes",
+      "Dark mode is a first-class palette, not an inversion"
+    ],
+    "rules": [
+      { "name": "The Green Budget Rule", "body": "Harness Green appears only where the mechanism speaks: links, active nav, one primary CTA per view, focus rings. If green exceeds ~10% of a screen, something is misusing it.", "section": "colors" },
+      { "name": "The Measured Pair Rule", "body": "No color pair ships on trust. Every foreground/background combination is computed against WCAG AA (≥4.5:1 text, ≥3:1 non-text) in both themes before it lands.", "section": "colors" },
+      { "name": "The 72ch Rule", "body": "Article prose never exceeds a 72-character measure, whatever the viewport.", "section": "typography" },
+      { "name": "The Machine Voice Rule", "body": "Anything the user would type or the system would emit — commands, keys, paths, values — is set in mono, always. Prose never wears mono for emphasis.", "section": "typography" },
+      { "name": "The Float Rule", "body": "If it doesn't physically overlay other content, it doesn't get a shadow. Cards are flat.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do hold every new color pair to The Measured Pair Rule — compute the ratio (≥4.5:1 text, ≥3:1 non-text) in both themes before shipping.",
+      "Do keep Harness Green scarce (The Green Budget Rule): links, active state, one CTA, focus ring — nothing else.",
+      "Do use real product screenshots as imagery; the working tool is the proof.",
+      "Do contain overflow locally: code blocks and tables scroll inside their own containers; scrollWidth ≤ clientWidth holds on the page at every viewport.",
+      "Do honor prefers-reduced-motion with a near-instant alternative for every transition.",
+      "Do keep icon-only buttons labeled (aria-label) and all icons as inline SVG."
+    ],
+    "donts": [
+      "Don't build the \"generic SaaS landing\": no gradient hero, no floating dashboard mockups, no logo marquee, no pricing-table energy.",
+      "Don't ship \"AI-hype maximalism\": no glowing gradients, no particle backgrounds, no sparkle iconography, no \"revolutionary agentic AI\" copy.",
+      "Don't drift back into \"cold dev-tool austerity\": light-first, generous line-height (1.65), patient explanatory copy — the dark theme is an option, not the identity.",
+      "Don't use emoji as icons, gradient text, glassmorphism, colored side-stripe borders (border-left > 1px), or a tracked-uppercase eyebrow above every section — one Label per page, maximum.",
+      "Don't put shadows on cards or transforms on hovers; if it looks lifted or it moves on hover, it's off-system.",
+      "Don't set prose in mono or let any text pair fall below 4.5:1 — \"light gray for elegance\" is prohibited."
+    ]
+  }
+}
