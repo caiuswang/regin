@@ -10,7 +10,7 @@ export const CORE_COMMANDS = [
   { cmd: 'regin tags --index', desc: 'Generate tag / repo indexes.' },
   { cmd: 'regin rebuild', desc: 'Rebuild the local database from git-tracked files.' },
   { cmd: 'regin migrate', desc: 'Sync an existing database to the current schema (alembic upgrade head).' },
-  { cmd: 'regin serve', desc: 'Start the web dashboard on port 8321 (override with --port).' },
+  { cmd: 'regin serve', desc: 'Start the web dashboard on port 8321. --port changes the port; --host 0.0.0.0 exposes it beyond localhost.' },
 ]
 
 export const COMMAND_GROUPS = [

@@ -60,6 +60,9 @@ const STATE_COLUMNS = [
       role, and there is no separate “open registration” toggle — if you expose the port before
       any account exists, anyone who can reach the URL can become admin.
     </Callout>
+    <p>Once that admin account exists, expose the dashboard to other machines by binding all interfaces:</p>
+    <CodeBlock :code="'.venv/bin/python cli/regin.py serve --host 0.0.0.0 --port 8321\n# reachable at http://&lt;this-machine-ip&gt;:8321'" />
+    <p><code>--host</code> defaults to <code>127.0.0.1</code> (localhost only); <code>0.0.0.0</code> binds every interface. For anything past a trusted LAN, front it with a reverse proxy — <code>regin serve</code> runs Flask's development server.</p>
 
     <h2 id="server-modes">Server modes</h2>
     <p><strong>Standalone</strong> (default) keeps everything in local SQLite — single user, no MySQL needed. <strong>Shared</strong> is team mode: user accounts and audit logs move to a MySQL instance every team member connects to.</p>
