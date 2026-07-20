@@ -82,4 +82,5 @@ Install, configure, and run regin: [docs/setup.md](docs/setup.md).
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system internals, module layout, procedure types, rule engines.
 - [docs/topics/proposals.md](docs/topics/proposals.md) — topic graph proposals via external tool-using agents.
 - [docs/topics/multi-user.md](docs/topics/multi-user.md) — sharing approved topics across users via git without a shared database.
+- [website/README.md](website/README.md) — the standalone Vue 3 marketing/docs site (own build and deploy target).
 - [CLAUDE.md](CLAUDE.md) — instructions for AI agents working in this codebase.
