@@ -101,7 +101,7 @@ const entries = (data) => Object.entries(data).sort((a, b) => b[1] - a[1])
       <li
         v-for="(c, i) in checks"
         :key="i"
-        class="flex items-start flex-wrap gap-2 text-xs"
+        class="flex items-center flex-wrap gap-2 text-xs"
         :class="LEVEL_CLS[c.level]"
       >
         <span class="flex min-w-0 items-start gap-2">
