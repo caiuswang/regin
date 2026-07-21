@@ -14,11 +14,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: website
+
+      - name: Build site
+        run: npm run build
+        working-directory: website
+
       - name: Deploy via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
-          switches: -avz --delete --exclude='node_modules' --exclude='dist' --exclude='.git'
-          path: website/
+          switches: -rlvz --delete --omit-dir-times --no-perms
+          path: website/dist/
           remote_path: /var/www/regin-website/
           remote_host: ${{ secrets.REGIN_SERVER_HOST }}
           remote_user: ${{ secrets.REGIN_SERVER_USER }}
