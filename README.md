@@ -2,6 +2,8 @@
 
 **Harness infrastructure for AI coding agents.**
 
+🌐 **[regin.ccday.top](https://regin.ccday.top)** — the official project site.
+
 > ⚠️ **Early beta.** regin is under active development and breaking changes are expected at any time. Database schemas, settings keys, hook contracts, skill bundles, and CLI flags may all change without backward-compatible shims. Pin a commit if you need stability.
 
 regin is not an agent platform. It's the layer *around* an agent — the **harness**. The framing that crystallized this for the community is *Agent = Model + Harness* ([LangChain: The Anatomy of an Agent Harness](https://www.langchain.com/blog/the-anatomy-of-an-agent-harness)), and Birgitta Böckeler's [Harness Engineering for coding agent users](https://martinfowler.com/articles/harness-engineering.html) is the clearest write-up of what that means in practice. regin is the harness half.
