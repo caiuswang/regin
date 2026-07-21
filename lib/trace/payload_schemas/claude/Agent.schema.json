@@ -14,12 +14,14 @@
         "description": {"type": "string"},
         "prompt": {"type": "string"},
         "subagent_type": {"type": "string"},
-        "model": {"type": "string"}
+        "model": {"type": "string"},
+        "run_in_background": {"type": "boolean"}
       }
     },
     "tool_response": {
       "type": "object",
       "additionalProperties": true
     }
-  }
+  },
+  "x-claude-versions": ["2.1.215", "2.1.216"]
 }

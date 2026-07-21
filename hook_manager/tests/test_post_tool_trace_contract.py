@@ -319,6 +319,20 @@ def test_agent_prompt_truncated_records_dropped_bytes(captured):
     assert attrs['prompt_truncated_bytes'] == 50
 
 
+def test_agent_run_in_background_captured(captured):
+    ptt.handle(_make_payload(
+        'Agent', {'prompt': 'p', 'subagent_type': 'general-purpose',
+                  'run_in_background': True}))
+    assert captured[0][2]['run_in_background'] is True
+
+
+def test_agent_run_in_background_absent_when_foreground(captured):
+    ptt.handle(_make_payload(
+        'Agent', {'prompt': 'p', 'subagent_type': 'general-purpose',
+                  'run_in_background': False}))
+    assert 'run_in_background' not in captured[0][2]
+
+
 # ── mcp__ prefix ─────────────────────────────────────────────────
 
 def test_mcp_tool_gets_mcp_flag(captured):
@@ -391,6 +405,28 @@ def test_bash_git_commit_absent_for_non_git_call(captured):
                              tool_response={'stdout': 'file.txt'}))
     attrs = captured[0][2]
     assert 'git_commit_sha' not in attrs
+
+
+# ── Bash timeout / sandbox meta (Claude Code 2.1.215+) ───────────
+
+def test_bash_timeout_and_sandbox_meta_captured(captured):
+    # Drive the real camelCase wire shape through normalization to prove
+    # capture + alias resolution end-to-end.
+    ptt.handle(_make_payload(
+        'Bash',
+        {'command': 'sleep 999', 'dangerouslyDisableSandbox': True},
+        tool_response={'timedOutAfterMs': 120000, 'dangerouslyDisableSandbox': True}))
+    attrs = captured[0][2]
+    assert attrs['timed_out_after_ms'] == 120000
+    assert attrs['dangerously_disable_sandbox'] is True
+
+
+def test_bash_timeout_and_sandbox_meta_absent_on_normal_call(captured):
+    ptt.handle(_make_payload('Bash', {'command': 'ls'},
+                             tool_response={'stdout': 'file.txt'}))
+    attrs = captured[0][2]
+    assert 'timed_out_after_ms' not in attrs
+    assert 'dangerously_disable_sandbox' not in attrs
     assert 'git_op_kind' not in attrs
 
 

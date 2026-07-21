@@ -239,16 +239,21 @@ def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payloa
 
 
 # Tool-independent metadata Claude Code stamps on a Bash `tool_response`:
-# a human-readable exit-status gloss and the background-task bookkeeping it
-# emits when a command is (auto-)backgrounded. Keys are read snake_case —
+# a human-readable exit-status gloss, the background-task bookkeeping it
+# emits when a command is (auto-)backgrounded, plus a timeout marker
+# (`timed_out_after_ms`, 2.1.215+) and a sandbox-disabled flag
+# (`dangerously_disable_sandbox`, 2.1.215+). Keys are read snake_case —
 # `_normalize_payload` aliases the camelCase originals. Only truthy values
-# are kept, so the common non-backgrounded case adds nothing.
+# are kept, so the common non-backgrounded, non-timed-out, sandboxed case
+# adds nothing.
 _BASH_RESPONSE_META: tuple[tuple[str, type], ...] = (
     ('return_code_interpretation', str),
     ('background_task_id', str),
     ('assistant_auto_backgrounded', bool),
     ('persisted_output_path', str),
     ('persisted_output_size', int),
+    ('timed_out_after_ms', int),
+    ('dangerously_disable_sandbox', bool),
 )
 
 
@@ -550,6 +555,8 @@ def _build_agent_attrs(attrs: dict, tool_input: dict, tool_response: dict, paylo
         attrs['prompt'] = head
         if dropped:
             attrs['prompt_truncated_bytes'] = dropped
+    if tool_input.get('run_in_background') is True:
+        attrs['run_in_background'] = True
 
 
 def _build_websearch_input_attrs(attrs: dict, tool_input: dict) -> None:

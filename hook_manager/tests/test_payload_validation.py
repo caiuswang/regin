@@ -383,3 +383,45 @@ def test_compact_event_schema_no_unknown_event(event):
     findings = validate_event(event, payload)
     assert not [f for f in findings if f.drift_kind == 'unknown_event'], findings
     assert findings == [], findings
+
+
+# ── Recent scheme drift (Claude Code 2.1.215/2.1.216) whitelisted ──
+# Each case drives the real camelCase wire shape through normalization so
+# both the snake alias and the camelCase original resolve clean. Mirrors
+# `test_bash_git_operation_not_flagged_as_drift`.
+
+@pytest.mark.parametrize('tool,tool_input,tool_response', [
+    ('Agent', {'prompt': 'p', 'subagent_type': 'x', 'run_in_background': False}, {}),
+    ('Bash', {'command': 'sleep 9', 'dangerouslyDisableSandbox': True},
+     {'timedOutAfterMs': 120000, 'dangerouslyDisableSandbox': True,
+      'backgroundCwdHint': 'Session cwd remains /repo'}),
+    ('SendMessage', {'to': 'a', 'message': 'm'},
+     {'success': True, 'pin': {'id': 'aa4f', 'name': 'aa4f', 'ref': '3b97'}}),
+    ('Write', {'file_path': '/x', 'content': 'y'},
+     {'type': 'create', 'file_path': '/x', 'memdirStamped': True}),
+])
+def test_recent_field_drift_whitelisted(tool, tool_input, tool_response):
+    payload = _normalize_payload({
+        'hook_event_name': 'PostToolUse',
+        'tool_name': tool,
+        'tool_input': tool_input,
+        'tool_response': tool_response,
+        'prompt_id': 'pr-1',
+    })
+    findings = validate(tool, payload)
+    assert findings == [], findings
+
+
+def test_permission_denied_reason_and_tool_use_id_clean():
+    """PermissionDenied (2.1.215+) carries a human-readable `reason` and the
+    `tool_use_id` of the denied call — both must validate against the
+    committed baseline, not flag as unknown_field."""
+    payload = _normalize_payload({
+        'hook_event_name': 'PermissionDenied',
+        'session_id': 's', 'transcript_path': 't', 'cwd': 'c',
+        'tool_name': 'Bash', 'tool_input': {'command': 'kill 7789'},
+        'tool_use_id': 'toolu_014n6WxYqw3FhvPwZNTTeFYv',
+        'reason': 'Killing a process the agent did not create risks…',
+    })
+    findings = validate_event('PermissionDenied', payload)
+    assert findings == [], findings
