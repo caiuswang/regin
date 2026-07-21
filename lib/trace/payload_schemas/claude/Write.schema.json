@@ -24,8 +24,10 @@
         "content": {"type": "string"},
         "structured_patch": {"type": "array"},
         "original_file": {"type": ["string", "null"]},
-        "user_modified": {"type": "boolean"}
+        "user_modified": {"type": "boolean"},
+        "memdir_stamped": {"type": "boolean"}
       }
     }
-  }
+  },
+  "x-claude-versions": ["2.1.216"]
 }

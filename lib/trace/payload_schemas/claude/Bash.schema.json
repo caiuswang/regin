@@ -29,6 +29,9 @@
         },
         "run_in_background": {
           "type": "boolean"
+        },
+        "dangerously_disable_sandbox": {
+          "type": "boolean"
         }
       }
     },
@@ -66,6 +69,15 @@
         "persisted_output_size": {
           "type": "integer"
         },
+        "timed_out_after_ms": {
+          "type": "integer"
+        },
+        "dangerously_disable_sandbox": {
+          "type": "boolean"
+        },
+        "background_cwd_hint": {
+          "type": "string"
+        },
         "git_operation": {
           "type": "object",
           "additionalProperties": true,
@@ -83,6 +95,7 @@
   "x-claude-versions": [
     "2.1.150",
     "2.1.177",
-    "2.1.195"
+    "2.1.195",
+    "2.1.215"
   ]
 }
