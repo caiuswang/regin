@@ -207,6 +207,64 @@ def test_happy_path_delivers_and_submits(monkeypatch):
     assert _enter_sent(calls)
 
 
+# ── 8b. ack survives the composer's line-wrap (reflow) ───────
+def _cu_sent(calls):
+    return any(c[-1] == "C-u" for c in calls)
+
+
+def test_ack_matches_wrapped_echo(monkeypatch):
+    # Claude soft-wraps a long line, injecting a newline + `│` gutter mid-text.
+    # The ack's needle (text[:30]) straddles that boundary; a raw substring
+    # match misses it (RED before the reflow-tolerant compare), so the good
+    # send was reported "not visible". Normalized, it matches → submits.
+    text = "please refactor the delivery layer now"
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="> please refactor the\n│   delivery layer now")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver("t1", text)
+
+    assert res.delivered is True
+    assert _enter_sent(calls)  # actually submitted
+    assert not _cu_sent(calls)  # happy path never clears the line
+
+
+def test_ack_failure_clears_the_typed_line(monkeypatch):
+    # Genuine ack failure: the keystrokes landed but never echoed. The line
+    # MUST be cleared (C-u) so the client's preserved-draft retry doesn't type
+    # on top and submit a duplicated / concatenated prompt — and Enter is still
+    # never sent.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="a totally different screen")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver("t1", "hello world")
+
+    assert res.delivered is False
+    assert _cu_sent(calls)
+    assert not _enter_sent(calls)
+    # The clear happens AFTER the literal type (clears what was typed) and
+    # BEFORE any Enter — the sequence a retry relies on.
+    type_idx = next(i for i, c in enumerate(calls) if "-l" in c and "--" in c)
+    cu_idx = next(i for i, c in enumerate(calls) if c[-1] == "C-u")
+    assert type_idx < cu_idx
+
+
+def test_ack_bar_only_needle_fails_closed_no_blind_submit(monkeypatch):
+    # A needle made only of whitespace / vertical bars normalizes to empty.
+    # It must NOT short-circuit the ack into a blind submit (an empty needle
+    # substring-matches any capture) — refuse, clear the line, send no Enter.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="a totally different screen with no bars")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver("t1", "|| | ||")
+
+    assert res.delivered is False
+    assert not _enter_sent(calls)  # nothing submitted un-echoed
+    assert _cu_sent(calls)         # residue cleared like any ack failure
+
+
 # ── 9. sanitize ──────────────────────────────────────────────
 def test_sanitize_strips_control_ansi_newline(monkeypatch):
     raw = "line one\nline\x1b[31mtwo\x03 end"

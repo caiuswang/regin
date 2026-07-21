@@ -42,6 +42,14 @@ _TMUX_TIMEOUT_SEC = 3.0
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b.")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
+# Claude's composer draws typed input inside a bordered box and SOFT-WRAPS a
+# long line, injecting a newline + a `│` left-gutter mid-text. Collapsing runs
+# of whitespace AND vertical box-drawing bars to one space lets the ack's
+# substring match survive that reflow — a needle straddling a wrap boundary
+# would otherwise never be found in the raw capture (the false "not visible"
+# that stranded the typed text; see `_type_and_ack`).
+_PANE_DECOR_RE = re.compile(r"[\s│┃║|]+")
+
 # Per-trace_id delivery timestamps (monotonic seconds) behind a lock. The
 # lock is held ONLY for the in-memory check/record — never across a tmux
 # subprocess call or a sleep. Bounded two ways so an authed caller spraying
@@ -178,6 +186,11 @@ def _type_and_ack(row: dict, text: str, in_mode: bool) -> DeliveryResult:
     # failure on a perfectly good send.
     needle = text[:30]
     if not _await_pane_text(socket, pane, needle):
+        # The keystrokes DID land — the ack only failed to SEE them. Leaving
+        # them in the composer makes the client's preserved-draft retry type
+        # ON TOP, submitting duplicated or two concatenated prompts, so clear
+        # the input line first. Enter is still never sent: nothing submits.
+        _tmux(socket, "send-keys", "-t", pane, "C-u")
         return DeliveryResult(False, "typed text not visible in pane; not submitting")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
     return DeliveryResult(True, f"delivered to {pane}")
@@ -186,11 +199,22 @@ def _type_and_ack(row: dict, text: str, in_mode: bool) -> DeliveryResult:
 def _await_pane_text(socket: str | None, pane: str, needle: str,
                      attempts: int = 5, interval: float = 0.3) -> bool:
     """Poll capture-pane until `needle` appears (echo can lag the keystroke).
-    True as soon as it is seen; False if it never shows within the budget."""
+    True as soon as it is seen; False if it never shows within the budget.
+
+    Both sides are decoration-normalized (`_PANE_DECOR_RE`) so a needle broken
+    by the composer's line-wrap (newline + `│` gutter) still matches — the same
+    reflow-tolerant compare the multi-question focus guard uses."""
+    want = _PANE_DECOR_RE.sub(" ", needle or "").strip()
+    if not want:
+        # A needle that is ALL whitespace/bars leaves nothing to confirm.
+        # Fail CLOSED — an empty `want` would substring-match any capture and
+        # submit text we never actually saw echo. (`sanitize_text` .strip()s,
+        # so a real prompt never reduces to this; a bar-only prompt refuses.)
+        return False
     for _ in range(attempts):
         time.sleep(interval)
         capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
-        if needle in (capture.stdout or ""):
+        if want in _PANE_DECOR_RE.sub(" ", capture.stdout or ""):
             return True
     return False
 
@@ -333,11 +357,10 @@ def _send_answer(row: dict, option_index: int, free_text: str | None,
     r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", free_text)
     if r.returncode != 0:
         return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
-    # Ack the typed text landed before submitting (same capture-pane check
-    # `_type_and_ack` applies to a steering message).
-    time.sleep(0.3)
-    capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
-    if free_text[:30] not in (capture.stdout or ""):
+    # Same reflow-tolerant, poll-until-echoed ack `_type_and_ack` and
+    # `_answer_one` use — a single early read false-negatived a good send and
+    # a raw substring missed a wrapped echo.
+    if not _await_pane_text(socket, pane, free_text[:30]):
         return DeliveryResult(False, "typed answer not visible in pane; not submitting")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
     kind = "chat message" if is_chat else "typed answer"
