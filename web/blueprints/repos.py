@@ -138,12 +138,19 @@ def api_repo_detail(name):
             select(Branch).where(Branch.repo_id == repo.id)
         ).all()
 
-        patterns = session.exec(
-            select(PatternDoc)
-            .join(PatternDeployment,
-                  PatternDeployment.pattern_slug == PatternDoc.slug)
+        # A pattern deployed to this repo under multiple providers (claude,
+        # kimi, …) has one pattern_deployments row per provider. This page has
+        # no provider dimension, so filter distinct slugs via a subquery — a
+        # join would fan those per-provider rows out into duplicate PatternDoc
+        # rows (the same pattern listed once per provider).
+        deployed_slugs = (
+            select(PatternDeployment.pattern_slug)
             .where(PatternDeployment.scope == "project")
             .where(PatternDeployment.project_id == repo.id)
+        )
+        patterns = session.exec(
+            select(PatternDoc)
+            .where(PatternDoc.slug.in_(deployed_slugs))
             .order_by(PatternDoc.category, PatternDoc.title)
         ).all()
 
