@@ -1692,7 +1692,15 @@ def _merge_bridge_steers(trace_id: str, queued: list) -> list:
     steers = _recent_bridge_steers(trace_id)
     if not steers:
         return queued
+    # A consumed steer leaves the pending queue, so deduping against the
+    # still-queued items alone lets its chip re-surface for the rest of the
+    # window — also suppress steers the transcript has already processed.
+    # Dedup is by normalized body (same basis as the client's representedTexts):
+    # a repeated identical steer ("continue") sent during the pre-enqueue gap is
+    # briefly suppressed, reappearing once it enqueues — an accepted transient.
+    from lib.trace.queued_prompts import consumed_prompt_texts
     seen = {_steer_key(q.get('content')) for q in queued}
+    seen |= consumed_prompt_texts(trace_id)
     for s in steers:
         key = _steer_key(s.get('content'))
         if key and key not in seen:
