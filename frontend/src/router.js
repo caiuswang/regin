@@ -118,4 +118,20 @@ router.beforeEach(async (to) => {
   return true
 })
 
+// Route chunks are fetched on demand, so a tab left open across a rebuild asks
+// for a content hash that no longer exists and the navigation dies silently
+// (Vue Router swallows the rejection). Reload once onto the target so the new
+// index.html + manifest are picked up; the one-shot flag stops a reload loop
+// when the chunk is genuinely missing rather than merely stale.
+const CHUNK_RELOAD_KEY = 'regin_chunk_reload'
+router.onError((err, to) => {
+  const msg = String(err?.message || '')
+  const stale = /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(msg)
+  if (!stale) return
+  if (sessionStorage.getItem(CHUNK_RELOAD_KEY) === to.fullPath) return
+  sessionStorage.setItem(CHUNK_RELOAD_KEY, to.fullPath)
+  window.location.assign(to.fullPath)
+})
+router.afterEach(() => sessionStorage.removeItem(CHUNK_RELOAD_KEY))
+
 export default router

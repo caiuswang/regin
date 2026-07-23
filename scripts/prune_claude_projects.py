@@ -80,11 +80,13 @@ def prune(config: Path, *, include_live: bool, apply: bool) -> int:
     return 0
 
 
+def default_config() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home())) / ".claude.json"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", type=Path,
-                    default=Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()))
-                    / ".claude.json")
+    ap.add_argument("--config", type=Path, default=default_config())
     ap.add_argument("--include-live", action="store_true",
                     help="also drop temp entries whose directory still exists")
     ap.add_argument("--apply", action="store_true",

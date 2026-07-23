@@ -39,13 +39,16 @@ def _prune_claude_tmp_projects():
 
 
 def _prune_dead_tmp_projects() -> None:
-    config = Path.home() / ".claude.json"
-    if not config.exists():
-        return
     root = str(Path(__file__).resolve().parents[1])
     if root not in sys.path:
         sys.path.insert(0, root)
-    from scripts.prune_claude_projects import prune  # noqa: PLC0415
+    # Resolve the path through the script so a CLAUDE_CONFIG_DIR install prunes
+    # the file the CLI actually writes, not a stale ~/.claude.json.
+    from scripts.prune_claude_projects import default_config, prune  # noqa: PLC0415
+
+    config = default_config()
+    if not config.exists():
+        return
 
     with contextlib.suppress(OSError, ValueError):
         with contextlib.redirect_stdout(io.StringIO()):
