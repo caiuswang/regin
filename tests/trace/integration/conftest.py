@@ -8,11 +8,8 @@ Global preconditions enforced here:
 
 from __future__ import annotations
 
-import json
-import os
 import shutil
 import socket
-import tempfile
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -68,55 +65,6 @@ def _environment_checks():
             f"Run `./.venv/bin/python cli/regin.py serve` first.",
             allow_module_level=True,
         )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _restore_claude_projects_after_suite():
-    """`claude` registers each cwd it's launched in under
-    `~/.claude.json['projects']`. Tests here spawn claude in a fresh
-    pytest tmp workspace per case, so without cleanup the global
-    config accumulates one entry per test forever. Snapshot the
-    project keyset at suite start and drop any new entries pointing
-    under `$TMPDIR` at suite end — leaves real (non-tmp) projects and
-    any tmp paths the developer registered manually untouched.
-    """
-    config = Path.home() / ".claude.json"
-    if not config.exists():
-        yield
-        return
-    try:
-        original_projects = set(
-            json.loads(config.read_text()).get("projects", {}).keys()
-        )
-    except (OSError, json.JSONDecodeError):
-        yield
-        return
-
-    yield
-
-    try:
-        current = json.loads(config.read_text())
-    except (OSError, json.JSONDecodeError):
-        return
-    projects = current.get("projects") or {}
-    tmp_root = os.path.realpath(tempfile.gettempdir())
-    leaked = []
-    for path in list(projects.keys()):
-        if path in original_projects:
-            continue
-        try:
-            resolved = os.path.realpath(path)
-        except OSError:
-            continue
-        rel = os.path.relpath(resolved, tmp_root)
-        if not rel.startswith("..") and rel != ".":
-            leaked.append(path)
-    if not leaked:
-        return
-    for path in leaked:
-        projects.pop(path, None)
-    current["projects"] = projects
-    config.write_text(json.dumps(current, indent=2))
 
 
 @pytest.fixture

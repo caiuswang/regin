@@ -72,6 +72,61 @@ def _replay_queue_ops(path: str) -> list[tuple]:
     return list(queue)
 
 
+def _norm(content) -> str:
+    """Whitespace-collapsed body, matching sessions._steer_key so a bridge
+    steer's optimistic copy dedupes against its consumed transcript turn."""
+    return ' '.join(str(content or '').split())
+
+
+def _turn_text(message) -> str:
+    """Plain text of a user turn's `message.content` — a raw string as-is, or
+    the joined text blocks of the block-array form (image/tool blocks skipped).
+    Empty for anything without extractable text."""
+    if isinstance(message, str):
+        return message
+    if isinstance(message, list):
+        parts = [b.get('text', '') for b in message
+                 if isinstance(b, dict) and b.get('type') == 'text']
+        return ' '.join(p for p in parts if p)
+    return ''
+
+
+def consumed_prompt_texts(trace_id: str) -> set[str]:
+    """Normalized bodies of user prompts the transcript has already PROCESSED
+    (non-meta `type:user` turns) — the counterpart to `current_queued_prompts`
+    (still-pending). A bridge steer surfaced optimistically must retire the
+    moment it appears here: a dequeued/consumed steer leaves the pending queue,
+    so a still-queued-only dedup would let its chip linger for the whole window.
+    Empty when the transcript is unreadable."""
+    from lib.trace.live_rescan import _find_main_transcript
+    path = _find_main_transcript(trace_id)
+    if not path:
+        return set()
+    seen: set[str] = set()
+    try:
+        with open(path) as f:
+            for line in f:
+                # cheap prefilter on the value token — matches both compact
+                # transcripts and any pretty-printed spacing around the colon
+                if '"user"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if e.get('type') != 'user' or e.get('isMeta'):
+                    continue
+                text = _norm(_turn_text((e.get('message') or {}).get('content')))
+                if text:
+                    seen.add(text)
+    # A corrupt/partial-write transcript (invalid UTF-8 mid-iteration) raises
+    # UnicodeDecodeError out of `for line in f`, not just json.loads; degrade to
+    # empty like an unreadable file rather than 500-ing the unguarded live poll.
+    except (OSError, UnicodeDecodeError):
+        return set()
+    return seen
+
+
 def current_queued_prompts(trace_id: str) -> list[dict]:
     """`[{content, enqueued_at}]` for the prompts still in the queue, oldest
     first. Empty when nothing is queued or the transcript is unreadable."""

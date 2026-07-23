@@ -7,12 +7,49 @@ dependency so tests can opt in. See plan phase A.2 at
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Iterator
 
 import pytest
+
+
+# ── `claude` CLI project-registry hygiene ─────────────────────
+
+@pytest.fixture(scope="session", autouse=True)
+def _prune_claude_tmp_projects():
+    """Keep `~/.claude.json['projects']` from accumulating tmp workspaces.
+
+    The CLI registers every cwd it is launched in and never evicts, so
+    anything that spawns it in a pytest tmp_path (the tmux trace harness,
+    the topics proposal/review agents) leaves a permanent entry in a file
+    re-read on every startup.
+
+    Pruning runs at session *start* as well as at teardown: a run killed
+    by Ctrl-C or a crash skips teardown, and only a start-side sweep of
+    all dead tmp entries makes the cleanup self-healing across runs.
+    """
+    _prune_dead_tmp_projects()
+    yield
+    _prune_dead_tmp_projects()
+
+
+def _prune_dead_tmp_projects() -> None:
+    config = Path.home() / ".claude.json"
+    if not config.exists():
+        return
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from scripts.prune_claude_projects import prune  # noqa: PLC0415
+
+    with contextlib.suppress(OSError, ValueError):
+        with contextlib.redirect_stdout(io.StringIO()):
+            prune(config, include_live=False, apply=True)
 
 
 # ── Span ingest isolation ─────────────────────────────────────

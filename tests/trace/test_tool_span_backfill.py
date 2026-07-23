@@ -310,6 +310,21 @@ def test_merge_bridge_steers_dedups_and_appends(monkeypatch):
     assert len(bridge) == 1 and bridge[0]['content'] == 'brand new steer'
 
 
+def test_merge_bridge_steers_suppresses_consumed_steer(monkeypatch):
+    # A steer already answered leaves the pending queue but is still inside the
+    # delivery window; without the consumed-turn dedup its chip re-surfaces.
+    from web.blueprints.trace import sessions as s
+    monkeypatch.setattr(
+        s, '_recent_bridge_steers',
+        lambda tid: [{'content': 'was  answered', 'delivered_at': '2026-01-01 10:00:00'},
+                     {'content': 'still pending', 'delivered_at': '2026-01-01 10:00:05'}])
+    monkeypatch.setattr('lib.trace.queued_prompts.consumed_prompt_texts',
+                        lambda tid: {'was answered'})  # normalized transcript turn
+    out = s._merge_bridge_steers('t', [])
+    bridge = [q['content'] for q in out if q.get('source') == 'bridge']
+    assert bridge == ['still pending']  # consumed steer dropped, pending kept
+
+
 def test_recent_bridge_steers_window_and_delivered_gate(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from web.blueprints.trace import sessions as s

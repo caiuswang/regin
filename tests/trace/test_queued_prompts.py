@@ -106,3 +106,50 @@ def test_no_transcript_returns_empty(monkeypatch):
     monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
                         lambda tid: None)
     assert qp.current_queued_prompts('missing') == []
+
+
+def _user(content, meta=False):
+    e = {'type': 'user', 'message': {'role': 'user', 'content': content}}
+    if meta:
+        e['isMeta'] = True
+    return e
+
+
+def test_consumed_texts_captures_processed_turns_normalized(tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [
+        _user('was  answered\n'),                              # collapses whitespace
+        _user('<caveat>local command</caveat>', meta=True),    # isMeta skipped
+        {'type': 'assistant', 'message': {'content': 'reply'}},  # non-user skipped
+    ])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert qp.consumed_prompt_texts('t') == {'was answered'}
+
+
+def test_consumed_texts_extracts_block_array_text(tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_user([
+        {'type': 'text', 'text': 'part one'},
+        {'type': 'image', 'source': {}},        # non-text block skipped
+        {'type': 'text', 'text': 'part two'},
+    ])])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert qp.consumed_prompt_texts('t') == {'part one part two'}
+
+
+def test_consumed_texts_no_transcript_returns_empty(monkeypatch):
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: None)
+    assert qp.consumed_prompt_texts('missing') == set()
+
+
+def test_consumed_texts_degrades_on_invalid_utf8(tmp_path, monkeypatch):
+    # A partial-write transcript with a non-UTF-8 byte must not escape (the
+    # call is unguarded in _merge_bridge_steers → would 500 the live poll).
+    tx = tmp_path / 't.jsonl'
+    tx.write_bytes(b'{"type":"user","message":{"content":"hi"}}\n\xff\xfe bad\n')
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert qp.consumed_prompt_texts('t') == set()
