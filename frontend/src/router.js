@@ -1,42 +1,42 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useFeatures } from './composables/useFeatures'
 
-import DashboardView from './views/DashboardView.vue'
-import ReposView from './views/ReposView.vue'
-import RepoDetailView from './views/RepoDetailView.vue'
-import RepoTopicsView from './views/RepoTopicsView.vue'
-import RevisionCompareView from './views/RevisionCompareView.vue'
-import PatternsView from './views/PatternsView.vue'
-import PatternDetailView from './views/PatternDetailView.vue'
-import RulesView from './views/RulesView.vue'
-import RuleDetailView from './views/RuleDetailView.vue'
-import TriggersView from './views/TriggersView.vue'
-import TriggersRawView from './views/TriggersRawView.vue'
-import SkillsView from './views/SkillsView.vue'
-import SkillDetailView from './views/SkillDetailView.vue'
-import PromptTemplatesView from './views/PromptTemplatesView.vue'
-import ExperimentsView from './views/ExperimentsView.vue'
-import ExperimentDetailView from './views/ExperimentDetailView.vue'
-import PlansView from './views/PlansView.vue'
-import PlanDetailView from './views/PlanDetailView.vue'
-import SkillReadsView from './views/SkillReadsView.vue'
-import MCPCallsView from './views/MCPCallsView.vue'
-import InboxView from './views/InboxView.vue'
-import MemoryView from './views/MemoryView.vue'
-import GradesView from './views/GradesView.vue'
-import IngestErrorsView from './views/IngestErrorsView.vue'
-import TraceView from './views/TraceView.vue'
-import SessionsView from './views/SessionsView.vue'
-import SessionTraceView from './views/SessionTraceView.vue'
-import LiveSessionView from './views/LiveSessionView.vue'
-import SettingsView from './views/SettingsView.vue'
-import LoginView from './views/LoginView.vue'
-import AuditView from './views/AuditView.vue'
-import UsersView from './views/UsersView.vue'
-import SchemaDriftView from './views/SchemaDriftView.vue'
-import PayloadLogView from './views/PayloadLogView.vue'
-import DesignSystemView from './views/DesignSystemView.vue'
-import NotFoundView from './views/NotFoundView.vue'
+const DashboardView = () => import('./views/DashboardView.vue')
+const ReposView = () => import('./views/ReposView.vue')
+const RepoDetailView = () => import('./views/RepoDetailView.vue')
+const RepoTopicsView = () => import('./views/RepoTopicsView.vue')
+const RevisionCompareView = () => import('./views/RevisionCompareView.vue')
+const PatternsView = () => import('./views/PatternsView.vue')
+const PatternDetailView = () => import('./views/PatternDetailView.vue')
+const RulesView = () => import('./views/RulesView.vue')
+const RuleDetailView = () => import('./views/RuleDetailView.vue')
+const TriggersView = () => import('./views/TriggersView.vue')
+const TriggersRawView = () => import('./views/TriggersRawView.vue')
+const SkillsView = () => import('./views/SkillsView.vue')
+const SkillDetailView = () => import('./views/SkillDetailView.vue')
+const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
+const ExperimentsView = () => import('./views/ExperimentsView.vue')
+const ExperimentDetailView = () => import('./views/ExperimentDetailView.vue')
+const PlansView = () => import('./views/PlansView.vue')
+const PlanDetailView = () => import('./views/PlanDetailView.vue')
+const SkillReadsView = () => import('./views/SkillReadsView.vue')
+const MCPCallsView = () => import('./views/MCPCallsView.vue')
+const InboxView = () => import('./views/InboxView.vue')
+const MemoryView = () => import('./views/MemoryView.vue')
+const GradesView = () => import('./views/GradesView.vue')
+const IngestErrorsView = () => import('./views/IngestErrorsView.vue')
+const TraceView = () => import('./views/TraceView.vue')
+const SessionsView = () => import('./views/SessionsView.vue')
+const SessionTraceView = () => import('./views/SessionTraceView.vue')
+const LiveSessionView = () => import('./views/LiveSessionView.vue')
+const SettingsView = () => import('./views/SettingsView.vue')
+const LoginView = () => import('./views/LoginView.vue')
+const AuditView = () => import('./views/AuditView.vue')
+const UsersView = () => import('./views/UsersView.vue')
+const SchemaDriftView = () => import('./views/SchemaDriftView.vue')
+const PayloadLogView = () => import('./views/PayloadLogView.vue')
+const DesignSystemView = () => import('./views/DesignSystemView.vue')
+const NotFoundView = () => import('./views/NotFoundView.vue')
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
