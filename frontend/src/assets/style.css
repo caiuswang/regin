@@ -1650,7 +1650,27 @@ body {
     align-items: center;
     padding: 0.5rem 0;
 }
+
+/* Global so views that don't define their own scoped copy still get a laid-out
+   row; RulesView/PatternsView keep bespoke variants (scoped attr wins). */
+.filter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.filter-row-label {
+    font-size: 0.75rem;
+    color: var(--color-slate-500);
+    margin-right: 0.25rem;
+}
+
 .filter-chip {
+    /* inline-flex, not the default inline-block: chips are also rendered as
+       <span> (PatternsView), where min-height would otherwise be inert. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0.3125rem 0.75rem;
     font-size: 0.8125rem;
     border-radius: 9999px;
@@ -1668,6 +1688,12 @@ body {
     background-color: var(--color-blue-800);
     color: #fff;
     font-weight: 500;
+}
+/* The blue ramp inverts under dark, so blue-800 lands pale (#bfdbfe) and the
+   white label drops to ~1.3:1. Pin the fill to a step that stays dark. */
+[data-theme="dark"] .filter-chip.active {
+    background-color: var(--color-blue-400);
+    color: #fff;
 }
 
 /* Code */
@@ -1754,7 +1780,11 @@ details summary {
         min-height: 44px;
     }
     .filter-chip {
-        padding: 0.5rem 0.75rem;
+        /* Width floor is tied to the 40px touch target: without it a short
+           label ("All") makes a ~36x40 box, which the pill radius renders as
+           a circle. min-width keeps it a pill whatever the label measures. */
+        padding: 0.5rem 1rem;
+        min-width: 3.75rem;
         min-height: 40px;
     }
     .table-link {

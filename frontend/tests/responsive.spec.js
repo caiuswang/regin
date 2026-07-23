@@ -254,3 +254,92 @@ test.describe('Markdown detail pages — no horizontal overflow', () => {
     })
   }
 })
+
+/**
+ * `/schema-drift` filter row.
+ *
+ * Three defects this pins, each of which passes vacuously if only asserted
+ * from the diff: (a) `.filter-row`/`.filter-row-label` were defined only in
+ * RulesView/PatternsView *scoped* styles, so on this view the row was an
+ * unstyled block with the label glued to the first chip; (b) at <=639px the
+ * chip's 0.75rem side padding against a 40px touch target rendered a short
+ * label ("All") as a circle; (c) the blue ramp inverts under dark, so
+ * `.filter-chip.active`'s blue-800 fill went pale behind white text.
+ */
+async function chipMetrics(page) {
+  return page.evaluate(() => {
+    const row = document.querySelector('.filter-row')
+    if (!row) return null
+    const label = row.querySelector('.filter-row-label')
+    const chips = [...row.querySelectorAll('.filter-chip')]
+    const all = chips[0]
+    const rowCS = getComputedStyle(row)
+    const lr = label.getBoundingClientRect()
+    const ar = all.getBoundingClientRect()
+
+    // Relative luminance / WCAG contrast on the resolved computed colors.
+    const lum = (rgb) => {
+      const c = rgb.match(/[\d.]+/g).slice(0, 3).map((v) => {
+        const s = Number(v) / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    }
+    const active = chips.find((c) => c.classList.contains('active')) || all
+    const acs = getComputedStyle(active)
+    const [l1, l2] = [lum(acs.backgroundColor), lum(acs.color)].sort((a, b) => b - a)
+
+    return {
+      display: rowCS.display,
+      flexWrap: rowCS.flexWrap,
+      labelToChipGap: ar.left - lr.right,
+      allWidth: ar.width,
+      allHeight: ar.height,
+      activeContrast: (l1 + 0.05) / (l2 + 0.05),
+    }
+  })
+}
+
+test.describe('/schema-drift filter row', () => {
+  test('label is spaced off the chips and the row lays out as a wrapping flex row', async ({ page }) => {
+    await page.goto('/schema-drift')
+    await settle(page)
+    const m = await chipMetrics(page)
+    test.skip(!m, 'filter row not rendered')
+
+    expect(m.display, 'filter-row must be flex, not an unstyled block').toBe('flex')
+    expect(m.flexWrap).toBe('wrap')
+    expect(
+      m.labelToChipGap,
+      `"State:" label sits ${m.labelToChipGap}px from the first chip`
+    ).toBeGreaterThanOrEqual(8)
+  })
+
+  test('the short "All" chip is a pill, not a circle, and keeps its touch target', async ({ page, viewport }) => {
+    test.skip(!viewport || viewport.width >= 640, 'mobile-viewport-only assertion')
+    await page.goto('/schema-drift')
+    await settle(page)
+    const m = await chipMetrics(page)
+    test.skip(!m, 'filter row not rendered')
+
+    expect(m.allHeight, 'chip must keep a >=40px tap target').toBeGreaterThanOrEqual(40)
+    expect(
+      m.allWidth / m.allHeight,
+      `"All" chip is ${Math.round(m.allWidth)}x${Math.round(m.allHeight)} — reads as a circle`
+    ).toBeGreaterThanOrEqual(1.35)
+  })
+
+  test('the active chip stays legible in dark mode', async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem('regin_theme', 'dark'))
+    await page.goto('/schema-drift')
+    await settle(page)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    const m = await chipMetrics(page)
+    test.skip(!m, 'filter row not rendered')
+
+    expect(
+      m.activeContrast,
+      `active chip label contrast is ${m.activeContrast.toFixed(2)}:1 in dark mode`
+    ).toBeGreaterThanOrEqual(4.5)
+  })
+})
