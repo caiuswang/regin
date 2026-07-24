@@ -8,6 +8,7 @@ import traceShotMobileWebp from '../assets/shots/trace-dark-mobile.webp'
 <template>
   <section class="section" aria-labelledby="proof-heading">
     <div class="section-head">
+      <p class="eyebrow">Live trace</p>
       <h2 id="proof-heading">This is regin tracing the session that built this page</h2>
       <p>Not a mockup — the actual session viewer, open on the actual run. Every tool call recorded and costed, every turn replayable. When a session goes sideways, this is where you find out why.</p>
     </div>

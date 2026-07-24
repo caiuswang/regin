@@ -22,7 +22,7 @@
         var theme
         try { theme = localStorage.getItem('regin-site-theme') } catch (e) { theme = null }
         if (theme !== 'light' && theme !== 'dark') {
-          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          theme = 'dark'
         }
         document.documentElement.setAttribute('data-theme', theme)
       })()

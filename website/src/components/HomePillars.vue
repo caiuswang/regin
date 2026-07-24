@@ -10,6 +10,7 @@ import { PILLARS, SECONDARY } from '../content/features.js'
 <template>
   <section class="section" aria-labelledby="pillars-heading">
     <div class="section-head">
+      <p class="eyebrow">How it works</p>
       <h2 id="pillars-heading">The three layers that do the work</h2>
       <p>Guides steer; these three are how the harness senses, corrects, and remembers — rules enforce the spec, the trace shows what happened, memory keeps what it taught.</p>
     </div>

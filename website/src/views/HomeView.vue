@@ -20,6 +20,10 @@ async function copyQuickstart() {
 <template>
   <div class="container">
     <section class="hero">
+      <div class="hero-badge">
+        <span class="dot" aria-hidden="true"></span>
+        Early beta · <strong>Runs locally</strong>
+      </div>
       <h1>Agent = Model + Harness</h1>
       <p class="lead">
         Everyone tunes the model. regin is the harness — the layer around your
@@ -33,18 +37,25 @@ async function copyQuickstart() {
         </a>
         <RouterLink to="/getting-started" class="btn btn-ghost focus-visible:ring">Read the guide</RouterLink>
       </div>
-      <div class="quickstart-wrap">
-        <pre class="quickstart"><code>{{ CLONE_CMD }}</code></pre>
-        <Button variant="icon" class="quickstart-copy" :aria-label="copied ? 'Copied' : 'Copy quick-start commands'" @click="copyQuickstart">
-          <SiteIcon :name="copied ? 'check' : 'copy'" :size="15" />
-        </Button>
-        <span class="sr-only" aria-live="polite">{{ copied ? 'Copied to clipboard' : '' }}</span>
+      <div class="terminal">
+        <div class="terminal-bar" aria-hidden="true">
+          <span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>
+          <span class="tlabel">bash</span>
+        </div>
+        <div class="quickstart-wrap">
+          <pre class="quickstart"><code>{{ CLONE_CMD }}</code></pre>
+          <Button variant="icon" class="quickstart-copy" :aria-label="copied ? 'Copied' : 'Copy quick-start commands'" @click="copyQuickstart">
+            <SiteIcon :name="copied ? 'check' : 'copy'" :size="15" />
+          </Button>
+          <span class="sr-only" aria-live="polite">{{ copied ? 'Copied to clipboard' : '' }}</span>
+        </div>
       </div>
       <p class="quickstart-caption">Runs locally — Python + Node, one setup script, then <RouterLink to="/getting-started#activate-hooks">install the hooks</RouterLink> to wire it into your agent. Early beta; pin a commit if you need stability.</p>
     </section>
 
     <section class="section" aria-labelledby="mechanisms-heading">
       <div class="section-head">
+        <p class="eyebrow">The harness</p>
         <h2 id="mechanisms-heading">Two complementary mechanisms</h2>
         <p>A harness is what turns a non-deterministic model into a teammate you can trust on real work. It takes both halves:</p>
       </div>

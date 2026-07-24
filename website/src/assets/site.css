@@ -124,33 +124,33 @@
    calmer 0.135-chroma green. All pairs measured >=4.5:1 text, >=3:1
    non-text (scratchpad palette.mjs; worst text pair 6.28:1). */
 [data-theme="dark"] {
-  --bg: #0b110d;
-  --surface: #141b16;
-  --surface-2: #1c251f;
-  --text: #eef1ef;
-  --body-ink: #cbd3cd;
-  --muted: #adb9b1;
-  --faint: #919e94;
-  --border: #2a362e;
-  --border-strong: #3d4c42;
-  --accent: #6bcd89;
-  --accent-contrast: #072311;
-  --accent-soft: #18301f;
-  --accent-soft-text: #a5e3b4;
+  --bg: #000000;
+  --surface: #0c0d0c;
+  --surface-2: #161816;
+  --text: #f6f8f6;
+  --body-ink: #c3c8c4;
+  --muted: #9aa39d;
+  --faint: #6d766f;
+  --border: #20221f;
+  --border-strong: #333733;
+  --accent: #2bde5e;
+  --accent-contrast: #052912;
+  --accent-soft: #10311d;
+  --accent-soft-text: #57e77f;
   --warn-soft: #31240e;
   --warn-text: #e8cb7b;
-  --code-bg: #070c08;
+  --code-bg: #000000;
   --code-text: #d5ddd7;
-  --code-inline-bg: #1e2821;
+  --code-inline-bg: #17201a;
   --code-inline-text: #dae0dc;
   --code-comment: #86998c;
-  --code-faint: #88998d;
-  --code-chrome-edge: #36473b;
+  --code-faint: #7f8a82;
+  --code-chrome-edge: #2b352e;
   --code-chrome-hover-ink: #d8e0da;
   --code-chrome-hover-edge: #54695b;
   --code-chrome-hover-bg: rgba(213, 221, 215, 0.1);
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
-  --header-bg: rgba(11, 17, 13, 0.85);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 12px 40px rgba(0, 0, 0, 0.5);
+  --header-bg: rgba(0, 0, 0, 0.72);
 }
 
 * { box-sizing: border-box; }
@@ -474,11 +474,41 @@ td code, th code { white-space: nowrap; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: var(--space-lg);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+}
+.card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
 }
 .card h3 { margin-top: 0; }
+
+/* ── Terminal chrome (hero quick-start well) ──────────── */
+.terminal {
+  max-width: 100%;
+  margin: var(--space-lg) auto 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--code-bg);
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.85rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.terminal-bar .tdot { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: rgba(255, 255, 255, 0.18); }
+.terminal-bar .tlabel { margin-left: 0.4rem; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--code-faint); letter-spacing: 0.03em; }
+.terminal .quickstart-wrap { display: block; margin: 0; }
+.terminal .quickstart { border: none; border-radius: 0; background: transparent; margin: 0; }
+.terminal .quickstart-copy { top: 0.55rem; right: 0.55rem; }
 
 .callout {
   display: flex;
@@ -532,13 +562,61 @@ td code, th code { white-space: nowrap; }
 /* ── Landing page ─────────────────────────────────────── */
 
 .hero {
+  position: relative;
   padding: var(--space-hero) 0 var(--space-section);
   text-align: center;
+  isolation: isolate;
 }
+/* Aurora glow — the OCR hero signature. Dark theme only; a blurred green
+   radial wash behind the headline, clipped to the hero band. */
+[data-theme="dark"] .hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -8%;
+  left: 50%;
+  width: min(1100px, 120%);
+  height: 420px;
+  transform: translateX(-50%);
+  background:
+    radial-gradient(closest-side, rgba(43, 222, 94, 0.28), transparent 70%),
+    radial-gradient(closest-side, rgba(43, 222, 94, 0.16), transparent 72%);
+  background-position: 30% 20%, 70% 60%;
+  background-size: 70% 100%, 60% 90%;
+  background-repeat: no-repeat;
+  filter: blur(46px);
+  opacity: 0.9;
+  pointer-events: none;
+  animation: hero-aurora 16s ease-in-out infinite alternate;
+}
+@keyframes hero-aurora {
+  from { transform: translateX(-52%) scale(1); opacity: 0.7; }
+  to { transform: translateX(-46%) scale(1.12); opacity: 0.95; }
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2rem;
+  padding: 0 0.85rem;
+  margin: 0 auto var(--space-lg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.hero-badge strong { color: var(--accent); font-weight: 600; }
+.hero-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
 .hero h1 {
   font-size: var(--text-display);
-  font-weight: 800;
-  letter-spacing: -0.035em;
+  font-weight: 650;
+  letter-spacing: -0.015em;
   line-height: 1.08;
   margin: 0 auto var(--space-md);
   max-width: 50rem;
@@ -709,9 +787,12 @@ article .mini-row { text-decoration: none; }
    to the content it introduces (instead of floating mid-void) and steps the
    closing cadence down from the 2×section beat of the sections above. */
 .section.closing-cols, .section.closing-cta { padding-top: min(var(--space-xl), var(--space-section)); }
-.section-head { max-width: 40rem; margin-bottom: var(--space-xl); }
-.section-head h2 { font-size: var(--text-section); font-weight: 750; letter-spacing: -0.025em; line-height: 1.2; margin: 0 0 0.6rem; }
-.section-head p { color: var(--muted); max-width: 65ch; margin: 0; }
+/* Centered eyebrow → display-heading → lead, the marketing section-header
+   grammar borrowed from the OCR aesthetic. */
+.section-head { max-width: 44rem; margin: 0 auto var(--space-xl); text-align: center; }
+.section-head h2 { font-size: var(--text-section); font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; margin: 0 0 0.7rem; }
+.section-head p { color: var(--muted); max-width: 60ch; margin: 0 auto; }
+.section-head .eyebrow { text-align: center; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr; gap: var(--space-md); }
 @media (min-width: 640px) { .grid-2 { grid-template-columns: repeat(2, 1fr); } }
