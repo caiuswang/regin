@@ -13,6 +13,9 @@ const props = defineProps({
   // attached. Cumulative across the session, so N can be > 1 even for
   // a prompt with a single image.
   imageIndices: { type: Array, default: () => [] },
+  // Forwarded to ClampedText so an outer "Show full prompt" opens this clamp
+  // too, instead of leaving the reader a second button to find.
+  forceExpanded: { type: Boolean, default: false },
 })
 
 const validIndices = computed(() => new Set(props.imageIndices))
@@ -119,7 +122,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-  <ClampedText :lines="8" class="text-[13.5px] whitespace-pre-wrap break-words text-purple-900 leading-relaxed">
+  <ClampedText :lines="8" :force-expanded="forceExpanded" class="text-[13.5px] whitespace-pre-wrap break-words text-purple-900 leading-relaxed">
     <template v-for="(seg, pos) in segments" :key="pos">
       <span v-if="seg.type === 'text'">{{ seg.value }}</span>
       <span
@@ -137,7 +140,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
             :src="blobUrls.get(seg.idx) || ''"
             alt=""
             loading="lazy"
-            class="max-h-32 max-w-[16rem] object-contain block"
+            class="max-h-32 max-w-full sm:max-w-[16rem] object-contain block"
           />
         </Button>
       </span>
@@ -159,7 +162,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
             :src="blobUrls.get(imageNum) || ''"
             alt=""
             loading="lazy"
-            class="max-h-32 max-w-[16rem] object-contain block"
+            class="max-h-32 max-w-full sm:max-w-[16rem] object-contain block"
           />
         </Button>
       </span>

@@ -71,7 +71,15 @@ const bill = computed(() => {
       <span class="font-normal text-slate-400">· token spend</span>
     </Button>
 
-    <div v-if="open" class="mt-2.5 flex max-h-[42vh] flex-col gap-3.5 overflow-y-auto pr-0.5">
+    <!-- `[&>*]:shrink-0` is load-bearing: as flex items the sections default to
+         shrink:1, so they compressed to the max-h instead of overflowing it.
+         Their own overflow-hidden (there for the rounded corners) then clipped
+         the squeezed-out rows while the scroller had nothing to scroll. -->
+    <div
+      v-if="open"
+      class="mt-2.5 flex max-h-[42vh] flex-col gap-3.5 overflow-y-auto pr-0.5 [&>*]:shrink-0"
+      data-testid="trace-spend-scroll"
+    >
       <TraceSpendLeaderboard :rollup-data="rollupData" @jump-span="$emit('jump-span', $event)" />
 
       <section
@@ -85,7 +93,7 @@ const bill = computed(() => {
           </p>
         </header>
         <div
-          class="grid items-center gap-x-3 border-b border-slate-200 px-4 pb-2 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-slate-400 [grid-template-columns:20px_1fr_92px_80px]"
+          class="grid items-center gap-x-2 border-b border-slate-200 px-3 pb-2 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-slate-400 [grid-template-columns:20px_1fr_74px_64px] sm:gap-x-3 sm:px-4 sm:[grid-template-columns:20px_1fr_92px_80px]"
         >
           <span></span>
           <span>Line item</span>
@@ -95,7 +103,7 @@ const bill = computed(() => {
         <div
           v-for="r in bill.rows"
           :key="r.key"
-          class="grid items-center gap-x-3 border-b border-slate-100 px-4 py-2 [grid-template-columns:20px_1fr_92px_80px]"
+          class="grid items-center gap-x-2 border-b border-slate-100 px-3 py-2 [grid-template-columns:20px_1fr_74px_64px] sm:gap-x-3 sm:px-4 sm:[grid-template-columns:20px_1fr_92px_80px]"
         >
           <span class="flex justify-center">
             <span class="h-2.5 w-2.5 rounded-sm" :class="r.accent"></span>
@@ -110,7 +118,10 @@ const bill = computed(() => {
           </span>
           <span class="text-right font-mono text-[12.5px] tabular-nums text-slate-700">{{ fmtTokens(r.tokenCount) }}</span>
         </div>
-        <div class="grid items-center gap-x-3 bg-slate-50 px-4 py-2.5 [grid-template-columns:20px_1fr_92px_80px]">
+        <div
+          class="grid items-center gap-x-2 bg-slate-50 px-3 py-2.5 [grid-template-columns:20px_1fr_74px_64px] sm:gap-x-3 sm:px-4 sm:[grid-template-columns:20px_1fr_92px_80px]"
+          data-testid="spend-bill-total"
+        >
           <span></span>
           <span class="text-[11px] font-bold uppercase tracking-[0.04em] text-slate-700">Total spend</span>
           <span class="text-right font-mono text-sm font-bold tabular-nums text-emerald-600">{{ bill.totalCost }}</span>

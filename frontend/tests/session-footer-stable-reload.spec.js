@@ -17,10 +17,20 @@ mobile('feed footer keeps a constant height when reloading', async ({ page }) =>
   await page.locator('header').first().waitFor({ timeout: 15000 })
   await page.waitForTimeout(1500)
 
+  // Located structurally, not by its text: in conversation mode the idle
+  // label is blank (the feed column prints its own end-of-timeline marker),
+  // so the fixed-height row is the only stable handle — and the height
+  // invariant is exactly what this test is about.
   const footerH = () => page.evaluate(() => {
-    const f = [...document.querySelectorAll('.pb-20')].find((d) => /End of timeline|Loading/i.test(d.textContent || ''))
+    const f = document.querySelector('.pb-20')
     return f ? Math.round(f.getBoundingClientRect().height) : -1
   })
+
+  // The old locator found the footer BY its text, so it doubled as proof the
+  // end-of-feed marker renders at all. That assertion would have been lost in
+  // the retarget, so state it separately: in conversation mode the marker is
+  // printed by the feed column rather than this row.
+  await expect(page.getByText('End of timeline').first()).toBeVisible({ timeout: 15000 })
 
   const idleH = await footerH()
   expect(idleH, 'footer not found').toBeGreaterThan(0)

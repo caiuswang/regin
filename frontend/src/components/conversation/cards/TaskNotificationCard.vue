@@ -1,6 +1,4 @@
 <script setup>
-import { fmtClock } from '../../../utils/traceFormatters.js'
-
 defineProps({
   span: { type: Object, required: true },
   selectedSpan: { type: Object, default: null },
@@ -11,17 +9,15 @@ defineEmits(['activate'])
 <template>
   <!-- Background-task notification card (amber tint) -->
   <div
-    class="rounded-md border bg-amber-50 border-amber-200 px-3 py-2 cursor-pointer hover:border-amber-300 transition-colors"
-    :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'ring-2 ring-amber-300' : ''"
+    class="rounded-lg border bg-amber-50 border-amber-200 px-3 py-2.5 cursor-pointer hover:border-amber-300 transition-colors"
+    :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
     @click="$emit('activate', span)"
   >
-    <div class="flex items-center gap-2 text-[11px] font-mono text-amber-700/80 mb-0.5">
-      <span class="font-semibold uppercase tracking-wider text-[10px]">BACKGROUND TASK</span>
-      <span class="text-amber-300">·</span>
-      <span>{{ fmtClock(span.start_time) }}</span>
+    <div class="flex items-center gap-2 mb-1">
+      <span class="font-semibold uppercase tracking-wider text-[10px] text-amber-700">Background task</span>
       <span
         v-if="span.attributes?.status"
-        class="px-1 rounded text-[10px] border"
+        class="ml-auto px-1 rounded text-[10px] border font-mono"
         :class="span.attributes.status === 'failed'
           ? 'bg-red-50 text-red-700 border-red-200'
           : 'bg-green-50 text-green-700 border-green-200'"

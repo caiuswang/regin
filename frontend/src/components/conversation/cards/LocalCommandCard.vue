@@ -1,5 +1,5 @@
 <script setup>
-import { fmtClock, fmtDuration, fullLabel, dotColor } from '../../../utils/traceFormatters.js'
+import { fmtDuration, fullLabel } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
 
 // Local command (`!ls` bang/bash or `/clear` slash): one-liner showing the
@@ -19,23 +19,21 @@ defineEmits(['activate'])
   <div class="group">
     <div
       tabindex="0"
-      class="flex items-center gap-2 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-blue-50' : ''"
+      class="flex items-baseline gap-2 cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
       @click="$emit('activate', span); folding.toggleBashExpanded(span.span_id)"
     >
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
-      <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
+      <span class="text-[12.5px] font-semibold text-teal-700 shrink-0">Command</span>
+      <span class="font-mono text-[12.5px] text-slate-500 flex-1 min-w-0 truncate">{{ span.attributes?.command_name || fullLabel(span) }}</span>
+      <span v-if="span.duration_ms" class="font-mono text-[10.5px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
       <span
         v-if="span.attributes?.stdout || span.attributes?.stderr"
-        class="text-slate-400 shrink-0 select-none w-3 text-center"
+        class="text-[10.5px] text-slate-400 shrink-0 select-none w-3 text-center"
       >{{ folding.bashExpanded(span.span_id) ? '▾' : '▸' }}</span>
-      <span v-else class="w-3 shrink-0"></span>
-      <span class="break-all flex-1 min-w-0 whitespace-pre-line font-mono text-teal-700 font-semibold">{{ span.attributes?.command_name || fullLabel(span) }}</span>
-      <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
     </div>
     <div
       v-if="folding.bashExpanded(span.span_id) && (span.attributes?.stdout || span.attributes?.stderr)"
-      class="code-surface ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
+      class="code-surface ml-2.5 mt-1 rounded-lg bg-slate-900 border border-slate-800 overflow-hidden"
     >
       <div v-if="span.attributes?.stdout" class="px-3 py-2">
         <div class="flex items-center gap-2 mb-1">

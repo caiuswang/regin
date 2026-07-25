@@ -954,7 +954,11 @@ const {
           <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
           <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        {{ reloading ? 'Loading' : 'End of timeline' }}
+        <!-- The conversation feed prints its own end-of-timeline marker at the
+             bottom of the feed COLUMN (where the design puts it); printing this
+             page-wide one too would show the reader two of them. The row itself
+             stays so the reload spinner and the fixed footer height survive. -->
+        {{ reloading ? 'Loading' : (viewMode === 'conversation' ? '' : 'End of timeline') }}
       </span>
     </div>
   </div>

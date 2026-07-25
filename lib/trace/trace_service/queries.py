@@ -1103,7 +1103,7 @@ def _fetch_turn_usage_rows(conn, trace_id: str) -> tuple[list[dict], list, set]:
         SELECT turn_uuid, turn_index, timestamp, model,
                input_tokens, output_tokens,
                cache_read_tokens, cache_creation_tokens,
-               context_used_tokens, request_id, effort_level
+               context_used_tokens, request_id, effort_level, cost_usd
         FROM turn_usage
         WHERE trace_id = ?
         ORDER BY timestamp ASC, turn_index ASC

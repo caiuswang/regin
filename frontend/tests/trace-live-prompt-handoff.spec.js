@@ -34,9 +34,9 @@ async function post(page, spans) {
   expect(res.ok()).toBeTruthy()
 }
 
-// One USER badge per user-prompt card in SessionConversationView.
+// One label per user-prompt card in SessionConversationView (`PROMPT · TURN n`).
 function userBadges(page) {
-  return page.getByText('USER', { exact: true })
+  return page.getByTestId('conversation-prompt-label')
 }
 
 test('live prompt placeholder is superseded by its anchor, not duplicated', async ({ page }) => {

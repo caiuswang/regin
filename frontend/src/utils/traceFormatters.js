@@ -678,6 +678,7 @@ export function dotColor(name) {
     'prompt': 'bg-purple-500',
     'task.notification': 'bg-amber-500',
     'assistant_response': 'bg-emerald-500',
+    'assistant.thinking': 'bg-amber-400',
     'skill.read': 'bg-green-500',
     'skill.invoke': 'bg-green-600',
     'file.edit': 'bg-orange-500',
@@ -709,7 +710,15 @@ export function isErrorToolSpan(span) {
 export function toolRowDotClass(span) {
   if (isDeniedToolSpan(span)) return 'bg-amber-400'
   if (isErrorToolSpan(span)) return 'bg-red-500'
+  // Most thinking spans arrive with no captured text, so their node says only
+  // "time passed here". A content colour would promise a payload that isn't
+  // there; the neutral keeps the coloured nodes meaning something.
+  if (isEmptyThinkingSpan(span)) return 'bg-slate-300'
   return dotColor(span.name)
+}
+
+export function isEmptyThinkingSpan(span) {
+  return span?.name === 'assistant.thinking' && !span?.attributes?.thinking_text
 }
 
 export function toolRowTextClass(span) {
@@ -717,6 +726,54 @@ export function toolRowTextClass(span) {
   if (isRejectedToolSpan(span)) return 'text-red-700'
   if (isDeniedToolSpan(span)) return 'text-amber-800'
   return 'text-slate-700'
+}
+
+// ── Conversation spine row composition ───────────────────────
+//
+// The conversation spine renders an event title-first: a bold semantic verb
+// ("Read") followed by its subject ("middleware.ts"). `fullLabel` stays the
+// single place that knows how to describe a span, so the subject is derived
+// by stripping the title `fullLabel` already emitted rather than re-deriving
+// every attribute branch here.
+
+const _ROW_TITLES = {
+  'skill.read': 'Skill read',
+  'skill.invoke': 'Skill',
+  'file.edit': 'Edit',
+  'plan.edit': 'Plan edit',
+  'subagent.start': 'Subagent',
+  'subagent.stop': 'Subagent done',
+}
+
+function _stripTitle(full, title) {
+  if (full === title) return ''
+  if (full.startsWith(title)) return full.slice(title.length).replace(/^[:\s]+/, '')
+  return full
+}
+
+export function rowParts(span) {
+  const name = span?.name || ''
+  const a = span?.attributes || {}
+  if (name === 'tool.failure') {
+    return { title: 'Failed', subject: _stripTitle(fullLabel(span), 'failed:') }
+  }
+  if (name.startsWith('tool.')) {
+    const title = toolDisplayLabel(name.slice(5))
+    return { title, subject: _stripTitle(fullLabel(span), title) }
+  }
+  switch (name) {
+    case 'skill.read':
+    case 'skill.invoke':
+      return { title: _ROW_TITLES[name], subject: a.skill_id || '' }
+    case 'file.edit':
+    case 'plan.edit':
+      return { title: _ROW_TITLES[name], subject: a.file_path ? a.file_path.split('/').pop() : '' }
+    case 'subagent.start':
+      return { title: _ROW_TITLES[name], subject: a.agent_type || '' }
+    case 'subagent.stop':
+      return { title: _ROW_TITLES[name], subject: '' }
+  }
+  return { title: name, subject: '' }
 }
 
 // ── Span category buckets (Terminal filter bar + /live filter sheet) ──

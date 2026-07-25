@@ -95,11 +95,12 @@ test('run view folds agent subtrees by default and drills in on expand', async (
   await page.goto(`/trace/sessions/${runId}`)
 
   // Count a turn marker only inside the spine's in-agent rows (the
-  // `border-pink-300` rail) — that's exactly what folding controls. The
+  // nested rail, keyed by testid not colour) — that's exactly what folding
+  // controls. The
   // right-hand detail sidebar also echoes a selected span's text, which is
   // unrelated to the fold, so a bare getByText would double-count it.
   const inAgentTurn = (text) =>
-    page.locator('.border-pink-300', { hasText: text })
+    page.getByTestId('in-agent-row').filter({ hasText: text })
 
   // The agent headers render (projection ran).
   await expect(page.getByText('find:bugs').first()).toBeVisible({ timeout: 10_000 })
@@ -158,7 +159,7 @@ test('regular session folds its tool.Agent subagents too', async ({ page }) => {
   })
   await page.goto(`/trace/sessions/${traceId}`)
 
-  const inAgentTurn = (text) => page.locator('.border-pink-300', { hasText: text })
+  const inAgentTurn = (text) => page.getByTestId('in-agent-row').filter({ hasText: text })
 
   // Agent headers render, but their captured turns are folded by default —
   // this session is NOT a workflow (no phases / run_id), proving the fold is
@@ -186,7 +187,7 @@ test('parent session shows a rich collapsed workflow summary node', async ({ pag
 
   // The inline tool.Workflow row carries the run name, the computed agent
   // count from /workflow-runs, and a link to drill into the run.
-  await expect(page.getByText('⚙ Workflow').first()).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByTestId('workflow-launch-row').first()).toBeVisible({ timeout: 10_000 })
   await expect(page.getByText('2 agents').first()).toBeVisible()
   await expect(page.getByRole('link', { name: 'view run →' }).first()).toBeVisible()
 
@@ -204,7 +205,7 @@ test('parent session folds workflow subagent markers behind the card', async ({ 
   })
   await page.goto(`/trace/sessions/${traceId}`)
 
-  await expect(page.getByText('⚙ Workflow').first()).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByTestId('workflow-launch-row').first()).toBeVisible({ timeout: 10_000 })
   // The two re-parented markers are folded away by default (not in the spine).
   await expect(page.getByText(/workflow-subagent/)).toHaveCount(0)
   // The fold chevron reports the marker count and reveals them on click.

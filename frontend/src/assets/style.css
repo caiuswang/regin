@@ -3379,6 +3379,76 @@ button.live-qa-pick.live-qa-staged {
     .trace-subagent-scoped { animation: none; }
 }
 
+/* ── Conversation event spine ─────────────────────────────────────────────
+   The expanded turn body is a wire with its events punched onto it as nodes.
+   Global (not scoped) because the wrapper lives in SessionConversationView
+   while the dot ships as its own component and the selection treatment is
+   applied inside a dozen leaf cards — scoped styles reach none of those.
+   Unlayered on purpose: these must beat the Tailwind utility layer so a card
+   that already carries e.g. `bg-slate-50` still takes the ONE selected fill. */
+.event-spine {
+    margin-left: 15px;
+    padding-left: 15px;
+    padding-top: 14px;
+    border-left: 2px solid var(--color-slate-200);
+}
+.event-spine-row {
+    position: relative;
+    padding-left: 22px;
+    margin-bottom: 14px;
+}
+/* Belt-and-braces only. Undispatched spans are now filtered out before they
+   reach the spine (conversation/dispatch.js), so this should never match; it
+   stays as a backstop for a card that renders nothing at runtime, which would
+   otherwise punch a node onto the wire with nothing attached. */
+.event-spine-row:not(:has(> :not(.spine-dot):not(.spine-pin))) {
+    display: none;
+}
+/* Two nested circles rather than a box-shadow ring: the ring must be the
+   dot's own per-kind color, and that color arrives as a Tailwind `bg-*`
+   utility (the existing `toolRowDotClass` source of truth) which no
+   `box-shadow`/`ring-*` color can be derived from without a second map.
+   The outer element is the colored disc; the inner one punches a
+   surface-colored gap out of it, leaving a 1px halo. */
+/* Centred on the rail by construction, not by a tuned offset. The row's
+   padding box starts 15px right of the rail's outer edge, the rail is 2px, so
+   the rail centre is 14px left of the row box; half the 13px dot is 6.5px.
+   A hardcoded -26px left the dot 3.5px off-centre, and `inAgent` rows shifted
+   it another 2px because their own `border-l-2` moves the padding box. */
+.spine-dot {
+    position: absolute;
+    right: calc(100% + 9.5px);
+    top: 2px;
+    width: 13px;
+    height: 13px;
+    border-radius: 9999px;
+}
+/* A nested (in-agent) row carries its own 2px border, which moves the padding
+   box the dot is anchored to — without this the node kinks 2px off the rail on
+   exactly the turns that have subagent work. The extra padding is the nesting
+   indent the pink stub alone never conveyed. */
+.spine-nested {
+    padding-left: 30px;
+}
+.spine-nested > .spine-dot {
+    right: calc(100% + 11.5px);
+}
+.spine-dot-core {
+    position: absolute;
+    inset: 1px;
+    border-radius: 9999px;
+    border: 2.5px solid var(--color-surface);
+}
+
+/* THE selection treatment for every conversation event — inline row, prose
+   card, diff, rule check, subagent header alike. Previously split between
+   `bg-blue-50` (rows) and `ring-2 ring-*` (cards), which read as two
+   different kinds of "selected". */
+.event-selected {
+    background-color: var(--color-blue-50);
+    border-color: var(--color-blue-300);
+}
+
 /* iOS Safari zooms the viewport in whenever a text-entry field with computed
    font-size < 16px gains focus, and never zooms back out. This is a global
    safety net for every such field in the app (composer, filters, search,

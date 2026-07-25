@@ -1,6 +1,4 @@
 <script setup>
-import { fmtClock, dotColor } from '../../../utils/traceFormatters.js'
-
 // Rule check row: status + engine·lang chips + file basename on the left,
 // applicable/total count pinned right. Full per-rule list lives in the Span
 // details side panel.
@@ -31,14 +29,16 @@ function onRowClick() {
 <template>
   <div
     tabindex="0"
-    class="flex items-center gap-2 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-    :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-blue-50' : ''"
+    class="flex items-baseline gap-2 text-xs cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+    :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
     @click="onRowClick"
   >
-    <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
-    <span class="font-mono text-[11px] text-slate-400 shrink-0 cursor-text select-text">{{ fmtClock(span.start_time) }}</span>
-    <div class="flex-1 min-w-0 truncate cursor-text select-text whitespace-nowrap">
-      <span class="text-slate-500">rule</span>
+    <span class="text-[12.5px] font-semibold text-slate-700 shrink-0">Rule check</span>
+    <div class="flex-1 min-w-0 truncate cursor-text select-text whitespace-nowrap text-[12.5px]">
+      <span
+        class="font-mono text-slate-500"
+        :title="span.attributes?.relative_path || ''"
+      >{{ span.attributes?.relative_path ? span.attributes.relative_path.split('/').pop() : '' }}</span>
       {{ ' ' }}<template v-for="(tag, ti) in (span.attributes?.engine_tags || [])" :key="ti"
         ><span
           class="hidden sm:inline font-mono text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1 rounded"
@@ -61,13 +61,9 @@ function onRowClick() {
         class="text-emerald-700"
         title="all applicable rules passed"
       >ok</span>
-      {{ ' ' }}<span
-        class="text-slate-700"
-        :title="span.attributes?.relative_path || ''"
-      >{{ span.attributes?.relative_path ? span.attributes.relative_path.split('/').pop() : '' }}</span>
     </div>
     <span
-      class="font-mono text-[11px] text-slate-400 shrink-0 tabular-nums cursor-text select-text"
+      class="font-mono text-[10.5px] text-slate-400 shrink-0 tabular-nums cursor-text select-text"
       :title="`${span.attributes?.applicable_rule_count || 0} applicable of ${span.attributes?.total_rules || 0} configured rules`"
     >{{ span.attributes?.applicable_rule_count || 0 }}/{{ span.attributes?.total_rules || 0 }}</span>
   </div>

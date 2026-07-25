@@ -97,7 +97,7 @@ const attributed = computed(() => {
 
     <template v-else>
       <div
-        class="grid items-center gap-x-3 border-b border-slate-200 px-4 pb-2 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-slate-400 [grid-template-columns:32px_1fr_84px_96px_44px]"
+        class="grid items-center gap-x-1.5 border-b border-slate-200 px-3 pb-2 text-[9.5px] font-semibold uppercase tracking-[0.06em] text-slate-400 [grid-template-columns:24px_1fr_62px_60px_40px] sm:gap-x-3 sm:px-4 sm:[grid-template-columns:32px_1fr_84px_96px_44px]"
       >
         <span>#</span>
         <span>Tool</span>
@@ -113,8 +113,9 @@ const attributed = computed(() => {
           variant="ghost"
           size="sm"
           :disabled="!r.targets.length"
+          data-testid="spend-tool-row"
           :class="[
-            'grid h-auto w-full items-center gap-x-3 gap-y-0 rounded-none border-b border-slate-100 px-4 py-2 text-left [grid-template-columns:32px_1fr_84px_96px_44px]',
+            'grid h-auto w-full items-center gap-x-1.5 gap-y-0 rounded-none border-b border-slate-100 px-3 py-2 text-left [grid-template-columns:24px_1fr_62px_60px_40px] sm:gap-x-3 sm:px-4 sm:[grid-template-columns:32px_1fr_84px_96px_44px]',
             r.rank <= 3 ? 'bg-emerald-50/40' : '',
           ]"
           @click="toggle(r.fullName)"
@@ -127,23 +128,23 @@ const attributed = computed(() => {
             <span class="block truncate text-[13px] font-semibold text-slate-800">{{ r.name }}</span>
             <span class="block truncate text-[10.5px] text-slate-400">{{ r.group }}</span>
           </span>
-          <span class="text-right">
-            <span class="block font-mono text-[13px] font-bold tabular-nums text-emerald-600">{{ fmtCost(r.cost) }}</span>
-            <span class="block font-mono text-[10px] text-slate-400">{{ r.pct }}</span>
+          <span class="min-w-0 text-right">
+            <span class="block truncate font-mono text-[13px] font-bold tabular-nums text-emerald-600">{{ fmtCost(r.cost) }}</span>
+            <span class="block truncate font-mono text-[10px] text-slate-400">{{ r.pct }}</span>
           </span>
-          <span class="text-right">
-            <span class="block font-mono text-[12.5px] tabular-nums text-slate-700"><span
+          <span class="min-w-0 text-right">
+            <span class="block truncate font-mono text-[12.5px] tabular-nums text-slate-700"><span
               v-if="r.isPeak"
-              class="mr-1.5 inline-block rounded bg-amber-100 px-1 align-middle font-sans text-[8px] font-bold uppercase tracking-[0.04em] text-amber-700"
+              class="mr-1.5 hidden rounded bg-amber-100 px-1 align-middle font-sans text-[8px] font-bold uppercase tracking-[0.04em] text-amber-700 sm:inline-block"
               title="heaviest token consumer this session"
             >peak</span>{{ fmtTokens(r.tokens) }}</span>
-            <span class="block font-mono text-[10px] text-slate-400">{{ r.inout }}</span>
+            <span class="hidden truncate font-mono text-[10px] text-slate-400 sm:block">{{ r.inout }}</span>
           </span>
-          <span class="text-right font-mono text-[12.5px] tabular-nums text-slate-500">{{ r.calls }}×</span>
+          <span class="min-w-0 truncate text-right font-mono text-[12.5px] tabular-nums text-slate-500">{{ r.calls }}×</span>
         </Button>
         <!-- Drill-down: the files/commands this tool touched, each jumping to
              its most expensive call. -->
-        <div v-if="expanded[r.fullName]" class="border-b border-slate-100 bg-slate-50 py-1 pl-[76px] pr-4">
+        <div v-if="expanded[r.fullName]" class="border-b border-slate-100 bg-slate-50 py-1 pl-[56px] pr-3 sm:pl-[76px] sm:pr-4">
           <Button
             v-for="g in r.targets"
             :key="g.target || g.label"

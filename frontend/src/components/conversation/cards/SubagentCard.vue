@@ -2,7 +2,7 @@
 import { computed, inject, ref } from 'vue'
 import MarkdownContent from '../../MarkdownContent.vue'
 import {
-  fmtClock, fmtModel, fmtTokens, fmtDuration, fullLabel, toolRowDotClass,
+  fmtModel, fmtTokens, fmtDuration, fullLabel,
 } from '../../../utils/traceFormatters.js'
 import { AGENT_PROMPT_PREVIEW_CHARS } from '../../../composables/useAgentLaunchMerge.js'
 import AgentResultCard from './AgentResultCard.vue'
@@ -54,9 +54,9 @@ function selectAgentPrompt() {
   <div>
     <div
       tabindex="0"
-      class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs cursor-pointer rounded-md px-2.5 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs cursor-pointer rounded-lg px-2.5 py-1.5 border border-violet-200 bg-violet-50 hover:bg-violet-100 hover:border-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-violet-500"
       :class="[
-        selectedSpan && selectedSpan.span_id === span.span_id ? '!bg-blue-50 !border-blue-300 ring-1 ring-blue-200' : '',
+        selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : '',
         isScoped ? 'trace-subagent-scoped' : '',
       ]"
       :data-testid="isScoped ? 'trace-subagent-scoped' : undefined"
@@ -73,8 +73,6 @@ function selectAgentPrompt() {
         :aria-expanded="folding.isAgentExpanded(span.span_id)"
         @click.stop="folding.toggleAgentExpanded(span.span_id)"
       >{{ folding.isAgentExpanded(span.span_id) ? '▾' : '▸' }}</Button>
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="toolRowDotClass(span)"></span>
-      <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
       <!-- Label: normal subagents read `subagent: <type> · <desc>`. Workflow
            agents have no agent_type, so the `subagent:` prefix would render
            bare — show just the agent's label instead. Single-line ellipsis, not
@@ -119,19 +117,19 @@ function selectAgentPrompt() {
     <!-- Task prompt card (collapsed by default) -->
     <div
       v-if="prompt"
-      class="ml-6 mt-1 mb-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-slate-300"
-      :class="selectedSpan && selectedSpan.span_id === promptOwnerId ? 'ring-1 ring-blue-300' : ''"
+      class="ml-2.5 mt-1 mb-1 rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2 cursor-pointer hover:border-violet-300"
+      :class="selectedSpan && selectedSpan.span_id === promptOwnerId ? 'event-selected' : ''"
       @click="selectAgentPrompt"
     >
       <div class="flex items-center justify-between gap-2 mb-1">
-        <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">task prompt</span>
+        <span class="text-[10px] font-semibold uppercase tracking-wider text-violet-500">task prompt</span>
         <Button
           v-if="prompt.length > AGENT_PROMPT_PREVIEW_CHARS"
           variant="link"
           size="sm"
-          class="text-[11px] font-medium text-blue-600 hover:text-blue-800"
+          class="min-w-0 max-w-full text-[11px] font-medium text-blue-600 hover:text-blue-800"
           @click.stop="folding.toggleAgentPrompt(span.span_id)"
-        >{{ folding.isAgentPromptExpanded(span.span_id) ? 'Collapse' : `Show full prompt · ${prompt.length} chars` }}</Button>
+        ><span class="truncate">{{ folding.isAgentPromptExpanded(span.span_id) ? 'Collapse' : `Show full prompt · ${prompt.length} chars` }}</span></Button>
       </div>
       <div :class="folding.isAgentPromptExpanded(span.span_id) ? 'max-h-[32rem] overflow-y-auto' : ''">
         <MarkdownContent
@@ -144,7 +142,7 @@ function selectAgentPrompt() {
         >{{ agentMerge.agentPromptPreview(prompt) }}</div>
       </div>
     </div>
-    <div v-if="resultSpan" class="ml-6">
+    <div v-if="resultSpan" class="ml-2.5">
       <AgentResultCard :span="resultSpan" :agent-merge="agentMerge" :folding="folding" />
     </div>
   </div>

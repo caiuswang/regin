@@ -1,5 +1,5 @@
 <script setup>
-import { fmtClock, toolDisplayName } from '../../../utils/traceFormatters.js'
+import { toolDisplayName } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
 
 // Tool-failure card: surface tool_name + the input that failed (Bash command
@@ -14,15 +14,13 @@ defineEmits(['activate'])
 
 <template>
   <div
-    class="group rounded-md border bg-red-50 border-red-200 px-3 py-2 cursor-pointer hover:border-red-300 transition-colors"
-    :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'ring-2 ring-red-300' : ''"
+    class="group rounded-lg border bg-red-50 border-red-200 px-3 py-2.5 cursor-pointer hover:border-red-300 transition-colors"
+    :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
     @click="$emit('activate', span)"
   >
-    <div class="flex items-center gap-2 text-[11px] font-mono text-red-700 mb-1">
-      <span class="font-semibold uppercase tracking-wider text-[10px]">TOOL FAILURE</span>
-      <span class="text-red-300">·</span>
-      <span>{{ fmtClock(span.start_time) }}</span>
-      <span class="font-sans text-red-700 font-medium">{{ toolDisplayName(span.attributes?.tool_name || 'tool') }}</span>
+    <div class="flex items-center gap-2 mb-1.5">
+      <span class="font-semibold uppercase tracking-wider text-[10px] text-red-700">Tool failure</span>
+      <span class="font-mono text-[12.5px] text-slate-500">{{ toolDisplayName(span.attributes?.tool_name || 'tool') }}</span>
       <span
         v-if="span.attributes?.is_interrupt"
         class="text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded font-sans"

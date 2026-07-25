@@ -1,6 +1,6 @@
 <script setup>
 import {
-  fmtClock, fmtDuration, dotColor,
+  fmtDuration,
   askOptLabel, askOptDescription, askIsChosen, askFreeText, askNote,
 } from '../../../utils/traceFormatters.js'
 
@@ -18,25 +18,23 @@ defineEmits(['activate'])
 <template>
   <div
     tabindex="0"
-    class="ml-3 -mx-1 my-1 cursor-pointer rounded focus-visible:outline-2"
+    class="cursor-pointer rounded-lg border border-transparent px-2.5 py-1.5 focus-visible:outline-2"
     :class="[
       span.attributes.denied ? 'focus-visible:outline-amber-500' : 'focus-visible:outline-blue-500',
-      selectedSpan && selectedSpan.span_id === span.span_id
-        ? (span.attributes.denied ? 'ring-2 ring-amber-200' : 'ring-2 ring-blue-200')
-        : '',
+      selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : '',
     ]"
     @click="$emit('activate', span)"
   >
-    <div class="flex items-center gap-2 text-[11px] font-mono text-slate-400 mb-1 px-1">
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-            :class="span.attributes.denied ? 'bg-amber-400' : dotColor(span.name)"></span>
-      <span>{{ fmtClock(span.start_time) }}</span>
-      <span class="font-sans uppercase tracking-wider text-[10px] text-slate-500 font-semibold">Ask user</span>
+    <div class="flex items-center gap-2 mb-1.5">
+      <span class="font-semibold uppercase tracking-wider text-[10px] text-slate-700">Ask user</span>
       <span
         v-if="span.attributes.denied"
         class="font-sans uppercase tracking-wider text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded"
       >{{ span.attributes.deny_kind === 'chat' ? 'chat instead' : 'denied' }}</span>
-      <span v-if="span.duration_ms" class="ml-auto">{{ fmtDuration(span.duration_ms) }}</span>
+      <span
+        v-if="span.duration_ms"
+        class="ml-auto font-mono text-[10.5px] text-slate-400"
+      >{{ fmtDuration(span.duration_ms) }}</span>
     </div>
     <div class="space-y-2">
       <div

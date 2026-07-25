@@ -100,7 +100,7 @@ test('deep-link selects an orphan rule.check past a retired placeholder', async 
   // surviving anchor, materialised by the deep-link subtree fetch, expanded,
   // and highlighted. The `rule` label + `bg-blue-50` background are jointly
   // load-bearing — both miss if the ancestors root is the retired placeholder.
-  const selectedCheckRow = page.locator('div.bg-blue-50:has-text("rule")').first()
+  const selectedCheckRow = page.locator('div.event-selected:has-text("rule")').first()
   await expect(selectedCheckRow).toBeVisible({ timeout: 10000 })
   await expect(page.locator('body')).toContainText('Placeholder.java', { timeout: 10000 })
 })

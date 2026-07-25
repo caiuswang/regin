@@ -180,7 +180,10 @@ function titleSourceTooltip(src) {
       <div class="text-[11px] tracking-widest uppercase text-slate-400 font-semibold mb-1">
         Observability · Session Trace
       </div>
-      <div class="flex items-start gap-3">
+      <!-- Baseline, not a magic `mt-1` on the pill: the status chip has to sit
+           against the title's first-line baseline, and an eyeballed top margin
+           drifts the moment the heading's size or line-height changes. -->
+      <div class="flex items-baseline gap-3">
         <h1
           class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words min-w-0 flex-1"
           :title="session.title || ''"
@@ -190,7 +193,7 @@ function titleSourceTooltip(src) {
           :title="titleSourceTooltip(session.title_source)"
         >{{ titleSourceLabel(session.title_source) }}</span></h1>
         <span
-          class="mt-1 shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"
+          class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"
           :class="isLive
             ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
             : 'border-slate-200 bg-slate-50 text-slate-500'"

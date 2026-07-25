@@ -89,7 +89,8 @@ async function seedScoped(page, { realPrompt = false, emptyAgent = false, filler
 
 const scopeBar = (page) => page.locator('[data-testid="trace-scope-bar"]')
 const agentsBtn = (page) => page.locator('[data-testid="trace-agents-btn"]')
-const userBadges = (page) => page.getByText('USER', { exact: true })
+// One label per user-prompt card in SessionConversationView (`PROMPT · TURN n`).
+const userBadges = (page) => page.getByTestId('conversation-prompt-label')
 const scroller = (page) => page.locator('.content-scroll')
 
 async function gotoTrace(page, traceId, query = '') {

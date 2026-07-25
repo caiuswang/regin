@@ -113,7 +113,11 @@ const pill = computed(() => {
 
     <div class="min-w-0 flex-1 py-2.5">
       <div class="flex items-baseline gap-2.5">
-        <span class="w-10 shrink-0 font-mono text-[10.5px] text-slate-400">t+{{ relStartTxt }}</span>
+        <!-- min-width, not a fixed `w-10`: a long-session offset (`t+126:08`)
+             is wider than 40px, and a fixed column let it spill under the
+             label so the two read as one run-on string. Short offsets still
+             align because the minimum holds the column. -->
+        <span class="min-w-[3.5rem] shrink-0 font-mono text-[10.5px] tabular-nums text-slate-400">t+{{ relStartTxt }}</span>
         <span class="min-w-0 truncate text-[13.5px] font-semibold text-slate-800">{{ label }}</span>
         <Button
           v-if="hasKids"

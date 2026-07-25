@@ -1,6 +1,5 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { fmtClock, dotColor } from '../../../utils/traceFormatters.js'
 import Button from '../../ui/Button.vue'
 
 // memory.recall row: the <recalled_experience> block regin injected into
@@ -51,18 +50,19 @@ function toggleBlock(e) {
 </script>
 
 <template>
-  <div class="pl-3">
+  <div>
     <div
       tabindex="0"
-      class="flex items-center gap-2 text-xs cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-blue-50' : ''"
+      class="flex items-baseline gap-2 text-xs cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
       @click="onRowClick"
     >
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
-      <span class="font-mono text-[11px] text-slate-400 shrink-0 cursor-text select-text">{{ fmtClock(span.start_time) }}</span>
-      <div class="flex-1 min-w-0 truncate cursor-text select-text whitespace-nowrap">
-        <span :class="isSkill ? 'text-emerald-700' : 'text-fuchsia-700'">{{ isSkill ? 'skill experience' : 'recalled experience' }}</span>
-        {{ ' ' }}<span
+      <span
+        class="text-[12.5px] font-semibold shrink-0"
+        :class="isSkill ? 'text-emerald-700' : 'text-fuchsia-700'"
+      >{{ isSkill ? 'Skill experience' : 'Recall' }}</span>
+      <div class="flex-1 min-w-0 truncate cursor-text select-text whitespace-nowrap text-[12.5px]">
+        <span
           v-if="isSkill && skillId"
           class="font-mono text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 rounded"
         >{{ skillId }}</span>
@@ -81,14 +81,14 @@ function toggleBlock(e) {
       <Button
         variant="ghost"
         size="sm"
-        class="font-mono text-[11px] text-slate-400 shrink-0 hover:bg-transparent hover:text-slate-600"
+        class="font-mono text-[10.5px] text-slate-400 shrink-0 hover:bg-transparent hover:text-slate-600"
         :title="expanded ? 'hide injected block' : 'show injected block'"
         @click="toggleBlock"
-      >{{ expanded ? '▾ block' : '▸ block' }}</Button>
+      >{{ expanded ? 'block ▾' : 'block ▸' }}</Button>
     </div>
     <pre
       v-if="expanded"
-      class="mt-1 ml-5 mb-1 p-2 text-[11px] leading-snug bg-slate-50 border border-slate-200 rounded whitespace-pre-wrap break-words text-slate-700 max-h-80 overflow-auto select-text"
+      class="mt-1 ml-2.5 mb-1 p-2 text-[11px] leading-snug bg-slate-50 border border-slate-200 rounded-lg whitespace-pre-wrap break-words text-slate-700 max-h-80 overflow-auto select-text"
     >{{ block || '(injected text not loaded — select the row)' }}</pre>
   </div>
 </template>

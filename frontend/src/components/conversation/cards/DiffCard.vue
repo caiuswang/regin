@@ -1,7 +1,7 @@
 <script setup>
 import DiffBlock from '../../DiffBlock.vue'
 import {
-  fmtClock, fmtDuration, fmtBytes, dotColor, diffOpLabel, diffFileName,
+  fmtDuration, fmtBytes, diffOpLabel, diffFileName,
 } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
 
@@ -21,31 +21,26 @@ defineEmits(['activate'])
   <div class="group">
     <div
       tabindex="0"
-      class="flex items-center gap-2 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-blue-50' : ''"
+      class="flex items-baseline gap-2 cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
       @click="$emit('activate', span); folding.toggleDiffExpanded(span.span_id)"
     >
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
-      <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
-      <span class="text-slate-400 shrink-0 select-none w-3 text-center">{{ folding.diffExpanded(span.span_id) ? '▾' : '▸' }}</span>
-      <span class="font-mono text-slate-700 min-w-0 truncate">
-        <span class="font-semibold">{{ diffOpLabel(span.attributes?.edit_op) }}</span><span class="text-slate-500">({{ diffFileName(span) }})</span>
-      </span>
-      <span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-        <span
-          v-if="span.attributes?.added_lines"
-          class="font-mono text-[11px] text-emerald-600 shrink-0"
-        >+{{ span.attributes.added_lines }}</span>
-        <span
-          v-if="span.attributes?.removed_lines"
-          class="font-mono text-[11px] text-red-600 shrink-0"
-        >-{{ span.attributes.removed_lines }}</span>
-      </span>
-      <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
+      <span class="text-[12.5px] font-semibold text-orange-700 shrink-0">{{ diffOpLabel(span.attributes?.edit_op) }}</span>
+      <span class="font-mono text-[12.5px] text-slate-500 flex-1 min-w-0 truncate" :title="span.attributes?.file_path">{{ diffFileName(span) }}</span>
+      <span
+        v-if="span.attributes?.added_lines"
+        class="font-mono text-[10.5px] text-emerald-600 shrink-0"
+      >+{{ span.attributes.added_lines }}</span>
+      <span
+        v-if="span.attributes?.removed_lines"
+        class="font-mono text-[10.5px] text-red-600 shrink-0"
+      >−{{ span.attributes.removed_lines }}</span>
+      <span v-if="span.duration_ms" class="font-mono text-[10.5px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
+      <span class="text-[10.5px] text-slate-400 shrink-0 select-none w-3 text-center">{{ folding.diffExpanded(span.span_id) ? '▾' : '▸' }}</span>
     </div>
     <div
       v-if="folding.diffExpanded(span.span_id)"
-      class="code-surface ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
+      class="code-surface ml-2.5 mt-1 rounded-lg bg-slate-900 border border-slate-800 overflow-hidden"
     >
       <div class="flex items-center gap-2 px-3 py-1.5 border-b border-slate-800">
         <span class="font-mono text-[11px] text-slate-300">

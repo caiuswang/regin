@@ -1,31 +1,35 @@
 <script setup>
-import { fmtClock, fmtDuration, fmtBytes, fullLabel, dotColor } from '../../../utils/traceFormatters.js'
+import { computed } from 'vue'
+import { fmtDuration, fmtBytes, fullLabel } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
 
-// Bash row: flat one-liner like other inline tool rows when collapsed, with a
-// `$` shell-prompt prefix. Output expands into a dark terminal-themed panel.
-defineProps({
+// Bash row: flat one-liner like other inline tool rows when collapsed, led by
+// a `Shell` verb. Output expands into a dark terminal-themed panel; the
+// disclosure caret sits on the right, so every row's title stays left-aligned.
+const props = defineProps({
   span: { type: Object, required: true },
   selectedSpan: { type: Object, default: null },
   // useConversationFolding: { bashExpanded, toggleBashExpanded }
   folding: { type: Object, required: true },
 })
 defineEmits(['activate'])
+
+const hasBody = computed(() => {
+  const a = props.span?.attributes || {}
+  return Boolean(a.command || a.stdout || a.stderr)
+})
 </script>
 
 <template>
   <div class="group">
     <div
       tabindex="0"
-      class="flex items-center gap-2 text-xs pl-3 cursor-pointer rounded px-2 py-1 -mx-2 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'bg-blue-50' : ''"
-      @click="$emit('activate', span); folding.toggleBashExpanded(span.span_id)"
+      class="flex items-baseline gap-2 cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
+      @click="$emit('activate', span); hasBody && folding.toggleBashExpanded(span.span_id)"
     >
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(span.name)"></span>
-      <span class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtClock(span.start_time) }}</span>
-      <span class="text-slate-400 shrink-0 select-none w-3 text-center">{{ folding.bashExpanded(span.span_id) ? '▾' : '▸' }}</span>
-      <span class="font-mono text-[11px] text-emerald-600 font-semibold shrink-0 select-none">$</span>
-      <span class="break-all flex-1 min-w-0 whitespace-pre-line font-mono text-slate-700">{{ span.attributes?.command_preview || fullLabel(span) }}</span>
+      <span class="text-[12.5px] font-semibold text-slate-700 shrink-0">Shell</span>
+      <span class="font-mono text-[12.5px] text-slate-500 flex-1 min-w-0 truncate">{{ span.attributes?.command_preview || fullLabel(span) }}</span>
       <span
         v-if="span.attributes?.interrupted"
         class="text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded shrink-0"
@@ -39,11 +43,17 @@ defineEmits(['activate'])
         v-if="span.attributes?.return_code_interpretation"
         class="text-[11px] text-slate-400 italic truncate shrink-0 max-w-[35%]"
       >{{ span.attributes.return_code_interpretation }}</span>
-      <span v-if="span.duration_ms" class="font-mono text-[11px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
+      <span v-if="span.duration_ms" class="font-mono text-[10.5px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
+      <!-- Only when there is a body to reveal: an `interrupted`-only Bash span
+           carries no command or output, and its caret opened an empty box. -->
+      <span
+        v-if="hasBody"
+        class="text-[10.5px] text-slate-400 shrink-0 select-none w-3 text-center"
+      >{{ folding.bashExpanded(span.span_id) ? '▾' : '▸' }}</span>
     </div>
     <div
       v-if="folding.bashExpanded(span.span_id)"
-      class="code-surface ml-6 mt-1 rounded-md bg-slate-900 border border-slate-800 overflow-hidden"
+      class="code-surface ml-2.5 mt-1 rounded-lg bg-slate-900 border border-slate-800 overflow-hidden"
     >
       <div v-if="span.attributes?.command" class="px-3 py-2">
         <div class="flex items-center gap-2 mb-1">

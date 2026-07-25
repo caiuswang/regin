@@ -7,7 +7,7 @@
 // Stateless w.r.t. the data model: it takes the root nodes + the timing
 // window + the current selection/turn highlight as props, and emits the
 // clicked node back to the parent (which owns selection + tree expansion).
-import { computed } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { spanLabel } from '../utils/traceFormatters.js'
 import Button from './ui/Button.vue'
 
@@ -167,6 +167,69 @@ const turnBoundaries = computed(() => {
       pct: ((t.ms - props.traceStart) / props.traceDuration) * 100,
     }))
 })
+
+// Percent positioning alone stacked the pills on top of each other whenever
+// two prompts landed close in time, and the one underneath lost the very digit
+// it exists to show. De-colliding needs real pixels, so measure the row.
+const flagRowRef = ref(null)
+const flagRowWidth = ref(0)
+let flagRowObserver = null
+
+onMounted(() => {
+  if (!flagRowRef.value || typeof ResizeObserver === 'undefined') return
+  flagRowWidth.value = flagRowRef.value.clientWidth
+  flagRowObserver = new ResizeObserver(entries => {
+    flagRowWidth.value = entries[0].contentRect.width
+  })
+  flagRowObserver.observe(flagRowRef.value)
+})
+onBeforeUnmount(() => {
+  flagRowObserver?.disconnect()
+  flagRowObserver = null
+})
+
+// px-1.5 either side + the glyph + ~6px per tabular digit.
+function flagWidth(num) {
+  return 22 + 6 * String(num).length
+}
+const FLAG_GAP = 3
+
+// The hairlines on the bar below still mark EVERY turn — only the pills are
+// thinned and nudged, because they are the part that has to stay legible.
+const placedFlags = computed(() => {
+  const width = flagRowWidth.value
+  const all = turnBoundaries.value
+  if (!width || !all.length) return all.map(b => ({ ...b, left: null, w: flagWidth(b.num) }))
+
+  // If even a tight packing cannot fit, drop to an evenly spaced subset (the
+  // last turn always survives). Letting all of them through just piles the
+  // surplus against the right edge, which is the bug in a different costume.
+  const needed = all.reduce((sum, b) => sum + flagWidth(b.num) + FLAG_GAP, 0)
+  const stride = needed > width ? Math.ceil(needed / width) : 1
+  const kept = stride === 1
+    ? all
+    : all.filter((b, i) => i % stride === 0 || i === all.length - 1)
+
+  // Left-to-right sweep: start each pill at its true time position, then push
+  // it right only as far as clearing its predecessor requires.
+  let cursor = 0
+  const placed = kept.map(b => {
+    const w = flagWidth(b.num)
+    const left = Math.max(cursor, (b.pct / 100) * width - w / 2)
+    cursor = left + w + FLAG_GAP
+    return { ...b, left, w }
+  })
+
+  // A sweep that ran off the right edge gets pulled back in from the tail.
+  if (cursor - FLAG_GAP > width) {
+    let limit = width
+    for (let i = placed.length - 1; i >= 0; i--) {
+      placed[i].left = Math.min(placed[i].left, limit - placed[i].w)
+      limit = placed[i].left - FLAG_GAP
+    }
+  }
+  return placed.map(f => ({ ...f, left: Math.max(0, f.left) }))
+})
 </script>
 
 <template>
@@ -181,17 +244,20 @@ const turnBoundaries = computed(() => {
     </div>
     <!-- Numbered turn flags. Kept in their own row above the bar so a dense
          run of turns crowds the flags, not the spans. -->
-    <div v-if="turnBoundaries.length" class="relative mb-1 h-[17px]">
+    <div v-if="turnBoundaries.length" ref="flagRowRef" class="relative mb-1 h-[17px]">
       <Button
-        v-for="b in turnBoundaries"
+        v-for="b in placedFlags"
         :key="'tf-' + b.num"
         variant="ghost"
         size="sm"
-        class="absolute top-0 h-[17px] gap-1 rounded-full border border-purple-200 bg-white px-1.5 text-[9.5px] font-bold tabular-nums text-purple-700 hover:border-purple-400 hover:bg-purple-50"
-        :style="{ left: b.pct + '%', transform: b.pct === 0 ? 'translateX(0)' : 'translateX(-50%)' }"
+        data-testid="turn-flag"
+        class="absolute top-0 h-[17px] gap-1 rounded-full border border-purple-200 bg-white px-1.5 text-[9.5px] font-medium tabular-nums text-purple-700 hover:border-purple-400 hover:bg-purple-50"
+        :style="b.left != null
+          ? { left: b.left + 'px' }
+          : { left: b.pct + '%', transform: b.pct === 0 ? 'translateX(0)' : 'translateX(-50%)' }"
         :title="`user prompt · start of turn ${b.num}`"
         @click="b.node && $emit('select-node', b.node)"
-      >⚑{{ b.num }}</Button>
+      >⚐{{ b.num }}</Button>
     </div>
     <!-- Bars + gridlines -->
     <div class="relative h-5 w-full bg-white rounded border border-gray-200 overflow-hidden">

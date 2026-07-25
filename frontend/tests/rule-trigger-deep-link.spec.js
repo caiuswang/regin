@@ -119,7 +119,7 @@ test('drawer event row deep-links to span in session trace', async ({ page }) =>
   // allSpans, so its "rule" label + `bg-blue-50` selection background
   // are jointly load-bearing.
   const selectedCheckRow = page.locator(
-    'div.bg-blue-50:has-text("rule")'
+    'div.event-selected:has-text("rule")'
   ).first()
   await expect(selectedCheckRow).toBeVisible({ timeout: 10000 })
   // The detail panel reflects the rule.check span's file_path

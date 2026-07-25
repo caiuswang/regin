@@ -66,15 +66,18 @@ function messageTypeClass(t) {
               :class="i === messages.length - 1 ? 'bg-blue-500' : 'bg-slate-300'"
             ></span>
           </span>
-          <div class="flex items-baseline gap-2 mb-1.5">
-            <span class="text-xs font-semibold text-slate-700">#{{ i + 1 }}</span>
+          <!-- Wraps, and the title truncates: a long message title held the
+               row on one line and pushed the copy button past the pane, so the
+               whole feed scrolled sideways on a phone. -->
+          <div class="flex flex-wrap items-baseline gap-2 mb-1.5">
+            <span class="shrink-0 text-xs font-semibold text-slate-700">#{{ i + 1 }}</span>
             <span
               v-if="m.msg_type && m.msg_type !== 'progress'"
               class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
               :class="messageTypeClass(m.msg_type)"
             >{{ m.msg_type }}</span>
-            <span v-if="m.title" class="text-xs font-semibold text-slate-800">{{ m.title }}</span>
-            <span class="text-[11px] font-mono text-slate-500">
+            <span v-if="m.title" class="min-w-0 max-w-full truncate text-xs font-semibold text-slate-800" :title="m.title">{{ m.title }}</span>
+            <span class="shrink-0 text-[11px] font-mono text-slate-500">
               {{ new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}
             </span>
             <CopyButton

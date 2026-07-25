@@ -72,8 +72,8 @@ function baseName(p) {
 
 <template>
   <div
-    class="my-3 cursor-pointer group rounded transition-colors hover:bg-rose-50/60 focus-visible:outline-2 focus-visible:outline-rose-400"
-    :class="selected ? 'ring-2 ring-rose-300' : ''"
+    class="my-3 px-2 py-1 cursor-pointer group rounded-lg border border-transparent transition-colors hover:bg-rose-50/60 focus-visible:outline-2 focus-visible:outline-rose-400"
+    :class="selected ? 'event-selected' : ''"
     tabindex="0"
     role="button"
     @click="emit('select', span)"

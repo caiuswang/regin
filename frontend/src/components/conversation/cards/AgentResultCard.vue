@@ -26,9 +26,9 @@ const expanded = computed(() => props.folding.isAgentResultExpanded(props.span.s
         v-if="resultText.length > AGENT_RESULT_PREVIEW_CHARS"
         variant="link"
         size="sm"
-        class="text-[11px] font-medium text-emerald-700 hover:text-emerald-900"
+        class="min-w-0 max-w-full text-[11px] font-medium text-emerald-700 hover:text-emerald-900"
         @click.stop="folding.toggleAgentResult(span.span_id)"
-      >{{ expanded ? 'Collapse' : `Show full · ${resultText.length} chars` }}</Button>
+      ><span class="truncate">{{ expanded ? 'Collapse' : `Show full · ${resultText.length} chars` }}</span></Button>
     </div>
     <div
       class="text-[12.5px] text-slate-700 whitespace-pre-wrap break-words leading-relaxed font-mono"
