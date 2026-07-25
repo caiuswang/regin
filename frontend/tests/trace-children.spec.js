@@ -1,7 +1,7 @@
 /**
- * SessionTraceView (timeline mode): clicking a non-leaf prompt row in the
- * TreeTable triggers the lazy `/spans/<id>/children` fetch and grows the
- * visible tree.
+ * SessionTraceView (timeline mode): expanding a non-leaf prompt row in the
+ * event spine triggers the lazy `/spans/<id>/children` fetch and grows the
+ * visible spine.
  *
  * Data is injected per run via `/api/session-spans` with `is_test=true`
  * so the trace is invisible in the sessions list and the test is portable
@@ -60,21 +60,21 @@ test('clicking a non-leaf prompt loads and expands children', async ({ page }) =
   })
 
   await page.goto(`/trace/sessions/${traceId}`)
-  const rows = page.locator('.p-treetable-tbody > tr')
+  const rows = page.locator('[data-testid="spine-row"]')
   await expect(rows.first()).toBeVisible({ timeout: 10_000 })
   const rootCountBefore = await rows.count()
 
-  // Synthetic fixture has exactly one prompt at the root. The row has a
-  // custom expander button (title="Expand", `▸`) — that's what triggers
-  // the on-demand `/children` fetch in `ensureNodeChildrenLoaded`,
-  // not a plain row-click (selecting the row alone doesn't expand it).
-  const promptRow = page.locator('.p-treetable-tbody > tr:has-text("prompt")').first()
-  const expandBtn = promptRow.locator('button[title="Expand"]').first()
+  // Synthetic fixture has exactly one prompt at the root. The row carries a
+  // custom expand toggle (title="Expand") — that's what triggers the
+  // on-demand `/children` fetch in `ensureNodeChildrenLoaded`, not a plain
+  // row-click (selecting the row alone doesn't expand it).
+  const promptRow = page.locator('[data-testid="spine-row"]:has-text("prompt")').first()
+  const expandBtn = promptRow.locator('[data-testid="spine-toggle"]').first()
   await expandBtn.click()
 
   await expect.poll(() => childrenApiHit, { timeout: 10_000 }).toBeTruthy()
   await expect.poll(
-    async () => page.locator('.p-treetable-tbody > tr').count(),
+    async () => page.locator('[data-testid="spine-row"]').count(),
     { timeout: 10_000 },
   ).toBeGreaterThan(rootCountBefore)
 })

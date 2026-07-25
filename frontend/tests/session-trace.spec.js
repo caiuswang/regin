@@ -13,7 +13,7 @@
 import { test, expect } from './auth-fixture.js'
 
 // Open the first session in the list and switch to Timeline view (the default
-// is Conversation, which renders chat cards rather than the TreeTable). The
+// is Conversation, which renders chat cards rather than the event spine). The
 // view-mode tabs only appear once the header has rendered, so waiting for the
 // Timeline button doubles as the "trace view loaded" signal.
 async function openFirstSessionTimeline(page) {
@@ -31,8 +31,8 @@ test.describe('Session Trace View', () => {
   test('renders span tree + details for a real session', async ({ page }) => {
     await openFirstSessionTimeline(page)
 
-    // At least one span row should render in the TreeTable.
-    const spanRows = page.locator('[role="row"][aria-level]')
+    // At least one event row should render in the timeline spine.
+    const spanRows = page.locator('[data-testid="spine-row"]')
     await expect(spanRows.first()).toBeVisible({ timeout: 10_000 })
     expect(await spanRows.count()).toBeGreaterThanOrEqual(1)
 

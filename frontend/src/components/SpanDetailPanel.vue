@@ -14,12 +14,14 @@ import McpCallDetail from './McpCallDetail.vue'
 import MarkdownContent from './MarkdownContent.vue'
 import SuppressButton from './triggers/SuppressButton.vue'
 import Button from './ui/Button.vue'
+import SpanDetailHeader from './SpanDetailHeader.vue'
 
 const props = defineProps({
   selectedSpan: { type: Object, default: null },
   ruleTriggersByRuleId: { type: Object, default: () => ({}) },
   canSuppressRule: { type: Boolean, default: false },
   workflowRunsById: { type: Object, default: () => ({}) },
+  traceStart: { type: Number, default: 0 },
 })
 
 defineEmits(['suppress-changed', 'view-message'])
@@ -52,44 +54,6 @@ const mcpCall = computed(() => {
 })
 const MCP_HIDDEN_KEYS = ['mcp', 'mcp_input', 'mcp_result',
   'mcp_input_truncated_bytes', 'mcp_result_truncated_bytes', 'tool_input_keys']
-
-// Local date/duration formatters — exact copies of SessionTraceView's, kept
-// local to avoid the differently-behaved traceFormatters variants (see that
-// file's note).
-function fmtTime(iso) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  return d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3, '0')
-}
-function fmtDuration(ms) {
-  if (!ms) return '-'
-  if (ms < 1000) return `${ms}ms`
-  const seconds = Math.floor(ms / 1000) % 60
-  const minutes = Math.floor(ms / 60000) % 60
-  const hours = Math.floor(ms / 3600000) % 24
-  const days = Math.floor(ms / 86400000)
-  const units = [
-    { value: days, label: 'd' },
-    { value: hours, label: 'h' },
-    { value: minutes, label: 'm' },
-    { value: seconds, label: 's' },
-  ]
-  const start = units.findIndex(u => u.value > 0)
-  if (start === -1) return '-'
-  let end = units.length - 1
-  while (end > start && units[end].value === 0) end--
-  return units.slice(start, end + 1).map(u => `${u.value}${u.label}`).join('')
-}
-
-// Spans whose duration_ms is a semantic latency (inference time) rather than a
-// wall-clock envelope; their start_time marks completion, not start.
-const SEMANTIC_DURATION_NAMES = new Set(['assistant_response', 'assistant.thinking'])
-function estStart(span) {
-  if (!span) return null
-  if (span.attributes?.estimated_start_time) return span.attributes.estimated_start_time
-  if (!SEMANTIC_DURATION_NAMES.has(span.name) || !span.duration_ms) return null
-  return new Date(new Date(span.start_time).getTime() - span.duration_ms).toISOString()
-}
 
 // Hide keys from the generic attributes table that are rendered by a dedicated
 // section above (prose, Q&A, rule list, deny panel) to avoid duplicate reads.
@@ -185,61 +149,7 @@ function annotationNote(q) {
 
 <template>
   <Card v-if="selectedSpan">
-    <h2 class="text-sm font-semibold text-slate-700 mb-3">Span details</h2>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm mb-4">
-      <div>
-        <div class="text-xs text-gray-400">Name</div>
-        <div class="font-medium break-words flex items-center gap-1 flex-wrap">
-          <span
-            v-if="mcpParts(selectedSpan.name)"
-            class="inline-block text-[9px] font-semibold uppercase tracking-wider px-1 py-px rounded bg-cyan-100 text-cyan-800"
-          >MCP</span>
-          <span>{{ selectedSpan.name }}</span>
-        </div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">Kind</div>
-        <div>{{ selectedSpan.kind }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">Source</div>
-        <div>
-          <span
-            class="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded border"
-            :class="selectedSpan.source === 'transcript'
-              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-              : 'bg-slate-50 border-slate-200 text-slate-600'"
-            :title="selectedSpan.source === 'transcript'
-              ? 'Written by the transcript scan (prompt / response / thinking anchors, local commands)'
-              : 'Written by live hook events (tool timing, permissions, skill reads)'"
-          >{{ selectedSpan.source || 'hook' }}</span>
-        </div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">Status</div>
-        <div>{{ selectedSpan.status_code }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">Duration</div>
-        <div>{{ fmtDuration(selectedSpan.duration_ms) }}</div>
-      </div>
-      <div v-if="estStart(selectedSpan)">
-        <div class="text-xs text-gray-400">Est. start</div>
-        <div :title="'estimated inference start: completion − inference latency'">{{ fmtTime(estStart(selectedSpan)) }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">{{ estStart(selectedSpan) ? 'Recorded' : 'Start' }}</div>
-        <div>{{ fmtTime(selectedSpan.start_time) }}</div>
-      </div>
-      <div>
-        <div class="text-xs text-gray-400">End</div>
-        <div>{{ fmtTime(selectedSpan.end_time || selectedSpan.start_time) }}</div>
-      </div>
-      <div class="col-span-2">
-        <div class="text-xs text-gray-400">Span ID</div>
-        <div class="font-mono text-xs break-all">{{ selectedSpan.span_id }}</div>
-      </div>
-    </div>
+    <SpanDetailHeader :span="selectedSpan" :trace-start="traceStart" class="mb-4" />
     <div
       v-if="selectedSpan.name === 'prompt' && selectedPromptText"
       class="mb-4"
@@ -522,15 +432,15 @@ function annotationNote(q) {
     <!-- send_to_user: jump to the rendered message in the Messages tab. -->
     <div v-if="isSendToUser" class="mb-4">
       <div class="text-xs text-gray-400 mb-1.5">Agent message</div>
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-blue-300 bg-blue-50 text-sm font-medium text-blue-700 hover:bg-blue-100 focus-visible:outline-2 focus-visible:outline-blue-500"
+      <Button
+        variant="ghost"
+        class="gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 hover:text-blue-700"
         title="Open this message in the Messages tab, rendered as markdown"
         @click="$emit('view-message', selectedSpan)"
       >
         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
         View in Messages →
-      </button>
+      </Button>
     </div>
     <div v-if="visibleAttributeKeys.length">
       <div class="text-xs text-gray-400 mb-1">Attributes</div>

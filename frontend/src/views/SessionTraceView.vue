@@ -36,7 +36,7 @@ import TraceOverviewStrip from '../components/TraceOverviewStrip.vue'
 import SpanDetailPanel from '../components/SpanDetailPanel.vue'
 import { findNodeBySpanId, findNodePath, findNodeKey } from '../utils/spanTree.js'
 import SessionTurnsSidebar from '../components/SessionTurnsSidebar.vue'
-import SessionTimelineTree from '../components/SessionTimelineTree.vue'
+import SessionTimelineSpine from '../components/SessionTimelineSpine.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -235,6 +235,7 @@ const spanDetailProps = computed(() => ({
   ruleTriggersByRuleId: ruleTriggersByRuleId.value,
   canSuppressRule: canSuppressRule.value,
   workflowRunsById: workflowRunsById.value,
+  traceStart: traceStart.value,
 }))
 
 // send_to_user messages (Messages tab). Null until first load so the tab
@@ -766,12 +767,14 @@ const {
 
       <template v-else>
         <Card :no-padding="true" class="trace-content-card flex-1 min-w-0 w-full">
-          <!-- Timeline view: TreeTable -->
+          <!-- Timeline view: chronological event spine -->
           <template v-if="viewMode === 'timeline'">
-            <SessionTimelineTree
+            <SessionTimelineSpine
               :tree-nodes="treeNodes"
-              v-model:expanded-keys="expandedKeys"
-              v-model:selection-keys="selectedKeys"
+              :expanded-keys="expandedKeys"
+              :selected-keys="selectedKeys"
+              :trace-start="traceStart"
+              :trace-duration="traceDuration"
               @node-select="onNodeSelect"
               @toggle-node="toggleTimelineNode"
             />
@@ -924,38 +927,16 @@ const {
 </template>
 
 <style scoped>
-/* Make the TreeTable column headers (Span / Time / Tokens) pin under
-   the sticky page header so they stay visible while scrolling a long
-   span list. Card and PrimeVue both wrap the table in an overflow-auto
-   container that would otherwise trap `position: sticky` inside the
-   card; we override those to `overflow: visible` so sticky resolves to
-   `.content-scroll` instead. `--regin-trace-header-h` is set on the
-   root by the ResizeObserver in <script>. */
+/* The Terminal/Messages tabs render inside `.trace-content-card`, which the
+   Card wraps in an overflow-auto container; keep it `overflow: visible` so a
+   sticky descendant resolves to `.content-scroll`, and let a wide flat log
+   reach a LOCAL horizontal scroll below lg rather than clip on a phone. */
 .trace-detail-root :deep(.trace-content-card.card) {
   overflow: visible !important;
 }
-.trace-detail-root :deep(.p-treetable-table-container) {
-  overflow: visible !important;
-}
-/* Below lg the timeline must stay reachable via a LOCAL horizontal
-   scroll (Pattern M): even with Time/Tokens dropped below sm, deep tree
-   indentation can exceed a phone width. That scroll container would trap
-   sticky th, so the thead pins only at ≥lg where the wrappers stay
-   `overflow: visible`. */
 @media (max-width: 1023px) {
   .trace-detail-root :deep(.trace-content-card.card) {
     overflow-x: auto;
-  }
-  .trace-detail-root :deep(.p-treetable-table-container) {
-    overflow-x: auto !important;
-  }
-}
-@media (min-width: 1024px) {
-  .trace-detail-root :deep(.p-treetable-thead > tr > th) {
-    position: sticky;
-    top: calc(var(--regin-trace-header-h, 0px) - 1.5rem);
-    z-index: 5;
-    background: var(--color-white);
   }
 }
 </style>

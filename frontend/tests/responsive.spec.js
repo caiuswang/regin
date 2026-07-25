@@ -104,7 +104,7 @@ test.describe('No horizontal overflow at narrow widths', () => {
 })
 
 test.describe('Detail pages — no horizontal overflow', () => {
-  test('session trace detail: timeline scrolls locally, pane does not', async ({ page, viewport }) => {
+  test('session trace detail: timeline spine wraps, pane does not scroll sideways', async ({ page }) => {
     await page.goto('/trace/sessions')
     await settle(page)
     // On mobile the `.tbl` is `hidden sm:table` and a card list is shown
@@ -130,29 +130,22 @@ test.describe('Detail pages — no horizontal overflow', () => {
     const timelineTab = page.getByRole('button', { name: 'Timeline', exact: true })
     await expect(timelineTab).toBeVisible({ timeout: 10_000 })
     await timelineTab.click()
-    await page.locator('[role="row"][aria-level]').first().waitFor({ timeout: 10_000 })
+    const spineRows = page.locator('[data-testid="spine-row"]')
+    await spineRows.first().waitFor({ timeout: 10_000 })
     await page.waitForTimeout(200)
 
-    // The content pane itself must not scroll sideways...
+    // The content pane itself must not scroll sideways. Unlike the old
+    // TreeTable, the event spine reads vertically and its meta chips wrap, so
+    // there is no wide-table local-scroll escape hatch to allow for — the pane
+    // simply must never overflow horizontally at any width.
     const m = await contentOverflow(page)
     expect(
       m.scrollWidth,
       `trace detail: pane overflows (${m.scrollWidth} > ${m.clientWidth}); offenders: ${m.offenders.join(', ')}`
     ).toBeLessThanOrEqual(m.clientWidth + 1)
 
-    // ...but on mobile the wide span timeline must remain REACHABLE via a local
-    // horizontal scroll container (Pattern M), not be clipped/unreachable.
-    if (viewport && viewport.width < 768) {
-      const canScroll = await page.evaluate(() => {
-        const c = document.querySelector('.p-treetable-table-container')
-        if (!c) return null
-        const ox = getComputedStyle(c).overflowX
-        return { scrollable: (ox === 'auto' || ox === 'scroll'), overflowsLocally: c.scrollWidth > c.clientWidth, ox }
-      })
-      if (canScroll) {
-        expect(canScroll.scrollable, `timeline container overflowX=${canScroll.ox} — must be auto/scroll on mobile`).toBeTruthy()
-      }
-    }
+    // The spine rows themselves stay reachable (not clipped) on a phone.
+    await expect(spineRows.first()).toBeVisible()
   })
 
   test('repo detail: content pane does not scroll sideways', async ({ page }) => {
