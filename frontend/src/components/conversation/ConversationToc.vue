@@ -112,8 +112,8 @@ function jumpToLive() {
     >
       <span class="block mx-auto w-px h-full bg-slate-200 group-hover:bg-blue-400 transition-colors"></span>
     </button>
-    <div class="flex items-baseline justify-between mb-2 shrink-0">
-      <h3 class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
+    <div class="flex items-baseline justify-between mb-2.5 shrink-0">
+      <h3 class="text-[10px] uppercase tracking-[0.08em] text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
       <div class="flex items-baseline gap-2">
         <Button
           v-if="foldableAgentIds.length"
@@ -246,20 +246,18 @@ function jumpToLive() {
     <div
       v-else
       ref="tocScrollEl"
-      class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-1 [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
+      class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-[3px] [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
     >
       <div
         v-for="item in turnItems"
         :key="item.promptSpanId"
         :ref="(el) => { if (el) turnTocRefs.set(item.promptSpanId, el) }"
         tabindex="0"
-        class="cursor-pointer rounded-md px-2 py-1.5 border transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="activeTurnIdx === item.idx
-          ? 'bg-blue-50 border-blue-300'
-          : 'bg-white border-transparent hover:border-slate-200'"
+        class="cursor-pointer rounded-[9px] px-2.5 py-[9px] transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+        :class="activeTurnIdx === item.idx ? 'bg-slate-50' : ''"
         @click="$emit('select-turn', item)"
       >
-        <div class="mb-1 flex items-center gap-1.5">
+        <div class="mb-[5px] flex items-center gap-[7px]">
           <span
             class="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md text-[10px] font-bold tabular-nums"
             :class="activeTurnIdx === item.idx ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-700'"
@@ -269,11 +267,11 @@ function jumpToLive() {
         <!-- Two lines, not one: a 32-char truncation cut nearly every prompt
              mid-first-clause, which is not enough to tell two turns apart. -->
         <div
-          class="line-clamp-2 text-xs leading-snug"
-          :class="activeTurnIdx === item.idx ? 'font-medium text-slate-800' : 'text-slate-500'"
+          class="line-clamp-2 text-[12px] leading-[1.35]"
+          :class="activeTurnIdx === item.idx ? 'text-slate-700' : 'text-slate-500'"
           :title="item.promptText"
         >{{ truncate(item.promptText, 140) }}</div>
-        <div class="text-[10px] text-slate-400 font-mono mt-1.5 flex flex-wrap items-center gap-x-1.5 tabular-nums">
+        <div class="text-[10.5px] text-slate-400 font-mono mt-[7px] flex flex-wrap items-center gap-x-[7px] gap-y-0.5 tabular-nums">
           <span v-if="item.turnAgg?.costUsd != null" class="font-bold text-emerald-600">{{ fmtCost(item.turnAgg.costUsd) }}</span>
           <span v-if="item.turnAgg?.inputTokens">{{ fmtTokens(item.turnAgg.inputTokens) }}/{{ fmtTokens(item.turnAgg.outputTokens || 0) }}</span>
           <span v-if="item.durationMs">{{ fmtDuration(item.durationMs) }}</span>
@@ -283,7 +281,7 @@ function jumpToLive() {
              the bill, and that is the thing a reader scans the rail for. -->
         <div
           v-if="turnConsumptionPct(item)"
-          class="mt-1 h-1 overflow-hidden rounded-full bg-slate-100"
+          class="mt-[5px] h-1 overflow-hidden rounded-full bg-slate-100"
         >
           <div
             class="h-full rounded-full"

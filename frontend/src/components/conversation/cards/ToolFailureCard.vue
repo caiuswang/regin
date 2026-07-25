@@ -31,6 +31,11 @@ defineEmits(['activate'])
         tint="text-red-600 hover:bg-red-200/60"
       />
     </div>
+    <!-- Both bodies scroll inside the card. 16 KB of captured error (the
+         post_tool_failure.py cap) renders ~2000px tall and swallows the rest
+         of the turn's spine — one failed Bash pushed every later event off
+         screen. The card keeps the feed's vertical rhythm; the full text stays
+         reachable by scrolling it, copying it, or opening the span panel. -->
     <!-- Bash failure: show the command with a $ prompt prefix. Falls back to
          command_preview if the full text wasn't captured. -->
     <div
@@ -38,7 +43,7 @@ defineEmits(['activate'])
       class="flex items-start gap-2 mb-1.5 text-[12.5px] font-mono"
     >
       <span class="text-emerald-700 font-semibold shrink-0 select-none">$</span>
-      <pre class="text-slate-800 whitespace-pre-wrap break-words leading-snug flex-1 min-w-0">{{ span.attributes.command || span.attributes.command_preview }}</pre>
+      <pre class="text-slate-800 whitespace-pre-wrap break-words leading-snug flex-1 min-w-0 max-h-40 overflow-y-auto">{{ span.attributes.command || span.attributes.command_preview }}</pre>
     </div>
     <!-- Non-Bash tools (Edit/Write/Read/etc.) surface file_path. -->
     <div
@@ -47,7 +52,7 @@ defineEmits(['activate'])
     >{{ span.attributes.file_path }}</div>
     <pre
       v-if="span.attributes?.error"
-      class="text-[12.5px] text-red-900 whitespace-pre-wrap break-words font-mono leading-snug"
+      class="text-[12.5px] text-red-900 whitespace-pre-wrap break-words font-mono leading-snug max-h-72 overflow-y-auto"
     >{{ span.attributes.error }}</pre>
     <div
       v-else

@@ -44,11 +44,13 @@ test.describe('Session Trace View', () => {
   test('turns sidebar links turns to spans', async ({ page }) => {
     await openFirstSessionTimeline(page)
 
-    // The panel starts closed with a "load" button — the cost is per-turn
-    // aggregation on the backend, so we defer until the user asks.
+    // The panel defers its per-turn aggregation behind a "load" button — but
+    // only while nothing else has needed turn_usage yet. The Conversation tab
+    // (which this helper passes through on its way to Timeline) fetches it for
+    // the Turns rail and the per-turn usage footers, so on that path the panel
+    // is already populated and there is no button to press.
     const loadBtn = page.getByRole('button', { name: /^load$/i })
-    await expect(loadBtn).toBeVisible({ timeout: 10_000 })
-    await loadBtn.click()
+    if (await loadBtn.isVisible().catch(() => false)) await loadBtn.click()
 
     // The count text ("N turns") replaces the button once the fetch settles.
     // The regex covers both the populated path and the "0 turns" edge case for

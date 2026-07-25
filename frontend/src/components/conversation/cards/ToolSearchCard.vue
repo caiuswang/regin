@@ -22,7 +22,7 @@ const hasBody = computed(() => {
   <div class="group">
     <div
       tabindex="0"
-      class="flex items-baseline gap-2 cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+      class="flex items-baseline gap-[9px] cursor-pointer rounded-lg border border-transparent px-2.5 py-[5px] hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
       :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
       @click="$emit('activate', span); folding.toggleToolSearchExpanded(span.span_id)"
     >

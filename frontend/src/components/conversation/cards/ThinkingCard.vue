@@ -37,19 +37,19 @@ const selected = computed(() =>
   </div>
   <div
     v-else
-    class="group rounded-lg border border-slate-200 bg-slate-50/40 px-3 py-2.5 cursor-pointer hover:border-slate-300 transition-colors"
+    class="group rounded-[9px] border border-transparent bg-amber-50/40 px-[13px] py-[10px] cursor-pointer hover:border-amber-200 transition-colors"
     :class="selected ? 'event-selected' : ''"
     @click="$emit('activate', span)"
   >
-    <div class="flex items-center gap-2 mb-1.5">
-      <span class="font-semibold uppercase tracking-wider text-[10px] text-amber-700">Thinking</span>
+    <div class="flex items-center gap-2 mb-[5px]">
+      <span class="font-bold uppercase tracking-[0.07em] text-[10px] text-amber-700">Thinking</span>
       <span
         v-if="span.duration_ms"
         class="ml-auto font-mono text-[10.5px] text-slate-400"
       >{{ fmtDuration(span.duration_ms) }}</span>
     </div>
     <div
-      class="text-[12.5px] text-slate-500 italic whitespace-pre-wrap break-words leading-relaxed max-h-72 overflow-y-auto"
+      class="text-[13px] text-stone-500 italic whitespace-pre-wrap break-words leading-[1.55] max-h-72 overflow-y-auto"
     >{{ span.attributes.thinking_text }}</div>
   </div>
 </template>

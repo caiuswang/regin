@@ -195,6 +195,35 @@ test.describe('Detail pages — no horizontal overflow', () => {
     ).toBeLessThanOrEqual(m.clientWidth + 1)
   })
 
+  // An OPEN Shell / Edit card is the widest thing the conversation feed ever
+  // renders: header bar and dark body are one full-bleed unit inside the
+  // spine's own left indent, and the body holds unwrapped command text. The
+  // closed row can't prove that — this case opens one and re-measures.
+  test('session trace conversation: an expanded tool card does not widen the pane', async ({ page }) => {
+    await page.goto('/trace/sessions')
+    await settle(page)
+    const firstLink = page.locator('a[href^="/trace/sessions/"]:visible').first()
+    if (!(await firstLink.count())) test.skip(true, 'no sessions in dev DB')
+    await firstLink.click()
+    await page.locator('.event-spine-row').first().waitFor({ timeout: 15_000 }).catch(() => {})
+
+    const opener = page.locator('.event-spine-row span')
+      .filter({ hasText: /^(Shell|Update|Write|Create)$/ }).first()
+    if (!(await opener.count())) test.skip(true, 'no expandable tool card in the first session')
+    await opener.scrollIntoViewIfNeeded()
+    // `force`: the sticky trace chrome and the follow-latest pill overlay the
+    // feed, so the actionability check never clears even once the row is in
+    // view. The row's own click handler is what we're exercising.
+    await opener.click({ force: true })
+    await page.waitForTimeout(400)
+
+    const m = await contentOverflow(page)
+    expect(
+      m.scrollWidth,
+      `trace conversation (card open): pane overflows; offenders: ${m.offenders.join(', ')}`
+    ).toBeLessThanOrEqual(m.clientWidth + 1)
+  })
+
   test('repo detail: content pane does not scroll sideways', async ({ page }) => {
     await page.goto('/repos')
     await settle(page)

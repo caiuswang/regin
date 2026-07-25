@@ -54,7 +54,7 @@ function selectAgentPrompt() {
   <div>
     <div
       tabindex="0"
-      class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs cursor-pointer rounded-lg px-2.5 py-1.5 border border-violet-200 bg-violet-50 hover:bg-violet-100 hover:border-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-violet-500"
+      class="flex flex-wrap items-center gap-x-[9px] gap-y-1 text-xs cursor-pointer rounded-[10px] px-3 py-[9px] border border-violet-200 bg-violet-50 hover:bg-violet-100 hover:border-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-violet-500"
       :class="[
         selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : '',
         isScoped ? 'trace-subagent-scoped' : '',
@@ -80,8 +80,8 @@ function selectAgentPrompt() {
            label degenerated into a one-character-per-line column. min-w-32
            keeps the ellipsized label legible; the row wraps trailing metric
            chips to a second line instead of crushing it further. -->
-      <span class="truncate flex-1 min-w-32 text-sm font-semibold text-slate-800">
-        <template v-if="span.attributes?.agent_type">{{ fullLabel(span) }}<template v-if="agentMerge.agentDescription(span)"><span class="text-slate-300"> · </span><span class="text-slate-600 font-normal">{{ agentMerge.agentDescription(span) }}</span></template></template>
+      <span class="truncate flex-1 min-w-32 text-[12.5px] font-bold text-violet-700">
+        <template v-if="span.attributes?.agent_type">{{ fullLabel(span) }}<template v-if="agentMerge.agentDescription(span)"><span class="text-violet-300"> · </span><span class="text-[11.5px] text-violet-600 font-normal">{{ agentMerge.agentDescription(span) }}</span></template></template>
         <template v-else>{{ agentMerge.agentDescription(span) || 'agent' }}</template>
       </span>
       <span
@@ -109,7 +109,7 @@ function selectAgentPrompt() {
         v-if="span.attributes?.agent_id && !span.attributes?.rewound_away"
         variant="ghost"
         data-testid="trace-agent-view"
-        class="shrink-0 h-auto -my-1 px-1.5 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50 hover:text-violet-800"
+        class="shrink-0 h-auto -my-0.5 rounded-[7px] border border-violet-200 bg-surface px-2.5 py-[3px] text-[11px] font-semibold text-violet-700 hover:bg-violet-100 hover:text-violet-800"
         :aria-label="`Scope the view to ${span.attributes?.agent_type || 'this agent'}`"
         @click.stop="emit('enter-scope', span.attributes.agent_id)"
       >Agent view →</Button>

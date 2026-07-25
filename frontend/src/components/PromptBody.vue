@@ -122,7 +122,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 </script>
 
 <template>
-  <ClampedText :lines="8" :force-expanded="forceExpanded" class="text-[13.5px] whitespace-pre-wrap break-words text-purple-900 leading-relaxed">
+  <ClampedText :lines="8" :force-expanded="forceExpanded" class="text-[13.5px] whitespace-pre-wrap break-words text-slate-800 leading-[1.5]">
     <template v-for="(seg, pos) in segments" :key="pos">
       <span v-if="seg.type === 'text'">{{ seg.value }}</span>
       <span

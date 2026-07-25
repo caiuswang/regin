@@ -29,11 +29,16 @@ function onRowClick() {
 <template>
   <div
     tabindex="0"
-    class="flex items-baseline gap-2 text-xs cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
+    class="flex items-baseline gap-[9px] text-xs cursor-pointer rounded-lg border border-transparent px-2.5 py-[5px] hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
     :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
     @click="onRowClick"
   >
-    <span class="text-[12.5px] font-semibold text-slate-700 shrink-0">Rule check</span>
+    <!-- Title takes the check's outcome color (design: a passing check reads
+         green, a violating one red) — the row is scanned by color first. -->
+    <span
+      class="text-[12px] font-semibold shrink-0"
+      :class="span.attributes?.status === 'violation' ? 'text-red-700' : 'text-emerald-800'"
+    >Rule check</span>
     <div class="flex-1 min-w-0 truncate cursor-text select-text whitespace-nowrap text-[12.5px]">
       <span
         class="font-mono text-slate-500"
@@ -46,7 +51,7 @@ function onRowClick() {
         >{{ tag.engine }}·{{ tag.language }}</span>{{ ' ' }}</template
       ><span
         v-if="span.attributes?.status === 'violation'"
-        class="text-red-700 bg-red-50 border border-red-200 px-1 rounded text-[10px]"
+        class="text-red-700 bg-red-100 px-[7px] py-px rounded-md text-[10px] font-bold uppercase tracking-[0.05em]"
       >⚠ {{ span.attributes.violating_rule_count }}</span
       ><span
         v-else-if="span.attributes?.status === 'no_applicable_rules'
@@ -58,7 +63,7 @@ function onRowClick() {
       >ok·n/a</span
       ><span
         v-else
-        class="text-emerald-700"
+        class="text-emerald-700 bg-emerald-100 px-[7px] py-px rounded-md text-[10px] font-bold uppercase tracking-[0.05em]"
         title="all applicable rules passed"
       >ok</span>
     </div>

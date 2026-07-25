@@ -21,15 +21,33 @@ const hasBody = computed(() => {
 </script>
 
 <template>
-  <div class="group">
+  <!-- Same open/closed split as DiffCard: open, the row is the card's header
+       bar and the terminal body attaches to it inside one bordered unit. -->
+  <div
+    class="group"
+    :class="[
+      folding.bashExpanded(span.span_id) ? 'rounded-[9px] border border-slate-200 overflow-hidden' : '',
+      folding.bashExpanded(span.span_id) && selectedSpan && selectedSpan.span_id === span.span_id
+        ? 'border-blue-300' : '',
+    ]"
+  >
     <div
       tabindex="0"
-      class="flex items-baseline gap-2 cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-      :class="selectedSpan && selectedSpan.span_id === span.span_id ? 'event-selected' : ''"
+      class="flex items-baseline gap-[9px] cursor-pointer px-2.5 py-[5px] focus-visible:outline-2 focus-visible:outline-blue-500"
+      :class="[
+        folding.bashExpanded(span.span_id)
+          ? 'bg-slate-100 border-b border-slate-200 px-3 py-[6px]'
+          : 'rounded-lg border border-transparent hover:bg-slate-50',
+        !folding.bashExpanded(span.span_id) && selectedSpan && selectedSpan.span_id === span.span_id
+          ? 'event-selected' : '',
+      ]"
       @click="$emit('activate', span); hasBody && folding.toggleBashExpanded(span.span_id)"
     >
-      <span class="text-[12.5px] font-semibold text-slate-700 shrink-0">Shell</span>
-      <span class="font-mono text-[12.5px] text-slate-500 flex-1 min-w-0 truncate">{{ span.attributes?.command_preview || fullLabel(span) }}</span>
+      <span class="text-[12px] font-semibold text-slate-600 shrink-0">Shell</span>
+      <span
+        class="font-mono text-[11.5px] flex-1 min-w-0 truncate"
+        :class="folding.bashExpanded(span.span_id) ? 'text-slate-900' : 'text-slate-500'"
+      >{{ span.attributes?.command_preview || fullLabel(span) }}</span>
       <span
         v-if="span.attributes?.interrupted"
         class="text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded shrink-0"
@@ -53,7 +71,7 @@ const hasBody = computed(() => {
     </div>
     <div
       v-if="folding.bashExpanded(span.span_id)"
-      class="code-surface ml-2.5 mt-1 rounded-lg bg-slate-900 border border-slate-800 overflow-hidden"
+      class="code-surface bg-slate-900"
     >
       <div v-if="span.attributes?.command" class="px-3 py-2">
         <div class="flex items-center gap-2 mb-1">

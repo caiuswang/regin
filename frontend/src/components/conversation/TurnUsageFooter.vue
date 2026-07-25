@@ -41,7 +41,7 @@ function turnCtxPct(turn) {
     class="mt-0.5 font-mono text-[11px] text-slate-500"
     :class="agg ? 'rounded-lg bg-slate-50 px-2.5 py-2' : 'px-0.5 py-0.5'"
   >
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <div class="flex flex-wrap items-center gap-x-3.5 gap-y-1">
       <template v-if="agg">
         <span class="uppercase tracking-[0.06em] text-[10px] font-semibold text-slate-400">Turn usage</span>
         <Button

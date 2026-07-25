@@ -372,6 +372,12 @@ async function syncClosedSessionTail() {
   }
 }
 
+async function ensureTurnsLoaded() {
+  if (turns.value != null || turnsLoading.value) return
+  turnsLoading.value = true
+  try { await fetchTurns() } finally { turnsLoading.value = false }
+}
+
 onMounted(async () => {
   const rollupP = fetchToolRollup()
   const plansP = fetchPlans()
@@ -392,6 +398,11 @@ onMounted(async () => {
   }
   if (viewMode.value === 'terminal') ensureTerminalSpansLoaded()
   if (viewMode.value === 'messages') ensureAgentMessagesLoaded()
+  // The watcher below only fires on a CHANGE, so a load that lands directly on
+  // the conversation tab (its localStorage default) never fetched turn_usage —
+  // leaving the Turns rail without cost/token figures and every turn without
+  // its usage footer.
+  if (viewMode.value === 'conversation') ensureTurnsLoaded()
   // Scroll/wheel/touch auto-reload listeners are attached by useTraceScroll();
   // the sticky-header ResizeObserver is owned by useStickyHeader.
 })
@@ -412,10 +423,7 @@ watch(viewMode, async (mode) => {
   } else if (mode === 'messages') {
     await ensureAgentMessagesLoaded()
   } else if (mode === 'conversation') {
-    if (turns.value == null && !turnsLoading.value) {
-      turnsLoading.value = true
-      try { await fetchTurns() } finally { turnsLoading.value = false }
-    }
+    await ensureTurnsLoaded()
   }
 })
 

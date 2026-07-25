@@ -27,7 +27,7 @@ const selected = computed(() =>
 <template>
   <div
     tabindex="0"
-    class="flex items-baseline gap-2 cursor-pointer rounded-lg border border-transparent px-2.5 py-1 hover:bg-slate-50 focus-visible:outline-2"
+    class="flex items-baseline gap-[9px] cursor-pointer rounded-lg border border-transparent px-2.5 py-[5px] hover:bg-slate-50 focus-visible:outline-2"
     :class="[
       span.attributes?.denied ? 'focus-visible:outline-amber-500' : (span.attributes?.rejected ? 'focus-visible:outline-red-500' : 'focus-visible:outline-blue-500'),
       selected ? 'event-selected' : '',

@@ -425,7 +425,9 @@ function toolChipsForEntry(entry) {
   }
   for (const { span } of entry.descendants) {
     const n = span.name || ''
-    if (n.startsWith('tool.')) {
+    if (n === 'tool.Bash') {
+      add('Shell', 'bg-slate-100 text-slate-700 border-slate-200')
+    } else if (n.startsWith('tool.')) {
       add(toolDisplayName(n.slice(5)), 'bg-blue-50 text-blue-700 border-blue-200')
     } else if (n === 'skill.read' || n === 'skill.invoke') {
       add(span.attributes?.skill_id || 'skill', 'bg-green-50 text-green-700 border-green-200')
@@ -435,8 +437,10 @@ function toolChipsForEntry(entry) {
       add('rule', 'bg-red-50 text-red-700 border-red-200')
     } else if (n === 'memory.recall') {
       add('recall', 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200')
+    } else if (n === 'assistant_response') {
+      add('assistant', 'bg-green-50 text-emerald-700 border-green-200')
     } else if (n.startsWith('subagent.')) {
-      add('subagent', 'bg-pink-50 text-pink-700 border-pink-200')
+      add('subagent', 'bg-violet-50 text-violet-700 border-violet-200')
     }
   }
   return Array.from(buckets.entries()).map(([label, v]) => ({ label, ...v }))
@@ -464,7 +468,7 @@ function toolChipsForEntry(entry) {
     />
 
     <!-- ──────── CENTER COLUMN: CHAT DOCUMENT ──────── -->
-    <div class="flex-1 min-w-0 font-sans text-sm leading-relaxed space-y-5">
+    <div class="flex-1 min-w-0 font-sans text-sm leading-relaxed space-y-[26px]">
       <div
         v-for="(entry, entryIdx) in entries"
         :key="entryIdx"
@@ -478,8 +482,9 @@ function toolChipsForEntry(entry) {
         >
           <!-- USER prompt card: avatar tile + `PROMPT · TURN n` + event count -->
           <div
-            class="group relative flex gap-3 rounded-[12px] border bg-purple-50 border-purple-200 px-3.5 py-3 cursor-pointer hover:border-purple-300 transition-colors"
+            class="group relative flex gap-3 rounded-[12px] border border-purple-200 px-3.5 py-3 cursor-pointer hover:border-purple-300 transition-colors"
             :class="[
+              isPromptExpanded(entry.prompt.span_id) ? 'bg-purple-50' : 'bg-purple-50/40',
               selectedSpan && selectedSpan.span_id === entry.prompt.span_id ? 'event-selected' : '',
               pinnedSpanId === entry.prompt.span_id ? 'ring-2 ring-amber-400' : '',
               promptUnresolved(entry.prompt) ? 'border-dashed !border-amber-300 !bg-amber-50/50' : '',
@@ -500,7 +505,7 @@ function toolChipsForEntry(entry) {
               aria-hidden="true"
             >You</span>
             <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-[3px]">
               <span
                 data-testid="conversation-prompt-label"
                 class="font-bold uppercase tracking-[0.08em] text-[10px] text-purple-700 shrink-0"
@@ -510,7 +515,7 @@ function toolChipsForEntry(entry) {
                 class="px-1 rounded bg-amber-200/70 text-amber-800 text-[9px] font-semibold uppercase tracking-wider not-italic"
                 title="Unresolved — a live prompt placeholder whose real anchor never landed. Usually a scheduled/loop wakeup (delivered as a plain prompt, never anchored) or an interrupted final prompt, not a turn the user typed."
               >unresolved</span>
-              <span class="font-mono text-[11px] text-purple-700/80 shrink-0">{{ fmtClock(entry.prompt.start_time) }}</span>
+              <span class="font-mono text-[11px] text-purple-500 shrink-0">{{ fmtClock(entry.prompt.start_time) }}</span>
               <div class="ml-auto flex items-center gap-2 min-w-0">
                 <button
                   v-if="entry.prompt.attributes?.text && isPromptBodyExpanded(entry.prompt.span_id)"
@@ -583,14 +588,14 @@ function toolChipsForEntry(entry) {
           <!-- Tool/skill chips for this turn (collapsed preview) -->
           <div
             v-if="!isPromptExpanded(entry.prompt.span_id)"
-            class="flex flex-wrap items-center gap-1.5 pl-[42px]"
+            class="flex flex-wrap items-center gap-1.5 pt-[3px] pl-[42px]"
           >
             <span
               v-for="chip in toolChipsForEntry(entry)"
               :key="chip.label"
-              class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[11px] rounded border"
+              class="inline-flex items-center gap-1 px-[9px] py-[3px] text-[11px] rounded-[7px] border"
               :class="chip.color"
-            >{{ chip.label }}<span v-if="chip.count > 1" class="opacity-70 ml-0.5">×{{ chip.count }}</span></span>
+            >{{ chip.label }}<span v-if="chip.count > 1" class="opacity-65">×{{ chip.count }}</span></span>
             <button
               type="button"
               class="font-mono text-[11px] text-slate-400 hover:text-slate-700 ml-1 cursor-pointer rounded px-1 focus-visible:outline-2 focus-visible:outline-blue-500"
@@ -688,7 +693,7 @@ function toolChipsForEntry(entry) {
                  a freed-tokens figure and a clock it runs ~407px, wider than a
                  phone's content pane, and `whitespace-nowrap` turned that into
                  a sideways scroll of the whole feed. -->
-            <span class="inline-flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1.5 text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-amber-50 border border-amber-200">
+            <span class="inline-flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1.5 text-[11px] font-mono uppercase tracking-[0.05em] px-2.5 py-[3px] rounded-[7px] bg-amber-50 border border-amber-200">
               <span>{{ entry.span.name === 'compact.pre' ? '▼ context compacting' : '▲ context compacted' }}</span>
               <span v-if="entry.span.attributes?.trigger" class="text-amber-500">·</span>
               <span v-if="entry.span.attributes?.trigger" class="lowercase">{{ entry.span.attributes.trigger }}</span>
@@ -767,7 +772,7 @@ function toolChipsForEntry(entry) {
            there is nothing further to load rather than guessing. -->
       <div
         v-if="entries.length"
-        class="text-center pt-3.5 pb-6 font-mono text-[11px] uppercase tracking-[0.1em] text-slate-500"
+        class="text-center pt-3.5 pb-[30px] font-mono text-[11px] uppercase tracking-[0.1em] text-slate-400"
       >End of timeline</div>
 
       <!-- Empty state. While scoped, "no spans ever captured" (server
