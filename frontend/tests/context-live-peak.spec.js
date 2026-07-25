@@ -45,8 +45,14 @@ test('headline ctx% reflects live peak after compaction, with a peaked chip', as
 
   await page.goto(`/trace/sessions/${traceId}`)
 
-  // Headline is the live peak (21%), NOT the pre-compaction 90%.
-  await expect(page.getByText(/ctx 21%/)).toBeVisible({ timeout: 10_000 })
+  // Headline is the live peak (21%), NOT the pre-compaction 90%. It reads off
+  // the vitals strip's "Context peak" cell — scoped to the strip so a stray 21%
+  // elsewhere on the page can't satisfy this.
+  const ctxCell = page.getByTestId('trace-vitals-strip')
+    .locator('div', { has: page.getByText('Context peak', { exact: true }) })
+    .first()
+  await expect(ctxCell).toContainText('21%', { timeout: 10_000 })
+  await expect(ctxCell).not.toContainText('90%')
   // The pre-compaction high is surfaced as a muted "peaked" chip.
   await expect(page.getByText(/peaked 90%/)).toBeVisible()
 

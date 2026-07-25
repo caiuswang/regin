@@ -1,24 +1,29 @@
 <script setup>
-// Session metadata header for the trace view: title (+ source badge, expand),
-// the stat/pivot chip row (spans, duration, active%, context%, cache, plans,
-// workflow runs, tasks), the expandable plan/workflow/task lists, the
-// view-mode toggle, and the reload control.
+// Session metadata header for the trace view: eyebrow, title (+ source badge,
+// expand, live/ended status), the identity + pivot chip row (trace id, model,
+// start clock, plans, workflow runs, tasks), the expandable plan/workflow/task
+// lists, the segmented view-mode switcher, and the reload control.
+//
+// The volume stats — spans, duration, active%, context%, cache, total tokens —
+// deliberately do NOT live here any more: they are cells in TraceVitalsStrip,
+// which gives each a stable slot instead of letting them reflow this paragraph.
+// Cache read/write survives in the Overview panel's session bill, where it also
+// carries a dollar figure.
 //
 // Self-contained by design: it takes the raw session + collections + the few
-// spans-derived stats it can't compute alone (traceDuration, activeWorkMs,
-// snapshotStaleAt, workflowParentTo), and derives everything else (title,
-// task summary, idle/active%) internally. It owns only presentational toggle
-// state and emits intent (`reload`, `jump-to-task`, `update:viewMode`) back to
-// the parent, which still owns the data model.
+// spans-derived facts it can't compute alone (snapshotStaleAt,
+// workflowParentTo), and derives everything else (title, task summary)
+// internally. It owns only presentational toggle state and emits intent
+// (`reload`, `jump-to-task`, `update:viewMode`) back to the parent, which
+// still owns the data model.
 import { ref, computed } from 'vue'
 import { fmtTokens } from '../utils/traceFormatters.js'
 import Button from './ui/Button.vue'
 
-// Date/duration formatters kept local (exact copies of SessionTraceView's)
-// rather than imported: traceFormatters exposes differently-behaved variants
-// (fmtTime as HH:MM, a simpler fmtDuration), so importing them would silently
-// change how the snapshot time, durations, plan dates, and the "updated" clock
-// render here. Unifying the sibling copies is a separate follow-up.
+// Date formatters kept local (exact copies of SessionTraceView's) rather than
+// imported: traceFormatters exposes a differently-behaved `fmtTime` (HH:MM), so
+// importing it would silently change how the snapshot time, plan dates, and the
+// "updated" clock render here. Unifying the siblings is a separate follow-up.
 function fmtTime(iso) {
   if (!iso) return '-'
   const d = new Date(iso)
@@ -36,47 +41,28 @@ function fmtLocalClock(iso) {
   const ss = String(d.getSeconds()).padStart(2, '0')
   return `${hh}:${mm}:${ss}`
 }
-function fmtDuration(ms) {
-  if (!ms) return '-'
-  if (ms < 1000) return `${ms}ms`
-
-  const seconds = Math.floor(ms / 1000) % 60
-  const minutes = Math.floor(ms / 60000) % 60
-  const hours = Math.floor(ms / 3600000) % 24
-  const days = Math.floor(ms / 86400000)
-
-  const units = [
-    { value: days, label: 'd' },
-    { value: hours, label: 'h' },
-    { value: minutes, label: 'm' },
-    { value: seconds, label: 's' },
-  ]
-
-  const start = units.findIndex(u => u.value > 0)
-  if (start === -1) return '-'
-
-  let end = units.length - 1
-  while (end > start && units[end].value === 0) {
-    end--
-  }
-
-  return units.slice(start, end + 1).map(u => `${u.value}${u.label}`).join('')
-}
-
 const props = defineProps({
   session: { type: Object, required: true },
   plans: { type: Array, default: () => [] },
   workflowRuns: { type: Array, default: () => [] },
   viewMode: { type: String, default: 'conversation' },
+  // Per-mode row counts for the switcher (e.g. { terminal: 38, messages: 3 }).
+  // A missing or zero entry renders no count pill.
+  modeCounts: { type: Object, default: () => ({}) },
   reloading: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
   lastReloadedAt: { type: Object, default: null },
   hasTurns: { type: Boolean, default: false },
-  traceDuration: { type: Number, default: 0 },
-  activeWorkMs: { type: Number, default: 0 },
   snapshotStaleAt: { type: [String, null], default: null },
   workflowParentTo: { type: [Object, null], default: null },
 })
+
+const MODE_OPTIONS = [
+  { id: 'conversation', label: 'Conversation' },
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'messages', label: 'Messages' },
+]
 
 defineEmits(['update:viewMode', 'reload', 'jump-to-task'])
 
@@ -111,11 +97,11 @@ const sessionTitle = computed(() => {
   return t.slice(0, max) + '…'
 })
 
-const idleMs = computed(() => Math.max(0, props.traceDuration - props.activeWorkMs))
-const activePct = computed(() => {
-  if (!props.traceDuration) return null
-  return (props.activeWorkMs / props.traceDuration) * 100
-})
+// A session with no `ended_at` is still attached to a live agent — the pulsing
+// pill is the one piece of session state that has to be legible without
+// reading a number, so it sits on the title line rather than in the vitals.
+const isLive = computed(() => !props.session?.ended_at)
+const startedClock = computed(() => fmtLocalClock(props.session?.started_at))
 
 // Pre-compaction high-water mark. The headline ctx% is the *live* peak
 // (since the last /compact); when the session compacted, the all-time
@@ -164,7 +150,10 @@ const taskSummary = computed(() => {
     else if (t.status === 'in_progress') inProgress++
     else pending++
   }
-  return { total: tasks.length, completed, inProgress, pending }
+  return {
+    total: tasks.length, completed, inProgress, pending,
+    pct: Math.round((completed / tasks.length) * 100) + '%',
+  }
 })
 
 function titleSourceLabel(src) {
@@ -183,29 +172,36 @@ function titleSourceTooltip(src) {
   if (src === 'user') return 'Manually set via the regin API; not overwritten by Claude.'
   return src
 }
-
-function contextBadgeClass(pct) {
-  if (pct == null) return 'bg-gray-100 text-gray-500 border-gray-200'
-  if (pct >= 80) return 'bg-red-50 text-red-700 border-red-200'
-  if (pct >= 50) return 'bg-amber-50 text-amber-700 border-amber-200'
-  return 'bg-green-50 text-green-700 border-green-200'
-}
 </script>
 
 <template>
   <header class="flex items-start justify-between gap-4 flex-wrap mb-5">
     <div class="min-w-0 flex-1">
       <div class="text-[11px] tracking-widest uppercase text-slate-400 font-semibold mb-1">
-        Observability · Session
+        Observability · Session Trace
       </div>
-      <h1
-        class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words"
-        :title="session.title || ''"
-      >{{ sessionTitle }}<span
-        v-if="session.title && session.title_source"
-        class="ml-2 align-middle inline-block rounded border border-slate-200 bg-slate-50 text-slate-500 text-[10px] font-medium px-1.5 py-0.5 uppercase tracking-wide"
-        :title="titleSourceTooltip(session.title_source)"
-      >{{ titleSourceLabel(session.title_source) }}</span></h1>
+      <div class="flex items-start gap-3">
+        <h1
+          class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words min-w-0 flex-1"
+          :title="session.title || ''"
+        >{{ sessionTitle }}<span
+          v-if="session.title && session.title_source"
+          class="ml-2 align-middle inline-block rounded border border-slate-200 bg-slate-50 text-slate-500 text-[10px] font-medium px-1.5 py-0.5 uppercase tracking-wide"
+          :title="titleSourceTooltip(session.title_source)"
+        >{{ titleSourceLabel(session.title_source) }}</span></h1>
+        <span
+          class="mt-1 shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"
+          :class="isLive
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : 'border-slate-200 bg-slate-50 text-slate-500'"
+          :title="isLive ? 'this session has not ended — spans are still arriving' : 'this session has ended'"
+        >
+          <span
+            class="h-1.5 w-1.5 rounded-full"
+            :class="isLive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"
+          ></span>{{ isLive ? 'Live' : 'Ended' }}
+        </span>
+      </div>
       <div
         v-if="sessionTitleNeedsExpand"
         class="mt-1.5"
@@ -237,29 +233,18 @@ function contextBadgeClass(pct) {
           class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-slate-300 bg-white text-[11px] font-medium text-slate-600 hover:bg-slate-50 no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
           title="Open the Claude Code session that launched this workflow run"
         >↑ launched from session</router-link>
-        <span class="text-slate-300">·</span>
-        <span>{{ session.span_count_total ?? session.spans.length }} spans</span>
-        <span class="text-slate-300">·</span>
-        <span :title="`wall-clock from first to last span — includes user-idle gaps between turns`">
-          duration <span class="font-mono">{{ fmtDuration(Math.round(traceDuration)) }}</span>
-        </span>
-        <template v-if="activeWorkMs > 0">
+        <template v-if="session.model">
           <span class="text-slate-300">·</span>
-          <span :title="`union of root-span intervals (overlaps merged) — agent work time, idle ${fmtDuration(idleMs)} excluded`">
-            active <span class="font-mono">{{ activePct != null ? Math.round(activePct) + '%' : fmtDuration(activeWorkMs) }}</span>
-          </span>
+          <span class="font-mono">{{ session.model }}</span>
+        </template>
+        <template v-if="startedClock">
+          <span class="text-slate-300">·</span>
+          <span>started <span class="font-mono">{{ startedClock }}</span></span>
         </template>
         <template v-if="session.context_pct != null">
-          <!-- Headline is the live main-conversation peak: the high-water
-               mark since the last /compact (matches the terminal, which
-               resets on compaction). -->
-          <span
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ml-1"
-            :class="contextBadgeClass(session.context_pct)"
-            :title="`live context peak (since last /compact): ${(session.live_context_tokens ?? session.peak_main_context_tokens ?? session.peak_context_tokens) || 0} / ${session.context_window_tokens} tokens`"
-          >ctx {{ session.context_pct }}%
-            <span class="opacity-75 font-mono">{{ fmtTokens(session.live_context_tokens ?? session.peak_main_context_tokens ?? session.peak_context_tokens) }} / {{ fmtTokens(session.context_window_tokens) }}</span>
-          </span>
+          <!-- The headline ctx% now lives in the vitals strip; only the two
+               divergence markers stay here, because each says something the
+               single gauge cannot. -->
           <!-- Pre-compaction high-water mark, shown only when a /compact
                freed context so the headline drop reads as a reset, not
                missing data. -->
@@ -279,26 +264,9 @@ function contextBadgeClass(pct) {
             :title="`all-inclusive peak turn: ${(session.peak_context_tokens || 0).toLocaleString()} tokens (vs ${(session.context_window_tokens || 0).toLocaleString()} window). Includes advisor/server-side sub-call tokens that Anthropic rolls into the parent turn's usage, so it can exceed the window — the headline ctx% excludes these.`"
           >+sub <span class="opacity-75 font-mono">{{ fmtTokens(session.peak_context_tokens) }}</span></span>
         </template>
-        <!-- Cache: read = context replayed each turn (the bulk of the API
-             bill), write = cache creation. Not attributable per-tool, so
-             it lives here rather than in the Tokens-by-tool rollup. -->
-        <span
-          v-if="session.cache_read_tokens || session.cache_creation_tokens"
-          class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-500 text-[11px] font-medium ml-1"
-          :title="`cache read (context replayed each turn): ${(session.cache_read_tokens || 0).toLocaleString()} tokens\ncache write (cache creation): ${(session.cache_creation_tokens || 0).toLocaleString()} tokens\n\nCache is a per-request cost, not attributable to a single tool — so it isn't in 'Tokens by tool', but it dominates the full session bill.`"
-        >cache <span class="opacity-75 font-mono">{{ fmtTokens(session.cache_read_tokens) }} r · {{ fmtTokens(session.cache_creation_tokens) }} w</span></span>
-        <!-- Workflow runs have no single context window (no ctx% chip), so
-             surface the run's authoritative grand total (manifest
-             totalTokens — input + cache + output across all agents). -->
-        <template v-if="session.total_tokens">
-          <span
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-slate-50 text-slate-600 text-[11px] font-medium ml-1"
-            title="total tokens across all workflow agents (input + cache + output), from the run manifest"
-          >Σ <span class="opacity-75 font-mono">{{ fmtTokens(session.total_tokens) }}</span> tokens</span>
-        </template>
-        <template v-if="session.model">
-          <span class="text-xs text-slate-500 font-mono ml-1">{{ session.model }}</span>
-        </template>
+        <!-- Cache read/write is NOT dropped: it moved to the Overview panel's
+             session bill, which shows it against a dollar figure — the reading
+             that actually matters, since cache dominates tokens but not cost. -->
         <!-- Plan chips: each PlanSession row this session authored or
              edited (from `plan_sessions`) lets the reader pivot
              session → plan from the header. N=1 renders inline as a
@@ -353,12 +321,15 @@ function contextBadgeClass(pct) {
              list inline. -->
         <template v-if="taskSummary">
           <span
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ml-1 cursor-pointer select-none border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-            :title="'session task list — click to expand'"
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium ml-1 cursor-pointer select-none border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+            :title="`session task list — ${taskSummary.completed} done · ${taskSummary.inProgress} in progress · ${taskSummary.pending} open. Click to expand.`"
             @click="tasksExpanded = !tasksExpanded"
-          >tasks {{ taskSummary.total }}
-            <span class="opacity-75 font-mono">{{ taskSummary.completed }}☑ · {{ taskSummary.inProgress }}◐ · {{ taskSummary.pending }}☐</span>
-            <span class="opacity-60 ml-0.5">{{ tasksExpanded ? '▾' : '▸' }}</span>
+          >tasks
+            <span class="font-mono tabular-nums">{{ taskSummary.completed }}<span class="opacity-50">/</span>{{ taskSummary.total }}</span>
+            <span class="inline-block h-1 w-[34px] overflow-hidden rounded-full bg-indigo-200">
+              <span class="block h-full rounded-full bg-indigo-500" :style="{ width: taskSummary.pct }"></span>
+            </span>
+            <span class="opacity-60">{{ tasksExpanded ? '▾' : '▸' }}</span>
           </span>
         </template>
       </p>
@@ -442,24 +413,33 @@ function contextBadgeClass(pct) {
       <div class="flex flex-wrap justify-end items-center gap-1.5">
         <!-- Header-row actions the parent owns (e.g. the agents popover). -->
         <slot name="actions"></slot>
-        <!-- Below lg the compact sticky strip owns the switcher; a second
-             visible copy here would double every mode button. -->
-        <Button
-          v-for="opt in [
-            { id: 'conversation', label: 'Conversation' },
-            { id: 'timeline', label: 'Timeline' },
-            { id: 'terminal', label: 'Terminal' },
-            { id: 'messages', label: 'Messages' },
-          ]"
-          :key="opt.id"
-          variant="ghost"
-          size="sm"
-          class="hidden lg:inline-flex h-auto px-3 py-1 text-xs rounded-full border"
-          :class="viewMode === opt.id
-            ? 'bg-blue-50 border-blue-400 text-blue-700 font-medium'
-            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'"
-          @click="$emit('update:viewMode', opt.id)"
-        >{{ opt.label }}</Button>
+        <!-- Segmented control on one recessed track: the four modes are a
+             single exclusive choice, and loose bordered pills read as four
+             independent toggles. Below lg the compact sticky strip owns the
+             switcher; a second visible copy here would double every button. -->
+        <div class="hidden lg:inline-flex gap-0.5 rounded-[11px] bg-slate-100 p-[3px]">
+          <Button
+            v-for="opt in MODE_OPTIONS"
+            :key="opt.id"
+            variant="ghost"
+            size="sm"
+            class="h-auto gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px]"
+            :class="viewMode === opt.id
+              ? 'bg-white text-blue-800 font-semibold shadow-[0_1px_3px_rgba(15,23,42,0.12)] hover:bg-white'
+              : 'text-slate-500 hover:bg-slate-200/60 hover:text-slate-700'"
+            :aria-pressed="viewMode === opt.id"
+            :title="modeCounts[opt.id] ? `${opt.label} · ${modeCounts[opt.id]} rows` : opt.label"
+            @click="$emit('update:viewMode', opt.id)"
+          >{{ opt.label }}<!-- aria-hidden: the count is a visual density hint,
+            and folding it into the accessible name would turn every mode
+            button's name into a moving target ("Terminal" → "Terminal 38").
+            The title above carries it for anyone who wants it. --><span
+            v-if="modeCounts[opt.id]"
+            aria-hidden="true"
+            class="rounded-md px-1.5 text-[10.5px] font-semibold tabular-nums"
+            :class="viewMode === opt.id ? 'bg-blue-50 text-blue-800' : 'bg-slate-200 text-slate-500'"
+          >{{ modeCounts[opt.id] }}</span></Button>
+        </div>
       </div>
       <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
         <span v-if="lastReloadedAt">updated {{ fmtLocalClock(lastReloadedAt.toISOString()) }}</span>

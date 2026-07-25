@@ -1,12 +1,13 @@
 /**
- * "Tokens by tool" drill-down: expand a tool to see which specific files /
+ * "Spend by tool" drill-down: expand a tool to see which specific files /
  * commands cost the most tokens.
  *
  * The serve-time rollup (`queries.py fetch_tool_token_rollup` +
  * `_tool_target_breakdown`) hangs a per-tool target list off each rollup row,
  * built from the tool span's `input_tokens` + its `file_path` (Read/Edit) or
- * `tool_input.command` (Bash). `ToolTokenRollup.vue` renders each tool as an
- * expandable row revealing those targets ranked by tokens.
+ * `tool_input.command` (Bash). `TraceSpendLeaderboard.vue` renders each tool as
+ * an expandable row revealing those targets ranked by tokens; the leaderboard
+ * lives behind the header's "Overview · token spend" disclosure.
  *
  * Portable: seeds its own tool spans (is_test=true) via /api/session-spans,
  * then fills input_tokens through the real tool-attribution path (keyed by
@@ -55,12 +56,13 @@ test('tokens-by-tool drill-down ranks a tool\'s files by token cost', async ({ p
   await page.evaluate(() => localStorage.setItem('regin_session_view_mode', 'conversation'))
   await page.goto(`/trace/sessions/${traceId}`)
 
-  // Expand the rollup, then the Read tool row, then assert the file drill-down.
-  await page.getByRole('button', { name: /Tokens by tool/ }).click()
+  // Open the Overview disclosure, then the Read tool row, then assert the
+  // file drill-down.
+  await page.getByTestId('trace-spend-toggle').click()
   await page.getByRole('button', { name: /Read/ }).first().click()
 
   // huge_module.py read 2× for 5000+3000 = 8000 — the drill-down target is a
-  // button labelled with the file (first match: the rollup sits above the
+  // button labelled with the file (first match: the leaderboard sits above the
   // conversation, so .first() is the drill-down row, not a span card).
   const target = page.getByRole('button', { name: /huge_module\.py/ }).first()
   await expect(target).toBeVisible({ timeout: 10_000 })

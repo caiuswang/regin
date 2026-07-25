@@ -29,9 +29,10 @@ import TraceScopeBar from '../components/TraceScopeBar.vue'
 import TraceAgentPane from '../components/TraceAgentPane.vue'
 import TraceAgentsPopover from '../components/TraceAgentsPopover.vue'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
-import ToolTokenRollup from '../components/ToolTokenRollup.vue'
 import Icon from '../components/ui/Icon.vue'
 import SessionTraceHeader from '../components/SessionTraceHeader.vue'
+import TraceVitalsStrip from '../components/TraceVitalsStrip.vue'
+import TraceSpendPanel from '../components/TraceSpendPanel.vue'
 import TraceOverviewStrip from '../components/TraceOverviewStrip.vue'
 import SpanDetailPanel from '../components/SpanDetailPanel.vue'
 import { findNodeBySpanId, findNodePath, findNodeKey } from '../utils/spanTree.js'
@@ -243,6 +244,25 @@ const spanDetailProps = computed(() => ({
 // reload() while the tab is active, so the live poll keeps it current.
 const agentMessages = ref(null)
 const sessionGoal = ref(null)
+
+// Row counts on the segmented switcher, so the reader knows whether a tab is
+// worth opening. Only tabs with a countable, always-known population get one:
+// Conversation/Timeline render the same spans the vitals strip already counts,
+// and a duplicate there would be noise. Messages stays absent until its first
+// fetch — a `0` pill would claim "no messages" when the truth is "not loaded".
+// "Turns" in the vitals strip means user prompts, counted off the loaded root
+// spans — NOT `turns.length`. The turn_usage table is per-API-response billing
+// data that is frequently still empty on a live session, which rendered the
+// cell as an em-dash next to a feed visibly showing several prompts.
+const promptCount = computed(() => {
+  const n = treeNodes.value.filter(t => t?.data?.name === 'prompt').length
+  return n || (turns.value ? turns.value.length : null)
+})
+
+const modeCounts = computed(() => ({
+  terminal: session.value?.span_count_total ?? allSpans.value.length,
+  messages: agentMessages.value?.length ?? 0,
+}))
 async function ensureAgentMessagesLoaded() {
   const data = await api.get(`/sessions/${route.params.id}/agent-messages`)
   agentMessages.value = data.messages
@@ -526,7 +546,13 @@ async function selectSpanById(spanId) {
       }
     }
   }
-  if (span) selectSpan(span)
+  if (!span) return
+  selectSpan(span)
+  // These jumps come from chrome ABOVE the feed (a task row, a spend
+  // drill-down target), where the answer the user asked for lives in the span
+  // detail. On the Conversation tab that rail is opt-in and defaults closed, so
+  // without this the click selected a span and produced no visible result.
+  if (viewMode.value === 'conversation') detailRailOpen.value = true
 }
 
 // Jump from a row in the expanded task list to the most relevant span for
@@ -623,12 +649,11 @@ const {
       :plans="plans"
       :workflow-runs="workflowRuns"
       :view-mode="viewMode"
+      :mode-counts="modeCounts"
       :reloading="reloading"
       :loading="loading"
       :last-reloaded-at="lastReloadedAt"
       :has-turns="turns != null"
-      :trace-duration="traceDuration"
-      :active-work-ms="activeWorkMs"
       :snapshot-stale-at="snapshotStaleAt"
       :workflow-parent-to="workflowParentTo"
       @update:view-mode="setViewMode"
@@ -653,7 +678,14 @@ const {
       </template>
     </SessionTraceHeader>
 
-    <ToolTokenRollup :rollup-data="toolRollupData" @jump-span="selectSpanById" />
+    <TraceVitalsStrip
+      :session="session"
+      :trace-duration="traceDuration"
+      :active-work-ms="activeWorkMs"
+      :rollup-data="toolRollupData"
+      :turn-count="promptCount"
+      :agent-count="liveAgents.agents.length"
+    />
 
     <TraceOverviewStrip
       :tree-nodes="treeNodes"
@@ -666,6 +698,8 @@ const {
       :trace-duration="traceDuration"
       @select-node="onOverviewSpanClick"
     />
+
+    <TraceSpendPanel :rollup-data="toolRollupData" @jump-span="selectSpanById" />
 
     <!-- Scoped-view bar: pins with the page header while the Conversation
          tab shows one subagent's subtree. Other tabs are never scoped (the

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, watch, nextTick, ref } from 'vue'
-import { fmtTime, fmtDuration, fmtTokens, fmtModel, truncate } from '../../utils/traceFormatters.js'
+import { fmtTime, fmtDuration, fmtTokens, fmtCost, fmtModel, truncate } from '../../utils/traceFormatters.js'
 import { useStickyMaxHeight } from '../../composables/useStickyMaxHeight.js'
 import { useConversationRail } from '../../composables/useConversationRail.js'
 import Button from '../ui/Button.vue'
@@ -35,6 +35,21 @@ const { maxH: turnsMaxH } = useStickyMaxHeight(turnsAsideEl)
 // TOC scroll region + one ref per turn card (active-turn auto-follow).
 const tocScrollEl = ref(null)
 const turnTocRefs = new Map()
+
+// Consumption bars are scaled within the rail rather than against a
+// session-wide constant: the rail's job is "which of these turns was the
+// expensive one", and a session-wide max would flatten every bar in a session
+// that has one runaway turn outside the loaded window.
+const maxTurnConsumption = computed(() => Math.max(
+  0,
+  ...props.turnItems.map(t => (t.turnAgg?.inputTokens || 0) + (t.turnAgg?.outputTokens || 0)),
+))
+function turnConsumptionPct(item) {
+  const max = maxTurnConsumption.value
+  if (!max) return 0
+  const c = (item.turnAgg?.inputTokens || 0) + (item.turnAgg?.outputTokens || 0)
+  return Math.round(Math.max(0, Math.min(100, (c / max) * 100)))
+}
 
 // Active turn = the turn whose [start, end] window contains the parent's
 // `selectedSpan`. Falls back to a direct prompt-id match.
@@ -244,19 +259,37 @@ function jumpToLive() {
           : 'bg-white border-transparent hover:border-slate-200'"
         @click="$emit('select-turn', item)"
       >
-        <div class="flex items-baseline gap-1.5 text-xs leading-tight">
-          <span class="text-slate-400 font-mono shrink-0 tabular-nums">#{{ item.idx + 1 }}</span>
+        <div class="mb-1 flex items-center gap-1.5">
           <span
-            class="truncate"
-            :class="activeTurnIdx === item.idx ? 'font-medium text-slate-900' : 'text-slate-700'"
-          >{{ truncate(item.promptText, 32) }}</span>
+            class="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md text-[10px] font-bold tabular-nums"
+            :class="activeTurnIdx === item.idx ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-700'"
+          >{{ item.idx + 1 }}</span>
+          <span class="font-mono text-[11px] text-slate-400">{{ fmtTime(item.timestamp) }}</span>
         </div>
-        <div class="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
-          <span>{{ fmtTime(item.timestamp) }}</span>
-          <span v-if="item.durationMs" class="text-slate-300">·</span>
+        <!-- Two lines, not one: a 32-char truncation cut nearly every prompt
+             mid-first-clause, which is not enough to tell two turns apart. -->
+        <div
+          class="line-clamp-2 text-xs leading-snug"
+          :class="activeTurnIdx === item.idx ? 'font-medium text-slate-800' : 'text-slate-500'"
+          :title="item.promptText"
+        >{{ truncate(item.promptText, 140) }}</div>
+        <div class="text-[10px] text-slate-400 font-mono mt-1.5 flex flex-wrap items-center gap-x-1.5 tabular-nums">
+          <span v-if="item.turnAgg?.costUsd != null" class="font-bold text-emerald-600">{{ fmtCost(item.turnAgg.costUsd) }}</span>
+          <span v-if="item.turnAgg?.inputTokens">{{ fmtTokens(item.turnAgg.inputTokens) }}/{{ fmtTokens(item.turnAgg.outputTokens || 0) }}</span>
           <span v-if="item.durationMs">{{ fmtDuration(item.durationMs) }}</span>
-          <span v-if="item.turnAgg?.inputTokens" class="text-slate-300">·</span>
-          <span v-if="item.turnAgg?.inputTokens">↑{{ fmtTokens(item.turnAgg.inputTokens) }}</span>
+        </div>
+        <!-- Consumption bar, scaled against the heaviest turn in this session:
+             the absolute token counts above don't show which turn dominated
+             the bill, and that is the thing a reader scans the rail for. -->
+        <div
+          v-if="turnConsumptionPct(item)"
+          class="mt-1 h-1 overflow-hidden rounded-full bg-slate-100"
+        >
+          <div
+            class="h-full rounded-full"
+            :class="turnConsumptionPct(item) > 66 ? 'bg-amber-500' : 'bg-blue-400'"
+            :style="{ width: turnConsumptionPct(item) + '%' }"
+          ></div>
         </div>
       </div>
     </div>

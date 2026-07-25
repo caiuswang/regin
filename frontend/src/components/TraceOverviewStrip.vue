@@ -9,6 +9,7 @@
 // clicked node back to the parent (which owns selection + tree expansion).
 import { computed } from 'vue'
 import { spanLabel } from '../utils/traceFormatters.js'
+import Button from './ui/Button.vue'
 
 const props = defineProps({
   treeNodes: { type: Array, default: () => [] },
@@ -46,15 +47,71 @@ function fmtDuration(ms) {
   return units.slice(start, end + 1).map(u => `${u.value}${u.label}`).join('')
 }
 
-// Distinct palette so each first-class span stands out regardless of name.
-const spanPalette = [
-  'bg-blue-500', 'bg-orange-500', 'bg-green-500', 'bg-purple-500',
-  'bg-pink-500', 'bg-teal-500', 'bg-amber-500', 'bg-indigo-500',
-  'bg-rose-500', 'bg-cyan-500', 'bg-lime-500', 'bg-fuchsia-500',
-  'bg-emerald-500', 'bg-yellow-500', 'bg-sky-500', 'bg-violet-500',
+// Bars are colored by what the span DID, not by its position in the list. The
+// old rotating palette made adjacent bars different colors for no reason, which
+// meant the strip could never carry a legend — the one thing that turns a row
+// of colored blocks into something readable at a glance.
+const KINDS = [
+  { key: 'prompt', label: 'Prompt', bar: 'bg-purple-500', dot: 'bg-purple-500' },
+  { key: 'read', label: 'Reads', bar: 'bg-blue-500', dot: 'bg-blue-500' },
+  { key: 'write', label: 'Writes', bar: 'bg-orange-500', dot: 'bg-orange-500' },
+  { key: 'shell', label: 'Shell', bar: 'bg-teal-500', dot: 'bg-teal-500' },
+  { key: 'check', label: 'Checks', bar: 'bg-red-500', dot: 'bg-red-500' },
+  { key: 'agent', label: 'Subagent', bar: 'bg-violet-500', dot: 'bg-violet-500' },
+  { key: 'model', label: 'Model', bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
+  { key: 'system', label: 'System', bar: 'bg-slate-300', dot: 'bg-slate-300' },
+  { key: 'other', label: 'Other', bar: 'bg-slate-400', dot: 'bg-slate-400' },
 ]
-function paletteColor(index) {
-  return spanPalette[index % spanPalette.length]
+const KIND_BAR = Object.fromEntries(KINDS.map(k => [k.key, k.bar]))
+
+// Span names come from lib/trace's builders; these prefixes are the stable part
+// of that vocabulary. Anything unrecognised falls to 'other' rather than being
+// forced into a bucket, so a new span family shows up as visibly unclassified
+// instead of silently miscolored.
+const SYSTEM_PREFIXES = ['harness.', 'cwd.', 'instructions.', 'session.', 'permission.', 'compact.']
+
+function spanKind(name) {
+  if (!name) return 'other'
+  if (name === 'prompt') return 'prompt'
+  if (name === 'rule.check') return 'check'
+  if (name === 'file.edit' || name === 'plan.edit') return 'write'
+  if (name.startsWith('subagent') || name.startsWith('workflow.agent')) return 'agent'
+  if (name.startsWith('assistant')) return 'model'
+  if (SYSTEM_PREFIXES.some(p => name.startsWith(p))) return 'system'
+  if (name === 'tool.Bash') return 'shell'
+  if (name === 'tool.Write' || name === 'tool.Edit' || name === 'tool.MultiEdit') return 'write'
+  if (name === 'tool.Agent' || name === 'tool.Task') return 'agent'
+  if (name.startsWith('skill.') || name.startsWith('memory.') || name.startsWith('tool.')) return 'read'
+  return 'other'
+}
+
+// A very long session can hold thousands of spans; past a few hundred bars the
+// strip is solid color anyway and the DOM cost stops buying anything. Newest
+// wins, because the recent tail is what a live watcher is looking at.
+const MAX_BARS = 500
+
+// Root spans, NOT the full span list. The trace view loads shallowly — only
+// roots plus whatever subtrees the reader has expanded — so plotting
+// `allSpans` drew a near-empty strip that got sparser the less you had
+// explored. Roots are the set that is always complete for the loaded window,
+// which is what a session-level overview has to be honest about.
+//
+// Prompt roots stay in: a prompt span covers its whole turn, and that band is
+// the turn extent. The flags above mark where each one starts.
+const bars = computed(() => props.treeNodes
+  .map(n => n?.data)
+  .filter(d => d && d.start_time)
+  .slice(-MAX_BARS))
+
+// Only the kinds actually present get a legend swatch — a key listing colors
+// that appear nowhere on the bar is noise.
+const legend = computed(() => {
+  const present = new Set(bars.value.map(s => spanKind(s.name)))
+  return KINDS.filter(k => present.has(k.key))
+})
+
+function barColor(span) {
+  return KIND_BAR[spanKind(span?.name)] || 'bg-slate-400'
 }
 
 function turnStartMs(turn) {
@@ -78,30 +135,63 @@ const timelineTicks = computed(() => {
   const total = props.traceDuration || 0
   return [0, 0.25, 0.5, 0.75, 1].map(p => ({
     pct: p * 100,
-    label: fmtDuration(Math.round(total * p)),
+    // fmtDuration(0) is "-", which reads as "no data" at the origin of an axis.
+    label: p === 0 ? '0' : fmtDuration(Math.round(total * p)),
   }))
 })
 
-// Vertical hairlines, one per turn timestamp.
+// One entry per turn: a hairline on the bar plus a numbered, clickable flag
+// above it. The bare hairlines were unreadable — a reader could see *that* the
+// cadence changed but not which turn a burst belonged to, which is the only
+// reason to look at turn boundaries in the first place.
+//
+// Driven off the PROMPT SPANS, not the turn_usage rows. A "turn" here means
+// "the user said something", which is what the reader is orienting by; the
+// turn_usage table is a per-API-response billing record that is often still
+// null on a live session, so keying off it left the strip with no flags at all
+// on exactly the sessions people watch most.
 const turnBoundaries = computed(() => {
-  if (!props.turns || !props.traceStart || !props.traceDuration) return []
-  return props.turns
-    .map(t => turnStartMs(t))
-    .filter(ms => ms != null && ms >= props.traceStart && ms <= props.traceEnd)
-    .map(ms => ({ pct: ((ms - props.traceStart) / props.traceDuration) * 100 }))
+  if (!props.traceStart || !props.traceDuration) return []
+  const prompts = props.treeNodes
+    .filter(n => n?.data?.name === 'prompt' && n.data.start_time)
+    .map(n => ({ ms: new Date(n.data.start_time).getTime(), node: n }))
+  const source = prompts.length
+    ? prompts
+    : (props.turns || []).map(t => ({ ms: turnStartMs(t), node: null }))
+  return source
+    .filter(t => t.ms != null && t.ms >= props.traceStart && t.ms <= props.traceEnd)
+    .sort((a, b) => a.ms - b.ms)
+    .map((t, i) => ({
+      num: i + 1,
+      node: t.node,
+      pct: ((t.ms - props.traceStart) / props.traceDuration) * 100,
+    }))
 })
 </script>
 
 <template>
-  <div class="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 pt-3 pb-3.5">
-    <!-- Time axis -->
-    <div class="relative h-4 w-full text-[10px] text-gray-500 font-mono">
-      <div
-        v-for="tick in timelineTicks"
-        :key="'tl-' + tick.pct"
-        class="absolute top-0"
-        :style="{ left: tick.pct + '%', transform: tick.pct === 0 ? 'translateX(0)' : tick.pct === 100 ? 'translateX(-100%)' : 'translateX(-50%)' }"
-      >{{ tick.label }}</div>
+  <div class="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-4 pt-2.5 pb-3.5">
+    <div class="mb-2 flex items-baseline justify-between gap-3">
+      <h3 class="m-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">Activity</h3>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
+        <span v-for="l in legend" :key="l.key" class="inline-flex items-center gap-1.5">
+          <span class="h-[7px] w-[7px] rounded-sm" :class="l.dot"></span>{{ l.label }}
+        </span>
+      </div>
+    </div>
+    <!-- Numbered turn flags. Kept in their own row above the bar so a dense
+         run of turns crowds the flags, not the spans. -->
+    <div v-if="turnBoundaries.length" class="relative mb-1 h-[17px]">
+      <Button
+        v-for="b in turnBoundaries"
+        :key="'tf-' + b.num"
+        variant="ghost"
+        size="sm"
+        class="absolute top-0 h-[17px] gap-1 rounded-full border border-purple-200 bg-white px-1.5 text-[9.5px] font-bold tabular-nums text-purple-700 hover:border-purple-400 hover:bg-purple-50"
+        :style="{ left: b.pct + '%', transform: b.pct === 0 ? 'translateX(0)' : 'translateX(-50%)' }"
+        :title="`user prompt · start of turn ${b.num}`"
+        @click="b.node && $emit('select-node', b.node)"
+      >⚑{{ b.num }}</Button>
     </div>
     <!-- Bars + gridlines -->
     <div class="relative h-5 w-full bg-white rounded border border-gray-200 overflow-hidden">
@@ -113,27 +203,37 @@ const turnBoundaries = computed(() => {
         :style="{ left: tick.pct + '%' }"
       ></div>
       <div
-        v-for="(node, idx) in treeNodes"
-        :key="node.data.span_id"
+        v-for="span in bars"
+        :key="span.span_id"
         data-testid="overview-strip-bar"
         class="absolute top-0.5 bottom-0.5 rounded-sm cursor-pointer transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-500"
         :class="[
-          paletteColor(idx),
-          selectedSpan && selectedSpan.span_id === node.data.span_id ? 'ring-2 ring-offset-1 ring-gray-800' : '',
-          selectedTurnUuid && !spanIdsInSelectedTurn.has(node.data.span_id) ? 'opacity-20 hover:opacity-50' : 'opacity-90 hover:opacity-100',
+          barColor(span),
+          selectedSpan && selectedSpan.span_id === span.span_id ? 'ring-2 ring-offset-1 ring-gray-800' : '',
+          selectedTurnUuid && !spanIdsInSelectedTurn.has(span.span_id) ? 'opacity-20 hover:opacity-50' : 'opacity-90 hover:opacity-100',
         ]"
-        :style="{ left: offsetPct(node.data.start_time) + '%', width: Math.max(widthPct(node.data.start_time, node.data.end_time), 0.2) + '%' }"
-        :title="spanLabel(node.data) + ' — ' + fmtDuration(node.data.duration_ms)"
-        @click="$emit('select-node', node)"
+        :style="{ left: offsetPct(span.start_time) + '%', width: Math.max(widthPct(span.start_time, span.end_time), 0.45) + '%' }"
+        :title="spanLabel(span) + ' — ' + fmtDuration(span.duration_ms)"
+        @click="$emit('select-node', { data: span })"
       ></div>
       <!-- Turn boundary markers — faint vertical lines so the user
            can see turn cadence at a glance without selecting. -->
       <div
-        v-for="(b, i) in turnBoundaries"
-        :key="'tb-' + i"
-        class="absolute top-0 bottom-0 w-px bg-indigo-300/50 pointer-events-none"
+        v-for="b in turnBoundaries"
+        :key="'tb-' + b.num"
+        class="absolute top-0 bottom-0 w-px bg-purple-400/70 pointer-events-none"
         :style="{ left: b.pct + '%' }"
       ></div>
+    </div>
+    <!-- Time axis sits UNDER the bar: the flags above already claim that edge,
+         and a reader scanning a bar drops to the axis to place it in time. -->
+    <div class="relative mt-1 h-3.5 w-full font-mono text-[9.5px] text-slate-400">
+      <div
+        v-for="tick in timelineTicks"
+        :key="'tl-' + tick.pct"
+        class="absolute top-0"
+        :style="{ left: tick.pct + '%', transform: tick.pct === 0 ? 'translateX(0)' : tick.pct === 100 ? 'translateX(-100%)' : 'translateX(-50%)' }"
+      >{{ tick.label }}</div>
     </div>
   </div>
 </template>

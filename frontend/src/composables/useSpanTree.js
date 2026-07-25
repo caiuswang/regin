@@ -78,14 +78,19 @@ function aggregateTurns(bucket) {
   if (!bucket?.length) return null
   let inputTokens = 0
   let outputTokens = 0
+  // Null, not 0, when no turn in the bucket carries a price: an unpriced model
+  // must read as "unknown" in the rail, not as a free turn.
+  let costUsd = null
   for (const t of bucket) {
     inputTokens += (t.input_tokens || 0) + (t.cache_creation_tokens || 0)
     outputTokens += t.output_tokens || 0
+    if (Number.isFinite(t.cost_usd)) costUsd = (costUsd || 0) + t.cost_usd
   }
   return {
     count: bucket.length,
     inputTokens,
     outputTokens,
+    costUsd,
     lastTurn: bucket[bucket.length - 1],
   }
 }

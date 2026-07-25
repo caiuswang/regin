@@ -148,6 +148,53 @@ test.describe('Detail pages — no horizontal overflow', () => {
     await expect(spineRows.first()).toBeVisible()
   })
 
+  // The redesigned header chrome is the part most likely to reintroduce a
+  // sideways scroll: the vitals strip is six cells, and the spend panels are
+  // fixed-column grids. Six equal flex cells at 375px are ~60px each and blow
+  // the pane out — this case fails on that layout and passes on the reflowing
+  // grid, so it is the guard for the strip specifically, not just the route.
+  test('session trace detail: vitals strip and spend panels fit a phone', async ({ page }) => {
+    await page.goto('/trace/sessions')
+    await settle(page)
+    const firstLink = page.locator('a[href^="/trace/sessions/"]:visible').first()
+    if (!(await firstLink.count())) test.skip(true, 'no sessions in dev DB')
+    await firstLink.click()
+
+    const strip = page.getByTestId('trace-vitals-strip')
+    await expect(strip).toBeVisible({ timeout: 10_000 })
+
+    // Width is the wrong assertion on its own: flex cells SHRINK rather than
+    // overflow, so a 6-across row "fits" a 375px pane at ~60px a cell while
+    // rendering every label one word per line. The real invariant is that each
+    // cell keeps enough width to show its label and value — which is what
+    // forces the strip to reflow to fewer columns on a phone.
+    const MIN_CELL_W = 90
+    const cells = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="trace-vitals-strip"]')
+      if (!el) return []
+      return [...el.children].map(c => ({
+        label: (c.querySelector('dt')?.textContent || '?').trim(),
+        w: Math.round(c.getBoundingClientRect().width),
+      }))
+    })
+    expect(cells.length, 'vitals strip rendered no cells').toBeGreaterThan(0)
+    const starved = cells.filter(c => c.w < MIN_CELL_W)
+    expect(
+      starved,
+      `vitals cells starved below ${MIN_CELL_W}px: ${starved.map(c => `${c.label}=${c.w}px`).join(', ')}`
+    ).toEqual([])
+
+    // Expanding the spend disclosure must not widen the pane either — both
+    // panels inside it are fixed-column grids.
+    await page.getByTestId('trace-spend-toggle').click()
+    await page.waitForTimeout(200)
+    const m = await contentOverflow(page)
+    expect(
+      m.scrollWidth,
+      `trace detail (spend panel open): pane overflows; offenders: ${m.offenders.join(', ')}`
+    ).toBeLessThanOrEqual(m.clientWidth + 1)
+  })
+
   test('repo detail: content pane does not scroll sideways', async ({ page }) => {
     await page.goto('/repos')
     await settle(page)
