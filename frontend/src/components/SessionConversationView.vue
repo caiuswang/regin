@@ -8,6 +8,7 @@ import SpineDot from './conversation/SpineDot.vue'
 import TurnUsageFooter from './conversation/TurnUsageFooter.vue'
 import RewindCard from './conversation/RewindCard.vue'
 import { rendersInConversation } from './conversation/dispatch.js'
+import { taskSnapshotsBySpan } from '../utils/taskSnapshots.js'
 import { useSpanTree } from '../composables/useSpanTree.js'
 import { useConversationPins } from '../composables/useConversationPins.js'
 import { useConversationFolding } from '../composables/useConversationFolding.js'
@@ -54,6 +55,11 @@ const props = defineProps({
   // columns (xl but not 2xl): the TOC rail (user-resizable, shrink-0) yields
   // so the feed column keeps a readable width beside the pane.
   hideToc: { type: Boolean, default: false },
+  // `session.task_list.events` — the whole-session task-write log. Computed
+  // server-side over ALL spans (a client-side scan would miss tasks whose
+  // owning prompt is still collapsed) and replayed here into per-span
+  // snapshots for the task-list cards.
+  taskEvents: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live', 'enter-scope'])
@@ -63,6 +69,11 @@ const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-
 // dispatcher. The pane's embedded scoped instance passes '', so only the main
 // feed's originating card lights up.
 provide('traceScopedAgentId', toRef(props, 'scopedAgentId'))
+
+// span_id → task-list snapshot as of that task-write span, for the cards the
+// dispatcher renders. Provided (not prop-threaded) for the same reason as the
+// scope signal above: it would otherwise cross every card boundary.
+provide('traceTaskSnapshots', computed(() => taskSnapshotsBySpan(props.taskEvents)))
 
 const { copyText } = useCopy()
 

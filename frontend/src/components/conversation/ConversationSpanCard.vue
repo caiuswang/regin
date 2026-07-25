@@ -1,4 +1,5 @@
 <script setup>
+import { inject, ref } from 'vue'
 import TaskNotificationCard from './cards/TaskNotificationCard.vue'
 import ThinkingCard from './cards/ThinkingCard.vue'
 import AssistantResponseCard from './cards/AssistantResponseCard.vue'
@@ -17,6 +18,7 @@ import SubagentCard from './cards/SubagentCard.vue'
 import AgentResultCard from './cards/AgentResultCard.vue'
 import WorkflowLaunchRow from './cards/WorkflowLaunchRow.vue'
 import InlineToolRow from './cards/InlineToolRow.vue'
+import TaskListCard from './cards/TaskListCard.vue'
 
 // Dispatcher for one descendant span inside an expanded prompt group. The
 // v-if/v-else-if chain order + guards are load-bearing: a `tool.Bash` with no
@@ -35,6 +37,14 @@ defineProps({
   workflowRunsById: { type: Object, default: () => ({}) },
 })
 defineEmits(['activate', 'enter-scope'])
+
+// span_id → replayed task-list snapshot, provided by the hosting
+// SessionConversationView. Injected (not a prop) so the whole-session task
+// event log doesn't thread through every card's prop chain. A task-write span
+// the log has no entry for (no `task_id` in its attributes, so the server
+// never emitted an event) keeps its generic inline row.
+const taskSnapshots = inject('traceTaskSnapshots', ref(new Map()))
+const snapshotFor = (span) => taskSnapshots.value.get(span.span_id)
 </script>
 
 <template>
@@ -120,6 +130,11 @@ defineEmits(['activate', 'enter-scope'])
   <WorkflowLaunchRow
     v-else-if="span.name === 'tool.Workflow'"
     :span="span" :selected-span="selectedSpan" :folding="folding" :workflow-runs-by-id="workflowRunsById"
+    @activate="$emit('activate', $event)"
+  />
+  <TaskListCard
+    v-else-if="snapshotFor(span)?.tasks?.length"
+    :span="span" :selected-span="selectedSpan" :snapshot="snapshotFor(span)"
     @activate="$emit('activate', $event)"
   />
   <InlineToolRow

@@ -33,6 +33,7 @@ const props = defineProps({
   contextWindowTokens: { type: Number, default: null },
   workflowRunsById: { type: Object, default: () => ({}) },
   loadedSubtrees: { default: () => new Set() },
+  taskEvents: { type: Array, default: () => [] },
   serverNow: { type: String, default: '' },
   serverNowAt: { type: Number, default: 0 },
   // Rendered sticky-header height (px) — the pane pins flush under it, mirroring
@@ -164,6 +165,7 @@ const paneStyle = computed(() => ({
         :context-window-tokens="contextWindowTokens"
         :workflow-runs-by-id="workflowRunsById"
         :loaded-subtrees="loadedSubtrees"
+        :task-events="taskEvents"
         :scope-agent="agent"
         :scope-loading="scopeLoading"
         :scoped-agent-id="''"

@@ -43,12 +43,15 @@ test('empty thinking spans collapse to a muted line; text-bearing ones keep the 
   // The text-bearing one still renders its content.
   await expect(page.getByText('Weighing two encodings before picking one.')).toBeVisible({ timeout: 10_000 })
 
-  const geometry = await page.evaluate(({ emptyId, fullId }) => {
+  // Poll until both rows are mounted: under parallel load the spine can still
+  // be rendering when the text assertion above first resolves, and a single
+  // measurement then reads a half-built feed.
+  const measure = () => page.evaluate(({ emptyId, fullId }) => {
     const rowFor = id => {
       const host = document.querySelector(`[data-span-id="${id}"]`)
       return host ? host.closest('.event-spine-row') || host : null
     }
-    const measure = el => {
+    const read = el => {
       if (!el) return null
       const dot = el.querySelector('.spine-dot')
       return {
@@ -57,8 +60,14 @@ test('empty thinking spans collapse to a muted line; text-bearing ones keep the 
         text: el.textContent.trim().slice(0, 60),
       }
     }
-    return { empty: measure(rowFor(emptyId)), full: measure(rowFor(fullId)) }
+    return { empty: read(rowFor(emptyId)), full: read(rowFor(fullId)) }
   }, { emptyId, fullId })
+
+  let geometry = null
+  await expect.poll(async () => {
+    geometry = await measure()
+    return !!(geometry?.empty && geometry?.full)
+  }, { timeout: 15_000, message: 'thinking rows never mounted' }).toBe(true)
 
   expect(geometry.empty, 'empty thinking row not found').not.toBeNull()
   expect(geometry.full, 'text-bearing thinking row not found').not.toBeNull()

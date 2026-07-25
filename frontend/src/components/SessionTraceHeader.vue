@@ -140,8 +140,13 @@ const contextSubDiverges = computed(() => {
 // Tasks summary for the header badge: counts of every status across the
 // session's final task-list snapshot.
 const taskSummary = computed(() => {
-  const tasks = props.session?.task_list?.final
-  if (!Array.isArray(tasks) || !tasks.length) return null
+  const all = props.session?.task_list?.final
+  if (!Array.isArray(all) || !all.length) return null
+  // A `deleted` task was taken off the list by the model — counting it as
+  // "open" would report work that is no longer planned, and would disagree
+  // with the per-span TASK LIST cards in the conversation feed, which drop it.
+  const tasks = all.filter(t => t.status !== 'deleted')
+  if (!tasks.length) return null
   let completed = 0
   let inProgress = 0
   let pending = 0
@@ -401,7 +406,7 @@ function titleSourceTooltip(src) {
       >
         <ul class="text-[13px] text-slate-800 leading-snug">
           <li
-            v-for="t in session.task_list?.final || []"
+            v-for="t in (session.task_list?.final || []).filter(t => t.status !== 'deleted')"
             :key="t.task_id"
             tabindex="0"
             class="flex items-baseline gap-2 rounded px-1 -mx-1 py-0.5 cursor-pointer hover:bg-indigo-100 focus-visible:outline-2 focus-visible:outline-indigo-400"

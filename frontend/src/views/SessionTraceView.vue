@@ -223,6 +223,7 @@ const feedProps = computed(() => ({
   contextWindowTokens: session.value?.context_window_tokens,
   workflowRunsById: workflowRunsById.value,
   loadedSubtrees: subtreeLoaded.value,
+  taskEvents: session.value?.task_list?.events || [],
   serverNow: session.value?.server_now || '',
   serverNowAt: session.value?.server_now_at || 0,
 }))
