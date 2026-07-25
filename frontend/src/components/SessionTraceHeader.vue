@@ -180,10 +180,14 @@ function titleSourceTooltip(src) {
       <div class="text-[11px] tracking-widest uppercase text-slate-400 font-semibold mb-1">
         Observability · Session Trace
       </div>
-      <!-- Baseline, not a magic `mt-1` on the pill: the status chip has to sit
-           against the title's first-line baseline, and an eyeballed top margin
-           drifts the moment the heading's size or line-height changes. -->
-      <div class="flex items-baseline gap-3">
+      <!-- items-start + a nudge, NOT items-baseline: the pill is a bordered
+           box whose padding hangs below its text baseline, so baseline
+           alignment drops it ~6px under the title's optical centre. The nudge
+           is (title line-height 30px - pill height 22.5px) / 2 = 3.75px, i.e.
+           `mt-1` — it centres the pill on the title's FIRST line, which is
+           what a wrapping title needs. `session-header-live-pill.spec.js`
+           pins the result. -->
+      <div class="flex items-start gap-3">
         <h1
           class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words min-w-0 flex-1"
           :title="session.title || ''"
@@ -193,7 +197,7 @@ function titleSourceTooltip(src) {
           :title="titleSourceTooltip(session.title_source)"
         >{{ titleSourceLabel(session.title_source) }}</span></h1>
         <span
-          class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"
+          class="mt-1 shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"
           :class="isLive
             ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
             : 'border-slate-200 bg-slate-50 text-slate-500'"
