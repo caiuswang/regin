@@ -327,9 +327,14 @@
     "cell-code",
     "code-block",
     "empty-state",
+    "event-selected",
+    "event-spine",
+    "event-spine-row",
     "field-label",
     "filter-bar",
     "filter-chip",
+    "filter-row",
+    "filter-row-label",
     "form-label",
     "input",
     "live-agent-badge",
@@ -557,6 +562,9 @@
     "section-heading",
     "segmented",
     "segmented-item",
+    "spine-dot",
+    "spine-dot-core",
+    "spine-nested",
     "stat-card",
     "stat-label",
     "stat-value",
@@ -707,7 +715,8 @@
       "name": "ClampedText",
       "file": "src/components/ui/ClampedText.vue",
       "props": [
-        "lines"
+        "lines",
+        "forceExpanded"
       ]
     },
     {
@@ -1040,7 +1049,8 @@
         "text",
         "traceId",
         "spanId",
-        "imageIndices"
+        "imageIndices",
+        "forceExpanded"
       ]
     },
     {
@@ -1091,7 +1101,8 @@
         "scopedAgentId",
         "showFollowTail",
         "scrollerGetter",
-        "hideToc"
+        "hideToc",
+        "taskEvents"
       ]
     },
     {
@@ -1132,12 +1143,15 @@
       ]
     },
     {
-      "name": "SessionTimelineTree",
-      "file": "src/components/SessionTimelineTree.vue",
+      "name": "SessionTimelineSpine",
+      "file": "src/components/SessionTimelineSpine.vue",
       "props": [
         "treeNodes",
         "expandedKeys",
-        "selectedKeys"
+        "selectedKeys",
+        "traceStart",
+        "traceDuration",
+        "showCost"
       ]
     },
     {
@@ -1148,12 +1162,11 @@
         "plans",
         "workflowRuns",
         "viewMode",
+        "modeCounts",
         "reloading",
         "loading",
         "lastReloadedAt",
         "hasTurns",
-        "traceDuration",
-        "activeWorkMs",
         "snapshotStaleAt",
         "workflowParentTo"
       ]
@@ -1200,13 +1213,29 @@
       ]
     },
     {
+      "name": "SkillRoiTable",
+      "file": "src/components/SkillRoiTable.vue",
+      "props": [
+        "rows"
+      ]
+    },
+    {
+      "name": "SpanDetailHeader",
+      "file": "src/components/SpanDetailHeader.vue",
+      "props": [
+        "span",
+        "traceStart"
+      ]
+    },
+    {
       "name": "SpanDetailPanel",
       "file": "src/components/SpanDetailPanel.vue",
       "props": [
         "selectedSpan",
         "ruleTriggersByRuleId",
         "canSuppressRule",
-        "workflowRunsById"
+        "workflowRunsById",
+        "traceStart"
       ]
     },
     {
@@ -1227,6 +1256,21 @@
       ]
     },
     {
+      "name": "TimelineSpineRow",
+      "file": "src/components/TimelineSpineRow.vue",
+      "props": [
+        "span",
+        "depth",
+        "selected",
+        "expanded",
+        "hasKids",
+        "childCount",
+        "rootMaxMs",
+        "traceStart",
+        "showCost"
+      ]
+    },
+    {
       "name": "ToggleSwitch",
       "file": "src/components/ToggleSwitch.vue",
       "props": [
@@ -1235,13 +1279,6 @@
         "disabled",
         "onLabel",
         "offLabel"
-      ]
-    },
-    {
-      "name": "ToolTokenRollup",
-      "file": "src/components/ToolTokenRollup.vue",
-      "props": [
-        "rollupData"
       ]
     },
     {
@@ -1261,6 +1298,7 @@
         "contextWindowTokens",
         "workflowRunsById",
         "loadedSubtrees",
+        "taskEvents",
         "serverNow",
         "serverNowAt",
         "stickyTop"
@@ -1339,12 +1377,29 @@
       ]
     },
     {
-      "name": "TreeIndent",
-      "file": "src/components/TreeIndent.vue",
+      "name": "TraceSpendLeaderboard",
+      "file": "src/components/TraceSpendLeaderboard.vue",
       "props": [
-        "depth",
-        "leaf",
-        "expanded"
+        "rollupData"
+      ]
+    },
+    {
+      "name": "TraceSpendPanel",
+      "file": "src/components/TraceSpendPanel.vue",
+      "props": [
+        "rollupData"
+      ]
+    },
+    {
+      "name": "TraceVitalsStrip",
+      "file": "src/components/TraceVitalsStrip.vue",
+      "props": [
+        "session",
+        "traceDuration",
+        "activeWorkMs",
+        "rollupData",
+        "turnCount",
+        "agentCount"
       ]
     }
   ],
@@ -1428,17 +1483,19 @@
       "src/components/SessionRow.vue",
       "src/components/SessionTags.vue",
       "src/components/SessionTerminalLog.vue",
-      "src/components/SessionTimelineTree.vue",
+      "src/components/SessionTimelineSpine.vue",
       "src/components/SessionTraceHeader.vue",
       "src/components/SessionTurnsSidebar.vue",
       "src/components/SettingsBlock.vue",
       "src/components/SettingsProviders.vue",
       "src/components/SettingsRuleTriggers.vue",
+      "src/components/SkillRoiTable.vue",
+      "src/components/SpanDetailHeader.vue",
       "src/components/SpanDetailPanel.vue",
       "src/components/StatCard.vue",
       "src/components/SurfaceAgentPicker.vue",
+      "src/components/TimelineSpineRow.vue",
       "src/components/ToggleSwitch.vue",
-      "src/components/ToolTokenRollup.vue",
       "src/components/TraceAgentPane.vue",
       "src/components/TraceAgentRoster.vue",
       "src/components/TraceAgentsPopover.vue",
@@ -1446,10 +1503,13 @@
       "src/components/TraceOverviewStrip.vue",
       "src/components/TraceScopeBar.vue",
       "src/components/TraceScopeIdentity.vue",
-      "src/components/TreeIndent.vue",
+      "src/components/TraceSpendLeaderboard.vue",
+      "src/components/TraceSpendPanel.vue",
+      "src/components/TraceVitalsStrip.vue",
       "src/components/conversation/ConversationSpanCard.vue",
       "src/components/conversation/ConversationToc.vue",
       "src/components/conversation/RewindCard.vue",
+      "src/components/conversation/SpineDot.vue",
       "src/components/conversation/TurnUsageFooter.vue",
       "src/components/conversation/cards/AgentResultCard.vue",
       "src/components/conversation/cards/AskUserQuestionCard.vue",
@@ -1464,6 +1524,7 @@
       "src/components/conversation/cards/RuleCheckRow.vue",
       "src/components/conversation/cards/ServerToolCard.vue",
       "src/components/conversation/cards/SubagentCard.vue",
+      "src/components/conversation/cards/TaskListCard.vue",
       "src/components/conversation/cards/TaskNotificationCard.vue",
       "src/components/conversation/cards/ThinkingCard.vue",
       "src/components/conversation/cards/ToolFailureCard.vue",
@@ -1578,6 +1639,7 @@
       "src/composables/useProposalApplyAll.js",
       "src/composables/useProviderPaths.js",
       "src/composables/useQueuedPrompts.js",
+      "src/composables/useRealtime.js",
       "src/composables/useResizablePanel.js",
       "src/composables/useRuleTriggers.js",
       "src/composables/useServerClock.js",
@@ -1607,9 +1669,9 @@
     "themeTokens": 34,
     "rootTokens": 13,
     "darkTokens": 245,
-    "classes": 359,
+    "classes": 367,
     "primitives": 14,
     "views": 36,
-    "components": 159
+    "components": 165
   }
 }

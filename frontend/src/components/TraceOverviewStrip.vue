@@ -7,7 +7,7 @@
 // Stateless w.r.t. the data model: it takes the root nodes + the timing
 // window + the current selection/turn highlight as props, and emits the
 // clicked node back to the parent (which owns selection + tree expansion).
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { spanLabel } from '../utils/traceFormatters.js'
 import Button from './ui/Button.vue'
 
@@ -98,15 +98,17 @@ const MAX_BARS = 500
 //
 // Prompt roots stay in: a prompt span covers its whole turn, and that band is
 // the turn extent. The flags above mark where each one starts.
+// Whole nodes, not bare `data`: the parent's click handler reads `key` and
+// `leaf` off the node to expand the timeline subtree, so a `{ data }` wrapper
+// would silently stop expanding anything and refetch children for leaves.
 const bars = computed(() => props.treeNodes
-  .map(n => n?.data)
-  .filter(d => d && d.start_time)
+  .filter(n => n?.data?.start_time)
   .slice(-MAX_BARS))
 
 // Only the kinds actually present get a legend swatch — a key listing colors
 // that appear nowhere on the bar is noise.
 const legend = computed(() => {
-  const present = new Set(bars.value.map(s => spanKind(s.name)))
+  const present = new Set(bars.value.map(n => spanKind(n.data.name)))
   return KINDS.filter(k => present.has(k.key))
 })
 
@@ -175,14 +177,24 @@ const flagRowRef = ref(null)
 const flagRowWidth = ref(0)
 let flagRowObserver = null
 
-onMounted(() => {
-  if (!flagRowRef.value || typeof ResizeObserver === 'undefined') return
-  flagRowWidth.value = flagRowRef.value.clientWidth
+// Watched, not measured once on mount: the flag row sits behind a `v-if` on
+// `turnBoundaries`, so on a session whose first prompt lands after this
+// component mounts (any live session opened early) a mount-time measure finds
+// no element, and the width would stay 0 forever — silently reverting every
+// flag to the percent positioning that stacks them.
+watch(flagRowRef, (el) => {
+  flagRowObserver?.disconnect()
+  flagRowObserver = null
+  if (!el || typeof ResizeObserver === 'undefined') {
+    flagRowWidth.value = 0
+    return
+  }
+  flagRowWidth.value = el.clientWidth
   flagRowObserver = new ResizeObserver(entries => {
     flagRowWidth.value = entries[0].contentRect.width
   })
-  flagRowObserver.observe(flagRowRef.value)
-})
+  flagRowObserver.observe(el)
+}, { immediate: true })
 onBeforeUnmount(() => {
   flagRowObserver?.disconnect()
   flagRowObserver = null
@@ -269,18 +281,18 @@ const placedFlags = computed(() => {
         :style="{ left: tick.pct + '%' }"
       ></div>
       <div
-        v-for="span in bars"
-        :key="span.span_id"
+        v-for="node in bars"
+        :key="node.data.span_id"
         data-testid="overview-strip-bar"
         class="absolute top-0.5 bottom-0.5 rounded-sm cursor-pointer transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-blue-500"
         :class="[
-          barColor(span),
-          selectedSpan && selectedSpan.span_id === span.span_id ? 'ring-2 ring-offset-1 ring-gray-800' : '',
-          selectedTurnUuid && !spanIdsInSelectedTurn.has(span.span_id) ? 'opacity-20 hover:opacity-50' : 'opacity-90 hover:opacity-100',
+          barColor(node.data),
+          selectedSpan && selectedSpan.span_id === node.data.span_id ? 'ring-2 ring-offset-1 ring-gray-800' : '',
+          selectedTurnUuid && !spanIdsInSelectedTurn.has(node.data.span_id) ? 'opacity-20 hover:opacity-50' : 'opacity-90 hover:opacity-100',
         ]"
-        :style="{ left: offsetPct(span.start_time) + '%', width: Math.max(widthPct(span.start_time, span.end_time), 0.45) + '%' }"
-        :title="spanLabel(span) + ' — ' + fmtDuration(span.duration_ms)"
-        @click="$emit('select-node', { data: span })"
+        :style="{ left: offsetPct(node.data.start_time) + '%', width: Math.max(widthPct(node.data.start_time, node.data.end_time), 0.45) + '%' }"
+        :title="spanLabel(node.data) + ' — ' + fmtDuration(node.data.duration_ms)"
+        @click="$emit('select-node', node)"
       ></div>
       <!-- Turn boundary markers — faint vertical lines so the user
            can see turn cadence at a glance without selecting. -->

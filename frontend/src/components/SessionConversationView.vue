@@ -409,8 +409,24 @@ function turnItemFor(prompt) {
 // from it. The previous hand-rolled version counted undispatched spans and
 // folded-agent rows, so a turn showing 61 rows advertised "259 events".
 // `conversation-event-count.spec.js` holds the two together.
+//
+// Memoized per prompt because the template asks for the same list five times
+// per turn (the count in three places, the spine's `v-if`, then its `v-for`),
+// and each call re-walks and re-allocates the whole descendant list on every
+// live-poll re-render. The computed still reads the fold predicates inside
+// `renderableDescendants`, so collapsing an agent invalidates it as before.
+const renderableByPrompt = computed(() => {
+  const byId = new Map()
+  for (const entry of entries.value) {
+    if (entry.prompt) byId.set(entry.prompt.span_id, renderableDescendants(entry))
+  }
+  return byId
+})
+function renderableFor(entry) {
+  return renderableByPrompt.value.get(entry.prompt.span_id) || []
+}
 function eventCount(entry) {
-  return renderableDescendants(entry).length
+  return renderableFor(entry).length
 }
 
 // ── Tool-chip categorization (collapsed-turn preview) ─────────
@@ -607,10 +623,10 @@ function toolChipsForEntry(entry) {
                it. The `:ref` wrapper + pin button stay here;
                ConversationSpanCard renders only the card body. -->
           <div
-            v-if="isPromptExpanded(entry.prompt.span_id) && renderableDescendants(entry).length"
+            v-if="isPromptExpanded(entry.prompt.span_id) && renderableFor(entry).length"
             class="event-spine"
           >
-            <template v-for="{ span, inAgent, agentSep } in renderableDescendants(entry)" :key="span.span_id">
+            <template v-for="{ span, inAgent, agentSep } in renderableFor(entry)" :key="span.span_id">
               <div
                 :ref="(el) => { if (el) spanRefs.set(span.span_id, el); else spanRefs.delete(span.span_id) }"
                 :data-span-id="span.span_id"
