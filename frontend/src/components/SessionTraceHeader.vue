@@ -195,7 +195,10 @@ function titleSourceTooltip(src) {
     class="flex justify-between gap-4 flex-wrap"
     :class="collapsed ? 'items-center' : 'items-start mb-5'"
   >
-    <div class="min-w-0 flex-1">
+    <!-- Keyed by fold state: the two layouts share no DOM, so only a fresh
+         subtree can restart the enter fade; the height glide across the swap
+         is the parent view's useFoldTransition tween. -->
+    <div :key="collapsed ? 'compact' : 'full'" class="min-w-0 flex-1 trace-fold-enter">
       <!-- Compact identity row: status dot + title + mono digest. Everything
            else (eyebrow, title row, meta chips, expanded lists) only renders
            in the full state. -->

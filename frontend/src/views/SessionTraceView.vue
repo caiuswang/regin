@@ -31,6 +31,7 @@ import TraceAgentsPopover from '../components/TraceAgentsPopover.vue'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
 import Icon from '../components/ui/Icon.vue'
 import SessionTraceHeader from '../components/SessionTraceHeader.vue'
+import { useFoldTransition } from '../composables/useFoldTransition.js'
 import TraceVitalsStrip from '../components/TraceVitalsStrip.vue'
 import TraceSpendPanel from '../components/TraceSpendPanel.vue'
 import TraceOverviewStrip from '../components/TraceOverviewStrip.vue'
@@ -95,6 +96,16 @@ const stickyChromeHeight = useStickyChromeHeight(isLgUp, stickyHeaderHeight, com
 // pins the choice until that return.
 const headerCollapsed = ref(false)
 const headerPinned = ref(false)
+// The fold otherwise swaps ~200px of header in one frame — dazzling in
+// both directions. Tween the wrapper's height across the state flip —
+// except the scroll-driven collapse, which fires mid-gesture where a
+// layout tween would kill the reader's own scroll; it stays instant (the
+// compact row's compositor fade is its softening). The auto-expand only
+// fires once the scroll has settled at the top, so it glides; manual
+// toggles arm their glide explicitly in toggleHeaderDetails.
+const headerFold = useFoldTransition(stickyHeaderEl, headerCollapsed, {
+  glideWhen: (collapsed) => !collapsed,
+})
 
 // A pin created while already inside the 24px band would be cleared by its own
 // unlock condition on the very next scroll nudge (a live poll's layout shift is
@@ -103,6 +114,9 @@ const headerPinned = ref(false)
 let pinnedInsideTopBand = false
 
 function toggleHeaderDetails() {
+  // A click/keypress means the scroll is settled, so even the collapse
+  // direction can glide safely here.
+  headerFold.glideNext()
   headerCollapsed.value = !headerCollapsed.value
   headerPinned.value = true
   if (expandTimer) { clearTimeout(expandTimer); expandTimer = null }
@@ -121,8 +135,13 @@ function toggleHeaderDetails() {
 // only folds once it would be fully scrolled through anyway, which is also
 // the earliest point folding can't yank content out from under the reader.
 const expandedHeaderHeight = ref(0)
+// The !animating guard keeps mid-tween heights out: a threshold read off a
+// half-grown header drops under the expand pushback and the two transitions
+// fire each other again — the same oscillation, reintroduced by the glide.
 watch(stickyHeaderHeight, (h) => {
-  if (!headerCollapsed.value && h) expandedHeaderHeight.value = h
+  if (!headerCollapsed.value && h && !headerFold.animating.value) {
+    expandedHeaderHeight.value = h
+  }
 }, { immediate: true })
 
 // The expand at the top is additionally DWELLED 150ms — far longer than an
@@ -208,8 +227,12 @@ function onCollapseScroll(e) {
 
 // Below lg the header isn't sticky, so a fold that survives the resize takes
 // its own Details button off-screen. Pinned folds are the user's call at any
-// width; only the auto one is undone.
+// width; only the auto one is undone. The crossing SNAPS, never glides: a
+// tween mid-resize leaves the content transiently shorter, and the clamp
+// scroll that answers can land inside the collapse machine's user-input
+// window and fold the header nobody asked to fold.
 watch(isLgUp, (up) => {
+  headerFold.snap()
   if (!up && headerCollapsed.value && !headerPinned.value) headerCollapsed.value = false
 })
 

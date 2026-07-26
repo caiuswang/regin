@@ -3361,6 +3361,20 @@ button.live-qa-pick.live-qa-staged {
     .live-spinner { animation-duration: 2s; }
 }
 
+/* ── Trace header fold ────────────────────────────────────────────────────
+   The collapse swaps entire subtrees (compact row ↔ detail blocks), so only
+   the ENTERING side can animate; the height glide across the swap is a WAAPI
+   tween on the sticky wrapper (useFoldTransition). Global because it lands
+   inside SessionTraceHeader, which the view's scoped styles can't reach. */
+.trace-fold-enter { animation: trace-fold-enter 200ms ease-out both; }
+@keyframes trace-fold-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .trace-fold-enter { animation: none; }
+}
+
 /* ── Trace agent scope (desktop companion pane) ───────────────────────────
    Shared across SessionTraceView + TraceAgentPane + SubagentCard, so global
    (scoped SFC styles don't reach children). Canonical stacking tokens exposed
