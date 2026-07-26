@@ -5,6 +5,7 @@ import { useClientPage } from '../../composables/useClientPage'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import PageControls from '../PageControls.vue'
+import { shortTraceId } from '../../utils/traceFormatters.js'
 
 // The topic-routing feedback loop: per-topic relevance verdicts stamped by
 // the InjectedRelated grade aspect, the threshold-derived PROPOSAL, and the
@@ -169,9 +170,6 @@ function rateBar(rate) {
 }
 function numCls(n) {
   return n ? 'text-slate-600' : 'text-slate-300'
-}
-function shortId(id) {
-  return (id || '').slice(0, 8)
 }
 function when(ts) {
   return (ts || '').slice(0, 19).replace('T', ' ')
@@ -349,7 +347,7 @@ defineExpose({ reload })
                   :to="`/trace/sessions/${r.session_id}`"
                   class="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500 hover:text-blue-600 no-underline rounded focus-visible:outline-2 focus-visible:outline-blue-500"
                   :title="`Open session ${r.session_id} in the trace view`"
-                ><Icon name="arrow-up-right" :size="12" />{{ shortId(r.session_id) }}</router-link>
+                ><Icon name="arrow-up-right" :size="12" />{{ shortTraceId(r.session_id) }}</router-link>
                 <span v-else class="font-mono text-[11px] text-slate-300">—</span>
               </td>
               <td class="px-3 py-2 text-right font-mono text-[11px] text-slate-400 whitespace-nowrap">{{ when(r.injected_at) }}</td>

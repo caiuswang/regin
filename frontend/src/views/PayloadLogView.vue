@@ -9,6 +9,7 @@ import ToggleSwitch from '../components/ToggleSwitch.vue'
 import Button from '../components/ui/Button.vue'
 import Input from '../components/ui/Input.vue'
 import Select from '../components/ui/Select.vue'
+import { shortTraceId } from '../utils/traceFormatters.js'
 
 const { enabled: diagEnabled, setEnabled: setDiag } = useDiagnosticsState()
 
@@ -237,7 +238,7 @@ onMounted(load)
                 <span v-else class="text-muted">—</span>
               </td>
               <td class="cell-truncate">
-                <code v-if="e.session_id" class="cell-code" :title="e.session_id">{{ e.session_id.slice(0, 8) }}</code>
+                <code v-if="e.session_id" class="cell-code" :title="e.session_id">{{ shortTraceId(e.session_id) }}</code>
                 <span v-else class="text-muted">—</span>
               </td>
             </tr>

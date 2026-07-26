@@ -8,7 +8,7 @@ import SkillRoiTable from '../components/SkillRoiTable.vue'
 import CursorControls from '../components/CursorControls.vue'
 import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
-import { fmtAgo } from '../utils/traceFormatters'
+import { fmtAgo, shortTraceId } from '../utils/traceFormatters'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useCursor } from '../composables/useCursor'
@@ -63,7 +63,7 @@ function clearFilters() {
 
 async function resetReads() {
   const scope = skillFilter.value ? `skill=${skillFilter.value}`
-    : sessionFilter.value ? `session=${sessionFilter.value.slice(0, 8)}`
+    : sessionFilter.value ? `session=${shortTraceId(sessionFilter.value)}`
     : 'all'
   const ok = await confirm('Reset skill reads', `Delete the currently-filtered trace rows (${scope})? This cannot be undone.`, true)
   if (!ok) return
@@ -118,7 +118,7 @@ function shortTestName(nodeid) {
           aria-label="Clear skill filter" @click="filterBy('skill', null)">&times;</button>
       </Badge>
       <Badge v-if="sessionFilter" color="blue">
-        session = {{ sessionFilter.slice(0, 8) }}…
+        session = {{ shortTraceId(sessionFilter) }}…
         <button type="button" class="badge-x focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label="Clear session filter" @click="filterBy('session', null)">&times;</button>
       </Badge>
@@ -150,7 +150,7 @@ function shortTestName(nodeid) {
           <tbody>
             <tr v-for="s in sessions" :key="s.session_id" :class="{ 'bg-blue-50': sessionFilter === s.session_id }">
               <td>
-                <span v-if="s.session_id" class="text-blue-600 hover:underline cursor-pointer whitespace-nowrap" @click="filterBy('session', s.session_id)"><code class="text-xs">{{ s.session_id.slice(0, 8) }}...</code></span>
+                <span v-if="s.session_id" class="text-blue-600 hover:underline cursor-pointer whitespace-nowrap" @click="filterBy('session', s.session_id)"><code class="text-xs">{{ shortTraceId(s.session_id) }}...</code></span>
                 <span v-else class="text-gray-400 text-xs">unknown</span>
                 <template v-if="s.is_test">
                   <span
@@ -227,7 +227,7 @@ function shortTestName(nodeid) {
               <span v-else class="inline-block rounded bg-blue-100 text-blue-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide">read</span>
             </td>
             <td>
-              <span v-if="r.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)"><code class="text-xs">{{ r.session_id.slice(0, 8) }}</code></span>
+              <span v-if="r.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)"><code class="text-xs">{{ shortTraceId(r.session_id) }}</code></span>
               <span v-else class="text-gray-300">-</span>
             </td>
             <td class="max-w-xs">
@@ -250,7 +250,7 @@ function shortTestName(nodeid) {
           <code v-if="r.source === 'invoke' && r.command_args" class="block text-xs text-gray-600 break-all">{{ r.command_args }}</code>
           <code v-else-if="r.file_path" class="block text-xs text-gray-600 break-all">{{ r.file_path }}</code>
           <div v-if="r.session_id" class="mt-1 text-xs">
-            <span class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)">session <code>{{ r.session_id.slice(0, 8) }}</code></span>
+            <span class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)">session <code>{{ shortTraceId(r.session_id) }}</code></span>
           </div>
         </li>
       </ul>

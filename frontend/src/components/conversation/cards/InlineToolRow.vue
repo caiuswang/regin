@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import {
-  fmtDuration, mcpParts, rowParts, toolRowTextClass,
+  denyBadgeLabel, fmtDuration, mcpParts, rowParts, toolRowTextClass,
   taskRowStatus, taskRowIcon, taskRowIconClass,
 } from '../../../utils/traceFormatters.js'
 
@@ -59,13 +59,12 @@ const selected = computed(() =>
       :title="parts.subject"
     >{{ parts.subject }}</span>
     <span v-else class="flex-1 min-w-0"></span>
-    <!-- Interrupt badge for any non-AskUserQuestion permission-deny synth span
-         (`tooldeny-*` from turn_trace). "Interrupted" matches Claude Code's own
-         terminal label for the same event. -->
+    <!-- Deny badge for any non-AskUserQuestion permission-deny synth span
+         (`tooldeny-*` from turn_trace); the wording splits on `deny_kind`. -->
     <span
       v-if="span.attributes?.denied"
       class="font-sans uppercase tracking-wider text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded shrink-0"
-    >{{ span.attributes.deny_kind === 'chat' ? 'chat instead' : 'Interrupted' }}</span>
+    >{{ denyBadgeLabel(span) }}</span>
     <span
       v-else-if="span.attributes?.rejected"
       class="font-sans uppercase tracking-wider text-[10px] bg-red-100 border border-red-200 text-red-800 px-1 rounded shrink-0"

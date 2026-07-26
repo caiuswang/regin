@@ -129,6 +129,15 @@ export function truncate(text, max) {
   return text.slice(0, max) + '…'
 }
 
+// Kimi trace ids are literally `session_<uuid>`, so a raw 8-char slice renders
+// the constant "session_" for every Kimi row. Drop the provider prefix first so
+// the short id stays a discriminator across providers.
+export function shortTraceId(id, len = 8) {
+  const raw = typeof id === 'string' ? id : ''
+  const body = raw.startsWith('session_') ? raw.slice('session_'.length) : raw
+  return body.slice(0, len)
+}
+
 // ── Tool / span semantics ────────────────────────────────────
 
 export function toolDisplayName(tool) {
@@ -705,6 +714,14 @@ export function isDeniedToolSpan(span) {
 
 export function isErrorToolSpan(span) {
   return span?.name?.startsWith('tool.failure') || isRejectedToolSpan(span)
+}
+
+// A hard user rejection ("deny") reads as a decision, not an accident; only an
+// unclassified deny falls back to Claude Code's own terminal wording.
+export function denyBadgeLabel(span) {
+  const kind = span?.attributes?.deny_kind
+  if (kind === 'chat') return 'chat instead'
+  return kind === 'deny' ? 'Denied' : 'Interrupted'
 }
 
 export function toolRowDotClass(span) {

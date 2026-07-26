@@ -13,7 +13,7 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
-import { fmtClock } from '../../utils/traceFormatters.js'
+import { fmtClock, shortTraceId } from '../../utils/traceFormatters.js'
 import { isActiveWithClock, parseLocalIso } from '../../utils/sessionActivity.js'
 
 const props = defineProps({
@@ -42,7 +42,7 @@ const sortedRows = computed(() => {
 })
 
 function rowTitle(row) {
-  return row.title || (row.trace_id ? row.trace_id.slice(0, 8) : '')
+  return row.title || shortTraceId(row.trace_id)
 }
 
 onMounted(async () => {

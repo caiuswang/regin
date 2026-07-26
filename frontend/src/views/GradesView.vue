@@ -8,6 +8,7 @@ import GradeAspectsConfig from '../components/GradeAspectsConfig.vue'
 import Select from '../components/ui/Select.vue'
 import { worstTone } from '../constants/gradeVerdicts'
 import { useFlash } from '../composables/useFlash'
+import { shortTraceId } from '../utils/traceFormatters.js'
 
 const { flash } = useFlash()
 const grades = ref(null)
@@ -123,7 +124,7 @@ async function gradeNow({ traceId, tier, body, onDone }) {
       return
     }
     const verdict = res?.grades?.correctness?.verdict
-    flash(`graded ${traceId.slice(0, 8)} (${tier})`
+    flash(`graded ${shortTraceId(traceId)} (${tier})`
       + (verdict ? ` — correctness: ${verdict}` : ''))
     onDone?.()
     await load()

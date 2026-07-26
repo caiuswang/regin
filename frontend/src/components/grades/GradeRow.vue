@@ -5,6 +5,7 @@
 import { computed } from 'vue'
 import GradeReportCard from '../GradeReportCard.vue'
 import { toneMeta, worstTone, TONE_META } from '../../constants/gradeVerdicts'
+import { shortTraceId } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
   // { trace_id, session, axes: { correctness, process }, point? }
@@ -37,7 +38,7 @@ const flag = computed(() => {
 
 const cost = computed(() => props.row.session?.cost_usd)
 const title = computed(() =>
-  props.row.session?.title || props.row.trace_id.slice(0, 12))
+  props.row.session?.title || shortTraceId(props.row.trace_id, 12))
 </script>
 
 <template>
@@ -66,7 +67,7 @@ const title = computed(() =>
           >{{ flag.label }}</span>
         </div>
         <div class="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-slate-400">
-          <span>{{ row.trace_id.slice(0, 8) }}</span>
+          <span>{{ shortTraceId(row.trace_id) }}</span>
           <span v-if="cost">· ${{ cost.toFixed(2) }}</span>
         </div>
       </div>

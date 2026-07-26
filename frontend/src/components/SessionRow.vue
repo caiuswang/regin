@@ -9,7 +9,7 @@
 // the shared traceFormatters `fmtDuration`/`fmtAgo` — those have a
 // different output shape (e.g. "1m05s" vs this view's "1m5s"), so reusing
 // them would change what the row renders.
-import { fmtTokens } from '../utils/traceFormatters.js'
+import { fmtTokens, shortTraceId } from '../utils/traceFormatters.js'
 import { fmtRelativeAge, isActiveWithClock, parseLocalIso, serverAgeMs } from '../utils/sessionActivity.js'
 import { useCopy } from '../composables/useCopy.js'
 import Checkbox from './ui/Checkbox.vue'
@@ -149,7 +149,7 @@ function activityMoreTitle(s) {
         class="align-middle"
         :model-value="selected"
         @update:model-value="onToggle"
-        :aria-label="`Select session ${s.trace_id.slice(0, 8)}`"
+        :aria-label="`Select session ${shortTraceId(s.trace_id)}`"
       />
     </td>
     <td class="whitespace-nowrap">
@@ -182,7 +182,7 @@ function activityMoreTitle(s) {
           </svg>
         </span>
         <router-link :to="`/trace/sessions/${s.trace_id}`" class="table-link">
-          <code class="cell-code"><span class="min-[1700px]:hidden">{{ s.trace_id.slice(0, 12) }}…</span><span class="hidden min-[1700px]:inline">{{ s.trace_id }}</span></code>
+          <code class="cell-code"><span class="min-[1700px]:hidden">{{ shortTraceId(s.trace_id, 12) }}…</span><span class="hidden min-[1700px]:inline">{{ s.trace_id }}</span></code>
         </router-link>
         <button
           type="button"
@@ -284,7 +284,7 @@ function activityMoreTitle(s) {
       <router-link
         :to="`/live/${s.trace_id}`"
         class="row-action text-xs text-emerald-600 hover:text-emerald-800 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500"
-        :title="`Watch session ${s.trace_id.slice(0, 12)}… in the live view`"
+        :title="`Watch session ${shortTraceId(s.trace_id, 12)}… in the live view`"
       >Live</router-link>
       <button
         v-if="s.status !== 'ended'"
@@ -292,14 +292,14 @@ function activityMoreTitle(s) {
         class="row-action ml-3 text-xs text-slate-500 hover:text-slate-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
         :disabled="isClosing"
         @click="emit('close', s)"
-        :title="`Mark session ${s.trace_id.slice(0, 12)}… as closed (keeps its trace data)`"
+        :title="`Mark session ${shortTraceId(s.trace_id, 12)}… as closed (keeps its trace data)`"
       >{{ isClosing ? 'Closing…' : 'Close' }}</button>
       <button
         type="button"
         class="row-action row-delete ml-3 text-xs text-red-600 hover:text-red-800 hover:underline disabled:opacity-50 disabled:cursor-wait focus-visible:outline-2 focus-visible:outline-blue-500"
         :disabled="isDeleting"
         @click="emit('delete', s)"
-        :title="`Delete session ${s.trace_id.slice(0, 12)}… and all its trace data`"
+        :title="`Delete session ${shortTraceId(s.trace_id, 12)}… and all its trace data`"
       >{{ isDeleting ? 'Deleting…' : 'Delete' }}</button>
     </td>
   </tr>

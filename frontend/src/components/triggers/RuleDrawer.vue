@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import api from '../../api'
 import SuppressButton from './SuppressButton.vue'
+import { shortTraceId } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
   ruleId: { type: String, required: true },
@@ -108,7 +109,7 @@ function topSessionLink(sid) {
                 <td>
                   <router-link v-if="s.session_id" :to="topSessionLink(s.session_id)"
                                class="table-link focus-visible:outline-2 focus-visible:outline-blue-500">
-                    <code class="cell-code">{{ s.session_id.slice(0, 8) }}…</code>
+                    <code class="cell-code">{{ shortTraceId(s.session_id) }}…</code>
                   </router-link>
                   <span v-else class="text-slate-400 text-xs">unknown</span>
                 </td>
@@ -153,7 +154,7 @@ function topSessionLink(sid) {
             <td>
               <router-link v-if="sessionLink(ev)" :to="sessionLink(ev)"
                            class="table-link focus-visible:outline-2 focus-visible:outline-blue-500">
-                <code class="cell-code">{{ ev.session_id.slice(0, 8) }}…</code>
+                <code class="cell-code">{{ shortTraceId(ev.session_id) }}…</code>
               </router-link>
               <span v-else class="text-slate-300 text-xs">-</span>
             </td>

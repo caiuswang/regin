@@ -8,7 +8,7 @@
 // mark-as-noise control; all the per-section display helpers live here. The
 // parent still owns trigger fetching (we emit `suppress-changed` to re-fetch).
 import { ref, computed } from 'vue'
-import { mcpParts, fmtTokens } from '../utils/traceFormatters.js'
+import { mcpParts, fmtTokens, denyBadgeLabel } from '../utils/traceFormatters.js'
 import Card from './Card.vue'
 import McpCallDetail from './McpCallDetail.vue'
 import MarkdownContent from './MarkdownContent.vue'
@@ -419,11 +419,11 @@ function annotationNote(q) {
       <div class="flex items-center gap-2 mb-1">
         <span
           class="text-[10px] font-semibold uppercase tracking-wider text-amber-700"
-          title="Templated text the agent harness (Claude Code) injects when the user interrupts a tool call — not user prose."
-        >Interrupted (agent injected prompt)</span>
+          title="Templated text the agent harness injects when a tool call is denied or interrupted — not user prose. The badge beside it says which."
+        >Agent injected prompt</span>
         <span
           class="text-[10px] uppercase tracking-wider bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded"
-        >{{ selectedSpan.attributes.deny_kind === 'chat' ? 'chat instead' : 'Interrupted' }}</span>
+        >{{ denyBadgeLabel(selectedSpan) }}</span>
       </div>
       {{ selectedSpan.attributes.denial_reason }}
     </div>

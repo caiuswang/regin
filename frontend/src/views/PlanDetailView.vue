@@ -6,6 +6,7 @@ import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
+import { shortTraceId } from '../utils/traceFormatters.js'
 
 const route = useRoute()
 const plan = ref(null)
@@ -83,7 +84,7 @@ function fmtDate(iso) {
           class="flex items-center justify-between text-sm py-2 -mx-3 px-3 rounded hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500 no-underline text-inherit"
         >
           <div class="flex items-center gap-2">
-            <code class="cell-code">{{ s.session_id ? s.session_id.slice(0, 8) : 'unknown' }}…</code>
+            <code class="cell-code">{{ s.session_id ? shortTraceId(s.session_id) : 'unknown' }}…</code>
             <Badge v-if="!s.ended_at" color="green" label="active" />
             <span v-else class="text-slate-400 text-xs">ended</span>
           </div>

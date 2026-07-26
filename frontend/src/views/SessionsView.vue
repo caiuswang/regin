@@ -18,6 +18,7 @@ import { useSessionFilterCollapse } from '../composables/useSessionFilterCollaps
 import { useSessionTags } from '../composables/useSessionTags'
 import { useStickyHeader } from '../composables/useStickyHeader'
 import { fmtRelativeAge, isActiveWithClock, parseLocalIso, serverAgeMs } from '../utils/sessionActivity.js'
+import { shortTraceId } from '../utils/traceFormatters.js'
 
 const { confirm } = useConfirm()
 const { flash } = useFlash()
@@ -285,12 +286,12 @@ function toggleSelectAll(e) {
 const isActive = (s) => isActiveWithClock(s, serverClock.value)
 
 async function deleteSession(s) {
-  const label = titlePreview(s.title) || s.trace_id.slice(0, 12) + '...'
+  const label = titlePreview(s.title) || shortTraceId(s.trace_id, 12) + '...'
   const active = isActive(s)
   const header = active
     ? `⚠️  This session appears to still be ACTIVE (last span ${fmtDuration(Math.max(0, serverAgeMs(s.last_seen, serverClock.value) ?? 0))} ago). Deleting now will remove its trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n`
     : ''
-  const msg = `${header}Delete "${label}"? This removes all spans, skill reads, plan sessions, and rule triggers for trace ${s.trace_id.slice(0, 12)}...`
+  const msg = `${header}Delete "${label}"? This removes all spans, skill reads, plan sessions, and rule triggers for trace ${shortTraceId(s.trace_id, 12)}...`
   const ok = await confirm('Delete session', msg, true)
   if (!ok) return
   deleting.value = s.trace_id
@@ -300,7 +301,7 @@ async function deleteSession(s) {
       flash(`Delete failed: ${res.msg || 'unknown error'}`, 'error')
       return
     }
-    flash(`Deleted session ${s.trace_id.slice(0, 12)}...`)
+    flash(`Deleted session ${shortTraceId(s.trace_id, 12)}...`)
     await reload()
   } finally {
     deleting.value = null
@@ -308,7 +309,7 @@ async function deleteSession(s) {
 }
 
 async function closeSession(s) {
-  const label = titlePreview(s.title) || s.trace_id.slice(0, 12) + '...'
+  const label = titlePreview(s.title) || shortTraceId(s.trace_id, 12) + '...'
   const msg = `Mark "${label}" as closed? This settles a corrupt or interrupted session that never emitted a SessionEnd. Its trace data is kept; only the status changes to ended.`
   const ok = await confirm('Close session', msg)
   if (!ok) return
@@ -319,7 +320,7 @@ async function closeSession(s) {
       flash(`Close failed: ${res.msg || 'unknown error'}`, 'error')
       return
     }
-    flash(`Closed session ${s.trace_id.slice(0, 12)}...`)
+    flash(`Closed session ${shortTraceId(s.trace_id, 12)}...`)
     await reload()
   } finally {
     closing.value = null
@@ -694,7 +695,7 @@ function timeTitle(s) {
               class="mt-1 shrink-0"
               :model-value="isSelected(s.trace_id)"
               @update:model-value="toggleOne(s.trace_id, $event)"
-              :aria-label="`Select session ${s.trace_id.slice(0, 8)}`"
+              :aria-label="`Select session ${shortTraceId(s.trace_id)}`"
             />
             <div class="flex-1 min-w-0">
               <div class="flex flex-wrap items-center gap-2">
@@ -730,7 +731,7 @@ function timeTitle(s) {
                   </svg>
                 </span>
                 <router-link :to="`/trace/sessions/${s.trace_id}`" class="text-blue-600 hover:underline font-medium">
-                  <code class="text-xs">{{ s.trace_id.slice(0, 12) }}…</code>
+                  <code class="text-xs">{{ shortTraceId(s.trace_id, 12) }}…</code>
                 </router-link>
                 <Button
                   variant="ghost"
@@ -806,7 +807,7 @@ function timeTitle(s) {
                 <router-link
                   :to="`/live/${s.trace_id}`"
                   class="inline-flex min-h-9 items-center rounded-lg border border-emerald-200 px-3 text-xs font-medium text-emerald-700 hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-                  :title="`Watch session ${s.trace_id.slice(0, 12)}… in the live view`"
+                  :title="`Watch session ${shortTraceId(s.trace_id, 12)}… in the live view`"
                 >Live</router-link>
                 <Button
                   v-if="s.status !== 'ended'"

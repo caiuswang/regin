@@ -10,6 +10,7 @@ import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 import { useCursor } from '../composables/useCursor'
 import { useStickyHeader } from '../composables/useStickyHeader'
+import { shortTraceId } from '../utils/traceFormatters.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,7 +51,7 @@ function clearFilters() { router.push({ query: {} }) }
 
 async function resetTriggers() {
   const scope = ruleFilter.value ? `rule=${ruleFilter.value}`
-    : sessionFilter.value ? `session=${sessionFilter.value.slice(0, 8)}`
+    : sessionFilter.value ? `session=${shortTraceId(sessionFilter.value)}`
     : 'all'
   const ok = await confirm('Reset triggers', `Delete the currently-filtered trace rows (${scope})? This cannot be undone.`, true)
   if (!ok) return
@@ -98,7 +99,7 @@ async function resetTriggers() {
           aria-label="Clear rule filter" @click="filterBy('rule', null)">&times;</button>
       </Badge>
       <Badge v-if="sessionFilter" color="blue">
-        session = {{ sessionFilter.slice(0, 8) }}…
+        session = {{ shortTraceId(sessionFilter) }}…
         <button type="button" class="badge-x focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label="Clear session filter" @click="filterBy('session', null)">&times;</button>
       </Badge>
@@ -125,7 +126,7 @@ async function resetTriggers() {
                 <button v-if="s.session_id" type="button"
                   class="table-link bg-transparent border-0 p-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500"
                   @click="filterBy('session', s.session_id)">
-                  <code class="cell-code">{{ s.session_id.slice(0, 8) }}…</code>
+                  <code class="cell-code">{{ shortTraceId(s.session_id) }}…</code>
                 </button>
                 <span v-else class="text-slate-400 text-xs">unknown</span>
               </td>
@@ -214,7 +215,7 @@ async function resetTriggers() {
               <button v-if="r.session_id" type="button"
                 class="table-link bg-transparent border-0 p-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-blue-500"
                 @click="filterBy('session', r.session_id)">
-                <code class="cell-code">{{ r.session_id.slice(0, 8) }}</code>
+                <code class="cell-code">{{ shortTraceId(r.session_id) }}</code>
               </button>
               <span v-else class="text-slate-300">-</span>
             </td>

@@ -7,6 +7,7 @@ import CursorControls from '../components/CursorControls.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import { useCursor } from '../composables/useCursor'
 import { useStickyHeader } from '../composables/useStickyHeader'
+import { shortTraceId } from '../utils/traceFormatters.js'
 
 const TEST_TOGGLE_KEY = 'regin_mcpcalls_show_tests'
 const route = useRoute()
@@ -98,7 +99,7 @@ function shortTestName(nodeid) {
           aria-label="Clear tool filter" @click="filterBy('tool', null)">&times;</button>
       </Badge>
       <Badge v-if="sessionFilter" color="blue">
-        session = {{ sessionFilter.slice(0, 8) }}…
+        session = {{ shortTraceId(sessionFilter) }}…
         <button type="button" class="badge-x focus-visible:outline-2 focus-visible:outline-blue-500"
           aria-label="Clear session filter" @click="filterBy('session', null)">&times;</button>
       </Badge>
@@ -115,7 +116,7 @@ function shortTestName(nodeid) {
           <tbody>
             <tr v-for="s in sessions" :key="s.session_id" :class="{ 'bg-blue-50': sessionFilter === s.session_id }">
               <td>
-                <span v-if="s.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', s.session_id)"><code class="text-xs">{{ s.session_id.slice(0, 8) }}...</code></span>
+                <span v-if="s.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', s.session_id)"><code class="text-xs">{{ shortTraceId(s.session_id) }}...</code></span>
                 <span v-else class="text-gray-400 text-xs">unknown</span>
                 <template v-if="s.is_test">
                   <span
@@ -175,7 +176,7 @@ function shortTestName(nodeid) {
               </span>
             </td>
             <td>
-              <span v-if="r.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)"><code class="text-xs">{{ r.session_id.slice(0, 8) }}</code></span>
+              <span v-if="r.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)"><code class="text-xs">{{ shortTraceId(r.session_id) }}</code></span>
               <span v-else class="text-gray-300">-</span>
             </td>
             <td class="text-right text-gray-500 text-xs">{{ fmtDuration(r.duration_ms) }}</td>
@@ -194,7 +195,7 @@ function shortTestName(nodeid) {
           </div>
           <div class="text-xs text-gray-500 flex flex-wrap gap-x-3">
             <span>{{ fmtDuration(r.duration_ms) }}</span>
-            <span v-if="r.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)">session <code>{{ r.session_id.slice(0, 8) }}</code></span>
+            <span v-if="r.session_id" class="text-blue-600 hover:underline cursor-pointer" @click="filterBy('session', r.session_id)">session <code>{{ shortTraceId(r.session_id) }}</code></span>
           </div>
           <code v-if="r.tool_input_keys" class="block mt-1 text-xs text-gray-500 break-all">{{ r.tool_input_keys }}</code>
         </li>
