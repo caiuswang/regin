@@ -4,6 +4,13 @@
 // start clock, plans, workflow runs, tasks), the expandable plan/workflow/task
 // lists, the segmented view-mode switcher, and the reload control.
 //
+// Collapsed state (`collapsed` prop): the whole detail surface (eyebrow,
+// title row, meta/chips, expanded lists) swaps for a single compact row —
+// status dot, title, the parent-computed mono `digest`, switcher, Reload —
+// while the parent folds the vitals/overview/spend strips away. The Details
+// toggle (also bound to the H key in the parent) lives on the right in both
+// states.
+//
 // The volume stats — spans, duration, active%, context%, cache, total tokens —
 // deliberately do NOT live here any more: they are cells in TraceVitalsStrip,
 // which gives each a stable slot instead of letting them reflow this paragraph.
@@ -55,6 +62,10 @@ const props = defineProps({
   hasTurns: { type: Boolean, default: false },
   snapshotStaleAt: { type: [String, null], default: null },
   workflowParentTo: { type: [Object, null], default: null },
+  // Collapsed compact-row state, owned (and scroll-driven) by the parent.
+  collapsed: { type: Boolean, default: false },
+  // [{ key, value, label, tone }] — the mono digest on the compact row.
+  digest: { type: Array, default: () => [] },
 })
 
 const MODE_OPTIONS = [
@@ -64,7 +75,7 @@ const MODE_OPTIONS = [
   { id: 'messages', label: 'Messages' },
 ]
 
-defineEmits(['update:viewMode', 'reload', 'jump-to-task'])
+defineEmits(['update:viewMode', 'reload', 'jump-to-task', 'toggle-collapse'])
 
 // Presentational toggle state — lives with the header, not the data model.
 const sessionTitleExpanded = ref(false)
@@ -180,8 +191,40 @@ function titleSourceTooltip(src) {
 </script>
 
 <template>
-  <header class="flex items-start justify-between gap-4 flex-wrap mb-5">
+  <header
+    class="flex justify-between gap-4 flex-wrap"
+    :class="collapsed ? 'items-center' : 'items-start mb-5'"
+  >
     <div class="min-w-0 flex-1">
+      <!-- Compact identity row: status dot + title + mono digest. Everything
+           else (eyebrow, title row, meta chips, expanded lists) only renders
+           in the full state. -->
+      <div v-if="collapsed" class="flex items-center gap-2.5 overflow-hidden">
+        <span
+          class="h-1.5 w-1.5 shrink-0 rounded-full"
+          :class="isLive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"
+          :title="isLive ? 'this session has not ended — spans are still arriving' : 'this session has ended'"
+        ></span>
+        <span
+          class="truncate text-sm font-semibold text-slate-800"
+          :title="session.title || ''"
+        >{{ sessionTitle }}</span>
+        <span
+          class="flex shrink-0 items-center gap-2 overflow-hidden font-mono text-[11px] text-slate-500"
+          data-testid="trace-header-digest"
+        >
+          <span
+            v-for="d in digest"
+            :key="d.key"
+            class="flex items-baseline gap-1 whitespace-nowrap"
+          >
+            <span class="text-slate-300">·</span>
+            <span class="font-semibold tabular-nums" :class="d.tone">{{ d.value }}</span>
+            <span v-if="d.label" class="text-slate-400">{{ d.label }}</span>
+          </span>
+        </span>
+      </div>
+      <template v-else>
       <div class="text-[11px] tracking-widest uppercase text-slate-400 font-semibold mb-1">
         Observability · Session Trace
       </div>
@@ -420,11 +463,17 @@ function titleSourceTooltip(src) {
           </li>
         </ul>
       </div>
+      </template>
     </div>
-    <div class="flex flex-col items-end gap-1.5 min-w-0 max-w-full">
+    <div
+      class="flex min-w-0 max-w-full"
+      :class="collapsed ? 'flex-row flex-wrap items-center gap-x-3 gap-y-1.5' : 'flex-col items-end gap-1.5'"
+    >
       <div class="flex flex-wrap justify-end items-center gap-1.5">
-        <!-- Header-row actions the parent owns (e.g. the agents popover). -->
-        <slot name="actions"></slot>
+        <!-- Header-row actions the parent owns (e.g. the agents popover).
+             Collapsed keeps identity + navigation only, so they fold away
+             with the rest of the detail surface. -->
+        <slot v-if="!collapsed" name="actions"></slot>
         <!-- Segmented control on one recessed track: the four modes are a
              single exclusive choice, and loose bordered pills read as four
              independent toggles. Below lg the compact sticky strip owns the
@@ -452,9 +501,28 @@ function titleSourceTooltip(src) {
             :class="viewMode === opt.id ? 'bg-blue-50 text-blue-800' : 'bg-slate-200 text-slate-500'"
           >{{ modeCounts[opt.id] }}</span></Button>
         </div>
+        <!-- Manual override for the collapse: pins the choice until the body
+             scroll returns to the top (the parent owns that state; H is the
+             keyboard twin). -->
+        <button
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+          :title="(collapsed ? 'Show session details' : 'Collapse header for more transcript') + ' (H)'"
+          :aria-pressed="collapsed"
+          data-testid="header-details-toggle"
+          @click="$emit('toggle-collapse')"
+        >
+          <span
+            class="inline-block leading-none transition-transform"
+            :class="collapsed ? 'rotate-180' : ''"
+          >⌃</span>{{ collapsed ? 'Details' : 'Hide details' }}
+        </button>
       </div>
       <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
-        <span v-if="lastReloadedAt">updated {{ fmtLocalClock(lastReloadedAt.toISOString()) }}</span>
+        <!-- tabular-nums: a proportional-width timestamp jitters the column
+             width on every live poll, which can toggle a wrap in the row
+             above and bounce everything below the header. -->
+        <span v-if="lastReloadedAt" class="tabular-nums">updated {{ fmtLocalClock(lastReloadedAt.toISOString()) }}</span>
         <Button
           variant="link"
           size="sm"

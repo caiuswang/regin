@@ -8,7 +8,7 @@ import SessionMessagesView from '../components/SessionMessagesView.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
 import TraceConversationRegion from '../components/TraceConversationRegion.vue'
 import SuppressButton from '../components/triggers/SuppressButton.vue'
-import { dropRetiredSpans } from '../utils/traceFormatters.js'
+import { dropRetiredSpans, fmtTokens, fmtCost, fmtDuration } from '../utils/traceFormatters.js'
 import { useTraceScroll } from '../composables/useTraceScroll.js'
 import { useStickyHeader, useStickyChromeHeight } from '../composables/useStickyHeader.js'
 import { useViewMode } from '../composables/useViewMode.js'
@@ -86,6 +86,117 @@ const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
 const { stickyHeaderEl: compactBarEl, stickyHeaderHeight: compactBarHeight } =
   useStickyHeader(loading)
 const stickyChromeHeight = useStickyChromeHeight(isLgUp, stickyHeaderHeight, compactBarHeight)
+
+// Header collapse: once the reader has scrolled PAST the full header's own
+// height, it folds into a single compact row — status dot, title, a mono
+// digest, the view switcher, Reload — so the spans get the space exactly
+// when they're being read. Scrolling back to the top (within 24px) always
+// re-expands and clears any manual pin; the Details button / H key toggle
+// pins the choice until that return.
+const headerCollapsed = ref(false)
+const headerPinned = ref(false)
+
+function toggleHeaderDetails() {
+  headerCollapsed.value = !headerCollapsed.value
+  headerPinned.value = true
+}
+
+// The collapse threshold is the EXPANDED header's measured height (floored
+// at 72px), not a flat 72px. Collapsing shrinks the header above the
+// viewport, and the browser's scroll anchoring answers by pulling the scroll
+// back by roughly the shrink; expanding at the top pushes it forward again
+// by the same amount. A flat 72px threshold leaves an overlap band
+// (72 < top < shrink) where the anchor pullback lands under the expand
+// threshold and the pushback lands over the collapse threshold — the two
+// fire each other forever (seen under parallel test load as a header that
+// never settles). Threshold ≥ shrink + 6 makes that band empty: the header
+// only folds once it would be fully scrolled through anyway, which is also
+// the earliest point folding can't yank content out from under the reader.
+const expandedHeaderHeight = ref(0)
+watch(stickyHeaderHeight, (h) => {
+  if (!headerCollapsed.value && h) expandedHeaderHeight.value = h
+}, { immediate: true })
+
+// The expand at the top is additionally DWELLED 150ms — far longer than an
+// anchor-adjustment frame pair, far shorter than a deliberate pause at the
+// top — so a transient anchor scroll can't flip it.
+let expandTimer = null
+
+// Both transitions only react to scrolls backed by a recent USER INPUT
+// (wheel / touch / scrollbar drag / scroll keys). Layout-driven scrolls —
+// the browser's scroll anchoring after the header folds or the spend panel
+// opens, Vue re-renders, programmatic scrollTop writes — carry no input, so
+// the anchor pullback/pushback cycle can never feed the state machine and
+// oscillate. 1200ms covers the smooth-scroll tail of one wheel notch.
+// Starts at -1e9: initializing to 0 would leave the gate OPEN for the first
+// 1.2s of page life (performance.now() is navigation-relative).
+let lastScrollInputAt = -1e9
+const SCROLL_INPUT_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
+function markScrollInput() { lastScrollInputAt = performance.now() }
+function onScrollInputKey(e) { if (SCROLL_INPUT_KEYS.has(e.key)) markScrollInput() }
+function onScrollbarMouseDown(e) {
+  // Only a press on the scroller's scrollbar track arms the gate. Any other
+  // click must not: the layout shift it can trigger (e.g. the spend panel
+  // opening pushes the page down via scroll anchoring) would otherwise
+  // inherit the click's input and read as a deliberate user scroll.
+  const r = getScroller()?.getBoundingClientRect?.()
+  if (r && e.clientX >= r.right - 20) markScrollInput()
+}
+
+function onCollapseScroll(e) {
+  const scroller = getScroller()
+  const el = e?.target
+  if (!el || (el !== scroller && el !== document && el !== document.scrollingElement)) return
+  const top = scroller.scrollTop ?? 0
+  if (top < 24) {
+    // The expand is DWELLED and re-checked at fire time. The 24px band (not
+    // 0) and the re-check both matter: a live poll's layout shift can nudge
+    // the scroll a few px off the top, and a dead timer would never re-arm —
+    // the header would stay folded while the user is effectively at the top.
+    // No input gate here: expanding can't cycle, because the collapse side
+    // only fires on user input.
+    if (!expandTimer) {
+      expandTimer = setTimeout(() => {
+        expandTimer = null
+        const nowTop = getScroller()?.scrollTop ?? 0
+        if (nowTop >= 24) return
+        if (headerCollapsed.value || headerPinned.value) {
+          headerCollapsed.value = false
+          headerPinned.value = false
+        }
+      }, 150)
+    }
+    return
+  }
+  if (performance.now() - lastScrollInputAt > 1200) return
+  if (headerPinned.value) return
+  // Auto-collapse is a ≥lg feature: there the header pins and collapsing buys
+  // back reading space. Below lg the full header scrolls away on its own (the
+  // compact bar is the pin), and folding it would only unmount the spend
+  // panel / strips out from under a reader who scrolled to them.
+  if (!isLgUp.value) return
+  if (headerCollapsed.value) return
+  if (top <= Math.max(72, expandedHeaderHeight.value)) return
+  // Only collapse once the header has actually reached its sticky pin. The
+  // pin offset is measured from the scroller's CONTENT box (top: -24px vs
+  // the 24px padding), so a stuck header's top edge lands exactly on the
+  // scrollport's top.
+  const header = stickyHeaderEl.value
+  if (!header) return
+  const scrollerTop = scroller.getBoundingClientRect?.().top ?? 0
+  if (header.getBoundingClientRect().top > scrollerTop + 1) return
+  headerCollapsed.value = true
+}
+
+function onHeaderKey(e) {
+  const t = e.target
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  if (e.key === 'h' || e.key === 'H') {
+    e.preventDefault()
+    toggleHeaderDetails()
+  }
+}
 
 const MODE_OPTIONS = [
   { id: 'conversation', label: 'Conversation' },
@@ -405,12 +516,27 @@ onMounted(async () => {
   if (viewMode.value === 'conversation') ensureTurnsLoaded()
   // Scroll/wheel/touch auto-reload listeners are attached by useTraceScroll();
   // the sticky-header ResizeObserver is owned by useStickyHeader.
+  // Capture phase: scroll events don't bubble, and the scroller is the
+  // app shell's `.content-scroll`, an ancestor of this view.
+  document.addEventListener('scroll', onCollapseScroll, { capture: true, passive: true })
+  document.addEventListener('keydown', onHeaderKey)
+  document.addEventListener('wheel', markScrollInput, { capture: true, passive: true })
+  document.addEventListener('touchmove', markScrollInput, { capture: true, passive: true })
+  document.addEventListener('mousedown', onScrollbarMouseDown, { capture: true, passive: true })
+  document.addEventListener('keydown', onScrollInputKey)
 })
 
 onUnmounted(() => {
   // Scroll/wheel/touch listeners are detached by useTraceScroll(); the
   // sticky-header observer + compact poll are torn down by their composables.
   stopLivePoll()
+  if (expandTimer) { clearTimeout(expandTimer); expandTimer = null }
+  document.removeEventListener('scroll', onCollapseScroll, { capture: true })
+  document.removeEventListener('keydown', onHeaderKey)
+  document.removeEventListener('wheel', markScrollInput, { capture: true })
+  document.removeEventListener('touchmove', markScrollInput, { capture: true })
+  document.removeEventListener('mousedown', onScrollbarMouseDown, { capture: true })
+  document.removeEventListener('keydown', onScrollInputKey)
 })
 
 // When the user enters the Terminal tab (or lands on it via localStorage
@@ -536,6 +662,29 @@ async function onOverviewSpanClick(node) {
 const { traceStart, traceEnd, traceDuration, activeWorkMs } =
   useTraceTimeline(session, allSpans)
 
+// Compact-header digest: the five vitals that survive the collapse — spans,
+// duration, tokens, cost, ctx%. Reads the same sources as TraceVitalsStrip
+// (tool rollup first, session fields as fallback) so the two never disagree.
+const headerDigest = computed(() => {
+  const s = session.value
+  if (!s) return []
+  const d = toolRollupData.value
+  const spendUsd = d ? (d.total_spend_usd ?? d.session_cost_usd) : null
+  const rollTokens = d?.total_spend_tokens ?? d?.session_total_tokens
+  const totalTok = (Number.isFinite(rollTokens) && rollTokens > 0)
+    ? rollTokens : (s.total_tokens ?? null)
+  const ctx = Number.isFinite(s.context_pct) ? s.context_pct : null
+  const ctxTone = ctx == null ? 'text-slate-400'
+    : ctx >= 80 ? 'text-red-600' : ctx >= 50 ? 'text-amber-600' : 'text-emerald-600'
+  return [
+    { key: 'spans', value: String(s.span_count_total ?? allSpans.value.length), label: 'spans', tone: 'text-slate-700' },
+    { key: 'duration', value: fmtDuration(Math.round(traceDuration.value)) || '—', label: '', tone: 'text-slate-700' },
+    { key: 'tokens', value: totalTok != null ? fmtTokens(totalTok) : '—', label: 'tok', tone: 'text-slate-700' },
+    { key: 'cost', value: Number.isFinite(spendUsd) ? fmtCost(spendUsd) : '—', label: '', tone: 'text-emerald-600' },
+    { key: 'ctx', value: ctx != null ? `${ctx}%` : '—', label: 'ctx', tone: ctxTone },
+  ]
+})
+
 // Select + scroll to a span by id, loading its (possibly collapsed)
 // subtree first. Shared by the task-list jump and the tool-drill-down
 // jump. If the span isn't in the loaded shallow set, walk the roots
@@ -650,7 +799,9 @@ const {
          to the sidebar's sticky offset. -->
     <div
       ref="stickyHeaderEl"
-      class="lg:sticky lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-4 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+      data-testid="trace-sticky-header"
+      class="lg:sticky lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+      :class="headerCollapsed ? 'pb-3' : 'pb-4'"
     >
     <SessionTraceHeader
       :key="session?.trace_id"
@@ -665,9 +816,12 @@ const {
       :has-turns="turns != null"
       :snapshot-stale-at="snapshotStaleAt"
       :workflow-parent-to="workflowParentTo"
+      :collapsed="headerCollapsed"
+      :digest="headerDigest"
       @update:view-mode="setViewMode"
       @reload="reload"
       @jump-to-task="jumpToTaskSpan"
+      @toggle-collapse="toggleHeaderDetails"
     >
       <template #actions>
         <!-- Pane roster mode only in the ≥xl SPLIT presentation. In 'full'
@@ -687,7 +841,12 @@ const {
       </template>
     </SessionTraceHeader>
 
+    <!-- Everything below the header's own row folds away in the collapsed
+         state: vitals strip, overview mini-timeline, spend disclosure. The
+         scope bar and the more-history banner stay — they're navigation,
+         not details. -->
     <TraceVitalsStrip
+      v-if="!headerCollapsed"
       :session="session"
       :trace-duration="traceDuration"
       :active-work-ms="activeWorkMs"
@@ -697,6 +856,7 @@ const {
     />
 
     <TraceOverviewStrip
+      v-if="!headerCollapsed"
       :tree-nodes="treeNodes"
       :selected-span="selectedSpan"
       :selected-turn-uuid="selectedTurnUuid"
@@ -708,7 +868,11 @@ const {
       @select-node="onOverviewSpanClick"
     />
 
-    <TraceSpendPanel :rollup-data="toolRollupData" @jump-span="selectSpanById" />
+    <TraceSpendPanel
+      v-if="!headerCollapsed"
+      :rollup-data="toolRollupData"
+      @jump-span="selectSpanById"
+    />
 
     <!-- Scoped-view bar: pins with the page header while the Conversation
          tab shows one subagent's subtree. Other tabs are never scoped (the
