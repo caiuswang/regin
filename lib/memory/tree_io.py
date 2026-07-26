@@ -292,25 +292,41 @@ def export_memory_tree(repo_path: str, *, out_dir: Optional[str] = None,
 STAMP_FILE = ".stamp"
 
 
-def store_signature() -> str:
-    """`<count>:<newest updated_at>` over exportable memories — the cheapest
-    fingerprint that changes whenever an export would produce different files.
+def store_signature(scope: Optional[str] = None) -> str:
+    """Fingerprint of everything an export's output depends on.
 
-    A pure aggregate (no row loading), so the on-write guard costs one query
+    Covers the memory rows *and* the authoritative-topic links, because a
+    memory's file PATH comes from its links, not its body: `link_authoritative_
+    topic` writes only the link table and never bumps `Memory.updated_at`. A
+    memories-only signature therefore misses the most common transition of all
+    — a lesson captured unclassified (exported to `_unfiled/`) and filed under
+    a topic moments later — leaving it stranded in `_unfiled/` forever.
+
+    Scope is part of the fingerprint so a scoped export is never skipped on the
+    strength of a full export's stamp.
+
+    Aggregates only (no row loading), so the on-write guard stays two queries
     rather than the export's full `list_memories` + file walk.
     """
     from sqlalchemy import func
     from sqlmodel import select
 
     from lib.memory.engine import MemorySessionLocal
-    from lib.memory.models import Memory
+    from lib.memory.models import Memory, MemoryAuthoritativeTopic
 
-    stmt = (select(func.count(Memory.id), func.max(Memory.updated_at))
-            .where(Memory.status == "active")
-            .where(Memory.kind != "digest"))
+    mem_stmt = (select(func.count(Memory.id), func.max(Memory.updated_at))
+                .where(Memory.status == "active")
+                .where(Memory.kind != "digest")
+                .where(Memory.is_test == False))  # noqa: E712 — SQL, not Python
+    if scope:
+        mem_stmt = mem_stmt.where(Memory.scope == scope)
+    link_stmt = select(func.count(MemoryAuthoritativeTopic.memory_id),
+                       func.max(MemoryAuthoritativeTopic.added_at))
     with MemorySessionLocal() as session:
-        count, newest = session.exec(stmt).one()
-    return f"{count or 0}:{newest or ''}"
+        count, newest = session.exec(mem_stmt).one()
+        links, linked_at = session.exec(link_stmt).one()
+    return (f"{scope or '*'}:{count or 0}:{newest or ''}"
+            f":{links or 0}:{linked_at or ''}")
 
 
 def export_tree_if_stale(repo_path: str, *, out_dir: Optional[str] = None,
@@ -322,14 +338,19 @@ def export_tree_if_stale(repo_path: str, *, out_dir: Optional[str] = None,
     full 200-file export would be wasteful. Returns the export counts when it
     ran, or None when the stamp already matched.
 
-    Failures are swallowed: this runs on write paths (`send_to_user(lesson)`,
-    reflect) whose real job is storing the memory. A stale tree degrades
-    recall; a raised exception here would lose the write.
+    Call this after any write that changes what the tree should contain: the
+    `send_to_user(lesson)` capture path, `reflect()`, and the CLI/UI curation
+    verbs. It is cheap to over-call (two aggregates when nothing moved) and
+    silently wrong to under-call — an agent following `memory-tree-nav` treats
+    the tree as current.
+
+    Failures are swallowed: the callers' real job is storing the memory. A
+    stale tree degrades recall; a raised exception here would lose the write.
     """
     base = Path(out_dir) if out_dir else Path(repo_path) / DEFAULT_TREE_DIR
     stamp_path = base / STAMP_FILE
     try:
-        signature = store_signature()
+        signature = store_signature(scope)
         if stamp_path.is_file() and stamp_path.read_text().strip() == signature:
             return None
         counts = export_memory_tree(repo_path, out_dir=out_dir, scope=scope)

@@ -65,3 +65,24 @@ def test_stamp_is_not_mistaken_for_a_memory_file(tmp_path):
     summary = tree_io.import_memory_tree(str(tmp_path))
     assert summary["imported"] >= 1
     memory.get_store()  # import must not have raised on the stamp file
+
+
+def test_linking_a_topic_makes_the_tree_stale(tmp_path):
+    """A memory's file PATH comes from its topic links, and linking never
+    bumps Memory.updated_at — so a memories-only signature left a lesson
+    captured unclassified stranded in `_unfiled/` forever."""
+    _write_graph(tmp_path)
+    mid = _remember("a lesson captured before classification", is_test=False)
+    tree_io.export_tree_if_stale(str(tmp_path))
+
+    memory.get_store().link_authoritative_topic(mid, "leaf-a")
+
+    counts = tree_io.export_tree_if_stale(str(tmp_path))
+    assert counts is not None, "a new topic link must re-export the tree"
+    assert counts["unfiled"] == 0
+
+
+def test_signature_is_scoped(tmp_path):
+    _write_graph(tmp_path)
+    _remember("a lesson", is_test=False)
+    assert tree_io.store_signature("repo:other") != tree_io.store_signature()

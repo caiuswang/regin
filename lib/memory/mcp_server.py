@@ -114,8 +114,9 @@ def recall(query: str, top_k: int = 5, scope: str = "",
             must score the full text.
 
     Returns:
-        Matching memories (best first) with kind, scope, score, memory id,
-        and the originating session id — or a note that nothing matched.
+        Matching memories (best first) with kind, scope, score and memory id —
+        or a note that nothing matched. The originating session id is carried
+        only when `brief=False`; in brief mode read it back with `memory_read`.
     """
     import lib.memory as memory
     if not memory.enabled():
@@ -153,7 +154,12 @@ def memory_read(memory_id: str, part: str = "") -> str:
     if not part:
         return _format_memory(m, brief=False)
     from lib.memory import parts as parts_mod
-    text = parts_mod.find_part(m["body"], part)
+    # Resolve against the withheld portion first, because that is what the
+    # recall hit's part index was built from. Searching the whole body would
+    # hand back a section of the lead the caller already has, under a name and
+    # char-count the index never advertised.
+    text = (parts_mod.find_part(parts_mod.split_lead(m["body"])[1], part)
+            or parts_mod.find_part(m["body"], part))
     if text is None:
         named = [name for name, _ in parts_mod.named_parts(m["body"])]
         available = f"available parts: {', '.join(named)}" if named else (

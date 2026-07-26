@@ -1187,6 +1187,12 @@ def reflect(store, embedder=None, llm=None, *,
               edges=result.edges, topics=result.topics,
               flagged_stale=result.flagged_stale, ref_renames=result.ref_renames,
               dry_run=dry_run)
+    if not dry_run:
+        # Consolidation retires, merges and re-files memories, so the exported
+        # tree an agent navigates is stale the moment this returns.
+        from lib.memory.tree_io import export_tree_if_stale
+        from lib.settings import settings
+        export_tree_if_stale(str(settings.project_root))
     return result
 
 

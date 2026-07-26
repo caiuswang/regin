@@ -1,6 +1,6 @@
 ---
 name: goal-verified-treenav
-description: "goal-verified-treenav - procedure guide from regin"
+description: The tree-nav arm of goal-verified — same independent-verifier build loop, but the recalled-lessons leg is swapped from preflight's flat embedding/keyword recall to coarse-to-fine topic-tree navigation (memory-tree-nav). The recall leg is gated by a trace-verified span check that makes silently skipping it a wall, not an option. Use to run /goal, build, implement, refactor tasks when you want to pin the bar by *browsing the knowledge tree by subsystem* instead of routing the goal text through the recall ranker — and to A/B the two recall mechanisms head-to-head.
 ---
 
 # goal-verified-treenav
@@ -89,9 +89,10 @@ SID=$(regin session-id)   # prints $CLAUDE_CODE_SESSION_ID — THIS session's id
 ### 1b. Tree-nav — recall the lessons by walking the taxonomy
 This replaces preflight's flat recall. The taxonomy is **materialised on disk**
 at `.regin/memory/tree/`, one directory per topic node and one markdown file
-per memory, so you walk it with `Glob`/`Read` — no MCP round-trip. It is kept
-current by an export that fires on every memory write, so what you read is what
-the store holds.
+per memory, so you walk it with `Glob`/`Read` — no MCP round-trip. It is refreshed
+automatically when a lesson is captured and after `reflect()`. Curation done
+via the CLI or the memory UI does not refresh it, so if you have just edited
+memories by hand, re-run `regin memory export-tree`.
 
 Walking the directories rather than calling `index_root`/`index_expand` is a
 measured ~3.3× cheaper for the same routing information (1,393 → 420 tokens on

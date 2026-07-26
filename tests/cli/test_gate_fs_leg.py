@@ -47,16 +47,31 @@ def test_filesystem_walk_alone_passes_the_gate(add_spans):
     assert span_count(tid, RECALL_ARM) == 1
 
 
-def test_glob_over_the_tree_passes_the_gate(add_spans):
+def test_glob_alone_does_not_pass_the_gate(add_spans):
+    """A Glob span records its pattern, never its result count — so globbing a
+    tree that was never exported would otherwise pass a gate on a walk that
+    saw nothing. Only an actual Read proves a file existed."""
     tid = add_spans("glob-trace", _span(
         "glob-trace", "tool.Glob", pattern=".regin/memory/tree/**/*.md"))
-    assert span_count(tid, RECALL_ARM) == 1
+    assert span_count(tid, RECALL_ARM) == 0
 
 
 def test_reading_an_unrelated_file_does_not_pass(add_spans):
     """A generic Read must not be mistaken for a memory-tree walk."""
     tid = add_spans("unrelated-trace", _span(
         "unrelated-trace", "tool.Read", file_path="/repo/lib/memory/store.py"))
+    assert span_count(tid, RECALL_ARM) == 0
+
+
+def test_reading_a_file_that_merely_mentions_the_tree_does_not_pass(add_spans):
+    """Read spans store the file's whole CONTENT in `attributes`. Matching the
+    raw JSON counted any file that mentions the path — including this skill's
+    own SKILL.md — so an agent could pass the anti-skip gate by reading its
+    own docs. The path must be decided on the parsed `file_path`."""
+    tid = add_spans("mention-trace", _span(
+        "mention-trace", "tool.Read",
+        file_path="/repo/.claude/skills/goal-verified-treenav/SKILL.md",
+        content="walk .regin/memory/tree/ with Glob/Read instead of index_*"))
     assert span_count(tid, RECALL_ARM) == 0
 
 

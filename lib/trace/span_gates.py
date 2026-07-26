@@ -28,11 +28,12 @@ class SpanGate:
     key: str
     like: tuple[str, ...] = ()
     exact: tuple[str, ...] = ()
-    # `(span name, attributes substring)` pairs, for steps whose tool is
+    # `(span name, attribute key, substring)` triples, for steps whose tool is
     # generic — `tool.Read` proves nothing on its own, only *what it read*
-    # does. Both halves must hold. Mirrors the `attributes LIKE` prefilter
-    # `lib/memory/wiki_reads.py` already uses to spot wiki reads.
-    attr_matchers: tuple[tuple[str, str], ...] = ()
+    # does. The substring is tested against the named attribute AFTER parsing,
+    # never against the raw JSON: Read spans embed the file's whole content
+    # there, so a raw match counts any file that mentions the path.
+    attr_matchers: tuple[tuple[str, str, str], ...] = ()
     describe: str = ""
     # What must be installed for the gated step to be *runnable* at all. A
     # count of 0 only means "you skipped it" once this is known present —
@@ -57,15 +58,20 @@ class SpanGate:
 _TREE_SEG = ".regin/memory/tree"
 
 # The recall arm has two legs and either one proves it ran:
-#   - the filesystem walk over the exported tree (tool.Read / tool.Glob whose
-#     path names the tree dir) — the cheap navigation leg;
+#   - the filesystem walk over the exported tree (a tool.Read whose file_path
+#     is inside the tree dir) — the cheap navigation leg;
 #   - the memory MCP server's semantic leg (tool.mcp__memory__recall,
 #     memory_read, and the legacy index_* walk) — see lib/memory/mcp_server.py.
+#
+# `tool.Glob` is deliberately NOT a matcher: a Glob span records only its
+# pattern, never its result count, so globbing a tree that was never exported
+# would pass a gate on a walk that saw nothing. A Read proves a file existed
+# and was opened.
 RECALL_ARM = SpanGate(
     key="recall-ran",
     like=("tool.mcp__memory__index_%",),
     exact=("tool.mcp__memory__recall", "tool.mcp__memory__memory_read"),
-    attr_matchers=(("tool.Read", _TREE_SEG), ("tool.Glob", _TREE_SEG)),
+    attr_matchers=(("tool.Read", "file_path", _TREE_SEG),),
     describe="memory tree-walk / recall arm (goal-verified-treenav step 1b)",
     capability="Read/Glob over .regin/memory/tree, or the memory MCP server",
     # Self-evident since the walk moved to the filesystem: Read and Glob are
@@ -168,16 +174,38 @@ def span_count(trace_id: str, gate: SpanGate) -> int:
 
     conds = [SessionSpan.name.like(p) for p in gate.like]
     conds += [SessionSpan.name == n for n in gate.exact]
-    conds += [and_(SessionSpan.name == name,
-                   SessionSpan.attributes.like(f"%{substring}%"))
-              for name, substring in gate.attr_matchers]
-    if not conds:
+    if not conds and not gate.attr_matchers:
         return 0
 
-    stmt = (
-        select(func.count(SessionSpan.id))
-        .where(SessionSpan.trace_id == trace_id)
-        .where(or_(*conds))
-    )
+    total = 0
     with SessionLocal() as session:
-        return int(session.exec(stmt).one())
+        if conds:
+            stmt = (select(func.count(SessionSpan.id))
+                    .where(SessionSpan.trace_id == trace_id)
+                    .where(or_(*conds)))
+            total += int(session.exec(stmt).one())
+        for name, key, substring in gate.attr_matchers:
+            # The LIKE is only a prefilter. It cannot be the test: a Read span
+            # stores the file's whole CONTENT in `attributes`, so matching the
+            # raw JSON counts any file that merely *mentions* the path — a
+            # session that read this skill's own docs would pass the anti-skip
+            # gate without walking anything. Decide on the parsed key instead,
+            # exactly as `lib/memory/wiki_reads.py` does.
+            rows = session.exec(
+                select(SessionSpan.attributes)
+                .where(SessionSpan.trace_id == trace_id)
+                .where(SessionSpan.name == name)
+                .where(SessionSpan.attributes.like(f"%{substring}%"))).all()
+            total += sum(1 for attrs in rows
+                         if substring in _attr_value(attrs, key))
+    return total
+
+
+def _attr_value(attributes: str, key: str) -> str:
+    """One span-attribute value as text, or "" when absent/unparseable."""
+    import json
+
+    try:
+        return str(json.loads(attributes or "{}").get(key) or "")
+    except (ValueError, TypeError):
+        return ""

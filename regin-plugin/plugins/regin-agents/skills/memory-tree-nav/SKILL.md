@@ -13,7 +13,8 @@ This skill walks that tree **coarse-to-fine** — you read node labels/blurbs an
 
 The taxonomy is also **materialised on disk** at `.regin/memory/tree/` (one
 directory per topic node, one `<title-slug>-<id>.md` per memory), refreshed
-automatically on every memory write. Walking it with `Glob`/`Read` costs
+automatically on lesson capture and after `reflect()` (CLI/UI curation does
+not refresh it — re-run `regin memory export-tree` after editing by hand). Walking it with `Glob`/`Read` costs
 measurably less than the MCP legs below for the same routing information —
 **420 vs 1,393 tokens** on a root→bucket→leaf walk — because the directory
 names *are* the bucket ids, so a listing reproduces the index for free.
