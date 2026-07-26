@@ -28,6 +28,11 @@ class SpanGate:
     key: str
     like: tuple[str, ...] = ()
     exact: tuple[str, ...] = ()
+    # `(span name, attributes substring)` pairs, for steps whose tool is
+    # generic — `tool.Read` proves nothing on its own, only *what it read*
+    # does. Both halves must hold. Mirrors the `attributes LIKE` prefilter
+    # `lib/memory/wiki_reads.py` already uses to spot wiki reads.
+    attr_matchers: tuple[tuple[str, str], ...] = ()
     describe: str = ""
     # What must be installed for the gated step to be *runnable* at all. A
     # count of 0 only means "you skipped it" once this is known present —
@@ -47,22 +52,29 @@ class SpanGate:
     served_by_memory_mcp: bool = False
 
 
-# The memory MCP server emits one span per index_root / index_expand /
-# index_fetch (tool.mcp__memory__index_*) and one per recall
-# (tool.mcp__memory__recall) — see lib/memory/mcp_server.py.
+#: Where `regin memory export-tree` writes the navigable memory tree. A
+#: `tool.Read`/`tool.Glob` naming a path under it is a tree-walk step.
+_TREE_SEG = ".regin/memory/tree"
+
+# The recall arm has two legs and either one proves it ran:
+#   - the filesystem walk over the exported tree (tool.Read / tool.Glob whose
+#     path names the tree dir) — the cheap navigation leg;
+#   - the memory MCP server's semantic leg (tool.mcp__memory__recall,
+#     memory_read, and the legacy index_* walk) — see lib/memory/mcp_server.py.
 RECALL_ARM = SpanGate(
     key="recall-ran",
     like=("tool.mcp__memory__index_%",),
-    exact=("tool.mcp__memory__recall",),
-    describe="memory-tree-nav / recall arm (goal-verified-treenav step 1b)",
-    capability="the memory MCP server (the index_*/recall tools)",
-    # Not self-evident from the CLI: `regin gate` runs fine in a session that
-    # never loaded the memory MCP, and there 0 spans proves nothing. It IS
-    # self-evident from `mcp__memory__gate`, because one FastMCP instance
-    # serves the gate and the index_*/recall tools alike — reaching the gate
-    # means the arm's tools were reachable too. That path passes
-    # capability_proven=True explicitly.
-    capability_self_evident=False,
+    exact=("tool.mcp__memory__recall", "tool.mcp__memory__memory_read"),
+    attr_matchers=(("tool.Read", _TREE_SEG), ("tool.Glob", _TREE_SEG)),
+    describe="memory tree-walk / recall arm (goal-verified-treenav step 1b)",
+    capability="Read/Glob over .regin/memory/tree, or the memory MCP server",
+    # Self-evident since the walk moved to the filesystem: Read and Glob are
+    # core tools present in every session, so a session that produced neither
+    # a tree read nor a recall genuinely skipped the step. (Before, the arm
+    # was MCP-only and 0 spans in an MCP-less session proved nothing — hence
+    # the INCONCLUSIVE path, which now only triggers for gates that are still
+    # capability-contingent.)
+    capability_self_evident=True,
     served_by_memory_mcp=True,
 )
 
@@ -148,7 +160,7 @@ def span_count(trace_id: str, gate: SpanGate) -> int:
     readers in `queries.py`: this is a trivial aggregate, not a paginated read.
     Returns 0 for a gate with no matchers (never matches everything by accident).
     """
-    from sqlalchemy import func, or_
+    from sqlalchemy import and_, func, or_
     from sqlmodel import select
 
     from lib.orm import SessionLocal
@@ -156,6 +168,9 @@ def span_count(trace_id: str, gate: SpanGate) -> int:
 
     conds = [SessionSpan.name.like(p) for p in gate.like]
     conds += [SessionSpan.name == n for n in gate.exact]
+    conds += [and_(SessionSpan.name == name,
+                   SessionSpan.attributes.like(f"%{substring}%"))
+              for name, substring in gate.attr_matchers]
     if not conds:
         return 0
 

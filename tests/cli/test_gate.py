@@ -75,19 +75,21 @@ def test_recall_ran_json_output():
     payload = json.loads(result.stdout)
     assert payload == {
         "gate": "recall-ran", "session": "sid-json", "spans": 1,
-        "pass": True, "status": "PASS", "capability_proven": False}
+        "pass": True, "status": "PASS", "capability_proven": True}
 
 
-def test_recall_ran_is_inconclusive_not_failed_from_the_cli():
-    # The CLI cannot see which MCP servers the session loaded, so 0 spans does
-    # not prove a skip. Accusing the agent of skipping when the tool may never
-    # have existed is the unfollowable-instruction bug that retired
-    # `ui-verified`; here it must degrade to INCONCLUSIVE instead.
+def test_recall_ran_fails_hard_from_the_cli_now_the_walk_is_filesystem():
+    # This gate USED to degrade to INCONCLUSIVE here, because its only leg was
+    # the memory MCP and the CLI cannot see which MCP servers a session loaded.
+    # The walk now runs on Read/Glob over `.regin/memory/tree/` — core tools
+    # present in every session — so 0 spans is an unambiguous skip and the
+    # INCONCLUSIVE escape no longer applies. (It still applies to any gate
+    # whose capability really is contingent; see `verdict`.)
     result = runner.invoke(app, ["gate", "recall-ran", "--session", "sid-none"])
-    assert result.exit_code == 2
-    assert "INCONCLUSIVE" in result.stdout
+    assert result.exit_code == 1
+    assert "GATE FAIL" in result.stdout
+    assert "skipped" in result.stdout
     assert "GATE PASS" not in result.stdout
-    assert "you skipped" not in result.stdout
 
 
 def test_task_recall_still_fails_hard_because_its_tool_is_the_cli():
@@ -111,9 +113,9 @@ def test_json_payload_carries_status_and_capability():
     result = runner.invoke(
         app, ["gate", "recall-ran", "--session", "sid-none", "--json"])
     payload = json.loads(result.stdout)
-    assert payload["status"] == "INCONCLUSIVE"
+    assert payload["status"] == "FAIL"
     assert payload["pass"] is False
-    assert payload["capability_proven"] is False
+    assert payload["capability_proven"] is True
 
 
 def test_ui_verified_gate_is_retired():

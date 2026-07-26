@@ -133,13 +133,22 @@ def _memory_filename(mem: dict) -> str:
 
 
 def _canonical_frontmatter(mem: dict, also_filed_under: list[str]) -> dict:
+    """Every field `_import_canonical` reads back, and nothing else.
+
+    `created_at`/`updated_at` were dropped: the importer never reads them (it
+    lets the store stamp fresh ones), so they round-tripped nothing while
+    costing ~26 tokens of every agent read of the tree. `importance` is
+    rounded for the same reason — 17 significant digits is noise on a [0,1]
+    score. `tier` stays: it is not re-imported either, but it is the one
+    remaining field a human scanning a git diff of the tree actually reads.
+    """
     fm = {
         "id": mem["id"], "kind": mem["kind"], "tier": mem["tier"],
         "title": mem.get("title"), "scope": mem["scope"],
-        "tags": mem.get("tags") or [], "importance": mem["importance"],
+        "tags": mem.get("tags") or [],
+        "importance": round(float(mem["importance"]), 3),
         "veracity": mem["veracity"], "status": mem["status"],
         "source_trace_id": mem.get("source_trace_id"),
-        "created_at": mem["created_at"], "updated_at": mem["updated_at"],
     }
     if also_filed_under:
         fm["also_filed_under"] = sorted(also_filed_under)
@@ -276,6 +285,59 @@ def export_memory_tree(repo_path: str, *, out_dir: Optional[str] = None,
             stale.unlink(missing_ok=True)
     log.write("memory_tree_exported", **counts)
     return counts
+
+
+#: Written beside the tree so a re-export can tell "nothing changed" from
+#: "never exported" without walking 200 files.
+STAMP_FILE = ".stamp"
+
+
+def store_signature() -> str:
+    """`<count>:<newest updated_at>` over exportable memories — the cheapest
+    fingerprint that changes whenever an export would produce different files.
+
+    A pure aggregate (no row loading), so the on-write guard costs one query
+    rather than the export's full `list_memories` + file walk.
+    """
+    from sqlalchemy import func
+    from sqlmodel import select
+
+    from lib.memory.engine import MemorySessionLocal
+    from lib.memory.models import Memory
+
+    stmt = (select(func.count(Memory.id), func.max(Memory.updated_at))
+            .where(Memory.status == "active")
+            .where(Memory.kind != "digest"))
+    with MemorySessionLocal() as session:
+        count, newest = session.exec(stmt).one()
+    return f"{count or 0}:{newest or ''}"
+
+
+def export_tree_if_stale(repo_path: str, *, out_dir: Optional[str] = None,
+                         scope: Optional[str] = None) -> Optional[dict]:
+    """Export only when the store has moved since the last export.
+
+    The tree is the agent's navigation surface, so a lesson written mid-session
+    must reach it before the next prompt — but every memory write calling a
+    full 200-file export would be wasteful. Returns the export counts when it
+    ran, or None when the stamp already matched.
+
+    Failures are swallowed: this runs on write paths (`send_to_user(lesson)`,
+    reflect) whose real job is storing the memory. A stale tree degrades
+    recall; a raised exception here would lose the write.
+    """
+    base = Path(out_dir) if out_dir else Path(repo_path) / DEFAULT_TREE_DIR
+    stamp_path = base / STAMP_FILE
+    try:
+        signature = store_signature()
+        if stamp_path.is_file() and stamp_path.read_text().strip() == signature:
+            return None
+        counts = export_memory_tree(repo_path, out_dir=out_dir, scope=scope)
+        _atomic_write(stamp_path, signature)
+        return counts
+    except Exception:
+        log.error("memory_tree_autoexport_failed", exc_info=True)
+        return None
 
 
 def _is_stub(frontmatter: dict) -> bool:

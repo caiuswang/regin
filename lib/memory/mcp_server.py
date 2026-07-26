@@ -30,21 +30,58 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("memory")
 
 
-def _format_memory(m: dict, *, score: Optional[float] = None) -> str:
+def _part_index(rest: str, parts: list) -> str:
+    """The `memory_read` follow-up line: how much was withheld and, when the
+    body carries authored seams, what they are. Names are the addresses
+    `memory_read(part=…)` accepts."""
+    if parts:
+        listed = " · ".join(f"{name} ({len(text)}ch)" for name, text in parts)
+        return (f"  ⋯ +{len(rest)} chars in {len(parts)} parts — "
+                f'memory_read("{{id}}", part=…): {listed}')
+    return f'  ⋯ +{len(rest)} chars (no sections) — memory_read("{{id}}")'
+
+
+def _format_memory(m: dict, *, score: Optional[float] = None,
+                   brief: bool = True) -> str:
+    """One hit. `brief` returns the lead plus a part index instead of the
+    whole body — the same addresses-not-contents contract `index_fetch`
+    already honours, and the reason `recall` no longer dominates the memory
+    token budget. The id is always shown: without it a caller cannot cite
+    what it recalled to `regin goal feedback --included`."""
     head = (f"[{m['kind']}|{m['scope']}|score {score:.2f}]"
             if score is not None else f"[{m['kind']}|{m['scope']}]")
+    # 8 chars, the prefix convention the inject block already displays: a
+    # full 32-hex id costs ~20 tokens on every hit, and `get_dict` resolves
+    # prefixes, so the short form is still a working address.
+    head += f" (id: {m['id'][:8]})"
     title = f" — {m['title']}" if m.get("title") else ""
-    src = f" (from session {m['source_trace_id']})" if m.get("source_trace_id") else ""
-    return f"{head}{title}\n{m['body']}{src}"
+    # Provenance is a drill-down address, not something acted on inline — a
+    # 36-char session UUID per hit is pure overhead in a survey. `brief=False`
+    # (and `memory_read`) still carry it.
+    src = ("" if brief else
+           f" (from session {m['source_trace_id']})"
+           if m.get("source_trace_id") else "")
+    body = m["body"]
+    if brief:
+        # Local import for the same reason every regin import here is local:
+        # `lib.memory.parts` runs the package __init__, which pulls the store
+        # and reflect layers. Callers reach this only from inside a tool call,
+        # where the package is already imported — so this is a dict lookup.
+        from lib.memory import parts
+        lead, rest = parts.split_lead(body)
+        if rest:
+            index = _part_index(rest, parts.named_parts(rest))
+            body = lead + "\n" + index.replace("{id}", m["id"])
+    return f"{head}{title}\n{body}{src}"
 
 
-def _format_hit(hit) -> str:
-    return _format_memory(hit.memory, score=hit.score)
+def _format_hit(hit, *, brief: bool = True) -> str:
+    return _format_memory(hit.memory, score=hit.score, brief=brief)
 
 
 @mcp.tool()
 def recall(query: str, top_k: int = 5, scope: str = "",
-           reinforce: bool = True) -> str:
+           reinforce: bool = True, brief: bool = True) -> str:
     """Recall experience from regin's cross-session agent memory.
 
     Use mid-task when past sessions may have hit the same problem:
@@ -52,6 +89,12 @@ def recall(query: str, top_k: int = 5, scope: str = "",
     an architectural question, or when the auto-injected
     <recalled_experience> block hints there is more. Complements (does
     not replace) repo docs — memories are distilled session experience.
+
+    This is the *semantic* leg of memory retrieval: it ranks across the
+    whole store regardless of where a lesson is filed, so it is what finds
+    cross-cutting lessons the topic-tree walk structurally cannot reach.
+    Walk the tree (`.regin/memory/tree/`) to survey a subsystem; `recall`
+    to sweep a concept.
 
     Args:
         query: What you want experience about. Keyword-style works best
@@ -65,10 +108,14 @@ def recall(query: str, top_k: int = 5, scope: str = "",
             rule. Pass False for AUDIT / curation / eval sweeps (e.g.
             surveying what's stored, scoring recall quality) so the
             measurement never inflates the very signal it measures.
+        brief: Return each hit's lead plus an index of what was withheld
+            (default), instead of whole bodies. Pull the rest of one hit
+            with `memory_read`. Pass False for eval/curation sweeps that
+            must score the full text.
 
     Returns:
-        Matching memories (best first) with kind, scope, score, and the
-        originating session id — or a note that nothing matched.
+        Matching memories (best first) with kind, scope, score, memory id,
+        and the originating session id — or a note that nothing matched.
     """
     import lib.memory as memory
     if not memory.enabled():
@@ -78,7 +125,41 @@ def recall(query: str, top_k: int = 5, scope: str = "",
                          reinforce=bool(reinforce))
     if not hits:
         return "no stored experience matched this query"
-    return "\n\n".join(_format_hit(h) for h in hits)
+    return "\n\n".join(_format_hit(h, brief=bool(brief)) for h in hits)
+
+
+@mcp.tool()
+def memory_read(memory_id: str, part: str = "") -> str:
+    """Read one memory in full — the follow-up to a `recall` hit whose lead
+    ended in a `⋯ +N chars` index.
+
+    Args:
+        memory_id: The id from a `recall` hit or an exported tree filename
+            (a unique prefix is enough).
+        part: Optional section name from the hit's part index, matched
+            case-insensitively by name then prefix (`"how"` finds
+            `**How to apply:**`). Most memories are flat prose with no
+            named parts; omit this for them.
+
+    Returns:
+        The full body, or just the named part when `part` is given.
+    """
+    import lib.memory as memory
+    if not memory.enabled():
+        return "agent memory is disabled (settings.agent_memory.enabled)"
+    m = memory.get_store().get_dict(memory_id)
+    if m is None:
+        return f"no memory {memory_id!r} — check the id from the recall hit"
+    if not part:
+        return _format_memory(m, brief=False)
+    from lib.memory import parts as parts_mod
+    text = parts_mod.find_part(m["body"], part)
+    if text is None:
+        named = [name for name, _ in parts_mod.named_parts(m["body"])]
+        available = f"available parts: {', '.join(named)}" if named else (
+            "this memory has no named parts — omit `part` to read it whole")
+        return f"no part {part!r} in {memory_id} — {available}"
+    return f"[{m['kind']}|{m['scope']}] (id: {m['id']}) — part {part!r}\n{text}"
 
 
 def _load_graph():

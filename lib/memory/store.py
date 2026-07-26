@@ -596,7 +596,14 @@ class SqliteMemoryStore:
             return session.get(Memory, memory_id)
 
     def get_dict(self, memory_id: str) -> Optional[dict]:
+        """Accepts a full id or an unambiguous PREFIX, matching how ids are
+        displayed (recall hits and the inject block both show 8 chars), so a
+        caller can read back exactly the id it was shown. An ambiguous prefix
+        resolves to None — never to an arbitrary one of its matches."""
         row = self.get(memory_id)
+        if row is None:
+            full = self._resolve_id(memory_id)
+            row = self.get(full) if full is not None else None
         return _serialize(row) if row is not None else None
 
     def _filtered_memory_stmt(self, *, tier: Optional[str],
