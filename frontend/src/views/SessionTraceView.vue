@@ -392,6 +392,9 @@ const sessionGoal = ref(null)
 // cell as an em-dash next to a feed visibly showing several prompts.
 const promptCount = computed(() => {
   const n = treeNodes.value.filter(t => t?.data?.name === 'prompt').length
+  // Workflow runs: turn_usage rows are the subagents' API responses, not
+  // user prompts — falling back to them read as hundreds of "turns".
+  if (session.value?.is_workflow) return n || null
   return n || (turns.value ? turns.value.length : null)
 })
 
@@ -886,6 +889,7 @@ const {
       :selected-turn-uuid="selectedTurnUuid"
       :span-ids-in-selected-turn="spanIdsInSelectedTurn"
       :turns="turns"
+      :is-workflow="session?.is_workflow === true"
       :trace-start="traceStart"
       :trace-end="traceEnd"
       :trace-duration="traceDuration"

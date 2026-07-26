@@ -18,6 +18,10 @@ const props = defineProps({
   // Set of span_ids overlapping the selected turn (cross-highlight dimming).
   spanIdsInSelectedTurn: { type: Object, default: () => new Set() },
   turns: { type: Array, default: null },
+  // Workflow runs have no user-prompt turns: their turn_usage rows are the
+  // subagents' API responses, so the turns fallback below would flag every
+  // agent turn as a prompt.
+  isWorkflow: { type: Boolean, default: false },
   traceStart: { type: Number, default: 0 },
   traceEnd: { type: Number, default: 0 },
   traceDuration: { type: Number, default: 0 },
@@ -159,7 +163,9 @@ const turnBoundaries = computed(() => {
     .map(n => ({ ms: new Date(n.data.start_time).getTime(), node: n }))
   const source = prompts.length
     ? prompts
-    : (props.turns || []).map(t => ({ ms: turnStartMs(t), node: null }))
+    : props.isWorkflow
+      ? []
+      : (props.turns || []).map(t => ({ ms: turnStartMs(t), node: null }))
   return source
     .filter(t => t.ms != null && t.ms >= props.traceStart && t.ms <= props.traceEnd)
     .sort((a, b) => a.ms - b.ms)

@@ -1432,6 +1432,7 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
                 SessionModel.ended_reason,
                 SessionModel.title,
                 SessionModel.title_source,
+                SessionModel.origin,
             ).where(SessionModel.trace_id == trace_id)
         ).first()
     if not row:
@@ -1439,7 +1440,7 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
     (model, cwd, input_tokens, output_tokens,
      cache_read, cache_creation, peak, peak_main, live, active_work_ms,
      started_at, ended_at, last_seen, status, ended_reason,
-     title, title_source) = row
+     title, title_source, origin) = row
     # Compute window at read time from the session's richer `model` id —
     # see _row_to_dict() for the rationale. Window inference uses the
     # all-inclusive peak; the headline `context_pct` divides the *live*
@@ -1496,6 +1497,11 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
         'server_now': datetime.now().isoformat(),
         'title': title,
         'title_source': title_source,
+        # Same axis the sessions list exposes (origin == 'workflow'): a
+        # workflow run's turn_usage rows are per-agent API responses, so the
+        # trace view must not read them as user-prompt turns.
+        'origin': origin,
+        'is_workflow': origin == 'workflow',
     }
 
 

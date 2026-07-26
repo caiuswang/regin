@@ -687,6 +687,31 @@ def test_session_map_span_dict_has_exact_projection_keys(client, trace_db):
     )
 
 
+def test_session_map_summary_carries_origin_and_is_workflow(client, trace_db):
+    """The trace view gates its turns-fallback on the session's origin: a
+    workflow run's turn_usage rows are per-agent API responses, and reading
+    them as user-prompt turns flagged every agent turn in the overview strip.
+    Both the full and shallow /map summaries must expose the axis."""
+    _seed_session_row(trace_db, 'wf_map-origin-1', origin='workflow')
+    _seed_session_row(trace_db, 'map-origin-2')
+    _seed(trace_db, [
+        {'trace_id': 'wf_map-origin-1', 'span_id': 'r',
+         'name': 'workflow.run', 'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': 'map-origin-2', 'span_id': 'p',
+         'name': 'prompt', 'start_time': '2026-01-01T00:00:00'},
+    ])
+    for url in ('/api/sessions/wf_map-origin-1/map',
+                '/api/sessions/wf_map-origin-1/map?shallow=1'):
+        body = client.get(url).get_json()
+        assert body['origin'] == 'workflow'
+        assert body['is_workflow'] is True
+    for url in ('/api/sessions/map-origin-2/map',
+                '/api/sessions/map-origin-2/map?shallow=1'):
+        body = client.get(url).get_json()
+        assert body['origin'] == 'session'
+        assert body['is_workflow'] is False
+
+
 def test_span_content_returns_decoded_attributes(client, trace_db):
     """`/spans/<id>/content` returns the JSON-decoded attributes blob.
     Pins the contract before the lib.db → lib.orm migration so the
