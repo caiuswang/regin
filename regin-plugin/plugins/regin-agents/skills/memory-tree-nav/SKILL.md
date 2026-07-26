@@ -9,6 +9,20 @@ regin's agent memory is mounted on the **approved topic graph** (`.regin/topics/
 
 This skill walks that tree **coarse-to-fine** — you read node labels/blurbs and decide where to drill — instead of routing a query through embedding cosine. Use it when you'd rather navigate by structure than guess keywords, or to *complement* `recall` when a query feels familiar but semantic search misses.
 
+## Prefer the exported tree for the walk
+
+The taxonomy is also **materialised on disk** at `.regin/memory/tree/` (one
+directory per topic node, one `<title-slug>-<id>.md` per memory), refreshed
+automatically on every memory write. Walking it with `Glob`/`Read` costs
+measurably less than the MCP legs below for the same routing information —
+**420 vs 1,393 tokens** on a root→bucket→leaf walk — because the directory
+names *are* the bucket ids, so a listing reproduces the index for free.
+
+Use the `index_*` tools below when you want the **blurbs** (the one-line "what
+task should drill in here" router text, which the filesystem doesn't carry), or
+when the exported tree is missing. Either way, finish with a flat `recall`:
+neither walk can reach a memory filed under a bucket you pruned.
+
 ## When to use this vs. plain `recall`
 
 - **Use this (tree nav)** to *orient*: "what does regin know about the trace subsystem?", "show me the eval/grading lessons", "browse what's under topic X". You get a map first, then content.
