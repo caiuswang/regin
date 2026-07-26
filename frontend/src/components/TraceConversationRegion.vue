@@ -12,7 +12,7 @@
 //
 // `feed` bundles the shared span/turn inputs as one object so the two feed
 // consumers don't each spell out a dozen binds.
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, nextTick, ref, watch } from 'vue'
 import SessionConversationView from './SessionConversationView.vue'
 import TraceAgentPane from './TraceAgentPane.vue'
 
@@ -40,6 +40,25 @@ const props = defineProps({
 const emit = defineEmits([
   'select-span', 'fetch-content', 'load-subtree', 'jump-live', 'enter-scope', 'exit', 'expand',
 ])
+
+// Which of the two feeds raised the current selection. The split mounts
+// SessionConversationView twice off ONE `selectedSpan`, so without this a click
+// in the pane reached the main feed's cross-highlight watcher and unfolded the
+// agent + scrolled the main thread to a row the reader never asked for (and
+// re-fired on every live poll). Anything not raised here — timeline click,
+// `?span=` deep link, a detail-rail span ref — stays 'external' and keeps the
+// original follow-the-selection behaviour on both feeds.
+const selectionOrigin = ref('external')
+let claimed = false
+function onSelect(origin, span) {
+  selectionOrigin.value = origin
+  claimed = true
+  emit('select-span', span)
+  nextTick(() => { claimed = false })
+}
+watch(() => props.feed.selectedSpan?.span_id, () => {
+  if (!claimed) selectionOrigin.value = 'external'
+})
 
 // Esc exits the scope (both the split pane and the <xl takeover) — the
 // keyboard sibling of the pane ✕ / scope-bar ✕. Only acts while a scope or the
@@ -74,8 +93,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     :scope-loading="traceScope.loadingSubtree"
     :scoped-agent-id="(!takeover && isXl && traceScope.scopeId) ? traceScope.scopeId : ''"
     :hide-toc="hideToc"
+    :follow-selection="selectionOrigin !== 'pane'"
     class="flex-1 min-w-0 xl:min-w-72"
-    @select-span="emit('select-span', $event)"
+    data-testid="trace-conversation-feed"
+    @select-span="onSelect('feed', $event)"
     @fetch-content="emit('fetch-content', $event)"
     @load-subtree="emit('load-subtree', $event)"
     @jump-live="emit('jump-live')"
@@ -101,10 +122,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     :server-now="feed.serverNow"
     :server-now-at="feed.serverNowAt"
     :sticky-top="stickyTop"
+    :follow-selection="selectionOrigin !== 'feed'"
     @exit="emit('exit')"
     @scope="emit('enter-scope', $event)"
     @expand="emit('expand')"
-    @select-span="emit('select-span', $event)"
+    @select-span="onSelect('pane', $event)"
     @fetch-content="emit('fetch-content', $event)"
     @load-subtree="emit('load-subtree', $event)"
     @jump-live="emit('jump-live')"

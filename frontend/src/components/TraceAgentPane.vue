@@ -39,6 +39,9 @@ const props = defineProps({
   // Rendered sticky-header height (px) — the pane pins flush under it, mirroring
   // the detail rail's offset math.
   stickyTop: { type: Number, default: 0 },
+  // False while the main feed raised the current selection — the embedded feed
+  // then highlights without unfolding or scrolling itself.
+  followSelection: { type: Boolean, default: true },
 })
 const emit = defineEmits([
   'exit', 'scope', 'expand', 'select-span', 'fetch-content', 'load-subtree', 'jump-live',
@@ -170,6 +173,7 @@ const paneStyle = computed(() => ({
         :scope-loading="scopeLoading"
         :scoped-agent-id="''"
         :show-follow-tail="false"
+        :follow-selection="followSelection"
         :scroller-getter="getPaneScroller"
         @select-span="emit('select-span', $event)"
         @fetch-content="emit('fetch-content', $event)"

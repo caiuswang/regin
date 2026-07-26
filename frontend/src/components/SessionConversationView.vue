@@ -46,6 +46,11 @@ const props = defineProps({
   // The fixed follow-latest pill is a session-level affordance; the pane's
   // embedded scoped instance suppresses it so there's one, on the main feed.
   showFollowTail: { type: Boolean, default: true },
+  // False while the current selection was raised by the OTHER feed instance
+  // (main feed ⇄ companion pane share one `selectedSpan`). A foreign selection
+  // must never rearrange this feed: no prompt/agent unfolding, no scroll to a
+  // row the reader hasn't opened. See the cross-highlight watcher.
+  followSelection: { type: Boolean, default: true },
   // Scroll container for the pin/follow-tail machinery. Defaults to the
   // page-level `.content-scroll`; the ≥xl companion pane passes its own
   // scrollable element so its embedded instance never attaches listeners to —
@@ -324,28 +329,44 @@ async function selectWorkflowRow(spanId) {
 // parent's mini-timeline strip): scroll the matching prompt — or the prompt
 // that owns the selected descendant — into view. `flush: 'post'` so the
 // fold-toggle reflow (re-registering spanRefs) lands before we read the ref.
+//
+// A selection raised by the sibling feed instance (`followSelection` false)
+// gets the passive half only: it may scroll to a row the reader already
+// unfolded, but it must not unfold anything, and it must not fall back to
+// yanking the feed to some ancestor the reader can't see.
 watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]) => {
   if (!id) return
   const owner = promptGroups.value.find(g =>
     g.descendants.some(d => d.span.span_id === id)
   )
-  if (owner && !isPromptExpanded(owner.prompt.span_id)) {
-    togglePromptExpanded(owner.prompt.span_id, true)
-    await nextTick()
-  }
-  // Folded agent: if the selected span lives inside (or is) a collapsed agent,
-  // expand it so its row exists to scroll to.
-  const agentId = agentAncestorId(id)
-  if (agentId && !isAgentExpanded(agentId)) {
-    toggleAgentExpanded(agentId)
-    await nextTick()
+  if (props.followSelection) {
+    if (owner && !isPromptExpanded(owner.prompt.span_id)) {
+      togglePromptExpanded(owner.prompt.span_id, true)
+      await nextTick()
+    }
+    // Folded agent: if the selected span lives inside (or is) a collapsed
+    // agent, expand it so its row exists to scroll to.
+    const agentId = agentAncestorId(id)
+    if (agentId && !isAgentExpanded(agentId)) {
+      toggleAgentExpanded(agentId)
+      await nextTick()
+    }
   }
   await nextTick()
   const spanEl = spanRefs.value.get(id)
   if (spanEl && typeof spanEl.scrollIntoView === 'function') {
-    spanEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    // A foreign selection reveals INSTANTLY, not smoothly: the sibling feed
+    // scrolls in the same tick, and its own scrollIntoView also targets the
+    // shared page scroller (to keep the pane in view). Two smooth animations
+    // on one container don't queue — the later one wins — so a smooth reveal
+    // here would silently never land.
+    spanEl.scrollIntoView({
+      behavior: props.followSelection ? 'smooth' : 'auto',
+      block: 'nearest',
+    })
     return
   }
+  if (!props.followSelection) return
   const direct = promptRefs.value.get(id) || standaloneRefs.value.get(id)
   if (direct && typeof direct.scrollIntoView === 'function') {
     direct.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
