@@ -48,6 +48,9 @@ _scan_states: dict = {}
 # trace_id -> {subagent_path: ResumableScanState}. Same idea, per subagent
 # transcript (each subagent writes its own jsonl under <session>/subagents/).
 _sub_scan_states: dict = {}
+# trace_id -> AgentProvider, so the per-poll transcript lookup doesn't re-read
+# sessions.agent_type. Cleared wholesale past `_MAX_TRACKED`.
+_provider_cache: dict = {}
 # LRU cap on the live accumulator maps. The SessionEnd hook fires in a
 # separate subprocess and can't reach this server-process state, so there's
 # no clean session-end signal to evict on; instead we bound the set to the
@@ -101,13 +104,32 @@ def _max_transcript_mtime(main_path: str) -> float | None:
     return newest
 
 
+def _session_provider(trace_id: str):
+    """Provider adapter for this trace, memoized on the recorded agent_type.
+
+    `trigger_rescan` runs on every 4s poll, so the lookup has to stay off the
+    DB for a steady session; `sessions.agent_type` is written once at
+    SessionStart and never changes, so a hit is permanently valid. A session
+    with no agent_type yet is left uncached so it can be re-resolved once the
+    SessionStart ingest lands."""
+    provider = _provider_cache.get(trace_id)
+    if provider is not None:
+        return provider
+    from lib.providers.base import provider_for_agent_type, session_agent_type
+    agent_type = session_agent_type(trace_id)
+    provider = provider_for_agent_type(agent_type)
+    if agent_type:
+        if len(_provider_cache) > _MAX_TRACKED:
+            _provider_cache.clear()
+        _provider_cache[trace_id] = provider
+    return provider
+
+
 def _find_main_transcript(trace_id: str) -> str | None:
-    """The session's own transcript, found by trace_id across project dirs
-    (avoids reconstructing Claude Code's cwd→dir encoding)."""
-    matches = glob.glob(
-        str(Path.home() / '.claude' / 'projects' / '*' / f'{trace_id}.jsonl')
-    )
-    return matches[0] if matches else None
+    """The session's own transcript, found by trace_id through the provider
+    that wrote it (avoids reconstructing the CLI's cwd→dir encoding, and keeps
+    a Kimi session off Claude's ~/.claude/projects layout)."""
+    return _session_provider(trace_id).find_session_transcript(trace_id)
 
 
 def _selfheal_ghost_agents(trace_id: str) -> None:
@@ -142,10 +164,29 @@ def _selfheal_lost_tool_spans(trace_id: str, main_changed: bool) -> None:
         pass
 
 
+def _rescan_foreign_format(trace_id: str, provider, main: str) -> None:
+    """Rescan a session whose transcript is not Claude-shaped.
+
+    The resumable scanner, the `<session>/subagents/agent-*.jsonl` layout and
+    both transcript self-heals are Claude-format readers with no analogue for
+    e.g. Kimi's event-sourced wire.jsonl, so those are skipped and the session
+    gets the same full provider parse the hook path already uses. The
+    seen-uuid cache makes a poll with no new rows cost a parse and zero posts.
+    """
+    if _file_changed(main):
+        from hook_manager.handlers.turn_trace.entry import _ingest_transcript_usage
+        _ingest_transcript_usage(trace_id, main, None, provider)
+    _record_rescan_gate(trace_id, main)
+
+
 def _do_rescan(trace_id: str) -> None:
     try:
+        provider = _session_provider(trace_id)
         main = _find_main_transcript(trace_id)
         if not main:
+            return
+        if getattr(provider, 'transcript_format', 'claude') != 'claude':
+            _rescan_foreign_format(trace_id, provider, main)
             return
         # Main agent: reuse turn_trace's scan (seen-cache gated, posts to self).
         # mtime gate skips the rescan when the file hasn't changed since the

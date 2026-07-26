@@ -14,8 +14,12 @@ all. Rules without an attached guide keep the pre-refactor behavior
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import time
 import uuid
+from pathlib import Path
 
 from lib import languages
 from lib import rule_engines
@@ -70,12 +74,140 @@ def _engines_for_file(file_path: str, repo_root: str | None) -> list[tuple[RuleE
     return matched
 
 
+# ── Deferred feedback queue ───────────────────────────────────────────
+#
+# Kimi Code 0.29.1 only reads a hook's stdout back into the model context on
+# UserPromptSubmit (`runPromptSubmitHook`); every other event's stdout is
+# piped and discarded. A rule violation found on PostToolUse therefore has no
+# live channel at the moment it is found, so it is parked here and replayed on
+# the session's next prompt. Claude reads PostToolUse `additionalContext`
+# directly and never touches this queue.
+
+_MAX_PENDING_FINDINGS = 5
+_MAX_FINDING_CHARS = 2000
+# A session that never prompts again leaves its queue file behind, so entries
+# are also expired by age — without this the directory grows for the life of
+# the install.
+_PENDING_MAX_AGE_SEC = 7 * 24 * 3600
+_SESSION_KEY_UNSAFE = re.compile(r'[^A-Za-z0-9_.-]')
+
+
+def _feedback_is_deferred(payload: HookPayload) -> bool:
+    return getattr(payload.resolved_provider, 'hook_output_format', 'claude') == 'kimi'
+
+
+def _pending_path(session_id: str | None) -> Path | None:
+    if not session_id:
+        return None
+    key = _SESSION_KEY_UNSAFE.sub('_', session_id)
+    from lib.settings import settings
+    return Path(settings.data_dir) / 'rule_feedback_queue' / f'{key}.jsonl'
+
+
+def _read_pending(path: Path) -> list[str]:
+    try:
+        raw = path.read_text()
+    except OSError:
+        return []
+    findings: list[str] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, str):
+            findings.append(value)
+    return findings
+
+
+def _sweep_stale(directory: Path) -> None:
+    cutoff = time.time() - _PENDING_MAX_AGE_SEC
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            continue
+
+
+def _enqueue_pending(session_id: str | None, body: str) -> None:
+    path = _pending_path(session_id)
+    if path is None:
+        return
+    _sweep_stale(path.parent)
+    findings = _read_pending(path)
+    findings.append(body[:_MAX_FINDING_CHARS])
+    kept = findings[-_MAX_PENDING_FINDINGS:]
+    tmp = path.with_name(f'{path.name}.{os.getpid()}.tmp')
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(''.join(json.dumps(f) + '\n' for f in kept))
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _drain_pending(session_id: str | None) -> list[str]:
+    """Claim and remove every parked finding for this session.
+
+    The claim is a rename, so a replayed prompt (or a second hook process
+    racing the same event) finds nothing and injects nothing.
+    """
+    path = _pending_path(session_id)
+    if path is None:
+        return []
+    claimed = path.with_name(f'{path.name}.{os.getpid()}.draining')
+    try:
+        os.replace(path, claimed)
+    except OSError:
+        return []
+    try:
+        return _read_pending(claimed)
+    finally:
+        try:
+            claimed.unlink()
+        except OSError:
+            pass
+
+
+def handle_prompt(payload: HookPayload) -> HookResponse | None:
+    """UserPromptSubmit: replay rule findings parked by an earlier PostToolUse.
+
+    Returns None on providers that read PostToolUse output inline (Claude),
+    which already saw the finding when it was found.
+    """
+    if not _feedback_is_deferred(payload):
+        return None
+    findings = _drain_pending(payload.session_id)
+    if not findings:
+        return None
+    return HookResponse(suppress_output=True,
+                        additional_context='\n\n'.join(findings))
+
+
+def _absolutize(path: str, cwd: str | None) -> str:
+    """Kimi's Edit/Write payloads carry the edited file as a *repo-relative*
+    `path`; Claude's are already absolute. Resolving against the payload's
+    own cwd (not the hook process's) keeps both providers on the same
+    absolute-path contract the engines and repo lookup expect."""
+    if os.path.isabs(path) or not cwd:
+        return path
+    return os.path.normpath(os.path.join(cwd, path))
+
+
 def _extract_file_path(payload: HookPayload) -> str | None:
     tr = payload.tool_response or {}
     ti = payload.tool_input or {}
-    for candidate in (tr.get('filePath'), ti.get('file_path')):
+    for candidate in (tr.get('filePath'), ti.get('file_path'),
+                      ti.get('path'), ti.get('notebook_path')):
         if candidate and isinstance(candidate, str):
-            return candidate
+            return _absolutize(candidate, payload.cwd)
     return None
 
 
@@ -298,6 +430,8 @@ def handle(payload: HookPayload) -> HookResponse | None:
     )
 
     body = _build_response_body(violations, rel, len(applicable), total_rules)
+    if violations and _feedback_is_deferred(payload):
+        _enqueue_pending(payload.session_id, body)
     return HookResponse(suppress_output=True, additional_context=body)
 
 

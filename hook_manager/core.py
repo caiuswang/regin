@@ -135,6 +135,24 @@ class HookPayload:
         return payload
 
 
+def _content_blocks_to_text(blocks: list) -> str:
+    """Flatten a content-block list into plain text.
+
+    Kimi delivers ``UserPromptSubmit.prompt`` as ``[{"type": "text", ...}]``
+    where Claude sends a bare string; non-text parts (images) carry nothing
+    usable downstream and are dropped.
+    """
+    parts = []
+    for block in blocks:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get('type', 'text') == 'text':
+            text = block.get('text')
+            if isinstance(text, str):
+                parts.append(text)
+    return '\n'.join(p for p in parts if p.strip())
+
+
 def _extract_prompt(data: dict) -> str:
     """Prompt text can appear in several fields. Pick the first populated one."""
     candidates = [
@@ -148,6 +166,8 @@ def _extract_prompt(data: dict) -> str:
         data.get('input'),
     ]
     for c in candidates:
+        if isinstance(c, list):
+            c = _content_blocks_to_text(c)
         if isinstance(c, str) and c.strip():
             return c.strip()
     return ''

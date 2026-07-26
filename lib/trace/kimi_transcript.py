@@ -13,6 +13,21 @@ it is event-sourced rather than message-per-line; the load-bearing records are:
   the per-step token ``usage`` (``inputOther`` / ``output`` / ``inputCacheRead``
   / ``inputCacheCreation``).
 * ``usage.record``     — turn-scoped token totals; we read ``model`` from here.
+* ``context.append_message`` — anything injected into the context that is not
+  a typed prompt; ``origin.kind=injection`` bodies wrapped in
+  ``<system-reminder>`` are the harness nudges Claude surfaces as
+  ``task_reminder`` attachments.
+* ``tools.set_active_tools`` / ``llm.tools_snapshot`` — the active tool
+  surface, diffed into ``deferred_tools_delta`` attachments.
+* ``turn.steer``      — input submitted *while a turn is running*. Only
+  ``origin.kind=user`` steers are the user's own words (the rest are
+  background-task notifications the CLI feeds back in).
+* ``turn.cancel``     — the user interrupted the turn; tool calls still
+  awaiting a ``tool.result`` at that point never ran to completion.
+
+A pasted image is not inlined: the prompt keeps an ``image_url`` part whose
+url is ``blobref:<media_type>;<sha256>``, resolving against the sibling
+``blobs/<sha256>`` file next to ``wire.jsonl``.
 
 ``read_usage_kimi`` returns the same :class:`TranscriptUsage` /
 :class:`TurnUsage` dataclasses Claude's ``read_usage`` produces, so every
@@ -21,15 +36,29 @@ downstream span/usage poster works unchanged.
 
 from __future__ import annotations
 
+import base64
 import json
+import os
 from datetime import datetime
 
-from lib.trace.transcript_models import TranscriptUsage, TurnUsage
+from lib.trace.transcript_models import (
+    TranscriptAttachment, TranscriptUsage, TurnUsage,
+)
 from lib.trace.transcript_parsers import _truncate_utf8
 from lib.trace.tool_input_summary import summarize_tool_input
 from lib.tokens.token_estimator import estimate_tool_use_tokens
 
 _DEFAULT_TEXT_CAP = 50_000
+
+# Kimi swaps a pasted image out of the prompt for a `<system>…</system>`
+# note describing the compression it applied. It is CLI bookkeeping, not
+# something the user typed, so it is dropped from the prompt text (the
+# image itself is recovered from the sibling `image_url` blobref part).
+_IMAGE_BLURB_PREFIX = '<system>Image compressed'
+
+_SYSTEM_REMINDER_TAG = '<system-reminder>'
+
+_BLOBREF_SCHEME = 'blobref:'
 
 
 # Kimi `permission.record_approval_result` decision values that mean the user
@@ -68,6 +97,95 @@ def _cap(text: str, max_bytes: int | None) -> tuple[str | None, bool]:
     return _truncate_utf8(text, max_bytes)
 
 
+def _message_text(content: object) -> str:
+    """Concatenate the text blocks of a Kimi ``message.content`` list."""
+    if not isinstance(content, list):
+        return ''
+    return ''.join(
+        str(c.get('text', '')) for c in content
+        if isinstance(c, dict) and c.get('type') == 'text'
+    )
+
+
+def _tool_names(names: list) -> list[str]:
+    """Concrete tool names from an active-tools list.
+
+    `tools.set_active_tools` may carry a selector glob (`mcp__*`) where
+    `llm.tools_snapshot` carries the tools it resolved to; diffing a selector
+    against concrete names invents a removal, so globs are dropped."""
+    return [n for n in names if isinstance(n, str) and n and '*' not in n]
+
+
+def _is_image_blurb(text: str) -> bool:
+    return text.startswith(_IMAGE_BLURB_PREFIX) and text.rstrip().endswith('</system>')
+
+
+def _parse_blobref(url: object) -> tuple[str, str] | None:
+    """Split ``blobref:<media_type>;<sha256>`` into its two halves."""
+    if not isinstance(url, str) or not url.startswith(_BLOBREF_SCHEME):
+        return None
+    media, sep, digest = url[len(_BLOBREF_SCHEME):].partition(';')
+    if not sep or not media or not digest:
+        return None
+    return media, digest
+
+
+def _load_blob(blobs_dir: str, digest: str) -> str | None:
+    """Base64 the content-addressed blob, or None when it is gone.
+
+    No size cap here: the persistence caps (`prompt_image_max_bytes`,
+    `prompt_images_max_count`) are applied once, downstream, where dropping
+    an image still leaves it counted in the anchor's `image_indices`."""
+    try:
+        with open(os.path.join(blobs_dir, digest), 'rb') as fh:
+            return base64.b64encode(fh.read()).decode('ascii')
+    except OSError:
+        return None
+
+
+def _image_part(part: dict, blobs_dir: str, idx: int) -> dict | None:
+    """Resolve one ``image_url`` part into the inline `{idx, media_type,
+    data_b64}` shape `resolve_prompt_images` consumes."""
+    url = part.get('imageUrl')
+    ref = _parse_blobref(url.get('url')) if isinstance(url, dict) else None
+    if ref is None:
+        return None
+    media_type, digest = ref
+    data_b64 = _load_blob(blobs_dir, digest)
+    if data_b64 is None:
+        return None
+    return {'idx': idx, 'media_type': media_type, 'data_b64': data_b64}
+
+
+def _typed_text(parts: object) -> str:
+    """The text the user actually typed in a Kimi ``input`` array."""
+    texts: list[str] = []
+    for part in parts if isinstance(parts, list) else []:
+        if not isinstance(part, dict) or part.get('type') != 'text':
+            continue
+        text = str(part.get('text', ''))
+        if not _is_image_blurb(text):
+            texts.append(text)
+    return ''.join(texts).strip()
+
+
+def _prompt_images(parts: object, blobs_dir: str) -> list[dict]:
+    """Inline image parts of a Kimi ``input`` array.
+
+    `idx` counts every image part, resolved or not, so a missing blob does
+    not renumber the images that follow it."""
+    images: list[dict] = []
+    idx = 0
+    for part in parts if isinstance(parts, list) else []:
+        if not isinstance(part, dict) or part.get('type') != 'image_url':
+            continue
+        idx += 1
+        image = _image_part(part, blobs_dir, idx)
+        if image is not None:
+            images.append(image)
+    return images
+
+
 class _Step:
     """Mutable accumulator for one Kimi step (= one regin turn)."""
 
@@ -88,7 +206,8 @@ class _Step:
 class _Scan:
     """Single-pass accumulator over a Kimi wire.jsonl event stream."""
 
-    def __init__(self):
+    def __init__(self, blobs_dir: str):
+        self.blobs_dir = blobs_dir
         self.model: str | None = None
         self.prompts: list[tuple[str, str, str | None]] = []  # (uuid, text, ts)
         self.current_prompt: str | None = None
@@ -97,7 +216,11 @@ class _Scan:
         self.tool_to_turn: dict[str, str] = {}
         self.calls_by_id: dict[str, dict] = {}
         self.call_args: dict[str, dict] = {}
+        self.call_times: dict[str, float] = {}
         self.denials: list[dict] = []
+        self.attachments: list[TranscriptAttachment] = []
+        self.prompt_images: dict[str, list] = {}
+        self.active_tools: set[str] = set()
 
     def _step(self, uuid: str | None) -> _Step | None:
         if not isinstance(uuid, str) or not uuid:
@@ -110,17 +233,84 @@ class _Scan:
         return step
 
     def feed(self, rec: dict) -> None:
-        rtype = rec.get('type')
-        if rtype == 'turn.prompt':
-            self._on_prompt(rec)
-        elif rtype == 'usage.record':
-            model = rec.get('model')
-            if isinstance(model, str) and model:
-                self.model = model
-        elif rtype == 'context.append_loop_event':
-            self._on_loop_event(rec.get('event') or {}, rec.get('time'))
-        elif rtype == 'permission.record_approval_result':
-            self._on_permission(rec)
+        handler = _RECORD_HANDLERS.get(rec.get('type'))
+        if handler is not None:
+            handler(self, rec)
+
+    def _on_usage_record(self, rec: dict) -> None:
+        model = rec.get('model')
+        if isinstance(model, str) and model:
+            self.model = model
+
+    def _on_loop_record(self, rec: dict) -> None:
+        self._on_loop_event(rec.get('event') or {}, rec.get('time'))
+
+    def _add_attachment(self, kind: str, payload: dict, ms: object) -> None:
+        """Append a synthetic attachment. Kimi records carry no uuid, so the
+        id is minted from the append order — it keys the span_id and the
+        seen-cache, both of which need it stable across rescans of a
+        (append-only) wire file."""
+        self.attachments.append(TranscriptAttachment(
+            uuid=f'katt-{len(self.attachments)}',
+            parent_uuid=self.current_prompt,
+            timestamp=_iso(ms),
+            kind=kind,
+            payload=payload,
+        ))
+
+    def _on_append_message(self, rec: dict) -> None:
+        message = rec.get('message')
+        text = _message_text(message.get('content')) if isinstance(message, dict) else ''
+        if _SYSTEM_REMINDER_TAG not in text:
+            return
+        self._add_attachment('task_reminder', {'content': text}, rec.get('time'))
+
+    def _on_active_tools(self, rec: dict) -> None:
+        self._tools_delta(rec.get('names'), rec.get('time'))
+
+    def _on_tools_snapshot(self, rec: dict) -> None:
+        tools = rec.get('tools')
+        if not isinstance(tools, list):
+            return
+        self._tools_delta(
+            [t.get('name') for t in tools if isinstance(t, dict)], rec.get('time'),
+        )
+
+    def _tools_delta(self, names: object, ms: object) -> None:
+        if not isinstance(names, list):
+            return
+        current = _tool_names(names)
+        added = [n for n in current if n not in self.active_tools]
+        removed = sorted(self.active_tools.difference(current))
+        self.active_tools = set(current)
+        if not added and not removed:
+            return
+        self._add_attachment(
+            'deferred_tools_delta',
+            {'added_names': added, 'removed_names': removed}, ms,
+        )
+
+    def _on_steer(self, rec: dict) -> None:
+        """A mid-turn submission. Only the user's own words become a prompt;
+        `background_task` steers are CLI notifications fed back into the
+        context, and already show up as the task's own spans."""
+        origin = rec.get('origin')
+        if not isinstance(origin, dict) or origin.get('kind') != 'user':
+            return
+        text = _typed_text(rec.get('input'))
+        if not text:
+            return
+        self._add_attachment(
+            'queued_command',
+            {'command_mode': 'prompt', 'prompt': text}, rec.get('time'),
+        )
+
+    def _on_cancel(self, rec: dict) -> None:
+        """Flag every tool call still awaiting a result — the interrupt
+        killed them mid-flight, so they never emit a tool.result."""
+        for call in self.calls_by_id.values():
+            if call.get('is_error') is None:
+                call['interrupted'] = True
 
     def _on_permission(self, rec: dict) -> None:
         """Record a *denied* tool call. Kimi resolves permission prompts in its
@@ -147,12 +337,13 @@ class _Scan:
         })
 
     def _on_prompt(self, rec: dict) -> None:
-        parts = [p.get('text', '') for p in (rec.get('input') or [])
-                 if isinstance(p, dict) and p.get('type') == 'text']
-        text = ''.join(parts).strip()
+        parts = rec.get('input')
         uuid = f'kprompt-{len(self.prompts)}'
-        self.prompts.append((uuid, text, _iso(rec.get('time'))))
+        self.prompts.append((uuid, _typed_text(parts), _iso(rec.get('time'))))
         self.current_prompt = uuid
+        images = _prompt_images(parts, self.blobs_dir)
+        if images:
+            self.prompt_images[uuid] = images
 
     def _on_loop_event(self, ev: dict, rec_time: object) -> None:
         kind = ev.get('type')
@@ -161,9 +352,9 @@ class _Scan:
         elif kind == 'content.part':
             self._on_content_part(ev)
         elif kind == 'tool.call':
-            self._on_tool_call(ev)
+            self._on_tool_call(ev, rec_time)
         elif kind == 'tool.result':
-            self._on_tool_result(ev)
+            self._on_tool_result(ev, rec_time)
         elif kind == 'step.end':
             self._on_step_end(ev, rec_time)
 
@@ -177,7 +368,7 @@ class _Scan:
         elif part.get('type') == 'text':
             step.text.append(str(part.get('text', '')))
 
-    def _on_tool_call(self, ev: dict) -> None:
+    def _on_tool_call(self, ev: dict, rec_time: object) -> None:
         step = self._step(ev.get('stepUuid'))
         call_id = ev.get('toolCallId') or ev.get('uuid')
         if step is None or not call_id:
@@ -193,15 +384,18 @@ class _Scan:
             'output_token_estimate': estimate_tool_use_tokens(name, ev.get('args')),
             'input_token_estimate': None,
             'image_token_estimate': None,
+            'source_prompt_id': self.current_prompt,
         }
         step.tool_calls.append(call)
         self.calls_by_id[call_id] = call
         self.tool_to_turn[call_id] = step.uuid
+        if isinstance(rec_time, (int, float)):
+            self.call_times[call_id] = rec_time
         args = ev.get('args')
         if isinstance(args, dict):
             self.call_args[call_id] = args
 
-    def _on_tool_result(self, ev: dict) -> None:
+    def _on_tool_result(self, ev: dict, rec_time: object) -> None:
         call_id = ev.get('toolCallId') or ev.get('parentUuid')
         call = self.calls_by_id.get(call_id) if call_id else None
         if call is None:
@@ -211,6 +405,21 @@ class _Scan:
         if isinstance(result, dict):
             is_error = is_error or bool(result.get('isError') or result.get('error'))
         call['is_error'] = is_error
+        # A result after a turn.cancel means the tool did finish — the
+        # in-flight guess made at cancel time was wrong.
+        call.pop('interrupted', None)
+        duration = self._call_duration(call_id, rec_time)
+        if duration is not None:
+            call['duration_ms'] = duration
+
+    def _call_duration(self, call_id: str, rec_time: object) -> int | None:
+        """Wall-clock of one tool call, from its own record timestamps. Kimi
+        never reports a tool duration itself; the `tool.call` → `tool.result`
+        record pair brackets the run exactly."""
+        started = self.call_times.get(call_id)
+        if started is None or not isinstance(rec_time, (int, float)):
+            return None
+        return max(0, int(rec_time - started))
 
     def _on_step_end(self, ev: dict, rec_time: object) -> None:
         step = self._step(ev.get('uuid'))
@@ -222,6 +431,19 @@ class _Scan:
         step.time = ev.get('time', rec_time)
         dur = ev.get('llmStreamDurationMs')
         step.duration_ms = int(dur) if isinstance(dur, (int, float)) else None
+
+
+_RECORD_HANDLERS = {
+    'turn.prompt': _Scan._on_prompt,
+    'usage.record': _Scan._on_usage_record,
+    'context.append_loop_event': _Scan._on_loop_record,
+    'permission.record_approval_result': _Scan._on_permission,
+    'context.append_message': _Scan._on_append_message,
+    'tools.set_active_tools': _Scan._on_active_tools,
+    'llm.tools_snapshot': _Scan._on_tools_snapshot,
+    'turn.steer': _Scan._on_steer,
+    'turn.cancel': _Scan._on_cancel,
+}
 
 
 def _turn_from_step(step: _Step, model: str | None, max_text_bytes: int | None) -> TurnUsage:
@@ -301,6 +523,15 @@ def _build_usage(scan: _Scan, turns: list[TurnUsage]) -> TranscriptUsage:
         peak_context_tokens=peak,
         prompt_texts=texts,
         prompt_timestamps=stamps,
+        # Kimi has no separate prompt id: the minted anchor uuid IS the
+        # value both sides of the ladder join on (anchor attr `prompt_id`
+        # ↔ tool span `source_prompt_id`).
+        prompt_ids={uuid: uuid for uuid in texts},
+        prompt_image_parts={
+            uuid: parts for uuid, parts in scan.prompt_images.items()
+            if uuid in texts
+        },
+        attachments=tuple(scan.attachments),
         tool_use_to_turn_uuid=scan.tool_to_turn,
         permission_denials=tuple(scan.denials),
     )
@@ -314,7 +545,7 @@ def read_usage_kimi(path: str, *, max_text_bytes: int | None = None) -> Transcri
     consume. ``max_text_bytes`` caps captured assistant/thinking text.
     """
     cap = _DEFAULT_TEXT_CAP if max_text_bytes is None else max_text_bytes
-    scan = _Scan()
+    scan = _Scan(blobs_dir=os.path.join(os.path.dirname(path), 'blobs'))
     try:
         for rec in _iter_records(path):
             if isinstance(rec, dict):

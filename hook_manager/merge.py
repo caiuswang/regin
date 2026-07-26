@@ -257,6 +257,12 @@ def response_to_json(event: str, merged: HookResponse) -> dict:
 # Events on which Kimi appends an exit-0 hook's stdout to the model context.
 # We use this to inject `additional_context` as PLAIN TEXT, since Kimi has no
 # `additionalContext` JSON field the way Claude does.
+#
+# The set is this narrow because Kimi Code 0.29.1 only reads hook stdout back
+# on the prompt path (`runPromptSubmitHook`); every other event's stdout is
+# piped and discarded, so listing e.g. PostToolUse here would emit bytes no
+# model ever sees. Handlers with PostToolUse feedback park it instead and
+# replay it on the next prompt (`rule_check.handle_prompt`).
 _KIMI_CONTEXT_EVENTS = frozenset({'UserPromptSubmit', 'SessionStart'})
 
 
@@ -284,5 +290,13 @@ def kimi_block_reason(merged: HookResponse) -> str:
 
     Kimi has no JSON `decision`/`reason` field — a block is communicated by
     exiting 2 with the reason on stderr. Empty string means no reason to emit.
+
+    `additional_context` rides along: on a blockable event the reason is the
+    only string Kimi puts in front of the model, so dropping it there would
+    discard the rule-violation body the handler produced.
     """
-    return merged.decision_reason or merged.stop_reason or ''
+    reason = merged.decision_reason or merged.stop_reason or ''
+    context = (merged.additional_context or '').strip()
+    if not context:
+        return reason
+    return f'{reason}\n\n{context}' if reason else context

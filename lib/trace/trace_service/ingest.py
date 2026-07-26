@@ -375,7 +375,10 @@ def _attribute_one_call(
     parentage — only the live `tool.<name>` span (posted parent-less at
     PostToolUse time) gets the issuing turn's `resp-`/`think-` parent.
     COALESCE means an already-parented tool span (server/deny synth) is
-    left untouched."""
+    left untouched. `duration_ms` and `source_prompt_id` follow the same
+    name scoping and are fill-only: a hook payload that reported the tool's
+    own execution time (Claude) is authoritative and outranks the
+    transcript's record-to-record bracket."""
     from lib.tokens.pricing import TokenBreakdown, cost
     if not isinstance(tc, dict):
         return False
@@ -385,6 +388,10 @@ def _attribute_one_call(
     out_tok = _as_int_or_none(tc.get('output_tokens'))
     in_tok = _as_int_or_none(tc.get('input_tokens'))
     img_tok = _as_int_or_none(tc.get('image_tokens'))
+    dur_ms = _as_int_or_none(tc.get('duration_ms'))
+    src_prompt = tc.get('source_prompt_id')
+    if not isinstance(src_prompt, str) or not src_prompt:
+        src_prompt = None
     # Cost bundles output (this turn's API output bill) + input (the
     # tool_result feeding the next turn's input bill) into one USD.
     usd = cost(model, TokenBreakdown(
@@ -411,13 +418,20 @@ def _attribute_one_call(
                turn_uuid     = COALESCE(turn_uuid, ?),
                parent_id     = CASE WHEN name LIKE 'tool.%'
                                     THEN COALESCE(parent_id, ?)
-                                    ELSE parent_id END
+                                    ELSE parent_id END,
+               duration_ms   = CASE WHEN name LIKE 'tool.%'
+                                     AND COALESCE(duration_ms, 0) = 0
+                                    THEN COALESCE(?, duration_ms)
+                                    ELSE duration_ms END,
+               source_prompt_id = CASE WHEN name LIKE 'tool.%'
+                                       THEN COALESCE(source_prompt_id, ?)
+                                       ELSE source_prompt_id END
          WHERE trace_id = ?
            AND (tool_use_id = ?
                 OR json_extract(attributes, '$.tool_use_id') = ?)
         """,
         (out_tok, in_tok, img_tok, usd, tu_id, turn_uuid, parent_span_id,
-         trace_id, tu_id, tu_id),
+         dur_ms, src_prompt, trace_id, tu_id, tu_id),
     )
     return cur.rowcount > 0
 
@@ -435,7 +449,8 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     `cost_usd` from the session's recorded model rate.
 
     Body: `{trace_id, turn_uuid, parent_span_id?, tool_calls: [{tool_use_id,
-            name?, output_tokens, input_tokens, image_tokens?}]}`.
+            name?, output_tokens, input_tokens, image_tokens?, duration_ms?,
+            source_prompt_id?}]}`.
 
     Returns (updated_count, skipped_count).
     """
@@ -1234,6 +1249,97 @@ def _resolve_session_title(b: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
+# Span names that prove the agent actually did something after a
+# `session.start` — as opposed to the bare start-only footprint a resume
+# *preview* leaves. Kimi fires SessionStart for every session it renders
+# in the resume picker, so a start alone is not evidence the session is
+# live again.
+_OPERATION_SPAN_NAMES = ('prompt', 'turn', 'assistant_response',
+                         'assistant.thinking')
+
+_OPERATION_SINCE_RESTART_SQL = f"""
+    SELECT 1 FROM session_spans
+     WHERE trace_id = ?
+       AND start_time >= ?
+       AND (name IN ({','.join('?' * len(_OPERATION_SPAN_NAMES))})
+            OR name LIKE 'tool.%'
+            OR name LIKE 'pre_tool.%')
+     LIMIT 1
+"""
+
+# Providers whose CLI emits a SessionStart for a session it merely RENDERS
+# in its resume picker. Everyone else's SessionStart means the session is
+# genuinely live from that instant, so holding it back — even for the one
+# batch before its first prompt lands — would show a running session as
+# ended in the sessions list and the live picker.
+_RESUME_PREVIEW_PROVIDERS = ('kimi',)
+
+_RESTART_CANDIDATES_SQL = """
+    SELECT trace_id, last_start_at, agent_type
+      FROM sessions
+     WHERE trace_id IN ({placeholders})
+       AND status = 'active'
+       AND ended_at IS NOT NULL
+       AND last_start_at IS NOT NULL
+"""
+
+
+def _previews_resumed_sessions(agent_type: object) -> bool:
+    from lib.providers.registry import canonical_agent_kind
+    return canonical_agent_kind(agent_type) in _RESUME_PREVIEW_PROVIDERS
+
+
+def _restart_candidates(conn, trace_ids) -> list:
+    """The batch's sessions that the upsert just flipped (or held) 'active'
+    while carrying an older `ended_at` — the only rows a restart hold can
+    apply to. One query for the whole batch; the common batch returns
+    nothing and no per-trace work follows."""
+    ids = list(trace_ids)
+    if not ids:
+        return []
+    sql = _RESTART_CANDIDATES_SQL.format(
+        placeholders=','.join('?' * len(ids)))
+    return conn.execute(sql, ids).fetchall()
+
+
+def _hold_ended_on_bare_restart(conn, trace_ids) -> None:
+    """Undo the upsert's 'active' flip when the restart that caused it has
+    no operation span behind it AND the provider is one that starts
+    sessions it isn't really resuming.
+
+    The upsert derives status from `last_start_at` vs `ended_at` alone, so
+    any SessionStart after a SessionEnd resurrects the session. Kimi emits
+    SessionStart for sessions it merely PREVIEWS in the resume picker,
+    which resurrects long-dead sessions that then sit at 'active' forever.
+    Running the same behavioural test for every provider regresses the ones
+    whose SessionStart is trustworthy: their genuinely live session reads as
+    ended for the whole window between the start and the first operation
+    span, which for an interactive CLI is however long the user takes to
+    type. Hence the provider scope.
+
+    Held sessions are re-evaluated on every later batch that touches them
+    (the upsert re-derives 'active' from the stored timestamps each time),
+    so a preview that turns into a real resume goes active on whichever
+    batch its first operation span lands in.
+
+    Activity is measured from `last_start_at`, not from `ended_at`: a
+    transcript-scanned `turn` routinely lands a few ms AFTER the SessionEnd
+    span, and that trailing turn belongs to the run that just finished, not
+    to the restart.
+    """
+    for row in _restart_candidates(conn, trace_ids):
+        if not _previews_resumed_sessions(row['agent_type']):
+            continue
+        hit = conn.execute(
+            _OPERATION_SINCE_RESTART_SQL,
+            (row['trace_id'], row['last_start_at'], *_OPERATION_SPAN_NAMES),
+        ).fetchone()
+        if hit is None:
+            conn.execute(
+                "UPDATE sessions SET status = 'ended' WHERE trace_id = ?",
+                (row['trace_id'],))
+
+
 def _upsert_session_counters(conn, buckets: dict) -> None:
     """Apply incremental sessions-table counter upserts for each trace."""
     for tid, b in buckets.items():
@@ -1248,6 +1354,7 @@ def _upsert_session_counters(conn, buckets: dict) -> None:
             b['tool_calls'], b['is_test'], b['test_name'],
             b['agent_type'], b['model'], b['cwd'],
         ))
+    _hold_ended_on_bare_restart(conn, buckets.keys())
 
 
 def _stored_surface_tags(conn, surface_id: str) -> "list | None":

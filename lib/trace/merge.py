@@ -197,6 +197,49 @@ def _drop_resolved_permission_requests(spans: list[dict]) -> list[dict]:
     return [s for s in spans if not retired(s)]
 
 
+def _tool_use_id(span: dict) -> str | None:
+    tu = span.get('tool_use_id') or _attrs(span).get('tool_use_id')
+    return tu if isinstance(tu, str) and tu else None
+
+
+def _denied_call_id(span: dict) -> str | None:
+    """The tool_use_id this span marks as user-denied, or None. `denied=True`
+    is the deny contract every deny path shares (`deny_detection.
+    _deny_skeleton`) — the Claude tool_result sentinel and the
+    provider-recorded transcript denial alike."""
+    if _attrs(span).get('denied') is not True:
+        return None
+    return _tool_use_id(span)
+
+
+def _drop_denied_tool_failures(spans: list[dict]) -> list[dict]:
+    """Drop a `tool.failure` row whose exact call is already represented by a
+    deny span in the window.
+
+    A provider that both reports a rejected call through PostToolUseFailure and
+    records the denial in its own transcript (Kimi, historically) leaves two
+    rows for ONE call: the red failure card and the deny marker. The deny is
+    the survivor — it carries the denial reason and the tool input, and it is
+    the shape the UI styles as a rejection. Matching on the shared tool_use_id
+    keeps the rule call-scoped: a genuine failure and an unrelated deny in the
+    same session never collide. Serve-time only; `session_spans` stays
+    append-only."""
+    denied = set()
+    for s in spans:
+        tu = _denied_call_id(s)
+        if tu:
+            denied.add((s.get('trace_id'), tu))
+    if not denied:
+        return spans
+
+    def retired(s: dict) -> bool:
+        if s.get('name') != 'tool.failure':
+            return False
+        return (s.get('trace_id'), _tool_use_id(s)) in denied
+
+    return [s for s in spans if not retired(s)]
+
+
 def _is_live_prompt_placeholder(span: dict) -> bool:
     sid = span.get('span_id')
     return (
@@ -527,7 +570,8 @@ def merge_spans(
     """Reconcile one window of append-only rows into the canonical span list.
 
     Pure: returns a new list, mutates neither `raw` nor the DB. Dedup runs
-    first (so superseded placeholders can't open phantom turns), then a
+    first (so superseded placeholders can't open phantom turns), then the
+    double-rendered-rejection drop (`_drop_denied_tool_failures`), then a
     slash-command rescue (`_absorb_slash_command_expansions` moves an
     expansion onto its resolved echo before the stale sweep could drop it),
     the stale-blocker drop, then the stuck-pending demotion. Drop-in
@@ -544,6 +588,7 @@ def merge_spans(
         return raw
     spans = _drop_superseded_placeholders(raw)
     spans = _drop_resolved_permission_requests(spans)
+    spans = _drop_denied_tool_failures(spans)
     spans = _absorb_slash_command_expansions(spans)
     spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling)
     spans = _demote_stale_pending(spans, session_activity=session_activity)

@@ -144,11 +144,10 @@ def _expected_span_ids_by_uuid(trace_id: str, transcript_path: str) -> dict[str,
     this repair path needs to recover.
     """
     from lib.settings import settings
-    from lib.trace.transcript_usage import read_usage
 
     capture_text = bool(getattr(settings, 'capture_assistant_response', True))
     max_text_bytes = int(getattr(settings, 'assistant_response_max_bytes', 50_000) or 0)
-    usage = read_usage(
+    usage = _session_provider(trace_id).parse_transcript(
         transcript_path,
         max_text_bytes=max_text_bytes if capture_text and max_text_bytes > 0 else None,
     )
@@ -171,27 +170,28 @@ def _expected_span_ids_by_uuid(trace_id: str, transcript_path: str) -> dict[str,
     return out
 
 
+def _session_provider(trace_id: str):
+    """The provider that WROTE this session, not the globally active one.
+
+    Repair is a server-side, after-the-fact path: the session being healed may
+    well come from a different CLI than the one currently configured, so its
+    transcript layout has to come off `sessions.agent_type`. Falls back to the
+    active provider (the previous behaviour) when the session carries no
+    provider-identifying agent_type."""
+    from lib.providers.base import provider_for_trace
+    from lib.providers import active_provider_id
+
+    return provider_for_trace(trace_id, default_provider_id=active_provider_id())
+
+
 def _find_transcript(trace_id: str) -> str | None:
-    """Locate the active provider's JSONL transcript for a session.
+    """Locate this session's provider's transcript.
 
     Claude writes one file per session under
-    `<transcript_projects_dir>/<munged_cwd>/<session_id>.jsonl`, so we
-    scan all project subdirs for the filename match. Returns the first
-    hit or None.
+    `<transcript_projects_dir>/<munged_cwd>/<session_id>.jsonl`; Kimi writes a
+    per-session directory. The provider owns the layout, so ask it.
     """
-    from lib.providers import get_active_provider
-
-    base = get_active_provider().transcript_projects_dir()
-    if not base or not Path(base).is_dir():
-        return None
-    target = f'{trace_id}.jsonl'
-    for project_dir in Path(base).iterdir():
-        if not project_dir.is_dir():
-            continue
-        candidate = project_dir / target
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    return _session_provider(trace_id).find_session_transcript(trace_id)
 
 
 def _state_path(trace_id: str) -> Path:
@@ -702,6 +702,14 @@ def backfill_transcript_tool_spans(trace_id: str) -> dict:
     no-op. Subagent tool spans are tagged with their `agent_id`. Returns
     `{trace_id, spans_backfilled, transcripts_walked}`."""
     result = {'trace_id': trace_id, 'spans_backfilled': 0, 'transcripts_walked': 0}
+    provider = _session_provider(trace_id)
+    # `_load_transcript_entries` and the tool_use/tool_result pairing below read
+    # Claude's message-per-line JSONL directly (not through the provider's
+    # parser), and there is no equivalent block structure in e.g. Kimi's
+    # event-sourced wire; a non-Claude session is left alone rather than walked
+    # with the wrong reader.
+    if getattr(provider, 'transcript_format', 'claude') != 'claude':
+        return result
     main = _find_transcript(trace_id)
     if not main:
         return result
@@ -778,8 +786,14 @@ def repair_session_spans(trace_id: str) -> dict:
     from hook_manager.core import HookPayload
     from hook_manager.handlers import turn_trace as _tt
 
+    # `agent_type` is what HookPayload.resolved_provider dispatches on; without
+    # it the re-emit would parse this session's transcript with whatever the
+    # globally active provider is, which for a Kimi trace is the wrong reader.
     payload = HookPayload(
-        raw={'transcript_path': transcript},
+        raw={
+            'transcript_path': transcript,
+            'agent_type': _session_provider(trace_id).provider_id,
+        },
         event='UserPromptSubmit',
         session_id=trace_id,
         tool_name=None,

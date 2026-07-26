@@ -44,20 +44,131 @@ _SKILL_READ_CONTENT_RE = re.compile(
 # detail panel.
 _KIMI_READ_FOOTER_RE = re.compile(r"\n?<system>.*?</system>\s*$", re.DOTALL)
 _KIMI_READ_TOTAL_LINES_RE = re.compile(r"Total lines in file:\s*(\d+)")
+_KIMI_READ_SPAN_RE = re.compile(r"(\d+) lines? read from file starting from line (\d+)")
 
 
-def _kimi_read_file_info(output: str) -> dict:
+def _kimi_read_footer_stats(info: dict, footer: str) -> None:
+    total = _KIMI_READ_TOTAL_LINES_RE.search(footer)
+    if total:
+        info['total_lines'] = int(total.group(1))
+    span = _KIMI_READ_SPAN_RE.search(footer)
+    if span:
+        info['num_lines'] = int(span.group(1))
+        info['start_line'] = int(span.group(2))
+
+
+def _kimi_read_input_stats(info: dict, tool_input: dict) -> None:
+    for key, field in (('start_line', 'line_offset'), ('num_lines', 'n_lines')):
+        val = tool_input.get(field)
+        if key not in info and isinstance(val, int) and not isinstance(val, bool):
+            info[key] = val
+
+
+def _kimi_read_file_info(output: str, tool_input: dict) -> dict:
     """Build the Claude-shaped ``tool_response['file']`` dict from Kimi's Read
-    output blob: the line-numbered body (footer stripped) plus the total line
-    count Kimi reports in its trailing ``<system>`` annotation."""
+    output blob: the line-numbered body (footer stripped) plus the line slice
+    it covers.
+
+    Kimi appends a ``<system>`` annotation carrying the slice ("N lines read
+    from file starting from line M") and the file's total length; the slice
+    falls back to the request's own ``line_offset`` / ``n_lines`` when that
+    annotation is absent.
+    """
     info: dict = {}
     footer = _KIMI_READ_FOOTER_RE.search(output)
     if footer:
-        total = _KIMI_READ_TOTAL_LINES_RE.search(footer.group(0))
-        if total:
-            info['total_lines'] = int(total.group(1))
+        _kimi_read_footer_stats(info, footer.group(0))
+    _kimi_read_input_stats(info, tool_input)
     info['content'] = _KIMI_READ_FOOTER_RE.sub('', output)
     return info
+
+
+# Kimi's background-task tools (a backgrounded `Bash`, and the `TaskOutput`
+# that later collects it) return one text blob whose leading `key: value`
+# lines are the task record and whose `[output]` section is the captured
+# program output.
+_KIMI_TASK_BODY_SEP = "\n[output]\n"
+_KIMI_TASK_HEADER_RE = re.compile(r"^([a-z][a-z0-9_]*): (.*)$")
+_KIMI_INT_RE = re.compile(r"-?\d+$")
+# Kimi's task-record field name → the Claude `task` key the shared TaskOutput
+# builder reads.
+_KIMI_TASK_FIELDS: tuple[tuple[str, str], ...] = (
+    ('task_id', 'task_id'),
+    ('description', 'description'),
+    ('status', 'status'),
+    ('task_type', 'kind'),
+)
+
+
+def _kimi_task_header(output: str) -> tuple[dict, str]:
+    head, sep, body = output.partition(_KIMI_TASK_BODY_SEP)
+    fields: dict = {}
+    for line in head.split('\n'):
+        m = _KIMI_TASK_HEADER_RE.match(line)
+        if m:
+            fields.setdefault(m.group(1), m.group(2))
+    return fields, body if sep else ''
+
+
+def _kimi_task_result(output: str, tool_input: dict, tool_response: dict) -> dict:
+    """Reshape a Kimi ``TaskOutput`` blob into Claude's
+    ``{retrieval_status, task: {...}}`` envelope. Without it the span carries
+    only the polled task id — no completed/failed signal and no output body."""
+    fields, body = _kimi_task_header(output)
+    task: dict = {}
+    for claude_key, kimi_key in _KIMI_TASK_FIELDS:
+        val = fields.get(kimi_key)
+        if val:
+            task[claude_key] = val
+    exit_code = fields.get('exit_code') or ''
+    if _KIMI_INT_RE.match(exit_code):
+        task['exit_code'] = int(exit_code)
+    if body.strip():
+        task['output'] = body
+    if not task:
+        return {}
+    result = {'task': task}
+    retrieval = fields.get('retrieval_status')
+    if retrieval:
+        result['retrieval_status'] = retrieval
+    return result
+
+
+def _kimi_is_error(tool_response: dict) -> bool:
+    return bool(tool_response.get('isError') or tool_response.get('is_error'))
+
+
+def _kimi_bash_result(output: str, tool_input: dict, tool_response: dict) -> dict:
+    """Kimi merges stdout+stderr into one stream, so the whole blob lands on
+    ``stdout`` — unless the envelope flags the call as an error, where the Bash
+    card's red ``stderr`` block is the honest rendering. A backgrounded Bash
+    returns the task record instead of program output; lift its ``task_id`` so
+    the card shows its background chip."""
+    stream = 'stderr' if _kimi_is_error(tool_response) else 'stdout'
+    result = {stream: output}
+    if tool_input.get('run_in_background'):
+        task_id = _kimi_task_header(output)[0].get('task_id')
+        if task_id:
+            result['background_task_id'] = task_id
+    return result
+
+
+def _kimi_read_result(output: str, tool_input: dict, tool_response: dict) -> dict:
+    return {'file': _kimi_read_file_info(output, tool_input)}
+
+
+def _newest_dir(pattern: Path) -> Path | None:
+    matches = [p for p in glob.glob(str(pattern)) if os.path.isdir(p)]
+    if not matches:
+        return None
+    return Path(max(matches, key=os.path.getmtime))
+
+
+_KIMI_RESULT_BUILDERS = {
+    'Bash': _kimi_bash_result,
+    'Read': _kimi_read_result,
+    'TaskOutput': _kimi_task_result,
+}
 
 # Kimi also discovers skills in the cross-agent `~/.agents/skills/` directory
 # (and `.agents/skills/` at project scope). `_SKILL_READ_CONTENT_RE` recognizes
@@ -158,25 +269,25 @@ class KimiProvider(AgentProvider):
 
         Kimi returns every tool result as one text blob under ``output`` (plus
         an ``isError`` flag), where regin's builders expect tool-specific
-        fields — ``stdout``/``stderr`` for Bash, ``file.content`` for Read —
-        so without this both cards render an empty body. Tools whose card
-        attrs derive purely from ``tool_input`` (Edit/Write diffs, Grep/Glob
-        pattern) need no result mapping and pass through. The original keys are
-        preserved; we only *add* the canonical ones (``setdefault``) so a
-        future Kimi payload that already carries them wins.
+        fields — ``stdout``/``stderr`` for Bash, ``file.content`` for Read,
+        ``retrieval_status``/``task`` for TaskOutput — so without this the
+        cards render an empty body. Tools whose card attrs derive purely from
+        ``tool_input`` (Edit/Write diffs, Grep/Glob pattern) need no result
+        mapping and pass through. The original keys are preserved; we only
+        *add* the canonical ones (``setdefault``) so a future Kimi payload that
+        already carries them wins.
         """
         if not isinstance(tool_response, dict):
             return tool_response
         output = tool_response.get('output')
         if not isinstance(output, str) or not output:
             return tool_response
+        builder = _KIMI_RESULT_BUILDERS.get(tool_name)
+        if builder is None:
+            return tool_response
         out = dict(tool_response)
-        if tool_name == 'Bash':
-            # Kimi merges stdout+stderr into one stream; surface it as stdout
-            # (the Bash card shows stderr separately only when present).
-            out.setdefault('stdout', output)
-        elif tool_name == 'Read':
-            out.setdefault('file', _kimi_read_file_info(output))
+        for key, value in builder(output, tool_input or {}, tool_response).items():
+            out.setdefault(key, value)
         return out
 
     def tool_failure_is_user_rejection(self, raw_error: object) -> bool:
@@ -237,8 +348,30 @@ class KimiProvider(AgentProvider):
         m = _SKILL_READ_CONTENT_RE.match(rel)
         return m.group(1) if m else None
 
+    def session_plans_dir(self, session_id: str) -> Path | None:
+        """The plans directory of one Kimi session, or None when it has none.
+
+        Mirrors `resolve_transcript_path`: the working-directory segment of the
+        session path is opaque, so it is globbed."""
+        if not session_id:
+            return None
+        return _newest_dir(
+            self.transcript_projects_dir() / "*" / session_id / "agents" / "main" / "plans"
+        )
+
     def plans_dir(self) -> Path:
-        return self._path("plans_dir", _KIMI_HOME / "plans")
+        """Kimi has no global plans directory — plan markdown is written per
+        session under ``<sessions>/<wd>/<session_id>/agents/main/plans``. The
+        plan scanner and the plan-file matcher both ask for a single path with
+        no session in hand, so resolve to the most recently written of those.
+        The legacy ``~/.kimi-code/plans`` is only the (never-written) fallback
+        for an install that has no plan at all yet."""
+        if self._overrides.get("plans_dir") not in (None, ""):
+            return self._path("plans_dir", _KIMI_HOME / "plans")
+        newest = _newest_dir(
+            self.transcript_projects_dir() / "*" / "*" / "agents" / "main" / "plans"
+        )
+        return newest or _KIMI_HOME / "plans"
 
     def traces_dir(self) -> Path:
         return self._path("traces_dir", _KIMI_HOME / "traces")
@@ -256,15 +389,15 @@ class KimiProvider(AgentProvider):
     def transcript_projects_dir(self) -> Path:
         return self._path("transcript_projects_dir", _KIMI_HOME / "sessions")
 
-    def resolve_transcript_path(self, payload: HookPayload) -> str | None:
+    def find_session_transcript(self, session_id: str) -> str | None:
         """Locate a session's wire.jsonl from its id.
 
-        Kimi hook payloads don't carry a transcript path, so we glob for
-        ``<sessions>/wd_*/<session_id>/agents/main/wire.jsonl`` (the working
-        directory segment is opaque). Returns the most recently modified match
+        Kimi stores a session as a *directory*
+        (``<sessions>/wd_*/<session_id>/agents/main/wire.jsonl``) rather than
+        Claude's ``<session_id>.jsonl`` file, and the working-directory segment
+        is opaque, so it is globbed. Returns the most recently modified match
         when more than one is present.
         """
-        session_id = payload.session_id
         if not session_id:
             return None
         base = self.transcript_projects_dir()
@@ -273,6 +406,10 @@ class KimiProvider(AgentProvider):
         if not matches:
             return None
         return max(matches, key=os.path.getmtime)
+
+    def resolve_transcript_path(self, payload: HookPayload) -> str | None:
+        """Kimi hook payloads carry no transcript path, so resolve from the id."""
+        return self.find_session_transcript(payload.session_id)
 
     def parse_transcript(self, transcript_path: str, *, max_text_bytes: int | None = None):
         from lib.trace.kimi_transcript import read_usage_kimi

@@ -159,9 +159,20 @@ def _attach_edit_metadata(attrs: dict, tool_response: dict) -> None:
         attrs['hunks'] = hunks
 
 
-def _file_path(tool_input: dict) -> str | None:
+# Providers whose tool paths are relative to the session cwd and are anchored
+# here rather than in every consumer. Claude is deliberately absent: it emits
+# relative paths too (13,109 of 64,259 stored file_path spans, mostly `Read`),
+# so absolutizing there would file new spans under a different identity than
+# every span already recorded and split a file's history in two.
+_CWD_RELATIVE_PATH_PROVIDERS = frozenset({'kimi'})
+
+
+def _file_path(tool_input: dict, cwd: str | None = None) -> str | None:
     ti = tool_input or {}
-    return ti.get('file_path') or ti.get('path') or ti.get('notebook_path')
+    fp = ti.get('file_path') or ti.get('path') or ti.get('notebook_path')
+    if isinstance(fp, str) and fp and cwd and not os.path.isabs(fp):
+        return os.path.normpath(os.path.join(cwd, fp))
+    return fp
 
 
 def _ask_option(o: dict) -> dict:
@@ -469,6 +480,78 @@ def _build_taskupdate_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
         attrs['status'] = status
 
 
+# Snapshot task-list statuses → the vocabulary the task-list surfaces render.
+# Kimi's `TodoList` says `done` where those surfaces say `completed`. Anything
+# unrecognised degrades to `pending` rather than leaking a status the UI has no
+# chip for.
+_TODO_STATUS_MAP = {
+    'pending': 'pending',
+    'not_started': 'pending',
+    'todo': 'pending',
+    'in_progress': 'in_progress',
+    'active': 'in_progress',
+    'done': 'completed',
+    'complete': 'completed',
+    'completed': 'completed',
+    'cancelled': 'deleted',
+    'canceled': 'deleted',
+    'deleted': 'deleted',
+}
+
+
+def _todo_status(value: object) -> str:
+    if not isinstance(value, str):
+        return 'pending'
+    return _TODO_STATUS_MAP.get(value.strip().lower(), 'pending')
+
+
+def _todo_subject(todo: dict) -> str:
+    # Kimi names the field `title`; `content`/`subject` cover the other
+    # snapshot spellings seen in the wild.
+    for key in ('title', 'content', 'subject'):
+        v = todo.get(key)
+        if isinstance(v, str) and v:
+            return v
+    return ''
+
+
+def _todo_entry(index: int, todo: object) -> dict | None:
+    if not isinstance(todo, dict):
+        return None
+    subject = _todo_subject(todo)
+    if not subject:
+        return None
+    entry = {
+        'task_id': str(index),
+        'subject': subject,
+        'status': _todo_status(todo.get('status')),
+    }
+    active_form = todo.get('activeForm') or todo.get('active_form')
+    if isinstance(active_form, str) and active_form:
+        entry['active_form'] = active_form
+    return entry
+
+
+def _build_todolist_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    """Kimi's `TodoList` resends the WHOLE list on every write, where
+    TaskCreate/TaskUpdate each carry a single task. Store the snapshot under
+    `todos` in the same per-task shape those builders emit
+    (`task_id`/`subject`/`status`) so the session task-list fold can replay
+    either kind. `task_id` is the 1-based position: the payload carries no id of
+    its own.
+
+    Claude Code's own `TodoWrite` is deliberately NOT routed here — see
+    `_TOOL_BUILDERS`.
+    """
+    todos = tool_input.get('todos')
+    if not isinstance(todos, list):
+        return
+    entries = [e for e in (_todo_entry(i, t) for i, t in enumerate(todos, 1))
+               if e is not None]
+    if entries:
+        attrs['todos'] = entries
+
+
 def _build_taskoutput_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
     # `retrieval_status` ('success' / 'not_found' / 'timed_out') is
     # distinct from the wrapped task's `status` and matters for
@@ -676,12 +759,20 @@ _TOOL_BUILDERS: dict = {
     'ToolSearch': _build_toolsearch_attrs,
     'TaskCreate': _build_taskcreate_attrs,
     'TaskUpdate': _build_taskupdate_attrs,
+    # Claude Code's own `TodoWrite` is deliberately absent: its main agent and
+    # each of its subagents write independent lists into the SAME trace_id, so
+    # folding them as one snapshot stream (web/blueprints/trace/sessions.py)
+    # makes every subagent write retire the main agent's live tasks and vice
+    # versa. Claude's task list reaches the trace via TaskCreate/TaskUpdate.
+    'TodoList': _build_todolist_attrs,
     'Workflow': _build_workflow_attrs,
     'TaskOutput': _build_taskoutput_attrs,
     'ScheduleWakeup': _build_schedulewakeup_attrs,
     'Skill': _build_skill_attrs,
     'WebSearch': _build_websearch_attrs,
     'WebFetch': _build_webfetch_attrs,
+    # Kimi's URL tool is named FetchURL but ships WebFetch's `url`/`prompt`.
+    'FetchURL': _build_webfetch_attrs,
 }
 
 
@@ -693,6 +784,7 @@ _INPUT_ONLY_BUILDERS: dict = {
     'Bash': _build_bash_input_attrs,
     'WebSearch': _build_websearch_input_attrs,
     'WebFetch': _build_webfetch_input_attrs,
+    'FetchURL': _build_webfetch_input_attrs,
 }
 
 
@@ -730,10 +822,11 @@ def _emit_span(payload: HookPayload) -> None:
     tool_response = payload.tool_response or {}
     raw = payload.raw or {}
 
+    provider = payload.resolved_provider
     # Reshape provider-specific result envelopes (Kimi wraps every tool result
     # in `{output, isError}`) onto the Claude-shaped keys the builders read.
     # Claude/Codex pass through unchanged.
-    tool_response = payload.resolved_provider.normalize_tool_response(
+    tool_response = provider.normalize_tool_response(
         tool, tool_input, tool_response
     )
 
@@ -744,7 +837,9 @@ def _emit_span(payload: HookPayload) -> None:
     tu_id = raw.get('tool_use_id')
     if isinstance(tu_id, str) and tu_id:
         attrs['tool_use_id'] = tu_id
-    fp = _file_path(tool_input)
+    anchor = (payload.cwd
+              if provider.provider_id in _CWD_RELATIVE_PATH_PROVIDERS else None)
+    fp = _file_path(tool_input, anchor)
     if fp:
         attrs['file_path'] = fp
 

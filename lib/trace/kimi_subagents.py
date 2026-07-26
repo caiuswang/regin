@@ -20,13 +20,16 @@ This pass reads those sibling wires and:
     with that ``agent_id``, the subagent's identity, and its final response
     (Kimi's ``SubagentStop`` carries the summary as ``response``); and
   * emits the subagent's own ``assistant_response`` / ``assistant.thinking``
-    turns, also tagged ``agent_id`` (parity with Claude's
-    ``emit_subagent_responses``).
+    turns plus its ``prompt-sa-<agent_id>`` task-prompt anchor, also tagged
+    ``agent_id`` (parity with Claude's ``emit_subagent_responses``); and
+  * closes the launching ``tool.Agent`` span, which Kimi leaves ``PENDING``
+    forever because it fires no ``PostToolUse`` for an ``Agent`` call.
 
 ``agent_id`` is the launching ``tool.Agent`` call's ``tool_use_id``, recovered
 by matching that span's stored ``prompt`` as a substring of the subagent
 wire's first prompt. Idempotent: deterministic span ids + value-stable UPDATEs,
-safe to re-run on every ``SubagentStop`` and during backfill.
+safe to re-run on every ``SubagentStart``/``SubagentStop``, on the
+``Stop``/``SessionEnd`` sweep, and during backfill.
 """
 
 from __future__ import annotations
@@ -44,6 +47,12 @@ _RESULT_PREVIEW_MAX = 200
 # the trailing-whitespace / cap differences between the stored span prompt and
 # the git-context-wrapped copy in the subagent wire.
 _PROMPT_MATCH_CHARS = 200
+# Same clamp the hook-side prompt anchors use
+# (`turn_trace.span_posters._PROMPT_ANCHOR_TEXT_MAX_BYTES`), so a scoped
+# subagent view opens with the same truncation regardless of which path wrote
+# the anchor.
+_PROMPT_TEXT_MAX_BYTES = 8 * 1024
+_EMPTY_RESULT = {"subagents": 0, "tool_spans": 0, "turns": 0, "launches_closed": 0}
 
 
 def discover_subagent_sessions() -> list[str]:
@@ -131,6 +140,59 @@ def _first_prompt(usage) -> str:
     return ""
 
 
+def _first_prompt_ts(usage) -> str | None:
+    for ts in usage.prompt_timestamps.values():
+        return ts
+    return None
+
+
+# The subagent's kind sits in the `profileName` of a `config.update` record at
+# the head of its wire (line 2 in every observed session); read a short prefix
+# rather than the whole file.
+_PROFILE_SCAN_LINES = 40
+
+
+def _wire_profile_name(wire_path: str) -> str | None:
+    """The subagent's own declared kind (`config.update.profileName`, e.g.
+    "explore") — the wire's ground truth for what this agent IS. Preferred over
+    the launch span's `subagent_type` because a subagent whose launch could not
+    be re-identified still gets a real name instead of "subagent"."""
+    try:
+        with open(wire_path) as fh:
+            for idx, line in enumerate(fh):
+                if idx >= _PROFILE_SCAN_LINES:
+                    break
+                if '"profileName"' not in line:
+                    continue
+                try:
+                    name = json.loads(line).get("profileName")
+                except ValueError:
+                    continue
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+    except OSError:
+        return None
+    return None
+
+
+def _is_provider_tag(value) -> bool:
+    """True when a stored `agent_type` is really a PROVIDER id ('kimi') rather
+    than a subagent kind. The isinstance guard matters: the value comes back
+    out of a span's JSON attributes and need not be a string."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    from lib.providers.registry import is_provider_id
+    return is_provider_id(value)
+
+
+def _apply_kind(attrs: dict, kind: str | None) -> None:
+    """Make `agent_type` name the SUBAGENT's kind. Kimi's SubagentStart hook
+    writes its provider id there, which renders the card as an anonymous
+    "kimi"/"agent" row; a value that is a real kind is left alone."""
+    if kind and (not attrs.get("agent_type") or _is_provider_tag(attrs.get("agent_type"))):
+        attrs["agent_type"] = kind
+
+
 def _tool_ids(usage) -> list[str]:
     """Every tool-call id the subagent issued in its own wire."""
     ids: list[str] = []
@@ -186,6 +248,7 @@ def _enrich_marker(conn, row, agent_id: str, info: dict) -> None:
     `subagent.start` or `subagent.stop` span, preserving other attributes."""
     attrs = json.loads(row["attributes"])
     attrs["agent_id"] = agent_id
+    _apply_kind(attrs, info.get("agent_name"))
     if info.get("agent_name"):
         attrs.setdefault("agent_name", info["agent_name"])
     if info.get("description"):
@@ -208,6 +271,7 @@ def _insert_marker(conn, trace_id: str, name: str, agent_id: str,
     from lib.trace.trace_service.ingest import _insert_span_row
     kind = "start" if name.endswith("start") else "stop"
     attrs: dict = {"agent_id": agent_id}
+    _apply_kind(attrs, info.get("agent_name"))
     if info.get("agent_name"):
         attrs["agent_name"] = info["agent_name"]
     if info.get("description"):
@@ -311,34 +375,109 @@ def _emit_subagent_turns(conn, trace_id: str, agent_id: str, usage) -> int:
     return emitted
 
 
+def _span_duration_ms(start: str | None, end: str | None) -> int:
+    from lib.trace.pending_spans import parse_naive_ts
+    first, last = parse_naive_ts(start), parse_naive_ts(end)
+    if first is None or last is None or last < first:
+        return 0
+    return int((last - first).total_seconds() * 1000)
+
+
+def _close_launch_span(conn, trace_id: str, tool_use_id: str | None,
+                       end_ts: str | None) -> int:
+    """Resolve the `tool.Agent` call that spawned this subagent.
+
+    Kimi never fires `PostToolUse` for an `Agent` call, so its PreToolUse
+    placeholder stays `PENDING` forever: the card renders as a launch that
+    never returned, and the serve-time merge eventually demotes it to
+    "interrupted" even though the subagent finished. Close it at the
+    subagent's last turn instead. Only `PENDING` rows are rewritten, so a
+    launch that genuinely errored or was denied keeps its verdict."""
+    if not (tool_use_id and end_ts):
+        return 0
+    rows = conn.execute(
+        "SELECT span_id, start_time FROM session_spans "
+        " WHERE trace_id = ? AND name = 'tool.Agent' AND status_code = 'PENDING' "
+        "   AND (tool_use_id = ? OR json_extract(attributes, '$.tool_use_id') = ?)",
+        (trace_id, tool_use_id, tool_use_id),
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            "UPDATE session_spans SET status_code = 'OK', end_time = ?, "
+            "       duration_ms = ? WHERE trace_id = ? AND span_id = ?",
+            (end_ts, _span_duration_ms(row["start_time"], end_ts),
+             trace_id, row["span_id"]),
+        )
+    return len(rows)
+
+
+def _emit_launch_prompt(conn, trace_id: str, agent_id: str, info: dict,
+                        usage) -> None:
+    """Insert the subagent's TASK PROMPT anchor (`prompt-sa-<agent_id>`) — the
+    same span Claude's path emits — so a scoped `?agent=` view opens on the
+    task statement instead of an empty pane. Prefers the launch span's clean
+    prompt over the wire's git-context-wrapped copy."""
+    from lib.trace.trace_service.ingest import _insert_span_row
+    text = info.get("launch_prompt") or _first_prompt(usage)
+    ts = _first_prompt_ts(usage) or _turn_bounds(usage)[0]
+    if not (text and ts):
+        return
+    capped = text.encode("utf-8")[:_PROMPT_TEXT_MAX_BYTES].decode("utf-8", "ignore")
+    attrs = {"text": capped, "chars": len(text), "agent_id": agent_id}
+    if len(capped) < len(text):
+        attrs["text_truncated"] = True
+    _insert_span_row(conn, {
+        "trace_id": trace_id,
+        "span_id": f"prompt-sa-{agent_id}",
+        "parent_id": None,
+        "name": "prompt",
+        "kind": "internal",
+        "start_time": ts,
+        "end_time": ts,
+        "duration_ms": 0,
+        "status_code": "OK",
+        "status_message": None,
+    }, attrs)
+
+
+def _identity(trace_id: str, wire_path: str, usage, launches: list[dict],
+              used: set[str], idx: int) -> dict:
+    """Who this subagent is: its `agent_id` (the launching `tool.Agent` call's
+    tool_use_id when the launch can be re-identified, else a positional
+    fallback), its kind, and its launch/result text."""
+    launch = _match_launch(_first_prompt(usage), launches, used)
+    if launch:
+        used.add(launch["tool_use_id"])
+    kind = _wire_profile_name(wire_path) or (
+        launch.get("subagent_type") if launch else None) or "subagent"
+    return {
+        "agent_id": launch["tool_use_id"] if launch else f"{trace_id}:agent-{idx}",
+        "tool_use_id": launch["tool_use_id"] if launch else None,
+        "agent_name": kind,
+        "description": launch.get("description") if launch else None,
+        "launch_prompt": launch.get("prompt") if launch else None,
+        "result_preview": _result_preview(usage),
+    }
+
+
 def _reconcile_one(conn, trace_id: str, wire_path: str, launches: list[dict],
                    used: set[str], starts: list, stops: list, idx: int) -> dict:
     """Reconcile a single subagent wire. Returns a small stats dict."""
     from lib.trace.kimi_transcript import read_usage_kimi
     usage = read_usage_kimi(wire_path)
     if usage is None:
-        return {"agent_id": None, "tool_spans": 0, "turns": 0}
-    launch = _match_launch(_first_prompt(usage), launches, used)
-    if launch:
-        used.add(launch["tool_use_id"])
-        agent_id = launch["tool_use_id"]
-        agent_name = launch.get("subagent_type")
-        description = launch.get("description")
-        launch_prompt = launch.get("prompt")
-    else:
-        agent_id = f"{trace_id}:agent-{idx}"
-        agent_name = "subagent"
-        description = None
-        launch_prompt = None
-    info = {
-        "agent_name": agent_name,
-        "description": description,
-        "result_preview": _result_preview(usage),
-    }
+        return {"agent_id": None, "tool_spans": 0, "turns": 0, "launches_closed": 0}
+    info = _identity(trace_id, wire_path, usage, launches, used, idx)
+    agent_id = info["agent_id"]
     touched = _stamp_tool_spans(conn, trace_id, agent_id, _tool_ids(usage))
-    _place_markers(conn, trace_id, agent_id, info, usage, starts, stops, launch_prompt)
+    _place_markers(conn, trace_id, agent_id, info, usage,
+                   starts, stops, info["launch_prompt"])
+    _emit_launch_prompt(conn, trace_id, agent_id, info, usage)
     turns = _emit_subagent_turns(conn, trace_id, agent_id, usage)
-    return {"agent_id": agent_id, "tool_spans": touched, "turns": turns}
+    closed = _close_launch_span(
+        conn, trace_id, info["tool_use_id"], _turn_bounds(usage)[1])
+    return {"agent_id": agent_id, "tool_spans": touched, "turns": turns,
+            "launches_closed": closed}
 
 
 def reconcile_kimi_subagents(trace_id: str) -> dict:
@@ -351,13 +490,13 @@ def reconcile_kimi_subagents(trace_id: str) -> dict:
     (``subagents: 0``) when the session has no subagent dirs. Idempotent.
     """
     if not isinstance(trace_id, str) or not trace_id:
-        return {"subagents": 0, "tool_spans": 0, "turns": 0}
+        return _EMPTY_RESULT.copy()
     agents_dir = _agents_dir(trace_id)
     if agents_dir is None:
-        return {"subagents": 0, "tool_spans": 0, "turns": 0}
+        return _EMPTY_RESULT.copy()
     wires = _subagent_wires(agents_dir)
     if not wires:
-        return {"subagents": 0, "tool_spans": 0, "turns": 0}
+        return _EMPTY_RESULT.copy()
 
     from lib.orm.engine import get_connection
     conn = get_connection()
@@ -366,13 +505,14 @@ def reconcile_kimi_subagents(trace_id: str) -> dict:
         starts = _claim_markers(conn, trace_id, "subagent.start")
         stops = _claim_markers(conn, trace_id, "subagent.stop")
         used: set[str] = set()
-        tool_spans = turns = 0
+        tool_spans = turns = closed = 0
         for idx, (_name, wire_path) in enumerate(wires):
             stats = _reconcile_one(
                 conn, trace_id, wire_path, launches, used, starts, stops, idx,
             )
             tool_spans += stats["tool_spans"]
             turns += stats["turns"]
+            closed += stats["launches_closed"]
         conn.commit()
     except Exception:
         try:
@@ -383,6 +523,7 @@ def reconcile_kimi_subagents(trace_id: str) -> dict:
     finally:
         conn.close()
 
-    result = {"subagents": len(wires), "tool_spans": tool_spans, "turns": turns}
+    result = {"subagents": len(wires), "tool_spans": tool_spans,
+              "turns": turns, "launches_closed": closed}
     _log.write("kimi_subagents_reconciled", trace_id=trace_id, **result)
     return result

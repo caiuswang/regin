@@ -137,9 +137,13 @@ def get_catalogue(force_refresh: bool = False) -> dict | None:
 # `kimi-code/kimi-for-coding`; models.dev keys the underlying model as
 # `kimi-k2.7-code` (the `kimi-for-coding` *provider* lists it at $0 because the
 # plan is a flat subscription, so we price the underlying K2.7 Code model).
+# `kimi-code/k3` is the same story one model on: the `kimi-for-coding` provider
+# keys it as bare `k3` at $0, so we price it as the published `kimi-k3`.
 _MODEL_ALIASES = {
     'kimi-code/kimi-for-coding': 'kimi-k2.7-code',
     'kimi-for-coding': 'kimi-k2.7-code',
+    'kimi-code/k3': 'kimi-k3',
+    'k3': 'kimi-k3',
 }
 
 
@@ -186,16 +190,20 @@ def _rate_completeness(m: dict) -> int:
     disagree: some carry the >200K context tier, some omit cache_read /
     cache_write entirely (so cache cost silently bills $0), and some are $0
     subscription mirrors (duo-chat, flat-plan providers). Rank highest a
-    tier-bearing shard, then the most complete rate dict, with genuinely-priced
-    shards above $0 mirrors. -1 when the shard has no usable cost dict.
+    tier-bearing shard, then any genuinely-priced shard, then the most complete
+    rate dict. -1 when the shard has no usable cost dict.
+
+    Pricedness outranks key count because a $0 flat-plan mirror tends to publish
+    *all four* keys as zeros while the real priced shard omits cache_write —
+    ranked on completeness alone the mirror wins and the model bills at $0.
     """
     cost_dict = m.get('cost')
     if not isinstance(cost_dict, dict):
         return -1
     present = sum(1 for k in _RATE_KEYS if cost_dict.get(k) is not None)
     tiered = 100 if _has_tiers(m) else 0
-    priced = 1 if (cost_dict.get('input') or 0) > 0 else 0
-    return tiered + present * 2 + priced
+    priced = 10 if (cost_dict.get('input') or 0) > 0 else 0
+    return tiered + priced + present * 2
 
 
 def _find_model(catalogue: dict, model: str) -> dict | None:

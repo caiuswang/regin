@@ -11,6 +11,7 @@ prose for the agent to read up front.
 
 from __future__ import annotations
 
+import os
 import re
 
 from ..core import HookPayload, HookResponse
@@ -41,12 +42,25 @@ _STALE_PHRASES = [
 _MAX_HITS_REPORTED = 5
 
 
+def _edited_markdown_path(payload: HookPayload) -> str | None:
+    """Resolve the edited `.md` file to an absolute path, or None if the edit
+    wasn't markdown. Kimi's Edit/Write payloads name the file under `path` and
+    make it *repo-relative*, where Claude sends an absolute `file_path`."""
+    tool_input = payload.tool_input or {}
+    raw = tool_input.get('file_path') or tool_input.get('path') or ''
+    if not isinstance(raw, str) or not raw.lower().endswith('.md'):
+        return None
+    if os.path.isabs(raw) or not payload.cwd:
+        return raw
+    return os.path.normpath(os.path.join(payload.cwd, raw))
+
+
 def handle(payload: HookPayload) -> HookResponse | None:
     if payload.tool_name not in ('Write', 'Edit', 'MultiEdit'):
         return None
 
-    file_path = (payload.tool_input or {}).get('file_path', '') or ''
-    if not file_path.lower().endswith('.md'):
+    file_path = _edited_markdown_path(payload)
+    if not file_path:
         return None
 
     # Ignore generated / vendored / scratch areas.

@@ -7,6 +7,7 @@ without hard-coded path rewrites across the codebase.
 
 from __future__ import annotations
 
+import glob
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -72,6 +73,25 @@ class AgentProvider:
         """
         path = (payload.raw or {}).get("transcript_path")
         return path if isinstance(path, str) and path else None
+
+    def find_session_transcript(self, session_id: str) -> str | None:
+        """Locate a session's transcript from its id alone, with no hook payload.
+
+        Server-side backfill/self-heal paths (live rescan, span repair, the
+        serve-time prompt-expansion read) only ever hold a trace_id, so they
+        cannot go through `resolve_transcript_path`. The default matches the
+        Claude/Codex layout — a single ``<session_id>.jsonl`` under some
+        project subdirectory of `transcript_projects_dir()`. Providers whose
+        session is a directory rather than a file (Kimi) override this.
+        """
+        if not session_id:
+            return None
+        try:
+            base = self.transcript_projects_dir()
+        except NotImplementedError:
+            return None
+        matches = glob.glob(str(Path(base) / '*' / f'{session_id}.jsonl'))
+        return matches[0] if matches else None
 
     def parse_transcript(self, transcript_path: str, *, max_text_bytes: int | None = None):
         """Parse a transcript file into a `lib.trace.transcript_models.TranscriptUsage`.
@@ -225,3 +245,48 @@ class AgentProvider:
 
     def transcript_projects_dir(self) -> Path:
         raise NotImplementedError
+
+
+def session_agent_type(trace_id: str) -> str | None:
+    """The `sessions.agent_type` recorded for one trace, or None."""
+    if not trace_id:
+        return None
+    try:
+        from sqlmodel import select
+        from lib.orm import SessionLocal
+        from lib.orm.models.trace import Session as SessionModel
+        with SessionLocal() as db:
+            return db.exec(
+                select(SessionModel.agent_type)
+                .where(SessionModel.trace_id == trace_id)
+            ).first()
+    except Exception:
+        return None
+
+
+def provider_for_agent_type(agent_type: str | None,
+                            default_provider_id: str = "claude") -> AgentProvider:
+    """Provider adapter implied by one session's stored `agent_type`.
+
+    Only an agent_type that maps to a registered, non-generic provider
+    redirects. `agent_type` is free-form vendor text and is frequently NULL or
+    a Claude subagent role ('explorer', 'verifier', …); those sessions really
+    do live in `default_provider_id`'s layout, so treating an unrecognized
+    value as 'generic' would break transcript discovery for most of the store.
+    """
+    from lib.providers.registry import build_provider, canonical_agent_kind, is_provider_id
+    kind = canonical_agent_kind(agent_type)
+    if kind and kind != "generic" and is_provider_id(kind):
+        return build_provider(kind)
+    return build_provider(default_provider_id)
+
+
+def provider_for_trace(trace_id: str, default_provider_id: str = "claude") -> AgentProvider:
+    """Provider adapter for ONE session, resolved from its stored agent_type.
+
+    Backfill / self-heal paths run inside the server long after the hook that
+    recorded the session, so `settings.active_provider` says nothing about
+    which CLI actually wrote that trace's transcript — a single global would
+    send every Kimi session down Claude's path layout (and back).
+    """
+    return provider_for_agent_type(session_agent_type(trace_id), default_provider_id)

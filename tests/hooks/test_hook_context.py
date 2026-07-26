@@ -14,6 +14,8 @@ import json
 import os
 import sys
 
+import pytest
+
 from lib.hook_plugin import HookContext
 
 
@@ -125,6 +127,81 @@ def test_prompt_ignores_non_string_values(monkeypatch):
 def test_prompt_empty_when_no_candidates(monkeypatch):
     _stdin(monkeypatch, {'hook_event_name': 'UserPromptSubmit'})
     assert HookContext().prompt == ''
+
+
+def test_prompt_reads_kimi_content_block_list(monkeypatch):
+    """Kimi sends UserPromptSubmit.prompt as a content-block list where
+    Claude sends a bare string; HookContext must flatten it, not drop it."""
+    _stdin(monkeypatch, {'hook_event_name': 'UserPromptSubmit',
+                          'prompt': [{'type': 'text', 'text': 'from kimi'}]})
+    assert HookContext().prompt == 'from kimi'
+
+
+# Payload shapes exercised by both extractors below. Claude-shaped (bare
+# string) cases come first so a break in the primary path is obvious.
+_PROMPT_PAYLOADS = [
+    {'prompt': 'plain claude prompt'},
+    {'prompt': '   padded  \n'},
+    {'text': 'from text'},
+    {'message': 'from message'},
+    {'text': 'from text', 'message': 'from message'},
+    {'prompt': '', 'text': 'from text'},
+    {'prompt': 42, 'text': True, 'message': 'real'},
+    {'tool_input': {'text': 'tool text'}},
+    {'tool_input': {'message': 'tool message'}},
+    {'tool_input': {'prompt': 'tool prompt'}},
+    {'tool_input': {'description': 'tool description'}},
+    {'tool_input': None, 'input': 'from input'},
+    {},
+    {'prompt': [{'type': 'text', 'text': 'kimi block'}]},
+    {'prompt': [{'type': 'text', 'text': 'first'}, {'type': 'text', 'text': 'second'}]},
+    {'prompt': ['bare', 'strings']},
+    {'prompt': [{'type': 'image'}, {'type': 'text', 'text': 'describe this'}]},
+    {'prompt': []},
+    {'prompt': [{'type': 'image'}], 'text': 'fallback'},
+    {'prompt': [{'type': 'image'}, 123, None]},
+]
+
+
+@pytest.mark.parametrize('payload', _PROMPT_PAYLOADS)
+def test_prompt_mirrors_core_extract_prompt(monkeypatch, payload):
+    """The mirror invariant, enforced rather than commented: HookContext must
+    return exactly what hook_manager.core._extract_prompt returns for the same
+    payload. Fails the moment either side grows a shape the other lacks."""
+    from hook_manager.core import _extract_prompt
+
+    _stdin(monkeypatch, dict(payload, hook_event_name='UserPromptSubmit'))
+    assert HookContext().prompt == _extract_prompt(payload)
+
+
+def _legacy_extract_prompt(p):
+    """The candidate loop as it stood before content-block support, kept as an
+    oracle for the Claude (bare-string) path."""
+    candidates = [
+        p.get('prompt'),
+        p.get('text'),
+        p.get('message'),
+        (p.get('tool_input') or {}).get('text'),
+        (p.get('tool_input') or {}).get('message'),
+        (p.get('tool_input') or {}).get('prompt'),
+        (p.get('tool_input') or {}).get('description'),
+        p.get('input'),
+    ]
+    for c in candidates:
+        if isinstance(c, str) and c.strip():
+            return c.strip()
+    return ''
+
+
+@pytest.mark.parametrize(
+    'payload',
+    [p for p in _PROMPT_PAYLOADS if not any(isinstance(v, list) for v in p.values())],
+)
+def test_prompt_claude_shapes_unchanged(monkeypatch, payload):
+    """Content-block support must not perturb any string-shaped payload:
+    every Claude case still resolves to what the pre-change loop returned."""
+    _stdin(monkeypatch, dict(payload, hook_event_name='UserPromptSubmit'))
+    assert HookContext().prompt == _legacy_extract_prompt(payload)
 
 
 # ── Span helpers (thin wrappers around lib.trace.trace_context) ────────────

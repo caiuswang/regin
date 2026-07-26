@@ -956,7 +956,12 @@ def _post_tool_attribution_event(
     by tool_use_id — the live PostToolUse span is posted parent-less
     because at PostToolUse time the issuing turn isn't yet known. This is
     a parent UPDATE on the existing row, never a re-post, so the rich
-    PostToolUse attributes (diff/stdout) are preserved."""
+    PostToolUse attributes (diff/stdout) are preserved.
+
+    `duration_ms` / `source_prompt_id` ride along for the same reason: a
+    provider whose CLI reports neither on the hook payload (Kimi) can only
+    recover them from the transcript, and ingest fills them in fill-only
+    (a hook-measured duration is never clobbered)."""
     from lib.hook_plugin import post_event  # type: ignore
     calls = [
         {
@@ -965,6 +970,8 @@ def _post_tool_attribution_event(
             'output_tokens': tc.get('output_token_estimate'),
             'input_tokens': tc.get('input_token_estimate'),
             'image_tokens': tc.get('image_token_estimate'),
+            'duration_ms': tc.get('duration_ms'),
+            'source_prompt_id': tc.get('source_prompt_id'),
         }
         for tc in turn.tool_calls
         if isinstance(tc.get('id'), str)

@@ -201,6 +201,19 @@ REGISTRY: list[Handler] = [
         fn=rule_check.handle,
     ),
     Handler(
+        name='rule_check_prompt',
+        label='Rule Check (Deferred Feedback)',
+        summary='Replays rule findings parked by an earlier PostToolUse.',
+        match_hint='Providers that discard PostToolUse hook output',
+        events=['UserPromptSubmit'],
+        kind='enrich',
+        priority=95,
+        # A second entry rather than adding the event to `rule_check`:
+        # `fn` is a single callable, so the shared entry would dispatch
+        # `handle` on UserPromptSubmit, where it has nothing to check.
+        fn=rule_check.handle_prompt,
+    ),
+    Handler(
         name='doc_check',
         label='Doc Hygiene Check',
         summary='Warns when a Markdown edit introduces rot-prone counts or stale phrases.',
@@ -312,6 +325,18 @@ REGISTRY: list[Handler] = [
         priority=50,
         fn=subagent_lifecycle.handle_stop,
     ),
+    Handler(
+        name='subagent_sweep',
+        label='Subagent Reconcile Sweep',
+        summary='Re-runs subagent reconciliation at a turn/session boundary so '
+                'a subagent whose SubagentStop never arrived still gets nested.',
+        match_hint='Stop/SessionEnd for providers whose subagent hooks land on '
+                   'the parent session (Kimi); returns immediately for Claude',
+        events=['Stop', 'SessionEnd'],
+        kind='trace',
+        priority=60,
+        fn=subagent_lifecycle.handle_sweep,
+    ),
 
     # ── Compaction boundaries ──────────────────────────────────────────
     Handler(
@@ -351,6 +376,18 @@ REGISTRY: list[Handler] = [
         kind='trace',
         priority=50,
         fn=task_lifecycle.handle_completed,
+    ),
+    Handler(
+        name='task_notification',
+        label='Background Task Notification',
+        summary='Turns a provider background-task notification into the '
+                'task.notification conversation card.',
+        match_hint='Notification events carrying a background-task source_id '
+                   '(Kimi); user-facing idle/permission notifications emit nothing',
+        events=['Notification'],
+        kind='trace',
+        priority=50,
+        fn=misc_events.notification,
     ),
 
     # ── Per-turn token usage from the transcript ──────────────────────

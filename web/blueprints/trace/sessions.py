@@ -597,6 +597,18 @@ def api_session_detail(trace_id):
     })
 
 
+# TaskCreate/TaskUpdate carry ONE task per span; the snapshot tool — Kimi's
+# `TodoList` — resends the WHOLE list on every write. Both feed the same event
+# log. Claude Code's `TodoWrite` is deliberately excluded: it is not recorded as
+# a snapshot span at all (hook_manager/handlers/post_tool_trace.py).
+_TASK_SPAN_NAMES = ('tool.TaskCreate', 'tool.TaskUpdate', 'tool.TodoList')
+
+# Statuses a dropped task is never rewritten to `deleted` from. `completed` is
+# here because the session-header badge filters `deleted` out entirely, so
+# retiring finished work would silently erase it from the task counts.
+_UNRETIRABLE_STATUSES = frozenset({'completed', 'deleted'})
+
+
 def _fetch_session_task_list(trace_id: str) -> dict | None:
     """Return the session's task-list events plus its final snapshot.
 
@@ -629,9 +641,10 @@ def _fetch_session_task_list(trace_id: str) -> dict | None:
             _select(
                 SessionSpan.span_id, SessionSpan.name,
                 SessionSpan.start_time, SessionSpan.attributes,
+                SessionSpan.agent_id,
             )
             .where(SessionSpan.trace_id == trace_id)
-            .where(SessionSpan.name.in_(('tool.TaskCreate', 'tool.TaskUpdate')))
+            .where(SessionSpan.name.in_(_TASK_SPAN_NAMES))
             .order_by(SessionSpan.start_time.asc(), SessionSpan.id.asc())
         ).all()
     if not rows:
@@ -645,8 +658,13 @@ def _fetch_session_task_list(trace_id: str) -> dict | None:
     # rather than always on its TaskCreate. Pending tasks (never
     # updated) fall back to the TaskCreate span.
     last_span_by_status: dict[str, dict[str, str]] = {}
+    # (agent_id, subject) → task_id, for the snapshot tool whose todos carry no
+    # id. Keyed by agent because a subagent keeps its OWN list in the same
+    # trace: sharing identity across agents would let one agent's snapshot
+    # retire another's live tasks.
+    todo_ids: dict[tuple[str, str], str] = {}
     for r in rows:
-        _apply_task_row(r, events, state, last_span_by_status)
+        _apply_task_row(r, events, state, last_span_by_status, todo_ids)
     if not events:
         return None
     final = _finalize_task_state(state, last_span_by_status)
@@ -658,25 +676,44 @@ def _str_attr(value) -> str:
     return value if isinstance(value, str) and value else ''
 
 
-def _apply_task_row(r, events, state, last_span_by_status) -> None:
-    """Fold one TaskCreate/TaskUpdate span into the event log + state.
+def _apply_task_row(r, events, state, last_span_by_status, todo_ids=None) -> None:
+    """Fold one task-write span into the event log + state.
 
-    Appends a per-span event (omitting subject/status when absent) and
-    updates the running per-task entry: first non-empty subject wins,
-    every set status both overwrites the entry and records the span_id
-    under that status in `last_span_by_status`.
+    A snapshot span (`todos` attr) expands into one event per task; a
+    TaskCreate/TaskUpdate span contributes its single task.
     """
     try:
         attrs = json.loads(r.attributes) if r.attributes else {}
     except (ValueError, TypeError):
         attrs = {}
+    todos = attrs.get('todos')
+    if isinstance(todos, list) and todos:
+        # The column is promoted from attributes at insert; rows written before
+        # that promotion only carry the attribute.
+        agent = _str_attr(getattr(r, 'agent_id', None)) or _str_attr(
+            attrs.get('agent_id'))
+        _apply_todo_snapshot(r, todos, agent, events, state,
+                             last_span_by_status,
+                             todo_ids if todo_ids is not None else {})
+        return
     tid = attrs.get('task_id')
     if tid is None:
         return
-    tid = str(tid)
-    subject = _str_attr(attrs.get('subject'))
-    status = _str_attr(attrs.get('status'))
-    active_form = _str_attr(attrs.get('active_form'))
+    _record_task_event(r, {
+        'task_id': str(tid),
+        'subject': _str_attr(attrs.get('subject')),
+        'status': _str_attr(attrs.get('status')),
+        'active_form': _str_attr(attrs.get('active_form')),
+    }, events, state, last_span_by_status)
+
+
+def _record_task_event(r, task: dict, events, state, last_span_by_status) -> None:
+    """Append one task's event (omitting subject/status when absent) and update
+    the running per-task entry: first non-empty subject wins, every set status
+    both overwrites the entry and records the span_id under that status in
+    `last_span_by_status`.
+    """
+    tid, subject, status = task['task_id'], task['subject'], task['status']
     event: dict = {
         'span_id': r.span_id,
         'timestamp': r.start_time,
@@ -697,11 +734,65 @@ def _apply_task_row(r, events, state, last_span_by_status) -> None:
     })
     if subject and not entry['subject']:
         entry['subject'] = subject
-    if active_form and not entry['active_form']:
-        entry['active_form'] = active_form
+    if task['active_form'] and not entry['active_form']:
+        entry['active_form'] = task['active_form']
     if status:
         entry['status'] = status
         last_span_by_status.setdefault(tid, {})[status] = r.span_id
+
+
+def _apply_todo_snapshot(r, todos, agent, events, state, last_span_by_status,
+                         todo_ids) -> None:
+    """Fold one whole-list task write (`tool.TodoList`) by its writing agent.
+
+    Its todos carry no id, and a session can replace the list wholesale (a new
+    plan reuses position 1 for a different task), so identity is the subject:
+    `todo_ids` hands each newly-seen (agent, subject) the next ordinal.
+    Position-keyed ids would be one span shorter but graft a replacement's
+    subject onto the old task's history; the cost here is only that a task
+    inserted mid-list sorts after the ones already seen.
+    """
+    seen: set[str] = set()
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        subject = _str_attr(todo.get('subject'))
+        if not subject:
+            continue
+        # Namespaced so a minted snapshot id can never collide with a
+        # provider-supplied TaskCreate/TaskUpdate `task_id`, which is a bare
+        # ordinal drawn from the same `state` keyspace.
+        tid = todo_ids.setdefault((agent, subject), f'todo-{len(todo_ids) + 1}')
+        seen.add(tid)
+        _record_task_event(r, {
+            'task_id': tid,
+            'subject': subject,
+            'status': _str_attr(todo.get('status')) or 'pending',
+            'active_form': _str_attr(todo.get('active_form')),
+        }, events, state, last_span_by_status)
+    _retire_missing_todos(r, agent, seen, events, state, last_span_by_status,
+                          todo_ids)
+
+
+def _retire_missing_todos(r, agent, seen, events, state, last_span_by_status,
+                          todo_ids) -> None:
+    """A task the newest snapshot dropped is recorded `deleted` — that's how the
+    task-list surfaces retire it, so the card keeps matching the list the model
+    now sees instead of stranding the old plan's items as open work.
+
+    Only the writing agent's OWN tasks are eligible: a subagent's list is a
+    different list that happens to share the trace, and retiring across agents
+    would mark the main agent's live work deleted (and vice versa).
+    """
+    for (owner, _subject), tid in todo_ids.items():
+        if owner != agent or tid in seen:
+            continue
+        if state.get(tid, {}).get('status') in _UNRETIRABLE_STATUSES:
+            continue
+        _record_task_event(r, {
+            'task_id': tid, 'subject': '', 'status': 'deleted',
+            'active_form': '',
+        }, events, state, last_span_by_status)
 
 
 def _finalize_task_state(state, last_span_by_status) -> list[dict]:

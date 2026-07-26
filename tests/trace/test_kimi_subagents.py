@@ -29,15 +29,28 @@ def _loop(event: dict, time: int = 0) -> dict:
 
 
 def _subagent_wire(path: Path, prefix: str, first_prompt: str,
-                   tool_ids: list[str], final_text: str) -> None:
+                   tool_ids: list[str], final_text: str,
+                   profile: str | None = "explore") -> None:
     """A minimal subagent wire: one prompt, a tool-call step, and a text step.
     Step uuids are prefixed so two subagents never collide (real Kimi uuids are
-    globally unique; the replayed-turn span ids are derived from them)."""
+    globally unique; the replayed-turn span ids are derived from them).
+    `profile` mirrors the real wire's `config.update.profileName` — the
+    subagent's declared kind."""
     s1, s2 = f"{prefix}-s1", f"{prefix}-s2"
     records: list[dict] = [
         {"type": "metadata", "protocol_version": "1.4", "created_at": 1},
+        {"type": "config.update", "cwd": "/proj", "modelAlias": "kimi-code/k3",
+         "time": 1},
+    ]
+    if profile:
+        records.append({"type": "config.update", "profileName": profile,
+                        "systemPrompt": "You are now running as a subagent.",
+                        "time": 1})
+    records += [
         {"type": "turn.prompt",
          "input": [{"type": "text", "text": first_prompt}], "time": 1_000},
+    ]
+    records += [
         _loop({"type": "step.begin", "uuid": s1}),
         _loop({"type": "content.part", "stepUuid": s1,
                "part": {"type": "think", "think": "working"}}),
@@ -79,7 +92,12 @@ def kimi_home(tmp_path, monkeypatch):
     return agents
 
 
-def _seed(db_path, *, with_prompt_preview: bool) -> None:
+def _seed(db_path, *, with_prompt_preview: bool, with_stops: bool = True) -> None:
+    """Seed the flat parent trace exactly as Kimi's hooks leave it: PENDING
+    `tool.Agent` launches (Kimi fires no PostToolUse for an Agent call), the
+    subagents' tool calls leaked flat under the parent prompt, and markers whose
+    `agent_type` is the PROVIDER id. `with_stops=False` is the reference
+    session's shape — SubagentStop never fired."""
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute(
@@ -87,22 +105,29 @@ def _seed(db_path, *, with_prompt_preview: bool) -> None:
             (_SID, "2026-06-01T00:00:00", "2026-06-01T00:00:00"),
         )
 
-        def span(span_id, name, ts, attrs, tool_use_id=None, parent_id=None):
+        def span(span_id, name, ts, attrs, tool_use_id=None, parent_id=None,
+                 status="OK"):
             conn.execute(
                 "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
-                "attributes, tool_use_id, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (_SID, span_id, name, ts, json.dumps(attrs), tool_use_id, parent_id),
+                "attributes, tool_use_id, parent_id, status_code) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (_SID, span_id, name, ts, json.dumps(attrs), tool_use_id,
+                 parent_id, status),
             )
 
         span("conv", "conversation", "2026-06-01T00:00:00", {})
         span("prompt-1", "prompt", "2026-06-01T00:00:01", {}, parent_id="conv")
-        # Launch spans carry the prompt that re-identifies each subagent.
-        span("agent-0", "tool.Agent", "2026-06-01T00:00:02",
+        # Launch spans carry the prompt that re-identifies each subagent. Kimi
+        # only ever emits the PreToolUse placeholder, so they stay PENDING and
+        # the tool_use_id lives in attributes, not the column.
+        span("pending-launch-0", "tool.Agent", "2026-06-01T00:00:02",
              {"prompt": "Explore alpha subsystem now", "subagent_type": "explore",
-              "description": "alpha"}, tool_use_id="launch-0", parent_id="prompt-1")
-        span("agent-1", "tool.Agent", "2026-06-01T00:00:03",
+              "description": "alpha", "tool_use_id": "launch-0"},
+             parent_id="prompt-1", status="PENDING")
+        span("pending-launch-1", "tool.Agent", "2026-06-01T00:00:03",
              {"prompt": "Explore beta subsystem now", "subagent_type": "explore",
-              "description": "beta"}, tool_use_id="launch-1", parent_id="prompt-1")
+              "description": "beta", "tool_use_id": "launch-1"},
+             parent_id="prompt-1", status="PENDING")
         # Leaked subagent tool spans (flat under the prompt, no agent_id).
         for tid in ("call-a1", "call-a2", "call-b1"):
             span(f"tsp-{tid}", "tool.Read", "2026-06-01T00:00:04",
@@ -116,8 +141,9 @@ def _seed(db_path, *, with_prompt_preview: bool) -> None:
             a1["prompt_preview"] = "Explore beta subsystem now"
         span("S0", "subagent.start", "2026-06-01T00:00:05", a0, parent_id="prompt-1")
         span("S1", "subagent.start", "2026-06-01T00:00:06", a1, parent_id="prompt-1")
-        span("T0", "subagent.stop", "2026-06-01T00:00:30", {"agent_type": "kimi"}, parent_id="prompt-1")
-        span("T1", "subagent.stop", "2026-06-01T00:00:31", {"agent_type": "kimi"}, parent_id="prompt-1")
+        if with_stops:
+            span("T0", "subagent.stop", "2026-06-01T00:00:30", {"agent_type": "kimi"}, parent_id="prompt-1")
+            span("T1", "subagent.stop", "2026-06-01T00:00:31", {"agent_type": "kimi"}, parent_id="prompt-1")
         conn.commit()
     finally:
         conn.close()
@@ -140,7 +166,8 @@ def _agent_id_of(db_path, tool_use_id) -> str | None:
 def test_tool_spans_get_subagent_agent_id(tmp_db, kimi_home, with_prompt_preview):
     _seed(tmp_db, with_prompt_preview=with_prompt_preview)
     result = reconcile_kimi_subagents(_SID)
-    assert result == {"subagents": 2, "tool_spans": 3, "turns": 4}
+    assert result == {"subagents": 2, "tool_spans": 3, "turns": 4,
+                      "launches_closed": 2}
     # Each leaked tool span now carries its launching agent's id.
     assert _agent_id_of(tmp_db, "call-a1") == "launch-0"
     assert _agent_id_of(tmp_db, "call-a2") == "launch-0"
@@ -248,4 +275,127 @@ def test_discover_finds_session_with_subagents(tmp_db, kimi_home):
 def test_no_subagents_is_noop(tmp_db, monkeypatch, tmp_path):
     monkeypatch.setattr(kimi_provider, "_KIMI_HOME", tmp_path)
     assert reconcile_kimi_subagents("session_missing") == {
-        "subagents": 0, "tool_spans": 0, "turns": 0}
+        "subagents": 0, "tool_spans": 0, "turns": 0, "launches_closed": 0}
+
+
+# ── agent_id / identity / launch closing (provider parity) ─────────────────
+
+def _rows(db_path, sql, params=()):
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, (_SID, *params))]
+    finally:
+        conn.close()
+
+
+def test_agent_id_column_populated_for_scope_pane(tmp_db, kimi_home):
+    """The `?agent=` scope pane and the roster group on the agent_id COLUMN
+    (pending_spans.AGENT_ID_SQL), not just the JSON attribute."""
+    _seed(tmp_db, with_prompt_preview=True)
+    reconcile_kimi_subagents(_SID)
+    by_agent: dict = {}
+    for r in _rows(tmp_db, "SELECT agent_id, name FROM session_spans "
+                           "WHERE trace_id = ? AND agent_id IS NOT NULL"):
+        by_agent.setdefault(r["agent_id"], []).append(r["name"])
+    assert set(by_agent) == {"launch-0", "launch-1"}
+    # Markers, leaked tools, replayed turns and the task prompt are all scoped.
+    assert set(by_agent["launch-0"]) == {
+        "subagent.start", "subagent.stop", "tool.Read",
+        "assistant_response", "assistant.thinking", "prompt"}
+
+
+def test_marker_kind_is_the_subagent_not_the_provider(tmp_db, kimi_home):
+    """`agent_type` on the marker must be the wire's `profileName`, not the
+    provider id the SubagentStart hook writes there — that is what made every
+    Kimi subagent card render as an anonymous row."""
+    _seed(tmp_db, with_prompt_preview=True)
+    reconcile_kimi_subagents(_SID)
+    kinds = {r["k"] for r in _rows(
+        tmp_db, "SELECT json_extract(attributes, '$.agent_type') AS k "
+                "FROM session_spans WHERE trace_id = ? "
+                "AND name IN ('subagent.start', 'subagent.stop')")}
+    assert kinds == {"explore"}
+
+
+def test_launch_span_is_closed(tmp_db, kimi_home):
+    """Kimi fires no PostToolUse for an `Agent` call, so its launch placeholder
+    would render PENDING forever (and then be demoted to 'interrupted')."""
+    _seed(tmp_db, with_prompt_preview=True)
+    before = _rows(tmp_db, "SELECT status_code, end_time FROM session_spans "
+                           "WHERE trace_id = ? AND name = 'tool.Agent'")
+    assert {r["status_code"] for r in before} == {"PENDING"}
+    assert all(r["end_time"] is None for r in before)
+    reconcile_kimi_subagents(_SID)
+    after = _rows(tmp_db, "SELECT status_code, end_time, duration_ms "
+                          "FROM session_spans WHERE trace_id = ? "
+                          "AND name = 'tool.Agent'")
+    assert {r["status_code"] for r in after} == {"OK"}
+    assert all(r["end_time"] and r["duration_ms"] >= 0 for r in after)
+
+
+def test_task_prompt_span_emitted_per_agent(tmp_db, kimi_home):
+    """The scoped view opens on a TASK PROMPT card, same as Claude's
+    `prompt-sa-<agent_id>` anchor."""
+    _seed(tmp_db, with_prompt_preview=True)
+    reconcile_kimi_subagents(_SID)
+    prompts = {r["span_id"]: r["text"] for r in _rows(
+        tmp_db, "SELECT span_id, json_extract(attributes, '$.text') AS text "
+                "FROM session_spans WHERE trace_id = ? AND name = 'prompt' "
+                "AND span_id LIKE 'prompt-sa-%'")}
+    assert prompts == {
+        "prompt-sa-launch-0": "Explore alpha subsystem now",
+        "prompt-sa-launch-1": "Explore beta subsystem now",
+    }
+
+
+def test_recovers_when_subagent_stop_never_fired(tmp_db, kimi_home):
+    """The reference-session failure: two `subagent.start` markers, no stop,
+    every span agent_id-NULL. Reconciliation must still nest and identify —
+    this is why it is also called from SubagentStart / the Stop sweep."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    result = reconcile_kimi_subagents(_SID)
+    assert result["subagents"] == 2
+    assert _agent_id_of(tmp_db, "call-a1") == "launch-0"
+    stops = _rows(tmp_db, "SELECT span_id, agent_id FROM session_spans "
+                          "WHERE trace_id = ? AND name = 'subagent.stop'")
+    # Inserted from the wire so the agent isn't stuck 'running' forever.
+    assert {r["agent_id"] for r in stops} == {"launch-0", "launch-1"}
+    assert {r["span_id"] for r in stops} == {
+        "sa-stop-launch-0", "sa-stop-launch-1"}
+
+
+def test_second_run_changes_nothing(tmp_db, kimi_home):
+    """Idempotency across two runs — the property every new trigger point
+    (SubagentStart, the Stop/SessionEnd sweep, backfill) relies on."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    first = reconcile_kimi_subagents(_SID)
+    sql = ("SELECT span_id, name, status_code, end_time, duration_ms, "
+           "agent_id, attributes FROM session_spans WHERE trace_id = ? "
+           "ORDER BY span_id")
+    snapshot = _rows(tmp_db, sql)
+    second = reconcile_kimi_subagents(_SID)
+    assert _rows(tmp_db, sql) == snapshot
+    # `launches_closed` counts rows actually transitioned out of PENDING, so a
+    # second pass legitimately reports 0 — everything else is value-stable.
+    assert first["launches_closed"] == 2 and second["launches_closed"] == 0
+    assert {k: v for k, v in second.items() if k != "launches_closed"} == \
+           {k: v for k, v in first.items() if k != "launches_closed"}
+
+
+def test_unmatched_launch_still_named_from_the_wire(tmp_db, kimi_home):
+    """With no `tool.Agent` launch to match, the subagent falls back to a
+    positional agent_id but still takes its kind from its own wire."""
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen) "
+            "VALUES (?, ?, ?)", (_SID, "2026-06-01T00:00:00", "2026-06-01T00:00:00"))
+        conn.commit()
+    finally:
+        conn.close()
+    reconcile_kimi_subagents(_SID)
+    kinds = {r["k"] for r in _rows(
+        tmp_db, "SELECT json_extract(attributes, '$.agent_type') AS k "
+                "FROM session_spans WHERE trace_id = ? AND name = 'subagent.start'")}
+    assert kinds == {"explore"}

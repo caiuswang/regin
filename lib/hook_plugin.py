@@ -549,24 +549,14 @@ class HookContext:
     def _extract_prompt(self) -> str:
         """Extract user prompt text from various possible payload fields.
 
-        Claude Code sends the prompt in different fields depending on context
-        (regular chat, plan review text area, tool confirmation, etc.).
+        Delegates to the hook_manager implementation rather than keeping a
+        second candidate loop: the two used to drift apart silently, and a
+        payload shape handled by one but not the other yields an empty prompt
+        with no error. Imported lazily to keep lib/ free of an import-time
+        dependency on the hook_manager package, matching the span helpers below.
         """
-        p = self.payload
-        candidates = [
-            p.get('prompt'),
-            p.get('text'),
-            p.get('message'),
-            (p.get('tool_input') or {}).get('text'),
-            (p.get('tool_input') or {}).get('message'),
-            (p.get('tool_input') or {}).get('prompt'),
-            (p.get('tool_input') or {}).get('description'),
-            p.get('input'),
-        ]
-        for c in candidates:
-            if isinstance(c, str) and c.strip():
-                return c.strip()
-        return ''
+        from hook_manager.core import _extract_prompt as core_extract_prompt
+        return core_extract_prompt(self.payload)
 
     def start_span(self, name: str, attributes: dict | None = None, persistent: bool = False, parent_id: str | None = None) -> dict:
         """Start a span on the active trace context stack."""

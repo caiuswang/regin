@@ -19,7 +19,39 @@ def handle_start(payload: HookPayload) -> HookResponse | None:
         _emit_span(payload, 'subagent.start')
     except Exception:
         pass
+    if _needs_parent_scoped_reconcile(payload):
+        _reconcile_subagents(payload)
     return HookResponse(suppress_output=True)
+
+
+def handle_sweep(payload: HookPayload) -> HookResponse | None:
+    """Turn/session boundary: re-run the provider's subagent reconciliation.
+
+    Hanging reconciliation off `SubagentStop` alone makes a single missed Stop
+    permanent, and Kimi frequently never fires one (the reference session has
+    two `subagent.start` markers and no stop at all). `Stop`/`SessionEnd` are
+    the two boundaries guaranteed to arrive afterwards, and reconciliation is
+    idempotent, so re-running there is the self-heal."""
+    if _needs_parent_scoped_reconcile(payload):
+        _reconcile_subagents(payload)
+    return HookResponse(suppress_output=True)
+
+
+def _needs_parent_scoped_reconcile(payload: HookPayload) -> bool:
+    """Whether this provider's subagent activity lands on the PARENT session
+    and so has to be re-nested from outside the `SubagentStop` path.
+
+    Keyed on `transcript_format` — the same discriminator the provider-
+    dispatched transcript layer uses (`lib/trace/live_rescan`,
+    `lib/trace/repair`). A Claude-shaped session already scopes a subagent's
+    hooks and transcript to the subagent itself, and its `reconcile_subagents`
+    is a full re-walk of every subagent transcript, so firing it at each start
+    and each turn `Stop` would be per-turn work that produces no new spans."""
+    try:
+        provider = payload.resolved_provider
+        return getattr(provider, 'transcript_format', 'claude') != 'claude'
+    except Exception:
+        return False
 
 
 def handle_stop(payload: HookPayload) -> HookResponse | None:
@@ -58,7 +90,14 @@ def _reconcile_subagents(payload: HookPayload) -> None:
     try:
         payload.resolved_provider.reconcile_subagents(payload.session_id)
     except Exception:
-        pass
+        # Fires on every Stop/SessionEnd, so a persistent delivery failure
+        # would otherwise be indistinguishable from a legitimate no-op.
+        from lib.activity_log import get_activity_logger
+        get_activity_logger('hooks').error(
+            'subagent_reconcile_failed',
+            session_id=payload.session_id,
+            exc_info=True,
+        )
 
 
 _RESULT_PREVIEW_MAX = 200
@@ -103,6 +142,35 @@ def _result_preview(raw: dict) -> str | None:
     return flat[:_RESULT_PREVIEW_MAX] + '…' if len(flat) > _RESULT_PREVIEW_MAX else flat
 
 
+def _is_provider_tag(value) -> bool:
+    """True when a would-be agent_type is really a PROVIDER id ('kimi'), not a
+    subagent kind. Decided by the provider registry, the same source of truth
+    the reconcile-time check in lib/trace/kimi_subagents consults, so the two
+    verdicts can't drift."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        from lib.providers.registry import is_provider_id  # type: ignore
+        return is_provider_id(value)
+    except Exception:
+        return False
+
+
+def _agent_kind(raw: dict) -> str | None:
+    """The SUBAGENT's own kind, never the provider tag.
+
+    Kimi Code puts its provider id in `agent_type` ('kimi') and the real
+    subagent kind in `agent_name` ('explore'), so taking `agent_type` verbatim
+    labels every Kimi subagent card "kimi". Claude sends the subagent's type
+    slug in `agent_type` and no `agent_name`, so it never takes this branch.
+    """
+    kind = raw.get('subagent_type') or raw.get('agent_type')
+    name = raw.get('subagent_name') or raw.get('agent_name')
+    if _is_provider_tag(kind) and isinstance(name, str) and name.strip():
+        return name
+    return kind or name
+
+
 def _span_attributes(raw: dict) -> dict:
     """Identity + preview attributes for a subagent marker span. Claude Code has
     used both `agent_*` and `subagent_*` field names across versions — accept
@@ -110,7 +178,7 @@ def _span_attributes(raw: dict) -> dict:
     let the Kimi reconciler bind a marker to its wire by content."""
     attrs: dict = {}
     fields = {
-        'agent_type': raw.get('subagent_type') or raw.get('agent_type'),
+        'agent_type': _agent_kind(raw),
         'agent_id': raw.get('subagent_id') or raw.get('agent_id'),
         'agent_name': raw.get('subagent_name') or raw.get('agent_name'),
         'description': raw.get('description'),

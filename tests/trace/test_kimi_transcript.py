@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -27,9 +29,9 @@ _RECORDS = [
     _loop({"type": "content.part", "stepUuid": "step-1",
            "part": {"type": "think", "think": "I should run echo."}}),
     _loop({"type": "tool.call", "stepUuid": "step-1", "toolCallId": "call-1",
-           "name": "Bash", "args": {"command": "echo hi"}}),
+           "name": "Bash", "args": {"command": "echo hi"}}, time=1_100),
     _loop({"type": "tool.result", "toolCallId": "call-1",
-           "result": {"output": "hi\n"}}),
+           "result": {"output": "hi\n"}}, time=1_450),
     _loop({"type": "step.end", "uuid": "step-1", "step": 1,
            "usage": {"inputOther": 3000, "output": 40,
                      "inputCacheRead": 10000, "inputCacheCreation": 5},
@@ -150,6 +152,198 @@ def test_no_permission_events_means_no_denials(tmp_path: Path):
 def test_empty_or_missing_returns_none(tmp_path: Path):
     assert read_usage_kimi(str(tmp_path / "nope.jsonl")) is None
     assert read_usage_kimi(_wire(tmp_path / "empty.jsonl", [])) is None
+
+
+def test_tool_duration_from_call_result_record_times(tmp_path: Path):
+    (call,) = _parsed(tmp_path).turns[0].tool_calls
+    assert call["duration_ms"] == 350
+
+
+def test_tool_duration_absent_when_result_never_lands(tmp_path: Path):
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "x"}], "time": 1},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "tool.call", "stepUuid": "s1", "toolCallId": "c1",
+               "name": "Bash", "args": {"command": "sleep 9"}}, time=1_000),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}, time=2_000),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert "duration_ms" not in u.turns[0].tool_calls[0]
+
+
+def test_prompt_ids_minted_and_stamped_on_tool_calls(tmp_path: Path):
+    u = _parsed(tmp_path)
+    # The anchor uuid doubles as the join value both ladder rungs use.
+    assert u.prompt_ids == {"kprompt-0": "kprompt-0"}
+    assert u.turns[0].tool_calls[0]["source_prompt_id"] == "kprompt-0"
+
+
+def test_prompt_ids_track_the_prompt_in_flight(tmp_path: Path):
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "one"}], "time": 1},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "tool.call", "stepUuid": "s1", "toolCallId": "c1",
+               "name": "Bash", "args": {"command": "ls"}}, time=2),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "two"}], "time": 9},
+        _loop({"type": "step.begin", "uuid": "s2"}),
+        _loop({"type": "tool.call", "stepUuid": "s2", "toolCallId": "c2",
+               "name": "Bash", "args": {"command": "pwd"}}, time=10),
+        _loop({"type": "step.end", "uuid": "s2", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert sorted(u.prompt_ids) == ["kprompt-0", "kprompt-1"]
+    assert [t.tool_calls[0]["source_prompt_id"] for t in u.turns] == [
+        "kprompt-0", "kprompt-1",
+    ]
+
+
+def _reminder(text: str, time: int) -> dict:
+    return {"type": "context.append_message", "time": time, "message": {
+        "role": "user",
+        "content": [{"type": "text", "text": text}],
+        "origin": {"kind": "injection", "variant": "todo_list_reminder"},
+    }}
+
+
+def test_system_reminder_becomes_task_reminder_attachment(tmp_path: Path):
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "x"}], "time": 1},
+        _reminder("<system-reminder>\nUpdate the todo list.\n</system-reminder>", 2),
+        # A plain user echo of the prompt is not a reminder and is skipped.
+        {"type": "context.append_message", "time": 3, "message": {
+            "role": "user", "content": [{"type": "text", "text": "x"}],
+            "origin": {"kind": "user"}}},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    (att,) = u.attachments
+    assert att.kind == "task_reminder"
+    assert "Update the todo list." in att.payload["content"]
+    assert att.parent_uuid == "kprompt-0"
+    assert att.timestamp is not None
+
+
+def test_tools_snapshot_diffs_against_active_tools_ignoring_globs(tmp_path: Path):
+    recs = [
+        {"type": "tools.set_active_tools",
+         "names": ["Read", "Bash", "mcp__*"], "time": 1},
+        {"type": "llm.tools_snapshot", "time": 2,
+         "tools": [{"name": "Read"}, {"name": "Bash"}]},
+        {"type": "tools.set_active_tools",
+         "names": ["Read", "Grep"], "time": 3},
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "x"}], "time": 4},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    kinds = [a.kind for a in u.attachments]
+    # The snapshot re-states the same surface (the `mcp__*` selector is not a
+    # tool), so it must not manufacture a second delta.
+    assert kinds == ["deferred_tools_delta", "deferred_tools_delta"]
+    assert u.attachments[0].payload == {
+        "added_names": ["Read", "Bash"], "removed_names": [],
+    }
+    assert u.attachments[1].payload == {
+        "added_names": ["Grep"], "removed_names": ["Bash"],
+    }
+
+
+def test_user_steer_becomes_queued_prompt_and_background_steer_does_not(tmp_path: Path):
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "go"}], "time": 1},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        {"type": "turn.steer", "time": 2, "origin": {"kind": "user"},
+         "input": [{"type": "text", "text": "actually, use ripgrep"}]},
+        {"type": "turn.steer", "time": 3,
+         "origin": {"kind": "background_task", "taskId": "bash-1"},
+         "input": [{"type": "text", "text": "<notification>done</notification>"}]},
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    (att,) = u.attachments
+    assert att.kind == "queued_command"
+    assert att.payload == {
+        "command_mode": "prompt", "prompt": "actually, use ripgrep",
+    }
+
+
+def test_turn_cancel_flags_only_in_flight_tool_calls(tmp_path: Path):
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "x"}], "time": 1},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "tool.call", "stepUuid": "s1", "toolCallId": "done",
+               "name": "Bash", "args": {"command": "ls"}}, time=2),
+        _loop({"type": "tool.result", "toolCallId": "done",
+               "result": {"output": "ok"}}, time=5),
+        _loop({"type": "tool.call", "stepUuid": "s1", "toolCallId": "flight",
+               "name": "Bash", "args": {"command": "sleep 99"}}, time=6),
+        {"type": "turn.cancel", "time": 7},
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    flags = {c["id"]: c.get("interrupted") for c in u.turns[0].tool_calls}
+    assert flags == {"done": None, "flight": True}
+
+
+def test_late_result_clears_the_interrupt_flag(tmp_path: Path):
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "x"}], "time": 1},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "tool.call", "stepUuid": "s1", "toolCallId": "c1",
+               "name": "Bash", "args": {"command": "sleep 1"}}, time=2),
+        {"type": "turn.cancel", "time": 3},
+        _loop({"type": "tool.result", "toolCallId": "c1",
+               "result": {"output": "ok"}}, time=9),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    (call,) = u.turns[0].tool_calls
+    assert "interrupted" not in call
+    assert call["duration_ms"] == 7
+
+
+_BLURB = (
+    '<system>Image compressed to fit model limits: original 2848x196 image/png '
+    '(162 KB) -> sent 2000x138 image/png (97 KB).</system>'
+)
+
+
+def _image_wire(tmp_path: Path, digest: str | None, blob: bytes | None) -> str:
+    main = tmp_path / "main"
+    (main / "blobs").mkdir(parents=True)
+    if digest and blob is not None:
+        (main / "blobs" / digest).write_bytes(blob)
+    recs = [
+        {"type": "turn.prompt", "time": 1, "origin": {"kind": "user"}, "input": [
+            {"type": "text", "text": _BLURB},
+            {"type": "image_url",
+             "imageUrl": {"url": f"blobref:image/png;{digest}"}},
+            {"type": "text", "text": " fix this"},
+        ]},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    return _wire(main / "wire.jsonl", recs)
+
+
+def test_prompt_image_blobref_resolved_and_blurb_stripped(tmp_path: Path):
+    blob = b"\x89PNG\r\n\x1a\n" + b"pixels"
+    digest = hashlib.sha256(blob).hexdigest()
+    u = read_usage_kimi(_image_wire(tmp_path, digest, blob))
+    assert u.prompt_texts == {"kprompt-0": "fix this"}
+    assert u.prompt_image_parts == {"kprompt-0": [{
+        "idx": 1,
+        "media_type": "image/png",
+        "data_b64": base64.b64encode(blob).decode("ascii"),
+    }]}
+
+
+def test_missing_blob_keeps_the_prompt_text(tmp_path: Path):
+    u = read_usage_kimi(_image_wire(tmp_path, "deadbeef" * 8, None))
+    assert u.prompt_texts == {"kprompt-0": "fix this"}
+    assert u.prompt_image_parts == {}
 
 
 def test_max_text_bytes_truncates(tmp_path: Path):
