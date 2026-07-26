@@ -40,7 +40,7 @@ from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
-from lib.topics.core import NON_DRIFTING_REF_TIERS
+from lib.topics.core import NON_DRIFTING_REF_TIERS, is_dir_ref
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.ref_digest import digests_for_topic, repo_id_for_path
 
@@ -173,6 +173,11 @@ def _changed_content(repo_root: Path, ref: Any,
     if not isinstance(ref, dict) or ref.get("tier") in NON_DRIFTING_REF_TIERS:
         return None
     path = ref.get("path")
+    # A directory ref has no content hash of its own, and by design its subtree
+    # is exempt from per-file drift (see `core.is_dir_ref`) — a file whose own
+    # content should stale a wiki must be cited individually.
+    if is_dir_ref(path):
+        return None
     digest = stored.get(path)
     if not path or digest is None:
         return None

@@ -68,24 +68,8 @@
       "tier": "reference"
     },
     {
-      "path": "lib/trace/payload_schemas/README.md",
-      "role": "docs"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Bash.schema.json",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/Agent.schema.json",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/payload_schemas/claude/_mcp_wildcard.schema.json",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/payload_schemas/kimi/Bash.schema.json",
-      "tier": "reference"
+      "path": "lib/trace/payload_schemas/",
+      "role": "schema"
     }
   ],
   "status": "active"

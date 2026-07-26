@@ -62,13 +62,22 @@
       "role": "implementation"
     },
     {
-      "path": "cli/commands/memory.py"
+      "path": "cli/commands/memory.py",
+      "tier": "reference"
     },
     {
       "path": "cli/commands/topics.py"
     },
     {
       "path": "cli/commands/trace.py"
+    },
+    {
+      "path": "cli/commands/goal.py",
+      "tier": "reference"
+    },
+    {
+      "path": "cli/commands/logs.py",
+      "tier": "reference"
     }
   ],
   "status": "active"

@@ -154,10 +154,35 @@
       "tier": "reference"
     },
     {
-      "path": "lib/trace/trace_service/__init__.py"
+      "path": "lib/trace/trace_service/__init__.py",
+      "tier": "reference"
     },
     {
       "path": "lib/trace/trace_service/queries.py",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/timestamps.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/providers/__init__.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/providers/base.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/providers/kimi/__init__.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/providers/kimi_hooks.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/providers/registry.py",
       "tier": "reference"
     }
   ],

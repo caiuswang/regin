@@ -37,7 +37,9 @@ from lib.topics.core import (
     SCHEMA_VERSION,
     TOPIC_STATUSES,
     _valid_id,
+    is_dir_ref,
     normalize,
+    ref_covers,
 )
 
 
@@ -224,6 +226,68 @@ def _ref_vocab_issues(
         )
 
 
+def _noncanonical_ref_issue(tid: str, path: str) -> Optional[ValidationIssue]:
+    """Reject a ref path that isn't the repo-relative canonical spelling of a
+    file. `schemas//x`, `./schemas/x` and `/etc/x` all *exist* as far as
+    `Path.exists` is concerned, but none of them compares equal to the path git
+    reports — so a primary overlap under such a ref would silently escape the
+    boundary audit, and `../` would point outside the repo entirely."""
+    body = path[:-1] if is_dir_ref(path) else path
+    parts = body.split("/")
+    if path.startswith("/") or "" in parts or "." in parts or ".." in parts:
+        return ValidationIssue(
+            severity="error",
+            code="topic.ref_path_not_canonical",
+            message=f"topic {tid} ref {path!r} is not a canonical repo-relative "
+                    f"path (no leading '/', '.', '..' or empty segments)",
+            topic_ids=(tid,),
+            paths=(path,),
+        )
+    return None
+
+
+def _ref_target_issues(
+    tid: str, path: str, repo_path: Path,
+) -> Iterable[ValidationIssue]:
+    """Check a ref against the working tree: it must exist, and its *kind* must
+    match its spelling. A trailing `/` promises a directory subtree; without one
+    the ref promises a single file. Letting the two blur would make coverage
+    ambiguous — `ref_covers` would claim a whole subtree from a path the author
+    meant as one file."""
+    noncanonical = _noncanonical_ref_issue(tid, path)
+    if noncanonical is not None:
+        yield noncanonical
+        return
+    target = repo_path / path
+    if not target.exists():
+        yield ValidationIssue(
+            severity="error",
+            code="graph.dead_ref",
+            message=f"topic {tid} ref does not exist: {path}",
+            topic_ids=(tid,),
+            paths=(path,),
+        )
+        return
+    if is_dir_ref(path) and not target.is_dir():
+        yield ValidationIssue(
+            severity="error",
+            code="topic.ref_kind_mismatch",
+            message=f"topic {tid} ref {path} ends in '/' but is not a "
+                    f"directory; drop the trailing slash",
+            topic_ids=(tid,),
+            paths=(path,),
+        )
+    elif not is_dir_ref(path) and target.is_dir():
+        yield ValidationIssue(
+            severity="error",
+            code="topic.ref_kind_mismatch",
+            message=f"topic {tid} ref {path} is a directory; add a trailing "
+                    f"'/' to cite the whole subtree as one ref",
+            topic_ids=(tid,),
+            paths=(path,),
+        )
+
+
 def _validate_refs(
     tid: str, topic: dict[str, Any], ctx: GraphContext, mode: str,
 ) -> Iterable[ValidationIssue]:
@@ -260,14 +324,7 @@ def _validate_refs(
             )
         seen_paths.add(path)
         if mode == "approved" and ctx.repo_path is not None:
-            if not (ctx.repo_path / path).exists():
-                yield ValidationIssue(
-                    severity="error",
-                    code="graph.dead_ref",
-                    message=f"topic {tid} ref does not exist: {path}",
-                    topic_ids=(tid,),
-                    paths=(path,),
-                )
+            yield from _ref_target_issues(tid, path, ctx.repo_path)
 
 
 def _validate_edges(
@@ -440,14 +497,15 @@ def _audit_shared_primary_refs(topics: dict[str, Any]) -> list[ValidationIssue]:
             _collect_primary_ref_owners(tid, topic, owners)
     out: list[ValidationIssue] = []
     for path, tids in sorted(owners.items()):
-        if len(tids) < 2:
+        pair = tuple(sorted(set(tids) | _covering_owners(owners, path)))
+        if len(pair) < 2:
             continue
-        pair = tuple(sorted(tids))
+        kind = "directory" if is_dir_ref(path) else "file"
         out.append(ValidationIssue(
             severity="warning",
             code="graph.shared_primary_ref",
             message=(
-                f"file {path} is a primary ref of {len(pair)} topics "
+                f"{kind} {path} is a primary ref of {len(pair)} topics "
                 f"({', '.join(pair)}); make it primary in the one topic that "
                 f"explains it and tier:\"reference\" in the others so their "
                 f"wikis don't cover the same code"
@@ -456,6 +514,19 @@ def _audit_shared_primary_refs(topics: dict[str, Any]) -> list[ValidationIssue]:
             paths=(path,),
         ))
     return out
+
+
+def _covering_owners(owners: dict[str, list[str]], path: str) -> set[str]:
+    """Topics that claim `path` primary through a *directory* ref rather than by
+    naming it. Asymmetric on purpose: a dir ref's own path is never reported
+    against the files it covers, so one collision yields exactly one issue —
+    keyed on the narrower path, which is where the boundary has to be redrawn."""
+    return {
+        tid
+        for dir_path, dir_tids in owners.items()
+        if dir_path != path and is_dir_ref(dir_path) and ref_covers(dir_path, path)
+        for tid in dir_tids
+    }
 
 
 def split_by_severity(issues: list[ValidationIssue]) -> tuple[list[ValidationIssue], list[ValidationIssue]]:

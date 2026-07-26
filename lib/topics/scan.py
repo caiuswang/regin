@@ -28,11 +28,13 @@ from lib.topics.core import (
     ValidationResult,
     _valid_id,
     empty_graph,
+    is_dir_ref,
     is_generated_path,
     load_graph,
     load_local_graph,
     match_glob,
     normalize,
+    ref_covers,
     save_local_graph,
     slugify,
     topic_dir,
@@ -271,7 +273,34 @@ def refs_for_topic(files: list[str], topic: dict[str, Any]) -> list[dict[str, st
     for path in files:
         if any(match_glob(path, pattern) for pattern in include) and not any(match_glob(path, pattern) for pattern in exclude):
             refs.append({"path": path})
-    return sorted(refs, key=_ref_sort_key)
+    return sorted(_under_dir_refs(refs, topic), key=_ref_sort_key)
+
+
+def _under_dir_refs(matched: list[dict[str, str]], topic: dict[str, Any]) -> list[dict[str, str]]:
+    """Fold glob matches into the topic's curated directory refs.
+
+    Directory refs are authored by hand, never inferred: a dense data subtree
+    (per-tool JSON schemas, fixtures) is cited once as `dir/` instead of once
+    per file. Scan therefore has to *keep* them — a plain glob reconcile would
+    drop the curated entry and re-expand the subtree it replaced. Files a dir
+    ref covers are dropped from the match set for the same reason."""
+    curated = {ref.get("path") for ref in topic.get("refs", []) or []
+               if isinstance(ref, dict)}
+    dir_paths = [p for p in curated if is_dir_ref(p)]
+    if not dir_paths:
+        return matched
+    kept = [r for r in matched if _survives_collapse(r["path"], curated, dir_paths)]
+    seen = {r["path"] for r in kept}
+    return kept + [{"path": d} for d in dir_paths if d not in seen]
+
+
+def _survives_collapse(path: str, curated: set[str], dir_paths: list[str]) -> bool:
+    """A glob match is folded away only when a curated dir ref covers it *and*
+    the topic doesn't cite it explicitly. The exception is what makes the
+    escape hatch real: a file whose own content the wiki explains can be
+    pulled back out of a collapsed subtree by hand and will survive a rescan
+    (and with it, its per-file drift digest)."""
+    return path in curated or not any(ref_covers(d, path) for d in dir_paths)
 
 
 def is_repo_content_path(path: str) -> bool:

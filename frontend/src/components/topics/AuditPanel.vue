@@ -30,6 +30,26 @@ const error = ref('')
 const lastFixSummary = ref(null)  // { fixed_counts, snapshot_ids, skipped_codes }
 
 const selectedCodes = ref(new Set())
+// A single boundary regression can emit dozens of issues per code; showing them
+// all turns the panel into an unreadable wall, so each group opens truncated.
+const PREVIEW_LIMIT = 10
+const expandedCodes = ref(new Set())
+
+function visibleIssues(code) {
+  const list = byCode.value[code] || []
+  return expandedCodes.value.has(code) ? list : list.slice(0, PREVIEW_LIMIT)
+}
+
+function hiddenCount(code) {
+  return Math.max(0, (byCode.value[code] || []).length - PREVIEW_LIMIT)
+}
+
+function toggleExpanded(code) {
+  const next = new Set(expandedCodes.value)
+  if (next.has(code)) next.delete(code)
+  else next.add(code)
+  expandedCodes.value = next
+}
 
 async function refresh() {
   loading.value = true
@@ -214,7 +234,7 @@ onMounted(refresh)
         <span class="text-xs">{{ byCode[code].length }} issue<span v-if="byCode[code].length !== 1">s</span></span>
       </div>
       <ul class="text-xs space-y-0.5">
-        <li v-for="(issue, i) in byCode[code]" :key="i" class="break-words">
+        <li v-for="(issue, i) in visibleIssues(code)" :key="i" class="break-words">
           <span>{{ issue.message }}</span>
           <span v-if="issue.topic_ids?.length" class="text-slate-600">
             — topics: {{ issue.topic_ids.join(', ') }}
@@ -224,6 +244,15 @@ onMounted(refresh)
           </span>
         </li>
       </ul>
+      <Button
+        v-if="hiddenCount(code) > 0 || expandedCodes.has(code)"
+        variant="link"
+        size="sm"
+        :data-testid="`audit-toggle-${code}`"
+        @click="toggleExpanded(code)"
+      >
+        {{ expandedCodes.has(code) ? 'Show fewer' : `Show all ${byCode[code].length}` }}
+      </Button>
     </div>
   </section>
 </template>

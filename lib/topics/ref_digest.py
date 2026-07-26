@@ -26,6 +26,7 @@ from sqlmodel import select
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.orm.models import Repo, TopicRefDigest
+from lib.topics.core import is_dir_ref
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.wiki_anchors import anchors_in_content, wiki_anchor_tokens
 
@@ -147,7 +148,8 @@ def _capture_topic(session, repo_root: Path, repo_id: int, topic_id: str,
         if not isinstance(ref, dict):
             continue
         path = ref.get("path")
-        if not path:
+        # Directory refs carry no body to hash, embed, or anchor-match.
+        if not path or is_dir_ref(path):
             continue
         content = _read_ref(repo_root, path)
         if content is None:

@@ -1,10 +1,16 @@
 <script setup>
 import Badge from '../Badge.vue'
+import Icon from '../ui/Icon.vue'
 
 defineProps({
   refs: { type: Array, default: () => [] },
   title: { type: String, default: 'References' },
 })
+
+// Trailing slash = the whole subtree cited as one ref (lib/topics/core.py::is_dir_ref).
+function isDirRef(path) {
+  return typeof path === 'string' && path.endsWith('/')
+}
 
 function roleColor(role) {
   if (role === 'test') return 'green'
@@ -23,7 +29,10 @@ function roleColor(role) {
           <Badge :color="roleColor(ref.role)" :label="ref.role" />
           <Badge :color="(ref.tier || 'primary') === 'primary' ? 'blue' : 'gray'" :label="ref.tier || 'primary'" />
         </div>
-        <code class="text-xs break-all">{{ ref.path }}</code>
+        <span class="inline-flex items-center gap-1">
+          <Icon v-if="isDirRef(ref.path)" name="folder" :size="12" class="shrink-0 text-gray-500" />
+          <code class="text-xs break-all">{{ ref.path }}</code>
+        </span>
       </li>
       <li v-if="!(refs || []).length" class="text-sm text-gray-500">No references recorded.</li>
     </ul>
@@ -34,7 +43,12 @@ function roleColor(role) {
           <tr v-for="ref in (refs || [])" :key="`${ref.role}:${ref.path}`">
             <td><Badge :color="roleColor(ref.role)" :label="ref.role" /></td>
             <td><Badge :color="(ref.tier || 'primary') === 'primary' ? 'blue' : 'gray'" :label="ref.tier || 'primary'" /></td>
-            <td><code class="text-xs whitespace-nowrap">{{ ref.path }}</code></td>
+            <td>
+              <span class="inline-flex items-center gap-1">
+                <Icon v-if="isDirRef(ref.path)" name="folder" :size="12" class="shrink-0 text-gray-500" />
+                <code class="text-xs whitespace-nowrap">{{ ref.path }}</code>
+              </span>
+            </td>
           </tr>
           <tr v-if="!(refs || []).length">
             <td colspan="3" class="text-gray-500">No references recorded.</td>

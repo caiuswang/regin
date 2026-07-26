@@ -83,6 +83,33 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def is_dir_ref(path: Any) -> bool:
+    """True when a ref path denotes a *directory* — the whole subtree cited as
+    one entry instead of a ref per file. A trailing ``/`` is the marker, so the
+    kind is readable from graph data alone (audits and diffs run without a
+    working tree).
+
+    The form is for a dense subtree the wiki names but does not narrate
+    file-by-file (per-tool JSON schemas, fixtures). That is a deliberate
+    trade: the subtree gets no per-file content-drift digest, because the
+    point is that editing one of N generated files should not stale a wiki
+    that only describes the shape they share. Cite a file individually when
+    its own content is what the wiki explains."""
+    return isinstance(path, str) and path.endswith("/")
+
+
+def ref_covers(ref_path: Any, file_path: Any) -> bool:
+    """True when `ref_path` *is* `file_path` or is a directory ref containing
+    it. The single definition of ref coverage: the shared-primary audit, scan's
+    collapse, and wiki-debt scoping all route through here, so a directory ref
+    can never mean one thing to the audit and another to the tree."""
+    if not isinstance(ref_path, str) or not isinstance(file_path, str):
+        return False
+    if ref_path == file_path:
+        return True
+    return is_dir_ref(ref_path) and file_path.startswith(ref_path)
+
+
 def repo_name(repo_path: str | Path) -> str:
     return Path(repo_path).resolve().name
 

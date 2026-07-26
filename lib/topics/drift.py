@@ -29,6 +29,7 @@ from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
+from lib.topics.core import ref_covers
 
 log = get_activity_logger("topics")
 
@@ -236,7 +237,7 @@ def cascade_deletions(repo_path: str | Path, store,
     demoted = 0
     for tid, topic in graph.get("topics", {}).items():
         refs = [r for r in topic.get("refs", []) if isinstance(r, dict)]
-        if any(r.get("path") in deletions for r in refs):
+        if any(ref_covers(r.get("path"), d) for r in refs for d in deletions):
             demoted += cascade_topic_stale(store, tid, reason="ref_deleted")
     return demoted
 

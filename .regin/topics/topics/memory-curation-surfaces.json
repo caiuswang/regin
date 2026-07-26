@@ -50,6 +50,14 @@
     {
       "path": "cli/commands/memory.py",
       "role": "entrypoint"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
+      "tier": "reference"
     }
   ],
   "status": "active"

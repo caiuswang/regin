@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
 from lib.topics.content_drift import detect_drifted_topics, emit_refresh_proposal
+from lib.topics.core import ref_covers
 from lib.topics.drift import _git
 from lib.topics.graph_io import load_authoritative_graph
 from lib.topics.wiki import topic_wiki_page
@@ -73,8 +74,11 @@ def _topic_ref_paths(topic: dict[str, Any]) -> list[str]:
 
 
 def _narrow(paths: list[str], changed: Optional[set]) -> list[str]:
-    """Paths kept that fall inside the diff; all of them when unscoped."""
-    return paths if changed is None else [p for p in paths if p in changed]
+    """Paths kept that fall inside the diff; all of them when unscoped. A
+    directory ref is in scope when the diff touched anything beneath it."""
+    if changed is None:
+        return paths
+    return [p for p in paths if any(ref_covers(p, c) for c in changed)]
 
 
 def _topic_debt(repo_path, topic_id: str, topic: dict[str, Any], *,

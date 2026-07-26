@@ -79,6 +79,34 @@
       "path": "ARCHITECTURE.md",
       "role": "architecture",
       "tier": "reference"
+    },
+    {
+      "path": "lib/memory/distill.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/memory/evaluate.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/memory/expand.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/memory/feedback.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/memory/reflect.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/memory/store.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/memory/topic_attach.py",
+      "tier": "reference"
     }
   ],
   "status": "active"

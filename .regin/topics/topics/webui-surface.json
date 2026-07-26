@@ -54,7 +54,8 @@
       "tier": "reference"
     },
     {
-      "path": "frontend/src/views/MemoryView.vue"
+      "path": "frontend/src/views/MemoryView.vue",
+      "tier": "reference"
     },
     {
       "path": "frontend/src/views/RevisionCompareView.vue"
@@ -69,6 +70,14 @@
     },
     {
       "path": "frontend/src/views/SettingsView.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/ExperimentDetailView.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/ExperimentsView.vue",
       "tier": "reference"
     }
   ],

@@ -240,6 +240,11 @@
     {
       "path": "frontend/src/composables/useCompactWatch.js",
       "tier": "reference"
+    },
+    {
+      "path": "lib/trace/payload_schemas/",
+      "role": "schema",
+      "tier": "reference"
     }
   ],
   "status": "active"
