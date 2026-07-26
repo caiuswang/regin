@@ -142,6 +142,34 @@ function getConversationScroller() {
     || document.scrollingElement
     || document.documentElement
 }
+// `block: 'nearest'` semantics against THIS instance's own scroller.
+//
+// Deliberately not `el.scrollIntoView()`: that walks every scrollable
+// ancestor, so the companion pane's reveal also scrolls the page scroller to
+// bring the pane into view. With both feeds reacting to one `selectedSpan`
+// that meant two smooth animations queued on `.content-scroll` in the same
+// tick — they don't merge, the later one simply wins, so the main feed's
+// reveal silently never landed. One instance, one scroller, no fight.
+function revealRow(el) {
+  const s = getConversationScroller()
+  if (!el || !s || typeof s.scrollTo !== 'function') return
+  const page = s === document.scrollingElement || s === document.documentElement
+  const portTop = page ? 0 : s.getBoundingClientRect().top
+  const portBottom = page ? window.innerHeight : s.getBoundingClientRect().bottom
+  // scroll-margin is what gives a prompt card its sticky-header clearance;
+  // scrollIntoView honored it for free, a manual scroll has to read it.
+  const cs = window.getComputedStyle(el)
+  const rect = el.getBoundingClientRect()
+  const top = rect.top - (parseFloat(cs.scrollMarginTop) || 0)
+  const bottom = rect.bottom + (parseFloat(cs.scrollMarginBottom) || 0)
+  const above = top < portTop
+  const below = bottom > portBottom
+  // Already in view, or taller than the port and straddling it — 'nearest'
+  // leaves both alone.
+  if ((!above && !below) || (above && below)) return
+  s.scrollTo({ top: s.scrollTop + (above ? top - portTop : bottom - portBottom),
+    behavior: 'smooth' })
+}
 // Force-expand the prompt/agent that owns a freshly-pinned span so the
 // auto-fold watcher can't collapse the pinned row out of the DOM.
 function ensurePinVisible(spanId) {
@@ -325,57 +353,43 @@ async function selectWorkflowRow(spanId) {
   }
 }
 
+function promptOwnerOf(spanId) {
+  return promptGroups.value.find(g =>
+    g.descendants.some(d => d.span.span_id === spanId)) || null
+}
+// Unfold whatever hides the selected row — its turn, then the agent it ran
+// inside — so there is a row to reveal at all.
+async function unfoldFor(spanId, owner) {
+  if (owner && !isPromptExpanded(owner.prompt.span_id)) {
+    togglePromptExpanded(owner.prompt.span_id, true)
+    await nextTick()
+  }
+  const agentId = agentAncestorId(spanId)
+  if (agentId && !isAgentExpanded(agentId)) {
+    toggleAgentExpanded(agentId)
+    await nextTick()
+  }
+}
+
 // Cross-highlight from external selection (e.g. clicking a colored bar in the
 // parent's mini-timeline strip): scroll the matching prompt — or the prompt
 // that owns the selected descendant — into view. `flush: 'post'` so the
 // fold-toggle reflow (re-registering spanRefs) lands before we read the ref.
 //
 // A selection raised by the sibling feed instance (`followSelection` false)
-// gets the passive half only: it may scroll to a row the reader already
-// unfolded, but it must not unfold anything, and it must not fall back to
-// yanking the feed to some ancestor the reader can't see.
+// gets the passive half only: it may reveal a row the reader already unfolded,
+// but it must not unfold anything, and it must not fall back to yanking the
+// feed to an ancestor the reader can't see.
 watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]) => {
   if (!id) return
-  const owner = promptGroups.value.find(g =>
-    g.descendants.some(d => d.span.span_id === id)
-  )
-  if (props.followSelection) {
-    if (owner && !isPromptExpanded(owner.prompt.span_id)) {
-      togglePromptExpanded(owner.prompt.span_id, true)
-      await nextTick()
-    }
-    // Folded agent: if the selected span lives inside (or is) a collapsed
-    // agent, expand it so its row exists to scroll to.
-    const agentId = agentAncestorId(id)
-    if (agentId && !isAgentExpanded(agentId)) {
-      toggleAgentExpanded(agentId)
-      await nextTick()
-    }
-  }
+  const owner = promptOwnerOf(id)
+  const follow = props.followSelection
+  if (follow) await unfoldFor(id, owner)
   await nextTick()
-  const spanEl = spanRefs.value.get(id)
-  if (spanEl && typeof spanEl.scrollIntoView === 'function') {
-    // A foreign selection reveals INSTANTLY, not smoothly: the sibling feed
-    // scrolls in the same tick, and its own scrollIntoView also targets the
-    // shared page scroller (to keep the pane in view). Two smooth animations
-    // on one container don't queue — the later one wins — so a smooth reveal
-    // here would silently never land.
-    spanEl.scrollIntoView({
-      behavior: props.followSelection ? 'smooth' : 'auto',
-      block: 'nearest',
-    })
-    return
-  }
-  if (!props.followSelection) return
-  const direct = promptRefs.value.get(id) || standaloneRefs.value.get(id)
-  if (direct && typeof direct.scrollIntoView === 'function') {
-    direct.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    return
-  }
-  const el = owner && promptRefs.value.get(owner.prompt.span_id)
-  if (el && typeof el.scrollIntoView === 'function') {
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }
+  const fallback = () => promptRefs.value.get(id)
+    || standaloneRefs.value.get(id)
+    || (owner && promptRefs.value.get(owner.prompt.span_id))
+  revealRow(spanRefs.value.get(id) || (follow ? fallback() : null))
 }, { flush: 'post' })
 
 // ── On-demand content fetching ────────────────────────────────
