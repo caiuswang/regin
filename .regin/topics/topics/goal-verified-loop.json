@@ -24,32 +24,16 @@
   "parent_id": "ops-cli",
   "refs": [
     {
-      "path": "lib/goal_preflight.py",
-      "role": "implementation"
+      "path": "cli/commands/goal.py",
+      "role": "entrypoint"
     },
     {
       "path": "lib/goal_feedback.py",
       "role": "implementation"
     },
     {
-      "path": "cli/commands/goal.py",
-      "role": "entrypoint"
-    },
-    {
-      "path": ".claude/skills/goal-verified/SKILL.md",
-      "role": "docs"
-    },
-    {
-      "path": ".claude/skills/goal-verified-treenav/SKILL.md",
-      "role": "docs"
-    },
-    {
-      "path": "tests/core/test_goal_preflight.py",
-      "role": "test"
-    },
-    {
-      "path": "tests/core/test_goal_feedback.py",
-      "role": "test"
+      "path": "lib/goal_preflight.py",
+      "role": "implementation"
     }
   ],
   "status": "active"

@@ -16,7 +16,7 @@
     "frontend/src/App.vue",
     "frontend/src/components/AppLayout.vue"
   ],
-  "intent": "Give a future agent a one-stop index of every page in the regin dashboard: which Vue view renders each route, how the routes are grouped in the sidebar, which feature flags hide a group, and how the SPA is built and served by Flask. It is a navigational map that hands off to the deep feature topics (memory, trace, rules, topics, live card) rather than re-explaining them.",
+  "intent": "Give a future agent a one-stop index of every page in the regin dashboard: which Vue view renders each route, how the routes are grouped in the sidebar, which feature flags or roles hide a group, and how the SPA is built and served by Flask. It is a navigational map that hands off to the deep feature topics (memory, trace, rules, topics, live card) rather than re-explaining them.",
   "label": "WebUI surface map (Vue 3 SPA pages, router routes, sidebar nav groups & the Flask shell that serves them)",
   "parent_id": "webui",
   "refs": [
@@ -33,8 +33,12 @@
       "role": "entrypoint"
     },
     {
-      "path": "web/app.py",
-      "role": "api"
+      "path": "frontend/src/views/RevisionCompareView.vue",
+      "role": "implementation"
+    },
+    {
+      "path": "frontend/src/views/UsersView.vue",
+      "role": "implementation"
     },
     {
       "path": "frontend/src/views/DesignSystemView.vue",
@@ -42,8 +46,28 @@
       "tier": "reference"
     },
     {
+      "path": "frontend/src/views/AuditView.vue"
+    },
+    {
       "path": "frontend/src/views/DashboardView.vue",
       "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/ExperimentDetailView.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/ExperimentsView.vue",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/views/GradesView.vue"
+    },
+    {
+      "path": "frontend/src/views/InboxView.vue"
+    },
+    {
+      "path": "frontend/src/views/IngestErrorsView.vue"
     },
     {
       "path": "frontend/src/views/LiveSessionView.vue",
@@ -54,11 +78,50 @@
       "tier": "reference"
     },
     {
+      "path": "frontend/src/views/MCPCallsView.vue"
+    },
+    {
       "path": "frontend/src/views/MemoryView.vue",
       "tier": "reference"
     },
     {
-      "path": "frontend/src/views/RevisionCompareView.vue"
+      "path": "frontend/src/views/NotFoundView.vue"
+    },
+    {
+      "path": "frontend/src/views/PatternDetailView.vue"
+    },
+    {
+      "path": "frontend/src/views/PatternsView.vue"
+    },
+    {
+      "path": "frontend/src/views/PayloadLogView.vue"
+    },
+    {
+      "path": "frontend/src/views/PlanDetailView.vue"
+    },
+    {
+      "path": "frontend/src/views/PlansView.vue"
+    },
+    {
+      "path": "frontend/src/views/PromptTemplatesView.vue"
+    },
+    {
+      "path": "frontend/src/views/RepoDetailView.vue"
+    },
+    {
+      "path": "frontend/src/views/RepoTopicsView.vue"
+    },
+    {
+      "path": "frontend/src/views/ReposView.vue"
+    },
+    {
+      "path": "frontend/src/views/RuleDetailView.vue"
+    },
+    {
+      "path": "frontend/src/views/RulesView.vue"
+    },
+    {
+      "path": "frontend/src/views/SchemaDriftView.vue"
     },
     {
       "path": "frontend/src/views/SessionTraceView.vue",
@@ -73,12 +136,22 @@
       "tier": "reference"
     },
     {
-      "path": "frontend/src/views/ExperimentDetailView.vue",
-      "tier": "reference"
+      "path": "frontend/src/views/SkillDetailView.vue"
     },
     {
-      "path": "frontend/src/views/ExperimentsView.vue",
-      "tier": "reference"
+      "path": "frontend/src/views/SkillReadsView.vue"
+    },
+    {
+      "path": "frontend/src/views/SkillsView.vue"
+    },
+    {
+      "path": "frontend/src/views/TraceView.vue"
+    },
+    {
+      "path": "frontend/src/views/TriggersRawView.vue"
+    },
+    {
+      "path": "frontend/src/views/TriggersView.vue"
     }
   ],
   "status": "active"

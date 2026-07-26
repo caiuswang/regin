@@ -62,8 +62,58 @@
       "role": "implementation"
     },
     {
+      "path": "cli/__init__.py"
+    },
+    {
+      "path": "cli/commands/__init__.py"
+    },
+    {
+      "path": "cli/commands/events.py"
+    },
+    {
+      "path": "cli/commands/gate.py"
+    },
+    {
+      "path": "cli/commands/goal.py",
+      "tier": "reference"
+    },
+    {
+      "path": "cli/commands/grader.py"
+    },
+    {
+      "path": "cli/commands/logs.py",
+      "tier": "reference"
+    },
+    {
       "path": "cli/commands/memory.py",
       "tier": "reference"
+    },
+    {
+      "path": "cli/commands/messages.py"
+    },
+    {
+      "path": "cli/commands/patterns.py"
+    },
+    {
+      "path": "cli/commands/repo.py"
+    },
+    {
+      "path": "cli/commands/route.py"
+    },
+    {
+      "path": "cli/commands/rules.py"
+    },
+    {
+      "path": "cli/commands/schema.py"
+    },
+    {
+      "path": "cli/commands/server.py"
+    },
+    {
+      "path": "cli/commands/session.py"
+    },
+    {
+      "path": "cli/commands/skills.py"
     },
     {
       "path": "cli/commands/topics.py"
@@ -72,12 +122,10 @@
       "path": "cli/commands/trace.py"
     },
     {
-      "path": "cli/commands/goal.py",
-      "tier": "reference"
+      "path": "cli/commands/users.py"
     },
     {
-      "path": "cli/commands/logs.py",
-      "tier": "reference"
+      "path": "cli/commands/wiki.py"
     }
   ],
   "status": "active"

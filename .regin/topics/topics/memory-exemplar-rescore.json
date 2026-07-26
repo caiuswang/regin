@@ -35,20 +35,6 @@
     {
       "path": "docs/agent-memory-exemplars.md",
       "role": "docs"
-    },
-    {
-      "path": "frontend/src/components/memory/ExemplarCaseList.vue",
-      "role": "implementation"
-    },
-    {
-      "path": "lib/memory/store.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/memory/models.py",
-      "role": "schema",
-      "tier": "reference"
     }
   ],
   "status": "active"

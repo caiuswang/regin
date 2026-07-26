@@ -39,11 +39,6 @@
     {
       "path": "lib/memory/distill.py",
       "role": "implementation"
-    },
-    {
-      "path": "hook_manager/handlers/post_tool_trace.py",
-      "role": "implementation",
-      "tier": "reference"
     }
   ],
   "status": "active"

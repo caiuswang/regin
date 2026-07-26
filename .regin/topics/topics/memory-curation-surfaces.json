@@ -40,6 +40,10 @@
   "parent_id": "agent-memory",
   "refs": [
     {
+      "path": "cli/commands/memory.py",
+      "role": "entrypoint"
+    },
+    {
       "path": "web/blueprints/memory.py",
       "role": "api"
     },
@@ -48,12 +52,47 @@
       "role": "implementation"
     },
     {
-      "path": "cli/commands/memory.py",
-      "role": "entrypoint"
+      "path": "frontend/src/components/memory/ExemplarCaseList.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryCategoryBar.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryDetail.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryDoctor.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryHeadline.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryList.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryTaxonomy.vue"
     },
     {
       "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
       "tier": "reference"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryTopics.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/MemoryWikiRecalls.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/ReflectPipeline.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/TaxonomyDetail.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/TaxonomyGraph.vue"
+    },
+    {
+      "path": "frontend/src/components/memory/TaxonomyTree.vue"
     },
     {
       "path": "frontend/src/components/memory/TopicRoutePlayground.vue",

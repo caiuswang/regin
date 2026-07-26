@@ -38,37 +38,12 @@
   "parent_id": "agent-memory",
   "refs": [
     {
-      "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
-      "role": "implementation"
-    },
-    {
       "path": "frontend/src/components/memory/MemoryTopicFeedback.vue",
       "role": "implementation"
     },
     {
-      "path": "lib/memory/store.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/memory_recall.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/grader/service.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/memory/models.py",
-      "role": "schema",
-      "tier": "reference"
-    },
-    {
-      "path": "web/blueprints/memory.py",
-      "role": "api",
-      "tier": "reference"
+      "path": "frontend/src/components/memory/TopicRoutePlayground.vue",
+      "role": "implementation"
     }
   ],
   "status": "active"

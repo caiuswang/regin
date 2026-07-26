@@ -43,11 +43,11 @@
   "parent_id": "agent-memory",
   "refs": [
     {
-      "path": "lib/memory/store.py",
+      "path": "lib/memory/expand.py",
       "role": "implementation"
     },
     {
-      "path": "lib/memory/expand.py",
+      "path": "lib/memory/store.py",
       "role": "implementation"
     },
     {

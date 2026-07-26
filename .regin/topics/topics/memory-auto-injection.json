@@ -42,17 +42,12 @@
   "parent_id": "agent-memory",
   "refs": [
     {
-      "path": "hook_manager/handlers/memory_recall.py",
-      "role": "implementation"
-    },
-    {
       "path": "lib/memory/mcp_server.py",
       "role": "entrypoint"
     },
     {
-      "path": "web/blueprints/memory.py",
-      "role": "api",
-      "tier": "reference"
+      "path": "hook_manager/handlers/memory_recall.py",
+      "role": "implementation"
     }
   ],
   "status": "active"

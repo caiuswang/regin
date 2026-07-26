@@ -99,10 +99,6 @@
       "role": "implementation"
     },
     {
-      "path": "lib/orm/engine.py",
-      "role": "implementation"
-    },
-    {
       "path": "lib/providers/claude/__init__.py",
       "role": "implementation",
       "tier": "reference"
@@ -154,14 +150,6 @@
       "tier": "reference"
     },
     {
-      "path": "lib/trace/trace_service/__init__.py",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/trace_service/queries.py",
-      "tier": "reference"
-    },
-    {
       "path": "hook_manager/handlers/turn_trace/timestamps.py",
       "tier": "reference"
     },
@@ -183,6 +171,14 @@
     },
     {
       "path": "lib/providers/registry.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/trace_service/__init__.py",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/trace_service/queries.py",
       "tier": "reference"
     }
   ],

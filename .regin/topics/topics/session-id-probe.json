@@ -22,18 +22,6 @@
     {
       "path": "lib/session_probe.py",
       "role": "implementation"
-    },
-    {
-      "path": "cli/commands/session.py",
-      "role": "entrypoint"
-    },
-    {
-      "path": "tests/test_session_probe.py",
-      "role": "test"
-    },
-    {
-      "path": "tests/cli/test_cli_registration.py",
-      "role": "test"
     }
   ],
   "status": "active"

@@ -35,8 +35,28 @@
       "role": "api"
     },
     {
+      "path": "web/blueprints/trace/ingest_errors.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
+      "path": "web/blueprints/trace/mcp_calls.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
+      "path": "web/blueprints/trace/prompt_images.py",
+      "role": "api",
+      "tier": "reference"
+    },
+    {
       "path": "web/blueprints/trace/sessions.py",
       "role": "api"
+    },
+    {
+      "path": "web/blueprints/trace/skill_reads.py",
+      "role": "api",
+      "tier": "reference"
     },
     {
       "path": "web/blueprints/trace/spans_ingest.py",
@@ -47,80 +67,28 @@
       "role": "api"
     },
     {
-      "path": "web/blueprints/trace/mcp_calls.py",
-      "role": "api",
-      "tier": "reference"
-    },
-    {
-      "path": "web/blueprints/trace/skill_reads.py",
-      "role": "api",
-      "tier": "reference"
-    },
-    {
-      "path": "web/blueprints/trace/prompt_images.py",
-      "role": "api",
-      "tier": "reference"
-    },
-    {
-      "path": "web/blueprints/trace/ingest_errors.py",
-      "role": "api",
-      "tier": "reference"
-    },
-    {
       "path": "lib/orm/models/trace.py",
       "role": "schema"
     },
     {
-      "path": "lib/trace/trace_service/ingest.py",
+      "path": "lib/trace/payload_schemas/",
+      "role": "schema",
+      "tier": "reference"
+    },
+    {
+      "path": "frontend/src/components/SessionConversationView.vue",
       "role": "implementation"
     },
     {
-      "path": "lib/trace/trace_service/queries.py",
+      "path": "frontend/src/views/SessionTraceView.vue",
       "role": "implementation"
     },
     {
-      "path": "lib/trace/merge.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/projection.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/repair.py",
+      "path": "frontend/src/views/SessionsView.vue",
       "role": "implementation"
     },
     {
-      "path": "lib/trace/pending_spans.py",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/payload_validation.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/transcript_parsers.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/transcript_usage.py",
-      "role": "implementation",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/trace_context.py",
-      "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/session_lifecycle.py",
-      "role": "implementation"
-    },
-    {
-      "path": "hook_manager/handlers/prompt_trace.py",
+      "path": "hook_manager/handlers/post_tool_trace.py",
       "role": "implementation",
       "tier": "reference"
     },
@@ -130,9 +98,13 @@
       "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/post_tool_trace.py",
+      "path": "hook_manager/handlers/prompt_trace.py",
       "role": "implementation",
       "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/session_lifecycle.py",
+      "role": "implementation"
     },
     {
       "path": "hook_manager/handlers/trace_payload.py",
@@ -140,11 +112,8 @@
       "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/plan_trace.py",
-      "tier": "reference"
-    },
-    {
-      "path": "hook_manager/handlers/turn_trace/__init__.py",
+      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "role": "implementation",
       "tier": "reference"
     },
     {
@@ -158,8 +127,48 @@
       "tier": "reference"
     },
     {
-      "path": "hook_manager/handlers/turn_trace/deny_detection.py",
+      "path": "lib/trace/merge.py",
       "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/payload_validation.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/projection.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/repair.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/trace_service/ingest.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/trace_service/queries.py",
+      "role": "implementation"
+    },
+    {
+      "path": "lib/trace/transcript_parsers.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "lib/trace/transcript_usage.py",
+      "role": "implementation",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/plan_trace.py",
+      "tier": "reference"
+    },
+    {
+      "path": "hook_manager/handlers/turn_trace/__init__.py",
       "tier": "reference"
     },
     {
@@ -171,80 +180,84 @@
       "tier": "reference"
     },
     {
-      "path": "frontend/src/views/SessionTraceView.vue",
-      "role": "implementation"
+      "path": "lib/trace/__init__.py"
     },
     {
-      "path": "frontend/src/views/SessionsView.vue",
-      "role": "implementation"
+      "path": "lib/trace/claude_subagents.py"
     },
     {
-      "path": "frontend/src/components/SessionConversationView.vue",
-      "role": "implementation"
+      "path": "lib/trace/claude_version.py"
     },
     {
-      "path": "frontend/src/composables/useAgentLaunchMerge.js",
+      "path": "lib/trace/file_history.py"
+    },
+    {
+      "path": "lib/trace/is_test.py"
+    },
+    {
+      "path": "lib/trace/kimi_subagents.py"
+    },
+    {
+      "path": "lib/trace/kimi_transcript.py"
+    },
+    {
+      "path": "lib/trace/live_rescan.py"
+    },
+    {
+      "path": "lib/trace/payload_drift_store.py"
+    },
+    {
+      "path": "lib/trace/pending_spans.py",
       "tier": "reference"
     },
     {
-      "path": "frontend/src/components/conversation/ConversationSpanCard.vue",
+      "path": "lib/trace/plan_context.py"
+    },
+    {
+      "path": "lib/trace/plans.py"
+    },
+    {
+      "path": "lib/trace/prompt_images_resolve.py"
+    },
+    {
+      "path": "lib/trace/prune.py"
+    },
+    {
+      "path": "lib/trace/queued_prompts.py"
+    },
+    {
+      "path": "lib/trace/reap.py"
+    },
+    {
+      "path": "lib/trace/rewind_detect.py"
+    },
+    {
+      "path": "lib/trace/session_tags.py"
+    },
+    {
+      "path": "lib/trace/span_gates.py"
+    },
+    {
+      "path": "lib/trace/tool_input_summary.py"
+    },
+    {
+      "path": "lib/trace/trace_context.py",
       "tier": "reference"
     },
     {
-      "path": "frontend/src/components/conversation/cards/SubagentCard.vue",
-      "tier": "reference"
+      "path": "lib/trace/transcript_models.py"
     },
     {
-      "path": "frontend/src/components/conversation/cards/AgentResultCard.vue",
-      "tier": "reference"
+      "path": "lib/trace/wakeup_links.py"
     },
     {
-      "path": "frontend/src/composables/useTraceData.js",
-      "role": "implementation"
+      "path": "lib/trace/workflow_ingest.py"
     },
     {
-      "path": "frontend/src/composables/useSpanContentCache.js",
-      "role": "implementation"
+      "path": "lib/trace/workflow_labels.py"
     },
     {
-      "path": "frontend/src/utils/traceFormatters.js"
-    },
-    {
-      "path": "frontend/src/utils/sessionActivity.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useViewMode.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useTurns.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useWorkflowMeta.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useToolRollup.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useTraceScroll.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useTraceTimeline.js",
-      "tier": "reference"
-    },
-    {
-      "path": "frontend/src/composables/useCompactWatch.js",
-      "tier": "reference"
-    },
-    {
-      "path": "lib/trace/payload_schemas/",
-      "role": "schema",
-      "tier": "reference"
+      "path": "web/blueprints/trace/agent_messages.py"
     }
   ],
   "status": "active"

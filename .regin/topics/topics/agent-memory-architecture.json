@@ -55,8 +55,9 @@
       "role": "architecture"
     },
     {
-      "path": "lib/memory/engine.py",
-      "role": "implementation"
+      "path": "lib/memory/mcp_server.py",
+      "role": "entrypoint",
+      "tier": "reference"
     },
     {
       "path": "lib/memory/models.py",
@@ -67,18 +68,12 @@
       "role": "implementation"
     },
     {
+      "path": "lib/memory/engine.py",
+      "role": "implementation"
+    },
+    {
       "path": "lib/memory/scoping.py",
       "role": "config"
-    },
-    {
-      "path": "lib/memory/mcp_server.py",
-      "role": "entrypoint",
-      "tier": "reference"
-    },
-    {
-      "path": "ARCHITECTURE.md",
-      "role": "architecture",
-      "tier": "reference"
     },
     {
       "path": "lib/memory/distill.py",
@@ -97,8 +92,20 @@
       "tier": "reference"
     },
     {
+      "path": "lib/memory/parts.py"
+    },
+    {
       "path": "lib/memory/reflect.py",
       "tier": "reference"
+    },
+    {
+      "path": "lib/memory/retitle.py"
+    },
+    {
+      "path": "lib/memory/skill_consolidate.py"
+    },
+    {
+      "path": "lib/memory/skill_experience.py"
     },
     {
       "path": "lib/memory/store.py",
@@ -107,6 +114,18 @@
     {
       "path": "lib/memory/topic_attach.py",
       "tier": "reference"
+    },
+    {
+      "path": "lib/memory/topic_cascade.py"
+    },
+    {
+      "path": "lib/memory/topic_classify.py"
+    },
+    {
+      "path": "lib/memory/tree_io.py"
+    },
+    {
+      "path": "lib/memory/wiki_reads.py"
     }
   ],
   "status": "active"

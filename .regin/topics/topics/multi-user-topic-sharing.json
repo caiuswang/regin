@@ -10,26 +10,21 @@
   "commands": [
     "regin topics install-hook",
     "regin topics promote <id>",
-    "regin topics list",
+    "regin topics promote --all",
+    "regin topics migrate-split",
     "regin topics import --reason git_pull",
     "regin doctor"
   ],
-  "edges": [
-    {
-      "target": "data-config",
-      "type": "related"
-    }
-  ],
+  "edges": [],
   "exclude_globs": [],
   "include_globs": [
     "docs/topics/multi-user.md",
-    ".regin/topics/wiki/multi-user-topic-sharing.md",
     "lib/topics/scan.py",
     "lib/topics/graph_io.py",
     "lib/topics/core.py",
     "cli/commands/topics.py"
   ],
-  "intent": "Explain how regin's standalone-per-user model lets one user's approved topics become visible to other users: what travels via git (topic.json + wiki/<id>.md), what stays local (topic.local.json overlay, snapshot DB, in-flight proposals), and the producer/consumer steps (promote -> pre-commit add -> teammate git pull -> post-merge `topics import` -> snapshot DB seeded -> routable & visible in WebUI). Also covers the shared-server alternative when cross-user proposal review is needed.",
+  "intent": "Explain how regin's standalone-per-user model lets one user's approved topics become visible to other users: what travels via git (topic.json or the split topics/<id>.json + wiki/<id>.md + bundles/*.json), what stays local (topic.local.json overlay, snapshot DB, in-flight proposals), and the producer/consumer steps (promote -> pre-commit add -> teammate git pull -> post-merge `topics import` -> snapshot DB seeded -> routable & visible in WebUI). Also covers the shared-server alternative when cross-user proposal review is needed.",
   "label": "Multi-user topic sharing (how approved topics travel from one user to another)",
   "parent_id": "topic-graph",
   "refs": [
@@ -54,10 +49,6 @@
     {
       "path": "docs/topics/multi-user.md",
       "role": "docs",
-      "tier": "reference"
-    },
-    {
-      "path": ".regin/topics/wiki/multi-user-topic-sharing.md",
       "tier": "reference"
     }
   ],

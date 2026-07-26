@@ -32,6 +32,9 @@
       "path": "frontend/src/components/ui/Checkbox.vue"
     },
     {
+      "path": "frontend/src/components/ui/ClampedText.vue"
+    },
+    {
       "path": "frontend/src/components/ui/CopyId.vue"
     },
     {

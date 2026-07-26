@@ -39,11 +39,6 @@
     {
       "path": "lib/memory/feedback.py",
       "role": "implementation"
-    },
-    {
-      "path": "lib/memory/models.py",
-      "role": "schema",
-      "tier": "reference"
     }
   ],
   "status": "active"
