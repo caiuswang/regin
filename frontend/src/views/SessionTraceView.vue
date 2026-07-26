@@ -96,9 +96,17 @@ const stickyChromeHeight = useStickyChromeHeight(isLgUp, stickyHeaderHeight, com
 const headerCollapsed = ref(false)
 const headerPinned = ref(false)
 
+// A pin created while already inside the 24px band would be cleared by its own
+// unlock condition on the very next scroll nudge (a live poll's layout shift is
+// enough), making a fold near the top a no-op. It holds until the reader
+// actually leaves the band.
+let pinnedInsideTopBand = false
+
 function toggleHeaderDetails() {
   headerCollapsed.value = !headerCollapsed.value
   headerPinned.value = true
+  if (expandTimer) { clearTimeout(expandTimer); expandTimer = null }
+  pinnedInsideTopBand = (getScroller()?.scrollTop ?? 0) < 24
 }
 
 // The collapse threshold is the EXPANDED header's measured height (floored
@@ -133,7 +141,15 @@ let expandTimer = null
 let lastScrollInputAt = -1e9
 const SCROLL_INPUT_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 function markScrollInput() { lastScrollInputAt = performance.now() }
-function onScrollInputKey(e) { if (SCROLL_INPUT_KEYS.has(e.key)) markScrollInput() }
+function isTextEntry(t) {
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+}
+function onScrollInputKey(e) {
+  // Space/arrows typed into a filter field are text entry, not scrolling. The
+  // shorter list that filter produces clamps scrollTop, and that layout scroll
+  // would ride the armed gate and fold the header mid-keystroke.
+  if (!isTextEntry(e.target) && SCROLL_INPUT_KEYS.has(e.key)) markScrollInput()
+}
 function onScrollbarMouseDown(e) {
   // Only a press on the scroller's scrollbar track arms the gate. Any other
   // click must not: the layout shift it can trigger (e.g. the spend panel
@@ -160,6 +176,7 @@ function onCollapseScroll(e) {
         expandTimer = null
         const nowTop = getScroller()?.scrollTop ?? 0
         if (nowTop >= 24) return
+        if (pinnedInsideTopBand) return
         if (headerCollapsed.value || headerPinned.value) {
           headerCollapsed.value = false
           headerPinned.value = false
@@ -168,6 +185,7 @@ function onCollapseScroll(e) {
     }
     return
   }
+  pinnedInsideTopBand = false
   if (performance.now() - lastScrollInputAt > 1200) return
   if (headerPinned.value) return
   // Auto-collapse is a ≥lg feature: there the header pins and collapsing buys
@@ -188,9 +206,15 @@ function onCollapseScroll(e) {
   headerCollapsed.value = true
 }
 
+// Below lg the header isn't sticky, so a fold that survives the resize takes
+// its own Details button off-screen. Pinned folds are the user's call at any
+// width; only the auto one is undone.
+watch(isLgUp, (up) => {
+  if (!up && headerCollapsed.value && !headerPinned.value) headerCollapsed.value = false
+})
+
 function onHeaderKey(e) {
-  const t = e.target
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (isTextEntry(e.target)) return
   if (e.metaKey || e.ctrlKey || e.altKey) return
   if (e.key === 'h' || e.key === 'H') {
     e.preventDefault()
@@ -868,8 +892,12 @@ const {
       @select-node="onOverviewSpanClick"
     />
 
+    <!-- v-show, not v-if: the panel owns its open/closed state, and unmounting
+         it on every collapse cycle silently re-closes a bill the reader had
+         expanded. The vitals/overview strips above are stateless, so they fold
+         with v-if. -->
     <TraceSpendPanel
-      v-if="!headerCollapsed"
+      v-show="!headerCollapsed"
       :rollup-data="toolRollupData"
       @jump-span="selectSpanById"
     />

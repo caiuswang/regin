@@ -205,10 +205,13 @@ function titleSourceTooltip(src) {
           :class="isLive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"
           :title="isLive ? 'this session has not ended — spans are still arriving' : 'this session has ended'"
         ></span>
-        <span
+        <!-- Still the page's h1: collapsed is the normal reading state at ≥lg,
+             and swapping it for a span leaves heading navigation with no
+             page heading for most of the session. -->
+        <h1
           class="truncate text-sm font-semibold text-slate-800"
           :title="session.title || ''"
-        >{{ sessionTitle }}</span>
+        >{{ sessionTitle }}</h1>
         <span
           class="flex shrink-0 items-center gap-2 overflow-hidden font-mono text-[11px] text-slate-500"
           data-testid="trace-header-digest"
@@ -504,19 +507,19 @@ function titleSourceTooltip(src) {
         <!-- Manual override for the collapse: pins the choice until the body
              scroll returns to the top (the parent owns that state; H is the
              keyboard twin). -->
-        <button
-          type="button"
-          class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-auto shrink-0 gap-1 border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
           :title="(collapsed ? 'Show session details' : 'Collapse header for more transcript') + ' (H)'"
-          :aria-pressed="collapsed"
+          :aria-expanded="!collapsed"
           data-testid="header-details-toggle"
           @click="$emit('toggle-collapse')"
-        >
-          <span
-            class="inline-block leading-none transition-transform"
-            :class="collapsed ? 'rotate-180' : ''"
-          >⌃</span>{{ collapsed ? 'Details' : 'Hide details' }}
-        </button>
+        ><span
+          aria-hidden="true"
+          class="inline-block leading-none transition-transform"
+          :class="collapsed ? 'rotate-180' : ''"
+        >⌃</span>{{ collapsed ? 'Details' : 'Hide details' }}</Button>
       </div>
       <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
         <!-- tabular-nums: a proportional-width timestamp jitters the column

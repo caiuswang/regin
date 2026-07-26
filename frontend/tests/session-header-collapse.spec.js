@@ -52,8 +52,12 @@ async function seedScrollableSession(page) {
 async function wheel(page, deltaY) {
   // The right gutter is .content-scroll's own padding strip: no span card
   // (some have internal scroll + overscroll containment) can swallow the
-  // wheel before it reaches the page scroller.
-  await page.mouse.move(1420, 450)
+  // wheel before it reaches the page scroller. Derived from the live viewport,
+  // never hard-coded — a fixed desktop x lands outside a phone viewport, the
+  // wheel hit-tests to nothing, and every "it didn't collapse" assertion below
+  // passes for the wrong reason.
+  const vp = page.viewportSize()
+  await page.mouse.move(vp.width - 20, Math.round(vp.height / 2))
   await page.mouse.wheel(0, deltaY)
 }
 
@@ -128,6 +132,62 @@ test('header auto-collapses past its own height, re-expands at the top, pin surv
   await page.keyboard.press('H')
   await expect(vitals).toBeVisible()
   await expect(digest).toBeHidden()
+})
+
+test('a fold pinned inside the top band survives a layout-driven scroll nudge', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const traceId = await seedScrollableSession(page)
+  await page.goto(`/trace/sessions/${traceId}`)
+
+  const digest = page.getByTestId('trace-header-digest')
+  await expect(page.getByTestId('trace-vitals-strip')).toBeVisible({ timeout: 10_000 })
+
+  // Fold a few px off the top — inside the 24px band whose own rule is "at the
+  // top ⇒ clear the pin". Without a guard the pin is unlocked the instant it
+  // is created, and the next nudge (a live poll's layout shift, written here
+  // directly) pops the header back open under the reader.
+  await page.evaluate(() => { document.querySelector('.content-scroll').scrollTop = 20 })
+  await page.waitForTimeout(300)
+  await page.getByTestId('header-details-toggle').click()
+  await expect(digest).toBeVisible()
+
+  await page.evaluate(() => { document.querySelector('.content-scroll').scrollTop = 0 })
+  await page.waitForTimeout(400)
+  await expect(digest).toBeVisible()
+
+  // Leaving the band and coming back is the real unlock, and still works.
+  await wheel(page, 1500)
+  await expect(digest).toBeVisible()
+  await wheel(page, -99999)
+  await expect(page.getByTestId('trace-vitals-strip')).toBeVisible()
+  await expect(digest).toBeHidden()
+})
+
+test('a viewport crossing under lg undoes an AUTO collapse but not a pinned one', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const traceId = await seedScrollableSession(page)
+  await page.goto(`/trace/sessions/${traceId}`)
+
+  const vitals = page.getByTestId('trace-vitals-strip')
+  const digest = page.getByTestId('trace-header-digest')
+  await expect(vitals).toBeVisible({ timeout: 10_000 })
+
+  // Below lg the header isn't sticky, so a fold that survived the resize would
+  // carry its own Details button off-screen — the strips must return unasked.
+  await wheel(page, 1500)
+  await expect(digest).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(vitals).toBeVisible()
+  await expect(digest).toHaveCount(0)
+
+  // A deliberate fold is the user's call at any width, so it survives.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(vitals).toBeVisible()
+  await page.keyboard.press('h')
+  await expect(digest).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(300)
+  await expect(digest).toBeVisible()
 })
 
 test('below lg the header never auto-collapses — it scrolls away whole instead', async ({ page }) => {
