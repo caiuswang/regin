@@ -57,6 +57,7 @@ packages = [
     "lib.patterns", "lib.skills", "lib.topics", "lib.trace", "lib.trace.trace_service",
     "lib.sync", "lib.tags", "lib.rules", "lib.tokens",
     "lib.utils", "lib.rule_engines", "lib.languages", "lib.providers",
+    "lib.agent_events", "lib.agent_sdk",
     "lib.providers.claude", "lib.providers.codex", "lib.providers.generic",
     "web", "web.blueprints",
     "web.blueprints.trace", "web.blueprints.patterns",

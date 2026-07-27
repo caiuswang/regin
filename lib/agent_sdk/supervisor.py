@@ -19,7 +19,7 @@ import uuid
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
 from . import registry
-from .runner import run_once
+from .runner import run_session
 
 log = get_activity_logger("agent_sdk")
 
@@ -60,7 +60,9 @@ def launch(prompt: str, *, cwd: str | None = None) -> str:
 
     Returns as soon as the run is scheduled — the agent works on the shared
     loop while the caller's request completes, which is what lets `/live` show
-    the session and answer its questions while it runs.
+    the session and answer its questions while it runs. The run does not end
+    with the prompt: it stays open for follow-ups (`send_prompt`) until it is
+    stopped or goes idle.
     """
     if not settings.agent_sdk.enabled:
         raise LaunchRefused("agent_sdk disabled")
@@ -71,7 +73,18 @@ def launch(prompt: str, *, cwd: str | None = None) -> str:
     trace_id = f"sdk-{uuid.uuid4().hex[:12]}"
     loop = _ensure_loop()
     future = asyncio.run_coroutine_threadsafe(
-        run_once(trace_id, prompt, cwd=cwd), loop)
+        run_session(trace_id, prompt, cwd=cwd), loop)
     future.add_done_callback(lambda f: _on_done(trace_id, f))
     log.write("sdk_run_launched", trace_id=trace_id, cwd=cwd)
     return trace_id
+
+
+def send_prompt(trace_id: str, text: str) -> tuple[bool, str]:
+    """Queue a follow-up prompt onto a run this process owns.
+
+    Reachability is the registry's answer, not the stored status: a `running`
+    row left behind by a previous process names a session nobody can talk to.
+    """
+    if not (text or "").strip():
+        return False, "prompt required"
+    return registry.submit_prompt(trace_id, text)

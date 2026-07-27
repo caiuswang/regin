@@ -53,6 +53,49 @@ def api_launch_agent_run():
     return jsonify({"launched": True, "trace_id": trace_id})
 
 
+@agent_runs_bp.route('/api/agent-runs/<trace_id>/prompt', methods=['POST'])
+@require_editor
+def api_prompt_agent_run(trace_id):
+    """Send a follow-up prompt to a run this process owns.
+
+    This is what makes a launched run a session rather than a one-shot: the
+    prompt is queued on the runner's input queue and picked up when the turn in
+    flight ends. Refusals are structured (`queued: false` + a reason), never a
+    500 — a session that already exited is an ordinary outcome for a phone that
+    still has the card open.
+    """
+    payload = request.get_json(silent=True) or {}
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return jsonify({"error": "prompt required"}), 400
+    queued, detail = supervisor.send_prompt(trace_id, prompt[:_PROMPT_MAX])
+    return jsonify({"queued": queued, "detail": detail})
+
+
+@agent_runs_bp.route('/api/agent-runs/<trace_id>/interrupt', methods=['POST'])
+@require_editor
+def api_interrupt_agent_run(trace_id):
+    """Cancel the turn in flight. The session stays open for the next prompt —
+    stopping it is a separate, explicit act."""
+    from lib import agent_sdk
+
+    delivered, detail = agent_sdk.interrupt_run(trace_id)
+    return jsonify({"delivered": delivered, "detail": detail})
+
+
+@agent_runs_bp.route('/api/agent-runs/<trace_id>/stop', methods=['POST'])
+@require_editor
+def api_stop_agent_run(trace_id):
+    """End the session: the runner finishes its current turn, emits
+    `session.end` and disconnects. Asynchronous by design — the stored row
+    advances to `exited` when teardown actually completes, not when it's asked
+    for."""
+    from lib import agent_sdk
+
+    delivered, detail = agent_sdk.stop_run(trace_id)
+    return jsonify({"delivered": delivered, "detail": detail})
+
+
 @agent_runs_bp.route('/api/agent-runs/<trace_id>', methods=['GET'])
 @require_editor
 def api_get_agent_run(trace_id):

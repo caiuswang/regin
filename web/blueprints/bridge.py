@@ -122,6 +122,40 @@ def api_bridge_post_message():
                     "detail": result.detail, "id": row_id})
 
 
+# A prompt handed to a typed channel is a message, not keystrokes, so it keeps
+# its newlines — but it is still bounded, like the launch route's.
+_SDK_PROMPT_MAX = 8000
+
+
+def _sdk_prompt_text(raw) -> str:
+    """The prompt as the agent should receive it.
+
+    `sanitize_text` exists to make a string safe to *type into a terminal*: it
+    flattens newlines and strips control bytes because tmux `send-keys` would
+    otherwise submit a half-written message. None of that applies to a queue,
+    and applying it anyway silently mangles the multi-line prompts (a stack
+    trace, a diff) this path exists to carry. Control bytes still go.
+    """
+    text = raw if isinstance(raw, str) else ""
+    cleaned = "".join(c for c in text if c in "\n\t" or c >= " ")
+    return cleaned.strip()[:_SDK_PROMPT_MAX]
+
+
+def _sdk_send(trace_id: str, raw_text, body: str, sender: str | None):
+    """Steer a session regin owns by queuing the prompt on its input queue.
+
+    No keystrokes and no pane: the runner picks it up when the turn in flight
+    ends. `body` is the sanitized single-line form recorded in the steering
+    inbox, so the audit trail reads the same whichever transport carried the
+    message, while the agent gets the prompt intact.
+    """
+    row_id = store.record_bridge_message(trace_id, body, sender)
+    delivered, detail = agent_sdk.submit_prompt(
+        trace_id, _sdk_prompt_text(raw_text))
+    store.mark_delivered(row_id, delivered, detail)
+    return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-send', methods=['POST'])
 @require_editor
 def api_session_bridge_send(trace_id):
@@ -134,8 +168,15 @@ def api_session_bridge_send(trace_id):
     Deliberately absent from both PUBLIC_API_ENDPOINTS and the
     bridge-token decorator. A disabled bridge is a clean structured
     refusal, not a 404: the composer surfaces `detail` verbatim.
+
+    A session regin launched itself is steered over its typed channel instead
+    (`lib/agent_sdk`) — checked first, and deliberately not gated on
+    `agent_bridge.enabled`, on the same reasoning as `bridge-answer`: that flag
+    authorizes keystroke injection into a terminal, which queuing a prompt for
+    a process regin owns never performs.
     """
-    if not settings.agent_bridge.enabled:
+    owned = agent_sdk.is_sdk_owned(trace_id)
+    if not owned and not settings.agent_bridge.enabled:
         return jsonify({"delivered": False, "detail": "bridge disabled"})
     payload = request.get_json(silent=True) or {}
     raw_text = payload.get("text")
@@ -144,6 +185,8 @@ def api_session_bridge_send(trace_id):
         return jsonify({"error": "text required"}), 400
     user = get_current_user()
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    if owned:
+        return _sdk_send(trace_id, raw_text, text, sender)
     row_id = store.record_bridge_message(trace_id, text, sender)
     result = delivery.deliver(trace_id, text)
     store.mark_delivered(row_id, result.delivered, result.detail)

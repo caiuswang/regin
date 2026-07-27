@@ -769,6 +769,16 @@ class AgentSdkConfig(BaseModel):
 
     `max_concurrent_runs` bounds live runners — each is a real child process,
     and an unbounded launcher is a fork bomb with extra steps.
+
+    `idle_timeout_sec` bounds how long a session with nothing to do keeps its
+    child process. A run stays open for follow-ups after its first prompt, so
+    without a bound an abandoned session holds a slot against
+    `max_concurrent_runs` for the life of the server. 0 waits forever.
+
+    `stop_grace_sec` bounds how long a stop waits on an interrupted turn to end
+    itself before abandoning it. The SDK ends a response stream on the CLI's
+    result message and otherwise iterates indefinitely, so without a timer a
+    wedged turn would make `stop` a promise nothing keeps.
     """
 
     enabled: bool = False
@@ -776,6 +786,8 @@ class AgentSdkConfig(BaseModel):
     model: str = ""
     max_concurrent_runs: int = 4
     permission_mode: str = "default"
+    idle_timeout_sec: int = 1800
+    stop_grace_sec: int = 10
 
 
 class TopicEvolutionConfig(BaseModel):

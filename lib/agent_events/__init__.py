@@ -8,9 +8,13 @@ renders both without knowing which produced a row.
 
 from .events import (
     AgentEvent,
+    AssistantText,
+    AssistantThinking,
     PERMISSION_KINDS,
     PermissionRequested,
     PermissionResolved,
+    SessionEnded,
+    SessionStarted,
     SubagentStarted,
     SubagentStopped,
     ToolCall,
@@ -21,12 +25,17 @@ from .events import (
     UsageUpdated,
 )
 from .spans import to_span
+from .usage import turn_usage_row
 
 __all__ = [
     'AgentEvent',
+    'AssistantText',
+    'AssistantThinking',
     'PERMISSION_KINDS',
     'PermissionRequested',
     'PermissionResolved',
+    'SessionEnded',
+    'SessionStarted',
     'SubagentStarted',
     'SubagentStopped',
     'ToolCall',
@@ -36,4 +45,5 @@ __all__ = [
     'TurnStarted',
     'UsageUpdated',
     'to_span',
+    'turn_usage_row',
 ]

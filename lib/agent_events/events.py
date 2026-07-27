@@ -35,13 +35,66 @@ class TurnStarted(AgentEvent):
 
 @dataclass(frozen=True)
 class TurnCompleted(AgentEvent):
+    """`usage` is already in regin's neutral token vocabulary — a producer
+    normalizes the provider's own key names before constructing this."""
+
     duration_ms: int = 0
     usage: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
+class AssistantText(AgentEvent):
+    """What the agent said. The counterpart to `ToolCall`'s what it did.
+
+    `turn_uuid` is the producer's turn identity — the value that joins this row
+    to its `turn_usage` row and groups a turn's spans for the serve-time ladder.
+    """
+
+    text: str = ''
+    model: str | None = None
+    agent_id: str | None = None
+    turn_uuid: str = ''
+    turn_index: int = -1
+
+
+@dataclass(frozen=True)
+class AssistantThinking(AgentEvent):
+    """Extended reasoning. `signature_bytes` is non-zero for encrypted
+    thinking, where the reasoning happened but no text is readable."""
+
+    text: str = ''
+    signature_bytes: int = 0
+    model: str | None = None
+    agent_id: str | None = None
+    turn_uuid: str = ''
+    turn_index: int = -1
+
+
+@dataclass(frozen=True)
+class SessionStarted(AgentEvent):
+    source: str = 'startup'
+    model: str | None = None
+    cwd: str | None = None
+    agent_type: str | None = None
+
+
+@dataclass(frozen=True)
+class SessionEnded(AgentEvent):
+    reason: str = 'exited'
+
+
+@dataclass(frozen=True)
 class TurnFailed(AgentEvent):
+    """A turn that ended badly — interrupted, or errored out.
+
+    It still carries `usage`: the tokens were spent whether or not the turn
+    produced an answer, and an interrupt is the *most* likely way for a turn to
+    end, so dropping its spend would bias cost and the context meter downward
+    on exactly the path an operator uses most.
+    """
+
     error: str = ''
+    usage: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

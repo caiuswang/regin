@@ -78,6 +78,78 @@ def discard_ask(trace_id: str) -> None:
         _asks.pop(trace_id, None)
 
 
+def _live_runner(trace_id: str):
+    """(runner, refusal) for a run this process can still reach.
+
+    A registry entry alone isn't reachability: the runner's loop is what
+    accepts work, and a stopped loop takes `call_soon_threadsafe` without
+    raising and silently never runs the callback — the same trap
+    `resolve_ask` guards, which is the difference between refusing and
+    telling the operator their prompt was delivered to nothing.
+    """
+    with _lock:
+        runner = _runs.get(trace_id)
+    if runner is None:
+        return None, "no live agent session"
+    loop = getattr(runner, "loop", None)
+    if loop is None or not loop.is_running() or loop.is_closed():
+        return None, "agent session is no longer running"
+    return runner, ""
+
+
+def submit_prompt(trace_id: str, text: str) -> tuple[bool, str]:
+    """Queue a follow-up prompt. Safe to call from any thread."""
+    runner, refusal = _live_runner(trace_id)
+    if runner is None:
+        return False, refusal
+    if getattr(runner, "is_stopping", False):
+        return False, "agent session is stopping"
+    try:
+        runner.loop.call_soon_threadsafe(runner.enqueue, text)
+    except RuntimeError as exc:
+        log.error("sdk_prompt_queue_failed", trace_id=trace_id, detail=str(exc))
+        return False, "agent session is no longer running"
+    log.write("sdk_prompt_queued", trace_id=trace_id)
+    return True, "prompt queued"
+
+
+def stop_run(trace_id: str) -> tuple[bool, str]:
+    """End the session, including one that is mid-turn.
+
+    `request_stop` interrupts the turn in flight as well as closing the queue,
+    so this can't return "stopping" for a session that will in fact keep
+    running until the server restarts.
+    """
+    runner, refusal = _live_runner(trace_id)
+    if runner is None:
+        return False, refusal
+    future = asyncio.run_coroutine_threadsafe(runner.request_stop(),
+                                              runner.loop)
+    future.add_done_callback(lambda f: _log_control(trace_id, "stop", f))
+    log.write("sdk_run_stop_requested", trace_id=trace_id)
+    return True, "stopping"
+
+
+def interrupt_run(trace_id: str) -> tuple[bool, str]:
+    """Cancel the turn in flight, leaving the session open for the next one."""
+    runner, refusal = _live_runner(trace_id)
+    if runner is None:
+        return False, refusal
+    future = asyncio.run_coroutine_threadsafe(runner.interrupt(), runner.loop)
+    future.add_done_callback(lambda f: _log_control(trace_id, "interrupt", f))
+    log.write("sdk_run_interrupt_requested", trace_id=trace_id)
+    return True, "interrupt sent"
+
+
+def _log_control(trace_id: str, action: str, future) -> None:
+    """Drain a control call's result so a refusal from the CLI is logged rather
+    than swallowed by the loop's default exception handler."""
+    error = future.exception() if not future.cancelled() else None
+    if error is not None:
+        log.error("sdk_run_control_failed", trace_id=trace_id, action=action,
+                  detail=repr(error))
+
+
 def resolve_ask(trace_id: str, result) -> tuple[bool, str]:
     """Hand `result` to the parked tool call. Safe to call from any thread."""
     with _lock:

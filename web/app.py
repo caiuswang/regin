@@ -159,6 +159,7 @@ def create_app():
     # ── Agent SDK tier (sessions regin launches and owns) ─────────
     from web.blueprints.agent_runs import agent_runs_bp
     app.register_blueprint(agent_runs_bp)
+    _reap_orphaned_agent_runs()
 
     from web.blueprints.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
@@ -170,6 +171,22 @@ def create_app():
     _install_spa_routes(app)
     _start_memory_warmup()
     return app
+
+
+def _reap_orphaned_agent_runs() -> None:
+    """Close out SDK runs the previous process took with it.
+
+    Unconditional: a run orphaned before the tier was switched off is exactly
+    the row that would otherwise sit in the UI claiming to be steerable
+    forever. Never fatal to startup — a server that can't reach the table
+    should still serve.
+    """
+    from lib.agent_sdk import store as agent_sdk_store
+
+    try:
+        agent_sdk_store.reap_orphaned_runs()
+    except Exception:
+        get_activity_logger("agent_sdk").error("sdk_reap_failed", exc_info=True)
 
 
 def _start_memory_warmup() -> None:
