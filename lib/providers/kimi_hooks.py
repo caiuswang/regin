@@ -96,6 +96,21 @@ def installed_commands(path: str, is_ours: Callable[[str], bool]) -> set[str]:
     }
 
 
+def installed_command_map(path: str, is_ours: Callable[[str], bool]) -> dict[str, list[str]]:
+    """Event → the commands of ours written for it, as they appear on disk.
+
+    Per-event granularity is what lets a caller tell a stale command from a
+    missing route; `installed_commands` flattens that away.
+    """
+    out: dict[str, list[str]] = {}
+    for hook in _read_hooks(path):
+        command = hook.get("command")
+        event = hook.get("event")
+        if isinstance(command, str) and isinstance(event, str) and is_ours(command):
+            out.setdefault(event, []).append(command)
+    return out
+
+
 def _toml_str(value: str) -> str:
     """Render a TOML basic string. JSON string escaping is a valid subset for
     the ASCII paths/commands we emit."""

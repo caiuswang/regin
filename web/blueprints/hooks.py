@@ -24,18 +24,20 @@ Legacy aggregated dashboard (kept for backward-compat with the SettingsView):
 - `GET  /api/hooks`                 — aggregate status (debug only today)
 - `POST /api/hooks/<name>/install`  — dispatcher (debug only today)
 - `POST /api/hooks/<name>/uninstall`
+
+Command construction, ownership detection, and the install/uninstall writers
+live in `lib/hooks_wiring.py` so `regin hooks` and `regin doctor` share one
+implementation with this blueprint; only request plumbing lives here.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
-import shlex
 
 from flask import Blueprint, request, jsonify
 
-from lib.settings import settings
+from lib import hooks_wiring
 from lib.providers import (
     active_provider_id,
     build_provider,
@@ -43,7 +45,6 @@ from lib.providers import (
     is_provider_id,
     list_visible_provider_ids,
 )
-from lib.providers import kimi_hooks
 from hook_manager.core import SPEC_EVENTS
 
 
@@ -52,7 +53,6 @@ hooks_bp = Blueprint('hooks', __name__)
 
 # ── Shared path helpers + settings helpers ──────────────────
 
-_HOOK_MANAGER_CMD_RE = re.compile(r'(^|\s)-m\s+hook_manager(?:\s|$)')
 _PROVIDER = None
 CLAUDE_SETTINGS_PATH: str | None = None
 HOOK_PAYLOAD_LOG_PATH: str | None = None
@@ -102,149 +102,20 @@ def _hook_payload_log_path(provider=None) -> str:
     return str(provider.hook_payload_log_path())
 
 
-def _cmd(script_name: str) -> str:
-    return (
-        f"{os.path.join(str(settings.project_root), '.venv/bin/python')} "
-        f"{os.path.join(str(settings.project_root), 'scripts', script_name)}"
-    )
-
-
-def _read_text(path: str) -> str:
-    try:
-        with open(path, 'r') as f:
-            return f.read()
-    except FileNotFoundError:
-        return ''
-
-
-def _read_claude_settings(provider=None) -> dict:
-    try:
-        with open(_hook_settings_path(provider), 'r') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def _write_claude_settings(settings: dict, provider=None) -> None:
-    path = _hook_settings_path(provider)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        json.dump(settings, f, indent=2)
-
-
-def _hook_manager_interpreter_prefix() -> str:
-    """The exact interpreter token that install bakes into commands.
-
-    Used to scope detection/removal to *this* regin checkout — two regin
-    instances on one machine share a Claude settings.json, and matching by
-    a bare `-m hook_manager` substring would let one instance's uninstall
-    clobber another's entries. Trailing space anchors to a token boundary
-    so `/foo/regin` doesn't match `/foo/regin-fork`.
-    """
-    return os.path.join(str(settings.project_root), '.venv/bin/python') + ' '
-
-
-# Matches a stale `env KEY=VAL …` prefix from an earlier fix iteration. Kept
-# only for detection so uninstall/reinstall still sees those entries as ours
-# and replaces them; new installs no longer emit any env prefix.
-_LEADING_ENV_RE = re.compile(r'^(?:/usr/bin/)?env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)+\s+')
-
-
-def _is_hook_manager_command(command: str) -> bool:
-    if not isinstance(command, str):
-        return False
-    if not _HOOK_MANAGER_CMD_RE.search(command):
-        return False
-    interpreter = _hook_manager_interpreter_prefix()
-    idx = command.find(interpreter)
-    if idx < 0:
-        return False
-    prefix = command[:idx]
-    return prefix == '' or _LEADING_ENV_RE.match(prefix) is not None
-
-
-def _hook_manager_routed_events(settings: dict) -> set[str]:
-    routed: set[str] = set()
-    hooks = settings.get('hooks', {})
-    if not isinstance(hooks, dict):
-        return routed
-
-    for event_name, entries in hooks.items():
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            for hook in entry.get('hooks', []):
-                if _is_hook_manager_command(hook.get('command', '')):
-                    routed.add(event_name)
-                    break
-            if event_name in routed:
-                break
-    return routed
-
-
-# ── Debug hook (multi-event fan-out) ──────────────────────────
-
-DEBUG_HOOK_COMMAND = _cmd('hook_payload_debug.py')
-_DEBUG_EVENTS = ('UserPromptSubmit', 'PostToolUse', 'PreToolUse')
+# Names below are thin aliases over `lib.hooks_wiring` so the blueprint (and
+# its tests) keep one vocabulary while the implementation stays shared.
+DEBUG_HOOK_COMMAND = hooks_wiring.debug_base_command()
+_DEBUG_EVENTS = hooks_wiring.DEBUG_EVENTS
+_is_hook_manager_command = hooks_wiring.is_hook_manager_command
+_is_debug_hook_command = hooks_wiring.is_debug_hook_command
 
 
 def _debug_hook_command(provider=None) -> str:
-    """Per-provider debug-hook command.
-
-    Claude keeps the bare command (logs to ``~/.claude`` and emits Claude-style
-    stdout). Other agents get their own log path appended — Kimi logs to
-    ``~/.kimi-code`` not ``~/.claude``, so without this its debug payloads never
-    reach the viewer — plus ``--silent`` when the agent renders raw hook stdout
-    (Kimi), so we never print a Claude-only response into its UI.
-    """
-    provider = provider or _provider()
-    if provider.provider_id == 'claude':
-        return DEBUG_HOOK_COMMAND
-    parts = [DEBUG_HOOK_COMMAND, shlex.quote(str(provider.hook_payload_log_path()))]
-    if getattr(provider, 'hook_output_format', 'claude') != 'claude':
-        parts.append('--silent')
-    return ' '.join(parts)
-# Delimited-block label for the debug hook in a TOML config (Kimi), kept
-# separate from the hook_manager block so the two never clobber each other.
-_DEBUG_LABEL = 'debug'
-_HOOK_MANAGER_TIMEOUT = 60
+    return hooks_wiring.debug_hook_command(provider or _provider())
 
 
 def _hook_manager_command(event_name: str, provider=None) -> str:
-    # `-P` is the CLI form of PYTHONSAFEPATH=1: it stops `python -m` from
-    # injecting `sys.path[0] = cwd`. Without it, a hook installed from one
-    # regin checkout would silently import another checkout's `hook_manager`
-    # when Claude ran from there, sending spans to the wrong DB.
-    provider = provider or _provider()
-    agent_type = getattr(provider, 'provider_id', None) or 'generic'
-    return (
-        f"{os.path.join(str(settings.project_root), '.venv/bin/python')} -P "
-        f"-m hook_manager {shlex.quote(event_name)} "
-        f"--agent-type {shlex.quote(agent_type)}"
-    )
-
-
-def _debug_hook_installed(settings: dict) -> bool:
-    for entry in settings.get('hooks', {}).values():
-        for e in (entry if isinstance(entry, list) else []):
-            for h in e.get('hooks', []):
-                if 'hook_payload_debug' in h.get('command', ''):
-                    return True
-    return False
-
-
-def _hook_manager_installed(settings: dict) -> bool:
-    return bool(_hook_manager_routed_events(settings))
-
-
-def _hook_manager_block(event_name: str, provider=None) -> dict:
-    return {
-        'hooks': [{
-            'type': 'command',
-            'command': _hook_manager_command(event_name, provider),
-            'timeout': _HOOK_MANAGER_TIMEOUT,
-        }]
-    }
+    return hooks_wiring.hook_manager_command(event_name, provider or _provider())
 
 
 def _require_hooks_capability(provider):
@@ -274,72 +145,29 @@ def api_hook_manager_status():
 
 
 def _is_toml_provider(provider) -> bool:
-    return getattr(provider, 'hook_config_format', 'json') == 'toml'
+    return hooks_wiring.is_toml_provider(provider)
 
 
 def _routed_events(provider) -> set[str]:
     """Events routed to this regin checkout's hook_manager, format-agnostic."""
-    if _is_toml_provider(provider):
-        return kimi_hooks.routed_events(_hook_settings_path(provider), _is_hook_manager_command)
-    return _hook_manager_routed_events(_read_claude_settings(provider))
+    return hooks_wiring.routed_events(provider, _hook_settings_path(provider))
 
 
-def _merge_hook_manager_blocks(hooks: dict, events, provider) -> tuple[int, int]:
-    """Add/refresh hook_manager command blocks in a settings.json `hooks` map."""
-    added = 0
-    updated = 0
-    for event_name in sorted(events):
-        event_hooks = hooks.setdefault(event_name, [])
-        command = _hook_manager_command(event_name, provider)
-        already_present = False
-        for entry in event_hooks:
-            for h in entry.get('hooks', []):
-                if not _is_hook_manager_command(h.get('command', '')):
-                    continue
-                already_present = True
-                if h.get('command') != command:
-                    h['command'] = command
-                    updated += 1
-        if not already_present:
-            event_hooks.append(_hook_manager_block(event_name, provider))
-            added += 1
-    return added, updated
+def _debug_hook_routed(provider) -> set[str]:
+    """Events the debug hook is installed for, format-agnostic."""
+    return hooks_wiring.debug_routed_events(provider, _hook_settings_path(provider))
 
 
-def _json_install_hook_manager(provider):
-    settings = _read_claude_settings(provider)
-    hooks = settings.setdefault('hooks', {})
-    supported_events = provider.hook_events() or tuple(sorted(SPEC_EVENTS))
-    added, updated = _merge_hook_manager_blocks(hooks, supported_events, provider)
-    if added == 0 and updated == 0:
-        return jsonify({'ok': True, 'msg': 'Hook manager already installed'})
-    _write_claude_settings(settings, provider)
-    parts = []
-    if added:
-        parts.append(f'{added} added')
-    if updated:
-        parts.append(f'{updated} updated')
-    return jsonify({'ok': True, 'msg': f"Hook manager installed for {provider.display_name} events ({', '.join(parts)})"})
+def _wiring(provider) -> dict:
+    return hooks_wiring.wiring_status(provider, _hook_settings_path(provider))
 
 
-def _toml_install_hook_manager(provider):
-    path = _hook_settings_path(provider)
-    before = kimi_hooks.routed_events(path, _is_hook_manager_command)
-    events = provider.hook_events() or tuple(sorted(SPEC_EVENTS))
-    kimi_hooks.install(
-        path,
-        list(events),
-        lambda event_name: _hook_manager_command(event_name, provider),
-        timeout=_HOOK_MANAGER_TIMEOUT,
-        is_ours=_is_hook_manager_command,
-    )
-    after = kimi_hooks.routed_events(path, _is_hook_manager_command)
-    if before == after:
-        return jsonify({'ok': True, 'msg': 'Hook manager already installed'})
-    return jsonify({
-        'ok': True,
-        'msg': f"Hook manager installed for {provider.display_name} events ({len(after)} routed)",
-    })
+def _run_wiring(action, provider):
+    """Apply one hooks_wiring writer to `provider`, or 400 if it has no hooks."""
+    unsupported = _require_hooks_capability(provider)
+    if unsupported is not None:
+        return unsupported
+    return jsonify(action(provider, _hook_settings_path(provider)))
 
 
 @hooks_bp.route('/api/hook-manager-install', methods=['POST'])
@@ -347,45 +175,7 @@ def api_hook_manager_install():
     provider, error = _provider_or_error()
     if error is not None:
         return error
-    unsupported = _require_hooks_capability(provider)
-    if unsupported is not None:
-        return unsupported
-    if _is_toml_provider(provider):
-        return _toml_install_hook_manager(provider)
-    return _json_install_hook_manager(provider)
-
-
-def _strip_hook_manager_blocks(hooks: dict) -> int:
-    """Remove hook_manager command blocks from a settings.json `hooks` map."""
-    removed = 0
-    for event_name in list(hooks.keys()):
-        entries = hooks[event_name]
-        if not isinstance(entries, list):
-            continue
-        filtered = []
-        for entry in entries:
-            entry_hooks = [h for h in entry.get('hooks', [])
-                           if not _is_hook_manager_command(h.get('command', ''))]
-            removed += len(entry.get('hooks', [])) - len(entry_hooks)
-            if entry_hooks:
-                next_entry = dict(entry)
-                next_entry['hooks'] = entry_hooks
-                filtered.append(next_entry)
-        if filtered:
-            hooks[event_name] = filtered
-        else:
-            del hooks[event_name]
-    return removed
-
-
-def _json_uninstall_hook_manager(provider):
-    settings = _read_claude_settings(provider)
-    hooks = settings.get('hooks', {})
-    removed = _strip_hook_manager_blocks(hooks) if isinstance(hooks, dict) else 0
-    if not hooks:
-        settings.pop('hooks', None)
-    _write_claude_settings(settings, provider)
-    return jsonify({'ok': True, 'msg': 'Hook manager removed' if removed else 'Hook manager was not installed'})
+    return _run_wiring(hooks_wiring.install_hook_manager, provider)
 
 
 @hooks_bp.route('/api/hook-manager-uninstall', methods=['POST'])
@@ -393,110 +183,7 @@ def api_hook_manager_uninstall():
     provider, error = _provider_or_error()
     if error is not None:
         return error
-    unsupported = _require_hooks_capability(provider)
-    if unsupported is not None:
-        return unsupported
-    if _is_toml_provider(provider):
-        removed = kimi_hooks.uninstall(_hook_settings_path(provider),
-                                       is_ours=_is_hook_manager_command)
-        return jsonify({'ok': True, 'msg': 'Hook manager removed' if removed else 'Hook manager was not installed'})
-    return _json_uninstall_hook_manager(provider)
-
-
-def _is_debug_hook_command(command: str) -> bool:
-    """Ours, scoped to this checkout — same rule as `_is_hook_manager_command`.
-
-    Two regin checkouts share one config file and one script *name*, and this
-    predicate now drives rewriting and deletion, so an unscoped substring match
-    would let either instance clobber the other's entries.
-    """
-    if not isinstance(command, str) or 'hook_payload_debug' not in command:
-        return False
-    idx = command.find(_hook_manager_interpreter_prefix())
-    if idx < 0:
-        return False
-    prefix = command[:idx]
-    return prefix == '' or _LEADING_ENV_RE.match(prefix) is not None
-
-
-def _toml_debug_routed(provider) -> set[str]:
-    """Debug events routed via the TOML config (Kimi)."""
-    return kimi_hooks.routed_events(
-        _hook_settings_path(provider), _is_debug_hook_command)
-
-
-def _toml_debug_commands(provider) -> set[str]:
-    """Debug-hook commands as currently written in the TOML config."""
-    return kimi_hooks.installed_commands(
-        _hook_settings_path(provider), _is_debug_hook_command)
-
-
-def _debug_hook_routed(provider) -> set[str]:
-    """Events the debug hook is installed for, format-agnostic."""
-    if _is_toml_provider(provider):
-        return _toml_debug_routed(provider)
-    if _debug_hook_installed(_read_claude_settings(provider)):
-        return set(_DEBUG_EVENTS)
-    return set()
-
-
-def _hook_entries(event_hooks: list):
-    """Every hook dict under one event, tolerating hand-mangled settings."""
-    for entry in event_hooks:
-        if not isinstance(entry, dict):
-            continue
-        inner = entry.get('hooks')
-        if not isinstance(inner, list):
-            continue
-        yield from (h for h in inner if isinstance(h, dict))
-
-
-def _merge_debug_blocks(hooks: dict, command: str) -> tuple[int, int]:
-    """Add/refresh debug-hook command blocks in a settings.json `hooks` map.
-
-    Mirrors `_merge_hook_manager_blocks`: an entry installed before the
-    per-provider command existed carries a stale command, and rewriting it is
-    the only way a reinstall can fix it.
-    """
-    added = 0
-    refreshed = 0
-    for event_name in _DEBUG_EVENTS:
-        event_hooks = hooks.setdefault(event_name, [])
-        if not isinstance(event_hooks, list):
-            continue
-        present = False
-        for h in _hook_entries(event_hooks):
-            if not _is_debug_hook_command(h.get('command', '')):
-                continue
-            present = True
-            if h.get('command') != command:
-                h['command'] = command
-                refreshed += 1
-        if not present:
-            event_hooks.append({
-                'hooks': [{'type': 'command', 'command': command, 'timeout': 10}]
-            })
-            added += 1
-    return added, refreshed
-
-
-def _toml_debug_install(provider):
-    path = _hook_settings_path(provider)
-    command = _debug_hook_command(provider)
-    installed = _toml_debug_commands(provider)
-    before = _read_text(path)
-    # Owns its own `debug`-labelled block; the hook_manager block (if any)
-    # is left untouched. Rewriting unconditionally and diffing the file is what
-    # catches a duplicated-but-correct entry, which a command-set comparison
-    # reports as already installed.
-    kimi_hooks.install(
-        path, list(_DEBUG_EVENTS), lambda _event: command,
-        timeout=10, label=_DEBUG_LABEL, is_ours=_is_debug_hook_command,
-    )
-    if _read_text(path) == before:
-        return jsonify({'ok': True, 'msg': 'Already installed'})
-    msg = 'Debug hook refreshed for all events' if installed else 'Debug hook installed for all events'
-    return jsonify({'ok': True, 'msg': msg})
+    return _run_wiring(hooks_wiring.uninstall_hook_manager, provider)
 
 
 @hooks_bp.route('/api/debug-hook-install', methods=['POST'])
@@ -504,21 +191,7 @@ def api_debug_hook_install():
     provider, error = _provider_or_error()
     if error is not None:
         return error
-    unsupported = _require_hooks_capability(provider)
-    if unsupported is not None:
-        return unsupported
-    if _is_toml_provider(provider):
-        return _toml_debug_install(provider)
-    settings = _read_claude_settings(provider)
-    hooks = settings.get('hooks')
-    if not isinstance(hooks, dict):
-        hooks = settings['hooks'] = {}
-    added, refreshed = _merge_debug_blocks(hooks, _debug_hook_command(provider))
-    if not added and not refreshed:
-        return jsonify({'ok': True, 'msg': 'Already installed'})
-    _write_claude_settings(settings, provider)
-    msg = 'Debug hook refreshed for all events' if refreshed else 'Debug hook installed for all events'
-    return jsonify({'ok': True, 'msg': msg})
+    return _run_wiring(hooks_wiring.install_debug_hook, provider)
 
 
 @hooks_bp.route('/api/debug-hook-uninstall', methods=['POST'])
@@ -526,28 +199,7 @@ def api_debug_hook_uninstall():
     provider, error = _provider_or_error()
     if error is not None:
         return error
-    unsupported = _require_hooks_capability(provider)
-    if unsupported is not None:
-        return unsupported
-    if _is_toml_provider(provider):
-        kimi_hooks.uninstall(_hook_settings_path(provider), label=_DEBUG_LABEL,
-                             is_ours=_is_debug_hook_command)
-        return jsonify({'ok': True, 'msg': 'Debug hook removed'})
-    settings = _read_claude_settings(provider)
-    for event_name in list(settings.get('hooks', {}).keys()):
-        event_hooks = settings['hooks'][event_name]
-        if not isinstance(event_hooks, list):
-            continue
-        filtered = []
-        for entry in event_hooks:
-            entry_hooks = [h for h in entry.get('hooks', [])
-                           if 'hook_payload_debug' not in h.get('command', '')]
-            if entry_hooks:
-                entry['hooks'] = entry_hooks
-                filtered.append(entry)
-        settings['hooks'][event_name] = filtered
-    _write_claude_settings(settings, provider)
-    return jsonify({'ok': True, 'msg': 'Debug hook removed'})
+    return _run_wiring(hooks_wiring.uninstall_debug_hook, provider)
 
 
 @hooks_bp.route('/api/debug-hook-payloads')
@@ -778,34 +430,51 @@ _UNINSTALLERS = {
 }
 
 
+def _provider_hooks_entry(provider) -> dict:
+    """One provider's row for `/api/hooks`, carrying enough to render a repair.
+
+    `stale`, `commands`, and `expected_commands` are what let the Settings
+    panel show *Refresh* (and what it would rewrite) instead of only
+    Install/Remove — an install whose command drifted looks identical to a
+    healthy one through `installed` alone.
+    """
+    wiring = _wiring(provider)
+    return {
+        'id': provider.provider_id,
+        'name': provider.display_name,
+        'active': provider.provider_id == active_provider_id(),
+        'hooks_supported': bool(provider.capabilities.hooks),
+        'hook_settings_path': str(provider.hook_settings_path()),
+        'hook_manager': {**wiring['hook_manager'], 'target': provider.provider_id},
+        'debug': {**wiring['debug'], 'target': provider.provider_id},
+    }
+
+
 @hooks_bp.route('/api/hooks')
 def api_hooks_status():
-    providers = []
-    for pid in list_visible_provider_ids():
-        provider = build_provider(pid)
-        routed = _routed_events(provider)
-        providers.append({
-            'id': provider.provider_id,
-            'name': provider.display_name,
-            'active': provider.provider_id == active_provider_id(),
-            'hooks_supported': bool(provider.capabilities.hooks),
-            'hook_settings_path': str(provider.hook_settings_path()),
-            'hook_manager': {
-                'installed': bool(routed),
-                'target': provider.provider_id,
-                'routed_events': sorted(routed),
-            },
-            'debug': {
-                'installed': bool(_debug_hook_routed(provider)),
-                'target': provider.provider_id,
-            },
-        })
+    providers = [_provider_hooks_entry(build_provider(pid))
+                 for pid in list_visible_provider_ids()]
     current = _provider()
+    wiring = _wiring(current)
     return jsonify({
         'providers': providers,
-        'hook_manager': {'installed': bool(_routed_events(current)), 'target': current.provider_id},
-        'debug': {'installed': bool(_debug_hook_routed(current)), 'target': current.provider_id},
+        'hook_manager': {'installed': wiring['hook_manager']['installed'],
+                         'stale': wiring['hook_manager']['stale'],
+                         'target': current.provider_id},
+        'debug': {'installed': wiring['debug']['installed'],
+                  'stale': wiring['debug']['stale'],
+                  'target': current.provider_id},
     })
+
+
+@hooks_bp.route('/api/hooks/wiring')
+def api_hooks_wiring():
+    """Install-vs-disk report for one provider: routed events, the command
+    written for each, and the command install would write today."""
+    provider, error = _provider_or_error()
+    if error is not None:
+        return error
+    return jsonify(_wiring(provider))
 
 
 @hooks_bp.route('/api/hooks/<name>/install', methods=['POST'])

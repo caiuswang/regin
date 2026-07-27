@@ -516,11 +516,14 @@ def test_debug_hook_uninstall_preserves_other_hooks(client):
     """Uninstalling the debug hook must not touch unrelated hook entries
     on the same events (e.g. the hook_manager dispatch command)."""
     c, settings_path = client
+    # The debug entry must carry this checkout's interpreter prefix: removal is
+    # scoped, so an unscoped path here would be another instance's to delete.
     settings_path.write_text(json.dumps({
         'hooks': {
             'PreToolUse': [
                 {'hooks': [{'type': 'command', 'command': 'python -m hook_manager PreToolUse'}]},
-                {'hooks': [{'type': 'command', 'command': '/path/to/hook_payload_debug.py'}]},
+                {'hooks': [{'type': 'command',
+                            'command': hooks_bp_module.DEBUG_HOOK_COMMAND}]},
             ],
         }
     }))
@@ -829,3 +832,50 @@ def test_reset_all_priorities_clears_every_override(client):
     snap = {h['name']: h for h in c.get('/api/hooks/handlers').get_json()['handlers']}
     for n in names:
         assert snap[n]['priority_overridden'] is False
+
+
+# ── /api/hooks/wiring + staleness in /api/hooks ──────────────────────
+
+def test_wiring_endpoint_reports_expected_and_current_commands(client):
+    c, settings_path = client
+    settings_path.write_text('{}')
+    c.post('/api/hook-manager-install')
+
+    body = c.get('/api/hooks/wiring').get_json()
+    hm = body['hook_manager']
+    assert hm['installed'] is True
+    assert hm['stale'] is False
+    assert hm['commands']['PostToolUse'] == [hm['expected_commands']['PostToolUse']]
+    assert '--agent-type claude' in hm['expected_commands']['PostToolUse']
+
+
+def test_wiring_endpoint_flags_a_drifted_command(client):
+    c, settings_path = client
+    # Pre-`-P`, pre-`--agent-type`: routed, ours, but not what install writes.
+    settings_path.write_text(json.dumps({'hooks': {
+        'PostToolUse': [{'hooks': [{'type': 'command', 'command': _hm_cmd('PostToolUse')}]}],
+    }}))
+    hm = c.get('/api/hooks/wiring').get_json()['hook_manager']
+    assert hm['installed'] is True
+    assert hm['stale'] is True
+    assert hm['stale_events'] == ['PostToolUse']
+
+    c.post('/api/hooks/hook_manager/install')
+    assert c.get('/api/hooks/wiring').get_json()['hook_manager']['stale'] is False
+
+
+def test_hooks_status_exposes_stale_per_provider(client):
+    c, settings_path = client
+    settings_path.write_text(json.dumps({'hooks': {
+        'PostToolUse': [{'hooks': [{'type': 'command', 'command': _hm_cmd('PostToolUse')}]}],
+    }}))
+    body = c.get('/api/hooks').get_json()
+    claude = next(p for p in body['providers'] if p['id'] == 'claude')
+    assert claude['hook_manager']['stale'] is True
+    assert claude['hook_manager']['expected_commands']
+    assert body['hook_manager']['stale'] is True
+
+
+def test_wiring_endpoint_rejects_unknown_provider(client):
+    c, _ = client
+    assert c.get('/api/hooks/wiring?provider=nope').status_code == 404

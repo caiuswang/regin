@@ -4,7 +4,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Button from '../components/ui/Button.vue'
-import HookCard from '../components/HookCard.vue'
+import SettingsHookInstallers from '../components/SettingsHookInstallers.vue'
 import HookLifecycleDiagram from '../components/HookLifecycleDiagram.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ListInput from '../components/ListInput.vue'
@@ -33,7 +33,6 @@ const formData = ref({})
 const loading = ref(true)
 
 const hooks = ref({})
-const hooksLoading = ref({})
 const providerHandlers = ref({})
 const providerConfigPaths = ref({})
 const providerSupportedEvents = ref({})
@@ -293,37 +292,6 @@ async function save() {
   flash(result.msg || 'Saved')
   await refreshFeatures()
 }
-
-async function toggleHook(providerId, name) {
-  const key = `${providerId}:${name}`
-  hooksLoading.value[key] = true
-  const provider = hookProviders.value.find(p => p.id === providerId)
-  const isInstalled = provider?.[name]?.installed
-  const result = await api.post(`/hooks/${name}/${isInstalled ? 'uninstall' : 'install'}?provider=${encodeURIComponent(providerId)}`)
-  if (!result.ok) {
-    flash(result.msg || 'Hook operation failed', 'error')
-    hooksLoading.value[key] = false
-    return
-  }
-  flash(result.msg)
-  await loadHookState()
-  hooksLoading.value[key] = false
-}
-
-const hookDefinitions = [
-  {
-    key: 'hook_manager',
-    title: 'Hook Manager',
-    subtitle: 'Recommended',
-    description: 'Installs the unified hook dispatcher for this provider. This is what makes the handler toggles above active.'
-  },
-  {
-    key: 'debug',
-    title: 'Debug Hook',
-    subtitle: 'Optional payload logger',
-    description: 'Logs raw hook payloads for this provider. It does <strong>not</strong> enable the handler toggles above.'
-  },
-]
 
 const showDiagram = ref(false)
 
@@ -668,34 +636,7 @@ watch([activeSection, selectedProvider], ([section]) => {
 
       <!-- Hook Installers -->
       <template v-else-if="activeSection === 'install'">
-        <div class="sv-section-header">
-          <h2 class="sv-section-title">Hook Installers</h2>
-          <p class="sv-section-desc">Install Hook Manager separately for each provider. The debug hook is optional and only logs raw payloads.</p>
-        </div>
-
-        <div class="space-y-4">
-          <Card v-for="provider in hookProviders" :key="provider.id">
-            <div class="flex items-start justify-between gap-4 mb-3">
-              <div>
-                <h3 class="text-sm font-semibold text-gray-800">{{ provider.name }}</h3>
-                <div class="text-xs text-gray-500 mt-0.5"><code>{{ provider.hook_settings_path }}</code></div>
-              </div>
-              <Badge :color="provider.hooks_supported ? 'green' : 'gray'" :label="provider.hooks_supported ? 'hooks supported' : 'not supported'" />
-            </div>
-            <div class="space-y-3">
-              <HookCard
-                v-for="h in hookDefinitions"
-                :key="`${provider.id}:${h.key}`"
-                :title="h.title"
-                :subtitle="h.subtitle"
-                :description="h.description"
-                :installed="provider[h.key]?.installed ?? null"
-                :loading="hooksLoading[`${provider.id}:${h.key}`]"
-                @toggle="toggleHook(provider.id, h.key)"
-              />
-            </div>
-          </Card>
-        </div>
+        <SettingsHookInstallers :providers="hookProviders" :reload="loadHookState" />
       </template>
 
       <!-- Payload Debugger -->

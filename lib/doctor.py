@@ -432,6 +432,74 @@ def _stale_skeleton_items() -> list[dict]:
              "present": True, "version": f"{seeded} match built-in defaults"}]
 
 
+def _wiring_item(provider, kind: str, status: dict, active: bool) -> dict:
+    """One doctor row comparing installed hook commands against what install
+    would write today. Staleness is invisible to an installed/not-installed
+    check — CAI-15 was a routed hook running a command regin had since
+    changed — so a drifted command reads as a failure with a repair line."""
+    # Only the active provider's router is load-bearing; the debug logger is
+    # opt-in and other providers may simply not be in use. The same split
+    # applies to a drifted row, not just a missing one.
+    base = {'id': f'hook_wiring_{provider.provider_id}_{kind}',
+            'label': f'{provider.provider_id}: {kind}',
+            'optional': not (active and kind == 'hook_manager')}
+    if not status['installed']:
+        flag = ' --only-debug' if kind == 'debug' else ''
+        return {**base, 'present': False,
+                'install_hint': f'run `regin hooks install '
+                                f'--provider {provider.provider_id}{flag}`'}
+    if not status['stale']:
+        return {**base, 'present': True,
+                'version': f"{len(status['routed_events'])} events routed"}
+    drifted = ', '.join(status['stale_events'] + status['missing_events'])
+    return {**base, 'present': False, 'status_text': 'stale',
+            'install_hint': f'installed, but differs from what install writes today '
+                            f'({drifted}) — run `regin hooks repair '
+                            f'--provider {provider.provider_id}`'}
+
+
+def _malformed_hooks_item(provider, status: dict) -> dict | None:
+    """A row for event keys install must refuse to touch.
+
+    A non-list value under an event can only come from a hand edit, so the
+    remedy is the file, not a regin command — reporting it under the repair
+    rows would point at a command that answers "already installed"."""
+    events = status['hook_manager']['malformed_events']
+    if not events:
+        return None
+    return {'id': f'hook_wiring_{provider.provider_id}_malformed',
+            'label': f'{provider.provider_id}: config shape',
+            'present': False, 'optional': True, 'status_text': 'malformed',
+            'install_hint': f"{', '.join(events)} is not a list of hook entries in "
+                            f'{provider.hook_settings_path()} — fix by hand; '
+                            'regin will not overwrite it'}
+
+
+def _hook_wiring_items(active_provider) -> list[dict]:
+    """Install-vs-disk rows for every hook-capable visible provider."""
+    from lib.hooks_wiring import wiring_status
+    from lib.providers import build_provider, list_visible_provider_ids
+
+    items: list[dict] = []
+    for pid in list_visible_provider_ids():
+        provider = build_provider(pid)
+        if not provider.capabilities.hooks:
+            continue
+        try:
+            status = wiring_status(provider, str(provider.hook_settings_path()))
+        except Exception as exc:  # noqa: BLE001 — doctor must never crash a row
+            items.append({'id': f'hook_wiring_{pid}', 'label': pid, 'present': False,
+                          'optional': True, 'install_hint': f'wiring read failed: {exc}'})
+            continue
+        active = pid == active_provider.provider_id
+        items.extend(_wiring_item(provider, kind, status[kind], active)
+                     for kind in ('hook_manager', 'debug'))
+        malformed = _malformed_hooks_item(provider, status)
+        if malformed is not None:
+            items.append(malformed)
+    return items
+
+
 def run_checks() -> dict:
     """Return structured doctor check results."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -504,6 +572,9 @@ def run_checks() -> dict:
 
     groups.append({'name': 'Agent bridge (web steering)',
                    'items': _agent_bridge_items(_check_tool)})
+
+    groups.append({'name': 'Hook wiring (installed vs. what install writes today)',
+                   'items': _hook_wiring_items(provider)})
 
     groups.append({'name': f'{provider.display_name} hooks (script paths in {provider.hook_settings_path()})', 'items': [
         {

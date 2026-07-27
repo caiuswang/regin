@@ -480,3 +480,112 @@ def test_agent_bridge_items_env_unset_and_no_panes(monkeypatch):
     assert items["bridge_env"]["present"] is False
     assert items["bridge_panes"]["present"] is False
     assert items["bridge_panes"]["version"] == "0 registered"
+
+
+# ── _hook_wiring_items / _wiring_item ────────────────────────
+
+class _StubProvider:
+    provider_id = "claude"
+
+    class capabilities:
+        hooks = True
+
+
+def _wiring(installed=False, stale=False, routed=(), stale_events=(), missing=()):
+    return {
+        "installed": installed,
+        "stale": stale,
+        "routed_events": list(routed),
+        "stale_events": list(stale_events),
+        "missing_events": list(missing),
+        "malformed_events": [],
+    }
+
+
+def test_wiring_item_healthy_install_passes():
+    item = doctor._wiring_item(
+        _StubProvider(), "hook_manager",
+        _wiring(installed=True, routed=("SessionStart", "Stop")), active=True)
+    assert item["present"] is True
+    assert item["version"] == "2 events routed"
+
+
+def test_wiring_item_stale_fails_with_repair_command():
+    item = doctor._wiring_item(
+        _StubProvider(), "hook_manager",
+        _wiring(installed=True, stale=True, routed=("Stop",), stale_events=("Stop",)),
+        active=True)
+    assert item["present"] is False
+    assert item["optional"] is False
+    assert item["status_text"] == "stale"
+    assert "regin hooks repair --provider claude" in item["install_hint"]
+    assert "Stop" in item["install_hint"]
+
+
+def test_wiring_item_stale_debug_stays_optional():
+    """The required/optional split applies to a drifted row too — the debug
+    logger is opt-in, so its drift must not read as a hard failure."""
+    item = doctor._wiring_item(
+        _StubProvider(), "debug",
+        _wiring(installed=True, stale=True, routed=("Stop",), stale_events=("Stop",)),
+        active=True)
+    assert item["optional"] is True
+
+
+def test_wiring_item_stale_on_inactive_provider_stays_optional():
+    item = doctor._wiring_item(
+        _StubProvider(), "hook_manager",
+        _wiring(installed=True, stale=True, routed=("Stop",), stale_events=("Stop",)),
+        active=False)
+    assert item["optional"] is True
+
+
+def test_malformed_hooks_item_points_at_the_file_not_a_command():
+    class _P(_StubProvider):
+        @staticmethod
+        def hook_settings_path():
+            return "/tmp/claude-settings.json"
+
+    item = doctor._malformed_hooks_item(
+        _P(), {"hook_manager": {"malformed_events": ["PreToolUse"]}})
+    assert item["present"] is False
+    assert item["optional"] is True
+    assert "PreToolUse" in item["install_hint"]
+    # Must not suggest a regin command: install deliberately cannot fix this.
+    assert "regin hooks" not in item["install_hint"]
+
+
+def test_malformed_hooks_item_absent_when_config_is_well_formed():
+    assert doctor._malformed_hooks_item(
+        _StubProvider(), {"hook_manager": {"malformed_events": []}}) is None
+
+
+def test_wiring_item_missing_router_on_active_provider_is_required():
+    item = doctor._wiring_item(_StubProvider(), "hook_manager", _wiring(), active=True)
+    assert item["present"] is False
+    assert item.get("optional") is False
+    assert "regin hooks install --provider claude`" in item["install_hint"]
+
+
+def test_wiring_item_missing_debug_hook_is_optional():
+    item = doctor._wiring_item(_StubProvider(), "debug", _wiring(), active=True)
+    assert item["optional"] is True
+    assert "--only-debug`" in item["install_hint"]
+
+
+def test_wiring_item_inactive_provider_router_is_optional():
+    item = doctor._wiring_item(_StubProvider(), "hook_manager", _wiring(), active=False)
+    assert item["optional"] is True
+
+
+def test_hook_wiring_items_survives_a_failing_provider(monkeypatch):
+    class _Boom(_StubProvider):
+        @staticmethod
+        def hook_settings_path():
+            raise OSError("nope")
+
+    monkeypatch.setattr("lib.providers.list_visible_provider_ids", lambda: ["claude"])
+    monkeypatch.setattr("lib.providers.build_provider", lambda pid: _Boom())
+    items = doctor._hook_wiring_items(_StubProvider())
+    assert items[0]["present"] is False
+    assert "wiring read failed" in items[0]["install_hint"]
