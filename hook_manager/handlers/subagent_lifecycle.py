@@ -362,34 +362,19 @@ def _subagent_thinking_output_tokens(turn) -> int | None:
     return max(0, int(turn.output_tokens or 0) - tool_use_out) or None
 
 
-def _subagent_turn_attributes(turn, idx, agent_id, fallback_model) -> dict:
-    """Build the span attributes for one subagent turn."""
-    has_text = bool(turn.text)
+def _subagent_turn_base_attributes(turn, idx, agent_id, fallback_model) -> dict:
+    """The attributes both spans of one subagent turn carry."""
     attributes = {
         'turn_uuid': turn.uuid,
         'turn_index': idx,
         'model': turn.model or fallback_model,
         'agent_id': agent_id,
     }
-    if has_text:
-        attributes['text'] = turn.text
-        attributes['truncated'] = turn.text_truncated
-        attributes['response_chars'] = len(turn.text)
-    else:
-        out = _subagent_thinking_output_tokens(turn)
-        if out:
-            attributes['output_tokens'] = out
     if turn.tool_calls:
         attributes['tool_calls'] = [
             {'name': t['name'], 'is_error': t['is_error']}
             for t in turn.tool_calls
         ]
-    if turn.thinking_blocks:
-        attributes['thinking_blocks'] = turn.thinking_blocks
-        attributes['thinking_signature_bytes'] = turn.thinking_signature_bytes
-        if turn.thinking_text:
-            attributes['thinking_text'] = turn.thinking_text
-            attributes['thinking_truncated'] = turn.thinking_text_truncated
     if turn.inference_duration_ms is not None:
         attributes['inference_duration_ms'] = int(turn.inference_duration_ms)
     if turn.turn_total_duration_ms is not None:
@@ -397,22 +382,99 @@ def _subagent_turn_attributes(turn, idx, agent_id, fallback_model) -> dict:
     return attributes
 
 
-def _post_one_subagent_turn(trace_id, turn, idx, agent_id, fallback_model) -> None:
-    """Emit the single assistant_response / assistant.thinking span for one
-    subagent turn. Thinking-only turns get the distinct `assistant.thinking`
-    name so the conversation view doesn't render an empty response card."""
-    from lib.hook_plugin import post_span  # type: ignore
-    has_text = bool(turn.text)
+def _subagent_thinking_attributes(turn, idx, agent_id, fallback_model) -> dict:
+    attributes = _subagent_turn_base_attributes(turn, idx, agent_id, fallback_model)
+    attributes['thinking_blocks'] = turn.thinking_blocks
+    attributes['thinking_signature_bytes'] = turn.thinking_signature_bytes
+    if turn.thinking_text:
+        attributes['thinking_text'] = turn.thinking_text
+        attributes['thinking_truncated'] = turn.thinking_text_truncated
+    out = _subagent_thinking_output_tokens(turn)
+    if out:
+        attributes['output_tokens'] = out
+    return attributes
+
+
+def _subagent_response_attributes(turn, idx, agent_id, fallback_model) -> dict:
+    attributes = _subagent_turn_base_attributes(turn, idx, agent_id, fallback_model)
+    attributes['text'] = turn.text
+    attributes['truncated'] = turn.text_truncated
+    attributes['response_chars'] = len(turn.text)
+    return attributes
+
+
+def _stagger_before(ts: str) -> str:
+    """1 ms earlier, so a start_time-ordered tree renders the turn's thinking
+    card ahead of its response (same idiom as the main-agent path)."""
+    from datetime import datetime, timedelta
+    try:
+        return (datetime.fromisoformat(ts) - timedelta(milliseconds=1)).isoformat()
+    except (ValueError, TypeError):
+        return ts
+
+
+def _thinking_worth_a_span(turn, has_text: bool) -> bool:
+    """Drop a content-free thinking block only when the turn also spoke: Kimi
+    records an empty `think` part at the tail of most steps, and pairing one
+    with a response would render an empty thinking card next to real text.
+    A thinking-ONLY turn keeps its span either way — it is the turn's sole
+    anchor for the tool summary and token attribution, and Claude's redacted
+    reasoning (signature bytes, no text) has to survive here too."""
+    if not has_text:
+        return True
+    return bool(turn.thinking_text or turn.thinking_signature_bytes)
+
+
+def subagent_turn_spans(turn, idx, agent_id, fallback_model) -> list[dict]:
+    """The span row(s) for one subagent turn, mirroring the main-agent pairing
+    in `turn_trace.span_posters._maybe_emit_assistant_span`: text →
+    `assistant_response`, extended thinking → `assistant.thinking`, and BOTH
+    when the turn carried both. Naming the thinking span separately keeps the
+    conversation view from rendering an empty response card; emitting it
+    alongside the response is what keeps a subagent's reasoning from being
+    dropped whenever it spoke in the same turn.
+
+    Shared with `lib.trace.kimi_subagents`, which writes the same rows straight
+    to the DB during reconciliation — the two paths must not drift."""
     ts = _normalize_subagent_ts(turn.timestamp)
-    post_span(
-        trace_id=trace_id,
-        span_id=f'{"resp-sa" if has_text else "think-sa"}-{turn.uuid[:13]}',
-        name='assistant_response' if has_text else 'assistant.thinking',
-        start_time=ts,
-        end_time=ts,
-        duration_ms=int(turn.inference_duration_ms or 0),
-        attributes=_subagent_turn_attributes(turn, idx, agent_id, fallback_model),
-    )
+    has_text = bool(turn.text)
+    duration_ms = int(turn.inference_duration_ms or 0)
+    spans: list[dict] = []
+    if turn.thinking_blocks and _thinking_worth_a_span(turn, has_text):
+        spans.append({
+            'span_id': f'think-sa-{turn.uuid[:13]}',
+            'name': 'assistant.thinking',
+            'start_time': _stagger_before(ts) if has_text else ts,
+            'duration_ms': 0 if has_text else duration_ms,
+            'attributes': _subagent_thinking_attributes(
+                turn, idx, agent_id, fallback_model),
+        })
+    if has_text:
+        spans.append({
+            'span_id': f'resp-sa-{turn.uuid[:13]}',
+            'name': 'assistant_response',
+            'start_time': ts,
+            'duration_ms': duration_ms,
+            'attributes': _subagent_response_attributes(
+                turn, idx, agent_id, fallback_model),
+        })
+    return spans
+
+
+def _post_one_subagent_turn(trace_id, turn, idx, agent_id, fallback_model) -> None:
+    """Emit the assistant_response / assistant.thinking span(s) for one
+    subagent turn."""
+    from lib.hook_plugin import post_span  # type: ignore
+    for span in subagent_turn_spans(turn, idx, agent_id, fallback_model):
+        post_span(
+            trace_id=trace_id,
+            span_id=span['span_id'],
+            name=span['name'],
+            start_time=span['start_time'],
+            end_time=span['start_time'],
+            duration_ms=span['duration_ms'],
+            attributes=span['attributes'],
+        )
 
 
 def _subagent_turn_emittable(turn, seen) -> bool:

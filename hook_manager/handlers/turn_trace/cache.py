@@ -10,6 +10,9 @@ Two file artefacts live under `~/.local/share/regin/turn_trace_state/`
   * `<trace_id>.aititle` — last-emitted `{source}:{text}` cache key for
                            the session.title span; suppresses a re-emit
                            when neither side changed.
+  * `<trace_id>.turnmodel` — last-emitted `{model}:{last_turn_uuid}` key
+                           for the `turn` model span; suppresses a re-emit
+                           on a Stop that brought no new turn.
 
 Server-side dedup keys (`resp-<uuid[:13]>`, etc.) make repeated posts
 safe — these caches are the client-side throttle that keeps PostToolUse
@@ -74,6 +77,26 @@ def _save_ai_title(trace_id: str, title: str) -> None:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(title)
+    except OSError:
+        pass
+
+
+def _turn_marker_cache_path(trace_id: str) -> Path:
+    return _state_dir() / f'{trace_id}.turnmodel'
+
+
+def _load_turn_marker(trace_id: str) -> str | None:
+    try:
+        return _turn_marker_cache_path(trace_id).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _save_turn_marker(trace_id: str, key: str) -> None:
+    p = _turn_marker_cache_path(trace_id)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(key)
     except OSError:
         pass
 

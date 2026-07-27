@@ -262,6 +262,34 @@ def _enrich_marker(conn, row, agent_id: str, info: dict) -> None:
     )
 
 
+def _synthetic_id(kind: str, agent_id: str) -> str:
+    return f"sa-{kind}-{agent_id}"
+
+
+def _is_synthetic(span_id: str) -> bool:
+    """True for a marker THIS module inserted (vs one a hook posted). Only
+    these are ours to delete."""
+    return span_id.startswith("sa-start-") or span_id.startswith("sa-stop-")
+
+
+def _delete_marker(conn, trace_id: str, span_id: str) -> None:
+    conn.execute(
+        "DELETE FROM session_spans WHERE trace_id = ? AND span_id = ?",
+        (trace_id, span_id),
+    )
+
+
+def _take_own_synthetic(pool: list, kind: str, agent_id: str):
+    """Claim (removing it) the synthetic marker a previous run inserted for
+    THIS agent, matched by its deterministic span id. Claiming by id rather
+    than by content is what stops one agent from adopting another's marker."""
+    want = _synthetic_id(kind, agent_id)
+    for i, m in enumerate(pool):
+        if m["span_id"] == want:
+            return pool.pop(i)
+    return None
+
+
 def _insert_marker(conn, trace_id: str, name: str, agent_id: str,
                    ts: str, info: dict) -> None:
     """Emit a fresh `subagent.start` / `subagent.stop` for a session whose
@@ -280,7 +308,7 @@ def _insert_marker(conn, trace_id: str, name: str, agent_id: str,
         attrs["result_preview"] = info["result_preview"]
     span = {
         "trace_id": trace_id,
-        "span_id": f"sa-{kind}-{agent_id}",
+        "span_id": _synthetic_id(kind, agent_id),
         "parent_id": None,
         "name": name,
         "kind": "internal",
@@ -301,34 +329,73 @@ def _overlap(a: str, b: str, n: int = 80) -> bool:
 
 
 def _match_marker(pool: list, key: str | None, attr: str):
-    """Claim one hook marker from `pool` (removing it): the marker whose stored
+    """Claim one HOOK marker from `pool` (removing it): the marker whose stored
     `attr` overlaps `key` (robust against out-of-order parallel subagents),
     else the first remaining (creation-order fallback for older markers that
-    predate the stored preview). None when the pool is empty."""
+    predate the stored preview). None when the pool holds no hook marker.
+
+    Synthetic markers are skipped — each agent claims its own by id first, and
+    letting the content/order fallback adopt a leftover synthetic is what used
+    to bind a marker to the wrong agent."""
+    hooks = [m for m in pool if not _is_synthetic(m["span_id"])]
+    if not hooks:
+        return None
     if key:
-        for i, m in enumerate(pool):
+        for m in hooks:
             value = json.loads(m["attributes"]).get(attr) or ""
             if _overlap(value, key):
-                return pool.pop(i)
-    return pool.pop(0) if pool else None
+                pool.remove(m)
+                return m
+    pool.remove(hooks[0])
+    return hooks[0]
+
+
+def _place_one_marker(conn, trace_id: str, kind: str, agent_id: str, info: dict,
+                      pool: list, key: str | None, attr: str, ts: str | None) -> None:
+    """Bind this subagent to exactly ONE marker span of `kind`.
+
+    A synthetic marker is inserted when the hook's marker hasn't landed yet
+    (Kimi fires `SubagentStop` late, and sometimes never). Once the real one
+    does arrive both describe the same event, so the synthetic is dropped
+    rather than left behind — without that, every reconcile pass that ran
+    before the hook permanently doubled the subagent's marker count."""
+    name = f"subagent.{kind}"
+    mine = _take_own_synthetic(pool, kind, agent_id)
+    hook = _match_marker(pool, key, attr)
+    if hook is not None:
+        _enrich_marker(conn, hook, agent_id, info)
+        if mine is not None:
+            _delete_marker(conn, trace_id, mine["span_id"])
+    elif mine is not None:
+        _enrich_marker(conn, mine, agent_id, info)
+    elif ts:
+        _insert_marker(conn, trace_id, name, agent_id, ts, info)
 
 
 def _place_markers(conn, trace_id: str, agent_id: str, info: dict, usage,
                    starts: list, stops: list, launch_prompt: str | None) -> None:
-    """Claim + enrich this subagent's hook start/stop markers, or insert fresh
-    ones when the session recorded none. `starts`/`stops` are mutated (claimed
+    """Claim + enrich this subagent's start/stop markers, or insert fresh ones
+    when the session recorded none. `starts`/`stops` are mutated (claimed
     markers are popped) so each is bound to exactly one subagent."""
     first_ts, last_ts = _turn_bounds(usage)
-    start = _match_marker(starts, launch_prompt, "prompt_preview")
-    if start is not None:
-        _enrich_marker(conn, start, agent_id, info)
-    elif first_ts:
-        _insert_marker(conn, trace_id, "subagent.start", agent_id, first_ts, info)
-    stop = _match_marker(stops, info.get("result_preview"), "result_preview")
-    if stop is not None:
-        _enrich_marker(conn, stop, agent_id, info)
-    elif last_ts:
-        _insert_marker(conn, trace_id, "subagent.stop", agent_id, last_ts, info)
+    _place_one_marker(conn, trace_id, "start", agent_id, info, starts,
+                      launch_prompt, "prompt_preview", first_ts)
+    _place_one_marker(conn, trace_id, "stop", agent_id, info, stops,
+                      info.get("result_preview"), "result_preview", last_ts)
+
+
+def _drop_stale_synthetics(conn, trace_id: str, unclaimed: list) -> int:
+    """Delete the synthetic markers no subagent claimed this pass. They are
+    keyed on `agent_id`, which changes once a subagent's launching `tool.Agent`
+    call becomes re-identifiable (positional fallback → real `tool_use_id`), so
+    a re-key would otherwise strand the old marker forever. Only ids this
+    module minted are touched; an unclaimed HOOK marker is left alone."""
+    dropped = 0
+    for row in unclaimed:
+        if _is_synthetic(row["span_id"]):
+            _delete_marker(conn, trace_id, row["span_id"])
+            dropped += 1
+    return dropped
 
 
 def _claim_markers(conn, trace_id: str, name: str) -> list:
@@ -348,30 +415,27 @@ def _emit_subagent_turns(conn, trace_id: str, agent_id: str, usage) -> int:
     """Insert the subagent's assistant_response / assistant.thinking turns,
     tagged agent_id. Deterministic span ids make this idempotent."""
     from hook_manager.handlers.subagent_lifecycle import (
-        _normalize_subagent_ts, _subagent_turn_attributes, _subagent_turn_emittable,
+        _subagent_turn_emittable, subagent_turn_spans,
     )
     from lib.trace.trace_service.ingest import _insert_span_row
     emitted = 0
     for idx, turn in enumerate(usage.turns):
         if not _subagent_turn_emittable(turn, None):
             continue
-        has_text = bool(turn.text)
-        ts = _normalize_subagent_ts(turn.timestamp)
-        attrs = _subagent_turn_attributes(turn, idx, agent_id, usage.model)
-        span = {
-            "trace_id": trace_id,
-            "span_id": f'{"resp-sa" if has_text else "think-sa"}-{turn.uuid[:13]}',
-            "parent_id": None,
-            "name": "assistant_response" if has_text else "assistant.thinking",
-            "kind": "internal",
-            "start_time": ts,
-            "end_time": ts,
-            "duration_ms": int(turn.inference_duration_ms or 0),
-            "status_code": "OK",
-            "status_message": None,
-        }
-        _insert_span_row(conn, span, attrs)
-        emitted += 1
+        for row in subagent_turn_spans(turn, idx, agent_id, usage.model):
+            _insert_span_row(conn, {
+                "trace_id": trace_id,
+                "span_id": row["span_id"],
+                "parent_id": None,
+                "name": row["name"],
+                "kind": "internal",
+                "start_time": row["start_time"],
+                "end_time": row["start_time"],
+                "duration_ms": row["duration_ms"],
+                "status_code": "OK",
+                "status_message": None,
+            }, row["attributes"])
+            emitted += 1
     return emitted
 
 
@@ -513,6 +577,7 @@ def reconcile_kimi_subagents(trace_id: str) -> dict:
             tool_spans += stats["tool_spans"]
             turns += stats["turns"]
             closed += stats["launches_closed"]
+        _drop_stale_synthetics(conn, trace_id, starts + stops)
         conn.commit()
     except Exception:
         try:

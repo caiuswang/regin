@@ -23,8 +23,10 @@ from ...core import HookPayload, HookResponse
 from .cache import (
     _load_ai_title,
     _load_seen,
+    _load_turn_marker,
     _read_session_title,
     _save_ai_title,
+    _save_turn_marker,
 )
 from .span_posters import (
     _post_attachment_spans,
@@ -74,6 +76,24 @@ def _post_turn_model_span(trace_id: str, model: str) -> None:
         name='turn',
         attributes={'model': model},
     )
+
+
+def _turn_span_wanted(payload: HookPayload, model: str, last_turn: str | None) -> bool:
+    """Whether this event should post a `turn` model span.
+
+    A prompt always does — the projection's submit-lookahead uses that span to
+    find where a prompt's activity begins. A `Stop` only does when the main
+    transcript actually moved since the last one: Kimi fires a parent-session
+    `Stop` a few hundred ms before every `SubagentStop`, and those carry the
+    same shape as a real main-agent stop, so an unconditional post minted one
+    `turn` row per subagent completion on top of the main agent's own."""
+    if payload.event == 'UserPromptSubmit' or not last_turn:
+        return True
+    key = f'{model}:{last_turn}'
+    if key == _load_turn_marker(payload.session_id):
+        return False
+    _save_turn_marker(payload.session_id, key)
+    return True
 
 
 def _emit_session_title_if_changed(trace_id: str, transcript_path: str) -> None:
@@ -174,11 +194,12 @@ def _ingest_transcript_usage(
     fallback_model: str | None,
     provider,
     effort_level: str | None = None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """Parse the transcript (via the provider's parser) and emit every derived
     span/event for rows the seen-uuid cache hasn't already accepted. Returns
-    the model the transcript reported, so callers without a cheaper model read
-    (non-Claude formats) can post the `turn` model span from the same parse."""
+    `(model, last_turn_uuid)`, so callers without a cheaper model read
+    (non-Claude formats) can post the `turn` model span from the same parse and
+    tell whether the transcript actually advanced since the last one."""
     capture_text, max_text_bytes, read_cap = _text_capture_config()
     usage = provider.parse_transcript(transcript_path, max_text_bytes=read_cap)
     _post_transcript_usage(
@@ -186,7 +207,9 @@ def _ingest_transcript_usage(
         capture_text=capture_text, max_text_bytes=max_text_bytes,
         effort_level=effort_level,
     )
-    return usage.model if usage else None
+    if usage is None:
+        return None, None
+    return usage.model, (usage.turns[-1].uuid if usage.turns else None)
 
 
 def ingest_transcript_usage_resumable(
@@ -236,9 +259,10 @@ def _emit_span(payload: HookPayload) -> None:
         # Other formats (Kimi) carry the model in the same parse, so derive the
         # `turn` model span from the ingest rather than scanning the file twice
         # (Kimi's SessionStart payload carries no model).
-        model = _ingest_transcript_usage(payload.session_id, transcript_path, None,
-                                         provider, effort_level=effort)
-        if model:
+        model, last_turn = _ingest_transcript_usage(
+            payload.session_id, transcript_path, None, provider,
+            effort_level=effort)
+        if model and _turn_span_wanted(payload, model, last_turn):
             _post_turn_model_span(payload.session_id, model)
 
 

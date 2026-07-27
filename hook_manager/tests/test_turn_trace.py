@@ -1751,3 +1751,47 @@ def test_command_with_stdout_before_expansion_anchors(captured_spans, tmp_path,
     # The response nests under the /goal anchor, not the prior typed prompt.
     resp = next(s for s in captured_spans if s.get('span_id') == 'resp-a1')
     assert resp['parent_id'] == 'prompt-cmd'
+
+
+# ── `turn` model span: one per real turn, not one per Stop ───────────
+
+@pytest.fixture
+def isolated_state(tmp_path, monkeypatch):
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / 'state'))
+
+
+def _wanted(event, model, last_turn):
+    from hook_manager.handlers.turn_trace.entry import _turn_span_wanted
+    return _turn_span_wanted(_p(event, session_id='s-gate'), model, last_turn)
+
+
+def test_stop_without_a_new_turn_posts_no_second_model_span(isolated_state):
+    """Kimi fires a parent-session `Stop` a few hundred ms before every
+    `SubagentStop`, shaped exactly like a real main-agent stop. Posting on each
+    minted one `turn` row per subagent completion on top of the main agent's."""
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is True
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is False
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is False
+
+
+def test_stop_after_a_new_turn_still_posts(isolated_state):
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is True
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-b') is True
+
+
+def test_a_model_switch_posts_even_on_the_same_turn(isolated_state):
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is True
+    assert _wanted('Stop', 'kimi-code/k2', 'turn-a') is True
+
+
+def test_a_prompt_always_posts(isolated_state):
+    """The projection's submit-lookahead finds a prompt's first activity via
+    this span, so the gate must never suppress it."""
+    assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is True
+    assert _wanted('UserPromptSubmit', 'kimi-code/k3', 'turn-a') is True
+    assert _wanted('UserPromptSubmit', 'kimi-code/k3', 'turn-a') is True
+
+
+def test_a_turnless_transcript_still_posts(isolated_state):
+    assert _wanted('Stop', 'kimi-code/k3', None) is True
+    assert _wanted('Stop', 'kimi-code/k3', None) is True

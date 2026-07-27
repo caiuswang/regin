@@ -135,3 +135,78 @@ def test_sweep_swallows_provider_errors(monkeypatch):
     resp = subagent_lifecycle.handle_sweep(_p('Stop', session_id='session_k',
                                               agent_type='kimi'))
     assert resp.suppress_output is True
+
+
+class _Turn:
+    """The subset of a parsed transcript turn the span builder reads."""
+
+    def __init__(self, *, text='', thinking_text='', thinking_blocks=0,
+                 signature_bytes=0):
+        self.uuid = 'turn-uuid-0123456789'
+        self.timestamp = '2026-06-01T00:00:10'
+        self.model = 'kimi-code/k3'
+        self.text = text
+        self.text_truncated = False
+        self.thinking_text = thinking_text
+        self.thinking_text_truncated = False
+        self.thinking_blocks = thinking_blocks
+        self.thinking_signature_bytes = signature_bytes
+        self.tool_calls = []
+        self.output_tokens = 0
+        self.inference_duration_ms = 400
+        self.turn_total_duration_ms = 900
+
+
+def _spans(turn):
+    return [(s['name'], s['span_id']) for s in
+            subagent_lifecycle.subagent_turn_spans(turn, 0, 'agent-x', 'k3')]
+
+
+def test_a_turn_that_thought_and_spoke_emits_both_spans():
+    """The subagent path used to name the span by `bool(turn.text)` alone, so
+    reasoning that shared a turn with a reply was dropped on the floor —
+    silently, and only for subagents."""
+    assert _spans(_Turn(text='done', thinking_text='reasoned', thinking_blocks=1)) == [
+        ('assistant.thinking', 'think-sa-turn-uuid-012'),
+        ('assistant_response', 'resp-sa-turn-uuid-012'),
+    ]
+
+
+def test_thinking_card_sorts_before_the_response_it_preceded():
+    spans = subagent_lifecycle.subagent_turn_spans(
+        _Turn(text='done', thinking_text='reasoned', thinking_blocks=1),
+        0, 'agent-x', 'k3')
+    assert spans[0]['start_time'] < spans[1]['start_time']
+
+
+def test_text_only_turn_emits_only_the_response():
+    assert _spans(_Turn(text='done')) == [
+        ('assistant_response', 'resp-sa-turn-uuid-012')]
+
+
+def test_thinking_only_turn_emits_only_the_thinking_span():
+    assert _spans(_Turn(thinking_text='reasoned', thinking_blocks=1)) == [
+        ('assistant.thinking', 'think-sa-turn-uuid-012')]
+
+
+def test_empty_thinking_beside_a_reply_is_not_its_own_card():
+    """Kimi closes most steps with a content-free `think` part; pairing one
+    with real text would render an empty thinking card next to the reply."""
+    assert _spans(_Turn(text='done', thinking_blocks=1)) == [
+        ('assistant_response', 'resp-sa-turn-uuid-012')]
+
+
+def test_redacted_thinking_beside_a_reply_survives():
+    """Claude's redacted reasoning carries signature bytes and no text — it is
+    evidence the turn reasoned, so it keeps its span."""
+    assert _spans(_Turn(text='done', thinking_blocks=1, signature_bytes=64)) == [
+        ('assistant.thinking', 'think-sa-turn-uuid-012'),
+        ('assistant_response', 'resp-sa-turn-uuid-012'),
+    ]
+
+
+def test_thinking_only_turn_keeps_its_span_even_when_empty():
+    """A tool-only turn's thinking span is its sole anchor for the tool summary
+    and token attribution, so an empty one still has a job."""
+    assert _spans(_Turn(thinking_blocks=1)) == [
+        ('assistant.thinking', 'think-sa-turn-uuid-012')]

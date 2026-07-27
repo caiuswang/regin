@@ -399,3 +399,95 @@ def test_unmatched_launch_still_named_from_the_wire(tmp_db, kimi_home):
         tmp_db, "SELECT json_extract(attributes, '$.agent_type') AS k "
                 "FROM session_spans WHERE trace_id = ? AND name = 'subagent.start'")}
     assert kinds == {"explore"}
+
+
+def _add_stop_markers(db_path, *previews: str) -> None:
+    """Append the hook-emitted `subagent.stop` markers that Kimi delivers late
+    — often several reconcile passes after the subagent's wire went quiet."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for i, preview in enumerate(previews):
+            conn.execute(
+                "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
+                "attributes, status_code) VALUES (?, ?, 'subagent.stop', ?, ?, 'OK')",
+                (_SID, f"hookstop-{i}", f"2026-06-01T00:01:0{i}",
+                 json.dumps({"agent_type": "kimi", "result_preview": preview})),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_late_hook_stop_supersedes_the_synthetic_marker(tmp_db, kimi_home):
+    """Kimi fires `SubagentStop` long after the wire goes quiet, so an earlier
+    sweep has already inserted a synthetic stop. When the real marker lands,
+    the subagent must end up with ONE stop, not one per emitter."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    reconcile_kimi_subagents(_SID)
+    assert {r["span_id"] for r in _rows(
+        tmp_db, "SELECT span_id FROM session_spans WHERE trace_id = ? "
+                "AND name = 'subagent.stop'")} == {
+        "sa-stop-launch-0", "sa-stop-launch-1"}
+
+    _add_stop_markers(tmp_db, "alpha done", "beta done")
+    reconcile_kimi_subagents(_SID)
+
+    stops = _rows(tmp_db, "SELECT span_id, agent_id FROM session_spans "
+                          "WHERE trace_id = ? AND name = 'subagent.stop'")
+    assert {r["span_id"] for r in stops} == {"hookstop-0", "hookstop-1"}
+    # Each real marker is bound to the agent whose result it reports.
+    assert {r["span_id"]: r["agent_id"] for r in stops} == {
+        "hookstop-0": "launch-0", "hookstop-1": "launch-1"}
+
+
+def test_hook_markers_are_never_claimed_by_two_agents(tmp_db, kimi_home):
+    """Content matching must not fall through to another agent's synthetic
+    marker — that used to hand agent A's stop row agent B's id."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    reconcile_kimi_subagents(_SID)
+    _add_stop_markers(tmp_db, "alpha done")  # only ONE subagent's stop landed
+    reconcile_kimi_subagents(_SID)
+
+    stops = _rows(tmp_db, "SELECT span_id, agent_id FROM session_spans "
+                          "WHERE trace_id = ? AND name = 'subagent.stop'")
+    assert len(stops) == 2
+    assert {r["agent_id"] for r in stops} == {"launch-0", "launch-1"}
+    # The agent still waiting on its hook keeps its synthetic stand-in.
+    assert {r["span_id"] for r in stops} == {"hookstop-0", "sa-stop-launch-1"}
+
+
+def test_stale_synthetic_is_swept_when_the_agent_id_rekeys(tmp_db, kimi_home):
+    """A subagent's `agent_id` changes from the positional fallback to the real
+    `tool_use_id` once its launch span becomes matchable. The marker keyed on
+    the old id has to go, or the session shows twice the subagents it ran."""
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen) "
+            "VALUES (?, ?, ?)", (_SID, "2026-06-01T00:00:00", "2026-06-01T00:00:00"))
+        conn.commit()
+    finally:
+        conn.close()
+    reconcile_kimi_subagents(_SID)
+    assert {r["span_id"] for r in _rows(
+        tmp_db, "SELECT span_id FROM session_spans WHERE trace_id = ? "
+                "AND name = 'subagent.start'")} == {
+        f"sa-start-{_SID}:agent-0", f"sa-start-{_SID}:agent-1"}
+
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        conn.execute(
+            "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
+            "attributes, status_code) VALUES (?, 'launch-span-0', 'tool.Agent', "
+            "'2026-06-01T00:00:02', ?, 'PENDING')",
+            (_SID, json.dumps({"prompt": "Explore alpha subsystem now",
+                               "tool_use_id": "launch-0"})))
+        conn.commit()
+    finally:
+        conn.close()
+    reconcile_kimi_subagents(_SID)
+
+    starts = {r["span_id"] for r in _rows(
+        tmp_db, "SELECT span_id FROM session_spans WHERE trace_id = ? "
+                "AND name = 'subagent.start'")}
+    assert starts == {"sa-start-launch-0", f"sa-start-{_SID}:agent-1"}
