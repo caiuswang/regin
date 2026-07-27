@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -91,7 +92,7 @@ def test_create_external_agent_proposal_run_writes_status_and_trace(monkeypatch,
     )
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     paths = create_proposal_run(fake_git_repo, run_id="run1", agent="fake")
@@ -151,7 +152,7 @@ def test_drafting_agent_env_carries_llm_surface(monkeypatch, fake_git_repo, tmp_
     )
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     create_proposal_run(fake_git_repo, run_id="run1", agent="fake")
@@ -194,7 +195,7 @@ def test_external_agent_run_rejects_stale_temp_output_from_prior_attempt(monkeyp
     script.write_text("print()\n")
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     with pytest.raises(TopicGraphError, match="external agent output invalid"):
@@ -243,7 +244,7 @@ def test_external_agent_permission_prompt_fails_clearly(monkeypatch, fake_git_re
     script.write_text("print('Do you want to allow this command?')\n")
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     with pytest.raises(TopicGraphError, match="requested interactive permission"):
@@ -265,7 +266,7 @@ def test_external_agent_permission_block_text_fails_even_with_json(monkeypatch, 
     )
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     with pytest.raises(TopicGraphError, match="requested interactive permission"):
@@ -287,7 +288,7 @@ def test_external_agent_nonzero_exit_includes_output_in_status(monkeypatch, fake
     )
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     with pytest.raises(TopicGraphError, match="No available channel"):
@@ -315,7 +316,7 @@ def test_external_agent_failure_status_bounds_detailed_output(monkeypatch, fake_
     )
     monkeypatch.setattr(
         "lib.topics.proposal_external.settings.topic_proposal_external_agents",
-        {"fake": type("Cfg", (), {"command": "python", "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
+        {"fake": type("Cfg", (), {"command": sys.executable, "args": [str(script)], "timeout_seconds": 30, "cwd": None})()},
     )
 
     with pytest.raises(TopicGraphError):
