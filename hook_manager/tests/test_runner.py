@@ -275,6 +275,22 @@ def test_kimi_observation_event_writes_nothing():
     assert out.getvalue() == ''
 
 
+def test_kimi_unparseable_stdin_writes_nothing():
+    """The `{}` bail-out is Claude-shaped too: Kimi displays it and, on the
+    prompt path, feeds it back as context."""
+    out = io.StringIO()
+    rc = run('UserPromptSubmit', [], 'not json at all', out, agent_type='kimi')
+    assert rc == 0
+    assert out.getvalue() == ''
+
+
+def test_claude_unparseable_stdin_still_writes_empty_object():
+    out = io.StringIO()
+    rc = run('UserPromptSubmit', [], 'not json at all', out, agent_type='claude')
+    assert rc == 0
+    assert json.loads(out.getvalue()) == {}
+
+
 def test_kimi_pretooluse_deny_writes_permission_decision():
     h = Handler(name='gate', events=['PreToolUse'], kind='gate',
                 fn=lambda p: HookResponse(permission_decision='deny',

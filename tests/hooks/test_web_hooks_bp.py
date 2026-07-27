@@ -25,6 +25,7 @@ from hook_manager import config as hm_config
 from lib import settings as _settings_mod
 from lib.providers.claude import ClaudeProvider
 from lib.providers.codex import CodexProvider
+from lib.providers.kimi import KimiProvider
 
 
 # Detection/removal scope hooks to this regin checkout by the interpreter path
@@ -43,6 +44,7 @@ def client(tmp_path, monkeypatch):
     """Bare Flask app with only the hooks blueprint + isolated config paths."""
     fake_settings = tmp_path / 'claude-settings.json'
     codex_settings = tmp_path / 'codex-hooks.json'
+    kimi_settings = tmp_path / 'kimi-config.toml'
     fake_hm_config = tmp_path / 'hook-manager-config.json'
     codex_hm_config = tmp_path / 'codex-hook-manager-config.json'
     monkeypatch.setattr(hooks_bp_module, 'CLAUDE_SETTINGS_PATH', str(fake_settings))
@@ -73,6 +75,11 @@ def client(tmp_path, monkeypatch):
             return ClaudeProvider({'hook_settings_path': fake_settings})
         if provider_id == 'codex':
             return CodexProvider({'hook_settings_path': codex_settings})
+        if provider_id == 'kimi':
+            return KimiProvider({
+                'hook_settings_path': kimi_settings,
+                'hook_payload_log_path': tmp_path / 'kimi-hook-payloads.jsonl',
+            })
         return original_build_provider(provider_id)
 
     monkeypatch.setattr(hooks_bp_module, 'build_provider', _build_provider)
@@ -88,7 +95,12 @@ def client(tmp_path, monkeypatch):
 
     app = Flask(__name__)
     app.register_blueprint(hooks_bp_module.hooks_bp)
-    return app.test_client(), fake_settings
+    test_client = app.test_client()
+    # Kimi keeps its hooks in a TOML config, not the settings.json the tuple
+    # exposes; tests that drive `?provider=kimi` read this path off the client.
+    test_client.kimi_settings = kimi_settings
+    test_client.codex_settings = codex_settings
+    return test_client, fake_settings
 
 
 # ── /api/hooks/handlers ──────────────────────────────────────────────
@@ -518,6 +530,126 @@ def test_debug_hook_uninstall_preserves_other_hooks(client):
     all_commands = [h['command'] for entry in pretool for h in entry['hooks']]
     assert any('hook_manager' in cmd for cmd in all_commands)
     assert not any('hook_payload_debug' in cmd for cmd in all_commands)
+
+
+# ── Stale debug-hook commands (CAI-15) ───────────────────────────────
+#
+# The debug hook's command is provider-specific: non-Claude agents get their
+# own log path plus `--silent`, because Kimi renders raw hook stdout in its UI
+# and would otherwise print `{"suppressOutput": true}` on every prompt. An
+# entry installed before that command existed is stale, so install has to
+# rewrite it — short-circuiting on "already installed" leaves the noise
+# permanently wired with no way to clear it from the UI.
+
+def _kimi_legacy_debug_config() -> str:
+    return (
+        'default_model = "kimi-code/k3"\n\n'
+        '[[hooks]]\nevent = "UserPromptSubmit"\n'
+        f'command = "{hooks_bp_module.DEBUG_HOOK_COMMAND}"\ntimeout = 10\n\n'
+        '[[hooks]]\nevent = "PreToolUse"\n'
+        f'command = "{hooks_bp_module.DEBUG_HOOK_COMMAND}"\ntimeout = 10\n'
+    )
+
+
+def _kimi_debug_commands(c) -> list[str]:
+    import tomllib
+    parsed = tomllib.loads(c.kimi_settings.read_text())
+    return [h['command'] for h in parsed.get('hooks', [])
+            if 'hook_payload_debug' in h.get('command', '')]
+
+
+def test_debug_hook_install_refreshes_stale_kimi_command(client):
+    c, _ = client
+    c.kimi_settings.write_text(_kimi_legacy_debug_config())
+
+    resp = c.post('/api/debug-hook-install?provider=kimi')
+    assert resp.status_code == 200
+    assert 'refreshed' in resp.get_json()['msg']
+
+    commands = _kimi_debug_commands(c)
+    assert len(commands) == len(hooks_bp_module._DEBUG_EVENTS)
+    # Every entry now silences its stdout; none of the noisy originals survive.
+    assert all(cmd.endswith('--silent') for cmd in commands)
+    assert 'default_model = "kimi-code/k3"' in c.kimi_settings.read_text()
+
+
+def test_debug_hook_uninstall_removes_stale_kimi_entries(client):
+    c, _ = client
+    c.kimi_settings.write_text(_kimi_legacy_debug_config())
+
+    resp = c.post('/api/debug-hook-uninstall?provider=kimi')
+    assert resp.status_code == 200
+    assert _kimi_debug_commands(c) == []
+    assert c.get('/api/debug-hook-status?provider=kimi').get_json()['installed'] is False
+
+
+def test_debug_hook_install_for_kimi_is_idempotent(client):
+    c, _ = client
+    c.kimi_settings.write_text('default_model = "kimi-code/k3"\n')
+    c.post('/api/debug-hook-install?provider=kimi')
+    first = c.kimi_settings.read_text()
+
+    resp = c.post('/api/debug-hook-install?provider=kimi')
+    assert 'Already installed' in resp.get_json()['msg']
+    assert c.kimi_settings.read_text() == first
+
+
+def test_debug_hook_install_leaves_another_checkouts_entries_alone(client):
+    """Two regin checkouts share one config.toml and one script name. Since
+    the predicate now drives rewriting *and* deletion, an unscoped match would
+    let this instance repoint or delete the other's hooks."""
+    c, _ = client
+    foreign = '/Users/someone/regin-fork/.venv/bin/python /Users/someone/regin-fork/scripts/hook_payload_debug.py'
+    c.kimi_settings.write_text(
+        'default_model = "kimi-code/k3"\n\n'
+        f'[[hooks]]\nevent = "PreToolUse"\ncommand = "{foreign}"\ntimeout = 10\n'
+    )
+
+    c.post('/api/debug-hook-install?provider=kimi')
+
+    text = c.kimi_settings.read_text()
+    assert foreign in text
+    assert len(_kimi_debug_commands(c)) == len(hooks_bp_module._DEBUG_EVENTS) + 1
+
+
+def test_debug_hook_install_dedupes_duplicate_kimi_entries(client):
+    """Duplicated entries carry the right command, so a command-set comparison
+    calls it installed — while the hook fires twice on every event."""
+    c, _ = client
+    command = hooks_bp_module._debug_hook_command(
+        hooks_bp_module.build_provider('kimi'))
+    entries = ''.join(
+        f'\n[[hooks]]\nevent = "{ev}"\ncommand = "{command}"\ntimeout = 10\n'
+        for ev in hooks_bp_module._DEBUG_EVENTS for _ in range(2)
+    )
+    c.kimi_settings.write_text('default_model = "kimi-code/k3"\n' + entries)
+
+    c.post('/api/debug-hook-install?provider=kimi')
+
+    assert len(_kimi_debug_commands(c)) == len(hooks_bp_module._DEBUG_EVENTS)
+
+
+def test_debug_hook_install_refreshes_stale_codex_command(client):
+    """Same defect, JSON dialect: a bare command installed for a non-Claude
+    provider logs into ~/.claude instead of that provider's own log."""
+    c, _ = client
+    c.codex_settings.write_text(json.dumps({
+        'hooks': {
+            ev: [{'hooks': [{'type': 'command',
+                             'command': hooks_bp_module.DEBUG_HOOK_COMMAND,
+                             'timeout': 10}]}]
+            for ev in hooks_bp_module._DEBUG_EVENTS
+        }
+    }))
+
+    resp = c.post('/api/debug-hook-install?provider=codex')
+    assert 'refreshed' in resp.get_json()['msg']
+
+    hooks = json.loads(c.codex_settings.read_text())['hooks']
+    commands = [h['command'] for ev in hooks_bp_module._DEBUG_EVENTS
+                for entry in hooks[ev] for h in entry['hooks']]
+    assert len(commands) == len(hooks_bp_module._DEBUG_EVENTS)
+    assert all('.codex' in cmd for cmd in commands)
 
 
 # ── /api/debug-hook-payloads ─────────────────────────────────────────

@@ -75,6 +75,27 @@ def _log_error(handler_name: str, payload_event: str, exc: BaseException, payloa
         pass
 
 
+def _out_format(payload: dict) -> str:
+    """The hook-output dialect implied by a payload."""
+    from lib.providers.registry import resolve_provider
+    return getattr(resolve_provider(payload), 'hook_output_format', 'claude')
+
+
+def _parse_stdin(stdin_text: str, agent_type: str | None, stdout) -> dict | None:
+    """Parsed payload, or None when it was unreadable and we already answered.
+
+    The unreadable answer is dialect-specific: Kimi renders raw hook stdout in
+    its UI (and feeds it back as prompt context), so even a bare `{}` is user-
+    visible junk there.
+    """
+    try:
+        return json.loads(stdin_text) if stdin_text.strip() else {}
+    except (json.JSONDecodeError, ValueError):
+        if _out_format({'agent_type': agent_type}) != 'kimi':
+            stdout.write('{}\n')
+        return None
+
+
 def run(
     event_hint: str,
     handlers: Sequence[Handler],
@@ -85,10 +106,8 @@ def run(
     """Core runner (pure w.r.t. I/O — stdin and stdout are explicit).
 
     Returns the process exit code."""
-    try:
-        data = json.loads(stdin_text) if stdin_text.strip() else {}
-    except (json.JSONDecodeError, ValueError):
-        stdout.write('{}\n')
+    data = _parse_stdin(stdin_text, agent_type, stdout)
+    if data is None:
         return 0
 
     if agent_type and isinstance(data, dict):

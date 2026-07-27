@@ -109,6 +109,14 @@ def _cmd(script_name: str) -> str:
     )
 
 
+def _read_text(path: str) -> str:
+    try:
+        with open(path, 'r') as f:
+            return f.read()
+    except FileNotFoundError:
+        return ''
+
+
 def _read_claude_settings(provider=None) -> dict:
     try:
         with open(_hook_settings_path(provider), 'r') as f:
@@ -323,6 +331,7 @@ def _toml_install_hook_manager(provider):
         list(events),
         lambda event_name: _hook_manager_command(event_name, provider),
         timeout=_HOOK_MANAGER_TIMEOUT,
+        is_ours=_is_hook_manager_command,
     )
     after = kimi_hooks.routed_events(path, _is_hook_manager_command)
     if before == after:
@@ -388,18 +397,37 @@ def api_hook_manager_uninstall():
     if unsupported is not None:
         return unsupported
     if _is_toml_provider(provider):
-        removed = kimi_hooks.uninstall(_hook_settings_path(provider))
+        removed = kimi_hooks.uninstall(_hook_settings_path(provider),
+                                       is_ours=_is_hook_manager_command)
         return jsonify({'ok': True, 'msg': 'Hook manager removed' if removed else 'Hook manager was not installed'})
     return _json_uninstall_hook_manager(provider)
 
 
 def _is_debug_hook_command(command: str) -> bool:
-    return isinstance(command, str) and 'hook_payload_debug' in command
+    """Ours, scoped to this checkout — same rule as `_is_hook_manager_command`.
+
+    Two regin checkouts share one config file and one script *name*, and this
+    predicate now drives rewriting and deletion, so an unscoped substring match
+    would let either instance clobber the other's entries.
+    """
+    if not isinstance(command, str) or 'hook_payload_debug' not in command:
+        return False
+    idx = command.find(_hook_manager_interpreter_prefix())
+    if idx < 0:
+        return False
+    prefix = command[:idx]
+    return prefix == '' or _LEADING_ENV_RE.match(prefix) is not None
 
 
 def _toml_debug_routed(provider) -> set[str]:
     """Debug events routed via the TOML config (Kimi)."""
     return kimi_hooks.routed_events(
+        _hook_settings_path(provider), _is_debug_hook_command)
+
+
+def _toml_debug_commands(provider) -> set[str]:
+    """Debug-hook commands as currently written in the TOML config."""
+    return kimi_hooks.installed_commands(
         _hook_settings_path(provider), _is_debug_hook_command)
 
 
@@ -412,18 +440,63 @@ def _debug_hook_routed(provider) -> set[str]:
     return set()
 
 
+def _hook_entries(event_hooks: list):
+    """Every hook dict under one event, tolerating hand-mangled settings."""
+    for entry in event_hooks:
+        if not isinstance(entry, dict):
+            continue
+        inner = entry.get('hooks')
+        if not isinstance(inner, list):
+            continue
+        yield from (h for h in inner if isinstance(h, dict))
+
+
+def _merge_debug_blocks(hooks: dict, command: str) -> tuple[int, int]:
+    """Add/refresh debug-hook command blocks in a settings.json `hooks` map.
+
+    Mirrors `_merge_hook_manager_blocks`: an entry installed before the
+    per-provider command existed carries a stale command, and rewriting it is
+    the only way a reinstall can fix it.
+    """
+    added = 0
+    refreshed = 0
+    for event_name in _DEBUG_EVENTS:
+        event_hooks = hooks.setdefault(event_name, [])
+        if not isinstance(event_hooks, list):
+            continue
+        present = False
+        for h in _hook_entries(event_hooks):
+            if not _is_debug_hook_command(h.get('command', '')):
+                continue
+            present = True
+            if h.get('command') != command:
+                h['command'] = command
+                refreshed += 1
+        if not present:
+            event_hooks.append({
+                'hooks': [{'type': 'command', 'command': command, 'timeout': 10}]
+            })
+            added += 1
+    return added, refreshed
+
+
 def _toml_debug_install(provider):
     path = _hook_settings_path(provider)
-    if _toml_debug_routed(provider):
-        return jsonify({'ok': True, 'msg': 'Already installed'})
-    # Owns its own `debug`-labelled block; the hook_manager block (if any)
-    # is left untouched.
     command = _debug_hook_command(provider)
+    installed = _toml_debug_commands(provider)
+    before = _read_text(path)
+    # Owns its own `debug`-labelled block; the hook_manager block (if any)
+    # is left untouched. Rewriting unconditionally and diffing the file is what
+    # catches a duplicated-but-correct entry, which a command-set comparison
+    # reports as already installed.
     kimi_hooks.install(
         path, list(_DEBUG_EVENTS), lambda _event: command,
-        timeout=10, label=_DEBUG_LABEL,
+        timeout=10, label=_DEBUG_LABEL, is_ours=_is_debug_hook_command,
     )
-    return jsonify({'ok': True, 'msg': 'Debug hook installed for all events'})
+    if _read_text(path) == before:
+        return jsonify({'ok': True, 'msg': 'Already installed'})
+    msg = 'Debug hook refreshed for all events' if installed else 'Debug hook installed for all events'
+    return jsonify({'ok': True, 'msg': msg})
 
 
 @hooks_bp.route('/api/debug-hook-install', methods=['POST'])
@@ -437,21 +510,15 @@ def api_debug_hook_install():
     if _is_toml_provider(provider):
         return _toml_debug_install(provider)
     settings = _read_claude_settings(provider)
-    if _debug_hook_installed(settings):
+    hooks = settings.get('hooks')
+    if not isinstance(hooks, dict):
+        hooks = settings['hooks'] = {}
+    added, refreshed = _merge_debug_blocks(hooks, _debug_hook_command(provider))
+    if not added and not refreshed:
         return jsonify({'ok': True, 'msg': 'Already installed'})
-    hooks = settings.setdefault('hooks', {})
-    command = _debug_hook_command(provider)
-    for event_name in _DEBUG_EVENTS:
-        event_hooks = hooks.setdefault(event_name, [])
-        event_hooks.append({
-            'hooks': [{
-                'type': 'command',
-                'command': command,
-                'timeout': 10,
-            }]
-        })
     _write_claude_settings(settings, provider)
-    return jsonify({'ok': True, 'msg': 'Debug hook installed for all events'})
+    msg = 'Debug hook refreshed for all events' if refreshed else 'Debug hook installed for all events'
+    return jsonify({'ok': True, 'msg': msg})
 
 
 @hooks_bp.route('/api/debug-hook-uninstall', methods=['POST'])
@@ -463,7 +530,8 @@ def api_debug_hook_uninstall():
     if unsupported is not None:
         return unsupported
     if _is_toml_provider(provider):
-        kimi_hooks.uninstall(_hook_settings_path(provider), label=_DEBUG_LABEL)
+        kimi_hooks.uninstall(_hook_settings_path(provider), label=_DEBUG_LABEL,
+                             is_ours=_is_debug_hook_command)
         return jsonify({'ok': True, 'msg': 'Debug hook removed'})
     settings = _read_claude_settings(provider)
     for event_name in list(settings.get('hooks', {}).keys()):
