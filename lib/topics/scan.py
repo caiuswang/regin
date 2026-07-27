@@ -152,7 +152,14 @@ def _validate_refs(
             warnings.append(f"topic {topic_id} has duplicate ref {path}")
         seen_refs.add(path)
         if not (Path(repo_path) / path).exists():
-            errors.append(f"topic {topic_id} ref does not exist: {path}")
+            # A ref anchors a working-tree path, and a working tree
+            # legitimately lacks files owned by a branch that isn't checked
+            # out. Erroring here made the whole graph invalid for every
+            # `result.ok` gate — the pre-commit hook, topic edit/delete,
+            # downgrade and wiki generation — so an unmerged branch's topic
+            # wedged all of them. Graph-internal inconsistency stays an
+            # error; absence in *this* checkout is a warning.
+            warnings.append(f"topic {topic_id} ref does not exist: {path}")
 
 
 def scan(

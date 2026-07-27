@@ -108,7 +108,29 @@ def test_generate_wiki_rejects_invalid_graph(fake_git_repo):
     graph["topics"]["bad"] = {
         "label": "Bad",
         "aliases": [],
-        "intent": "Bad ref.",
+        "intent": "Bad edge.",
+        "status": "active",
+        "refs": [],
+        "edges": [{"target": "no-such-topic", "type": "related"}],
+        "commands": [],
+        "include_globs": [],
+        "exclude_globs": [],
+    }
+    save_graph(fake_git_repo, graph)
+
+    with pytest.raises(ValueError, match="edge target does not exist"):
+        generate_wiki(fake_git_repo)
+
+
+def test_generate_wiki_tolerates_ref_missing_from_this_checkout(fake_git_repo):
+    """A topic anchoring a file that only exists on another branch must not
+    block wiki generation — see the dead-ref warning in `scan.validate`."""
+    bootstrap(fake_git_repo)
+    graph = load_graph(fake_git_repo)
+    graph["topics"]["branchy"] = {
+        "label": "Branchy",
+        "aliases": [],
+        "intent": "Anchors a file from an unmerged branch.",
         "status": "active",
         "refs": [{"path": "missing.py", "role": "implementation"}],
         "edges": [],
@@ -118,5 +140,4 @@ def test_generate_wiki_rejects_invalid_graph(fake_git_repo):
     }
     save_graph(fake_git_repo, graph)
 
-    with pytest.raises(ValueError, match="ref does not exist"):
-        generate_wiki(fake_git_repo)
+    assert generate_wiki(fake_git_repo)

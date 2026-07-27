@@ -103,8 +103,29 @@ def test_validate_detects_duplicate_alias_and_broken_refs(fake_git_repo):
 
     assert not result.ok
     assert any("duplicate alias" in error for error in result.errors)
-    assert any("ref does not exist" in error for error in result.errors)
     assert any("edge target does not exist" in error for error in result.errors)
+    # A ref to a path absent from this checkout is a warning, not an error:
+    # the file may simply belong to a branch that isn't checked out.
+    assert not any("ref does not exist" in error for error in result.errors)
+    assert any("ref does not exist" in warning for warning in result.warnings)
+
+
+def test_validate_accepts_graph_whose_only_flaw_is_a_missing_ref(fake_git_repo):
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "on-another-branch.py", "role": "implementation"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert result.ok
+    assert any("ref does not exist" in warning for warning in result.warnings)
 
 
 def test_validate_rejects_invalid_ref_tier(fake_git_repo):
