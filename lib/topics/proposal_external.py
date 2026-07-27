@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,9 @@ FAILURE_SUMMARY_LIMIT = 500
 FAILURE_DETAIL_LIMIT = 4000
 FAILURE_STREAM_TAIL_LIMIT = 2000
 PIPELINE_SESSION_TITLE = "Topic proposal pipeline (evidence → draft → review)"
+# Agent commands the SDK tier can stand in for; anything else keeps its own
+# binary, because the tier only ever launches `claude`.
+_CLAUDE_COMMANDS = frozenset({"claude", "claude.exe"})
 
 
 @dataclass(frozen=True)
@@ -349,6 +352,47 @@ class _AgentRunContext:
     stderr_path: Path
     started: float
     prompt_templates: list[dict[str, Any]] | None
+    # Known only when regin launched the agent itself; the subprocess path
+    # has to go looking for the session the spawned CLI opened.
+    agent_trace_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _AgentExit:
+    """How the drafting agent finished, in the terms the ingest path judges.
+
+    The subprocess runner fills these from `communicate()`; the SDK runner has
+    no captured streams (its transcript is spans) and reports the run's
+    terminal state instead. One shape means the completion contract — finish
+    signal first, then output validation, then the graph-integrity check — is
+    the same code for both.
+    """
+
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int = 0
+
+
+class _SdkRunProcess:
+    """A `run_control`-shaped handle for a run owned by `lib/agent_sdk`.
+
+    `run_control` holds `Popen`s so the Stop endpoint — a different request
+    thread — can reach a run whose only other reference is a worker's stack.
+    An SDK run has no child process of regin's own to signal: ending it means
+    asking the supervisor to stop the session. Presenting the three members
+    `run_control` actually uses keeps Stop, `is_live` and the stranded-run
+    reaper working unchanged across both runners.
+    """
+
+    def __init__(self, handle):
+        self._handle = handle
+        self.pid = os.getpid()
+
+    def poll(self) -> int | None:
+        return 0 if self._handle.done() else None
+
+    def terminate(self) -> None:
+        self._handle.stop()
 
 
 def run_external_agent_proposal(
@@ -362,6 +406,7 @@ def run_external_agent_proposal(
     prompt_templates: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     agent, config = _resolve_agent_config(agent_id)
+    use_sdk = _sdk_runner_enabled(config)
 
     trace_id = external_trace_id(proposal_id)
     status = {
@@ -382,7 +427,9 @@ def run_external_agent_proposal(
     }
     write_status(out_dir, status)
     _emit_session_start(trace_id, proposal_id=proposal_id, repo=repo, agent=agent)
-    _emit(trace_id, "proposal.agent.start", {"proposal_id": proposal_id, "agent": agent, "repo": str(repo)})
+    _emit(trace_id, "proposal.agent.start", {
+        "proposal_id": proposal_id, "agent": agent, "repo": str(repo),
+        "runner": "agent-sdk" if use_sdk else "subprocess"})
 
     before_topic = _read_topic_signature(repo)
     temp_dir = out_dir / TEMP_OUTPUT_DIR
@@ -404,24 +451,9 @@ def run_external_agent_proposal(
 
     stdout_path = out_dir / "stdout.log"
     stderr_path = out_dir / "stderr.log"
-    from lib.prompts.surfaces.drafting import SURFACE_ID as _DRAFTING_SURFACE_ID
-    env = {
-        **os.environ,
-        # Tag the spawned agent's own Claude session by the drafting surface so
-        # ingest stamps origin='llm-stage' + the surface's declared tags on the
-        # REAL agent session (the synthetic wrapper's `agent_type` tag never
-        # reaches it). Mirrors proposal_review's REGIN_LLM_SURFACE.
-        "REGIN_LLM_SURFACE": _DRAFTING_SURFACE_ID,
-        "REGIN_TOPIC_PROPOSAL_DIR": str(out_dir),
-        "REGIN_TOPIC_PROPOSAL_OUTPUT": str(temp_output_path),
-        "REGIN_TOPIC_PROPOSAL_CANONICAL_OUTPUT": str(output_path),
-        "REGIN_TOPIC_PROPOSAL_TRACE_ID": trace_id,
-        "REGIN_TOPIC_PROPOSAL_ID": proposal_id,
-        "REGIN_TOPIC_PROPOSAL_FINISH_CMD": _finish_command(repo, proposal_id),
-    }
+    env_overlay = _agent_env_overlay(
+        repo, out_dir, proposal_id, trace_id, temp_output_path, output_path)
     cwd = Path(config.cwd).expanduser() if config.cwd else repo
-    command = [config.command, *config.args]
-    started = time.monotonic()
     ctx = _AgentRunContext(
         repo=repo,
         out_dir=out_dir,
@@ -433,9 +465,50 @@ def run_external_agent_proposal(
         output_path=output_path,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
-        started=started,
+        started=time.monotonic(),
         prompt_templates=prompt_templates,
     )
+    if use_sdk:
+        return _run_via_agent_sdk(ctx, instructions, env_overlay, cwd, status,
+                                  _sdk_run_options(config) or {})
+    return _run_via_subprocess(
+        ctx, instructions, {**os.environ, **env_overlay},
+        [config.command, *config.args], cwd, status)
+
+
+def _agent_env_overlay(
+    repo: Path, out_dir: Path, proposal_id: str, trace_id: str,
+    temp_output_path: Path, output_path: Path,
+) -> dict[str, str]:
+    """What the drafting agent's process learns about this run from its
+    environment — the output/finish handshake, plus the surface tag.
+
+    `REGIN_LLM_SURFACE` tags the agent's own Claude session by the drafting
+    surface so ingest stamps origin='llm-stage' + the surface's declared tags
+    on the REAL agent session (the synthetic wrapper's `agent_type` tag never
+    reaches it). Mirrors proposal_review's REGIN_LLM_SURFACE.
+
+    An overlay, not a full environment: the subprocess runner merges it over
+    `os.environ` itself and the SDK does the same for its child.
+    """
+    from lib.prompts.surfaces.drafting import SURFACE_ID as _DRAFTING_SURFACE_ID
+    return {
+        "REGIN_LLM_SURFACE": _DRAFTING_SURFACE_ID,
+        "REGIN_TOPIC_PROPOSAL_DIR": str(out_dir),
+        "REGIN_TOPIC_PROPOSAL_OUTPUT": str(temp_output_path),
+        "REGIN_TOPIC_PROPOSAL_CANONICAL_OUTPUT": str(output_path),
+        "REGIN_TOPIC_PROPOSAL_TRACE_ID": trace_id,
+        "REGIN_TOPIC_PROPOSAL_ID": proposal_id,
+        "REGIN_TOPIC_PROPOSAL_FINISH_CMD": _finish_command(repo, proposal_id),
+    }
+
+
+def _run_via_subprocess(
+    ctx: _AgentRunContext, instructions: str, env: dict[str, str],
+    command: list[str], cwd: Path, status: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Spawn the configured agent command and block on it."""
+    from lib.topics.proposals import run_control
     try:
         proc = subprocess.Popen(
             command,
@@ -447,14 +520,14 @@ def run_external_agent_proposal(
             text=True,
         )
     except OSError as exc:
-        return _fail(out_dir, trace_id, status, "failed", f"external agent failed to start: {exc}", exc)
+        return _fail(ctx.out_dir, ctx.trace_id, status, "failed",
+                     f"external agent failed to start: {exc}", exc)
 
     # Register the live process so the Stop endpoint (a different request
     # thread) can terminate it; happens before we block on communicate().
-    from lib.topics.proposals import run_control
-    run_control.register(proposal_id, proc)
+    run_control.register(ctx.proposal_id, proc)
     status["pid"] = proc.pid
-    write_status(out_dir, status)
+    write_status(ctx.out_dir, status)
     # The agent signals completion by calling `regin topics proposal-finish`
     # (notify-on-finish), so the server-side wait has no fixed timeout by
     # default — a long draft is never killed mid-flight. A configured
@@ -467,27 +540,145 @@ def run_external_agent_proposal(
     except subprocess.TimeoutExpired as exc:
         proc.kill()
         stdout, stderr = proc.communicate()
-        stdout_path.write_text(stdout or "")
-        stderr_path.write_text(stderr or "")
-        signaled = _load_signaled_result(ctx)
-        if signaled is not None:
-            # The agent already signalled via `proposal-finish`, which is the
-            # authoritative completion and *already emitted* `proposal.ready`
-            # (see finish.py). Re-notifying here supersedes the same inbox card
-            # but re-fires the push channels (record_message pushes on every
-            # write, supersede included), double-notifying Feishu/webhook.
-            return signaled
-        return _fail(
-            out_dir,
-            trace_id,
-            status,
-            "timed_out",
-            f"external agent timed out after {wait_timeout}s",
-            exc,
-            stdout=stdout,
-            stderr=stderr,
-        )
-    return _handle_agent_output(ctx, proc, stdout, stderr, status)
+        ctx.stdout_path.write_text(stdout or "")
+        ctx.stderr_path.write_text(stderr or "")
+        return _timed_out(ctx, status, wait_timeout, exc,
+                          stdout=stdout, stderr=stderr)
+    return _handle_agent_output(
+        ctx, _AgentExit(stdout, stderr, proc.returncode), status)
+
+
+def _timed_out(
+    ctx: _AgentRunContext, status: dict[str, Any], wait_timeout: int | None,
+    exc: Exception, *, stdout: str | None = None, stderr: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    """The ceiling fired. A run that already signalled is still a success.
+
+    Re-notifying here would supersede the same inbox card but re-fire the push
+    channels (record_message pushes on every write, supersede included),
+    double-notifying Feishu/webhook — so the signalled branch returns the
+    persisted result and emits nothing.
+    """
+    signaled = _load_signaled_result(ctx)
+    if signaled is not None:
+        return signaled
+    return _fail(
+        ctx.out_dir, ctx.trace_id, status, "timed_out",
+        f"external agent timed out after {wait_timeout}s", exc,
+        stdout=stdout, stderr=stderr,
+    )
+
+
+# CLI flags the SDK tier can honour as `RunOptions`, and the ones that are
+# simply how a subprocess is driven and mean nothing to a client that already
+# streams (`--print`, `-p`). Anything outside both sets is a flag the tier
+# would drop on the floor, which is what `_sdk_args_honoured` refuses.
+_ARGS_AS_OPTIONS = {"--model": "model", "--permission-mode": "permission_mode"}
+_ARGS_IGNORABLE = {"--print", "-p"}
+
+
+def _sdk_run_options(config: Any) -> dict[str, str] | None:
+    """The configured agent's `args` as `RunOptions` fields, or None when they
+    can't all be honoured.
+
+    A configured agent is a *command line*: `claude-haiku` is the same binary
+    as `claude-opus` and differs only by `--model haiku`. The tier launches
+    through the SDK rather than that command line, so unless those flags are
+    carried across, every configured agent silently collapses into the CLI
+    default — and a dropped `--permission-mode bypassPermissions` puts an
+    unattended drafting run into the mode where calls park.
+    """
+    args = list(getattr(config, "args", None) or [])
+    resolved: dict[str, str] = {}
+    index = 0
+    while index < len(args):
+        flag = args[index]
+        if flag in _ARGS_IGNORABLE:
+            index += 1
+            continue
+        field = _ARGS_AS_OPTIONS.get(flag)
+        if field is None or index + 1 >= len(args):
+            return None
+        resolved[field] = args[index + 1]
+        index += 2
+    return resolved
+
+
+def _sdk_runner_enabled(config: Any) -> bool:
+    """Whether this run should go through the Agent SDK tier.
+
+    Both gates have to be on, the configured agent has to be the CLI the tier
+    can actually launch — `lib/agent_sdk` starts the user's own `claude`, so a
+    drafting agent bound to codex/kimi, or to a wrapper regin can't recognise,
+    keeps its own binary and its own subprocess — and its `args` have to be
+    ones the tier can carry across. Falling back is always safe; silently
+    running a different model than the operator configured is not.
+    """
+    if not settings.topic_evolution.proposal_sdk_runner:
+        return False
+    if not settings.agent_sdk.enabled:
+        return False
+    if Path(getattr(config, "command", "") or "").name not in _CLAUDE_COMMANDS:
+        return False
+    return _sdk_run_options(config) is not None
+
+
+def _run_via_agent_sdk(
+    ctx: _AgentRunContext, instructions: str, env: dict[str, str],
+    cwd: Path, status: dict[str, Any], run_options: dict[str, str],
+) -> tuple[dict[str, Any], str]:
+    """Draft through `lib/agent_sdk` instead of a subprocess of our own.
+
+    The completion contract is unchanged — the agent's `proposal-finish` call
+    is still authoritative and the temp-file handshake is still the fallback —
+    but the run is owned by the shared loop rather than by this thread's
+    `Popen`, so it has a durable `agent_runs` row, live spans, and a `/live`
+    session the operator can watch and stop while it works.
+    """
+    from lib.agent_sdk import supervisor
+    from lib.topics.proposals import run_control
+
+    try:
+        handle = supervisor.launch_run(
+            instructions, cwd=str(cwd), env=env, one_shot=True,
+            # The configured agent's own flags win: `claude-haiku` differs
+            # from `claude-opus` only by `--model`, so falling back to the
+            # tier default here would run a model the operator did not pick.
+            permission_mode=(run_options.get("permission_mode")
+                             or settings.agent_sdk.permission_mode or "default"),
+            model=run_options.get("model", ""))
+    except Exception as exc:
+        return _fail(ctx.out_dir, ctx.trace_id, status, "failed",
+                     f"external agent failed to start: {exc}", exc)
+
+    run_control.register(ctx.proposal_id, _SdkRunProcess(handle))
+    status["pid"] = os.getpid()
+    # Unlike a spawned CLI, a run regin owns names its own session up front —
+    # no post-hoc search for the trace the agent happened to open.
+    status["agent_trace_id"] = handle.trace_id
+    status["agent_trace_url"] = f"/trace/sessions/{handle.trace_id}"
+    write_status(ctx.out_dir, status)
+    ctx = replace(ctx, agent_trace_id=handle.trace_id)
+
+    wait_timeout = _proposal_wait_timeout()
+    try:
+        outcome = handle.wait(timeout=wait_timeout)
+    except TimeoutError as exc:
+        handle.stop()
+        return _timed_out(ctx, status, wait_timeout, exc)
+    return _handle_agent_output(ctx, _sdk_exit(outcome), status)
+
+
+def _sdk_exit(outcome) -> _AgentExit:
+    """Read an SDK run's terminal state as the exit the ingest path judges.
+
+    A failed run has no captured streams to explain itself, so its detail
+    stands in for stderr — that is what `_fail` summarises into the run's
+    error message.
+    """
+    if outcome.status == "failed":
+        return _AgentExit(stderr=outcome.detail, returncode=1)
+    return _AgentExit()
 
 
 def _proposal_wait_timeout() -> int | None:
@@ -514,19 +705,18 @@ def _load_signaled_result(ctx: _AgentRunContext) -> tuple[dict[str, Any], str] |
 
 def _handle_agent_output(
     ctx: _AgentRunContext,
-    proc: subprocess.Popen,
-    stdout: str,
-    stderr: str,
+    exit_: _AgentExit,
     status: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    """Post-`communicate` handling: cancellation, failures, payload parse.
+    """Post-run handling: cancellation, failures, payload parse.
 
     Split out of `run_external_agent_proposal` so the cancel check has one
     clear home and the parent stays under the complexity budget. The
-    cancel check runs FIRST so a terminated subprocess (non-zero exit) is
+    cancel check runs FIRST so a terminated agent (non-zero exit) is
     reported as `cancelled`, never `failed`.
     """
     from lib.topics.proposals import run_control
+    stdout, stderr = exit_.stdout, exit_.stderr
     if run_control.is_cancelled(ctx.proposal_id):
         return _cancelled(ctx, status, stdout=stdout, stderr=stderr)
 
@@ -552,9 +742,10 @@ def _handle_agent_output(
     if stderr:
         _emit(ctx.trace_id, "proposal.agent.stderr", {"proposal_id": ctx.proposal_id, "chunk": stderr[-4000:]})
 
-    _reject_bad_agent_result(ctx, proc, stdout, stderr, status)  # raises _fail on any problem
+    _reject_bad_agent_result(ctx, exit_, status)  # raises _fail on any problem
 
-    agent_trace_id = _find_agent_session_trace_id(ctx.proposal_id, ctx.started)
+    agent_trace_id = ctx.agent_trace_id or _find_agent_session_trace_id(
+        ctx.proposal_id, ctx.started)
     if agent_trace_id:
         status["agent_trace_id"] = agent_trace_id
         status["agent_trace_url"] = f"/trace/sessions/{agent_trace_id}"
@@ -595,13 +786,12 @@ def _handle_agent_output(
 
 def _reject_bad_agent_result(
     ctx: _AgentRunContext,
-    proc: subprocess.Popen,
-    stdout: str,
-    stderr: str,
+    exit_: _AgentExit,
     status: dict[str, Any],
 ) -> None:
     """Raise via `_fail` if the agent hit a permission prompt, exited
     non-zero, or mutated the approved graph. Returns normally otherwise."""
+    stdout, stderr = exit_.stdout, exit_.stderr
     if _looks_like_permission_prompt(f"{stdout}\n{stderr}"):
         _emit(ctx.trace_id, "proposal.agent.permission_request", {"proposal_id": ctx.proposal_id, "agent": ctx.agent})
         _fail(
@@ -609,10 +799,10 @@ def _reject_bad_agent_result(
             "external agent requested interactive permission; v1 runs non-interactively",
             stdout=stdout, stderr=stderr,
         )
-    if proc.returncode != 0:
+    if exit_.returncode != 0:
         _fail(
             ctx.out_dir, ctx.trace_id, status, "failed",
-            f"external agent exited with code {proc.returncode}",
+            f"external agent exited with code {exit_.returncode}",
             stdout=stdout, stderr=stderr,
         )
     if _read_topic_signature(ctx.repo) != ctx.before_topic:

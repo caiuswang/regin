@@ -99,14 +99,21 @@ def _permission_requested_span(event: PermissionRequested) -> dict:
 
 
 def _permission_resolved_span(event: PermissionResolved) -> dict:
+    attrs = {
+        'tool_use_id': event.tool_use_id,
+        'behavior': event.behavior,
+        'detail': event.detail,
+    }
+    if event.tool_name:
+        attrs['tool_name'] = event.tool_name
+    if event.behavior != 'allow':
+        # The card reads a denial's cause off `reason`, the key the hook tier's
+        # permission spans carry; `detail` alone renders an unexplained ✗.
+        attrs['reason'] = event.detail
     return {
         'name': ('permission.request' if event.behavior == 'allow'
                  else 'permission.denied'),
-        'attributes': {
-            'tool_use_id': event.tool_use_id,
-            'behavior': event.behavior,
-            'detail': event.detail,
-        },
+        'attributes': attrs,
         'status_code': 'OK' if event.behavior == 'allow' else 'ERROR',
     }
 

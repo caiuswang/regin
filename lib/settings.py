@@ -779,6 +779,30 @@ class AgentSdkConfig(BaseModel):
     itself before abandoning it. The SDK ends a response stream on the CLI's
     result message and otherwise iterates indefinitely, so without a timer a
     wedged turn would make `stop` a promise nothing keeps.
+
+    `gate_plan` and `gated_tools` extend the typed channel from answering
+    questions to *deciding* — an `ExitPlanMode` held for approval, and named
+    tools held for an allow/deny from `/live` (`lib/agent_sdk/policy.py`). Both
+    default to nothing gated, so an existing install keeps parking only
+    `AskUserQuestion`. `gated_tools = ["*"]` gates every call, which is the
+    only way to cover tools regin cannot enumerate (MCP tools arrive with
+    server-specific names).
+
+    **Gating is a veto the CLI offers, not a hook regin controls.** The
+    callback is consulted only for calls the CLI would otherwise prompt about,
+    so an allowlisted pattern or a sandbox-approved read-only Bash never
+    reaches the policy — measured: three `Bash echo` calls invoked it zero
+    times, three `Write` calls three times. A shadowing `permission_mode`
+    (`acceptEdits`, `bypassPermissions`) skips it entirely; `shadowed_gating()`
+    reports that combination, because a security control that silently does
+    nothing is worse than one that refuses.
+
+    `park_timeout_sec` bounds a held call. `idle_timeout_sec` cannot: it
+    bounds the wait *between* turns and a park lives inside one, so without
+    this an unattended run — regin's own spawns, which nobody has `/live` open
+    for — holds its worker and a `max_concurrent_runs` slot until the server
+    restarts. Timing out declines the call: nobody said yes. 0 waits forever,
+    which is right only when an operator is actually watching.
     """
 
     enabled: bool = False
@@ -788,6 +812,23 @@ class AgentSdkConfig(BaseModel):
     permission_mode: str = "default"
     idle_timeout_sec: int = 1800
     stop_grace_sec: int = 10
+    gate_plan: bool = False
+    gated_tools: list[str] = Field(default_factory=list)
+    park_timeout_sec: int = 900
+
+    def shadowed_gating(self) -> str:
+        """The reason gating is inert, or "" when it can take effect.
+
+        `bypassPermissions` at least makes the SDK warn; `acceptEdits` is
+        silent, so an operator can configure `gated_tools` and get a UI that
+        promises approval over a runtime that never asks.
+        """
+        if not (self.gate_plan or self.gated_tools):
+            return ""
+        if self.permission_mode in ("acceptEdits", "bypassPermissions"):
+            return (f"permission_mode={self.permission_mode!r} skips the "
+                    "permission callback, so nothing is gated")
+        return ""
 
 
 class TopicEvolutionConfig(BaseModel):
@@ -840,6 +881,15 @@ class TopicEvolutionConfig(BaseModel):
     # mid-run) may stay quiet before `reap_stranded_proposal_runs` fails it.
     proposal_run_timeout_seconds: int = 0
     proposal_stranded_grace_seconds: int = 1800
+
+    # Run the drafting agent through the Agent SDK tier (`lib/agent_sdk`)
+    # instead of `subprocess.Popen` + `communicate()`. Off by default, and
+    # inert unless `agent_sdk.enabled` is also on: the SDK tier launches the
+    # user's own `claude`, so a run bound to a different CLI keeps the
+    # subprocess path regardless. What it buys is a run that outlives the
+    # request — a durable `agent_runs` row, live spans, and `/live`
+    # steering/stop — instead of a `Popen` handle on one thread's stack.
+    proposal_sdk_runner: bool = False
 
 
 # Project-root-relative paths — fixed by where this file lives.

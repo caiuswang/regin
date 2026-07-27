@@ -265,6 +265,19 @@ def _payload_answers(payload: dict) -> list | None:
     return None
 
 
+def _target(payload: dict) -> dict:
+    """The `tool_use_id` naming which parked call to resolve, as kwargs.
+
+    Omitted entirely when the client sends none — a session can hold several
+    parked calls, and an unnamed resolve takes the oldest of its kind, which is
+    what every caller predating multiple parks expects.
+    """
+    tool_use_id = payload.get("tool_use_id")
+    if isinstance(tool_use_id, str) and tool_use_id:
+        return {"tool_use_id": tool_use_id}
+    return {}
+
+
 def _sdk_answer(trace_id: str, payload: dict, sender: str | None):
     """Answer a session regin owns by handing the tool its input back.
 
@@ -277,7 +290,8 @@ def _sdk_answer(trace_id: str, payload: dict, sender: str | None):
     if answers is None:
         return jsonify({"error": "option_index required"}), 400
     row_id = store.record_bridge_message(trace_id, _answers_body(answers), sender)
-    delivered, detail = agent_sdk.resolve_ask(trace_id, answers)
+    delivered, detail = agent_sdk.resolve_ask(trace_id, answers,
+                                              **_target(payload))
     store.mark_delivered(row_id, delivered, detail)
     return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
 
@@ -324,6 +338,66 @@ def api_session_bridge_answer(trace_id):
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,
                     "detail": result.detail, "id": row_id})
+
+
+# A denial reason is a sentence for the agent, not a payload; the runner caps
+# it again before it reaches the tool.
+_DECISION_REASON_MAX = 500
+
+
+def _parse_decision(payload: dict):
+    """(behavior, reason) from a decision payload, or None when `behavior` is
+    neither allow nor deny. The reason is sanitized like every other body that
+    lands in the steering inbox."""
+    behavior = payload.get("behavior")
+    if behavior not in ("allow", "deny"):
+        return None
+    raw = payload.get("reason")
+    reason = (delivery.sanitize_text(raw) if isinstance(raw, str) else "")
+    return behavior, reason[:_DECISION_REASON_MAX]
+
+
+def _decision_body(behavior: str, reason: str) -> str:
+    verb = "allowed" if behavior == "allow" else "denied"
+    return f"{verb} the pending request" + (f" — {reason}" if reason else "")
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-decide', methods=['POST'])
+@require_editor
+def api_session_bridge_decide(trace_id):
+    """Allow or deny a tool call a regin-owned session parked (editor+ only).
+
+    The capability the tmux tier structurally lacks: answering over that tier
+    means driving whatever widget is on screen with keystrokes, whereas regin
+    owning the SDK process means `can_use_tool` holds the call and this route
+    resolves it with a typed decision. So an unowned session is a structured
+    refusal — there is no channel to carry an allow/deny into someone else's
+    terminal, and typing one blindly is exactly what must not happen.
+
+    Same JWT + `require_editor` gate as `bridge-answer`, and the decision is
+    recorded in the steering inbox like every sibling route, so the audit trail
+    reads the same whichever transport steered the session.
+
+    `tool_use_id` names which parked call this decides — a session gating tools
+    holds one park per call in a multi-call assistant message, and the card the
+    operator tapped is not necessarily the oldest.
+    """
+    if not agent_sdk.is_sdk_owned(trace_id):
+        return jsonify({"delivered": False,
+                        "detail": "no typed channel for this session"})
+    payload = request.get_json(silent=True) or {}
+    parsed = _parse_decision(payload)
+    if parsed is None:
+        return jsonify({"error": "behavior must be allow or deny"}), 400
+    behavior, reason = parsed
+    user = get_current_user()
+    sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    row_id = store.record_bridge_message(
+        trace_id, _decision_body(behavior, reason), sender)
+    delivered, detail = agent_sdk.resolve_permission(
+        trace_id, {"behavior": behavior, "reason": reason}, **_target(payload))
+    store.mark_delivered(row_id, delivered, detail)
+    return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-commands', methods=['GET'])

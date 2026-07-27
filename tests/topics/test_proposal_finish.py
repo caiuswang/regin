@@ -174,12 +174,6 @@ def test_runner_signaled_exit_does_not_re_notify(fake_git_repo, tmp_db, monkeypa
     from lib.topics import proposal_external as pe
     from lib.topics.proposals import run_control
 
-    class _FakePopen:
-        returncode = 0
-
-        def poll(self):
-            return 0
-
     _commit_service(fake_git_repo)
     out_dir = _seed_run(fake_git_repo)
     _write_temp_output(out_dir)
@@ -204,7 +198,7 @@ def test_runner_signaled_exit_does_not_re_notify(fake_git_repo, tmp_db, monkeypa
         stdout_path=out_dir / "stdout.log", stderr_path=out_dir / "stderr.log",
         started=0.0, prompt_templates=None)
     result = pe._handle_agent_output(
-        ctx, _FakePopen(), "out", "err", load_status(out_dir))
+        ctx, pe._AgentExit("out", "err"), load_status(out_dir))
 
     # The signalled branch returns the persisted proposal AND fires no 2nd emit.
     assert result[0]["topics"][0]["id"] == "service"
@@ -458,12 +452,6 @@ def test_runner_invalid_output_persists_validation_errors_and_allows_retry(
     an agent that outlives the runner can still fix its file and re-signal."""
     from lib.topics import proposal_external as pe
 
-    class _FakePopen:
-        returncode = 0
-
-        def poll(self):
-            return 0
-
     _commit_service(fake_git_repo)
     out_dir = _seed_run(fake_git_repo)
     _write_temp_output(out_dir, {"topics": [{"id": "svc"}], "wiki": ""})
@@ -479,7 +467,8 @@ def test_runner_invalid_output_persists_validation_errors_and_allows_retry(
         started=0.0, prompt_templates=None)
 
     with pytest.raises(TopicGraphError, match="output invalid"):
-        pe._handle_agent_output(ctx, _FakePopen(), "done", "", load_status(out_dir))
+        pe._handle_agent_output(ctx, pe._AgentExit("done", ""),
+                                load_status(out_dir))
 
     status = load_proposal_status(fake_git_repo, "run1")
     assert status["state"] == "failed"

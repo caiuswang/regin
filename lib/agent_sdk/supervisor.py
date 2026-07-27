@@ -8,6 +8,12 @@ reachable from a browser at all.
 
 The loop is created lazily: a regin install with `agent_sdk` off never starts a
 thread, and importing this module costs nothing.
+
+`launch` serves an operator's session. `launch_run` serves regin's own spawns:
+it carries the environment and per-run model/permission mode the caller's job
+needs, can end the session with its first turn, and hands back a `RunHandle` —
+the completion signal a programmatic caller has to have and a watching UI does
+not.
 """
 
 from __future__ import annotations
@@ -15,10 +21,11 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
+from dataclasses import dataclass
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
-from . import registry
+from . import client, registry, store
 from .runner import run_session
 
 log = get_activity_logger("agent_sdk")
@@ -55,6 +62,111 @@ def _on_done(trace_id: str, future) -> None:
         log.error("sdk_run_crashed", trace_id=trace_id, detail=repr(error))
 
 
+@dataclass(frozen=True)
+class RunOutcome:
+    """How a run ended, in the same vocabulary as the `agent_runs` row."""
+
+    trace_id: str
+    status: str
+    detail: str = ""
+
+
+class RunHandle:
+    """The completion signal for a launched run.
+
+    `launch` returns before the agent has done anything, which is the point —
+    but a programmatic caller (unlike `/live`, which watches the trace) needs
+    to know when the run ended and how. That signal is the
+    `concurrent.futures.Future` the loop already hands back, wrapped here:
+    it gives a callback (`add_done_callback`) *and* a bounded block (`wait`)
+    from the one mechanism, so a Flask thread can stay non-blocking while a
+    worker thread that genuinely wants the result doesn't need a second one.
+    Polling `GET /api/agent-runs/<id>` remains the answer for a reader in
+    another process — this is the in-process, no-poll path.
+
+    The outcome itself is read back from the durable `agent_runs` row rather
+    than the coroutine's return value: the runner writes that row in a
+    `finally`, so it is the one report that exists on every exit path.
+    """
+
+    def __init__(self, trace_id: str, future):
+        self.trace_id = trace_id
+        self._future = future
+
+    def done(self) -> bool:
+        return self._future.done()
+
+    def wait(self, timeout: float | None = None) -> RunOutcome:
+        """Block up to `timeout` seconds for the run to end.
+
+        Raises `TimeoutError` if it hasn't — the run keeps going, and `stop`
+        is how a caller that has given up ends it.
+        """
+        try:
+            self._future.result(timeout)
+        except TimeoutError:
+            # An Exception subclass, so it would otherwise be reported below
+            # as a run that failed — the opposite of a run still going.
+            raise
+        except Exception as exc:
+            return RunOutcome(self.trace_id, "failed", str(exc))
+        return self._stored_outcome()
+
+    def add_done_callback(self, callback) -> None:
+        """Call `callback(RunOutcome)` when the run ends, on the shared loop's
+        thread — so it must not block."""
+        self._future.add_done_callback(
+            lambda f: callback(self._outcome(f)))
+
+    def stop(self) -> tuple[bool, str]:
+        return registry.stop_run(self.trace_id)
+
+    def _outcome(self, future) -> RunOutcome:
+        error = future.exception() if not future.cancelled() else None
+        if error is not None:
+            return RunOutcome(self.trace_id, "failed", str(error))
+        return self._stored_outcome()
+
+    def _stored_outcome(self) -> RunOutcome:
+        row = store.get_run(self.trace_id) or {}
+        return RunOutcome(self.trace_id, row.get("status") or "exited",
+                          row.get("detail") or "")
+
+
+def _refuse_unless_launchable(prompt: str) -> None:
+    if not settings.agent_sdk.enabled:
+        raise LaunchRefused("agent_sdk disabled")
+    if not (prompt or "").strip():
+        raise LaunchRefused("prompt required")
+    if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
+        raise LaunchRefused("max_concurrent_runs reached")
+
+
+def launch_run(prompt: str, *, cwd: str | None = None,
+               env: dict[str, str] | None = None,
+               permission_mode: str = "", model: str = "",
+               one_shot: bool = False) -> RunHandle:
+    """Schedule a run on the shared loop and return its completion handle.
+
+    This is the programmatic entry point: `env` reaches the launched agent's
+    process (as an overlay on this one's), and `permission_mode` / `model`
+    override the global defaults for this run alone. `one_shot` ends the
+    session with its first turn instead of leaving it open for follow-ups.
+    """
+    _refuse_unless_launchable(prompt)
+    trace_id = f"sdk-{uuid.uuid4().hex[:12]}"
+    options = client.RunOptions(env=dict(env or {}),
+                                permission_mode=permission_mode, model=model)
+    future = asyncio.run_coroutine_threadsafe(
+        run_session(trace_id, prompt, cwd=cwd, options=options,
+                    one_shot=one_shot),
+        _ensure_loop())
+    future.add_done_callback(lambda f: _on_done(trace_id, f))
+    log.write("sdk_run_launched", trace_id=trace_id, cwd=cwd,
+              one_shot=one_shot)
+    return RunHandle(trace_id, future)
+
+
 def launch(prompt: str, *, cwd: str | None = None) -> str:
     """Start a session for `prompt` and return its trace id immediately.
 
@@ -64,19 +176,7 @@ def launch(prompt: str, *, cwd: str | None = None) -> str:
     with the prompt: it stays open for follow-ups (`send_prompt`) until it is
     stopped or goes idle.
     """
-    if not settings.agent_sdk.enabled:
-        raise LaunchRefused("agent_sdk disabled")
-    if not (prompt or "").strip():
-        raise LaunchRefused("prompt required")
-    if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
-        raise LaunchRefused("max_concurrent_runs reached")
-    trace_id = f"sdk-{uuid.uuid4().hex[:12]}"
-    loop = _ensure_loop()
-    future = asyncio.run_coroutine_threadsafe(
-        run_session(trace_id, prompt, cwd=cwd), loop)
-    future.add_done_callback(lambda f: _on_done(trace_id, f))
-    log.write("sdk_run_launched", trace_id=trace_id, cwd=cwd)
-    return trace_id
+    return launch_run(prompt, cwd=cwd).trace_id
 
 
 def send_prompt(trace_id: str, text: str) -> tuple[bool, str]:

@@ -164,6 +164,13 @@ const permDetail = computed(() => {
   const a = pendingPerm.value?.attributes || {}
   return a.requested_permission || a.command_preview || ''
 })
+// Only a regin-owned session stamps `kind`, and only it can carry a decision
+// back — everywhere else the sheet is a read-only look at what was asked, so
+// promising "decide" there would be a button that decides nothing.
+const permAction = computed(() => {
+  const kind = pendingPerm.value?.attributes?.kind
+  return kind === 'plan' || kind === 'tool' ? 'decide ▾' : 'details ▾'
+})
 const questionText = computed(() => {
   const qs = pendingQuestion.value?.attributes?.questions || []
   return qs[0]?.question || 'Question for you'
@@ -288,6 +295,15 @@ const elapsed = computed(() => {
         <span class="live-now-elapsed">{{ elapsed }}</span>
       </div>
       <div v-if="permDetail" class="live-now-text live-mono">{{ permDetail }}</div>
+      <div class="live-now-act">
+        <Button
+          variant="link"
+          size="sm"
+          class="live-now-more"
+          data-testid="live-now-decide"
+          @click="emit('open-question', pendingPerm)"
+        >{{ permAction }}</Button>
+      </div>
     </template>
 
     <template v-else-if="state === 'question'">

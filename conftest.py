@@ -216,6 +216,11 @@ def _no_external_agent_spawn(monkeypatch):
     rather than a `subprocess` call this repo makes, so layer 2 is blind to
     it; a test that enables the tier and reaches a launch would otherwise
     start a real agent.
+
+    Layer 5 — `supervisor._on_done`, layer 4's asyncio twin. A fire-and-forget
+    launch puts the run on the shared loop, so layer 4's exception lands in a
+    Future whose done-callback only logs it. Same failure mode layer 3 exists
+    to close for daemon threads.
     """
     from lib.settings import settings
     monkeypatch.setattr(settings, "topic_proposal_external_agents", {})
@@ -227,6 +232,21 @@ def _no_external_agent_spawn(monkeypatch):
     monkeypatch.setattr(agent_sdk_client, "new_client", refuse_sdk_launch)
 
     escaped: list[str] = []
+
+    # Layer 5, the asyncio twin of layer 3: a fire-and-forget launch schedules
+    # the run on the shared loop, where the guard's exception lands in a Future
+    # that `_on_done` only logs. Without this the guard fires and the test
+    # still passes.
+    from lib.agent_sdk import supervisor as agent_sdk_supervisor
+    prior_on_done = agent_sdk_supervisor._on_done
+
+    def _record_run(trace_id, future):
+        error = future.exception() if not future.cancelled() else None
+        if isinstance(error, ExternalAgentSpawnBlocked):
+            escaped.append(str(error))
+        return prior_on_done(trace_id, future)
+
+    monkeypatch.setattr(agent_sdk_supervisor, "_on_done", _record_run)
     prior_hook = threading.excepthook
 
     def _record(args):

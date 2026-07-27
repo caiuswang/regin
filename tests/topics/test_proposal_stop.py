@@ -148,7 +148,9 @@ def test_record_thread_failure_preserves_cancelled(fake_git_repo):
 def test_handle_agent_output_cancelled_path_raises_and_marks(fake_git_repo):
     """When the cancel flag is set, the runner's output handler stamps
     `cancelled` and raises BEFORE reaching the non-zero-exit → failed path."""
-    from lib.topics.proposal_external import _AgentRunContext, _handle_agent_output
+    from lib.topics.proposal_external import (
+        _AgentExit, _AgentRunContext, _handle_agent_output,
+    )
 
     proposal_id = "20260526T120400Z"
     out_dir = _seed_running_run(fake_git_repo, proposal_id)
@@ -170,7 +172,8 @@ def test_handle_agent_output_cancelled_path_raises_and_marks(fake_git_repo):
             prompt_templates=None,
         )
         with pytest.raises(TopicGraphError):
-            _handle_agent_output(ctx, FakePopen(alive=False), "out", "err", {"state": "running"})
+            _handle_agent_output(
+                ctx, _AgentExit("out", "err", -15), {"state": "running"})
         assert load_proposal_status(str(fake_git_repo), proposal_id)["state"] == "cancelled"
     finally:
         run_control.reset(proposal_id)

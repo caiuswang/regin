@@ -523,3 +523,52 @@ def test_a_failed_turn_ends_the_session_as_failed(captured, fake_client,
 
     assert statuses[-1] == "failed"
     assert registry.is_sdk_owned("sdk-t9") is False
+
+
+def test_an_unattended_park_is_declined_rather_than_held_forever(
+        captured, fake_client, monkeypatch):
+    """`idle_timeout_sec` bounds the wait BETWEEN turns; a park lives inside
+    one, so an unattended run would hold its slot until the server restarted."""
+    monkeypatch.setattr(settings.agent_sdk, "park_timeout_sec", 1)
+    monkeypatch.setattr(settings.agent_sdk, "gated_tools", ["Bash"])
+
+    class Ctx:
+        tool_use_id = "tu-unattended"
+
+    async def scenario():
+        run = runner_mod.AgentRunner("sdk-unattended")
+        run.loop = asyncio.get_running_loop()
+        run._post = _noop_post
+        return await asyncio.wait_for(
+            run._can_use_tool("Bash", {"command": "ls"}, Ctx()), timeout=6)
+
+    result = _run(scenario())
+
+    # Nobody said yes, so the call is declined — not approved by default.
+    assert type(result).__name__ == "PermissionResultDeny"
+    assert registry.pending_asks("sdk-unattended") == []
+
+
+def test_a_one_shot_run_refuses_a_follow_up_it_could_never_run(
+        captured, fake_client):
+    """Its queue is closed at launch, so a queued prompt would sit behind the
+    terminator forever — reporting it as queued is a lie."""
+    async def scenario():
+        task = asyncio.create_task(
+            runner_mod.run_session("sdk-oneshot", "the job", one_shot=True))
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if registry.is_sdk_owned("sdk-oneshot"):
+                break
+        result = registry.submit_prompt("sdk-oneshot", "and another")
+        await asyncio.wait_for(task, timeout=6)
+        return result
+
+    delivered, detail = _run(scenario())
+
+    assert delivered is False
+    assert fake_client.prompts == ["the job"]
+
+
+async def _noop_post(_span):
+    return None

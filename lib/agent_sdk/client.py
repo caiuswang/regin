@@ -13,6 +13,7 @@ different settings, plugins and version behaviour.
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass, field
 
 from lib.activity_log import get_activity_logger
 from lib.settings import settings
@@ -22,6 +23,35 @@ log = get_activity_logger("agent_sdk")
 
 class ClaudeCliNotFound(RuntimeError):
     """No `claude` on PATH and no explicit `agent_sdk.cli_path`."""
+
+
+@dataclass(frozen=True)
+class RunOptions:
+    """Per-run overrides for a session regin launches on its own behalf.
+
+    A run regin makes for itself talks to its agent through the environment,
+    and may want a different model or permission mode than the global defaults
+    an operator's session uses. `env` is an *overlay*: the SDK merges it over
+    the parent process environment, so it carries only what the run adds.
+    """
+
+    env: dict[str, str] = field(default_factory=dict)
+    permission_mode: str = ""
+    model: str = ""
+
+
+def _run_overrides(run: RunOptions | None) -> dict:
+    """A run's contributions to `ClaudeAgentOptions`, if any."""
+    if run is None:
+        return {}
+    overrides = {}
+    if run.env:
+        overrides["env"] = dict(run.env)
+    if run.permission_mode:
+        overrides["permission_mode"] = run.permission_mode
+    if run.model:
+        overrides["model"] = run.model
+    return overrides
 
 
 def resolve_cli_path() -> str:
@@ -39,13 +69,18 @@ def resolve_cli_path() -> str:
 
 
 def build_options(*, cwd: str | None = None, can_use_tool=None,
-                  resume: str | None = None):
+                  resume: str | None = None,
+                  options: RunOptions | None = None):
     """`ClaudeAgentOptions` for a regin-launched session.
 
     `setting_sources` is explicit so the launched agent loads the same
     user/project/local settings and CLAUDE.md an interactive session would —
     without it the SDK starts from a bare configuration and the run behaves
     unlike every other session regin has traced.
+
+    `options` wins over the global settings: those are the defaults for an
+    operator-launched session, not a ceiling on what regin's own spawns may
+    ask for.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -61,6 +96,7 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
         kwargs["resume"] = resume
     if settings.agent_sdk.model:
         kwargs["model"] = settings.agent_sdk.model
+    kwargs.update(_run_overrides(options))
     return ClaudeAgentOptions(**kwargs)
 
 

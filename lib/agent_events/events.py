@@ -137,7 +137,12 @@ class PermissionRequested(AgentEvent):
 
 @dataclass(frozen=True)
 class PermissionResolved(AgentEvent):
+    """How a `PermissionRequested` ended. `tool_name` rides along because the
+    resolution retires the request's placeholder row, and a denial that names
+    no tool is the only surviving record of what was refused."""
+
     tool_use_id: str = ''
+    tool_name: str = ''
     behavior: str = 'allow'
     detail: str = ''
 

@@ -28,6 +28,7 @@ from lib.agent_events import (
     AssistantText,
     AssistantThinking,
     PermissionRequested,
+    PermissionResolved,
     SessionEnded,
     SessionStarted,
     ToolCall,
@@ -42,15 +43,10 @@ from lib.agent_events.usage import context_tokens, turn_uuid
 from lib.agent_events.ask import ask_questions
 from lib.agent_events.from_sdk import from_sdk_message, prompt_event
 from lib.settings import settings
-from . import client, registry, store
+from . import client, policy, registry, store
 from .answers import build_updated_input
 
 log = get_activity_logger("agent_sdk")
-
-# Tools that block on a human rather than returning on their own. Only these
-# park a future; everything else is auto-allowed, because regin's permission
-# story for SDK runs is the operator answering questions, not gating every tool.
-_INTERACTIVE_TOOLS = frozenset({"AskUserQuestion"})
 
 # Pushed into the prompt queue to end the pump. A prompt is always a non-empty
 # string, so None can never collide with real input.
@@ -74,12 +70,28 @@ def _enrich_ask(span: dict | None, event) -> None:
         span['attributes']['questions'] = questions
 
 
+def _enrich_permission(span: dict | None, event) -> None:
+    """Carry what is being asked onto a parked call's span.
+
+    A decision card that can only name the tool asks an operator to approve
+    `tool.Bash` with no command in sight, which is not a decision at all.
+    """
+    if not span or not isinstance(event, PermissionRequested):
+        return
+    if event.kind == 'question':
+        return
+    span['attributes'].update(
+        policy.request_attrs(event.tool_name, event.tool_input, event.kind))
+
+
 class AgentRunner:
     """One live session. Not reusable across runs."""
 
-    def __init__(self, trace_id: str, *, cwd: str | None = None):
+    def __init__(self, trace_id: str, *, cwd: str | None = None,
+                 options: client.RunOptions | None = None):
         self.trace_id = trace_id
         self.cwd = cwd
+        self.options = options
         self.loop: asyncio.AbstractEventLoop | None = None
         self._client = None
         self._tool_names: dict[str, str] = {}
@@ -95,6 +107,7 @@ class AgentRunner:
         self._stop_reason = "exited"
         self._stopping = asyncio.Event()
         self._stopped = False
+        self._queue_closed = False
 
     # ── capture ────────────────────────────────────────────────────────
 
@@ -108,6 +121,7 @@ class AgentRunner:
     async def _emit(self, event) -> None:
         span = to_span(self._name_tool(event))
         _enrich_ask(span, event)
+        _enrich_permission(span, event)
         await self._post(span)
 
     async def _handle(self, event) -> None:
@@ -197,35 +211,95 @@ class AgentRunner:
     # ── permissions ────────────────────────────────────────────────────
 
     async def _can_use_tool(self, tool_name: str, tool_input: dict, context):
-        if tool_name not in _INTERACTIVE_TOOLS:
+        kind = policy.permission_kind(tool_name)
+        if kind is None:
             return client.allow(tool_input)
-        return await self._park_question(tool_name, tool_input, context)
+        return await self._park(kind, tool_name, tool_input, context)
 
-    async def _park_question(self, tool_name: str, tool_input: dict, context):
+    async def _park(self, kind: str, tool_name: str, tool_input: dict, context):
+        """Hold the call open until the operator resolves it from `/live`."""
         tool_use_id = getattr(context, "tool_use_id", "") or ""
         await self._emit(PermissionRequested(
             trace_id=self.trace_id,
             tool_name=tool_name,
             tool_use_id=tool_use_id,
             tool_input=tool_input,
-            kind="question",
+            kind=kind,
         ))
+        resolution = await self._await_operator(kind, tool_use_id, tool_input)
+        if kind == "question":
+            return self._answered(tool_input, resolution)
+        return await self._decided(tool_name, tool_use_id, tool_input,
+                                   resolution)
+
+    async def _wait_for_operator(self, future):
+        """Wait for a decision, but not forever when nobody is watching.
+
+        `idle_timeout_sec` cannot cover this: it bounds the wait *between*
+        turns, and a park lives inside one. An unattended run — regin's own
+        spawns, which no operator has `/live` open for — would otherwise hold
+        its worker, its child process and a `max_concurrent_runs` slot until
+        the server restarted. Timing out declines the call rather than
+        approving it: nobody said yes.
+        """
+        timeout = int(settings.agent_sdk.park_timeout_sec or 0)
+        if timeout <= 0:
+            return await future
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except asyncio.TimeoutError:
+            log.write("sdk_park_timed_out", trace_id=self.trace_id,
+                      timeout_sec=timeout)
+            return None
+
+    async def _await_operator(self, kind: str, tool_use_id: str,
+                              tool_input: dict):
+        """Park this call and wait. One assistant message can carry several
+        gated calls, so each waits on its own future and drops only its own
+        park — the session's other parked calls are still someone's to answer.
+        """
         future: asyncio.Future = asyncio.get_running_loop().create_future()
-        registry.register_ask(registry.PendingAsk(
+        ask_id = registry.register_ask(registry.PendingAsk(
             trace_id=self.trace_id,
             tool_use_id=tool_use_id,
             tool_input=tool_input,
             future=future,
             loop=asyncio.get_running_loop(),
+            kind=kind,
         ))
         try:
-            answers = await future
-        except asyncio.CancelledError:
-            registry.discard_ask(self.trace_id)
-            raise
+            return await self._wait_for_operator(future)
+        finally:
+            # Every exit drops this park and only this one: resolved (already
+            # popped, so a no-op), timed out, or cancelled. A park left behind
+            # is a call the operator can still be offered and nothing can
+            # deliver an answer to.
+            registry.discard_ask(ask_id)
+
+    def _answered(self, tool_input: dict, answers):
         if answers is None:
             return client.deny("Dismissed by operator")
         return client.allow(build_updated_input(tool_input, answers))
+
+    async def _decided(self, tool_name: str, tool_use_id: str,
+                       tool_input: dict, decision):
+        """Run or refuse the gated call, and record which of the two happened.
+
+        The resolution span is what a later reader sees: the parked
+        `permission.request` placeholder is retired by `tool_use_id`, so
+        without this the trace of a denial is a request that simply stops.
+        """
+        behavior, detail = policy.decision_outcome(decision)
+        await self._emit(PermissionResolved(
+            trace_id=self.trace_id,
+            tool_use_id=tool_use_id,
+            tool_name=tool_name,
+            behavior=behavior,
+            detail=detail,
+        ))
+        if behavior == "allow":
+            return client.allow(tool_input)
+        return client.deny(detail)
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
@@ -233,8 +307,13 @@ class AgentRunner:
         if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
             raise RunnerBusy("max_concurrent_runs reached")
         self.loop = asyncio.get_running_loop()
+        shadowed = settings.agent_sdk.shadowed_gating()
+        if shadowed:
+            log.error("sdk_gating_inert", trace_id=self.trace_id,
+                      detail=shadowed)
         self._client = client.new_client(
-            cwd=self.cwd, can_use_tool=self._can_use_tool)
+            cwd=self.cwd, can_use_tool=self._can_use_tool,
+            options=self.options)
         await self._client.connect()
         registry.register_run(self.trace_id, self)
         # The pid is what makes the reaper safe: it distinguishes a row this
@@ -248,10 +327,21 @@ class AgentRunner:
 
     @property
     def is_stopping(self) -> bool:
-        """True once a stop has been asked for. The registry entry outlives
-        that request by a turn's teardown, so reachability alone would accept
-        prompts this session will never run."""
-        return self._stopping.is_set() or self._stopped
+        """True once this session will run nothing further.
+
+        The registry entry outlives a stop by a turn's teardown, so
+        reachability alone would accept prompts this session never runs — and
+        a one-shot run, whose queue is closed from the start, would accept a
+        follow-up that sits behind the terminator forever.
+        """
+        return self._stopping.is_set() or self._stopped or self._queue_closed
+
+    @property
+    def stop_requested(self) -> bool:
+        """True only when someone asked this session to stop — distinct from
+        `is_stopping`, which also covers a one-shot run whose queue was closed
+        at launch and which therefore *finished* rather than being stopped."""
+        return self._stopping.is_set()
 
     def enqueue(self, text: str) -> None:
         """Queue a prompt. Must run on this runner's loop — see
@@ -261,6 +351,7 @@ class AgentRunner:
     def close(self) -> None:
         """End the session once everything already queued has run."""
         self._stop_reason = "stopped"
+        self._queue_closed = True
         self._prompts.put_nowait(_CLOSE)
 
     async def request_stop(self) -> None:
@@ -384,14 +475,26 @@ class AgentRunner:
 
 
 async def run_session(trace_id: str, prompt: str, *,
-                      cwd: str | None = None) -> None:
-    """Launch, run `prompt`, then stay open for follow-ups until stopped."""
+                      cwd: str | None = None,
+                      options: client.RunOptions | None = None,
+                      one_shot: bool = False) -> None:
+    """Launch and run `prompt`.
+
+    Stays open for follow-ups until stopped, unless `one_shot` — a run regin
+    made to get one job done must end with its turn, or it holds a
+    `max_concurrent_runs` slot until `idle_timeout_sec` elapses, long after
+    the caller has its result.
+    """
     if not settings.agent_sdk.enabled:
         raise RuntimeError("agent_sdk disabled")
-    runner = AgentRunner(trace_id, cwd=cwd)
+    runner = AgentRunner(trace_id, cwd=cwd, options=options)
     # Queued before the session is reachable, so a follow-up arriving during
     # `start()` cannot overtake the prompt the run was launched for.
     runner.enqueue(prompt)
+    if one_shot:
+        # The terminator queues behind the prompt, so the pump stops at the
+        # end of that turn rather than waiting out the idle timeout.
+        runner.close()
     try:
         await runner.start()
         await runner.pump()
@@ -402,4 +505,9 @@ async def run_session(trace_id: str, prompt: str, *,
         log.error("sdk_run_failed", trace_id=trace_id, detail=str(exc))
         await runner.stop(status="failed", detail=str(exc))
         raise
-    await runner.stop()
+    # A one-shot run's queue was closed from the start, so its stop reason
+    # reads "stopped" even when it simply finished; only an operator's Stop
+    # sets `is_stopping`.
+    await runner.stop(
+        detail="" if not one_shot
+        else ("stopped" if runner.stop_requested else "completed"))

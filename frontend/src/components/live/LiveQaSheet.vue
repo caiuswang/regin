@@ -13,9 +13,18 @@
 // and delivers them in order on Send-all). An ask with a multi-select question,
 // or an unreachable/completed span, stays read-only — a multi-select TUI needs
 // per-option toggles the bridge can't drive blindly.
+//
+// A PENDING permission request delegates to LiveQaDecision instead — the plan
+// (`ExitPlanMode`) and gated-tool approval cards. That path is gated on the
+// span's `kind`, which only the SDK tier stamps: regin owns that process, so a
+// typed allow/deny reaches the call parked inside it, whereas a hook-observed
+// session's permission prompt is waiting on keystrokes in someone else's
+// terminal and stays read-only.
 import { computed } from 'vue'
 import LiveQaAnswer from './LiveQaAnswer.vue'
 import LiveQaAnswerMulti from './LiveQaAnswerMulti.vue'
+import LiveQaDecision from './LiveQaDecision.vue'
+import MarkdownContent from '../MarkdownContent.vue'
 import {
   askOptLabel, askOptDescription, askIsChosen, askFreeText, askNote,
   toolDisplayName,
@@ -52,6 +61,16 @@ const hasMultiSelect = computed(() => questions.value.some(q => q.multiSelect))
 const canAnswer = computed(() => isAsk.value && pending.value
   && props.bridgeReachable && !!props.sessionId && singleSelectOnly.value)
 const isMulti = computed(() => questions.value.length > 1)
+
+const permKind = computed(() => a.value.kind || '')
+const isPlan = computed(() => permKind.value === 'plan')
+const planText = computed(() => a.value.plan || '')
+const canDecide = computed(() => !isAsk.value && pending.value
+  && props.bridgeReachable && !!props.sessionId
+  && (isPlan.value || permKind.value === 'tool'))
+const permEyebrow = computed(() => (isPlan.value
+  ? 'plan · your approval'
+  : `requested · ${toolDisplayName(a.value.tool_name || 'tool')}`))
 
 function chosen(q, opt) {
   return !pending.value && askIsChosen(props.span, q, opt)
@@ -127,10 +146,14 @@ function chosen(q, opt) {
   <div v-else data-testid="live-qa-sheet">
     <div class="live-qa-card">
       <div class="live-qa-card-hd">
-        <div class="live-qa-h">requested · {{ toolDisplayName(a.tool_name || 'tool') }}</div>
+        <div class="live-qa-h">{{ permEyebrow }}</div>
         <div class="live-qa-title live-mono">{{ permRequested }}</div>
       </div>
+      <div v-if="planText" class="live-qa-plan" data-testid="live-qa-plan">
+        <MarkdownContent :markdown="planText" />
+      </div>
       <div
+        v-if="!canDecide"
         class="live-qa-opt"
         :class="pending ? '' : (permDenied ? 'live-qa-free' : 'live-qa-chosen')"
       >
@@ -145,5 +168,25 @@ function chosen(q, opt) {
         </span>
       </div>
     </div>
+    <LiveQaDecision
+      v-if="canDecide"
+      :session-id="sessionId"
+      :kind="permKind"
+      :tool-use-id="a.tool_use_id || ''"
+      @decided="$emit('answered')"
+    />
   </div>
 </template>
+
+<style scoped>
+/* The plan is markdown, not a preview blob: rendered, scrolled inside the card
+   rather than growing it, and wrapped — a 375px sheet must never scroll
+   sideways. */
+.live-qa-plan {
+  padding: 8px 12px;
+  max-height: 40dvh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+}
+</style>
