@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from conftest_support import (
-    ExternalAgentSpawnBlocked, SpawnGuard, spawning_modules,
+    ExternalAgentSpawnBlocked, SpawnGuard, refuse_sdk_launch, spawning_modules,
 )
 
 
@@ -210,12 +210,21 @@ def _no_external_agent_spawn(monkeypatch):
     daemon thread (`proposal_review._spawn_review_agent`,
     `external_jobs`). An exception raised there never reaches pytest, so
     without this the guard could fire and the test would still pass.
+
+    Layer 4 — `lib.agent_sdk.client.new_client`, the Agent-SDK tier's single
+    door to the raw SDK. That tier launches through the SDK's own machinery
+    rather than a `subprocess` call this repo makes, so layer 2 is blind to
+    it; a test that enables the tier and reaches a launch would otherwise
+    start a real agent.
     """
     from lib.settings import settings
     monkeypatch.setattr(settings, "topic_proposal_external_agents", {})
 
     for module in spawning_modules():
         monkeypatch.setattr(module, "subprocess", SpawnGuard())
+
+    from lib.agent_sdk import client as agent_sdk_client
+    monkeypatch.setattr(agent_sdk_client, "new_client", refuse_sdk_launch)
 
     escaped: list[str] = []
     prior_hook = threading.excepthook

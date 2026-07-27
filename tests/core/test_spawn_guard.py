@@ -84,3 +84,23 @@ def test_configuring_an_agent_does_not_defeat_the_guard(monkeypatch):
     from lib.memory.adapters import ExternalAgentLLM
     with pytest.raises(ExternalAgentSpawnBlocked):
         ExternalAgentLLM().complete("prompt")
+
+
+def test_the_agent_sdk_launch_door_is_guarded():
+    """The SDK tier spawns through the SDK's own machinery, so the
+    `subprocess` layer is blind to it — `new_client` is the seam that isn't."""
+    from lib.agent_sdk import client
+
+    with pytest.raises(ExternalAgentSpawnBlocked):
+        client.new_client(cwd="/tmp")
+
+
+def test_a_runner_start_cannot_reach_a_real_agent():
+    """The layer that matters: a test enabling the tier and starting a run
+    must be refused rather than launching a coding agent in the working tree."""
+    import asyncio
+
+    from lib.agent_sdk.runner import AgentRunner
+
+    with pytest.raises(ExternalAgentSpawnBlocked):
+        asyncio.run(AgentRunner("sdk-guard-probe").start())

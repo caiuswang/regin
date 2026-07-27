@@ -60,3 +60,20 @@ class SpawnGuard:
     call = _refuse
     check_call = _refuse
     check_output = _refuse
+
+
+def refuse_sdk_launch(*_args, **_kwargs):
+    """Stand-in for `lib.agent_sdk.client.new_client`.
+
+    `SpawnGuard` cannot see an Agent-SDK launch: that path spawns through the
+    SDK's own machinery, not through a module this repo calls `subprocess` on.
+    `new_client` is the single door to the raw SDK — its module docstring is
+    explicit about that — so refusing there covers every caller, an
+    operator-launched run and one regin makes for itself alike.
+    """
+    raise ExternalAgentSpawnBlocked(
+        "test attempted to launch a real Claude Agent SDK session. Stub "
+        "`lib.agent_sdk.client.new_client` (or `supervisor.launch_run`) "
+        "instead — a real launch runs a coding agent in the working tree "
+        "and costs API credit."
+    )
