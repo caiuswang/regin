@@ -4,5 +4,6 @@
 #
 # Optional extras live elsewhere:
 #   - dev tooling:        pip install -e ".[dev]"
+#   - launching agents:   pip install -e ".[agent-sdk]"
 #   - SkillRouter (heavy): pip install -r requirements-router.txt
 -e .

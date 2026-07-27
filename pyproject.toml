@@ -40,6 +40,12 @@ dev = [
     "pytest-xdist>=3.5",
     "factory-boy>=3.3",
 ]
+# Only needed to LAUNCH agents (`lib/agent_sdk`, settings.agent_sdk.enabled).
+# Observing sessions the user drives needs nothing from this, so it stays an
+# extra rather than a base dependency; the SDK import is lazy to match.
+agent-sdk = [
+    "claude-agent-sdk>=0.2",
+]
 
 [project.scripts]
 regin = "cli.regin:main"

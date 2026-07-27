@@ -752,6 +752,32 @@ class AgentBridgeConfig(BaseModel):
         default_factory=lambda: ["claude", "claude.exe", "node"])
 
 
+class AgentSdkConfig(BaseModel):
+    """Sessions regin *launches* through the Claude Agent SDK (`lib/agent_sdk`).
+
+    Off by default. This is a strictly larger capability than the rest of
+    regin: everything else observes a session the user drives, whereas this
+    starts a `claude` process and holds its input stream. The payoff is a
+    typed control channel — an `AskUserQuestion` is answered by returning
+    `updated_input` from the SDK's permission callback, instead of the tmux
+    tier's keystroke walk through the question widget.
+
+    `cli_path` is empty by default, meaning "resolve `claude` off PATH". Leave
+    it that way unless the user's CLI is somewhere unusual: the SDK ships its
+    own `claude` inside its platform package and will silently prefer that
+    one, so regin would trace a build the user never installed.
+
+    `max_concurrent_runs` bounds live runners — each is a real child process,
+    and an unbounded launcher is a fork bomb with extra steps.
+    """
+
+    enabled: bool = False
+    cli_path: str = ""
+    model: str = ""
+    max_concurrent_runs: int = 4
+    permission_mode: str = "default"
+
+
 class TopicEvolutionConfig(BaseModel):
     """Code-driven topic/memory co-evolution (`lib/topics` drift loop).
 
@@ -903,7 +929,8 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "hooks", "patterns", "sync", "web", "cli", "rules",
             "trace_ingest", "topics", "auth", "rebuild",
-            "agent_messages", "agent_bridge", "notifications", "memory", "grader",
+            "agent_messages", "agent_bridge", "agent_sdk", "notifications",
+            "memory", "grader",
             "goal", "gate", "prompts", "other",
         ]
     )
@@ -1024,6 +1051,9 @@ class Settings(BaseSettings):
 
     # ── Agent bridge (HTTP → guarded tmux keystroke injection) ──
     agent_bridge: AgentBridgeConfig = Field(default_factory=AgentBridgeConfig)
+
+    # ── Agent SDK (regin-launched sessions with a typed control channel) ──
+    agent_sdk: AgentSdkConfig = Field(default_factory=AgentSdkConfig)
 
     # ── Trace retention (opt-in prune of superseded pending spans) ──
     trace_retention: TraceRetentionConfig = Field(default_factory=TraceRetentionConfig)

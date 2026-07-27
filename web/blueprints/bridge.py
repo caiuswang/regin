@@ -36,6 +36,7 @@ from flask import Blueprint, request, jsonify
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
 from lib.agent_bridge import store, delivery, commands, ansi_html
+from lib import agent_sdk
 
 bridge_bp = Blueprint('bridge', __name__)
 
@@ -207,6 +208,37 @@ def _answers_body(answers: list) -> str:
     return " · ".join(_answer_body_part(a) for a in answers) or "answers"
 
 
+def _payload_answers(payload: dict) -> list | None:
+    """The ordered per-question answer list, whichever shape the sheet sent.
+
+    A single-question ask posts flat `option_index`/`text`/`label`; a
+    multi-question ask posts an `answers` array. Both mean the same thing to a
+    typed channel, which fills one map keyed by question.
+    """
+    if isinstance(payload.get("answers"), list):
+        return payload["answers"]
+    if isinstance(payload.get("option_index"), int):
+        return [payload]
+    return None
+
+
+def _sdk_answer(trace_id: str, payload: dict, sender: str | None):
+    """Answer a session regin owns by handing the tool its input back.
+
+    No keystrokes and no widget: the parked `can_use_tool` call is resolved with
+    the operator's choices, so the CLI runs `AskUserQuestion` with `answers`
+    already filled in. Recorded in the steering inbox exactly like the tmux
+    path, so the audit trail doesn't depend on which transport was used.
+    """
+    answers = _payload_answers(payload)
+    if answers is None:
+        return jsonify({"error": "option_index required"}), 400
+    row_id = store.record_bridge_message(trace_id, _answers_body(answers), sender)
+    delivered, detail = agent_sdk.resolve_ask(trace_id, answers)
+    store.mark_delivered(row_id, delivered, detail)
+    return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-answer', methods=['POST'])
 @require_editor
 def api_session_bridge_answer(trace_id):
@@ -221,12 +253,19 @@ def api_session_bridge_answer(trace_id):
     terminal outranks every editor-gated mutation, so viewers get 403. The
     human-readable answer is recorded in the steering inbox for audit, mirroring
     `bridge-send`. A disabled bridge is a clean structured refusal.
+
+    A session regin launched itself is answered over its typed channel instead
+    (`lib/agent_sdk`) — checked first, and deliberately not gated on
+    `agent_bridge.enabled`: that flag authorizes keystroke injection into a
+    terminal, which a typed answer to a process regin owns never performs.
     """
-    if not settings.agent_bridge.enabled:
-        return jsonify({"delivered": False, "detail": "bridge disabled"})
     payload = request.get_json(silent=True) or {}
     user = get_current_user()
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    if agent_sdk.is_sdk_owned(trace_id):
+        return _sdk_answer(trace_id, payload, sender)
+    if not settings.agent_bridge.enabled:
+        return jsonify({"delivered": False, "detail": "bridge disabled"})
     if isinstance(payload.get("answers"), list):
         answers = payload["answers"]
         row_id = store.record_bridge_message(trace_id, _answers_body(answers), sender)

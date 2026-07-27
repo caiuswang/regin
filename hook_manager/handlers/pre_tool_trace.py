@@ -56,51 +56,47 @@ def handle(payload: HookPayload) -> HookResponse | None:
 
 
 def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
+    """Project through the neutral event union so this row is byte-identical to
+    the one an SDK-owned session emits for the same call (`lib/agent_events`).
+    The union fixes name/span_id/status; the tool-specific attrs below are this
+    producer's own enrichment."""
+    from lib.agent_events import ToolCall, to_span  # type: ignore
     from lib.hook_plugin import post_span  # type: ignore
-    from lib.trace.pending_spans import tool_pending_id  # type: ignore
 
-    attrs: dict = {'tool_name': tool, 'tool_use_id': tu_id, 'live': True}
+    span = to_span(ToolCall(
+        trace_id=payload.session_id,
+        tool_name=tool,
+        tool_use_id=tu_id,
+        agent_id=(payload.raw or {}).get('agent_id'),
+        agent_type=(payload.raw or {}).get('agent_type'),
+    ))
+    _enrich_attrs(span['attributes'], payload, tool)
+    post_span(**span)
+
+
+def _enrich_attrs(attrs: dict, payload: HookPayload, tool: str) -> None:
+    """Tool-specific presentation attrs on top of the union's identity fields."""
     if tool == 'AskUserQuestion':
         questions = _ask_questions(payload.tool_input or {})
         if questions:
             attrs['questions'] = questions
-    elif tool == 'Agent':
+        return
+    if tool == 'Agent':
         # Same structured launch attrs the resolved span gets, so the
         # subagent-row merge works identically against the pending twin.
         from .post_tool_trace import _build_agent_attrs  # type: ignore
         _build_agent_attrs(attrs, payload.tool_input or {}, {}, payload)
-    else:
-        # Reuse the resolved card's input-derived attrs (Bash command, WebSearch
-        # query, WebFetch url, …) so the in-flight card shows what's running
-        # instead of a bare tool name — the conversation labellers read those
-        # flat keys, not a raw `tool_input` dump.
-        from .post_tool_trace import apply_pending_input_attrs  # type: ignore
-        ti = payload.tool_input or {}
-        if not apply_pending_input_attrs(attrs, tool, ti) and isinstance(ti, dict) and ti:
-            # No tool-specific flat attrs (BashOutput, MCP, …) — keep a raw
-            # input preview so the detail panel still shows the call.
-            attrs['tool_input'] = ti
-    _stamp_subagent(attrs, payload)
-    post_span(
-        trace_id=payload.session_id,
-        name=f'tool.{tool}',
-        span_id=tool_pending_id(tu_id),
-        attributes=attrs,
-        status_code='PENDING',
-    )
-
-
-def _stamp_subagent(attrs: dict, payload: HookPayload) -> None:
-    """Same subagent tagging as the resolved span (post_tool_trace): without
-    it every in-flight subagent tool renders under the MAIN agent until the
-    PostToolUse twin retires the placeholder."""
-    raw = payload.raw or {}
-    agent_id = raw.get('agent_id')
-    if agent_id:
-        attrs['agent_id'] = agent_id
-        agent_type = raw.get('agent_type')
-        if agent_type:
-            attrs['agent_type'] = agent_type
+        return
+    # Reuse the resolved card's input-derived attrs (Bash command, WebSearch
+    # query, WebFetch url, …) so the in-flight card shows what's running
+    # instead of a bare tool name — the conversation labellers read those
+    # flat keys, not a raw `tool_input` dump.
+    from .post_tool_trace import apply_pending_input_attrs  # type: ignore
+    ti = payload.tool_input or {}
+    if not apply_pending_input_attrs(attrs, tool, ti) and isinstance(ti, dict) and ti:
+        # No tool-specific flat attrs (BashOutput, MCP, …) — keep a raw
+        # input preview so the detail panel still shows the call.
+        attrs['tool_input'] = ti
 
 
 def _ask_questions(tool_input: dict) -> list[dict]:

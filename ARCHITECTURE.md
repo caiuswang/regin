@@ -384,6 +384,22 @@ The inverse channel of Agent Messages above: instead of the agent pushing to a h
 
 Gated off by default (`settings.agent_bridge.enabled = False`); per-session delivery additionally requires the pane's registration to opt in.
 
+## Agent SDK tier (regin-launched sessions)
+
+regin's second capture tier. Everything else observes a session the *user* started; this one regin starts itself, through the Python Claude Agent SDK, and keeps a typed channel to it (`lib/agent_sdk/`).
+
+**Why it exists:** answering an `AskUserQuestion` over the Agent Bridge means driving the question widget with keystrokes and confirming submission by matching on-screen text — a contract with a specific CLI build, not an API. When regin owns the process, the SDK's `can_use_tool` callback parks the tool call and the answer is returned as `updated_input`, so the CLI runs the tool with the operator's choices filled in. The resulting transcript is indistinguishable from one answered in the terminal: the recorded `tool_use.input` still holds only `questions`, and `toolUseResult.answers` matches byte-for-byte.
+
+**Answer shape** (`lib/agent_sdk/answers.py`) is dictated by Claude Code, not chosen: `answers` keys are the **full question text**, not the short `header` the `/live` sheet keys its payload by, and a multi-select value is one comma-joined string.
+
+**Capture goes through the neutral event union** (`lib/agent_events/`): both producers — the hook path and this one — project their events onto the same span shape via `to_span`, so the trace UI never learns there are two sources. The union fixes a row's identity (name, span id, status, the ids the serve-time merge joins on); tool-specific presentation attrs stay a producer concern.
+
+**The raw SDK import is confined to `lib/agent_sdk/client.py`**, which also resolves the user's own `claude` off PATH and passes it as `cli_path`. The SDK ships its own copy inside a platform package and spawns that by default — without the override, traces would record a build the user never installed.
+
+**Storage:** `agent_runs` (one mutable row per regin-launched session — the fact steering routes on, mirroring what `bridge_panes` is to the tmux tier). Parked questions live in a process-local registry rather than the DB, because a runner and its channel share a lifetime; resolving one hops back onto the runner's event loop from the Flask request thread.
+
+Gated off by default (`settings.agent_sdk.enabled = False`), and the SDK is an optional extra (`pip install -e ".[agent-sdk]"`) since observing sessions needs nothing from it.
+
 ## Agent Memory (cross-session experience)
 
 `lib/memory/` learns from past sessions and surfaces that experience into future ones — lifecycle **capture → consolidate (`reflect`) → recall → reinforce**; `send_to_user(type=lesson)` is one capture endpoint (see *Agent Messages* above), not the system itself. It lives in its **own self-initializing SQLite DB** (`db/regin_memory.db`, see *Agent memory database* above): `lib/memory/models.py` declares its **own** `MetaData` — load-bearing, so `create_all` / `regin init` / Alembic never build regin's schema into the memory file and accumulated experience survives `rebuild`. The engine depends on four Protocols in `lib/memory/ports.py` (`EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`), each **degrading gracefully** (no embedder → FTS-only recall; no LLM → no contradiction judging / synthesis / distill — the LLM *is* the abstraction step; no sink → no export); concrete adapters live in `lib/memory/adapters.py` and are injected at the edge, so swapping one is a zero-diff change to the engine.

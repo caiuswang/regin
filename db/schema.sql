@@ -202,6 +202,28 @@ CREATE TABLE IF NOT EXISTS bridge_messages (
 CREATE INDEX IF NOT EXISTS idx_bridge_messages_trace ON bridge_messages(trace_id);
 CREATE INDEX IF NOT EXISTS idx_bridge_messages_created ON bridge_messages(created_at DESC);
 
+-- Sessions regin launched itself through the Claude Agent SDK
+-- (`lib/agent_sdk/`). This is to the SDK tier what `bridge_panes` is to the
+-- tmux tier: a canonical, mutable, one-row-per-session identity record, and
+-- the fact steering routes on — an SDK-owned session answers an
+-- AskUserQuestion over a typed in-process channel, a user-started one can only
+-- be reached by typing into its pane. `pid` is the `claude` child; `status`
+-- ('starting' | 'running' | 'exited' | 'failed') keeps a crashed runner's row
+-- distinguishable from a live one after a server restart.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id   TEXT NOT NULL UNIQUE,
+    status     TEXT NOT NULL DEFAULT 'starting',
+    pid        INTEGER,
+    cwd        TEXT,
+    model      TEXT,
+    detail     TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+
 -- Post-hoc rubric grades for captured sessions (lib/grader/). Two
 -- independent axes per session — 'correctness' (claim groundedness /
 -- coverage / source quality) and 'process' (tool-use, redundancy,
