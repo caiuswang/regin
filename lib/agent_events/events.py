@@ -76,6 +76,9 @@ class SessionStarted(AgentEvent):
     model: str | None = None
     cwd: str | None = None
     agent_type: str | None = None
+    # The session this one continues (`--resume`). A resumed run gets its own
+    # trace, so without this the conversation it inherits is invisible.
+    resumed_from: str | None = None
 
 
 @dataclass(frozen=True)

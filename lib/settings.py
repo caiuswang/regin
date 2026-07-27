@@ -816,17 +816,22 @@ class AgentSdkConfig(BaseModel):
     gated_tools: list[str] = Field(default_factory=list)
     park_timeout_sec: int = 900
 
-    def shadowed_gating(self) -> str:
+    def shadowed_gating(self, mode: str = "") -> str:
         """The reason gating is inert, or "" when it can take effect.
 
         `bypassPermissions` at least makes the SDK warn; `acceptEdits` is
         silent, so an operator can configure `gated_tools` and get a UI that
         promises approval over a runtime that never asks.
+
+        `mode` is a per-run override (`RunOptions.permission_mode`), which wins
+        over this config — so a report keyed only on the configured mode would
+        miss exactly the case an operator chose at launch time.
         """
         if not (self.gate_plan or self.gated_tools):
             return ""
-        if self.permission_mode in ("acceptEdits", "bypassPermissions"):
-            return (f"permission_mode={self.permission_mode!r} skips the "
+        effective = mode or self.permission_mode
+        if effective in ("acceptEdits", "bypassPermissions"):
+            return (f"permission_mode={effective!r} skips the "
                     "permission callback, so nothing is gated")
         return ""
 

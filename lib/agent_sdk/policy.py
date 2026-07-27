@@ -102,6 +102,24 @@ def request_attrs(tool_name: str, tool_input: dict, kind: str) -> dict:
     return attrs
 
 
+def notify_attrs(kind: str, tool_name: str, tool_input: dict,
+                 tool_use_id: str) -> dict:
+    """The attrs `event_notify.notify_permission_request` formats into a card.
+
+    Deliberately the same vocabulary the hook tier's `_build_perm_attrs`
+    produces — one inbox card shape has to render a park from either producer,
+    or the phone would show two different notions of "waiting on you".
+    """
+    attrs = {'tool_name': tool_name, 'tool_use_id': tool_use_id}
+    if kind == 'question':
+        questions = (tool_input or {}).get('questions')
+        if isinstance(questions, list) and questions:
+            attrs['questions'] = questions
+        return attrs
+    attrs.update(request_attrs(tool_name, tool_input, kind))
+    return attrs
+
+
 def decision_outcome(decision) -> tuple[str, str]:
     """(behavior, detail) for a resolved permission request.
 

@@ -277,7 +277,8 @@ def test_an_interactive_launch_still_returns_a_trace_id(monkeypatch):
     trace_id = supervisor.launch("hello", cwd="/repo")
 
     assert trace_id == "sdk-deadbeef"
-    assert seen == {"prompt": "hello", "cwd": "/repo"}
+    assert seen == {"prompt": "hello", "cwd": "/repo", "model": "",
+                    "permission_mode": "", "one_shot": False, "resume": None}
 
 def test_a_disabled_tier_refuses_a_programmatic_launch(monkeypatch):
     monkeypatch.setattr(settings.agent_sdk, "enabled", False)

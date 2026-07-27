@@ -16,7 +16,7 @@ from __future__ import annotations
 from flask import Blueprint, request, jsonify
 
 from lib.auth import require_editor
-from lib.agent_sdk import store, supervisor
+from lib.agent_sdk import client, store, supervisor
 from lib.settings import settings
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
@@ -24,6 +24,65 @@ agent_runs_bp = Blueprint('agent_runs', __name__)
 # A prompt is a message, not a payload — bound it so a stray body can't be
 # shipped into an agent turn.
 _PROMPT_MAX = 8000
+# Identifiers, not prose: a model name or a session id arriving longer than this
+# is a malformed request, and both are passed to a child process.
+_ID_MAX = 200
+_PATH_MAX = 2000
+# regin's own name for a run it launched (`supervisor.launch_run`). The CLI has
+# no session under that id, so resuming one could only fail at start.
+_SYNTHETIC_PREFIX = 'sdk-'
+
+
+class _BadRequest(ValueError):
+    """A malformed launch payload — a 400, not a structured refusal."""
+
+
+def _text(payload: dict, key: str, limit: int) -> str:
+    value = payload.get(key)
+    return value.strip()[:limit] if isinstance(value, str) else ""
+
+
+def _launch_params(payload: dict) -> dict:
+    """Validated per-run overrides for `supervisor.launch`.
+
+    `permission_mode` is checked against the CLI's own vocabulary here rather
+    than left for the SDK: an unknown mode reaching the launch would surface as
+    a run that died on start, which reads to the operator like regin broke.
+    """
+    mode = _text(payload, "permission_mode", _ID_MAX)
+    if mode and mode not in client.PERMISSION_MODES:
+        raise _BadRequest(f"unknown permission_mode {mode!r}")
+    resume = _text(payload, "resume", _ID_MAX)
+    if resume.startswith(_SYNTHETIC_PREFIX):
+        raise _BadRequest("a regin-launched run has no CLI session to resume")
+    return {
+        "cwd": _text(payload, "cwd", _PATH_MAX) or None,
+        "model": _text(payload, "model", _ID_MAX),
+        "permission_mode": mode,
+        "one_shot": bool(payload.get("one_shot")),
+        "resume": resume or None,
+    }
+
+
+@agent_runs_bp.route('/api/agent-runs/launch-options', methods=['GET'])
+@require_editor
+def api_launch_options():
+    """What the `/live` launch sheet may offer.
+
+    Served rather than hardcoded in the client: the working directories are the
+    operator's registered repos and the modes are the CLI's contract, so a
+    client guessing either would drift from the install it is driving.
+    """
+    cfg = settings.agent_sdk
+    return jsonify({
+        "enabled": bool(cfg.enabled),
+        # `repo_paths` are `Path`s, which jsonify cannot serialize.
+        "cwds": [str(path) for path in (settings.repo_paths or [])],
+        "permission_modes": list(client.PERMISSION_MODES),
+        "default_permission_mode": cfg.permission_mode or "default",
+        "default_model": cfg.model or "",
+        "gating_active": bool(cfg.gate_plan or cfg.gated_tools),
+    })
 
 
 @agent_runs_bp.route('/api/agent-runs', methods=['POST'])
@@ -40,9 +99,12 @@ def api_launch_agent_run():
     prompt = payload.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         return jsonify({"error": "prompt required"}), 400
-    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
     try:
-        trace_id = supervisor.launch(prompt[:_PROMPT_MAX], cwd=cwd)
+        params = _launch_params(payload)
+    except _BadRequest as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        trace_id = supervisor.launch(prompt[:_PROMPT_MAX], **params)
     except supervisor.LaunchRefused as exc:
         return jsonify({"launched": False, "detail": str(exc)})
     except ImportError:
@@ -50,7 +112,13 @@ def api_launch_agent_run():
             "launched": False,
             "detail": 'claude-agent-sdk not installed (pip install -e ".[agent-sdk]")',
         })
-    return jsonify({"launched": True, "trace_id": trace_id})
+    body = {"launched": True, "trace_id": trace_id}
+    # A mode the operator picked can make gating inert for this run alone, which
+    # the settings-keyed report at launch would not have caught.
+    warning = settings.agent_sdk.shadowed_gating(params["permission_mode"])
+    if warning:
+        body["warning"] = warning
+    return jsonify(body)
 
 
 @agent_runs_bp.route('/api/agent-runs/<trace_id>/prompt', methods=['POST'])

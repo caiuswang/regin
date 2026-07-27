@@ -1630,6 +1630,9 @@ _MAP_KEEP_ATTR_KEYS = (
     # serve-time cross-turn link (wakeup_links.annotate_wakeup_resumes).
     'stop', 'delay_seconds', 'reason',
     'resume_action', 'resume_span_id', 'poll_round', 'poll_total',
+    # An SDK run that continued an earlier session names it on session.start;
+    # dropped here, the trace would open with no sign it inherited a history.
+    'resumed_from',
 )
 
 

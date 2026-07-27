@@ -208,6 +208,8 @@ def _session_started_span(event: SessionStarted) -> dict:
         attrs['cwd'] = event.cwd
     if event.agent_type:
         attrs['agent_type'] = event.agent_type
+    if event.resumed_from:
+        attrs['resumed_from'] = event.resumed_from
     return {'name': 'session.start', 'attributes': attrs, 'status_code': 'OK'}
 
 

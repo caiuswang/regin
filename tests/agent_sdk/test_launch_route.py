@@ -23,9 +23,9 @@ def enabled(monkeypatch):
 def stub_launch(monkeypatch):
     seen = {}
 
-    def _launch(prompt, *, cwd=None):
+    def _launch(prompt, **kwargs):
         seen["prompt"] = prompt
-        seen["cwd"] = cwd
+        seen.update(kwargs)
         return "sdk-deadbeef"
 
     monkeypatch.setattr(supervisor, "launch", _launch)
@@ -63,7 +63,7 @@ def test_prompt_is_bounded(flask_client, enabled, stub_launch):
 
 
 def test_capacity_refusal_is_surfaced(flask_client, enabled, monkeypatch):
-    def _busy(prompt, *, cwd=None):
+    def _busy(prompt, **kwargs):
         raise supervisor.LaunchRefused("max_concurrent_runs reached")
 
     monkeypatch.setattr(supervisor, "launch", _busy)
@@ -75,7 +75,7 @@ def test_capacity_refusal_is_surfaced(flask_client, enabled, monkeypatch):
 
 def test_missing_sdk_package_explains_the_extra(flask_client, enabled,
                                                 monkeypatch):
-    def _missing(prompt, *, cwd=None):
+    def _missing(prompt, **kwargs):
         raise ImportError("no module named claude_agent_sdk")
 
     monkeypatch.setattr(supervisor, "launch", _missing)
@@ -104,3 +104,101 @@ def test_status_reports_reachability_separately_from_stored_status(flask_client)
 
 def test_unknown_run_is_404(flask_client):
     assert flask_client.get("/api/agent-runs/nope").status_code == 404
+
+
+# ── per-run overrides ────────────────────────────────────────────────
+
+def test_per_run_overrides_reach_the_supervisor(flask_client, enabled,
+                                                stub_launch):
+    res = flask_client.post("/api/agent-runs", json={
+        "prompt": "go", "cwd": "/tmp/x", "model": "claude-opus-5",
+        "permission_mode": "plan", "one_shot": True, "resume": "abc-123",
+    })
+
+    assert res.status_code == 200
+    assert stub_launch["cwd"] == "/tmp/x"
+    assert stub_launch["model"] == "claude-opus-5"
+    assert stub_launch["permission_mode"] == "plan"
+    assert stub_launch["one_shot"] is True
+    assert stub_launch["resume"] == "abc-123"
+
+
+def test_unknown_permission_mode_is_a_400_not_a_dead_run(flask_client, enabled,
+                                                        stub_launch):
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "go", "permission_mode": "yolo"})
+
+    assert res.status_code == 400
+    # Refused before launching: an unknown mode reaching the SDK would surface
+    # as a run that died on start.
+    assert "prompt" not in stub_launch
+
+
+def test_resuming_a_regin_launched_run_is_refused(flask_client, enabled,
+                                                  stub_launch):
+    """`sdk-…` is regin's name for a run, not a session the CLI can reopen."""
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "go", "resume": "sdk-abc123"})
+
+    assert res.status_code == 400
+    assert "prompt" not in stub_launch
+
+
+def test_omitted_overrides_stay_empty(flask_client, enabled, stub_launch):
+    flask_client.post("/api/agent-runs", json={"prompt": "go"})
+
+    assert stub_launch["cwd"] is None
+    assert stub_launch["resume"] is None
+    assert stub_launch["model"] == ""
+    assert stub_launch["permission_mode"] == ""
+    assert stub_launch["one_shot"] is False
+
+
+def test_a_mode_that_shadows_gating_is_reported_on_the_launch(
+        flask_client, enabled, stub_launch, monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "gate_plan", True)
+
+    body = flask_client.post("/api/agent-runs", json={
+        "prompt": "go", "permission_mode": "acceptEdits",
+    }).get_json()
+
+    assert body["launched"] is True
+    assert "acceptEdits" in body["warning"]
+
+
+def test_no_warning_when_nothing_is_gated(flask_client, enabled, stub_launch,
+                                          monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "gate_plan", False)
+    monkeypatch.setattr(settings.agent_sdk, "gated_tools", [])
+
+    body = flask_client.post("/api/agent-runs", json={
+        "prompt": "go", "permission_mode": "acceptEdits",
+    }).get_json()
+
+    assert body == {"launched": True, "trace_id": "sdk-deadbeef"}
+
+
+# ── launch options ───────────────────────────────────────────────────
+
+def test_launch_options_describe_this_install(flask_client, enabled,
+                                              monkeypatch):
+    from pathlib import Path
+    # Real `repo_paths` are `Path`s — serialize them, or the route 500s on
+    # every install that has registered a repo.
+    monkeypatch.setattr(settings, "repo_paths", [Path("/repo/a"),
+                                                Path("/repo/b")])
+    monkeypatch.setattr(settings.agent_sdk, "permission_mode", "plan")
+
+    body = flask_client.get("/api/agent-runs/launch-options").get_json()
+
+    assert body["enabled"] is True
+    assert body["cwds"] == ["/repo/a", "/repo/b"]
+    assert body["default_permission_mode"] == "plan"
+    assert "bypassPermissions" in body["permission_modes"]
+
+
+def test_launch_options_report_a_disabled_tier(flask_client, monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "enabled", False)
+
+    assert flask_client.get(
+        "/api/agent-runs/launch-options").get_json()["enabled"] is False

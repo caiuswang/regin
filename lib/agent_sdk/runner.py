@@ -88,10 +88,16 @@ class AgentRunner:
     """One live session. Not reusable across runs."""
 
     def __init__(self, trace_id: str, *, cwd: str | None = None,
-                 options: client.RunOptions | None = None):
+                 options: client.RunOptions | None = None,
+                 resume: str | None = None):
         self.trace_id = trace_id
         self.cwd = cwd
         self.options = options
+        # The session this run continues, if any. It is *not* this run's trace
+        # id: whether `--resume` keeps the CLI's own session id is that build's
+        # business, so the continuation gets its own trace and names its parent
+        # instead of assuming it inherits one.
+        self.resume = resume
         self.loop: asyncio.AbstractEventLoop | None = None
         self._client = None
         self._tool_names: dict[str, str] = {}
@@ -226,11 +232,63 @@ class AgentRunner:
             tool_input=tool_input,
             kind=kind,
         ))
-        resolution = await self._await_operator(kind, tool_use_id, tool_input)
+        await self._notify_park(kind, tool_name, tool_input, tool_use_id)
+        try:
+            resolution = await self._await_operator(kind, tool_use_id,
+                                                    tool_input)
+        finally:
+            await self._dismiss_park_notice()
         if kind == "question":
             return self._answered(tool_input, resolution)
         return await self._decided(tool_name, tool_use_id, tool_input,
                                    resolution)
+
+    @property
+    def _permission_mode(self) -> str:
+        """The mode this run actually launches under, per-run override first."""
+        return (self.options.permission_mode if self.options else "") or ""
+
+    async def _notify_park(self, kind: str, tool_name: str, tool_input: dict,
+                           tool_use_id: str) -> None:
+        """Tell the operator out-of-band that a call is waiting on them.
+
+        Without this the tier can hold a call for the whole
+        `park_timeout_sec` and then decline it, while the only signal a human
+        ever got was a row in a trace nobody had open — the hook tier pushes
+        this event, so a session regin owns would be the *quiet* one.
+
+        Off the loop thread: the push channels do network I/O and every run on
+        this process shares one loop.
+        """
+        try:
+            from lib.agent_messages import event_notify
+
+            attrs = policy.notify_attrs(kind, tool_name, tool_input,
+                                        tool_use_id)
+            await asyncio.to_thread(
+                lambda: event_notify.notify_permission_request(
+                    trace_id=self.trace_id, attrs=attrs))
+        except Exception:  # noqa: BLE001 — a push must never break the park
+            log.error("sdk_park_notify_failed", trace_id=self.trace_id,
+                      exc_info=True)
+
+    async def _dismiss_park_notice(self) -> None:
+        """Retire the pending card once this session has nothing parked.
+
+        The card is keyed per *session* while parks are keyed per call, so
+        dismissing on the first resolution would clear a notice that is still
+        true for the calls still waiting.
+        """
+        try:
+            if registry.pending_asks(self.trace_id):
+                return
+            from lib.agent_messages import event_notify
+
+            await asyncio.to_thread(
+                lambda: event_notify.resolve_permission(self.trace_id))
+        except Exception:  # noqa: BLE001 — as above; a stale card beats a crash
+            log.error("sdk_park_dismiss_failed", trace_id=self.trace_id,
+                      exc_info=True)
 
     async def _wait_for_operator(self, future):
         """Wait for a decision, but not forever when nobody is watching.
@@ -307,13 +365,13 @@ class AgentRunner:
         if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
             raise RunnerBusy("max_concurrent_runs reached")
         self.loop = asyncio.get_running_loop()
-        shadowed = settings.agent_sdk.shadowed_gating()
+        shadowed = settings.agent_sdk.shadowed_gating(self._permission_mode)
         if shadowed:
             log.error("sdk_gating_inert", trace_id=self.trace_id,
                       detail=shadowed)
         self._client = client.new_client(
             cwd=self.cwd, can_use_tool=self._can_use_tool,
-            options=self.options)
+            options=self.options, resume=self.resume)
         await self._client.connect()
         registry.register_run(self.trace_id, self)
         # The pid is what makes the reaper safe: it distinguishes a row this
@@ -322,7 +380,7 @@ class AgentRunner:
                          model=self._model, pid=os.getpid())
         await self._emit(SessionStarted(
             trace_id=self.trace_id, source="sdk", model=self._model,
-            cwd=self.cwd, agent_type="sdk",
+            cwd=self.cwd, agent_type="sdk", resumed_from=self.resume,
         ))
 
     @property
@@ -462,6 +520,10 @@ class AgentRunner:
         self._stopped = True
         reason = detail or self._stop_reason
         registry.unregister_run(self.trace_id)
+        # A park cancelled with the session never reaches its own dismissal, so
+        # without this a dead session can leave a "waiting on you" card standing
+        # — the one moment the notice is most misleading.
+        await self._dismiss_park_notice()
         if self._client is None:
             # Refused before it ever connected (at capacity): there is no
             # session to close, so `session.end` would bracket nothing.
@@ -477,17 +539,22 @@ class AgentRunner:
 async def run_session(trace_id: str, prompt: str, *,
                       cwd: str | None = None,
                       options: client.RunOptions | None = None,
-                      one_shot: bool = False) -> None:
+                      one_shot: bool = False,
+                      resume: str | None = None) -> None:
     """Launch and run `prompt`.
 
     Stays open for follow-ups until stopped, unless `one_shot` — a run regin
     made to get one job done must end with its turn, or it holds a
     `max_concurrent_runs` slot until `idle_timeout_sec` elapses, long after
     the caller has its result.
+
+    `resume` continues an earlier session's conversation instead of starting
+    an empty one, which is what makes a session the user drove in a terminal
+    steerable later from `/live`.
     """
     if not settings.agent_sdk.enabled:
         raise RuntimeError("agent_sdk disabled")
-    runner = AgentRunner(trace_id, cwd=cwd, options=options)
+    runner = AgentRunner(trace_id, cwd=cwd, options=options, resume=resume)
     # Queued before the session is reachable, so a follow-up arriving during
     # `start()` cannot overtake the prompt the run was launched for.
     runner.enqueue(prompt)

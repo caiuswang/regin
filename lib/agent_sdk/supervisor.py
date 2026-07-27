@@ -145,13 +145,15 @@ def _refuse_unless_launchable(prompt: str) -> None:
 def launch_run(prompt: str, *, cwd: str | None = None,
                env: dict[str, str] | None = None,
                permission_mode: str = "", model: str = "",
-               one_shot: bool = False) -> RunHandle:
+               one_shot: bool = False,
+               resume: str | None = None) -> RunHandle:
     """Schedule a run on the shared loop and return its completion handle.
 
     This is the programmatic entry point: `env` reaches the launched agent's
     process (as an overlay on this one's), and `permission_mode` / `model`
     override the global defaults for this run alone. `one_shot` ends the
     session with its first turn instead of leaving it open for follow-ups.
+    `resume` continues an earlier session instead of starting a fresh one.
     """
     _refuse_unless_launchable(prompt)
     trace_id = f"sdk-{uuid.uuid4().hex[:12]}"
@@ -159,24 +161,31 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                                 permission_mode=permission_mode, model=model)
     future = asyncio.run_coroutine_threadsafe(
         run_session(trace_id, prompt, cwd=cwd, options=options,
-                    one_shot=one_shot),
+                    one_shot=one_shot, resume=resume),
         _ensure_loop())
     future.add_done_callback(lambda f: _on_done(trace_id, f))
     log.write("sdk_run_launched", trace_id=trace_id, cwd=cwd,
-              one_shot=one_shot)
+              one_shot=one_shot, resumed_from=resume)
     return RunHandle(trace_id, future)
 
 
-def launch(prompt: str, *, cwd: str | None = None) -> str:
+def launch(prompt: str, *, cwd: str | None = None,
+           model: str = "", permission_mode: str = "",
+           one_shot: bool = False, resume: str | None = None) -> str:
     """Start a session for `prompt` and return its trace id immediately.
 
     Returns as soon as the run is scheduled — the agent works on the shared
     loop while the caller's request completes, which is what lets `/live` show
     the session and answer its questions while it runs. The run does not end
     with the prompt: it stays open for follow-ups (`send_prompt`) until it is
-    stopped or goes idle.
+    stopped or goes idle, unless `one_shot`.
+
+    The operator's launch path, so the per-run overrides an operator can pick
+    on `/live` travel here rather than only through `launch_run`.
     """
-    return launch_run(prompt, cwd=cwd).trace_id
+    return launch_run(prompt, cwd=cwd, model=model,
+                      permission_mode=permission_mode, one_shot=one_shot,
+                      resume=resume).trace_id
 
 
 def send_prompt(trace_id: str, text: str) -> tuple[bool, str]:

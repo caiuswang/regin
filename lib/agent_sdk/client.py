@@ -25,6 +25,14 @@ class ClaudeCliNotFound(RuntimeError):
     """No `claude` on PATH and no explicit `agent_sdk.cli_path`."""
 
 
+# The SDK's `PermissionMode` values, restated rather than imported: the launch
+# surface has to validate an operator's choice on an install where the optional
+# `[agent-sdk]` extra isn't present, and a mode the CLI rejects should fail as a
+# bad request rather than as a crashed run.
+PERMISSION_MODES = ('default', 'acceptEdits', 'plan', 'bypassPermissions',
+                    'dontAsk', 'auto')
+
+
 @dataclass(frozen=True)
 class RunOptions:
     """Per-run overrides for a session regin launches on its own behalf.

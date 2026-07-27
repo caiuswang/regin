@@ -16,6 +16,7 @@ import LiveNowZone from '../components/live/LiveNowZone.vue'
 import LiveQueuedChips from '../components/live/LiveQueuedChips.vue'
 import LiveSheet from '../components/live/LiveSheet.vue'
 import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
+import LiveLaunchSheet from '../components/live/LiveLaunchSheet.vue'
 import LiveQaSheet from '../components/live/LiveQaSheet.vue'
 import LiveAgentSheet from '../components/live/LiveAgentSheet.vue'
 import LiveAgentDetail from '../components/live/LiveAgentDetail.vue'
@@ -318,6 +319,14 @@ function onPickSession(row) {
   if (row.trace_id && row.trace_id !== sessionId.value) router.push('/live/' + row.trace_id)
 }
 
+// A launched run exists before it has done anything, so navigate straight to
+// its trace: the sheet's job ends at "it started", and everything after that —
+// including the questions it parks — is the card's normal live path.
+function onLaunched({ traceId }) {
+  closeSheet()
+  if (traceId) router.push('/live/' + traceId)
+}
+
 // Sheet title/copy are dispatch tables keyed on kind (not if-ladders): the
 // static-title kinds collapse to one lookup, leaving only the span-derived
 // kinds to compute.
@@ -325,6 +334,7 @@ const sheetTitle = computed(() => {
   const fixed = {
     filter: 'Filter · loaded spans',
     sessions: 'Switch session',
+    launch: 'New agent run',
     agents: 'Agents',
     tasks: 'Tasks',
     terminal: 'Raw terminal',
@@ -512,6 +522,16 @@ onUnmounted(() => {
             @click="openSheet('terminal')"
           >
             <Icon name="terminal" :size="14" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="live-hd-btn"
+            data-testid="live-launch-btn"
+            aria-label="Start a new agent run"
+            @click="openSheet('launch')"
+          >
+            <Icon name="plus" :size="14" />
           </Button>
           <Button
             variant="ghost"
@@ -721,6 +741,10 @@ onUnmounted(() => {
 
         <template v-else-if="sheetKind === 'sessions'">
           <LiveSessionPicker :current-id="sessionId" @select="onPickSession" />
+        </template>
+
+        <template v-else-if="sheetKind === 'launch'">
+          <LiveLaunchSheet :resume-from="sessionId || ''" @launched="onLaunched" />
         </template>
 
         <template v-else-if="sheetKind === 'terminal'">
