@@ -25,6 +25,7 @@ provider-agnostic deployer writes the standard ``SKILL.md`` layout there.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 from pathlib import Path
@@ -157,6 +158,21 @@ def _kimi_read_result(output: str, tool_input: dict, tool_response: dict) -> dic
     return {'file': _kimi_read_file_info(output, tool_input)}
 
 
+def _kimi_ask_result(output: str, tool_input: dict, tool_response: dict) -> dict:
+    """Kimi returns the AskUserQuestion result as a JSON string under
+    ``output`` (``{"answers": {...}}``); the shared `_build_ask_attrs` reads
+    ``answers``/``annotations`` off the top-level response, so parse the blob
+    and lift them. A non-JSON output (user dismissed the prompt) yields
+    nothing — the card then shows just the questions, which is the truth."""
+    try:
+        parsed = json.loads(output)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {k: parsed[k] for k in ('answers', 'annotations') if parsed.get(k)}
+
+
 def _newest_dir(pattern: Path) -> Path | None:
     matches = [p for p in glob.glob(str(pattern)) if os.path.isdir(p)]
     if not matches:
@@ -165,6 +181,7 @@ def _newest_dir(pattern: Path) -> Path | None:
 
 
 _KIMI_RESULT_BUILDERS = {
+    'AskUserQuestion': _kimi_ask_result,
     'Bash': _kimi_bash_result,
     'Read': _kimi_read_result,
     'TaskOutput': _kimi_task_result,

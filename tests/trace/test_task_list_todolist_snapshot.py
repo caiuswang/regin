@@ -174,6 +174,28 @@ def test_task_create_update_fold_is_unchanged(tmp_db):
     assert out['final'][0]['current_span_id'] == "B"
 
 
+def test_reordered_snapshot_renders_in_latest_payload_order(tmp_db):
+    # Kimi moves the active task up as work proceeds; first-seen (minted-id)
+    # order strands it mid-list, diverging from the terminal (CAI-14). The
+    # fold must track the latest payload position instead.
+    tid = "t-kimi-reorder"
+    _seed(tid, "A", "tool.TodoList", "2026-06-16 18:58:43",
+          _todos(("One", "completed"), ("Two", "in_progress"),
+                 ("Three", "pending")))
+    _seed(tid, "B", "tool.TodoList", "2026-06-16 19:02:00",
+          _todos(("Two", "in_progress"), ("One", "completed"),
+                 ("Three", "pending")))
+
+    out = _fetch_session_task_list(tid)
+    assert [t['subject'] for t in out['final']] == ["Two", "One", "Three"]
+    # Snapshot events carry their payload position (both spans are snapshots).
+    assert [e['order'] for e in out['events'] if e['span_id'] == "A"] == [0, 1, 2]
+    assert [e['order'] for e in out['events'] if e['span_id'] == "B"] == [0, 1, 2]
+    # The minted ids did NOT move — identity still follows the subject.
+    by_subject = {t['subject']: t['task_id'] for t in out['final']}
+    assert by_subject == {"One": "todo-1", "Two": "todo-2", "Three": "todo-3"}
+
+
 def test_todolist_without_todos_still_returns_none(tmp_db):
     tid = "t-kimi-empty"
     _seed(tid, "A", "tool.TodoList", "2026-06-16 18:58:43",

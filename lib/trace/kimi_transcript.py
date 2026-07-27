@@ -245,18 +245,20 @@ class _Scan:
     def _on_loop_record(self, rec: dict) -> None:
         self._on_loop_event(rec.get('event') or {}, rec.get('time'))
 
-    def _add_attachment(self, kind: str, payload: dict, ms: object) -> None:
+    def _add_attachment(self, kind: str, payload: dict, ms: object) -> TranscriptAttachment:
         """Append a synthetic attachment. Kimi records carry no uuid, so the
         id is minted from the append order — it keys the span_id and the
         seen-cache, both of which need it stable across rescans of a
         (append-only) wire file."""
-        self.attachments.append(TranscriptAttachment(
+        att = TranscriptAttachment(
             uuid=f'katt-{len(self.attachments)}',
             parent_uuid=self.current_prompt,
             timestamp=_iso(ms),
             kind=kind,
             payload=payload,
-        ))
+        )
+        self.attachments.append(att)
+        return att
 
     def _on_append_message(self, rec: dict) -> None:
         message = rec.get('message')
@@ -300,10 +302,17 @@ class _Scan:
         text = _typed_text(rec.get('input'))
         if not text:
             return
-        self._add_attachment(
+        att = self._add_attachment(
             'queued_command',
             {'command_mode': 'prompt', 'prompt': text}, rec.get('time'),
         )
+        # A steer ends the current turn: every step that begins after this
+        # record is the steer's response, not the interrupted prompt's. The
+        # wire log has no `turn.prompt` for a consumed steer, so without
+        # advancing the anchor those steps keep the stale prompt_uuid and
+        # group under the previous prompt in the trace UI. The minted
+        # attachment uuid doubles as the anchor id (`prompt-katt-N`).
+        self.current_prompt = att.uuid
 
     def _on_cancel(self, rec: dict) -> None:
         """Flag every tool call still awaiting a result — the interrupt

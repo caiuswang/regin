@@ -3,9 +3,11 @@
 //
 // The payload ships events, not snapshots, on purpose: a 53-task-write session
 // would otherwise carry 53 near-identical list blobs. Each event is
-// `{span_id, timestamp, task_id, subject?, status?}` and an absent field means
-// "this span didn't touch it", so the fold mirrors the server's
-// `_apply_task_row`: first non-empty subject wins, every set status overwrites.
+// `{span_id, timestamp, task_id, subject?, status?, order?}` and an absent
+// field means "this span didn't touch it" (`order` is a snapshot span's
+// payload position), so the fold mirrors the server's `_apply_task_row`:
+// first non-empty subject wins, every set status overwrites, latest order
+// overwrites.
 //
 // A snapshot is the list AS OF that span — never future state.
 
@@ -25,16 +27,31 @@ function applyEvent(state, ev) {
   const entry = state.get(key) || { task_id: key, subject: '', status: PENDING }
   if (ev.subject && !entry.subject) entry.subject = ev.subject
   if (ev.status) entry.status = ev.status
+  // A snapshot event's `order` is the task's position in the LATEST whole-list
+  // payload — overwrite, so the card tracks the order the agent last wrote.
+  if (ev.order !== undefined && ev.order !== null) entry.order = ev.order
   state.set(key, entry)
 }
 
-// Numeric task_ids sort numerically; non-digit ids sink to the end then sort
-// lexically — same order the server hands the header its `final` list in.
+// Tasks a snapshot positioned (an `order` from the latest whole-list payload)
+// sort by that position — the order the agent last wrote. Unpositioned tasks
+// keep the legacy order: numeric task_ids sort numerically; non-digit ids sink
+// to the end then sort lexically — same order the server hands the header its
+// `final` list in.
 function byTaskId(a, b) {
   const na = /^\d+$/.test(a.task_id) ? Number(a.task_id) : Number.MAX_SAFE_INTEGER
   const nb = /^\d+$/.test(b.task_id) ? Number(b.task_id) : Number.MAX_SAFE_INTEGER
   if (na !== nb) return na - nb
   return a.task_id < b.task_id ? -1 : (a.task_id > b.task_id ? 1 : 0)
+}
+
+function byPositionThenId(a, b) {
+  const oa = a.order ?? null
+  const ob = b.order ?? null
+  if (oa !== null && ob !== null && oa !== ob) return oa - ob
+  if (oa !== null && ob === null) return -1
+  if (oa === null && ob !== null) return 1
+  return byTaskId(a, b)
 }
 
 function snapshotOf(state) {
@@ -47,7 +64,7 @@ function snapshotOf(state) {
     if (entry.status === DONE) done++
     else if (entry.status === ACTIVE) active++
   }
-  tasks.sort(byTaskId)
+  tasks.sort(byPositionThenId)
   return { tasks, done, active, open: tasks.length - done - active }
 }
 

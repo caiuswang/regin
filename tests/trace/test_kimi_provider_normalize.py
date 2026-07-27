@@ -218,3 +218,58 @@ def test_kimi_untouched_tools_and_claude_still_pass_through():
     assert claude.normalize_tool_response(
         "Read", {"file_path": "a.py"}, read) is read
     assert read["file"]["content"] == "     1\thi"
+
+
+def test_kimi_askuserquestion_lifts_answers_out_of_the_output_blob():
+    """Fixture copied from the CAI-13 payload (session_480d82c2-…): the answer
+    arrives as a JSON string under `output`, and `_build_ask_attrs` reads
+    top-level `answers` — so the card never showed what the user picked."""
+    out = _kimi().normalize_tool_response(
+        "AskUserQuestion",
+        {"questions": [{"question": "Proceed?", "header": "H",
+                        "options": [{"label": "Yes"}, {"label": "No"}]}]},
+        {"output": '{"answers":{"Proceed?":"Yes"},"annotations":{"Proceed?":{"notes":"go"}}}'},
+    )
+    assert out["answers"] == {"Proceed?": "Yes"}
+    assert out["annotations"] == {"Proceed?": {"notes": "go"}}
+    # The original envelope is preserved alongside the lifted keys.
+    assert out["output"].startswith('{"answers"')
+
+
+def test_kimi_askuserquestion_non_json_output_adds_nothing():
+    kimi = _kimi()
+    tr = {"output": "The user dismissed the question."}
+    assert kimi.normalize_tool_response("AskUserQuestion", {}, tr) == tr
+
+
+def test_kimi_askuserquestion_span_carries_the_answers():
+    """End-to-end: the emitted `tool.AskUserQuestion` span must carry the
+    user's picks, or the session-view card shows only the questions (CAI-13)."""
+    from hook_manager.core import HookPayload
+    from hook_manager.handlers import post_tool_trace
+    from lib import hook_plugin
+
+    spans: list[dict] = []
+    original = hook_plugin.post_span
+    hook_plugin.post_span = lambda **kw: spans.append(kw)
+    try:
+        post_tool_trace._emit_span(HookPayload.from_stdin_json("PostToolUse", {
+            "hook_event_name": "PostToolUse",
+            "agent_type": "kimi",
+            "session_id": "session_kimi_ask",
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [
+                {"question": "How aggressive?", "header": "Scope",
+                 "options": [{"label": "Rename + consolidate"},
+                             {"label": "Rename only"}]}]},
+            "tool_use_id": "tool_ask_1",
+            "tool_response": {"output":
+                '{"answers":{"How aggressive?":"Rename + consolidate"}}'},
+        }))
+    finally:
+        hook_plugin.post_span = original
+
+    assert spans[0]["name"] == "tool.AskUserQuestion"
+    attrs = spans[0]["attributes"]
+    assert attrs["answers"] == {"How aggressive?": "Rename + consolidate"}
+    assert attrs["questions"][0]["question"] == "How aggressive?"

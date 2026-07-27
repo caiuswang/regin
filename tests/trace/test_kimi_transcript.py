@@ -269,6 +269,36 @@ def test_user_steer_becomes_queued_prompt_and_background_steer_does_not(tmp_path
     }
 
 
+def test_steps_after_a_user_steer_anchor_to_it(tmp_path: Path):
+    # A steer ends the current turn: steps beginning after it are the steer's
+    # response and must anchor to the steer (`prompt-katt-N`), not the
+    # interrupted prompt — otherwise the trace UI groups the whole steered
+    # turn under the previous prompt (CAI-14).
+    recs = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "go"}], "time": 1},
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        {"type": "turn.steer", "time": 2, "origin": {"kind": "user"},
+         "input": [{"type": "text", "text": "actually, use ripgrep"}]},
+        _loop({"type": "step.begin", "uuid": "s2"}),
+        _loop({"type": "tool.call", "stepUuid": "s2", "toolCallId": "c2",
+               "name": "Grep", "args": {"pattern": "x"}}, time=3),
+        _loop({"type": "step.end", "uuid": "s2", "usage": {"output": 1}}),
+        # A real prompt after the steer re-anchors the steps that follow it.
+        {"type": "turn.prompt", "input": [{"type": "text", "text": "next"}], "time": 4},
+        _loop({"type": "step.begin", "uuid": "s3"}),
+        _loop({"type": "step.end", "uuid": "s3", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert [t.prompt_uuid for t in u.turns] == [
+        "kprompt-0", "katt-0", "kprompt-1",
+    ]
+    (call,) = u.turns[1].tool_calls
+    assert call["source_prompt_id"] == "katt-0"
+    # The interrupted step keeps its original anchor.
+    assert u.turns[0].prompt_uuid == "kprompt-0"
+
+
 def test_turn_cancel_flags_only_in_flight_tool_calls(tmp_path: Path):
     recs = [
         {"type": "turn.prompt", "input": [{"type": "text", "text": "x"}], "time": 1},

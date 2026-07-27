@@ -631,9 +631,10 @@ def _fetch_session_task_list(trace_id: str) -> dict | None:
 
     Returns `{events: [...], final: [...]}` or `None` if the session
     never used Task tools. Each event is `{span_id, timestamp, task_id,
-    subject?, status?}`; absent fields mean "this span didn't touch
-    that field." `final` is the snapshot after the last event,
-    pre-sorted by numeric task_id.
+    subject?, status?, order?}`; absent fields mean "this span didn't touch
+    that field" (`order` is a snapshot span's payload position). `final` is
+    the snapshot after the last event, ordered the way the agent last wrote
+    the list (snapshot position, falling back to numeric task_id).
     """
     from sqlmodel import select as _select
     with SessionLocal() as session:
@@ -711,7 +712,9 @@ def _record_task_event(r, task: dict, events, state, last_span_by_status) -> Non
     """Append one task's event (omitting subject/status when absent) and update
     the running per-task entry: first non-empty subject wins, every set status
     both overwrites the entry and records the span_id under that status in
-    `last_span_by_status`.
+    `last_span_by_status`. A snapshot-supplied `order` overwrites — it is the
+    task's position in the LATEST whole-list payload, so the rendered list
+    tracks the order the agent last wrote, not first-seen order.
     """
     tid, subject, status = task['task_id'], task['subject'], task['status']
     event: dict = {
@@ -723,6 +726,8 @@ def _record_task_event(r, task: dict, events, state, last_span_by_status) -> Non
         event['subject'] = subject
     if status:
         event['status'] = status
+    if task.get('order') is not None:
+        event['order'] = task['order']
     events.append(event)
     entry = state.setdefault(tid, {
         'task_id': tid,
@@ -736,6 +741,8 @@ def _record_task_event(r, task: dict, events, state, last_span_by_status) -> Non
         entry['subject'] = subject
     if task['active_form'] and not entry['active_form']:
         entry['active_form'] = task['active_form']
+    if task.get('order') is not None:
+        entry['order'] = task['order']
     if status:
         entry['status'] = status
         last_span_by_status.setdefault(tid, {})[status] = r.span_id
@@ -749,11 +756,12 @@ def _apply_todo_snapshot(r, todos, agent, events, state, last_span_by_status,
     plan reuses position 1 for a different task), so identity is the subject:
     `todo_ids` hands each newly-seen (agent, subject) the next ordinal.
     Position-keyed ids would be one span shorter but graft a replacement's
-    subject onto the old task's history; the cost here is only that a task
-    inserted mid-list sorts after the ones already seen.
+    subject onto the old task's history. Display order comes from the event's
+    `order` field (position in this payload), not the minted id, so a
+    reordered list renders the way the agent last wrote it.
     """
     seen: set[str] = set()
-    for todo in todos:
+    for position, todo in enumerate(todos):
         if not isinstance(todo, dict):
             continue
         subject = _str_attr(todo.get('subject'))
@@ -769,6 +777,7 @@ def _apply_todo_snapshot(r, todos, agent, events, state, last_span_by_status,
             'subject': subject,
             'status': _str_attr(todo.get('status')) or 'pending',
             'active_form': _str_attr(todo.get('active_form')),
+            'order': position,
         }, events, state, last_span_by_status)
     _retire_missing_todos(r, agent, seen, events, state, last_span_by_status,
                           todo_ids)
@@ -799,18 +808,27 @@ def _finalize_task_state(state, last_span_by_status) -> list[dict]:
     """Resolve `current_span_id` per task and return the sorted snapshot.
 
     `current_span_id` is the latest span that set the FINAL status,
-    falling back to the TaskCreate for pending tasks. Numeric task_ids
-    sort numerically; non-digit ids sink to the end then sort lexically.
+    falling back to the TaskCreate for pending tasks. Tasks a snapshot
+    span positioned (an `order` from the latest whole-list payload) sort
+    by that position — the order the agent last wrote; unpositioned
+    tasks (TaskCreate/TaskUpdate numeric ids) keep their legacy order:
+    numeric ids numerically, non-digit ids sunk to the end lexically.
     """
     for tid, entry in state.items():
         per_status = last_span_by_status.get(tid, {})
         entry['current_span_id'] = (
             per_status.get(entry['status']) or entry['created_span_id']
         )
-    return sorted(state.values(), key=lambda t: (
-        int(t['task_id']) if t['task_id'].isdigit() else 1_000_000,
-        t['task_id'],
-    ))
+    return sorted(state.values(), key=_task_sort_key)
+
+
+def _task_sort_key(t: dict) -> tuple:
+    order = t.get('order')
+    if order is not None:
+        return (0, order, t['task_id'])
+    return (1,
+            int(t['task_id']) if t['task_id'].isdigit() else 1_000_000,
+            t['task_id'])
 
 
 # ── Session agent roster (whole-session, window-independent) ─────────
