@@ -1291,7 +1291,7 @@ def _previews_resumed_sessions(agent_type: object) -> bool:
 
 def _restart_candidates(conn, trace_ids) -> list:
     """The batch's sessions that the upsert just flipped (or held) 'active'
-    while carrying an older `ended_at` — the only rows a restart hold can
+    while carrying an older `ended_at` — the rows a restart reconcile can
     apply to. One query for the whole batch; the common batch returns
     nothing and no per-trace work follows."""
     ids = list(trace_ids)
@@ -1302,25 +1302,24 @@ def _restart_candidates(conn, trace_ids) -> list:
     return conn.execute(sql, ids).fetchall()
 
 
-def _hold_ended_on_bare_restart(conn, trace_ids) -> None:
-    """Undo the upsert's 'active' flip when the restart that caused it has
-    no operation span behind it AND the provider is one that starts
-    sessions it isn't really resuming.
+def _reconcile_restart_ended_marker(conn, trace_ids) -> None:
+    """Settle the end marker on sessions a restart just flipped 'active'.
 
-    The upsert derives status from `last_start_at` vs `ended_at` alone, so
-    any SessionStart after a SessionEnd resurrects the session. Kimi emits
-    SessionStart for sessions it merely PREVIEWS in the resume picker,
-    which resurrects long-dead sessions that then sit at 'active' forever.
-    Running the same behavioural test for every provider regresses the ones
-    whose SessionStart is trustworthy: their genuinely live session reads as
-    ended for the whole window between the start and the first operation
-    span, which for an interactive CLI is however long the user takes to
-    type. Hence the provider scope.
+    The upsert derives status from `last_start_at` vs `ended_at` alone and
+    keeps `ended_at` sticky (MAX of old/new), so without this pass an
+    exited-then-resumed session carries a stale `ended_at` forever and every
+    read path that keys off it (trace header Live pill, the trace view's
+    poll-stop) keeps reporting a running session as ended. Two outcomes:
 
-    Held sessions are re-evaluated on every later batch that touches them
-    (the upsert re-derives 'active' from the stored timestamps each time),
-    so a preview that turns into a real resume goes active on whichever
-    batch its first operation span lands in.
+    - GENUINE restart — a trusted provider's SessionStart (everyone outside
+      `_RESUME_PREVIEW_PROVIDERS`), or a previewing provider's start that
+      real operation spans have since backed: CLEAR `ended_at` /
+      `ended_reason`, so the bare marker is truthful again.
+    - BARE PREVIEW — Kimi fires SessionStart for every session it renders
+      in its resume picker, so a start alone is not evidence the session is
+      live again: hold status at 'ended' AND keep `ended_at`. The candidate
+      query re-selects the row on every later batch that touches it, so the
+      first real operation span clears the marker in that batch.
 
     Activity is measured from `last_start_at`, not from `ended_at`: a
     transcript-scanned `turn` routinely lands a few ms AFTER the SessionEnd
@@ -1328,16 +1327,20 @@ def _hold_ended_on_bare_restart(conn, trace_ids) -> None:
     to the restart.
     """
     for row in _restart_candidates(conn, trace_ids):
-        if not _previews_resumed_sessions(row['agent_type']):
-            continue
-        hit = conn.execute(
-            _OPERATION_SINCE_RESTART_SQL,
-            (row['trace_id'], row['last_start_at'], *_OPERATION_SPAN_NAMES),
-        ).fetchone()
-        if hit is None:
-            conn.execute(
-                "UPDATE sessions SET status = 'ended' WHERE trace_id = ?",
-                (row['trace_id'],))
+        if _previews_resumed_sessions(row['agent_type']):
+            hit = conn.execute(
+                _OPERATION_SINCE_RESTART_SQL,
+                (row['trace_id'], row['last_start_at'], *_OPERATION_SPAN_NAMES),
+            ).fetchone()
+            if hit is None:
+                conn.execute(
+                    "UPDATE sessions SET status = 'ended' WHERE trace_id = ?",
+                    (row['trace_id'],))
+                continue
+        conn.execute(
+            "UPDATE sessions SET ended_at = NULL, ended_reason = NULL "
+            "WHERE trace_id = ?",
+            (row['trace_id'],))
 
 
 def _upsert_session_counters(conn, buckets: dict) -> None:
@@ -1354,7 +1357,7 @@ def _upsert_session_counters(conn, buckets: dict) -> None:
             b['tool_calls'], b['is_test'], b['test_name'],
             b['agent_type'], b['model'], b['cwd'],
         ))
-    _hold_ended_on_bare_restart(conn, buckets.keys())
+    _reconcile_restart_ended_marker(conn, buckets.keys())
 
 
 def _stored_surface_tags(conn, surface_id: str) -> "list | None":

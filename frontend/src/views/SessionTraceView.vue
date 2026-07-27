@@ -477,10 +477,11 @@ useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive,
 // The poll is self-terminating: it consumes resources (a /map fetch + a
 // backend transcript rescan) every tick, which is pure waste once a session
 // has ended and its tail has stopped growing. So we stop polling once the
-// session is closed (`ended_at` set) AND the tail has converged — see
-// `maybeStopOnConverge`. An already-ended session never starts the recurring
-// poll at all; it runs one bounded catch-up instead (`syncClosedSessionTail`),
-// which is also the crash-recovery path (reopening the view re-runs it).
+// session is closed (`ended_at` set — the ingest clears it again on a
+// genuine resume) AND the tail has converged — see `maybeStopOnConverge`.
+// An already-ended session never starts the recurring poll at all; it runs
+// one bounded catch-up instead (`syncClosedSessionTail`), which is also the
+// crash-recovery path (reopening the view re-runs it).
 let livePollTimer = null
 const LIVE_POLL_MS = 4000
 // Max reconciles the bounded catch-up will run before giving up on an
@@ -506,8 +507,17 @@ function stopLivePoll() {
 // says ended while spans are still landing) must NOT stop us on the first
 // `ended_at`; we require one unchanged-newest tick.
 function maybeStopOnConverge() {
+  if (!session.value?.ended_at) {
+    convergeAnchorId = null
+    // Live (again): the ingest clears `ended_at` when a genuine resume lands,
+    // so a poll that retired on the old "ended" read — and the scroll/wheel
+    // pull-to-refresh retired with it — re-arms here, on whichever reload
+    // first observes the cleared marker.
+    if (!livePollTimer) startLivePoll()
+    liveSyncActive.value = true
+    return
+  }
   if (!livePollTimer) return
-  if (!session.value?.ended_at) { convergeAnchorId = null; return }
   if (convergeAnchorId !== null && newestLoadedId.value === convergeAnchorId) {
     stopLivePoll()
     // Tail has converged on a closed session: the scroll/wheel pull-to-refresh

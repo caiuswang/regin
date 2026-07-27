@@ -16,9 +16,10 @@ export function useTraceTimeline(session, allSpans) {
 
   const traceEnd = computed(() => {
     // ended_at marks when the session formally ended; last_seen tracks
-    // MAX(span.end_time). For well-formed sessions they agree, but if a
-    // session is resumed after `ended_at` is set, later spans push
-    // last_seen forward without resetting ended_at.
+    // MAX(span.end_time). For well-formed sessions they agree. A resumed
+    // session gets its `ended_at` cleared by the ingest's restart
+    // reconcile; legacy rows resumed before that rule may still carry a
+    // stale one, with last_seen pushed past it — the max below covers both.
     //
     // We also fold in the latest timestamp across the loaded spans. This
     // is what keeps the header duration *live*: an in-progress span (the

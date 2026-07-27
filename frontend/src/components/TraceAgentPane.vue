@@ -42,6 +42,9 @@ const props = defineProps({
   // False while the main feed raised the current selection — the embedded feed
   // then highlights without unfolding or scrolling itself.
   followSelection: { type: Boolean, default: true },
+  // The main feed's follow-tail state, mirrored into the embedded scoped feed
+  // so following the session also keeps this pane stuck to its newest span.
+  followActive: { type: Boolean, default: false },
 })
 const emit = defineEmits([
   'exit', 'scope', 'expand', 'select-span', 'fetch-content', 'load-subtree', 'jump-live',
@@ -174,6 +177,7 @@ const paneStyle = computed(() => ({
         :scoped-agent-id="''"
         :show-follow-tail="false"
         :follow-selection="followSelection"
+        :follow-active="followActive"
         :scroller-getter="getPaneScroller"
         @select-span="emit('select-span', $event)"
         @fetch-content="emit('fetch-content', $event)"

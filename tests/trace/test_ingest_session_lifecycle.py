@@ -91,7 +91,9 @@ def test_bare_session_start_after_end_does_not_reactivate(lifecycle_db):
 def test_prompt_after_bare_restart_reactivates(lifecycle_db):
     """A real resume: the held-back restart promotes the moment work lands,
     even though the operation span arrives in a LATER batch than the
-    `session.start` (Claude's SessionStart / UserPromptSubmit ordering)."""
+    `session.start` (Claude's SessionStart / UserPromptSubmit ordering).
+    The stale `ended_at` is cleared with it, so read paths keying off the
+    bare marker (trace header Live pill, poll-stop) see the session live."""
     _seed_ended_session('t-resume')
     _ingest([
         _span('t-resume', 'start-2', 'session.start', '2026-07-26T07:58:25',
@@ -103,12 +105,15 @@ def test_prompt_after_bare_restart_reactivates(lifecycle_db):
         _span('t-resume', 'prompt-2', 'prompt', '2026-07-26T07:59:00',
               {'text': 'keep going'}),
     ])
-    assert _session_row(lifecycle_db, 't-resume')['status'] == 'active'
+    row = _session_row(lifecycle_db, 't-resume')
+    assert row['status'] == 'active'
+    assert row['ended_at'] is None
 
 
 def test_restart_with_work_in_same_batch_reactivates(lifecycle_db):
     """Provider-safe: a restart batch that already carries an operation
-    span is live immediately — the guard never fires."""
+    span is live immediately — the guard never fires, and the end marker
+    is cleared in the same ingest."""
     _seed_ended_session('t-batched')
     _ingest([
         _span('t-batched', 'start-2', 'session.start', '2026-07-26T07:58:25',
@@ -116,7 +121,9 @@ def test_restart_with_work_in_same_batch_reactivates(lifecycle_db):
         _span('t-batched', 'tool-2', 'tool.Read', '2026-07-26T07:58:30',
               {'file_path': '/repo/a.py'}),
     ])
-    assert _session_row(lifecycle_db, 't-batched')['status'] == 'active'
+    row = _session_row(lifecycle_db, 't-batched')
+    assert row['status'] == 'active'
+    assert row['ended_at'] is None
 
 
 def test_first_session_start_still_activates(lifecycle_db):

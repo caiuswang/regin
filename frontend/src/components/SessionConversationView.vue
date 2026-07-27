@@ -46,6 +46,11 @@ const props = defineProps({
   // The fixed follow-latest pill is a session-level affordance; the pane's
   // embedded scoped instance suppresses it so there's one, on the main feed.
   showFollowTail: { type: Boolean, default: true },
+  // External follow-tail mirror (the ≥xl companion pane tracks the main
+  // feed's follow state): null = own the choice locally; true/false = driven.
+  // A local user scroll-up still cancels follow here — the mirror only moves
+  // when the main feed's state flips.
+  followActive: { type: Boolean, default: null },
   // False while the current selection was raised by the OTHER feed instance
   // (main feed ⇄ companion pane share one `selectedSpan`). A foreign selection
   // must never rearrange this feed: no prompt/agent unfolding, no scroll to a
@@ -195,6 +200,17 @@ const {
   getScroller: getConversationScroller,
   onPinExpand: ensurePinVisible,
 })
+
+// The main feed exposes its followTail so the companion pane can mirror it
+// (trace-conversation-region wires the two); the pane never shows its own
+// pill, it rides this prop. flush:'post' so the immediate fire (pane opening
+// while the main feed is already following) scrolls a mounted scroller.
+defineExpose({ followTail })
+watch(() => props.followActive, (on) => {
+  if (on == null) return
+  if (on) enableFollow()
+  else disableFollow()
+}, { immediate: true, flush: 'post' })
 
 // Subagent launch merge + the agent-metadata helpers the subagent / phase /
 // result cards consume (passed down as the `agentMerge` object).
@@ -380,11 +396,22 @@ async function unfoldFor(spanId, owner) {
 // gets the passive half only: it may reveal a row the reader already unfolded,
 // but it must not unfold anything, and it must not fall back to yanking the
 // feed to an ancestor the reader can't see.
+//
+// The watcher also re-fires on every live poll (the spans.length dep, so a
+// selection whose subtree hadn't loaded yet still resolves once it lands).
+// Unfolding must NOT re-fire then: it re-expanded the selected span's
+// subagent on every poll, undoing the reader's manual collapse. Unfold only
+// for a NEW selection id, or while the selected span still isn't in the
+// loaded set (its subtree may arrive on a later poll).
+let lastUnfoldedSpanId = null
 watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]) => {
   if (!id) return
   const owner = promptOwnerOf(id)
   const follow = props.followSelection
-  if (follow) await unfoldFor(id, owner)
+  if (follow && (id !== lastUnfoldedSpanId || !spanById.value.has(id))) {
+    lastUnfoldedSpanId = id
+    await unfoldFor(id, owner)
+  }
   await nextTick()
   const fallback = () => promptRefs.value.get(id)
     || standaloneRefs.value.get(id)

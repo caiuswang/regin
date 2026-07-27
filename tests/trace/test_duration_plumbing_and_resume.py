@@ -216,7 +216,10 @@ def test_claude_bare_resume_is_live_immediately(ingest_db, agent_type):
                    {'cwd': '/repo', 'source': 'resume',
                     'agent_type': agent_type})])
 
-    assert _session_status(ingest_db, 'c-resume')['status'] == 'active'
+    row = _session_status(ingest_db, 'c-resume')
+    assert row['status'] == 'active'
+    # A trusted provider's restart clears the stale end marker immediately.
+    assert row['ended_at'] is None
 
 
 def test_kimi_bare_preview_is_held_then_promoted_by_a_later_batch(ingest_db):
@@ -231,7 +234,11 @@ def test_kimi_bare_preview_is_held_then_promoted_by_a_later_batch(ingest_db):
     held = _session_status(ingest_db, 'k-resume')
     assert held['status'] == 'ended'
     assert held['last_start_at'] == '2026-07-26T07:58:25'
+    # The preview keeps the end marker — clearing it is what a real resume does.
+    assert held['ended_at'] is not None
 
     _ingest([_span('k-resume', 'prompt-2', 'prompt', '2026-07-26T07:59:00',
                    {'text': 'keep going'})])
-    assert _session_status(ingest_db, 'k-resume')['status'] == 'active'
+    promoted = _session_status(ingest_db, 'k-resume')
+    assert promoted['status'] == 'active'
+    assert promoted['ended_at'] is None

@@ -111,6 +111,8 @@ const sessionTitle = computed(() => {
 // A session with no `ended_at` is still attached to a live agent — the pulsing
 // pill is the one piece of session state that has to be legible without
 // reading a number, so it sits on the title line rather than in the vitals.
+// (The ingest clears `ended_at` when a genuine resume lands, so an
+// exited-then-resumed session reads Live again here.)
 const isLive = computed(() => !props.session?.ended_at)
 const startedClock = computed(() => fmtLocalClock(props.session?.started_at))
 

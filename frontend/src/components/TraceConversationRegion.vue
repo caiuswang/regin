@@ -12,7 +12,7 @@
 //
 // `feed` bundles the shared span/turn inputs as one object so the two feed
 // consumers don't each spell out a dozen binds.
-import { onMounted, onUnmounted, nextTick, ref, watch } from 'vue'
+import { onMounted, onUnmounted, nextTick, ref, computed, watch } from 'vue'
 import SessionConversationView from './SessionConversationView.vue'
 import TraceAgentPane from './TraceAgentPane.vue'
 
@@ -60,6 +60,12 @@ watch(() => props.feed.selectedSpan?.span_id, () => {
   if (!claimed) selectionOrigin.value = 'external'
 })
 
+// The pane's embedded feed shows no follow pill of its own — it mirrors the
+// main feed's follow-tail (exposed by SessionConversationView), so following
+// the session also keeps the scoped agent view stuck to its newest span.
+const mainFeed = ref(null)
+const mainFollowing = computed(() => !!mainFeed.value?.followTail)
+
 // Esc exits the scope (both the split pane and the <xl takeover) — the
 // keyboard sibling of the pane ✕ / scope-bar ✕. Only acts while a scope or the
 // roster is open, so it never swallows Escape for the rest of the view.
@@ -81,6 +87,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   >Loading agent scope…</div>
   <SessionConversationView
     v-else
+    ref="mainFeed"
     :spans="feed.spans"
     :turns="feed.turns"
     :selected-span="feed.selectedSpan"
@@ -123,6 +130,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     :server-now-at="feed.serverNowAt"
     :sticky-top="stickyTop"
     :follow-selection="selectionOrigin !== 'feed'"
+    :follow-active="mainFollowing"
     @exit="emit('exit')"
     @scope="emit('enter-scope', $event)"
     @expand="emit('expand')"
