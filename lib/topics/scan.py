@@ -67,14 +67,109 @@ def validate(repo_path: str | Path) -> ValidationResult:
         return ValidationResult(errors, warnings)
 
     aliases: dict[str, str] = {}
+    absent: list[tuple[str, str]] = []
     for topic_id, topic in topics.items():
         if not _valid_id(topic_id):
             errors.append(f"topic id {topic_id!r} must use lowercase letters, digits, dots, underscores, or hyphens")
         if not isinstance(topic, dict):
             errors.append(f"topic {topic_id} must be an object")
             continue
-        _validate_topic(repo_path, topic_id, topic, topics, aliases, errors, warnings)
+        _validate_topic(repo_path, topic_id, topic, topics, aliases, errors, warnings, absent)
+    # Classified in one batch so a graph with N absent refs still costs a
+    # single git pass, not one per ref.
+    absent_errors, absent_warnings = _classify_absent_refs(repo_path, absent)
+    errors.extend(absent_errors)
+    warnings.extend(absent_warnings)
     return ValidationResult(errors, warnings)
+
+
+def _classify_absent_refs(
+    repo_path: str | Path, absent: list[tuple[str, str]],
+) -> tuple[list[str], list[str]]:
+    """Split refs missing from the working tree into (errors, warnings).
+
+    A path carried by the tip of some *other* branch belongs to work that
+    simply isn't checked out — a warning, because failing here made the whole
+    graph invalid for every `validate().ok` gate (pre-commit hook, topic
+    edit/delete, proposal downgrade, wiki generation), so one unmerged
+    branch's topic wedged all five. A path no branch carries is genuinely
+    dead — the file was deleted or renamed and its anchor never updated — and
+    stays an error, or deletions would silently rot the graph.
+    """
+    if not absent:
+        return [], []
+    repo = Path(repo_path)
+    paths = {path for _, path in absent}
+    elsewhere = _paths_on_other_branches(repo, paths)
+    # A path this commit itself stages as deleted is dead by intent, whatever
+    # other branches still carry — the anchor has to be updated here, so it
+    # outranks the branch check.
+    deleted_here = _staged_deletions(repo) & paths
+    errors: list[str] = []
+    warnings: list[str] = []
+    for topic_id, path in absent:
+        if path in deleted_here:
+            errors.append(
+                f"topic {topic_id} ref is deleted by this commit; drop or "
+                f"re-anchor it: {path}"
+            )
+        elif path in elsewhere:
+            warnings.append(
+                f"topic {topic_id} ref does not exist in this checkout "
+                f"(it is present on another branch): {path}"
+            )
+        else:
+            errors.append(f"topic {topic_id} ref does not exist: {path}")
+    return errors, warnings
+
+
+def _staged_deletions(repo: Path) -> set[str]:
+    """Repo-relative paths staged for deletion. Empty outside a commit (and
+    for dir refs, which a single member's deletion does not invalidate)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "diff", "--cached", "--name-only", "--diff-filter=D"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return set()
+    return {line for line in out.splitlines() if line and not is_dir_ref(line)}
+
+
+def _paths_on_other_branches(repo: Path, paths: set[str]) -> set[str]:
+    """The subset of `paths` present in the tip tree of a branch other than
+    the checked-out one. Unprovable (no git, unborn HEAD) means we cannot
+    claim a path is dead, so every path is reported as found — absence then
+    degrades to a warning rather than a spurious commit-blocking error."""
+    def _git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    try:
+        head = _git("rev-parse", "HEAD").strip()
+        oids = _git("for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes").split()
+    except (subprocess.CalledProcessError, OSError):
+        return set(paths)
+
+    found: set[str] = set()
+    for oid in dict.fromkeys(oids):
+        remaining = paths - found
+        if not remaining:
+            break
+        if oid == head:
+            continue
+        try:
+            listed = set(_git("ls-tree", "-r", "--name-only", oid, "--", *remaining).splitlines())
+        except (subprocess.CalledProcessError, OSError):
+            continue
+        for path in remaining:
+            # A dir ref promises a subtree, so ls-tree reports its *members*,
+            # never the directory itself.
+            if any(name.startswith(path) for name in listed) if is_dir_ref(path) else path in listed:
+                found.add(path)
+    return found
 
 
 def _validate_topic(
@@ -85,6 +180,7 @@ def _validate_topic(
     aliases: dict[str, str],
     errors: list[str],
     warnings: list[str],
+    absent: list[tuple[str, str]],
 ) -> None:
     for field in ("label", "intent", "status"):
         if not isinstance(topic.get(field), str) or not topic.get(field):
@@ -102,7 +198,7 @@ def _validate_topic(
             errors.append(f"duplicate alias {alias!r} on topics {aliases[key]} and {topic_id}")
         aliases[key] = topic_id
 
-    _validate_refs(repo_path, topic_id, topic, errors, warnings)
+    _validate_refs(repo_path, topic_id, topic, errors, warnings, absent)
     _validate_edges(topic_id, topic, topics, errors)
 
 
@@ -129,6 +225,7 @@ def _validate_refs(
     topic: dict[str, Any],
     errors: list[str],
     warnings: list[str],
+    absent: list[tuple[str, str]],
 ) -> None:
     seen_refs: set[str] = set()
     for ref in topic.get("refs", []):
@@ -152,14 +249,7 @@ def _validate_refs(
             warnings.append(f"topic {topic_id} has duplicate ref {path}")
         seen_refs.add(path)
         if not (Path(repo_path) / path).exists():
-            # A ref anchors a working-tree path, and a working tree
-            # legitimately lacks files owned by a branch that isn't checked
-            # out. Erroring here made the whole graph invalid for every
-            # `result.ok` gate — the pre-commit hook, topic edit/delete,
-            # downgrade and wiki generation — so an unmerged branch's topic
-            # wedged all of them. Graph-internal inconsistency stays an
-            # error; absence in *this* checkout is a warning.
-            warnings.append(f"topic {topic_id} ref does not exist: {path}")
+            absent.append((topic_id, path))
 
 
 def scan(

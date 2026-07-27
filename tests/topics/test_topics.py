@@ -103,20 +103,39 @@ def test_validate_detects_duplicate_alias_and_broken_refs(fake_git_repo):
 
     assert not result.ok
     assert any("duplicate alias" in error for error in result.errors)
+    assert any("ref does not exist" in error for error in result.errors)
     assert any("edge target does not exist" in error for error in result.errors)
-    # A ref to a path absent from this checkout is a warning, not an error:
-    # the file may simply belong to a branch that isn't checked out.
-    assert not any("ref does not exist" in error for error in result.errors)
-    assert any("ref does not exist" in warning for warning in result.warnings)
 
 
-def test_validate_accepts_graph_whose_only_flaw_is_a_missing_ref(fake_git_repo):
+def _commit_on_branch(repo, branch, path, body="x\n"):
+    """Create `path` on a new branch, then return to the original branch so the
+    file is absent from the working tree but carried by another branch tip."""
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    here = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", branch], check=True, env=env)
+    target = repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body)
+    subprocess.run(["git", "-C", str(repo), "add", "-f", path], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", f"add {path}"], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", here], check=True, env=env)
+
+
+def test_validate_warns_not_errors_on_ref_owned_by_another_branch(fake_git_repo):
+    """A topic anchoring a file that lives on an unmerged branch must not make
+    the whole graph invalid — that wedged the pre-commit hook and every other
+    `validate().ok` gate (CAI-25)."""
+    _commit_on_branch(fake_git_repo, "feat/elsewhere", "elsewhere.py")
     topics.bootstrap(fake_git_repo)
     graph = topics.load_graph(fake_git_repo)
     graph["topics"] = {
         "a": {
             "label": "A", "aliases": [], "intent": "A", "status": "active",
-            "refs": [{"path": "on-another-branch.py", "role": "implementation"}],
+            "refs": [{"path": "elsewhere.py", "role": "implementation"}],
             "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
         },
     }
@@ -125,7 +144,58 @@ def test_validate_accepts_graph_whose_only_flaw_is_a_missing_ref(fake_git_repo):
     result = topics.validate(fake_git_repo)
 
     assert result.ok
-    assert any("ref does not exist" in warning for warning in result.warnings)
+    assert not (fake_git_repo / "elsewhere.py").exists()
+    assert any("present on another branch" in w for w in result.warnings)
+
+
+def test_validate_errors_when_this_commit_deletes_an_anchored_file(fake_git_repo):
+    """Deleting an anchored file must still fail the pre-commit gate even though
+    another branch keeps the path alive — otherwise deletions silently rot the
+    graph, since a stale branch tip would mask every one of them."""
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    (fake_git_repo / "doomed.py").write_text("x\n")
+    subprocess.run(["git", "-C", str(fake_git_repo), "add", "-f", "doomed.py"], check=True, env=env)
+    subprocess.run(["git", "-C", str(fake_git_repo), "commit", "-q", "-m", "add"], check=True, env=env)
+    _commit_on_branch(fake_git_repo, "feat/keeps-it", "unrelated.py")
+
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "doomed.py", "role": "implementation"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+    subprocess.run(["git", "-C", str(fake_git_repo), "rm", "-q", "doomed.py"], check=True, env=env)
+
+    result = topics.validate(fake_git_repo)
+
+    assert not result.ok
+    assert any("deleted by this commit" in error for error in result.errors)
+
+
+def test_validate_still_errors_on_ref_no_branch_carries(fake_git_repo):
+    """The deletion case keeps its teeth: a path no branch tip carries is a
+    genuinely dead anchor, not a not-checked-out one."""
+    _commit_on_branch(fake_git_repo, "feat/unrelated", "unrelated.py")
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "nowhere.py", "role": "implementation"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert not result.ok
+    assert any("ref does not exist: nowhere.py" in error for error in result.errors)
 
 
 def test_validate_rejects_invalid_ref_tier(fake_git_repo):

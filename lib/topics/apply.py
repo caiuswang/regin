@@ -97,7 +97,10 @@ class ApplyOptions:
     - `drop_dead_refs=False` — legacy `validate()` blocked accept on dead
       refs, and the refactor's goal is to make that pain *one click to
       resolve*, not zero-click. The UI defaults the checkbox to checked
-      in Phase C; the diff layer's job is to make damage visible.
+      in Phase C; the diff layer's job is to make damage visible. Keep it
+      opt-in: `scan.validate` now treats an anchor carried by another
+      branch as legitimate, so dropping dead refs wholesale would delete
+      anchors that are merely not checked out.
     - `dedupe_aliases=False` — within-topic normalize-duplicates are
       always collapsed at the shape layer (`diff._approved_shape`), so
       they never reach the graph regardless of this flag. Turning it on

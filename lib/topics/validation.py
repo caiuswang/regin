@@ -372,6 +372,14 @@ def audit_graph(
     `ValidationIssue` objects with stable identity keys so the diff
     layer can set-diff them. `repo_path=None` skips on-disk ref checks
     (used by unit tests that don't materialize files).
+
+    One deliberate divergence from `scan.validate()`: a ref absent from the
+    working tree is `graph.dead_ref` (error) here regardless of whether
+    another branch carries it. This gate runs on *authoring* — a proposal
+    citing a path this checkout cannot show is unreviewable — whereas
+    `scan.validate` gates a whole pre-existing graph, where a not-checked-out
+    branch's anchors are legitimate. `diff_against_graph` only reports issues
+    the change *introduces*, so pre-existing dead refs never block an apply.
     """
     issues: list[ValidationIssue] = []
 

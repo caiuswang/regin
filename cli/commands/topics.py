@@ -849,10 +849,6 @@ def cmd_topics_proposal_import(
 @topics_app.command("check", help="Validate topic graph schema and approved refs")
 def cmd_topics_check(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
-    strict: bool = typer.Option(
-        False, "--strict",
-        help="Fail on warnings too (e.g. refs absent from this checkout)",
-    ),
 ) -> None:
     result = validate(_repo_path(repo))
     for warning in result.warnings:
@@ -860,9 +856,6 @@ def cmd_topics_check(
     if not result.ok:
         for error in result.errors:
             print(f"error: {error}")
-        raise typer.Exit(1)
-    if strict and result.warnings:
-        print(f"Strict mode: {len(result.warnings)} warning(s) treated as errors.")
         raise typer.Exit(1)
     print("Topic graph is valid.")
 
