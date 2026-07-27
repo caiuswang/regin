@@ -1698,13 +1698,21 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
 
 
 def _bridge_reachability(trace_id: str) -> dict:
-    """Per-session agent-bridge availability for the /live composer.
+    """Per-session steerability for the /live composer and answer sheet.
 
     Rides the existing shallow-map poll so the client needs no extra
     polling loop. Exposes only a boolean + the pane label — never the
     bridge bearer token (that credential must not reach the browser).
+
+    Reachable means "regin can steer this session", not "this session has a
+    tmux pane": a session regin launched itself is answered over its typed
+    channel and has no pane at all, so gating the sheet on a pane would leave
+    the tier's own questions unanswerable.
     """
+    from lib import agent_sdk
     from lib.settings import settings
+    if agent_sdk.is_sdk_owned(trace_id):
+        return {'bridge_reachable': True, 'bridge_pane': None}
     if not settings.agent_bridge.enabled:
         return {'bridge_reachable': False, 'bridge_pane': None}
     from lib.agent_bridge import store as bridge_store

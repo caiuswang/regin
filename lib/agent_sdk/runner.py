@@ -16,6 +16,7 @@ from dataclasses import replace
 
 from lib.activity_log import get_activity_logger
 from lib.agent_events import PermissionRequested, ToolCall, ToolResult, to_span
+from lib.agent_events.ask import ask_questions
 from lib.agent_events.from_sdk import from_sdk_message, prompt_event
 from lib.settings import settings
 from . import client, registry, store
@@ -31,6 +32,19 @@ _INTERACTIVE_TOOLS = frozenset({"AskUserQuestion"})
 
 class RunnerBusy(RuntimeError):
     """`max_concurrent_runs` reached."""
+
+
+def _enrich_ask(span: dict | None, event) -> None:
+    """Carry the question structure onto an ask's span.
+
+    Without it the `/live` sheet has no options to render and falls back to
+    read-only, so the tier's own questions would be unanswerable.
+    """
+    if not span or getattr(event, 'tool_name', '') != 'AskUserQuestion':
+        return
+    questions = ask_questions(getattr(event, 'tool_input', None) or {})
+    if questions:
+        span['attributes']['questions'] = questions
 
 
 class AgentRunner:
@@ -50,7 +64,9 @@ class AgentRunner:
         await asyncio.to_thread(lambda: post_span(**span))
 
     async def _emit(self, event) -> None:
-        await self._post(to_span(self._name_tool(event)))
+        span = to_span(self._name_tool(event))
+        _enrich_ask(span, event)
+        await self._post(span)
 
     def _name_tool(self, event):
         """Tool results carry only a `tool_use_id`, so the call's name has to be

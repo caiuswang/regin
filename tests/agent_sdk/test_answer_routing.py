@@ -105,3 +105,17 @@ def test_unowned_session_still_falls_through_to_the_tmux_path(
                             json={"option_index": 0})
 
     assert res.get_json()["detail"] == "bridge disabled"
+
+
+def test_sdk_session_reads_as_reachable_without_a_tmux_pane(sdk_session,
+                                                            monkeypatch):
+    """The /live sheet gates its answer UI on reachability. An SDK-owned
+    session has no pane, so gating on one would render its own questions
+    unanswerable."""
+    from web.blueprints.trace.sessions import _bridge_reachability
+
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+
+    assert _bridge_reachability(_TRACE) == {"bridge_reachable": True,
+                                            "bridge_pane": None}
+    assert _bridge_reachability("not-ours")["bridge_reachable"] is False

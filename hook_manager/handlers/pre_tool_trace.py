@@ -100,17 +100,12 @@ def _enrich_attrs(attrs: dict, payload: HookPayload, tool: str) -> None:
 
 
 def _ask_questions(tool_input: dict) -> list[dict]:
-    """The question structure, mirroring `post_tool_trace._build_ask_attrs`
-    (minus answers, which don't exist yet) so the pending card renders the
-    same question the resolved card later will."""
-    from .post_tool_trace import _ask_option  # type: ignore
+    """The question structure the pending card renders.
 
-    out: list[dict] = []
-    for q in (tool_input.get('questions') or []):
-        out.append({
-            'question': q.get('question'),
-            'header': q.get('header'),
-            'options': [_ask_option(o) for o in (q.get('options') or [])],
-            'multiSelect': q.get('multiSelect', False),
-        })
-    return out
+    Shared with the SDK producer (`lib/agent_events/ask.py`) so both tiers
+    describe an ask identically — the `/live` answer sheet reads this shape and
+    refuses to offer options without it.
+    """
+    from lib.agent_events.ask import ask_questions  # type: ignore
+
+    return ask_questions(tool_input)

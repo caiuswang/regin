@@ -396,7 +396,11 @@ regin's second capture tier. Everything else observes a session the *user* start
 
 **The raw SDK import is confined to `lib/agent_sdk/client.py`**, which also resolves the user's own `claude` off PATH and passes it as `cli_path`. The SDK ships its own copy inside a platform package and spawns that by default — without the override, traces would record a build the user never installed.
 
-**Storage:** `agent_runs` (one mutable row per regin-launched session — the fact steering routes on, mirroring what `bridge_panes` is to the tmux tier). Parked questions live in a process-local registry rather than the DB, because a runner and its channel share a lifetime; resolving one hops back onto the runner's event loop from the Flask request thread.
+**Storage:** `agent_runs` (one mutable row per regin-launched session — the fact steering routes on, mirroring what `bridge_panes` is to the tmux tier). Parked questions live in a process-local registry rather than the DB, because a runner and its channel share a lifetime; resolving one hops back onto the runner's event loop from the Flask request thread. Note that a *stopped* loop accepts `call_soon_threadsafe` without raising, so `registry.resolve_ask` checks liveness explicitly — otherwise an operator is told their answer landed when nothing received it.
+
+**HTTP surface:** `POST /api/agent-runs` launches (returning a trace id immediately) and `GET /api/agent-runs/<id>` reports status plus `owned` — reachability, which `status` alone can't give since a runner killed with the server leaves a `running` row behind. Launching runs the agent *in the web process* (`supervisor.py` owns one shared loop): the registry is process-local, so a runner started elsewhere could not be answered from `/live`. Both routes are `require_editor`, matching the bridge's session-scoped routes.
+
+**Reachability is transport-neutral.** `_bridge_reachability` (`web/blueprints/trace/sessions.py`) answers "can regin steer this session", not "does it have a pane" — the `/live` answer sheet gates on that flag, so a pane-only definition would leave this tier's own questions unanswerable.
 
 Gated off by default (`settings.agent_sdk.enabled = False`), and the SDK is an optional extra (`pip install -e ".[agent-sdk]"`) since observing sessions needs nothing from it.
 

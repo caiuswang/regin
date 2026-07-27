@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from sqlmodel import select
+
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.orm.models import AgentRun
@@ -14,8 +16,8 @@ def upsert_run(trace_id: str, *, status: str, pid: int | None = None,
                detail: str | None = None) -> None:
     """Create or advance the run row for `trace_id`."""
     with SessionLocal() as session:
-        row = session.query(AgentRun).filter(
-            AgentRun.trace_id == trace_id).one_or_none()
+        row = session.exec(
+            select(AgentRun).where(AgentRun.trace_id == trace_id)).first()
         if row is None:
             row = AgentRun(trace_id=trace_id, status=status)
             session.add(row)
@@ -34,8 +36,8 @@ def upsert_run(trace_id: str, *, status: str, pid: int | None = None,
 
 def get_run(trace_id: str) -> dict | None:
     with SessionLocal() as session:
-        row = session.query(AgentRun).filter(
-            AgentRun.trace_id == trace_id).one_or_none()
+        row = session.exec(
+            select(AgentRun).where(AgentRun.trace_id == trace_id)).first()
         if row is None:
             return None
         return {

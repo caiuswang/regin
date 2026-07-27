@@ -156,6 +156,10 @@ def create_app():
     from web.blueprints.bridge import bridge_bp
     app.register_blueprint(bridge_bp)
 
+    # ── Agent SDK tier (sessions regin launches and owns) ─────────
+    from web.blueprints.agent_runs import agent_runs_bp
+    app.register_blueprint(agent_runs_bp)
+
     from web.blueprints.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
 
