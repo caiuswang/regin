@@ -1177,26 +1177,22 @@ const {
         </div>
       </div>
     </Teleport>
-    <!-- Infinite-feed-style footer: spinner during reload, otherwise
-         a quiet end-of-timeline marker. Same pattern as Twitter/IG,
-         no instructional text. `pb-20` below lg keeps the last rows
-         scrollable clear of the fixed "Follow latest" pill. -->
+    <!-- Infinite-feed-style footer: a quiet end-of-timeline marker, nothing
+         else. Reload progress is signalled only by the header's Reload button
+         (spinning icon + disabled); a second indicator down here blinked in and
+         out on every live-poll tick, which read as the page flickering.
+         `pb-20` below lg keeps the last rows scrollable clear of the fixed
+         "Follow latest" pill. -->
     <div class="mt-8 mb-4 pb-20 lg:pb-0 flex items-center justify-center text-slate-400">
-      <!-- Fixed-height, same-font-size row so the reload↔idle swap can't change
-           the footer height: "Loading" and "End of timeline" share text-[11px]
-           and the spinner sits inside the h-4 line. Otherwise, parked at the
-           bottom of a live session, the tiny per-poll height change clamped the
-           scroll and the feed twitched up/down every few seconds. -->
+      <!-- Fixed-height row: parked at the bottom of a live session, any
+           per-poll height change here clamped the scroll and the feed twitched
+           up/down every few seconds. -->
       <span class="inline-flex items-center justify-center gap-2 h-4 text-[11px] tracking-wider uppercase">
-        <svg v-if="reloading" class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
-          <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
         <!-- The conversation feed prints its own end-of-timeline marker at the
              bottom of the feed COLUMN (where the design puts it); printing this
              page-wide one too would show the reader two of them. The row itself
-             stays so the reload spinner and the fixed footer height survive. -->
-        {{ reloading ? 'Loading' : (viewMode === 'conversation' ? '' : 'End of timeline') }}
+             stays so the fixed footer height survives. -->
+        {{ viewMode === 'conversation' ? '' : 'End of timeline' }}
       </span>
     </div>
   </div>
