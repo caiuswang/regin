@@ -206,3 +206,49 @@ def test_index_fetch_duplicate_spans_per_call_dedup(tmp_path, monkeypatch):
                         {"mcp_input": json.dumps({"node_id": "alpha"})})),
     ])
     assert compute_wiki_reads()["alpha"]["count"] == 1
+
+
+def _cli_nav_span(span_id: str, node_id: str, start_time: str,
+                  trace_id: str = "t1", *, reinforce: bool | None = None,
+                  ) -> SessionSpan:
+    """The span `regin memory index-fetch --session` leaves: same meaning as
+    the MCP fetch span, but its arguments sit flat with no `tool_input`."""
+    attrs: dict = {"tool": "index-fetch", "node_id": node_id}
+    if reinforce is not None:
+        attrs["reinforce"] = reinforce
+    return SessionSpan(
+        trace_id=trace_id, span_id=span_id, name="memory.index.nav",
+        start_time=start_time, attributes=json.dumps(attrs))
+
+
+def test_a_cli_walk_feeds_the_read_signal(tmp_path, monkeypatch):
+    # Keyed on the MCP span alone, this signal reads zero for a harness whose
+    # only route to the tree is the CLI — so its walk would rank children by a
+    # counter it can never move.
+    _wiki_dir_with(tmp_path, monkeypatch, ["alpha"])
+    _seed([_cli_nav_span("c1", "alpha", "2026-01-01T00:00:00", "s1")])
+    assert compute_wiki_reads()["alpha"]["count"] == 1
+
+
+def test_a_cli_audit_sweep_does_not_count_as_consultation(tmp_path, monkeypatch):
+    _wiki_dir_with(tmp_path, monkeypatch, ["alpha"])
+    _seed([_cli_nav_span("c2", "alpha", "2026-01-01T00:00:00", "s1",
+                         reinforce=False)])
+    assert "alpha" not in compute_wiki_reads()
+
+
+def test_a_non_fetch_cli_nav_span_is_not_a_wiki_read(tmp_path, monkeypatch):
+    # `index-expand` carries a node_id too, so only the `tool` guard separates
+    # it from a real consultation — crediting it would inflate the very signal
+    # the walk ranks children by. (`index-root` has no node_id and would drop
+    # out anyway, which is why it cannot be the test.)
+    _wiki_dir_with(tmp_path, monkeypatch, ["alpha"])
+    _seed([SessionSpan(trace_id="s1", span_id="c3", name="memory.index.nav",
+                       start_time="2026-01-01T00:00:00",
+                       attributes=json.dumps({"tool": "index-expand",
+                                              "node_id": "alpha"})),
+           SessionSpan(trace_id="s1", span_id="c4", name="memory.index.nav",
+                       start_time="2026-01-01T00:00:00",
+                       attributes=json.dumps({"tool": "index-root",
+                                              "scope": ""}))])
+    assert compute_wiki_reads() == {}

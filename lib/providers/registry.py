@@ -59,6 +59,20 @@ def list_provider_ids() -> list[str]:
     return sorted(_PROVIDER_BUILDERS.keys())
 
 
+def provider_session_id_env_vars() -> list[str]:
+    """Every registered provider's session-id env vars, deduplicated.
+
+    Reads the class attribute rather than building providers: the resolver in
+    `lib/session_probe.py` runs on every `regin session-id`, and constructing
+    four adapters (each touching settings) to read four literals is not worth
+    the import cost.
+    """
+    names: list[str] = []
+    for pid in list_provider_ids():
+        names.extend(_PROVIDER_BUILDERS[pid].session_id_env_vars)
+    return list(dict.fromkeys(names))
+
+
 def list_visible_provider_ids() -> list[str]:
     """Provider IDs that UI surfaces should expose.
 

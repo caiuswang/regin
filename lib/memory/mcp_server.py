@@ -1,11 +1,17 @@
 """`recall` — the on-demand memory MCP server.
 
-A stdio MCP server exposing one tool, `recall`, for deeper mid-task pulls
-beyond the few memories the UserPromptSubmit hook auto-injects. Unlike
+A stdio MCP server exposing the memory tools for deeper mid-task pulls beyond
+the few memories the UserPromptSubmit hook auto-injects. Unlike
 `send_to_user`'s deliberately regin-blind server, this one *must* read
 the memory DB — so regin imports happen lazily inside the tool call,
 keeping server startup instant and shielding tool listing from a DB
 hiccup.
+
+Every tool here is a thin delegate: the text they return is rendered by
+`lib/memory/tree_nav.py`, which `regin memory recall|read|index-*` also calls.
+The docstrings, not the bodies, are this file's payload — they are the tool
+schemas the harness shows the model. Harnesses without MCP run the same walk
+through the CLI.
 
 The server process lives as long as the session, so the dense + rerank
 legs are affordable here (models load once, stay warm); `mode='auto'`
@@ -23,60 +29,22 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from typing import Optional
-
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("memory")
 
 
-def _part_index(rest: str, parts: list) -> str:
-    """The `memory_read` follow-up line: how much was withheld and, when the
-    body carries authored seams, what they are. Names are the addresses
-    `memory_read(part=…)` accepts."""
-    if parts:
-        listed = " · ".join(f"{name} ({len(text)}ch)" for name, text in parts)
-        return (f"  ⋯ +{len(rest)} chars in {len(parts)} parts — "
-                f'memory_read("{{id}}", part=…): {listed}')
-    return f'  ⋯ +{len(rest)} chars (no sections) — memory_read("{{id}}")'
+def _nav():
+    """The shared renderer, imported per call.
 
-
-def _format_memory(m: dict, *, score: Optional[float] = None,
-                   brief: bool = True) -> str:
-    """One hit. `brief` returns the lead plus a part index instead of the
-    whole body — the same addresses-not-contents contract `index_fetch`
-    already honours, and the reason `recall` no longer dominates the memory
-    token budget. The id is always shown: without it a caller cannot cite
-    what it recalled to `regin goal feedback --included`."""
-    head = (f"[{m['kind']}|{m['scope']}|score {score:.2f}]"
-            if score is not None else f"[{m['kind']}|{m['scope']}]")
-    # 8 chars, the prefix convention the inject block already displays: a
-    # full 32-hex id costs ~20 tokens on every hit, and `get_dict` resolves
-    # prefixes, so the short form is still a working address.
-    head += f" (id: {m['id'][:8]})"
-    title = f" — {m['title']}" if m.get("title") else ""
-    # Provenance is a drill-down address, not something acted on inline — a
-    # 36-char session UUID per hit is pure overhead in a survey. `brief=False`
-    # (and `memory_read`) still carry it.
-    src = ("" if brief else
-           f" (from session {m['source_trace_id']})"
-           if m.get("source_trace_id") else "")
-    body = m["body"]
-    if brief:
-        # Local import for the same reason every regin import here is local:
-        # `lib.memory.parts` runs the package __init__, which pulls the store
-        # and reflect layers. Callers reach this only from inside a tool call,
-        # where the package is already imported — so this is a dict lookup.
-        from lib.memory import parts
-        lead, rest = parts.split_lead(body)
-        if rest:
-            index = _part_index(rest, parts.named_parts(rest))
-            body = lead + "\n" + index.replace("{id}", m["id"])
-    return f"{head}{title}\n{body}{src}"
-
-
-def _format_hit(hit, *, brief: bool = True) -> str:
-    return _format_memory(hit.memory, score=hit.score, brief=brief)
+    Deferred because this file is *run as a script* (see the plugin's
+    `.mcp.json`), so its module is `__main__` and no parent package has been
+    imported yet: a module-scope `from lib.memory import tree_nav` would run
+    `lib/memory/__init__.py` — the store and reflect layers — before the server
+    can list a single tool. Inside the call it costs a dict lookup.
+    """
+    from lib.memory import tree_nav
+    return tree_nav
 
 
 @mcp.tool()
@@ -118,15 +86,8 @@ def recall(query: str, top_k: int = 5, scope: str = "",
         or a note that nothing matched. The originating session id is carried
         only when `brief=False`; in brief mode read it back with `memory_read`.
     """
-    import lib.memory as memory
-    if not memory.enabled():
-        return "agent memory is disabled (settings.agent_memory.enabled)"
-    hits = memory.recall(query, top_k=max(1, min(int(top_k), 20)),
-                         scope=scope or None, mode="auto",
-                         reinforce=bool(reinforce))
-    if not hits:
-        return "no stored experience matched this query"
-    return "\n\n".join(_format_hit(h, brief=bool(brief)) for h in hits)
+    return _nav().render_recall(query, top_k=top_k, scope=scope,
+                                reinforce=reinforce, brief=brief)
 
 
 @mcp.tool()
@@ -145,117 +106,7 @@ def memory_read(memory_id: str, part: str = "") -> str:
     Returns:
         The full body, or just the named part when `part` is given.
     """
-    import lib.memory as memory
-    if not memory.enabled():
-        return "agent memory is disabled (settings.agent_memory.enabled)"
-    m = memory.get_store().get_dict(memory_id)
-    if m is None:
-        return f"no memory {memory_id!r} — check the id from the recall hit"
-    if not part:
-        return _format_memory(m, brief=False)
-    from lib.memory import parts as parts_mod
-    # Resolve against the withheld portion first, because that is what the
-    # recall hit's part index was built from. Searching the whole body would
-    # hand back a section of the lead the caller already has, under a name and
-    # char-count the index never advertised.
-    text = (parts_mod.find_part(parts_mod.split_lead(m["body"])[1], part)
-            or parts_mod.find_part(m["body"], part))
-    if text is None:
-        named = [name for name, _ in parts_mod.named_parts(m["body"])]
-        available = f"available parts: {', '.join(named)}" if named else (
-            "this memory has no named parts — omit `part` to read it whole")
-        return f"no part {part!r} in {memory_id} — {available}"
-    return f"[{m['kind']}|{m['scope']}] (id: {m['id']}) — part {part!r}\n{text}"
-
-
-def _load_graph():
-    """The repo's approved topic graph (the taxonomy tree the index walks),
-    plus the global meta-roots overlay (`skills` / `preferences`) so
-    cross-repo skill-usage and preference memories are navigable from here."""
-    from lib.settings import settings
-    from lib.topics.graph_io import load_authoritative_graph
-    from lib.topics.meta_roots import merge_meta_roots
-    return merge_meta_roots(
-        load_authoritative_graph(str(settings.project_root)))
-
-
-def _subtree_mem_count(store, graph, node_id: str, scope: str) -> int:
-    from lib.topics.tree import subtree_ids
-    ids = subtree_ids(graph, node_id)
-    return len(store.memories_for_topic_subtree(ids, scope=scope or None))
-
-
-def _format_card(card: dict, mem_count: Optional[int],
-                 read_count: int = 0) -> str:
-    shape = f"{card['child_count']} sub" if card["child_count"] else "leaf"
-    mc = f", {mem_count} mem" if mem_count is not None else ""
-    rc = f", read×{read_count}" if read_count else ""
-    return (f"- {card['id']} · {card['label']} ({shape}{mc}{rc})"
-            f"\n    {card['blurb']}")
-
-
-def _orphan_nav_card(node_id: str, label: str, blurb: str, count: int) -> str:
-    """The synthetic 'unfiled' bucket rendered as a nav card, so a memory with
-    no authoritative-topic link is visible in the index walk (parity with the
-    WebUI taxonomy tree) instead of hanging under no subtree. A leaf: its
-    members are read with `index_fetch`, not descended into."""
-    return _format_card(
-        {"id": node_id, "label": label, "child_count": 0, "blurb": blurb},
-        count)
-
-
-def _wiki_section(node_id: str, read_count: int = 0) -> tuple[str, bool]:
-    """Address of the curated per-topic wiki — the agent Reads it if it wants
-    the narrative. We hand over the path, not the contents. Returns
-    (section_text, wiki_exists); the bool lets index_fetch record an exposure
-    only when a real wiki was actually surfaced. `read_count` annotates how
-    many past sessions actually read this wiki (a battle-tested signal)."""
-    from lib.settings import settings
-    from lib.topics.wiki import wiki_dir
-    if not (wiki_dir(settings.project_root) / f"{node_id}.md").exists():
-        return "## wiki\n(none — bucket or un-accepted topic)", False
-    consulted = f"read in {read_count} past session(s); " if read_count else ""
-    return (f"## wiki\n.regin/topics/wiki/{node_id}.md  "
-            f"({consulted}Read this for the full topic narrative)"), True
-
-
-_REF_CAP = 12  # role-bearing anchors are enough; the wiki has the full file map
-
-
-def _refs_section(node: dict) -> str:
-    """High-signal source-file addresses (path + role). Role-bearing anchors
-    first, capped — the full file list lives in the wiki, so we don't dump
-    every low-signal path here."""
-    refs = node.get("refs") or []
-    if not refs:
-        return "## source refs\n(none)"
-    ranked = sorted(refs, key=lambda r: (r.get("role") in (None, ""),))
-    shown = ranked[:_REF_CAP]
-    lines = [f"  {r.get('path')} ({r.get('role') or '—'})" for r in shown]
-    more = len(refs) - len(shown)
-    tail = f"\n  … +{more} more (full file map in the wiki)" if more > 0 else ""
-    return f"## source refs ({len(refs)})\n" + "\n".join(lines) + tail
-
-
-def _memory_headline(m: dict) -> str:
-    title = m.get("title") or (m.get("body") or "").strip()[:60] or "(untitled)"
-    return f"- [{m['kind']}|imp {m.get('importance', 0):.1f}] {title}  (id: {m['id']})"
-
-
-def _memories_section(store, ids: list[str], top_k: int) -> str:
-    """Memory addresses (kind · title · id), importance-ranked and capped —
-    labels for the agent to choose from, not a body dump. The agent reads a
-    chosen one with `recall`."""
-    total = len(ids)
-    if not total:
-        return "## memories\n(none linked under this subtree)"
-    cap = max(1, min(int(top_k), 50))
-    shown = [m for m in (store.get_dict(mid) for mid in ids[:cap]) if m]
-    lines = "\n".join(_memory_headline(m) for m in shown)
-    more = total - len(shown)
-    tail = f"\n… +{more} more (raise top_k)" if more > 0 else ""
-    return (f"## memories ({total}, importance-ranked; titles only — "
-            f"recall to read one)\n{lines}{tail}")
+    return _nav().render_memory_read(memory_id, part=part)
 
 
 @mcp.tool()
@@ -277,28 +128,7 @@ def index_root(scope: str = "") -> str:
     Returns:
         Each root as `id · label (N sub, M mem)` with its router blurb.
     """
-    import lib.memory as memory
-    from lib.topics.tree import build_tree, node_card
-    if not memory.enabled():
-        return "agent memory is disabled (settings.agent_memory.enabled)"
-    graph = _load_graph()
-    store = memory.get_store()
-    reads = store.wiki_read_counts()
-    lines = [_format_card(node_card(graph, rid),
-                          _subtree_mem_count(store, graph, rid, scope),
-                          reads.get(rid, 0))
-             for rid in build_tree(graph)["roots"]]
-    # Surface the unfiled bucket only when it holds something — untopiced
-    # memories hang under no subtree, so without this they're invisible here.
-    orphans = store.orphaned_memory_ids(scope=scope or None)
-    if orphans:
-        lines.append(_orphan_nav_card(
-            memory.ORPHAN_NODE_ID, memory.ORPHAN_LABEL, memory.ORPHAN_BLURB,
-            len(orphans)))
-    if not lines:
-        return "topic graph has no nodes (run `regin topics scan`)"
-    return "top-level topics (then index_expand / index_fetch):\n" + \
-        "\n".join(lines)
+    return _nav().render_index_root(scope)
 
 
 @mcp.tool()
@@ -314,34 +144,7 @@ def index_expand(node_id: str, scope: str = "") -> str:
         The node's blurb + subtree memory count, then each child as a card.
         A leaf node says so and points you at `index_fetch`.
     """
-    import lib.memory as memory
-    from lib.topics.tree import build_tree, node_card
-    if not memory.enabled():
-        return "agent memory is disabled (settings.agent_memory.enabled)"
-    if node_id == memory.ORPHAN_NODE_ID:
-        orphans = memory.get_store().orphaned_memory_ids(scope=scope or None)
-        return (f"{memory.ORPHAN_NODE_ID} · {memory.ORPHAN_LABEL} "
-                f"({len(orphans)} mem in subtree)\n{memory.ORPHAN_BLURB}"
-                "\n\n(leaf — use index_fetch to read its memories)")
-    graph = _load_graph()
-    card = node_card(graph, node_id)
-    if card is None:
-        return f"no topic node {node_id!r} — call index_root to list roots"
-    store = memory.get_store()
-    self_mc = _subtree_mem_count(store, graph, node_id, scope)
-    head = (f"{node_id} · {card['label']} "
-            f"({self_mc} mem in subtree)\n{card['blurb']}")
-    kids = build_tree(graph)["children"].get(node_id, [])
-    if not kids:
-        return head + "\n\n(leaf — use index_fetch to read its memories)"
-    reads = store.wiki_read_counts()
-    ranked = sorted(kids, key=lambda k: reads.get(k, 0), reverse=True)
-    lines = [_format_card(node_card(graph, k),
-                          _subtree_mem_count(store, graph, k, scope),
-                          reads.get(k, 0))
-             for k in ranked]
-    return (head + "\n\nchildren (most-read wiki first):\n"
-            + "\n".join(lines))
+    return _nav().render_index_expand(node_id, scope)
 
 
 @mcp.tool()
@@ -372,33 +175,8 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "",
     Returns:
         `## wiki`, `## source refs`, `## memories` sections of pointers.
     """
-    import lib.memory as memory
-    from lib.topics.tree import subtree_ids
-    if not memory.enabled():
-        return "agent memory is disabled (settings.agent_memory.enabled)"
-    if node_id == memory.ORPHAN_NODE_ID:
-        store = memory.get_store()
-        ids = store.orphaned_memory_ids(scope=scope or None)
-        sections = ["## wiki\n(none — unfiled memories, not a topic)",
-                    "## source refs\n(none)",
-                    _memories_section(store, ids, top_k)]
-        return (f"{memory.ORPHAN_NODE_ID} · {memory.ORPHAN_LABEL}\n\n"
-                + "\n\n".join(sections))
-    graph = _load_graph()
-    node = (graph.get("topics") or {}).get(node_id)
-    if node is None:
-        return f"no topic node {node_id!r} — call index_root to list roots"
-    store = memory.get_store()
-    ids = store.memories_for_topic_subtree(subtree_ids(graph, node_id),
-                                           scope=scope or None)
-    label = node.get("label") or node_id
-    read_count = store.wiki_read_counts().get(node_id, 0)
-    wiki_text, wiki_exists = _wiki_section(node_id, read_count)
-    if wiki_exists and reinforce:
-        store.bump_wiki_recall(node_id, signal="exposure")
-    sections = [wiki_text, _refs_section(node),
-                _memories_section(store, ids, top_k)]
-    return f"{node_id} · {label}\n\n" + "\n\n".join(sections)
+    return _nav().render_index_fetch(node_id, top_k=top_k, scope=scope,
+                                     reinforce=reinforce)
 
 
 @mcp.tool()
@@ -418,14 +196,15 @@ def gate(name: str, session_id: str) -> str:
     past it was to argue around a red gate. Verify UI with the Playwright
     suite or `scripts/dom-measure.mjs --overflow` instead.
 
-    `session_id` is REQUIRED and must be the *caller's* session id (read it from
-    `$CLAUDE_CODE_SESSION_ID`). This server is shared and long-lived, so its own
-    environment holds the session id of whichever session first spawned it — not
-    the caller's — which is why the gate cannot infer the session itself.
+    `session_id` is REQUIRED and must be the *caller's* session id (read it with
+    `regin session-id`, or from `$CLAUDE_CODE_SESSION_ID` under Claude Code).
+    This server is shared and long-lived, so its own environment holds the
+    session id of whichever session first spawned it — not the caller's — which
+    is why the gate cannot infer the session itself.
 
     Args:
         name: Gate key, e.g. "recall-ran" or "task-recall-ran".
-        session_id: The caller's Claude Code session/trace id.
+        session_id: The caller's session/trace id.
 
     Returns:
         "<gate description> spans this session: N" plus a PASS/FAIL verdict
@@ -438,9 +217,9 @@ def gate(name: str, session_id: str) -> str:
         return f"unknown gate {name!r} — valid gates: {', '.join(sorted(GATES))}"
     if not session_id:
         return (
-            "session_id is required — pass your $CLAUDE_CODE_SESSION_ID. This "
-            "shared memory server cannot infer the caller's session (its own "
-            "environment holds the spawner session's id, not yours)."
+            "session_id is required — pass the id `regin session-id` prints. "
+            "This shared memory server cannot infer the caller's session (its "
+            "own environment holds the spawner session's id, not yours)."
         )
 
     n = span_count(session_id, spec)

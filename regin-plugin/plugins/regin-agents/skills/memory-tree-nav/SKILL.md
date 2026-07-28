@@ -1,6 +1,6 @@
 ---
 name: memory-tree-nav
-description: "Navigate regin's cross-session agent memory by its topic taxonomy instead of blind semantic search. Use when you want to orient in what the project knows about an area, browse memories by subsystem, or do coarse-to-fine recall by reading topic labels and drilling down — not guessing keywords. Triggers: \"what does regin know about X\", \"browse memories for the trace/eval/memory subsystem\", \"find lessons under topic Y\", \"explore the knowledge tree\", or any recall where you'd rather route by structure than by embedding similarity. Backed by the memory MCP tools index_root / index_expand / index_fetch over the parent_id tree in .regin/topics/topics/."
+description: "Navigate regin's cross-session agent memory by its topic taxonomy instead of blind semantic search. Use when you want to orient in what the project knows about an area, browse memories by subsystem, or do coarse-to-fine recall by reading topic labels and drilling down — not guessing keywords. Triggers: \"what does regin know about X\", \"browse memories for the trace/eval/memory subsystem\", \"find lessons under topic Y\", \"explore the knowledge tree\", or any recall where you'd rather route by structure than by embedding similarity. Backed by the index_root / index_expand / index_fetch walk over the parent_id tree in .regin/topics/topics/, callable as memory MCP tools or as `regin memory index-*` commands."
 ---
 
 # Memory Tree Navigation
@@ -30,9 +30,27 @@ neither walk can reach a memory filed under a bucket you pruned.
 - **Use `recall`** for a *specific* known question where you can phrase a tight query ("playwright stale backend"). It's one shot, semantic.
 - **Combine**: nav to the right subtree, then if it's thin, `recall` scoped to fill the long tail. Tree nav is precision-first; `recall` is recall-first.
 
-## Prerequisite
+## Two ways to call the walk
 
-The three tools are served by the **`memory` MCP server** (`lib/memory/mcp_server.py`). They appear as `mcp__memory__index_root`, `…_index_expand`, `…_index_fetch`. The server is long-lived per session, so if you just added/changed these tools they only show up **after the server reloads** (next session or a restart). If the tools aren't listed, fall back to `recall` and tell the user the server needs a reload.
+The three steps exist as **MCP tools** and as **CLI commands**, rendered by one
+shared implementation (`lib/memory/tree_nav.py`), so they return the same text:
+
+| Step | MCP tool | CLI |
+|---|---|---|
+| 1 | `mcp__memory__index_root` | `regin memory index-root [--scope repo:regin]` |
+| 2 | `mcp__memory__index_expand` | `regin memory index-expand <node-id>` |
+| 3 | `mcp__memory__index_fetch` | `regin memory index-fetch <node-id> [--top-k N]` |
+| — | `mcp__memory__recall` / `memory_read` | `regin memory recall <query>` / `regin memory read <id> [--part …]` |
+
+The MCP tools are served by the `memory` server (`lib/memory/mcp_server.py`),
+which is long-lived per session — a newly added or changed tool only appears
+**after the server reloads** (next session or a restart). The CLI needs no such
+reload and works on a harness with no MCP at all, which is what keeps this walk
+runnable outside Claude Code.
+
+Pass `--session "$(regin session-id)"` to any of the CLI commands when you are
+running them as `goal-verified-treenav`'s recall arm: that is what leaves the
+span `regin gate recall-ran` counts.
 
 ## Workflow (root → expand → fetch)
 
@@ -71,5 +89,7 @@ The tree only helps if memories are linked to nodes and nodes have good blurbs.
 
 - `lib/topics/tree.py` — `build_tree` / `subtree_ids` / `node_card` (pure tree helpers over the graph dict).
 - `lib/memory/store.py::memories_for_topic_subtree` — subtree memory lookup.
-- `lib/memory/mcp_server.py` — the three `index_*` tools.
+- `lib/memory/tree_nav.py` — the shared renderers behind both front-ends.
+- `lib/memory/mcp_server.py` / `cli/commands/memory.py` — the MCP and CLI
+  entry points that delegate to them.
 - `lib/topics/graph_io.py::load_authoritative_graph` — loads the graph the tools walk.

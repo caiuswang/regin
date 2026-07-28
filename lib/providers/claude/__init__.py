@@ -34,6 +34,7 @@ class ClaudeProvider(AgentProvider):
         sessions=True,
         transcript_usage=True,
     )
+    session_id_env_vars = ("CLAUDE_CODE_SESSION_ID",)
 
     def __init__(self, overrides: dict | None = None, *, legacy_skills_dir: Path | None = None):
         self._overrides = overrides or {}

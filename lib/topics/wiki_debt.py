@@ -146,8 +146,8 @@ def emit_wiki_debt_proposals(repo_path, *,
     agent-free way to author a brand-new wiki, so drafting those remains a
     human/server action.
 
-    `session_trace_id` is the Claude Code session running this emit (the CLI
-    passes `$CLAUDE_CODE_SESSION_ID`); when set, each drift card links back to
+    `session_trace_id` is the agent session running this emit (the CLI
+    passes the id `regin session-id` resolves); when set, each drift card links back to
     it as its "Detected in session" run.
 
     Returns the debt rows (same shape as `wiki_debt`), each annotated with a

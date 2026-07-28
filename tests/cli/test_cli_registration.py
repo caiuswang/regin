@@ -58,3 +58,40 @@ def test_session_id_command_is_callable():
     # Cache miss prints nothing and exits 0 (soft, composable failure by design);
     # a hit prints an id. Either way it must not be an unrecognized command.
     assert result.exit_code == 0
+
+
+def test_session_id_reads_the_portable_override(monkeypatch):
+    # The escape hatch for a harness that exports no session id of its own.
+    from lib import session_probe
+    monkeypatch.setenv(session_probe._PORTABLE_ENV, "portable-sid")
+    result = runner.invoke(app, ["session-id"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "portable-sid"
+
+
+def test_session_id_from_trace_falls_back_to_the_live_session(monkeypatch, tmp_path):
+    from lib import session_probe
+    from lib.orm import SessionLocal
+    from lib.orm.models.trace import Session as SessionRow
+
+    from datetime import datetime
+
+    for name in session_probe.env_candidates():
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    # `last_seen` must be fresh on the span writer's clock (naive local
+    # isoformat) — the fallback only answers for a recently-active session.
+    now = datetime.now().isoformat()
+    with SessionLocal() as s:
+        s.add(SessionRow(trace_id="sid-fallback",
+                         cwd=str(tmp_path.resolve()), started_at=now,
+                         last_seen=now, origin="session",
+                         is_test=0, span_count=0, skill_reads=0, file_edits=0,
+                         rule_checks=0, plan_enters=0, prompts=0, tool_calls=0))
+        s.commit()
+
+    # Off by default — the env miss stays a miss unless you opt in.
+    assert runner.invoke(app, ["session-id"]).stdout.strip() == ""
+    result = runner.invoke(app, ["session-id", "--from-trace"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "sid-fallback"

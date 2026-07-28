@@ -126,3 +126,25 @@ def test_ui_verified_gate_is_retired():
     result = runner.invoke(app, ["gate", "ui-verified", "--session", "sid-any"])
     assert result.exit_code != 0
     assert "GATE PASS" not in result.stdout
+
+
+def test_empty_session_is_inconclusive_not_an_accusation():
+    # A harness that exports no session id has nothing to attribute spans to,
+    # so 0 says nothing about whether the step ran. Telling the agent "you
+    # skipped it, go back and run it" is an instruction it cannot follow — the
+    # unfollowable-gate failure that retired `ui-verified`.
+    result = runner.invoke(app, ["gate", "recall-ran", "--session", "  "])
+    assert result.exit_code == 2
+    assert "GATE INCONCLUSIVE" in result.stdout
+    assert "regin session-id" in result.stdout
+    assert "GATE FAIL" not in result.stdout
+
+
+def test_empty_session_json_reports_inconclusive():
+    result = runner.invoke(
+        app, ["gate", "task-recall-ran", "--session", "", "--json"])
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "INCONCLUSIVE"
+    assert payload["pass"] is False
+    assert payload["spans"] is None

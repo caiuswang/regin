@@ -60,6 +60,33 @@ Running from the `regin-agents` plugin? The agents register namespaced — see
 `REFERENCE.md`. The orchestrator (you) owns the human checkpoint (step 2), the
 fix loop, and the commit; never let a worker commit.
 
+## Running on a harness other than Claude Code
+
+Nothing in this arm is Claude-specific *in principle*, but several steps used to
+reach for tools only Claude Code has. Each has a shell-command form, so the loop
+runs wherever regin's CLI does:
+
+| Step | Claude-only form | Portable form |
+|---|---|---|
+| session id | `$CLAUDE_CODE_SESSION_ID` | `regin session-id` reads `$REGIN_SESSION_ID` first — **export it from your harness or its wrapper; that is the reliable route.** Failing that, `regin session-id --from-trace` returns the session regin's hooks recorded for this directory, but only when exactly one has been active in the last 30 minutes — two concurrent agents, or none, print nothing. |
+| the 1b walk | `mcp__memory__index_*` | `Glob`+`Read` over `.regin/memory/tree/` (the default here — the gate counts the `Read`, never the `Glob`), or `regin memory index-root` / `index-expand` / `index-fetch` when you want the blurbs — one shared renderer, so the same text |
+| flat recall | `mcp__memory__recall`, `memory_read` | `regin memory recall`, `regin memory read` |
+| anti-skip gate | `mcp__memory__gate(…)` | `regin gate recall-ran --session "$SID"` — exit 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
+| fresh-context verify | `goal-verifier` subagent, `/code-review high` | a **second process** of your CLI, started clean, handed the goal + acceptance checklist + `git diff` and told it did not write the code. The fresh process is the isolation that matters; the subagent tool is only the convenient way to get one. |
+
+Pass `--session "$SID"` to the `memory` commands: that is what leaves the span
+the gate counts, so a run with no MCP at all that did the recall arm honestly
+still PASSes instead of reading as a skip. Two caveats the gate itself will tell
+you about, rather than silently failing you: a walk whose span the ingest
+refused prints a warning on stderr (start `regin serve`, re-run), and
+`regin gate` with an empty `--session` returns **INCONCLUSIVE**, not FAIL —
+without an id there is nothing to count, so that is not evidence you skipped.
+
+**Agent-arm mode stays Claude-only.** Steps 1.5 / 3 / 4 dispatch named
+subagents, which needs a harness-level subagent tool. On any other harness run
+**inline mode** and get the fresh context for step 4 from a second CLI process;
+everything else in the loop is identical.
+
 ## Procedure
 
 ### 1a. The deterministic scaffold — gates inline, skills from the table
@@ -69,7 +96,8 @@ scaffold is fixed and tiny:
 
 - **Hard gates (the universal floor — the loop may NOT exit until both pass):**
   1. the existing test suite stays green;
-  2. an independent fresh-context reviewer checked the diff (`/code-review high`).
+  2. an independent fresh-context reviewer checked the diff
+     (`/code-review high`, an agent, or a second clean CLI process).
 
   Then add the *area's* machine gates from the `CLAUDE.local.md` convention
   table for the files you touch — e.g. `pytest` + radon ≥ C + grit for
@@ -83,7 +111,8 @@ scaffold is fixed and tiny:
 Grab this session's id now — the step-2 gate and step-6 feedback both need it:
 
 ```bash
-SID=$(regin session-id)   # prints $CLAUDE_CODE_SESSION_ID — THIS session's id
+SID=$(regin session-id)   # THIS session's id; add --from-trace on a harness
+                          # that exports none (see the table above)
 ```
 
 ### 1b. Tree-nav — recall the lessons by walking the taxonomy
@@ -114,7 +143,11 @@ This is not optional: the walk only surfaces memories filed under the buckets
 you actually descended, so a relevant lesson in a bucket you pruned is
 *structurally unreachable*. `recall` ranks across the whole store and is the
 only leg that finds cross-cutting lessons. Its hits come back as a lead plus a
-`⋯ +N chars` index; pull the rest of one with `memory_read(id, part=…)`.
+`⋯ +N chars` index; pull the rest of one with `regin memory read <id> --part …`
+(or the `memory_read` tool). When you want the topic **blurbs** the directory
+listing can't carry, `regin memory index-root` / `index-expand <node>` /
+`index-fetch <node>` render exactly what the `mcp__memory__index_*` tools do —
+pass `--session "$SID"` so the step-2 gate sees them.
 
 **Record every memory id the walk and the recall surfaced** — that is the
 *offered* set for this arm (the tree-nav analogue of the `[lesson-id]`s
@@ -169,17 +202,20 @@ dispatch `goal-refiner` with the goal + the combined raw roadmap.
 present anything for approval, verify from the **trace** — not from your own
 memory of what you did — that this session emitted memory-nav tool calls. Every
 tool call is a span, so the skip is detectable from data: a `tool.Read` or
-`tool.Glob` naming `.regin/memory/tree` proves the walk, and a
-`tool.mcp__memory__recall` / `…__memory_read` proves the flat-recall pairing.
-Call the **`mcp__memory__gate`** tool, which needs no `regin` CLI:
+`tool.Read` naming `.regin/memory/tree` proves the walk (a `tool.Glob` does
+not — it records its pattern, never a result, so globbing a tree that was never
+exported would pass a gate on a walk that saw nothing), and a
+`memory.index.nav` (the `regin memory` walk) or `tool.mcp__memory__recall` /
+`…__memory_read` proves the flat-recall pairing. Run the gate:
 
-    mcp__memory__gate(name="recall-ran", session_id="<your $CLAUDE_CODE_SESSION_ID>")
+    regin gate recall-ran --session "$SID"
 
-Pass your **own** session id — the memory server is shared and long-lived, so it
-cannot infer the caller's session and refuses an empty `session_id`. The tool
-counts this session's tree-read and recall spans and returns `GATE PASS` only
-when the count is > 0, else `GATE FAIL`. Because `Read`/`Glob` exist in every
-session, `0` is now an unambiguous skip — there is no "the tool wasn't loaded"
+Pass your **own** session id. It counts this session's tree-read and recall
+spans and returns `GATE PASS` only when the count is > 0, else `GATE FAIL`;
+exit code 0/1/2 makes it scriptable as a hard stop. The
+`mcp__memory__gate(name="recall-ran", session_id="$SID")` tool is the same check
+where the memory MCP is loaded. Because `Read` and the `regin memory` commands
+are available in every session, `0` is now an unambiguous skip — there is no "the tool wasn't loaded"
 defence any more. This is the
 same check the verifier re-runs in step 4. (Span fingerprints live in
 `lib/trace/span_gates.py`; add a `SpanGate` there to gate another unenforced
@@ -210,7 +246,8 @@ self-congratulate.** **Agent-arm:** dispatch `goal-builder`.
 ### 4. Verify — independent, adversarial
 Hand the work to a checker that did **not** build it:
 
-- **Fresh-context reviewer:** `/code-review high`, or a new agent: *"You did
+- **Fresh-context reviewer:** `/code-review high`, a new agent, or a second
+  CLI process: *"You did
   NOT write this. The branch claims <goal> is done. Assume it is broken. Check
   each acceptance item PASS/FAIL with proof. Find empty/edge states, filter
   counts that don't match, console errors, untested paths."*
@@ -219,9 +256,8 @@ Hand the work to a checker that did **not** build it:
     console errors.
   - python: `.venv/bin/python -m pytest <relevant>`; radon grade ≥ C; grit clean.
 - **Recall-arm gate (re-checked here):** the verifier re-runs the gate against
-  the builder's session — `mcp__memory__gate(name="recall-ran",
-  session_id="<the build session's id>")` (or the `regin gate recall-ran
-  --session "$SID"` CLI where regin is installed). `GATE FAIL` / `0` spans = the
+  the builder's session — `regin gate recall-ran --session "<the build
+  session's id>"`. `GATE FAIL` / `0` spans = the
   arm was never run = **protocol violation**, treated as a DO-NOT-SHIP wall
   regardless of how good the diff looks. A roadmap that arrived without a
   receipt, or whose receipt isn't backed by spans, fails verification on that
@@ -317,6 +353,13 @@ stranded no wiki — say so and move on.
 - **`recall` is not optional.** The walk alone cannot reach a lesson filed
   under a bucket you pruned. Skipping the paired flat recall is the documented
   way this arm misses cross-cutting lessons.
+- **No memory MCP? That is not an excuse to skip 1b.** The walk's default leg
+  is `Glob`+`Read` over the exported tree and the fallbacks are `regin memory`
+  subcommands — none of it needs MCP, and all of it leaves gate spans. A `0`
+  gate on such a harness means you skipped, not that the instrument was absent.
+  **A `Glob` alone does not count**: a Glob span records only its pattern,
+  never a result, so the gate matches a `tool.Read` of a tree file — finish
+  the walk by reading a leaf, or use the `regin memory` commands.
 - **Tree dead-ends are data.** A right-bucket-but-empty leaf is a genuine
   knowledge gap; record it (it is exactly the kind of thing step 6's `--fail`
   should seed) and fill from code, not from a forced semantic guess.

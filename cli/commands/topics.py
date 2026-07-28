@@ -1085,9 +1085,9 @@ def cmd_topics_wiki_debt(
              "for each drifted topic. missing topics stay report-only."),
     session_id: str | None = typer.Option(
         None, "--session-id",
-        help="Attribute emitted drift cards to this Claude Code session so the "
+        help="Attribute emitted drift cards to this agent session so the "
              "inbox card links back to the run that detected the drift. "
-             "Defaults to $CLAUDE_CODE_SESSION_ID."),
+             "Defaults to the id `regin session-id` resolves."),
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
 ) -> None:
     from lib.session_probe import resolve as resolve_session

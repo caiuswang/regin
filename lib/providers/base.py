@@ -56,6 +56,12 @@ class AgentProvider:
     # real runs (Codex); the Stop-fallback handler reads this off the session's
     # provider so it never ends a Claude/Kimi session that Stops per turn.
     synthesizes_session_end_from_stop: bool = False
+    # Environment variables this CLI exports into every child process holding
+    # the live session id, most-authoritative first. Empty for harnesses that
+    # export nothing — those resolve through `REGIN_SESSION_ID` or the trace
+    # fallback instead (see `lib/session_probe.py`). Read off the class, so
+    # declaring one must not require constructing the provider.
+    session_id_env_vars: tuple[str, ...] = ()
 
     def hook_events(self) -> tuple[str, ...] | None:
         """Supported hook event names for install wiring.

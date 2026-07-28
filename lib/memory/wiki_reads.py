@@ -6,7 +6,8 @@ things, unioned per distinct session:
 * opened the wiki file directly — a ``tool.Read`` span whose ``file_path`` is
   ``.regin/topics/wiki/<id>.md``; or
 * consulted the topic through navigation — a genuine (``reinforce`` not False)
-  ``index_fetch`` on the topic. This is the primary consultation path: the agent
+  ``index_fetch`` on the topic, through **either** front-end (the MCP tool or
+  ``regin memory index-fetch``). This is the primary consultation path: the agent
   walks the taxonomy and pulls a leaf without ever literally ``Read``-ing the
   ``.md``, so a read signal keyed on ``tool.Read`` alone stays starved (only the
   weaker ``exposure`` counter moves, and ranking ignores it).
@@ -20,7 +21,11 @@ from __future__ import annotations
 import json
 
 _WIKI_SEG = "/.regin/topics/wiki/"
-_INDEX_FETCH_SPAN = "tool.mcp__memory__index_fetch"
+#: A reinforcing fetch through either front-end. `memory.index.nav` covers the
+#: CLI walk (`regin memory index-fetch`), which a harness without MCP is the
+#: only way to reach — keyed off it, this signal would read zero there and the
+#: walk would permanently rank its own children wrong.
+_INDEX_FETCH_SPANS = ("tool.mcp__memory__index_fetch", "memory.index.nav")
 
 
 def _topic_id_from_path(file_path: str) -> str | None:
@@ -59,17 +64,29 @@ def _index_fetch_pull(attributes: str) -> tuple[str | None, bool]:
         blob = json.loads(attributes or "{}") or {}
     except (ValueError, TypeError):
         return None, False
-    inp = blob.get("tool_input")
-    if not isinstance(inp, dict):
-        raw = blob.get("mcp_input")
-        try:
-            inp = json.loads(raw) if raw else {}
-        except (ValueError, TypeError):
-            inp = {}
-    node_id = (inp or {}).get("node_id")
+    inp = _fetch_args(blob)
+    node_id = inp.get("node_id")
     if not node_id:
         return None, False
-    return node_id, bool((inp or {}).get("reinforce", True))
+    return node_id, bool(inp.get("reinforce", True))
+
+
+def _fetch_args(blob: dict) -> dict:
+    """The fetch's arguments, wherever this span's producer put them: a
+    `tool_input` dict, an `mcp_input` JSON string, or — for the CLI walk's
+    `memory.index.nav` span — flat at the top level."""
+    inp = blob.get("tool_input")
+    if isinstance(inp, dict):
+        return inp
+    raw = blob.get("mcp_input")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+    return blob if blob.get("tool") == "index-fetch" else {}
 
 
 def _existing_wiki_topics() -> set[str]:
@@ -117,7 +134,7 @@ def compute_wiki_reads() -> dict[str, dict]:
                  .where(SessionSpan.attributes.like(f"%{_WIKI_SEG}%")))
     fetch_stmt = (select(SessionSpan.trace_id, SessionSpan.attributes,
                          SessionSpan.start_time)
-                  .where(SessionSpan.name == _INDEX_FETCH_SPAN))
+                  .where(SessionSpan.name.in_(_INDEX_FETCH_SPANS)))
     existing = _existing_wiki_topics()
     sessions_by_topic: dict[str, set] = {}
     last_read: dict[str, str] = {}

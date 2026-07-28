@@ -61,7 +61,12 @@ _TREE_SEG = ".regin/memory/tree"
 #   - the filesystem walk over the exported tree (a tool.Read whose file_path
 #     is inside the tree dir) — the cheap navigation leg;
 #   - the memory MCP server's semantic leg (tool.mcp__memory__recall,
-#     memory_read, and the legacy index_* walk) — see lib/memory/mcp_server.py.
+#     memory_read, and the legacy index_* walk) — see lib/memory/mcp_server.py;
+#   - the same walk driven from the CLI (`regin memory index-root|index-expand|
+#     index-fetch|read|recall --session`), which emits `memory.index.nav`. That
+#     leg is what keeps this gate passable on a harness with no MCP at all: the
+#     renderer is shared (lib/memory/tree_nav.py), so it is the same walk, and
+#     an agent that did it honestly must not read as a skip.
 #
 # `tool.Glob` is deliberately NOT a matcher: a Glob span records only its
 # pattern, never its result count, so globbing a tree that was never exported
@@ -70,10 +75,12 @@ _TREE_SEG = ".regin/memory/tree"
 RECALL_ARM = SpanGate(
     key="recall-ran",
     like=("tool.mcp__memory__index_%",),
-    exact=("tool.mcp__memory__recall", "tool.mcp__memory__memory_read"),
+    exact=("tool.mcp__memory__recall", "tool.mcp__memory__memory_read",
+           "memory.index.nav"),
     attr_matchers=(("tool.Read", "file_path", _TREE_SEG),),
     describe="memory tree-walk / recall arm (goal-verified-treenav step 1b)",
-    capability="Read/Glob over .regin/memory/tree, or the memory MCP server",
+    capability=("Read/Glob over .regin/memory/tree, the `regin memory "
+                "index-*` CLI, or the memory MCP server"),
     # Self-evident since the walk moved to the filesystem: Read and Glob are
     # core tools present in every session, so a session that produced neither
     # a tree read nor a recall genuinely skipped the step. (Before, the arm

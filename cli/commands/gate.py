@@ -57,8 +57,27 @@ def cmd_task_recall_ran(
 def _run_gate(key: str, session: str, json: bool) -> None:
     """Shared body: count the gate's spans, report, exit non-zero on fail."""
     from lib.activity_log import get_activity_logger
+    from lib.trace.span_gates import INCONCLUSIVE
 
     gate = GATES[key]
+    if not (session or "").strip():
+        # No session id means no spans can be attributed, so a 0 count says
+        # nothing about whether the step ran. Accusing the caller of skipping
+        # here is the unfollowable-gate failure that retired `ui-verified`:
+        # the only way past it would be to argue around a red gate.
+        message = (
+            "GATE INCONCLUSIVE — no session id, so this session's spans cannot "
+            "be counted. Resolve one with `regin session-id` (export "
+            "$REGIN_SESSION_ID from your harness, or try "
+            "`regin session-id --from-trace`) and re-run. Do NOT record this "
+            "as a pass.")
+        if json:
+            print(_json.dumps({"gate": key, "session": session, "spans": None,
+                               "pass": False, "status": INCONCLUSIVE,
+                               "capability_proven": gate.capability_self_evident}))
+        else:
+            print(message)
+        raise typer.Exit(STATUS_EXIT[INCONCLUSIVE])
     n = span_count(session, gate)
     # The CLI can only vouch for capabilities that running regin itself
     # demonstrates; it cannot see which MCP servers the caller's session

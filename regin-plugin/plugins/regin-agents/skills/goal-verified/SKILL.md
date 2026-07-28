@@ -58,6 +58,32 @@ exists outside the plugin. In a plugin-only install, dispatch the qualified
 `regin-agents:goal-verifier` form so the agent-arm doesn't silently fall back
 to inline.
 
+## Running on a harness other than Claude Code
+
+Nothing in the loop is Claude-specific *in principle*, but three steps used to
+reach for tools only Claude Code has. Each has a shell-command form, so the loop
+runs wherever regin's CLI does:
+
+| Step | Claude-only form | Portable form |
+|---|---|---|
+| session id | `$CLAUDE_CODE_SESSION_ID` | `regin session-id` reads `$REGIN_SESSION_ID` first — **export it from your harness or its wrapper; that is the reliable route.** Failing that, `regin session-id --from-trace` returns the session regin's hooks recorded for this directory, but only when exactly one has been active in the last 30 minutes — two concurrent agents, or none, print nothing. |
+| recall / tree walk | `mcp__memory__recall`, `index_*`, `memory_read` | `regin memory recall`, `index-root` / `index-expand` / `index-fetch`, `read` — one shared renderer, so the same text |
+| anti-skip gate | `mcp__memory__gate(…)` | `regin gate <name> --session "$SID"` — exit 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
+| fresh-context verify | `goal-verifier` subagent, `/code-review high` | a **second process** of your CLI, started clean, handed the goal + acceptance checklist + `git diff` and told it did not write the code. The fresh process is the isolation that matters; the subagent tool is only the convenient way to get one. |
+
+Pass `--session "$SID"` to the `memory` commands: that is what leaves the span
+the gate counts, so a run with no MCP at all that did the recall arm honestly
+still PASSes instead of reading as a skip. Two caveats the gate itself will tell
+you about, rather than silently failing you: a walk whose span the ingest
+refused prints a warning on stderr (start `regin serve`, re-run), and
+`regin gate` with an empty `--session` returns **INCONCLUSIVE**, not FAIL —
+without an id there is nothing to count, so that is not evidence you skipped.
+
+**Agent-arm mode stays Claude-only.** Steps 1.5 / 3 / 4 dispatch named
+subagents, which needs a harness-level subagent tool. On any other harness run
+**inline mode** and get the fresh context for step 4 from a second CLI process;
+everything else in the loop is identical.
+
 **Preflight (step 1) and feedback (step 6) stay programs in both modes** —
 they are the deterministic gather and record; only the judgment steps become
 agents. The orchestrator (you) owns the human checkpoint (step 2 approval),
@@ -83,10 +109,10 @@ topic tree, ranked by importance — *not* by similarity to the stage wording),
 so a build/verify-phrased task still surfaces the right subsystem experience.
 Pass `--subsystem` with the node id you identified while reading the code in
 step 1.5; omit it to let the task text route. Anti-skip: it leaves a
-`memory.recall.task` span, and **`mcp__memory__gate(name="task-recall-ran",
-session_id="<your $CLAUDE_CODE_SESSION_ID>")` PASSes iff a worker was armed this
-run** (or the `regin gate task-recall-ran --session "$SID"` CLI where regin is
-installed) — treat a `GATE FAIL` before commit as a wall (the same span-gate
+`memory.recall.task` span, and **`regin gate task-recall-ran --session "$SID"`
+PASSes iff a worker was armed this run** (the `mcp__memory__gate(name=
+"task-recall-ran", session_id="$SID")` tool is the same check where the memory
+MCP is loaded) — treat a `GATE FAIL` before commit as a wall (the same span-gate
 discipline `goal-verified-treenav` uses for its recall arm).
 
 ## Procedure
@@ -104,11 +130,11 @@ SID=$(regin session-id)   # prints THIS session's id
 regin goal preflight "<the full goal string>" --session-id "$SID"
 ```
 
-`regin session-id` is a real CLI command: a thin wrapper that prints the
-`CLAUDE_CODE_SESSION_ID` env var Claude Code exports into every Bash call (see
-`lib/session_probe.py`). Run it via `regin session-id`.
-If it ever comes back empty, omit the flag (you lose only the
-offered-recording, not the roadmap).
+`regin session-id` is a real CLI command. It resolves provider-agnostically
+(`lib/session_probe.py`): `$REGIN_SESSION_ID` first, then the running CLI's own
+variable (`CLAUDE_CODE_SESSION_ID` under Claude Code). If it comes back empty,
+either omit the flag (you lose only the offered-recording, not the roadmap) or
+add `--from-trace` — see *Running on a harness other than Claude Code* above.
 
 For the **convention skills**, read whatever your repo maps to the files you'll
 touch *before* writing code — a file-keyed convention table (e.g. in `CLAUDE.md`
@@ -195,7 +221,8 @@ design.
 ### 4. Verify — independent, adversarial
 Hand the work to a checker that did **not** build it:
 
-- **Fresh-context reviewer:** `/code-review high`, or spawn an agent with:
+- **Fresh-context reviewer:** `/code-review high`, an agent, or a second CLI
+  process, given:
   *"You did NOT write this. The branch claims <goal> is done. Assume it is
   broken. Check each acceptance item PASS/FAIL with proof. Find empty/edge
   states, filter counts that don't match, console errors, untested paths."*
@@ -232,11 +259,10 @@ acceptance item passes and every gate is green do you continue.
 ### 6. Commit, then close the loop
 Now commit (and only now). Reference the goal; note which gates passed.
 
-**Agent-arm precondition:** `mcp__memory__gate(name="task-recall-ran",
-session_id="<the run's session id>")` must PASS — proof you armed the workers
-with stage-scoped recall (step 3/4) (the `regin gate task-recall-ran --session
-"$SID"` CLI works too where regin is installed). A `GATE FAIL` means you
-dispatched a builder/verifier blind; that is a wall, not a note.
+**Agent-arm precondition:** `regin gate task-recall-ran --session "$SID"` must
+PASS — proof you armed the workers with stage-scoped recall (step 3/4). A
+`GATE FAIL` means you dispatched a builder/verifier blind; that is a wall, not a
+note.
 
 Then feed the outcome back into memory so the *next* run starts smarter:
 

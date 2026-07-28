@@ -40,6 +40,61 @@ def _print_memory_line(m: dict) -> None:
           f"{m['kind']:10s} {m['scope']:14s} {title}{suffix}")
 
 
+#: Session option shared by the walk commands. Optional everywhere: the walk
+#: works without it, you just forgo the gate's proof that it ran.
+_SESSION_OPT = typer.Option(
+    None, "--session", "-s",
+    help="Session/trace id to fingerprint this step under, so "
+         "`regin gate recall-ran` can prove the walk happened. "
+         "Get it from `regin session-id`.")
+
+
+def _walk(session: Optional[str], tool: str, rendered: str, **attrs) -> str:
+    """Print a walk step and leave the trace fingerprint the MCP tools leave.
+
+    Without the fingerprint the walk is invisible to `regin gate recall-ran`,
+    and a harness that can only reach the tree through this CLI would fail the
+    anti-skip gate for having done the work the honest way. Two rules keep the
+    fingerprint honest: only a render that surfaced something counts —
+    otherwise `regin memory read <typo> --session $SID` is a one-command bypass
+    of the gate that step 2 and step 4 both treat as a wall.
+    """
+    print(rendered)
+    if not tree_nav_module().is_result(rendered):
+        # Same convention as `recall`: nothing found is a non-zero exit, so
+        # `regin memory index-root … || handle_it` works in a shell loop.
+        raise typer.Exit(1)
+    _fingerprint(session, tool, **attrs)
+    return rendered
+
+
+def _fingerprint(session: Optional[str], tool: str, **attrs) -> None:
+    """Leave the gate's span for a step that really surfaced something.
+
+    A span the ingest refused is reported on stderr. Silence there would leave
+    the agent believing it had proof, then convict it of skipping — the
+    unfollowable red gate that retired `ui-verified` (`lib/trace/span_gates`).
+    """
+    if not session:
+        return
+    from lib.hook_plugin import post_span
+    landed = post_span(trace_id=session, name="memory.index.nav",
+                       attributes={"tool": tool, **attrs})
+    if not landed:
+        typer.echo(
+            f"warning: the {tool} span did not reach regin's ingest, so "
+            f"`regin gate recall-ran --session {session}` will not see this "
+            "walk. Start `regin serve` (or set REGIN_INGEST_BASE_URL) and "
+            "re-run before treating a red gate as a skip.", err=True)
+
+
+def tree_nav_module():
+    """`lib.memory.tree_nav`, imported on use — the package __init__ pulls the
+    store and embedding layers, which `regin memory --help` must not pay for."""
+    from lib.memory import tree_nav
+    return tree_nav
+
+
 @memory_app.command("recall")
 def cmd_recall(
     query: str = typer.Argument(..., help="What to recall experience about"),
@@ -48,10 +103,49 @@ def cmd_recall(
     fts_only: bool = typer.Option(False, "--fts-only",
                                   help="Skip the dense leg + rerank"),
     json_out: bool = typer.Option(False, "--json"),
+    compact: bool = typer.Option(
+        False, "--compact",
+        help="One inspection line per hit (tier/status/importance/use) instead "
+             "of the agent-facing lead + part index"),
+    session: Optional[str] = _SESSION_OPT,
 ) -> None:
+    """Semantic recall across the whole store.
+
+    Prints what `mcp__memory__recall` returns — the lead of each hit plus an
+    index of what was withheld, which is what makes the `regin memory read <id>
+    --part …` follow-up discoverable without MCP. `--compact` gives the older
+    one-line-per-hit listing for eyeballing the store.
+    """
     import lib.memory as memory
-    hits = memory.recall(query, top_k=top_k, scope=scope,
-                         mode="fts" if fts_only else "auto")
+    tree_nav = tree_nav_module()
+    mode = "fts" if fts_only else "auto"
+    # The kill switch has to be honoured HERE: `memory.recall` itself does not
+    # consult `enabled()`, so reaching it while the subsystem is off would
+    # return real bodies, bump their recall_count, and credit the anti-skip
+    # gate. `--json` keeps its old contract of an empty array rather than a
+    # prose line a consumer's `json.loads` would choke on.
+    if not memory.enabled():
+        print(json.dumps([], indent=2) if json_out else tree_nav.DISABLED)
+        raise typer.Exit(0 if json_out else 1)
+    # One clamp for every output mode, matching `render_recall`'s — otherwise
+    # `--json --top-k 50` returns 50 hits where the default render returns 20.
+    top_k = max(1, min(int(top_k), 20))
+    if not (json_out or compact):
+        rendered = tree_nav.render_recall(query, top_k=top_k, scope=scope or "",
+                                          mode=mode)
+        _walk(session, "recall", rendered, query=query[:120])
+        raise typer.Exit(0 if tree_nav.is_result(rendered) else 1)
+    hits = memory.recall(query, top_k=top_k, scope=scope, mode=mode)
+    # `--session` fingerprints these legs too. Honouring it only on the default
+    # output would make `recall --json --session $SID` a silent no-op, and the
+    # agent that scripted it would then be told it skipped the recall arm.
+    if hits:
+        _fingerprint(session, "recall", query=query[:120])
+    _print_inspection_hits(hits, json_out)
+
+
+def _print_inspection_hits(hits, json_out: bool) -> None:
+    """The `--json` / `--compact` legs: machine rows, or one line per hit."""
     if json_out:
         print(json.dumps([{**h.memory, "score": h.score,
                            "score_kind": h.score_kind} for h in hits], indent=2))
@@ -62,6 +156,61 @@ def cmd_recall(
     for h in hits:
         print(f"[{h.score:.3f} {h.score_kind}]", end="")
         _print_memory_line(h.memory)
+
+
+@memory_app.command("read")
+def cmd_read(
+    memory_id: str = typer.Argument(..., help="Memory id (a unique prefix works)"),
+    part: Optional[str] = typer.Option(
+        None, "--part", help="Section name from the hit's part index, e.g. 'how'"),
+    session: Optional[str] = _SESSION_OPT,
+) -> None:
+    """Read one memory in full — the follow-up to a recall hit whose lead
+    ended in a `⋯ +N chars` index (CLI form of `mcp__memory__memory_read`)."""
+    _walk(session, "read",
+          tree_nav_module().render_memory_read(memory_id, part=part or ""),
+          memory_id=memory_id)
+
+
+@memory_app.command("index-root")
+def cmd_index_root(
+    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    session: Optional[str] = _SESSION_OPT,
+) -> None:
+    """List the top-level topic buckets — step 1 of the tree walk (CLI form of
+    `mcp__memory__index_root`, for harnesses without MCP)."""
+    _walk(session, "index-root",
+          tree_nav_module().render_index_root(scope or ""), scope=scope or "")
+
+
+@memory_app.command("index-expand")
+def cmd_index_expand(
+    node_id: str = typer.Argument(..., help="Topic node id from index-root"),
+    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    session: Optional[str] = _SESSION_OPT,
+) -> None:
+    """Drill into one topic node and list its children — step 2 of the walk."""
+    _walk(session, "index-expand",
+          tree_nav_module().render_index_expand(node_id, scope or ""),
+          node_id=node_id)
+
+
+@memory_app.command("index-fetch")
+def cmd_index_fetch(
+    node_id: str = typer.Argument(..., help="Topic node to read"),
+    top_k: int = typer.Option(10, "--top-k", help="Max memory titles (max 50)"),
+    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    reinforce: bool = typer.Option(
+        True, "--reinforce/--no-reinforce",
+        help="Count as wiki usage; pass --no-reinforce for audit sweeps"),
+    session: Optional[str] = _SESSION_OPT,
+) -> None:
+    """Read a topic node's wiki path, source refs and memory titles — step 3,
+    the leaf. Returns addresses, not contents."""
+    _walk(session, "index-fetch",
+          tree_nav_module().render_index_fetch(
+              node_id, top_k=top_k, scope=scope or "", reinforce=reinforce),
+          node_id=node_id, reinforce=reinforce)
 
 
 def _resolve_subsystem_node(graph: dict, subsystem: Optional[str], task: str,
