@@ -67,11 +67,30 @@ def _engines_for_file(file_path: str, repo_root: str | None) -> list[tuple[RuleE
     """
     matched: list[tuple[RuleEngine, str]] = []
     for engine in rule_engines.all_engines():
+        if not _engine_covers_file(engine, file_path):
+            continue
         for language_id in getattr(engine, 'language_ids', ()):
             if any(file_path.endswith(ext) for ext in _extensions_for_language(language_id, repo_root)):
                 matched.append((engine, language_id))
                 break
     return matched
+
+
+def _engine_covers_file(engine: RuleEngine, file_path: str) -> bool:
+    """Whether this engine is in scope for `file_path` at all.
+
+    Central engines cover everything (per-rule scope is then resolved through
+    `pattern_scope`). An engine loaded from a repo's own `.regin/rules/` is
+    scoped to that repo by construction — its rules describe that codebase's
+    conventions, so they must not fire on files in some other repo. This is
+    engine-level on purpose: `pattern_scope` can only scope rules that link a
+    `guide`, and a repo-shipped rule usually links none.
+    """
+    origin = getattr(engine, 'origin_repo_path', None)
+    if not origin:
+        return True
+    file_real = os.path.realpath(file_path)
+    return file_real == origin or file_real.startswith(origin.rstrip(os.sep) + os.sep)
 
 
 # ── Deferred feedback queue ───────────────────────────────────────────
@@ -230,7 +249,15 @@ def _collect_applicable_rules(
     repo_root: str | None = None
     any_engine_evaluable = False
 
-    def _scope_gate(rule_id, guide: str | None) -> bool:
+    def _scope_gate(engine, rule_id, guide: str | None) -> bool:
+        # A repo-shipped bundle is already scoped to its own repo by
+        # `_engine_covers_file`, and its `guide` names whatever doc the repo
+        # keeps its conventions in — not a regin pattern with deployments.
+        # Running it through `pattern_scope` would demand every repo register
+        # its guides centrally, which is the coupling repo-local rules exist
+        # to avoid.
+        if getattr(engine, 'origin_repo_path', None):
+            return True
         if pattern_scope.pattern_allowed_for_file(guide, file_path):
             return True
         skipped_by_scope.append({
@@ -250,12 +277,24 @@ def _collect_applicable_rules(
             rule_id = getattr(rule, 'id', None) or (
                 rule.get('id') if isinstance(rule, dict) else None
             )
-            if not _scope_gate(rule_id, guide):
+            if not _scope_gate(run_engine, rule_id, guide):
                 continue
             applicable.append((run_engine, rule, guide))
 
     total_rules = sum(engine_rule_totals.values())
     return applicable, total_rules, any_engine_evaluable, repo_root
+
+
+def _root_for_engine(engine: RuleEngine, effective_root: str) -> str:
+    """The `repo_root` this engine's rules should be evaluated against.
+
+    `effective_root` is resolved once per file from whichever engine reported
+    one first, so with several engines in play a repo-shipped bundle could be
+    handed *another* bundle's directory — enough to make a checker that shells
+    out to the project's own toolchain (tsc, eslint) run in the wrong place.
+    An engine that came from a repo always gets that repo.
+    """
+    return getattr(engine, 'origin_repo_path', None) or effective_root
 
 
 def _run_applicable_rules(
@@ -270,7 +309,7 @@ def _run_applicable_rules(
     violations: list[str] = []
     trigger_events: list[dict] = []
     for engine, rule, guide in applicable:
-        v = engine.run(rule, file_path, effective_root)
+        v = engine.run(rule, file_path, _root_for_engine(engine, effective_root))
         match_count = v.match_count if v is not None else 0
         # The engine's per-rule detail (e.g. "aggregate CC=180 (threshold 130)"
         # or the offending function names) is the actionable part — surface it

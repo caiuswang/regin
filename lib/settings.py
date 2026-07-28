@@ -868,6 +868,14 @@ class Settings(BaseSettings):
     # same `id` always win — auto-discovered entries only fill gaps.
     bundle_autoload: bool = True
 
+    # When true, also scan every *registered* repo's `.regin/rules/` for
+    # bundles the repo ships itself, so a rule pack can travel with the code
+    # it governs. Discovery alone never executes anything: a repo bundle runs
+    # only after `regin rules trust`, keyed to a fingerprint of its checker
+    # code (see `lib/rule_engines/bundle_trust.py`). Set false to ignore
+    # repo-shipped rules entirely.
+    repo_bundle_autoload: bool = True
+
     # Config-only language→file-extension overrides for the PostToolUse
     # rule gate (hook_manager/handlers/rule_check.py). Maps a language id
     # to the file extensions (leading dot, e.g. ".kt") that identify it.

@@ -25,6 +25,7 @@ def api_rule_engines():
             rule_count = len(engine.parse_rules())
         except Exception:
             rule_count = 0
+        origin_repo = getattr(engine, 'origin_repo_name', None)
         payload.append({
             'id': engine.id,
             'kind': engine.kind,
@@ -32,6 +33,12 @@ def api_rule_engines():
             'rule_count': rule_count,
             'invocation_hint': _invocation_hint_for(engine),
             'install_hint': _install_hint_for(engine),
+            # Where the rules live, and — for repo-shipped ones — whether
+            # they may execute. A central engine is always `trusted`; it
+            # came from config the user controls, not from a cloned repo.
+            'origin': origin_repo or 'central',
+            'origin_repo': origin_repo,
+            'trusted': bool(getattr(engine, 'trusted', True)),
         })
     return jsonify(payload)
 

@@ -87,6 +87,9 @@ def create_app():
     from web.blueprints.repos import repos_bp
     app.register_blueprint(repos_bp)
 
+    from web.blueprints.repo_bundles import repo_bundles_bp
+    app.register_blueprint(repo_bundles_bp)
+
     # ── Meta / dashboard (extracted to blueprint) ────────────────
     from web.blueprints.meta import meta_bp
     app.register_blueprint(meta_bp)

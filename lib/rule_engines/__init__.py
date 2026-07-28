@@ -21,7 +21,10 @@ from lib.logging_setup import get_logger
 from lib.rule_engines.base import Rule, RuleEngine, Violation
 from lib.rule_engines.bundle import BundleEngine
 from lib.rule_engines.grit import GritEngine
-from lib.rule_engines.manifest import discover_bundles, load_manifest, manifest_path
+from lib.rule_engines import bundle_trust
+from lib.rule_engines.manifest import (
+    discover_bundles, discover_repo_bundles, load_manifest, manifest_path,
+)
 from lib.rule_engines.radon_engine import RadonEngine
 # Resolve `settings` dynamically (via the module) each call — tests
 # monkeypatch `lib.settings.settings` and `reload_settings()` can swap it.
@@ -114,6 +117,80 @@ def _discovered_bundle_engines(already_taken_ids: set[str]) -> dict[str, RuleEng
     return out
 
 
+def _registered_repos() -> list[tuple[str, str]]:
+    """`(name, path)` for every registered repo whose path still exists.
+
+    Registration is half the trust boundary for repo-shipped rules: regin
+    only looks for `.regin/rules/` inside repos the user added on purpose,
+    never in arbitrary directories it happens to edit files in.
+    """
+    try:
+        from sqlmodel import select
+
+        from lib.orm import SessionLocal
+        from lib.orm.models import Repo
+
+        with SessionLocal() as session:
+            repos = session.exec(select(Repo)).all()
+    except Exception:
+        # No DB yet (fresh install, tests with no ORM) — repo bundles are
+        # simply unavailable; central bundles keep working.
+        _log.debug('rule_engines.repo_bundles.repo_lookup_failed', exc_info=True)
+        return []
+    import os as _os
+    return [
+        (repo.name, repo.path) for repo in repos
+        if repo.path and _os.path.isdir(repo.path)
+    ]
+
+
+def _repo_bundle_engine(engine_id: str, bundle_root: Path, manifest,
+                        repo_name: str, repo_path: str) -> RuleEngine:
+    """Build one repo-shipped bundle engine, resolving its trust state."""
+    current = bundle_trust.fingerprint(bundle_root, manifest)
+    return BundleEngine(
+        id=engine_id,
+        bundle_root=bundle_root,
+        manifest=manifest,
+        # Triggers in a repo-shipped bundle are written against the repo
+        # ("server/**/*.ts"), so the repo is what paths must be relative to.
+        # Leaving the default (the bundle root, three levels down inside
+        # `.regin/rules/<id>/`) would turn every path into `../../../…` and
+        # silently stop such triggers from ever matching.
+        project_root=repo_path,
+        origin_repo_path=repo_path,
+        origin_repo_name=repo_name,
+        trusted=bundle_trust.is_trusted(repo_path, manifest.id, current),
+    )
+
+
+def _repo_bundle_engines(already_taken_ids: set[str]) -> dict[str, RuleEngine]:
+    """Discover bundles that registered repos ship in `<repo>/.regin/rules/`.
+
+    Engine ids are namespaced `<repo-name>:<bundle-id>` so two repos can ship
+    a bundle of the same name, and so trace tags name the origin. An
+    untrusted bundle is still loaded — it must be, for the UI to offer the
+    trust decision — but `BundleEngine.run` refuses to execute it.
+    """
+    s = _current_settings()
+    if not s.repo_bundle_autoload:
+        return {}
+    out: dict[str, RuleEngine] = {}
+    for repo_name, repo_path in _registered_repos():
+        for bundle_root, manifest in discover_repo_bundles(repo_path):
+            engine_id = f'{repo_name}:{manifest.id}'
+            if engine_id in already_taken_ids or engine_id in out:
+                _log.info(
+                    'rule_engines.repo_bundle.skipped_collision',
+                    bundle=str(bundle_root), id=engine_id,
+                )
+                continue
+            out[engine_id] = _repo_bundle_engine(
+                engine_id, bundle_root, manifest, repo_name, repo_path,
+            )
+    return out
+
+
 def _load_engines() -> dict[str, RuleEngine]:
     configured = [c for c in _current_settings().rule_engines if c.enabled]
     engines: dict[str, RuleEngine] = {}
@@ -135,6 +212,7 @@ def _load_engines() -> dict[str, RuleEngine]:
             )
     discovered = _discovered_bundle_engines(set(engines.keys()))
     engines.update(discovered)
+    engines.update(_repo_bundle_engines(set(engines.keys())))
     return engines
 
 

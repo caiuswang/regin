@@ -30,6 +30,8 @@ _log = get_logger(__name__)
 
 SCHEMA_ID = 'rule-bundle/v1'
 MANIFEST_NAMES = ('regin-bundle.yaml', 'regin-bundle.yml', 'regin-bundle.json')
+# Where a repo ships rule bundles it owns, relative to the repo root.
+REPO_RULES_RELDIR = os.path.join('.regin', 'rules')
 BUNDLE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]*$')
 
 
@@ -137,6 +139,28 @@ def discover_bundles(patterns_dir: Path) -> Iterator[tuple[Path, BundleManifest]
             )
             continue
         yield entry, manifest
+
+
+def repo_rules_dir(repo_root: Path | str) -> Path:
+    """The directory a repo ships its own rule bundles in."""
+    return Path(repo_root) / REPO_RULES_RELDIR
+
+
+def discover_repo_bundles(repo_root: Path | str) -> Iterator[tuple[Path, BundleManifest]]:
+    """Yield `(bundle_root, manifest)` for bundles a repo ships itself.
+
+    Same layout and manifest contract as `discover_bundles`, but rooted at
+    `<repo>/.regin/rules/` so a rule pack travels with the repo it governs
+    (version-controlled, team-shared) instead of living in the user's global
+    `patterns_dir`.
+
+    Discovery is deliberately separate from *execution*: a repo-shipped
+    bundle names a runner script, so loading one without a trust decision
+    would let any cloned repo run code on the next edit. The registry gates
+    execution through `lib.rule_engines.bundle_trust`; this function only
+    reports what a repo declares.
+    """
+    yield from discover_bundles(repo_rules_dir(repo_root))
 
 
 # ── Scaffold ────────────────────────────────────────────────────────────

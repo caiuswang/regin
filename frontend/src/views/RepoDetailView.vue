@@ -4,15 +4,53 @@ import { useRoute } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
+import Button from '../components/ui/Button.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
 
 const route = useRoute()
 const data = ref(null)
 const loading = ref(true)
+const bundles = ref([])
+const busyBundle = ref('')
+
+async function loadBundles() {
+  try {
+    const resp = await api.get(`/repos/${route.params.name}/bundles`)
+    bundles.value = resp.bundles || []
+  } catch {
+    bundles.value = []
+  }
+}
+
+// Trust is what lets a repo-shipped bundle actually run; until then regin
+// only lists its rules. Re-fetch after toggling so a stale fingerprint
+// (checker edited since approval) can't linger in the table.
+async function setTrust(bundle, trusted) {
+  busyBundle.value = bundle.bundle_id
+  const url = `/repos/${route.params.name}/bundles/${bundle.bundle_id}/trust`
+  try {
+    if (trusted) await api.post(url, {})
+    else await api.del(url)
+    await loadBundles()
+  } finally {
+    busyBundle.value = ''
+  }
+}
+
+function trustColor(bundle) {
+  if (bundle.trusted) return 'green'
+  return bundle.code_changed ? 'red' : 'gray'
+}
+
+function trustLabel(bundle) {
+  if (bundle.trusted) return 'trusted'
+  return bundle.code_changed ? 'code changed' : 'not trusted'
+}
 
 onMounted(async () => {
   data.value = await api.get(`/repos/${route.params.name}`)
   loading.value = false
+  await loadBundles()
 })
 </script>
 
@@ -67,6 +105,48 @@ onMounted(async () => {
               </router-link>
             </td>
             <td><Badge color="purple" :label="p.category" /></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+    </Card>
+
+    <h2 class="section-heading">Rule bundles ({{ bundles.length }})</h2>
+    <Card :no-padding="true" class="mb-6">
+      <div class="overflow-x-auto">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Bundle</th>
+            <th style="width: 10rem">Languages</th>
+            <th style="width: 9rem">Code</th>
+            <th style="width: 8rem">Status</th>
+            <th style="width: 8rem"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="b in bundles" :key="b.bundle_id">
+            <td>
+              <div class="font-medium">{{ b.engine_id }}</div>
+              <div class="cell-sub">{{ b.root }}</div>
+            </td>
+            <td>{{ b.languages.join(', ') }}</td>
+            <td><code class="cell-code">{{ b.fingerprint }}</code></td>
+            <td><Badge :color="trustColor(b)" :label="trustLabel(b)" /></td>
+            <td>
+              <Button size="sm" :variant="b.trusted ? 'secondary' : 'primary'"
+                :disabled="busyBundle === b.bundle_id"
+                @click="setTrust(b, !b.trusted)">
+                {{ b.trusted ? 'Untrust' : 'Trust' }}
+              </Button>
+            </td>
+          </tr>
+          <tr v-if="!bundles.length">
+            <td colspan="5" class="empty-state">
+              This repo ships no rule bundles. Add one at
+              <code class="cell-code">.regin/rules/&lt;id&gt;/regin-bundle.yaml</code>
+              to keep its conventions with the code.
+            </td>
           </tr>
         </tbody>
       </table>

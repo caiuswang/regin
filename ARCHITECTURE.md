@@ -226,6 +226,17 @@ On every edit the PostToolUse handler (`hook_manager/handlers/rule_check.py`) ro
 
 Deep dive — the adapter Protocol, the three-source registry precedence, the Grit/Bundle/Radon adapters, `@rule triggers=` matching, the in-tree `example/rule/` bundles, and the add-an-engine / add-a-language playbook: **[`.regin/topics/wiki/rule-engine-design.md`](.regin/topics/wiki/rule-engine-design.md)**.
 
+### Repo-shipped bundles
+
+A repo can carry its own rule pack at `<repo>/.regin/rules/<id>/` (same `rule-bundle/v1` manifest as a central bundle), so conventions travel with the code they govern instead of living in one user's `patterns_dir`. Discovery covers every **registered** repo and yields an engine id namespaced `<repo-name>:<bundle-id>`; `settings.repo_bundle_autoload` turns the whole mechanism off.
+
+Two properties make this safe and useful where a plain `rule_engines` overlay would not be:
+
+- **Trust gate** (`lib/rule_engines/bundle_trust.py`). A bundle names a runner script, so discovery alone never executes anything — regin parses and lists the rules, and runs them only after `regin rules trust <repo>` (or the Trust button on the repo page). Approval is keyed to a fingerprint of the bundle's *code* (runner + `checkers/`), not its rule data: editing a threshold in `rules/*.json` keeps trust, while a `git pull` that changes a checker drops the bundle back to discovered-only until re-approved.
+- **Repo scope**. A repo engine only sees files inside its own repo (`_engine_covers_file`), its rules are anchored at the repo root so `server/**/*.ts`-style triggers mean what they say, and they bypass `pattern_scope` — a repo's `guide` names its own doc, not a centrally deployed pattern. `_root_for_engine` likewise hands it its own repo as `repo_root`, so a checker that shells out to the project's toolchain runs in the right place.
+
+`GET /api/repos/<name>/bundles` lists them with trust state; POST/DELETE on `…/bundles/<id>/trust` toggles it.
+
 ## Frontend Stack
 
 - **Vue 3** (Composition API, `<script setup>`) + **Vue Router**

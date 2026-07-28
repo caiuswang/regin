@@ -9,6 +9,9 @@ contract that matches the one already used by `frontend-ux-runner.mjs`:
     stdin:  {"repo_root": str, "file_path": str, "rule": {...}}
     stdout: {"matches": int, "details": [str, ...]}
 
+A runner is spawned with cwd set to the *bundle* root, so a relative
+`file_path` is the caller's to resolve against `repo_root` — never cwd.
+
 The runner may be written in Node, Python, or Bash — `manifest.runner.kind`
 selects the interpreter. Beyond that, the engine is intentionally generic:
 it doesn't know what the bundle's checkers do, only how to feed them a
@@ -45,11 +48,24 @@ class BundleEngine:
     def __init__(self, *, id: str, bundle_root: str | Path,
                  manifest: BundleManifest,
                  project_root: str | Path | None = None,
-                 external_runner_path: str | Path | None = None) -> None:
+                 external_runner_path: str | Path | None = None,
+                 origin_repo_path: str | Path | None = None,
+                 origin_repo_name: str | None = None,
+                 trusted: bool = True) -> None:
         self.id = id
         self.bundle_root = Path(bundle_root).resolve()
         self.manifest = manifest
         self.language_ids = tuple(manifest.language_ids)
+        # Set when the bundle ships inside a repo (`<repo>/.regin/rules/`)
+        # rather than the user's global patterns dir. Two consequences:
+        # the hook only selects this engine for files inside that repo
+        # (see `rule_check._engines_for_file`), and `run()` refuses to
+        # execute until the user trusts the bundle's code.
+        self.origin_repo_path = (
+            os.path.realpath(str(origin_repo_path)) if origin_repo_path else None
+        )
+        self.origin_repo_name = origin_repo_name
+        self.trusted = trusted
         # `project_root` is what parse-time `Rule.source_file` is computed
         # relative to. For a bundle living under the user's regin patterns
         # dir, the bundle root is the natural anchor — rules are global,
@@ -198,18 +214,40 @@ class BundleEngine:
 
     def run(self, rule: Rule | dict, file_path: str,
             repo_root: str) -> Violation | None:
+        # An untrusted repo-shipped bundle is parsed and listed but never
+        # executed — see `lib.rule_engines.bundle_trust`.
+        if not self.trusted:
+            return None
         rule_dict = self._as_dict(rule)
+        entry = self._runner_entry()
+        if entry is None:
+            return None
+        result = self._invoke_runner(entry, self._payload_for(rule_dict, file_path, repo_root))
+        if result is None:
+            return None
+        matches = int(result.get('matches') or 0)
+        if matches <= 0:
+            return None
+        details = result.get('details') or []
+        return Violation(
+            rule_id=rule_dict['id'],
+            file_path=file_path,
+            match_count=matches,
+            detail='; '.join(str(d) for d in details[:3]) if details else None,
+        )
+
+    def _runner_entry(self) -> Path | None:
+        """The script `run()` executes, or None when it can't be resolved."""
         if self.external_runner_path is not None:
-            if not self.external_runner_path.is_file():
-                return None
-            entry = self.external_runner_path
-        else:
-            try:
-                entry = resolve_runner_entry(self.bundle_root, self.manifest.runner.entry)
-            except ValueError:
-                return None
-        argv = self._argv_for(entry)
-        payload = {
+            return self.external_runner_path if self.external_runner_path.is_file() else None
+        try:
+            return resolve_runner_entry(self.bundle_root, self.manifest.runner.entry)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _payload_for(rule_dict: dict, file_path: str, repo_root: str) -> dict:
+        return {
             'repo_root': repo_root,
             'file_path': file_path,
             'rule': {
@@ -222,9 +260,12 @@ class BundleEngine:
                 },
             },
         }
+
+    def _invoke_runner(self, entry: Path, payload: dict) -> dict | None:
+        """Run the bundle's runner on one payload; None on any failure."""
         try:
             proc = subprocess.run(
-                argv,
+                self._argv_for(entry),
                 cwd=str(self.bundle_root),
                 input=json.dumps(payload),
                 capture_output=True,
@@ -236,20 +277,10 @@ class BundleEngine:
         if proc.returncode != 0:
             return None
         try:
-            result = json.loads(proc.stdout or '{}')
+            parsed = json.loads(proc.stdout or '{}')
         except json.JSONDecodeError:
             return None
-        matches = int(result.get('matches') or 0)
-        if matches <= 0:
-            return None
-        details = result.get('details') or []
-        detail = '; '.join(str(d) for d in details[:3]) if details else None
-        return Violation(
-            rule_id=rule_dict['id'],
-            file_path=file_path,
-            match_count=matches,
-            detail=detail,
-        )
+        return parsed if isinstance(parsed, dict) else None
 
     def _argv_for(self, entry: Path) -> list[str]:
         kind = self.manifest.runner.kind

@@ -272,3 +272,108 @@ def cmd_rules_list(
             print(f"  {rule.id} [{rule.severity}] checker={checker} source={source_file}")
         else:
             print(f"  {rule.id} [{rule.severity}] source={source_file}")
+
+
+# ── Repo-shipped bundles ───────────────────────────────────────────────
+#
+# A repo may ship its own rule pack under `<repo>/.regin/rules/<id>/`. regin
+# discovers those for every registered repo but refuses to execute one until
+# it is trusted, because a bundle names a runner script — see
+# `lib/rule_engines/bundle_trust.py` for the fingerprint boundary.
+
+
+def _resolve_repo(target: str) -> tuple[str, str]:
+    """Map a repo name or path to `(name, path)`, exiting if unregistered."""
+    from sqlmodel import select
+
+    from lib.orm import SessionLocal
+    from lib.orm.models import Repo
+
+    real = os.path.realpath(os.path.expanduser(target)).rstrip(os.sep)
+    with SessionLocal() as session:
+        repos = session.exec(select(Repo)).all()
+    for repo in repos:
+        if repo.name == target:
+            return repo.name, repo.path
+        if repo.path and os.path.realpath(repo.path).rstrip(os.sep) == real:
+            return repo.name, repo.path
+    print(f"Not a registered repo: {target}")
+    print("Register it first with `regin repo add <path>`.")
+    raise typer.Exit(1)
+
+
+def _repo_bundles(repo_path: str) -> list:
+    """`(bundle_root, manifest)` pairs the repo ships, as a list."""
+    from lib.rule_engines.manifest import discover_repo_bundles
+
+    return list(discover_repo_bundles(repo_path))
+
+
+def _trust_label(state: dict) -> str:
+    if state["trusted"]:
+        return "trusted"
+    if state["code_changed"]:
+        return "CODE CHANGED — re-trust required"
+    return "untrusted (discovered only, not executed)"
+
+
+@rules_app.command("bundles", help="List rule bundles a repo ships in .regin/rules/")
+def cmd_rules_bundles(
+    repo: str = typer.Argument(..., help="Registered repo name or path"),
+) -> None:
+    from lib.rule_engines import bundle_trust
+
+    name, path = _resolve_repo(repo)
+    found = _repo_bundles(path)
+    if not found:
+        print(f"{name}: no bundles under .regin/rules/")
+        return
+    print(f"{name} ({path}):")
+    for bundle_root, manifest in found:
+        fingerprint = bundle_trust.fingerprint(bundle_root, manifest)
+        state = bundle_trust.describe(path, manifest.id, fingerprint)
+        print(f"  {name}:{manifest.id}  [{_trust_label(state)}]")
+        print(f"    languages: {', '.join(manifest.language_ids)}")
+        print(f"    root:      {bundle_root}")
+        print(f"    code:      {fingerprint[:12]}")
+
+
+@rules_app.command("trust", help="Allow a repo's own rule bundles to execute")
+def cmd_rules_trust(
+    repo: str = typer.Argument(..., help="Registered repo name or path"),
+    bundle: Optional[str] = typer.Option(
+        None, "--bundle", help="Only this bundle id (default: every bundle in the repo)",
+    ),
+) -> None:
+    from lib.rule_engines import bundle_trust
+
+    name, path = _resolve_repo(repo)
+    targets = [
+        (root, manifest) for root, manifest in _repo_bundles(path)
+        if bundle is None or manifest.id == bundle
+    ]
+    if not targets:
+        print(f"{name}: nothing to trust (no matching bundle under .regin/rules/)")
+        raise typer.Exit(1)
+    for bundle_root, manifest in targets:
+        fingerprint = bundle_trust.fingerprint(bundle_root, manifest)
+        bundle_trust.trust(path, manifest.id, fingerprint)
+        print(f"trusted {name}:{manifest.id}  code={fingerprint[:12]}")
+    print("Their checkers now run on edits inside this repo.")
+
+
+@rules_app.command("untrust", help="Revoke execution trust for a repo's rule bundles")
+def cmd_rules_untrust(
+    repo: str = typer.Argument(..., help="Registered repo name or path"),
+    bundle: Optional[str] = typer.Option(
+        None, "--bundle", help="Only this bundle id (default: every bundle in the repo)",
+    ),
+) -> None:
+    from lib.rule_engines import bundle_trust
+
+    name, path = _resolve_repo(repo)
+    removed = bundle_trust.untrust(path, bundle)
+    if not removed:
+        print(f"{name}: nothing was trusted")
+        return
+    print(f"untrusted {removed} bundle(s) for {name}; they are now discovered but not executed")
