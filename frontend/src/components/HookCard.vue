@@ -18,13 +18,23 @@ const props = defineProps({
   expectedCommands: { type: Object, default: () => ({}) },
   staleEvents: { type: Array, default: () => [] },
   missingEvents: { type: Array, default: () => [] },
+  // Events routed to a *different* regin checkout. Ownership is scoped to
+  // this one, so those read as "not installed" — and Install would add a
+  // second entry beside them, leaving both to fire.
+  foreignEvents: { type: Array, default: () => [] },
+  foreignRoots: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['toggle', 'refresh'])
+const emit = defineEmits(['toggle', 'refresh', 'adopt'])
 
 const showWiring = ref(false)
 
+const foreign = computed(() => props.foreignEvents.length > 0)
+
+const foreignWhere = computed(() => props.foreignRoots.join(', ') || 'another checkout')
+
 const state = computed(() => {
+  if (foreign.value) return { color: 'yellow', label: 'Other checkout' }
   if (!props.installed) return { color: 'gray', label: 'Not installed' }
   return props.stale
     ? { color: 'yellow', label: 'Needs repair' }
@@ -65,16 +75,21 @@ const eventRows = computed(() => {
             @click="showWiring = !showWiring"
           >{{ showWiring ? 'Hide' : 'Show' }} commands</Button>
         </div>
-        <p v-if="stale && !loading" class="text-xs text-amber-700 mt-1">
+        <p v-if="foreign && !loading" class="text-xs text-amber-700 mt-1">
+          {{ foreignEvents.join(', ') }} runs out of {{ foreignWhere }} — installing here would add a
+          second entry beside it, and both would fire. Adopt takes it over.
+        </p>
+        <p v-else-if="stale && !loading" class="text-xs text-amber-700 mt-1">
           The installed command is not the one regin writes today. Refresh to rewrite it.
         </p>
       </div>
       <div v-if="installed !== null && !loading" class="flex gap-2 shrink-0">
+        <Button v-if="foreign" variant="primary" size="sm" @click="emit('adopt')">Adopt</Button>
         <template v-if="installed">
           <Button :variant="stale ? 'primary' : 'secondary'" size="sm" @click="emit('refresh')">Refresh</Button>
           <Button variant="secondary" size="sm" @click="emit('toggle')">Remove</Button>
         </template>
-        <Button v-else variant="primary" size="sm" @click="emit('toggle')">Install</Button>
+        <Button v-else-if="!foreign" variant="primary" size="sm" @click="emit('toggle')">Install</Button>
       </div>
     </div>
 

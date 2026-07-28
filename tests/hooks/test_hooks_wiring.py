@@ -110,6 +110,198 @@ def test_foreign_checkout_command_is_not_ours(claude):
     assert status['hook_manager']['installed'] is False
 
 
+# ── another checkout's entries (CAI-26) ──────────────────────
+
+_FOREIGN_MANAGER = '/other/regin/.venv/bin/python -P -m hook_manager PostToolUse --agent-type claude'
+_FOREIGN_DEBUG = '/other/regin/.venv/bin/python /other/regin/scripts/hook_payload_debug.py'
+
+
+def test_foreign_checkout_is_reported_with_its_root(claude):
+    """A *moved* checkout looks exactly like a second one, and reads as
+    not-installed — so without this state doctor advises `hooks install`,
+    which adds a second entry beside the old one and both then fire."""
+    provider, path = claude
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER}]},
+    ]})
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['installed'] is False
+    assert status['foreign_events'] == ['PostToolUse']
+    assert status['foreign_roots'] == ['/other/regin']
+    assert status['foreign_commands']['PostToolUse'] == [_FOREIGN_MANAGER]
+
+
+def test_foreign_entry_beside_a_healthy_install_is_still_reported(claude):
+    provider, path = claude
+    hooks_wiring.install_hook_manager(provider, path)
+    data = json.load(open(path))
+    data['hooks']['PostToolUse'].append({'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER}]})
+    with open(path, 'w') as f:
+        json.dump(data, f)
+
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['installed'] is True
+    assert status['stale'] is False  # ours is fine; theirs is not ours to repair
+    assert status['foreign_events'] == ['PostToolUse']
+
+
+def test_install_leaves_a_foreign_entry_firing_beside_ours(claude):
+    """The defect CAI-26 names, pinned: install is not a fix for this state."""
+    provider, path = claude
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER}]},
+    ]})
+    hooks_wiring.install_hook_manager(provider, path)
+    commands = [h['command'] for entry in json.load(open(path))['hooks']['PostToolUse']
+                for h in entry['hooks']]
+    assert _FOREIGN_MANAGER in commands
+    assert len(commands) == 2
+
+
+def test_adopt_replaces_a_foreign_entry_with_ours(claude):
+    provider, path = claude
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER}]},
+    ]})
+    result = hooks_wiring.adopt_hook_manager(provider, path)
+    assert result['ok'] is True
+    assert result['adopted'] == 1
+    assert '/other/regin' in result['msg']
+
+    commands = [h['command'] for entry in json.load(open(path))['hooks']['PostToolUse']
+                for h in entry['hooks']]
+    assert commands == [hooks_wiring.expected_hook_manager_commands(provider)['PostToolUse']]
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['foreign_events'] == []
+    assert status['stale'] is False
+
+
+def test_adopt_is_a_noop_without_foreign_entries(claude):
+    provider, path = claude
+    hooks_wiring.install_hook_manager(provider, path)
+    before = open(path).read()
+    result = hooks_wiring.adopt_hook_manager(provider, path)
+    assert result['adopted'] == 0
+    assert 'No entries from another checkout' in result['msg']
+    assert open(path).read() == before
+
+
+def test_adopt_hook_manager_leaves_a_foreign_debug_entry_alone(claude):
+    """Adopt is scoped to one hook, like every other writer here — taking over
+    the router must not silently claim the other checkout's debug logger."""
+    provider, path = claude
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER},
+                   {'type': 'command', 'command': _FOREIGN_DEBUG}]},
+    ]})
+    hooks_wiring.adopt_hook_manager(provider, path)
+    commands = [h['command'] for entry in json.load(open(path))['hooks']['PostToolUse']
+                for h in entry['hooks']]
+    assert _FOREIGN_DEBUG in commands
+    assert _FOREIGN_MANAGER not in commands
+
+
+def test_adopt_debug_hook_takes_over_the_debug_entry(claude):
+    provider, path = claude
+    _write_json_hooks(path, {'UserPromptSubmit': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN_DEBUG}]},
+    ]})
+    result = hooks_wiring.adopt_debug_hook(provider, path)
+    assert result['adopted'] == 1
+    status = hooks_wiring.wiring_status(provider, path)['debug']
+    assert status['foreign_events'] == []
+    assert status['installed'] is True
+
+
+def test_adopt_refuses_an_unparseable_settings_file(claude):
+    provider, path = claude
+    original = '{"model": "opus",}'
+    with open(path, 'w') as f:
+        f.write(original)
+    result = hooks_wiring.adopt_hook_manager(provider, path)
+    assert result['ok'] is False
+    assert open(path).read() == original
+
+
+def test_kimi_foreign_entry_is_reported_and_adoptable(kimi):
+    provider, path = kimi
+    with open(path, 'w') as f:
+        f.write('[[hooks]]\nevent = "PostToolUse"\n'
+                f'command = "{_FOREIGN_MANAGER}"\ntimeout = 60\n')
+
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['installed'] is False
+    assert status['foreign_events'] == ['PostToolUse']
+    assert status['foreign_roots'] == ['/other/regin']
+
+    assert hooks_wiring.adopt_hook_manager(provider, path)['adopted'] == 1
+    assert _FOREIGN_MANAGER not in open(path).read()
+    after = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert after['installed'] is True
+    assert after['foreign_events'] == []
+
+
+# ── timeout drift (CAI-26) ───────────────────────────────────
+
+def test_drifted_timeout_reads_stale_and_is_repaired(claude):
+    """A command-only comparison calls this healthy, so the hook keeps being
+    killed at the old limit with every surface reporting `ok`."""
+    provider, path = claude
+    expected = hooks_wiring.expected_hook_manager_commands(provider)['PostToolUse']
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': expected, 'timeout': 5}]},
+    ]})
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['timeouts']['PostToolUse'] == [5]
+    assert status['expected_timeout'] == hooks_wiring.HOOK_MANAGER_TIMEOUT
+    assert status['timeout_drift_events'] == ['PostToolUse']
+    assert status['stale_events'] == ['PostToolUse']
+
+    hooks_wiring.install_hook_manager(provider, path)
+    after = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert after['timeouts']['PostToolUse'] == [hooks_wiring.HOOK_MANAGER_TIMEOUT]
+    assert after['stale'] is False
+
+
+def test_missing_timeout_is_not_drift(claude):
+    """The agent applies its own default there, so an entry predating the
+    timeout key behaves correctly — calling it stale is noise, not a finding."""
+    provider, path = claude
+    expected = hooks_wiring.expected_hook_manager_commands(provider)['PostToolUse']
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': expected}]},
+    ]})
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['timeout_drift_events'] == []
+    assert status['stale_events'] == []
+
+
+def test_drifted_debug_timeout_uses_the_debug_limit(claude):
+    provider, path = claude
+    _write_json_hooks(path, {'UserPromptSubmit': [
+        {'hooks': [{'type': 'command', 'command': hooks_wiring.debug_hook_command(provider),
+                    'timeout': 60}]},
+    ]})
+    status = hooks_wiring.wiring_status(provider, path)['debug']
+    assert status['expected_timeout'] == hooks_wiring.DEBUG_TIMEOUT
+    assert status['timeout_drift_events'] == ['UserPromptSubmit']
+
+    hooks_wiring.install_debug_hook(provider, path)
+    assert hooks_wiring.wiring_status(provider, path)['debug']['timeout_drift_events'] == []
+
+
+def test_kimi_timeout_drift_is_visible(kimi):
+    provider, path = kimi
+    command = hooks_wiring.hook_manager_command('PostToolUse', provider)
+    with open(path, 'w') as f:
+        f.write(f'[[hooks]]\nevent = "PostToolUse"\ncommand = "{command}"\ntimeout = 5\n')
+
+    status = hooks_wiring.wiring_status(provider, path)['hook_manager']
+    assert status['timeout_drift_events'] == ['PostToolUse']
+    hooks_wiring.install_hook_manager(provider, path)
+    assert hooks_wiring.wiring_status(provider, path)['hook_manager']['timeout_drift_events'] == []
+
+
 # ── the CAI-15 shape: a debug hook missing --silent ──────────
 
 def test_kimi_debug_hook_without_silent_is_stale_and_repairable(kimi):

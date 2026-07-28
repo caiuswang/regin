@@ -66,7 +66,8 @@ function refreshHook(providerId, name) {
     <p class="sv-section-desc">
       Install Hook Manager separately for each provider. The debug hook is optional and only logs raw payloads.
       A card marked <em>Needs repair</em> is routed to a command regin no longer writes — <strong>Refresh</strong> rewrites it
-      (the CLI equivalent is <code>regin hooks repair</code>).
+      (the CLI equivalent is <code>regin hooks repair</code>). One marked <em>Other checkout</em> is routed to a different
+      regin directory — <strong>Adopt</strong> takes it over (<code>regin hooks adopt</code>).
     </p>
   </div>
 
@@ -97,8 +98,11 @@ function refreshHook(providerId, name) {
           :expected-commands="provider[h.key]?.expected_commands ?? {}"
           :stale-events="provider[h.key]?.stale_events ?? []"
           :missing-events="provider[h.key]?.missing_events ?? []"
+          :foreign-events="provider[h.key]?.foreign_events ?? []"
+          :foreign-roots="provider[h.key]?.foreign_roots ?? []"
           @toggle="toggleHook(provider, h.key)"
           @refresh="refreshHook(provider.id, h.key)"
+          @adopt="run(provider.id, h.key, 'adopt')"
         />
       </div>
     </Card>

@@ -75,3 +75,47 @@ test('stale wiring reads Needs repair and explains the fix', async ({ page }) =>
   await expect(card.getByText('stale')).toBeVisible()
   await expect(card.locator('pre').last()).toContainText('--agent-type claude')
 })
+
+test('another checkout offers Adopt instead of Install (CAI-26)', async ({ page }) => {
+  // A moved checkout reads as not-installed, so the card used to offer only
+  // Install — which adds a second entry beside the old one, both then firing.
+  await page.route('**/api/hooks', async route => {
+    await route.fulfill({
+      json: {
+        providers: [{
+          id: 'claude',
+          name: 'Claude Code',
+          active: true,
+          hooks_supported: true,
+          hook_settings_path: '/tmp/claude-settings.json',
+          hook_manager: {
+            installed: false,
+            stale: false,
+            target: 'claude',
+            routed_events: [],
+            commands: {},
+            expected_commands: {},
+            stale_events: [],
+            missing_events: [],
+            foreign_events: ['PostToolUse'],
+            foreign_roots: ['/old/regin'],
+          },
+          debug: {
+            installed: false, stale: false, target: 'claude', routed_events: [],
+            commands: {}, expected_commands: {}, stale_events: [], missing_events: [],
+            foreign_events: [], foreign_roots: [],
+          },
+        }],
+        hook_manager: { installed: false, stale: false, target: 'claude' },
+        debug: { installed: false, stale: false, target: 'claude' },
+      },
+    })
+  })
+
+  await page.goto(ROUTE)
+  const card = page.locator('.card', { hasText: 'Installs the unified hook dispatcher' }).last()
+  await expect(card.getByText('Other checkout')).toBeVisible()
+  await expect(card.getByText(/runs out of \/old\/regin/)).toBeVisible()
+  await expect(card.getByRole('button', { name: 'Adopt' })).toBeVisible()
+  await expect(card.getByRole('button', { name: 'Install' })).toHaveCount(0)
+})

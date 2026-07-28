@@ -491,7 +491,8 @@ class _StubProvider:
         hooks = True
 
 
-def _wiring(installed=False, stale=False, routed=(), stale_events=(), missing=()):
+def _wiring(installed=False, stale=False, routed=(), stale_events=(), missing=(),
+            foreign=(), foreign_roots=()):
     return {
         "installed": installed,
         "stale": stale,
@@ -499,6 +500,8 @@ def _wiring(installed=False, stale=False, routed=(), stale_events=(), missing=()
         "stale_events": list(stale_events),
         "missing_events": list(missing),
         "malformed_events": [],
+        "foreign_events": list(foreign),
+        "foreign_roots": list(foreign_roots),
     }
 
 
@@ -576,6 +579,34 @@ def test_wiring_item_missing_debug_hook_is_optional():
 def test_wiring_item_inactive_provider_router_is_optional():
     item = doctor._wiring_item(_StubProvider(), "hook_manager", _wiring(), active=False)
     assert item["optional"] is True
+
+
+def test_wiring_item_foreign_checkout_points_at_adopt_not_install():
+    """The CAI-26 shape: a moved checkout reads as not-installed, and advising
+    `hooks install` there adds a second entry that fires alongside the old."""
+    item = doctor._wiring_item(
+        _StubProvider(), "hook_manager",
+        _wiring(foreign=("Stop",), foreign_roots=("/old/regin",)), active=True)
+    assert item["present"] is False
+    assert item["status_text"] == "other checkout"
+    assert "regin hooks adopt --provider claude`" in item["install_hint"]
+    assert "/old/regin" in item["install_hint"]
+    assert "hooks install" not in item["install_hint"]
+
+
+def test_wiring_item_foreign_beside_a_healthy_install_still_reports():
+    item = doctor._wiring_item(
+        _StubProvider(), "hook_manager",
+        _wiring(installed=True, routed=("Stop",), foreign=("Stop",)), active=True)
+    assert item["present"] is False
+    assert item["status_text"] == "other checkout"
+
+
+def test_wiring_item_foreign_debug_scopes_the_adopt_flag():
+    item = doctor._wiring_item(
+        _StubProvider(), "debug", _wiring(foreign=("Stop",)), active=True)
+    assert "--only-debug`" in item["install_hint"]
+    assert "another checkout" in item["install_hint"]
 
 
 def test_hook_wiring_items_survives_a_failing_provider(monkeypatch):

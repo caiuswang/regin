@@ -94,6 +94,18 @@ def _state_label(row: dict) -> str:
     return 'STALE' if row['stale'] else 'ok'
 
 
+def _foreign_label(row: dict) -> str:
+    """Where another checkout's entries for this hook come from.
+
+    Its own column rather than folded into STATE: a foreign entry can sit
+    beside a perfectly healthy install of ours (both then fire), so it is not
+    an alternative state — it is an extra fact about the same row.
+    """
+    if not row['foreign_events']:
+        return '-'
+    return ', '.join(row['foreign_roots']) or 'other checkout'
+
+
 _REPAIR_PREVIEW = 3
 
 
@@ -119,11 +131,14 @@ def cmd_status(
         return
     table(
         [(r['provider'], r['hook'], _state_label(r), len(r['routed_events']),
-          _repair_label(r)) for r in rows],
-        headers=('PROVIDER', 'HOOK', 'STATE', 'ROUTED', 'NEEDS REPAIR'),
+          _foreign_label(r), _repair_label(r)) for r in rows],
+        headers=('PROVIDER', 'HOOK', 'STATE', 'ROUTED', 'OTHER CHECKOUT', 'NEEDS REPAIR'),
     )
     if any(r['stale'] for r in rows):
         echo("\nSome wiring is out of date — run `regin hooks repair`.")
+    if any(r['foreign_events'] for r in rows):
+        echo("\nSome events are routed to a different regin checkout — `regin hooks install` "
+             "would add a second entry beside it. Run `regin hooks adopt` to take it over.")
 
 
 def _apply(action, providers, kinds: tuple[str, ...]) -> int:
@@ -175,6 +190,24 @@ def cmd_remove(
     only_debug: bool = typer.Option(False, "--only-debug", help="Remove only the debug hook."),
 ) -> None:
     failed = _apply(hooks_wiring.UNINSTALLERS, _targets(provider, every), _kinds(debug, only_debug))
+    if failed:
+        raise typer.Exit(1)
+
+
+@hooks_app.command("adopt", help="Take over hook entries another regin checkout installed here.")
+def cmd_adopt(
+    provider: str = typer.Option(None, "--provider", "-p", help="Only this provider id."),
+    every: bool = typer.Option(False, "--all", help="Act on every hook-capable provider."),
+    debug: bool = typer.Option(False, "--debug", help="Also adopt the debug payload logger."),
+    only_debug: bool = typer.Option(False, "--only-debug", help="Adopt only the debug hook."),
+) -> None:
+    """Replace another checkout's entries with this one's.
+
+    Deliberately a separate command, not a fallback inside `install`: a moved
+    checkout and a genuine second one are indistinguishable on disk, so taking
+    over has to be asked for.
+    """
+    failed = _apply(hooks_wiring.ADOPTERS, _targets(provider, every), _kinds(debug, only_debug))
     if failed:
         raise typer.Exit(1)
 

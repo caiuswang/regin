@@ -138,6 +138,39 @@ def test_all_flag_fans_out(env):
     assert hooks_wiring.wiring_status(env.provider, str(env.path))['hook_manager']['installed']
 
 
+_FOREIGN = '/other/regin/.venv/bin/python -P -m hook_manager PostToolUse --agent-type claude'
+
+
+def test_status_names_the_other_checkout_and_points_at_adopt(env):
+    """`install` here would add a second entry beside the old one, so status
+    must not read as a plain "not installed" row."""
+    env.path.write_text(json.dumps({'hooks': {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN}]},
+    ]}}))
+    _, out = env.run('status')
+    assert '/other/regin' in out
+    assert 'regin hooks adopt' in out
+
+
+def test_adopt_takes_over_another_checkouts_entry(env):
+    env.path.write_text(json.dumps({'hooks': {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': _FOREIGN}]},
+    ]}}))
+    result, out = env.run('adopt', '--all')
+    assert result.exit_code == 0
+    assert 'Adopted 1 entry' in out
+    status = hooks_wiring.wiring_status(env.provider, str(env.path))
+    assert status['hook_manager']['foreign_events'] == []
+    assert status['hook_manager']['installed'] is True
+
+
+def test_adopt_requires_explicit_scope(env):
+    result, out = env.run('adopt')
+    assert result.exit_code == 2
+    assert '--all' in out
+    assert not env.path.exists()
+
+
 def test_repair_survives_a_malformed_config(env):
     """One hand-mangled event must not abort the run — `regin doctor` prints
     this command, so a traceback there strands the user."""

@@ -202,6 +202,22 @@ def api_debug_hook_uninstall():
     return _run_wiring(hooks_wiring.uninstall_debug_hook, provider)
 
 
+@hooks_bp.route('/api/hook-manager-adopt', methods=['POST'])
+def api_hook_manager_adopt():
+    provider, error = _provider_or_error()
+    if error is not None:
+        return error
+    return _run_wiring(hooks_wiring.adopt_hook_manager, provider)
+
+
+@hooks_bp.route('/api/debug-hook-adopt', methods=['POST'])
+def api_debug_hook_adopt():
+    provider, error = _provider_or_error()
+    if error is not None:
+        return error
+    return _run_wiring(hooks_wiring.adopt_debug_hook, provider)
+
+
 @hooks_bp.route('/api/debug-hook-payloads')
 def api_debug_hook_payloads():
     provider, error = _provider_or_error()
@@ -428,6 +444,10 @@ _UNINSTALLERS = {
     'hook_manager': api_hook_manager_uninstall,
     'debug': api_debug_hook_uninstall,
 }
+_ADOPTERS = {
+    'hook_manager': api_hook_manager_adopt,
+    'debug': api_debug_hook_adopt,
+}
 
 
 def _provider_hooks_entry(provider) -> dict:
@@ -491,3 +511,11 @@ def api_hook_group_uninstall(name):
     if not uninstaller:
         return jsonify({'ok': False, 'msg': f'Unknown hook: {name}'}), 404
     return uninstaller()
+
+
+@hooks_bp.route('/api/hooks/<name>/adopt', methods=['POST'])
+def api_hook_group_adopt(name):
+    adopter = _ADOPTERS.get(name)
+    if not adopter:
+        return jsonify({'ok': False, 'msg': f'Unknown hook: {name}'}), 404
+    return adopter()

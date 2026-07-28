@@ -432,6 +432,23 @@ def _stale_skeleton_items() -> list[dict]:
              "present": True, "version": f"{seeded} match built-in defaults"}]
 
 
+def _foreign_hint(provider, kind: str, status: dict) -> str | None:
+    """The repair line for entries belonging to a *different* regin checkout.
+
+    Without this row the state is invisible: ownership is scoped to this
+    checkout, so a moved repo reads as "not installed" and doctor's advice
+    (`hooks install`) adds a second entry beside the old one — both fire.
+    """
+    events = status.get('foreign_events') or ()
+    if not events:
+        return None
+    where = ', '.join(status.get('foreign_roots') or ()) or 'another checkout'
+    flag = ' --only-debug' if kind == 'debug' else ''
+    return (f"{', '.join(events)} routed to a regin checkout at {where} — run "
+            f'`regin hooks adopt --provider {provider.provider_id}{flag}` to take it over '
+            '(install would add a second entry beside it, and both would fire)')
+
+
 def _wiring_item(provider, kind: str, status: dict, active: bool) -> dict:
     """One doctor row comparing installed hook commands against what install
     would write today. Staleness is invisible to an installed/not-installed
@@ -443,6 +460,11 @@ def _wiring_item(provider, kind: str, status: dict, active: bool) -> dict:
     base = {'id': f'hook_wiring_{provider.provider_id}_{kind}',
             'label': f'{provider.provider_id}: {kind}',
             'optional': not (active and kind == 'hook_manager')}
+    # Reported ahead of drift because `repair` cannot clear it, and because
+    # `adopt` reinstalls afterwards — so it fixes the drift on the way.
+    if foreign := _foreign_hint(provider, kind, status):
+        return {**base, 'present': False, 'status_text': 'other checkout',
+                'install_hint': foreign}
     if not status['installed']:
         flag = ' --only-debug' if kind == 'debug' else ''
         return {**base, 'present': False,

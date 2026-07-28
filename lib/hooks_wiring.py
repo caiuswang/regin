@@ -31,11 +31,15 @@ DEBUG_TIMEOUT = 10
 DEBUG_LABEL = 'debug'
 
 _HOOK_MANAGER_CMD_RE = re.compile(r'(^|\s)-m\s+hook_manager(?:\s|$)')
+_DEBUG_SCRIPT_TOKEN = 'hook_payload_debug'
 
 # Matches a stale `env KEY=VAL …` prefix from an earlier fix iteration. Kept
 # only for detection so uninstall/reinstall still sees those entries as ours
 # and replaces them; new installs no longer emit any env prefix.
 _LEADING_ENV_RE = re.compile(r'^(?:/usr/bin/)?env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)+\s+')
+
+# The checkout a foreign command runs out of, read back from its interpreter.
+_VENV_PYTHON_RE = re.compile(r'(?P<root>\S+?)/\.venv/bin/python(?:\s|$)')
 
 
 # ── Command construction ──────────────────────────────────────
@@ -119,12 +123,16 @@ def _ours_prefix(command: str) -> bool:
     return prefix == '' or _LEADING_ENV_RE.match(prefix) is not None
 
 
+def _runs_hook_manager(command) -> bool:
+    return isinstance(command, str) and bool(_HOOK_MANAGER_CMD_RE.search(command))
+
+
+def _runs_debug_hook(command) -> bool:
+    return isinstance(command, str) and _DEBUG_SCRIPT_TOKEN in command
+
+
 def is_hook_manager_command(command: str) -> bool:
-    if not isinstance(command, str):
-        return False
-    if not _HOOK_MANAGER_CMD_RE.search(command):
-        return False
-    return _ours_prefix(command)
+    return _runs_hook_manager(command) and _ours_prefix(command)
 
 
 def is_debug_hook_command(command: str) -> bool:
@@ -134,9 +142,28 @@ def is_debug_hook_command(command: str) -> bool:
     predicate drives rewriting and deletion, so an unscoped substring match
     would let either instance clobber the other's entries.
     """
-    if not isinstance(command, str) or 'hook_payload_debug' not in command:
-        return False
-    return _ours_prefix(command)
+    return _runs_debug_hook(command) and _ours_prefix(command)
+
+
+def is_foreign_hook_manager_command(command: str) -> bool:
+    """Runs regin's router, but out of a different checkout than this one.
+
+    A *moved* checkout is indistinguishable from a second one, so this state
+    cannot be auto-repaired: install would add a second entry beside the old
+    one and both would fire. Surfacing it as its own state is what lets a
+    caller offer `adopt` instead of a blind reinstall.
+    """
+    return _runs_hook_manager(command) and not _ours_prefix(command)
+
+
+def is_foreign_debug_hook_command(command: str) -> bool:
+    return _runs_debug_hook(command) and not _ours_prefix(command)
+
+
+def checkout_root(command: str) -> str | None:
+    """The regin checkout a command's interpreter lives in, when readable."""
+    match = _VENV_PYTHON_RE.search(command or '')
+    return match.group('root') if match else None
 
 
 # ── On-disk readers ───────────────────────────────────────────
@@ -219,12 +246,16 @@ def _matcher_key(entry: dict):
     return matcher
 
 
-def _entry_commands(entry, is_ours) -> list[str]:
-    """Our commands inside one matcher entry, tolerating a mangled shape."""
+def _entry_hooks(entry, is_ours) -> list[dict]:
+    """Our hook dicts inside one matcher entry, tolerating a mangled shape."""
     if not isinstance(entry, dict) or not isinstance(entry.get('hooks'), list):
         return []
-    return [h.get('command', '') for h in entry['hooks']
+    return [h for h in entry['hooks']
             if isinstance(h, dict) and is_ours(h.get('command', ''))]
+
+
+def _entry_commands(entry, is_ours) -> list[str]:
+    return [h.get('command', '') for h in _entry_hooks(entry, is_ours)]
 
 
 def _matcher_groups(entries: list, is_ours) -> dict:
@@ -257,11 +288,38 @@ def _json_command_map(path: str, is_ours) -> dict[str, list[str]]:
             for event, groups in _json_command_groups(path, is_ours).items()}
 
 
+def _json_timeout_map(path: str, is_ours) -> dict[str, list]:
+    """event → the `timeout` written beside each of our commands.
+
+    Read separately from the commands because a drifted timeout is real drift
+    that a command-only comparison calls healthy — an entry left at an older
+    `HOOK_MANAGER_TIMEOUT` gets killed mid-handler on a slow event.
+    """
+    hooks = read_json_settings(path).get('hooks')
+    if not isinstance(hooks, dict):
+        return {}
+    out: dict[str, list] = {}
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        timeouts = [h.get('timeout') for entry in entries for h in _entry_hooks(entry, is_ours)]
+        if timeouts:
+            out[event] = timeouts
+    return out
+
+
 def installed_command_map(provider, settings_path: str, is_ours) -> dict[str, list[str]]:
     """Event → the commands of ours currently written for it, format-agnostic."""
     if is_toml_provider(provider):
         return kimi_hooks.installed_command_map(settings_path, is_ours)
     return _json_command_map(settings_path, is_ours)
+
+
+def installed_timeout_map(provider, settings_path: str, is_ours) -> dict[str, list]:
+    """Event → the timeouts written beside our commands, format-agnostic."""
+    if is_toml_provider(provider):
+        return kimi_hooks.installed_timeout_map(settings_path, is_ours)
+    return _json_timeout_map(settings_path, is_ours)
 
 
 def routed_events(provider, settings_path: str) -> set[str]:
@@ -294,15 +352,32 @@ def duplicate_events(provider, settings_path: str, is_ours) -> list[str]:
                   if any(len(commands) > 1 for commands in groups.values()))
 
 
+def timeout_drift_events(expected: dict[str, str], expected_timeout: int,
+                         timeouts: dict[str, list]) -> list[str]:
+    """Routed events whose `timeout` is not the one install writes today.
+
+    Scoped to events install would write, for the same reason `stale` excludes
+    `unexpected_events`: nothing rewrites a route install no longer emits, so
+    reporting drift there would leave doctor red pointing at a no-op repair.
+
+    A *missing* timeout is not drift. The agent applies its own default there,
+    so an entry predating the timeout key behaves correctly, and calling every
+    one of those stale would turn the first upgrade into a wall of red.
+    """
+    def drifted(values) -> bool:
+        return any(t is not None and t != expected_timeout for t in values)
+    return sorted(e for e, values in timeouts.items() if e in expected and drifted(values))
+
+
 def _stale_events(expected: dict[str, str], current: dict[str, list[str]],
-                  duplicates: list[str]) -> list[str]:
-    """Routed events install would rewrite: a drifted command, or a duplicate.
+                  duplicates: list[str], timeout_drift: list[str]) -> list[str]:
+    """Routed events install would rewrite: drifted command or timeout, or a duplicate.
 
     Duplicates count even when every copy is correct — two entries under one
     matcher fire the hook twice per event, and comparing command *sets* (the
     obvious implementation) reports that as healthy.
     """
-    redundant = set(duplicates)
+    redundant = set(duplicates) | set(timeout_drift)
 
     def differs(event: str) -> bool:
         if event in redundant:
@@ -311,19 +386,30 @@ def _stale_events(expected: dict[str, str], current: dict[str, list[str]],
     return sorted(e for e in current if differs(e))
 
 
-def _kind_status(expected: dict[str, str], current: dict[str, list[str]],
-                 malformed: list[str], duplicates: list[str]) -> dict:
+def _foreign_roots(foreign: dict[str, list[str]]) -> list[str]:
+    roots = {checkout_root(c) for commands in foreign.values() for c in commands}
+    return sorted(r for r in roots if r)
+
+
+def _kind_status(provider, settings_path: str, spec: dict, malformed: list[str]) -> dict:
     """Compare what install would write against what is on disk.
 
-    Two states are reported but deliberately excluded from `stale`, because
-    install cannot clear either and gating on them would leave doctor
+    Three states are reported but deliberately excluded from `stale`, because
+    install cannot clear any of them and gating on them would leave doctor
     permanently red pointing at a repair that answers "already installed":
     `unexpected_events` (routes install would no longer write — the JSON
-    installer only adds and refreshes), and `malformed_events` (an event key
+    installer only adds and refreshes), `malformed_events` (an event key
     whose value is not a list, which only a human edit can have produced and
-    only a human edit should undo).
+    only a human edit should undo), and `foreign_events` (another checkout's
+    entries, which only `adopt` may touch).
     """
-    stale = _stale_events(expected, current, duplicates)
+    expected, is_ours = spec['expected'], spec['is_ours']
+    current = installed_command_map(provider, settings_path, is_ours)
+    timeouts = installed_timeout_map(provider, settings_path, is_ours)
+    foreign = installed_command_map(provider, settings_path, spec['is_foreign'])
+    drift = timeout_drift_events(expected, spec['timeout'], timeouts)
+    stale = _stale_events(expected, current,
+                          duplicate_events(provider, settings_path, is_ours), drift)
     missing = sorted(set(expected) - set(current) - set(malformed)) if current else []
     return {
         'installed': bool(current),
@@ -332,10 +418,16 @@ def _kind_status(expected: dict[str, str], current: dict[str, list[str]],
         # duplicated-but-correct entry from every surface downstream.
         'commands': {e: sorted(c) for e, c in sorted(current.items())},
         'expected_commands': dict(sorted(expected.items())),
+        'timeouts': {e: list(t) for e, t in sorted(timeouts.items())},
+        'expected_timeout': spec['timeout'],
+        'timeout_drift_events': drift,
         'stale_events': stale,
         'missing_events': missing,
         'unexpected_events': sorted(set(current) - set(expected)),
         'malformed_events': sorted(malformed),
+        'foreign_events': sorted(foreign),
+        'foreign_commands': {e: sorted(c) for e, c in sorted(foreign.items())},
+        'foreign_roots': _foreign_roots(foreign),
         'stale': bool(current) and bool(stale or missing),
     }
 
@@ -354,24 +446,35 @@ def malformed_events(provider, settings_path: str) -> list[str]:
     return [e for e, entries in hooks.items() if not isinstance(entries, list)]
 
 
+def _kind_specs(provider) -> dict[str, dict]:
+    """Everything that differs between the two hooks, in one place, so every
+    comparison and writer below is the same code with a different spec."""
+    return {
+        'hook_manager': {
+            'is_ours': is_hook_manager_command,
+            'is_foreign': is_foreign_hook_manager_command,
+            'expected': expected_hook_manager_commands(provider),
+            'timeout': HOOK_MANAGER_TIMEOUT,
+        },
+        'debug': {
+            'is_ours': is_debug_hook_command,
+            'is_foreign': is_foreign_debug_hook_command,
+            'expected': expected_debug_commands(provider),
+            'timeout': DEBUG_TIMEOUT,
+        },
+    }
+
+
 def wiring_status(provider, settings_path: str) -> dict:
     """Full install-vs-disk report for one provider's hook wiring."""
     malformed = malformed_events(provider, settings_path)
+    specs = _kind_specs(provider)
     return {
         'provider': provider.provider_id,
         'settings_path': settings_path,
-        'hook_manager': _kind_status(
-            expected_hook_manager_commands(provider),
-            installed_command_map(provider, settings_path, is_hook_manager_command),
-            malformed,
-            duplicate_events(provider, settings_path, is_hook_manager_command),
-        ),
-        'debug': _kind_status(
-            expected_debug_commands(provider),
-            installed_command_map(provider, settings_path, is_debug_hook_command),
-            [e for e in malformed if e in DEBUG_EVENTS],
-            duplicate_events(provider, settings_path, is_debug_hook_command),
-        ),
+        'hook_manager': _kind_status(provider, settings_path, specs['hook_manager'], malformed),
+        'debug': _kind_status(provider, settings_path, specs['debug'],
+                              [e for e in malformed if e in DEBUG_EVENTS]),
     }
 
 
@@ -409,6 +512,23 @@ def _drop_duplicate_hooks(event_hooks: list, is_ours) -> int:
     return removed
 
 
+def _refresh_hook(hook: dict, command: str, timeout: int) -> bool:
+    """Bring one of our hook dicts up to what install writes; True if it moved.
+
+    The timeout matters as much as the command: an entry left at an older
+    value is a hook that gets killed mid-handler, and nothing about the
+    command string shows it.
+    """
+    changed = False
+    if hook.get('command') != command:
+        hook['command'] = command
+        changed = True
+    if hook.get('timeout') != timeout:
+        hook['timeout'] = timeout
+        changed = True
+    return changed
+
+
 def _merge_event_command(hooks: dict, event_name: str, command: str,
                          is_ours, timeout: int) -> str:
     """Wire exactly one of our hooks, carrying `command`, to `event_name`.
@@ -428,11 +548,9 @@ def _merge_event_command(hooks: dict, event_name: str, command: str,
     # Every surviving copy, not just the first: the dedup above deliberately
     # keeps one per matcher, and leaving the others on a drifted command would
     # report the event stale forever.
-    for h in hook_entries(entries):
-        if is_ours(h.get('command', '')) and h.get('command') != command:
-            h['command'] = command
-            changed = True
-    return 'updated' if changed else 'ok'
+    rewritten = [_refresh_hook(h, command, timeout) for h in hook_entries(entries)
+                 if is_ours(h.get('command', ''))]
+    return 'updated' if changed or any(rewritten) else 'ok'
 
 
 def _merge_hook_manager_blocks(hooks: dict, events, provider) -> tuple[int, int]:
@@ -483,8 +601,8 @@ def install_hook_manager(provider, settings_path: str) -> dict:
     return _unreadable_error(settings_path) or _json_install_hook_manager(provider, settings_path)
 
 
-def _strip_hook_manager_blocks(hooks: dict) -> int:
-    """Remove hook_manager command blocks from a settings.json `hooks` map."""
+def _strip_matching_blocks(hooks: dict, is_match) -> int:
+    """Remove command blocks satisfying `is_match` from a settings.json `hooks` map."""
     removed = 0
     for event_name in list(hooks.keys()):
         entries = hooks[event_name]
@@ -493,7 +611,7 @@ def _strip_hook_manager_blocks(hooks: dict) -> int:
         filtered = []
         for entry in entries:
             entry_hooks = [h for h in entry.get('hooks', [])
-                           if not is_hook_manager_command(h.get('command', ''))]
+                           if not is_match(h.get('command', ''))]
             removed += len(entry.get('hooks', [])) - len(entry_hooks)
             if entry_hooks:
                 next_entry = dict(entry)
@@ -515,7 +633,7 @@ def uninstall_hook_manager(provider, settings_path: str) -> dict:
         return refusal
     data = read_json_settings(settings_path)
     hooks = data.get('hooks', {})
-    removed = _strip_hook_manager_blocks(hooks) if isinstance(hooks, dict) else 0
+    removed = _strip_matching_blocks(hooks, is_hook_manager_command) if isinstance(hooks, dict) else 0
     if not hooks:
         data.pop('hooks', None)
     write_json_settings(data, settings_path)
@@ -603,3 +721,56 @@ def uninstall_debug_hook(provider, settings_path: str) -> dict:
 
 INSTALLERS = {'hook_manager': install_hook_manager, 'debug': install_debug_hook}
 UNINSTALLERS = {'hook_manager': uninstall_hook_manager, 'debug': uninstall_debug_hook}
+
+
+# ── adopting another checkout's entries ───────────────────────
+
+def _strip_foreign(provider, settings_path: str, is_foreign) -> None:
+    if is_toml_provider(provider):
+        text = read_text(settings_path)
+        cleaned = kimi_hooks.strip_entries(text, is_foreign)
+        if cleaned != text:
+            with open(settings_path, 'w') as f:
+                f.write(cleaned.rstrip() + '\n')
+        return
+    data = read_json_settings(settings_path)
+    hooks = data.get('hooks')
+    if not isinstance(hooks, dict) or not _strip_matching_blocks(hooks, is_foreign):
+        return
+    if not hooks:
+        data.pop('hooks', None)
+    write_json_settings(data, settings_path)
+
+
+def _adopt(provider, settings_path: str, kind: str) -> dict:
+    """Replace another checkout's entries for `kind` with this checkout's.
+
+    Never implicit: a *moved* checkout and a genuine second one look identical
+    on disk, and silently rewriting the second case would break whichever
+    regin the user did not run. The counterpart failure — install adding its
+    own entry beside the old one, so both fire — is what this exists to avoid.
+    """
+    if not is_toml_provider(provider) and (refusal := _unreadable_error(settings_path)):
+        return refusal
+    spec = _kind_specs(provider)[kind]
+    foreign = installed_command_map(provider, settings_path, spec['is_foreign'])
+    adopted = sum(len(commands) for commands in foreign.values())
+    if not adopted:
+        return {'ok': True, 'msg': 'No entries from another checkout to adopt', 'adopted': 0}
+    _strip_foreign(provider, settings_path, spec['is_foreign'])
+    result = INSTALLERS[kind](provider, settings_path)
+    where = ', '.join(_foreign_roots(foreign)) or 'another checkout'
+    return {**result, 'adopted': adopted,
+            'msg': f"Adopted {adopted} entr{'y' if adopted == 1 else 'ies'} "
+                   f"from {where} — {result['msg']}"}
+
+
+def adopt_hook_manager(provider, settings_path: str) -> dict:
+    return _adopt(provider, settings_path, 'hook_manager')
+
+
+def adopt_debug_hook(provider, settings_path: str) -> dict:
+    return _adopt(provider, settings_path, 'debug')
+
+
+ADOPTERS = {'hook_manager': adopt_hook_manager, 'debug': adopt_debug_hook}

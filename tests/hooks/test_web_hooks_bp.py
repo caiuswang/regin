@@ -879,3 +879,41 @@ def test_hooks_status_exposes_stale_per_provider(client):
 def test_wiring_endpoint_rejects_unknown_provider(client):
     c, _ = client
     assert c.get('/api/hooks/wiring?provider=nope').status_code == 404
+
+
+# ── another checkout's entries (CAI-26) ──────────────────────────────
+
+_FOREIGN_CMD = '/other/regin/.venv/bin/python -P -m hook_manager PostToolUse --agent-type claude'
+
+
+def _write_foreign(settings_path):
+    settings_path.write_text(json.dumps({'hooks': {
+        'PostToolUse': [{'hooks': [{'type': 'command', 'command': _FOREIGN_CMD}]}],
+    }}))
+
+
+def test_wiring_endpoint_reports_another_checkouts_entry(client):
+    c, settings_path = client
+    _write_foreign(settings_path)
+    hm = c.get('/api/hooks/wiring').get_json()['hook_manager']
+    assert hm['installed'] is False
+    assert hm['foreign_events'] == ['PostToolUse']
+    assert hm['foreign_roots'] == ['/other/regin']
+
+
+def test_adopt_endpoint_takes_over_another_checkouts_entry(client):
+    c, settings_path = client
+    _write_foreign(settings_path)
+    body = c.post('/api/hooks/hook_manager/adopt').get_json()
+    assert body['ok'] is True
+    assert body['adopted'] == 1
+
+    hm = c.get('/api/hooks/wiring').get_json()['hook_manager']
+    assert hm['foreign_events'] == []
+    assert hm['installed'] is True
+    assert _FOREIGN_CMD not in settings_path.read_text()
+
+
+def test_adopt_endpoint_rejects_unknown_hook(client):
+    c, _ = client
+    assert c.post('/api/hooks/nope/adopt').status_code == 404
