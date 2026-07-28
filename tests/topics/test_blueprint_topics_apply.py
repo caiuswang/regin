@@ -538,6 +538,41 @@ def test_audit_endpoint_returns_graph_issues_grouped_by_code(stub_proposal_provi
     assert body["error_count"] >= 1
 
 
+def test_audit_endpoint_reports_undeletable_refs_outside_the_error_count(
+    stub_proposal_provider, flask_client, fake_git_repo, branch_owned_ref,
+):
+    """A ref this checkout cannot show is still severity=error for authoring,
+    but the panel must not tally it as a fixable defect (CAI-35)."""
+    name = _seed_repo(fake_git_repo)
+    bootstrap(fake_git_repo)
+
+    graph = load_graph(fake_git_repo)
+    graph["topics"]["x"] = {
+        "label": "X", "intent": "x", "status": "active",
+        "aliases": [],
+        "refs": [{"path": branch_owned_ref, "role": "implementation"}],
+        "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+    }
+    write_split_graph(fake_git_repo, graph)
+
+    body = flask_client.get(f"/api/repos/{name}/topics/audit").get_json()
+
+    undeletable = set(body["informational_codes"])
+    assert undeletable == {"graph.ref_on_other_branch", "graph.ref_unverifiable"}
+    assert "graph.ref_on_other_branch" in body["by_code"]
+
+    softened = [i for i in body["issues"] if i["code"] in undeletable]
+    assert softened
+    # The raw severity the authoring gate reads is untouched in the payload —
+    # only the tally moved, which is what the old count got wrong.
+    assert all(i["severity"] == "error" for i in softened)
+    assert body["info_count"] == len(softened)
+    assert body["error_count"] == len([
+        i for i in body["issues"]
+        if i["severity"] == "error" and i["code"] not in undeletable
+    ])
+
+
 # ── /snapshots ─────────────────────────────────────────────────────
 
 

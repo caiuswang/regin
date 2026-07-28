@@ -1275,7 +1275,11 @@ def cmd_topics_audit(
     repo: str | None = typer.Option(None, "--repo", help="Repository path"),
 ) -> None:
     from lib.topics.graph_io import load_authoritative_graph
-    from lib.topics.validation import audit_graph
+    from lib.topics.validation import (
+        INFORMATIONAL_DISPLAY_CODES,
+        audit_graph,
+        count_by_display_severity,
+    )
     from lib.topics.bulk_fix import AUTO_FIXABLE_CODES
 
     repo_path = _repo_path(repo)
@@ -1294,10 +1298,13 @@ def cmd_topics_audit(
             "paths": list(issue.paths),
             "aliases": list(issue.aliases),
         })
+    counts = count_by_display_severity(issues)
     print(json.dumps({
-        "error_count": sum(1 for i in issues if i.severity == "error"),
-        "warning_count": sum(1 for i in issues if i.severity == "warning"),
+        "error_count": counts["error"],
+        "warning_count": counts["warning"],
+        "info_count": counts["info"],
         "auto_fixable_codes": sorted(AUTO_FIXABLE_CODES),
+        "informational_codes": sorted(INFORMATIONAL_DISPLAY_CODES),
         "by_code": by_code,
     }, indent=2, sort_keys=True))
 

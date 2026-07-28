@@ -40,7 +40,11 @@ from lib.topics.snapshots import (
     restore_preview,
     restore_snapshot,
 )
-from lib.topics.validation import audit_graph
+from lib.topics.validation import (
+    INFORMATIONAL_DISPLAY_CODES,
+    audit_graph,
+    count_by_display_severity,
+)
 
 from web.blueprints.topics import topics_bp
 from web.blueprints.topics._helpers import _error, _repo_path_or_404
@@ -141,13 +145,16 @@ def api_repo_topic_audit(name):
     by_code: dict[str, list[dict[str, Any]]] = {}
     for issue in issues:
         by_code.setdefault(issue.code, []).append(serialize_issue(issue))
+    counts = count_by_display_severity(issues)
     return jsonify({
         "ok": True,
         "issues": [serialize_issue(i) for i in issues],
         "by_code": by_code,
-        "error_count": sum(1 for i in issues if i.severity == "error"),
-        "warning_count": sum(1 for i in issues if i.severity == "warning"),
+        "error_count": counts["error"],
+        "warning_count": counts["warning"],
+        "info_count": counts["info"],
         "auto_fixable_codes": sorted(AUTO_FIXABLE_CODES),
+        "informational_codes": sorted(INFORMATIONAL_DISPLAY_CODES),
     })
 
 

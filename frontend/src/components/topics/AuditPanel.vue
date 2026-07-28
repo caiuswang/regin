@@ -7,7 +7,9 @@
  * renders a disabled checkbox and a tag saying why bulk-fix can't take
  * it: "manual" for a code needing a human decision (duplicate_alias),
  * "not checked out" for a ref that is not a defect at all, "unverified"
- * for one the branch-tip check could not run on.
+ * for one the branch-tip check could not run on. Those last two are the
+ * server's `informational_codes` — reported separately from the error and
+ * warning tallies, since neither is something this panel can resolve.
  *
  * The "Fix selected" button posts to `/audit/fix` and refreshes.
  */
@@ -23,8 +25,10 @@ const props = defineProps({
 const issues = ref([])
 const byCode = ref({})
 const autoFixableCodes = ref([])
+const informationalCodes = ref([])
 const errorCount = ref(0)
 const warningCount = ref(0)
+const infoCount = ref(0)
 const loading = ref(false)
 const fixing = ref(false)
 const error = ref('')
@@ -61,8 +65,10 @@ async function refresh() {
       issues.value = res.issues || []
       byCode.value = res.by_code || {}
       autoFixableCodes.value = res.auto_fixable_codes || []
+      informationalCodes.value = res.informational_codes || []
       errorCount.value = res.error_count || 0
       warningCount.value = res.warning_count || 0
+      infoCount.value = res.info_count || 0
       // Discard selections for codes that no longer have issues.
       const presentCodes = new Set(Object.keys(byCode.value))
       selectedCodes.value = new Set(
@@ -81,11 +87,18 @@ async function refresh() {
 const sortedCodes = computed(() => Object.keys(byCode.value).sort())
 
 const autoFixableSet = computed(() => new Set(autoFixableCodes.value))
+// Server-sent rather than hardcoded here so a group's colour and the header's
+// tally can't disagree about which codes are informational.
+const informationalSet = computed(() => new Set(informationalCodes.value))
 const selectableCount = computed(() => sortedCodes.value.filter(isAutoFixable).length)
 const selectedCount = computed(() => selectedCodes.value.size)
 
 function isAutoFixable(code) {
   return autoFixableSet.value.has(code)
+}
+
+function isInformational(code) {
+  return informationalSet.value.has(code)
 }
 
 // Absent from this checkout but alive on another branch tip. Not a defect and
@@ -114,16 +127,25 @@ function codeHint(code) {
   if (code === UNPROVABLE_CODE) {
     return 'Nothing to fix — the branch-tip check could not run here, so this ref cannot be proven dead'
   }
+  // A code the server calls informational but this panel has no wording for:
+  // still not something to go and fix, so don't send the reader off to do it.
+  if (isInformational(code)) return 'Nothing to fix — reported for information only'
   return 'Manual resolution only — fix via DiffPanel or the originating proposal'
 }
 
 function codeTag(code) {
   if (code === BRANCH_OWNED_CODE) return 'not checked out'
   if (code === UNPROVABLE_CODE) return 'unverified'
+  if (isInformational(code)) return 'informational'
   return 'manual'
 }
 
 function severityForCode(code) {
+  // These arrive as errors — audit_graph gates *authoring*, where a ref this
+  // checkout cannot show makes a proposal unreviewable. Read as a whole-graph
+  // report they are not defects (nothing to fix, no checkbox), so colouring
+  // them red is a permanent unfixable error group that contradicts its own tag.
+  if (isInformational(code)) return 'info'
   const list = byCode.value[code] || []
   if (list.some((i) => i.severity === 'error')) return 'error'
   if (list.some((i) => i.severity === 'warning')) return 'warning'
@@ -187,8 +209,8 @@ onMounted(refresh)
         <h3 class="text-base font-semibold text-slate-900">Graph audit</h3>
         <p class="text-xs text-slate-500">
           Validation issues against the live approved graph.
-          <span v-if="!loading && (errorCount || warningCount)">
-            {{ errorCount }} error<span v-if="errorCount !== 1">s</span>, {{ warningCount }} warning<span v-if="warningCount !== 1">s</span>.
+          <span v-if="!loading && (errorCount || warningCount || infoCount)">
+            {{ errorCount }} error<span v-if="errorCount !== 1">s</span>, {{ warningCount }} warning<span v-if="warningCount !== 1">s</span><span v-if="infoCount">, {{ infoCount }} informational</span>.
           </span>
           <span v-else-if="!loading">Graph is clean.</span>
         </p>

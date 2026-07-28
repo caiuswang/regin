@@ -66,6 +66,50 @@ UNPROVABLE_REF_CODE = "graph.ref_unverifiable"
 # both: the graph did not become unfileable because git could not answer.
 UNDELETABLE_REF_CODES = frozenset({BRANCH_OWNED_REF_CODE, UNPROVABLE_REF_CODE})
 
+# The codes whose `severity="error"` is an *authoring* verdict that does not
+# survive into a whole-graph readout. `audit_graph` keeps them errors because a
+# proposal citing a path this checkout cannot show is unreviewable, but a panel
+# tallying the live graph would then show a permanently red group whose own copy
+# says there is nothing to fix and whose fix checkbox is disabled — noise that
+# trains a reader to ignore the panel (CAI-35). `scan.validate` already grades
+# this case below error, so display-side agreement is also the older behaviour.
+#
+# Spelled out rather than aliased to `UNDELETABLE_REF_CODES`, which today holds
+# the same two codes for a different reason: "bulk-fix must not delete this" and
+# "this is not an error worth counting" are separate policies, and a code added
+# to the first because it needs a human decision must not silently drop out of
+# the error tally.
+INFORMATIONAL_DISPLAY_CODES = frozenset({
+    BRANCH_OWNED_REF_CODE, UNPROVABLE_REF_CODE,
+})
+
+
+def display_severity(issue: "ValidationIssue") -> Severity:
+    """Severity to *show* for `issue`, as opposed to the one that gates policy.
+
+    Only ever softens; anything a reader may still act on keeps its own
+    severity. Never call this where an apply/authoring decision is made —
+    `issue.severity` is the gate.
+    """
+    if issue.code in INFORMATIONAL_DISPLAY_CODES:
+        return "info"
+    return issue.severity
+
+
+def count_by_display_severity(issues: list["ValidationIssue"]) -> dict[str, int]:
+    """`{"error": n, "warning": n, "info": n}` over `display_severity`.
+
+    One helper so every audit readout (web `/audit`, CLI `topics audit`) tallies
+    the same way a panel styles its groups. A severity outside the three buckets
+    counts as an error rather than vanishing: a reader who sees rendered groups
+    over a total of zero is being told the graph is clean when it is not.
+    """
+    counts = {"error": 0, "warning": 0, "info": 0}
+    for issue in issues:
+        severity = display_severity(issue)
+        counts[severity if severity in counts else "error"] += 1
+    return counts
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -656,6 +700,7 @@ def diff_issues(
 
 __all__ = [
     "BRANCH_OWNED_REF_CODE",
+    "INFORMATIONAL_DISPLAY_CODES",
     "UNDELETABLE_REF_CODES",
     "UNPROVABLE_REF_CODE",
     "ValidationIssue",
@@ -663,6 +708,8 @@ __all__ = [
     "Severity",
     "validate_topic",
     "audit_graph",
+    "count_by_display_severity",
+    "display_severity",
     "split_by_severity",
     "diff_issues",
 ]

@@ -22,7 +22,10 @@ from lib.topics.bulk_fix import AUTO_FIXABLE_CODES, compose_fix
 from lib.topics.validation import (
     BRANCH_OWNED_REF_CODE,
     UNPROVABLE_REF_CODE,
+    ValidationIssue,
     audit_graph,
+    count_by_display_severity,
+    display_severity,
 )
 
 MISSING_TIP_OID = f"{'0' * 39}1"
@@ -199,3 +202,54 @@ def test_an_unverifiable_ref_is_never_auto_fixable(tmp_path):
     assert UNPROVABLE_REF_CODE not in AUTO_FIXABLE_CODES
     assert compose_fix(graph, issues, codes_to_fix=AUTO_FIXABLE_CODES) == []
     assert compose_fix(graph, issues, codes_to_fix={UNPROVABLE_REF_CODE}) == []
+
+
+def test_an_undeletable_ref_keeps_error_severity_but_displays_as_info(tmp_path):
+    """The authoring gate is unchanged (CAI-30); only the readout softens
+    (CAI-35). A panel that colours these red shows an error group its own tag
+    calls unfixable."""
+    issues = audit_graph(_graph_with_refs("lib/x.py"), repo_path=tmp_path)
+    undeletable = [i for i in issues if i.code == UNPROVABLE_REF_CODE]
+
+    assert undeletable
+    assert all(i.severity == "error" for i in undeletable)
+    assert all(display_severity(i) == "info" for i in undeletable)
+
+
+def test_display_counts_move_undeletable_refs_out_of_the_error_tally():
+    issues = [
+        ValidationIssue(severity="error", code="graph.dead_ref",
+                        message="", topic_ids=("a",), paths=("gone.py",)),
+        ValidationIssue(severity="error", code=BRANCH_OWNED_REF_CODE,
+                        message="", topic_ids=("a",), paths=("b.py",)),
+        ValidationIssue(severity="error", code=UNPROVABLE_REF_CODE,
+                        message="", topic_ids=("a",), paths=("c.py",)),
+        ValidationIssue(severity="warning", code="graph.shared_primary_ref",
+                        message="", topic_ids=("a", "b"), paths=("d.py",)),
+    ]
+
+    assert count_by_display_severity(issues) == {
+        "error": 1, "warning": 1, "info": 2,
+    }
+
+
+def test_an_unknown_severity_is_counted_not_dropped():
+    """Dropping it would total zero over a non-empty issue list — a readout
+    saying the graph is clean above the groups it is rendering."""
+    issues = [ValidationIssue(severity="critical", code="graph.whatever",
+                              message="", topic_ids=("a",))]
+
+    assert count_by_display_severity(issues) == {
+        "error": 1, "warning": 0, "info": 0,
+    }
+
+
+def test_the_display_bucket_is_not_the_bulk_fix_waiver_set():
+    """Two policies, two sets: a code added to `UNDELETABLE_REF_CODES` because
+    it needs a human decision must not silently leave the error tally."""
+    from lib.topics.validation import (
+        INFORMATIONAL_DISPLAY_CODES,
+        UNDELETABLE_REF_CODES,
+    )
+
+    assert INFORMATIONAL_DISPLAY_CODES is not UNDELETABLE_REF_CODES
