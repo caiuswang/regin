@@ -201,6 +201,28 @@ def test_validate_handles_non_ascii_ref_paths(fake_git_repo):
     assert any("present on another branch" in w for w in result.warnings)
 
 
+def test_validate_does_not_let_an_unusable_ref_path_condemn_the_others(fake_git_repo):
+    """git refuses `../outside.py` as a pathspec and fails the whole batched
+    lookup. Swallowing that would report every other absent ref as dead and
+    wedge commits — the CAI-25 bug — so the lookup fails open instead."""
+    _commit_on_branch(fake_git_repo, "feat/holder", "held.py")
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "../outside.py"}, {"path": "held.py"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert not any("held.py" in error for error in result.errors)
+    assert any("held.py" in warning for warning in result.warnings)
+
+
 def test_validate_warns_not_errors_on_ref_owned_by_another_branch(fake_git_repo):
     """A topic anchoring a file that lives on an unmerged branch must not make
     the whole graph invalid — that wedged the pre-commit hook and every other

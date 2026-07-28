@@ -174,9 +174,17 @@ def _staged_removals(repo: Path) -> set[str]:
 
 def _paths_on_other_branches(repo: Path, paths: set[str]) -> set[str]:
     """The subset of `paths` present in the tip tree of a branch other than
-    the checked-out one. Unprovable (no git, unborn HEAD) means we cannot
-    claim a path is dead, so every path is reported as found — absence then
-    degrades to a warning rather than a spurious commit-blocking error."""
+    the checked-out one.
+
+    Fails *open* throughout: whenever git cannot answer — no repo, unborn
+    HEAD, an argv too long for one batch, a ref spelled as something git
+    refuses to take as a pathspec (`../outside.py`, `/etc/passwd`) — the
+    honest answer is "unprovable", not "dead". Reporting a path as found
+    downgrades its absence to a warning; swallowing the failure instead would
+    turn every absent ref in the graph into a commit-blocking error on the
+    strength of a git invocation nobody saw fail. A deletion is still caught
+    regardless, because the staged-removal check outranks this one.
+    """
     try:
         head = _git_out(repo, "rev-parse", "HEAD").strip()
         oids = _git_out(repo, "for-each-ref", "--format=%(objectname)",
@@ -192,15 +200,19 @@ def _paths_on_other_branches(repo: Path, paths: set[str]) -> set[str]:
         if oid == head:
             continue
         try:
-            # --literal-pathspecs so a ref spelled like pathspec magic
-            # (`:(foo)x.py`) can't fail the call and blank out every other
-            # path in the batch; -z for the same verbatim-path reason as above.
+            # --literal-pathspecs keeps a ref spelled like pathspec magic
+            # (`:(foo)x.py`) from being interpreted; -z keeps paths verbatim.
             listed = set(_git_out(
                 repo, "--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z",
                 oid, "--", *remaining,
             ).split("\0"))
-        except (subprocess.CalledProcessError, OSError):
-            continue
+        except (subprocess.CalledProcessError, OSError) as exc:
+            _topics_log().error(
+                "topic_ref_branch_lookup_failed",
+                repo_path=str(repo), tree=oid, path_count=len(remaining),
+                error=str(exc),
+            )
+            return set(paths)
         found |= {path for path in remaining if _listed_covers(path, listed)}
     return found
 
