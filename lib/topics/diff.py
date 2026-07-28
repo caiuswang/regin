@@ -440,6 +440,10 @@ def _classify_issues(
 ) -> tuple[tuple[ValidationIssue, ...], tuple[ValidationIssue, ...]]:
     """Derive graph_warnings (advisory) and introduced_errors (blocking)."""
     repo_pathobj = Path(repo_path) if repo_path else None
+    # `pre_issues` does not stay inside the set-diff — it becomes
+    # `graph_warnings`, which DiffPanel renders by code beside the
+    # `drop_dead_refs` checkbox, so a branch-owned anchor has to read as one
+    # here too or the panel names a fix it will refuse to perform (CAI-30).
     pre_issues = audit_graph(current_graph, repo_path=repo_pathobj)
     post_issues = audit_graph(prospective_graph, repo_path=repo_pathobj)
     introduced_from_audit, _resolved = diff_issues(pre_issues, post_issues)

@@ -31,7 +31,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from lib.topics.tree import UNCLASSIFIED, build_tree, is_bucket
-from lib.topics.validation import audit_graph, split_by_severity
+from lib.topics.validation import (
+    BRANCH_OWNED_REF_CODE,
+    audit_graph,
+    split_by_severity,
+)
 
 # Link sources that represent a human/synthesis decision — never auto-moved.
 PROTECTED_SOURCES = frozenset({"manual", "reflect"})
@@ -123,7 +127,18 @@ def _check_structural(plan: SplitPlan, graph: dict, repo_path) -> list[str]:
 
 def _audit_prospective(plan: SplitPlan, graph: dict, repo_path) -> list[str]:
     """Add the new nodes, re-audit, and fail on any error touching them or any
-    new node that build_tree routes to `unclassified` (the 2-level trap)."""
+    new node that build_tree routes to `unclassified` (the 2-level trap).
+
+    A split redistributes the leaf's existing anchors, so the new nodes inherit
+    whatever refs live on an unmerged branch. Blocking on those would make a
+    topic unsplittable until the branch merges (CAI-30) without protecting
+    anything — the refs were already in the graph.
+
+    The waiver is unconditional rather than restricted to inherited paths: a
+    proposer that invents a path happening to exist on some branch tip is
+    waived too. Distinguishing them would mean diffing the plan's refs against
+    the leaf's, and the payoff is small — the ref still had to name a real file
+    in some tree, and `scan.validate` re-audits the result either way."""
     errors: list[str] = []
     prospective = {**graph,
                    "topics": {**(graph.get("topics") or {}), **plan.new_topics}}
@@ -133,6 +148,8 @@ def _audit_prospective(plan: SplitPlan, graph: dict, repo_path) -> list[str]:
     errs, _ = split_by_severity(issues)
     for e in errs:
         tids = set(e.topic_ids or ())
+        if e.code == BRANCH_OWNED_REF_CODE:
+            continue
         if not tids or tids & new_ids:
             errors.append(f"audit error {e.code}: {e.message}")
 

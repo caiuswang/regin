@@ -3,10 +3,10 @@
  * AuditPanel — graph-wide validation issues from /audit + bulk-fix.
  *
  * Each code group shows a header with the count + a checkbox when the
- * code is auto-fixable (dead refs, orphan edge targets). Non-auto-
- * fixable codes (duplicate_alias) render with a "manual resolution"
- * tag — clicking the checkbox is a no-op with a tooltip explaining
- * why bulk-fix can't handle them.
+ * code is auto-fixable (dead refs, orphan edge targets). Everything else
+ * renders a disabled checkbox and a tag saying why bulk-fix can't take
+ * it: "manual" for a code needing a human decision (duplicate_alias),
+ * "not checked out" for a ref that is not a defect at all.
  *
  * The "Fix selected" button posts to `/audit/fix` and refreshes.
  */
@@ -85,6 +85,28 @@ const selectedCount = computed(() => selectedCodes.value.size)
 
 function isAutoFixable(code) {
   return autoFixableSet.value.has(code)
+}
+
+// Absent from this checkout but alive on another branch tip. Not a defect and
+// not something to "resolve" — it clears once that branch merges and the file
+// lands in the working tree, and the one thing you must not do is strip the
+// anchor. A stale branch carrying the path does not by itself keep the finding
+// alive: it also needs the file to be absent here. What can outlive the merge
+// is a path deleted afterwards — a stale tip still carries it, so the backend
+// scans refs/heads+refs/remotes with no merged filter and reports it here
+// rather than as the dead ref it now is.
+const BRANCH_OWNED_CODE = 'graph.ref_on_other_branch'
+
+function codeHint(code) {
+  if (isAutoFixable(code)) return 'Auto-fixable — select to bulk fix'
+  if (code === BRANCH_OWNED_CODE) {
+    return 'Nothing to fix — the file lives on a branch that is not checked out; clears when it merges'
+  }
+  return 'Manual resolution only — fix via DiffPanel or the originating proposal'
+}
+
+function codeTag(code) {
+  return code === BRANCH_OWNED_CODE ? 'not checked out' : 'manual'
 }
 
 function severityForCode(code) {
@@ -225,11 +247,11 @@ onMounted(refresh)
         <Checkbox
           :disabled="!isAutoFixable(code)"
           :model-value="selectedCodes.has(code)"
-          :title="isAutoFixable(code) ? 'Auto-fixable — select to bulk fix' : 'Manual resolution only — fix via DiffPanel or the originating proposal'"
+          :title="codeHint(code)"
           @update:model-value="toggleCode(code)"
         >
           <code class="text-xs font-semibold">{{ code }}</code>
-          <span v-if="!isAutoFixable(code)" class="text-[10px] uppercase tracking-wide text-slate-500 ml-1">manual</span>
+          <span v-if="!isAutoFixable(code)" class="text-[10px] uppercase tracking-wide text-slate-500 ml-1">{{ codeTag(code) }}</span>
         </Checkbox>
         <span class="text-xs">{{ byCode[code].length }} issue<span v-if="byCode[code].length !== 1">s</span></span>
       </div>

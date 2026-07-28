@@ -20,6 +20,7 @@ from lib.topics.apply import ApplyOptions, apply_diff, resolve_diff_with_options
 from lib.topics.core import load_graph_merged, topic_local_path, write_split_graph
 from lib.topics.diff import GraphDiff, compute_topic_delta, diff_against_graph
 from lib.topics.snapshots import latest_snapshot, resolve_or_create_repo
+from lib.topics.validation import BRANCH_OWNED_REF_CODE
 
 
 @pytest.fixture
@@ -448,6 +449,96 @@ def test_resolve_diff_preserves_create_collision_error():
         e.code == "topic.id_collides_with_approved" for e in resolved.introduced_errors
     ), "strategy precondition error must survive resolution"
     assert not resolved.is_applyable
+
+
+def test_drop_dead_refs_spares_an_anchor_owned_by_another_branch(
+    fake_git_repo, branch_owned_ref,
+):
+    """`drop_dead_refs` is the second door onto the same unrecoverable deletion
+    the audit panel's bulk fix offers, so an anchor the topic *already carries*
+    needs the same guard: absent from this checkout is not dead when a branch
+    tip still carries it (CAI-30).
+
+    Threads `repo_path` into both the diff and the resolve, the way
+    `proposals.apply_service` does — audit one side only and the pair stops
+    cancelling.
+    """
+    (fake_git_repo / "here.py").write_text("x\n")
+    base = {**_base_graph(), "topics": {"t": _topic("t", refs=[
+        {"path": branch_owned_ref, "role": "implementation"},
+        {"path": "gone.py", "role": "implementation"},
+    ])}}
+    incoming = {"id": "incoming", **_topic(
+        "incoming", refs=[{"path": "here.py", "role": "implementation"}],
+    )}
+
+    raw = diff_against_graph(
+        incoming, base, strategy="merge", target_topic_id="t",
+        repo_path=str(fake_git_repo),
+    )
+    resolved, dropped = resolve_diff_with_options(
+        raw, ApplyOptions(drop_dead_refs=True), repo_path=str(fake_git_repo),
+    )
+
+    assert [p for _, p, _ in dropped.dead_refs] == ["gone.py"]
+    kept = resolved.prospective_graph["topics"]["t"]["refs"]
+    assert sorted(r["path"] for r in kept) == sorted(["here.py", branch_owned_ref])
+    assert resolved.is_applyable
+
+
+def test_drop_dead_refs_strips_a_branch_owned_ref_the_proposal_itself_adds(
+    fake_git_repo, branch_owned_ref,
+):
+    """The guard protects existing curation, not a path the proposal invents.
+
+    A newly-authored branch-owned ref is still an introduced error, so sparing
+    it would strand the diff: permanently unapplyable, with the one checkbox
+    offered to clear it doing nothing and `dropped` explaining nothing (CAI-30).
+    """
+    (fake_git_repo / "here.py").write_text("x\n")
+    base = _base_graph()
+    proposed = {"id": "t", **_topic("t", refs=[
+        {"path": "here.py", "role": "implementation"},
+        {"path": branch_owned_ref, "role": "implementation"},
+    ])}
+
+    raw = diff_against_graph(
+        proposed, base, strategy="create", repo_path=str(fake_git_repo),
+    )
+    assert not raw.is_applyable
+
+    resolved, dropped = resolve_diff_with_options(
+        raw, ApplyOptions(drop_dead_refs=True), repo_path=str(fake_git_repo),
+    )
+
+    assert [p for _, p, _ in dropped.dead_refs] == [branch_owned_ref]
+    kept = resolved.prospective_graph["topics"]["t"]["refs"]
+    assert [r["path"] for r in kept] == ["here.py"]
+    assert resolved.is_applyable
+
+
+def test_graph_warnings_name_a_branch_owned_ref_by_its_own_code(
+    fake_git_repo, branch_owned_ref,
+):
+    """`graph_warnings` escapes the set-diff and is rendered by code next to
+    DiffPanel's `drop_dead_refs` checkbox, so a pre-existing branch-owned
+    anchor must not be advertised there as the `graph.dead_ref` that checkbox
+    now refuses to drop (CAI-30)."""
+    base = {**_base_graph(), "topics": {"old": _topic("old", refs=[
+        {"path": branch_owned_ref, "role": "implementation"},
+    ])}}
+    proposed = {"id": "new", **_topic("new")}
+
+    diff = diff_against_graph(
+        proposed, base, strategy="create", repo_path=str(fake_git_repo),
+    )
+
+    codes = {w.code for w in diff.graph_warnings}
+    assert BRANCH_OWNED_REF_CODE in codes
+    assert "graph.dead_ref" not in codes
+    # Pre-existing rot never blocks an apply, whichever code it carries.
+    assert not [i for i in diff.introduced_errors
+                if i.code == BRANCH_OWNED_REF_CODE]
 
 
 def test_compute_topic_delta_surfaces_tier_only_ref_change():

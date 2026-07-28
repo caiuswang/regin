@@ -25,10 +25,11 @@ the *new* issues (those a diff would introduce) block apply.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from lib.topics.branch_refs import ABSENT_ELSEWHERE, classify_absent_paths
 from lib.topics.core import (
     EDGE_TYPES,
     NON_DRIFTING_REF_TIERS,
@@ -44,6 +45,11 @@ from lib.topics.core import (
 
 
 Severity = str  # "error" | "warning" | "info"
+
+# A ref absent from this checkout but carried by another branch tip. Split out
+# of `graph.dead_ref` so remediation can refuse to delete it; see
+# `_recode_branch_owned_refs`.
+BRANCH_OWNED_REF_CODE = "graph.ref_on_other_branch"
 
 
 @dataclass(frozen=True)
@@ -374,12 +380,28 @@ def audit_graph(
     (used by unit tests that don't materialize files).
 
     One deliberate divergence from `scan.validate()`: a ref absent from the
-    working tree is `graph.dead_ref` (error) here regardless of whether
-    another branch carries it. This gate runs on *authoring* — a proposal
-    citing a path this checkout cannot show is unreviewable — whereas
-    `scan.validate` gates a whole pre-existing graph, where a not-checked-out
-    branch's anchors are legitimate. `diff_against_graph` only reports issues
-    the change *introduces*, so pre-existing dead refs never block an apply.
+    working tree is an *error* here even when another branch carries it. This
+    gate runs on *authoring* — a proposal citing a path this checkout cannot
+    show is unreviewable — whereas `scan.validate` gates a whole pre-existing
+    graph, where a not-checked-out branch's anchors are legitimate.
+    `diff_against_graph` only reports issues the change *introduces*, so
+    pre-existing dead refs never block an apply.
+
+    The two cases still get distinct codes (`graph.dead_ref` vs
+    `BRANCH_OWNED_REF_CODE`), because equal severity here does not mean equal
+    remediation: only a truly dead ref may be deleted. See
+    `_recode_branch_owned_refs`.
+
+    Classification is unconditional. It costs one git pass per branch tip, and
+    an earlier revision let set-diffing callers opt out to save it — on the
+    theory that a code which cancels out between two audits is never read. It
+    is: `diff._classify_issues` feeds its `pre_issues` into
+    `GraphDiff.graph_warnings`, which is serialized and rendered *by code* by
+    DiffPanel and `mcp_server` (the CLI prints only a count). Opting out there
+    printed `graph.dead_ref` next to the `drop_dead_refs` checkbox for an
+    anchor that checkbox now refuses to drop. Callers that set-diff must also
+    stay mutually consistent — classify one side only and the pair no longer
+    cancels — which an opt-in flag makes easy to get wrong (CAI-30).
     """
     issues: list[ValidationIssue] = []
 
@@ -437,7 +459,50 @@ def audit_graph(
         ))
     issues.extend(_audit_taxonomy_placement(topics))
     issues.extend(_audit_shared_primary_refs(topics))
-    return issues
+    return _recode_branch_owned_refs(issues, ctx.repo_path)
+
+
+def _recode_branch_owned_refs(
+    issues: list[ValidationIssue], repo_path: Optional[Path],
+) -> list[ValidationIssue]:
+    """Re-code the `graph.dead_ref` findings whose path is merely not checked
+    out as `graph.ref_on_other_branch`.
+
+    Both stay errors — this gate runs on authoring, and a proposal citing a
+    path this checkout cannot show is unreviewable either way. What the split
+    buys is that everything *downstream* of the finding can tell the two apart:
+    only `graph.dead_ref` is auto-fixable, so the audit panel's one-click strip
+    can no longer delete an anchor whose file lives on an unmerged branch, and
+    the group/split gates can waive the branch-owned case (CAI-30).
+
+    Costs nothing on a clean graph — no `graph.dead_ref` findings, no git.
+    """
+    if repo_path is None:
+        return issues
+    absent = {p for i in issues if i.code == "graph.dead_ref" for p in i.paths}
+    if not absent:
+        return issues
+    verdicts = classify_absent_paths(repo_path, absent)
+    return [
+        replace(
+            issue,
+            code=BRANCH_OWNED_REF_CODE,
+            message=f"topic {issue.topic_ids[0]} ref does not exist in this "
+                    f"checkout (it is present on another branch): "
+                    f"{issue.paths[0]}",
+        )
+        if _is_branch_owned(issue, verdicts) else issue
+        for issue in issues
+    ]
+
+
+def _is_branch_owned(issue: ValidationIssue, verdicts: dict[str, str]) -> bool:
+    return (
+        issue.code == "graph.dead_ref"
+        and bool(issue.topic_ids)
+        and len(issue.paths) == 1
+        and verdicts.get(issue.paths[0]) == ABSENT_ELSEWHERE
+    )
 
 
 def _audit_taxonomy_placement(
@@ -562,6 +627,7 @@ def diff_issues(
 
 
 __all__ = [
+    "BRANCH_OWNED_REF_CODE",
     "ValidationIssue",
     "GraphContext",
     "Severity",

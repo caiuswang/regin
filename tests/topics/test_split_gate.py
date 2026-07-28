@@ -147,6 +147,39 @@ def test_thin_leaf_and_tiny_subtopic_warn_but_pass():
     assert any("min_per_topic" in w for w in res.warnings)
 
 
+# ── ref anchors ─────────────────────────────────────────────────
+
+def test_split_is_not_blocked_by_an_anchor_owned_by_another_branch(
+    fake_git_repo, branch_owned_ref,
+):
+    """A split redistributes the leaf's existing anchors, so the new nodes
+    inherit whatever refs live on an unmerged branch. Erroring on those made
+    the leaf unsplittable until that branch merged, while protecting nothing —
+    the refs were already in the graph (CAI-30)."""
+    plan = _good_plan()
+    plan.new_topics["sub-a"]["refs"] = [
+        {"path": branch_owned_ref, "role": "implementation"}]
+
+    res = check_split(plan, _graph(), _links(plan), repo_path=fake_git_repo)
+
+    assert res.ok, res.errors
+
+
+def test_split_still_blocks_on_a_genuinely_dead_anchor(
+    fake_git_repo, branch_owned_ref,
+):
+    """The waiver is scoped to the branch-owned code — a path no branch carries
+    must still fail the gate."""
+    plan = _good_plan()
+    plan.new_topics["sub-a"]["refs"] = [
+        {"path": "gone.py", "role": "implementation"}]
+
+    res = check_split(plan, _graph(), _links(plan), repo_path=fake_git_repo)
+
+    assert not res.ok
+    assert any("graph.dead_ref" in e for e in res.errors)
+
+
 # ── live-store adapter ──────────────────────────────────────────
 
 def test_gather_leaf_links_reads_sources_from_store():

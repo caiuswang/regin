@@ -8,6 +8,14 @@ issue codes whose resolution is unambiguous.
   - `graph.orphan_edge_target` — drop the edge. The target topic
     doesn't exist; the edge points nowhere.
 
+`graph.ref_on_other_branch` is deliberately absent. It reads as the
+same shape of finding — a ref whose path this checkout cannot show —
+but the file is alive on another branch tip, so deleting the anchor
+destroys curation for work that merely isn't checked out, and nothing
+in the UI can put it back (CAI-30). The audit list surfaces it under
+its own code with no fix offered; it resolves itself when the branch
+merges.
+
 `graph.duplicate_alias` is NOT auto-fixable. The right resolution
 depends on which topic the user considers canonical and whether
 the right answer is to rename one alias rather than drop it. The

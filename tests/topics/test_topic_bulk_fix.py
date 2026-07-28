@@ -16,7 +16,7 @@ from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, Repo
 from lib.topics import bootstrap, load_graph, write_split_graph
 from lib.topics.bulk_fix import AUTO_FIXABLE_CODES, compose_fix
-from lib.topics.validation import audit_graph
+from lib.topics.validation import BRANCH_OWNED_REF_CODE, audit_graph
 
 
 def _seed_repo(path) -> str:
@@ -29,7 +29,11 @@ def _seed_repo(path) -> str:
 # ── Composer unit tests ─────────────────────────────────────────────
 
 
-def test_compose_fix_drops_dead_refs_only_for_selected_topic(tmp_path):
+def test_compose_fix_drops_dead_refs_only_for_selected_topic(fake_git_repo):
+    """Every ref here is absent from the working tree *and* from every branch
+    tip, so all of them are genuinely dead and all of them get stripped. The
+    audit must run against a real repo: the branch lookup fails open, so on a
+    bare directory git cannot rule out an owning branch and nothing is dead."""
     graph = {
         "version": 1, "repo": "demo", "topics": {
             "alpha": {
@@ -47,18 +51,14 @@ def test_compose_fix_drops_dead_refs_only_for_selected_topic(tmp_path):
             },
         },
     }
-    issues = audit_graph(graph, repo_path=tmp_path)  # tmp_path has no files
+    issues = audit_graph(graph, repo_path=fake_git_repo)
 
     fixes = compose_fix(graph, issues, codes_to_fix={"graph.dead_ref"})
     by_topic = {tid: (cleaned, before) for tid, cleaned, before in fixes}
     assert "alpha" in by_topic
     assert "beta" in by_topic
-    # alpha's missing.py removed; alpha.py kept (also missing but the
-    # audit can't find it on tmp_path either — let me check)
     alpha_cleaned, _ = by_topic["alpha"]
-    alpha_paths = sorted(r["path"] for r in alpha_cleaned["refs"])
-    # Both refs are "missing" because tmp_path is empty, so both get dropped.
-    assert alpha_paths == []
+    assert alpha_cleaned["refs"] == []
     beta_cleaned, _ = by_topic["beta"]
     assert beta_cleaned["refs"] == []
 
@@ -109,6 +109,91 @@ def test_compose_fix_refuses_duplicate_alias(tmp_path):
 def test_compose_fix_empty_when_no_issues(tmp_path):
     graph = {"version": 1, "repo": "demo", "topics": {}}
     assert compose_fix(graph, [], codes_to_fix=AUTO_FIXABLE_CODES) == []
+
+
+# ── CAI-30: branch-owned anchors are not "dead" ─────────────────────
+
+
+def _graph_with_refs(*paths):
+    return {
+        "version": 1, "repo": "demo", "topics": {
+            "alpha": {
+                "label": "A", "intent": "a", "status": "active",
+                "aliases": [],
+                "refs": [{"path": p, "role": "implementation"} for p in paths],
+                "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+            },
+        },
+    }
+
+
+def test_audit_separates_branch_owned_refs_from_dead_ones(
+    fake_git_repo, branch_owned_ref,
+):
+    """Both are absent from this checkout, but only one is recoverable."""
+    graph = _graph_with_refs(branch_owned_ref, "gone.py")
+
+    issues = audit_graph(graph, repo_path=fake_git_repo)
+    by_code = {i.code: i for i in issues if i.code in
+               {"graph.dead_ref", BRANCH_OWNED_REF_CODE}}
+
+    assert by_code[BRANCH_OWNED_REF_CODE].paths == (branch_owned_ref,)
+    assert by_code["graph.dead_ref"].paths == ("gone.py",)
+    assert "present on another branch" in by_code[BRANCH_OWNED_REF_CODE].message
+
+
+def test_compose_fix_refuses_to_strip_a_branch_owned_ref(
+    fake_git_repo, branch_owned_ref,
+):
+    """The audit panel's one-click strip would otherwise delete an anchor whose
+    file is alive on an unmerged branch, with no way to recover it (CAI-30)."""
+    graph = _graph_with_refs(branch_owned_ref, "gone.py")
+    issues = audit_graph(graph, repo_path=fake_git_repo)
+
+    fixes = compose_fix(graph, issues, codes_to_fix=AUTO_FIXABLE_CODES)
+
+    assert len(fixes) == 1
+    _, cleaned, _ = fixes[0]
+    assert [r["path"] for r in cleaned["refs"]] == [branch_owned_ref]
+
+
+def test_branch_owned_ref_code_is_never_auto_fixable(
+    fake_git_repo, branch_owned_ref,
+):
+    """Asking for it explicitly must not open a back door around the guard."""
+    graph = _graph_with_refs(branch_owned_ref)
+    issues = audit_graph(graph, repo_path=fake_git_repo)
+
+    assert BRANCH_OWNED_REF_CODE not in AUTO_FIXABLE_CODES
+    assert compose_fix(graph, issues, codes_to_fix={BRANCH_OWNED_REF_CODE}) == []
+
+
+def test_audit_fix_endpoint_leaves_branch_owned_refs_alone(
+    flask_client, fake_git_repo, branch_owned_ref,
+):
+    """End-to-end: the panel offers no fix for the code, and selecting every
+    code it does offer still leaves the branch-owned anchor in the graph."""
+    name = _seed_repo(fake_git_repo)
+    bootstrap(fake_git_repo)
+    graph = load_graph(fake_git_repo)
+    graph["topics"]["alpha"] = _graph_with_refs(
+        branch_owned_ref, "gone.py")["topics"]["alpha"]
+    write_split_graph(fake_git_repo, graph)
+
+    audit = flask_client.get(f"/api/repos/{name}/topics/audit").get_json()
+    assert BRANCH_OWNED_REF_CODE in audit["by_code"]
+    assert BRANCH_OWNED_REF_CODE not in audit["auto_fixable_codes"]
+
+    resp = flask_client.post(
+        f"/api/repos/{name}/topics/audit/fix",
+        json={"issue_codes": audit["auto_fixable_codes"]},
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+
+    after = flask_client.get(f"/api/repos/{name}/topics/audit").get_json()
+    assert "graph.dead_ref" not in after["by_code"]
+    assert [i["paths"] for i in after["by_code"][BRANCH_OWNED_REF_CODE]] \
+        == [[branch_owned_ref]]
 
 
 # ── Endpoint integration ────────────────────────────────────────────

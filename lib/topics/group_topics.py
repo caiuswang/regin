@@ -36,7 +36,11 @@ from lib.topics.split_leaf import ClusterProposerUnavailable, _slug, _unique_id
 from lib.topics.tree import (
     UNCLASSIFIED, build_tree, effective_parent, is_bucket,
 )
-from lib.topics.validation import audit_graph, split_by_severity
+from lib.topics.validation import (
+    BRANCH_OWNED_REF_CODE,
+    audit_graph,
+    split_by_severity,
+)
 
 log = get_activity_logger("topics")
 
@@ -358,7 +362,13 @@ def _prospective(plan: GroupPlan, graph: dict) -> dict:
 def _audit_prospective(plan: GroupPlan, graph: dict, repo_path) -> list[str]:
     """Add the new buckets + reparents, re-audit, and fail on any error touching
     a new/grouped node or any grouped topic that build_tree routes to
-    `unclassified` (the 2-level trap this gate exists to catch)."""
+    `unclassified` (the 2-level trap this gate exists to catch).
+
+    Grouping only rewrites `parent_id`, so it cannot introduce a ref problem —
+    a topic whose anchors live on an unmerged branch is one this gate would
+    otherwise refuse to file forever (CAI-30), and waiving that code is what
+    keeps it groupable. Unlike the split gate's waiver this one cannot be
+    abused: no plan here authors a ref."""
     errors: list[str] = []
     prospective = _prospective(plan, graph)
     touched = set(plan.new_buckets) | set(plan.assignment)
@@ -367,6 +377,8 @@ def _audit_prospective(plan: GroupPlan, graph: dict, repo_path) -> list[str]:
     errs, _ = split_by_severity(issues)
     for e in errs:
         tids = set(e.topic_ids or ())
+        if e.code == BRANCH_OWNED_REF_CODE:
+            continue
         if not tids or tids & touched:
             errors.append(f"audit error {e.code}: {e.message}")
 

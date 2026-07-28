@@ -228,6 +228,35 @@ def test_check_group_warns_on_singleton_bucket():
     assert any("< 2" in w for w in res.warnings)
 
 
+def test_check_group_not_blocked_by_an_anchor_owned_by_another_branch(
+    fake_git_repo, branch_owned_ref,
+):
+    """Grouping only rewrites `parent_id`, so it cannot introduce a ref
+    problem. Erroring on a topic whose anchors live on an unmerged branch left
+    it unfilable forever (CAI-30)."""
+    graph = _flat_graph(4)
+    graph["topics"]["t0"]["refs"] = [
+        {"path": branch_owned_ref, "role": "implementation"}]
+
+    res = check_group(_good_plan(), graph, repo_path=fake_git_repo)
+
+    assert res.ok, res.errors
+
+
+def test_check_group_still_blocks_on_a_genuinely_dead_anchor(
+    fake_git_repo, branch_owned_ref,
+):
+    """The waiver is scoped to the branch-owned code — a path no branch carries
+    must still fail the gate."""
+    graph = _flat_graph(4)
+    graph["topics"]["t0"]["refs"] = [{"path": "gone.py", "role": "implementation"}]
+
+    res = check_group(_good_plan(), graph, repo_path=fake_git_repo)
+
+    assert not res.ok
+    assert any("graph.dead_ref" in e for e in res.errors)
+
+
 # ── proposer parse / fail-loud ──────────────────────────────────
 
 def test_propose_buckets_parses_and_filters_unknown_ids():

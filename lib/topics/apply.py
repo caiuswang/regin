@@ -48,6 +48,7 @@ from sqlmodel import Session, select
 
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, ProposalTopic, Repo, TopicAudit
+from lib.topics.branch_refs import ABSENT_ELSEWHERE, classify_absent_paths
 from lib.topics.core import normalize as _normalize_alias
 from lib.topics.diff import GraphDiff, TopicDelta, compute_topic_delta, serialize_topic_delta
 from lib.topics.graph_io import export_overlay_to_disk, repo_path_for
@@ -97,10 +98,13 @@ class ApplyOptions:
     - `drop_dead_refs=False` — legacy `validate()` blocked accept on dead
       refs, and the refactor's goal is to make that pain *one click to
       resolve*, not zero-click. The UI defaults the checkbox to checked
-      in Phase C; the diff layer's job is to make damage visible. Keep it
-      opt-in: `scan.validate` now treats an anchor carried by another
-      branch as legitimate, so dropping dead refs wholesale would delete
-      anchors that are merely not checked out.
+      in Phase C; the diff layer's job is to make damage visible. It stays
+      opt-in because dropping a ref is unrecoverable from the UI, but it is
+      no longer indiscriminate: an anchor the topic *already carried* that
+      is merely absent from this checkout — the file lives on another
+      branch tip — survives the filter. One the proposal itself introduces
+      does not; there is no curation to lose, and sparing it would strand
+      the diff (CAI-30). See `_filter_dead_refs`.
     - `dedupe_aliases=False` — within-topic normalize-duplicates are
       always collapsed at the shape layer (`diff._approved_shape`), so
       they never reach the graph regardless of this flag. Turning it on
@@ -305,20 +309,59 @@ def _filter_dead_refs(
     cleaned_topic: dict,
     repo_path_obj: Path,
     topic_id: str,
+    protected: frozenset[str],
 ) -> list[tuple[str, str, str]]:
-    """Mutates `cleaned_topic['refs']`; returns dropped (topic_id, path, role)."""
-    dropped: list[tuple[str, str, str]] = []
-    kept: list[dict] = []
-    for r in cleaned_topic.get("refs", []) or []:
-        if not isinstance(r, dict):
-            continue
-        path = r.get("path")
-        if isinstance(path, str) and (repo_path_obj / path).exists():
-            kept.append(r)
-        else:
-            dropped.append((topic_id, path or "", r.get("role", "")))
-    cleaned_topic["refs"] = kept
-    return dropped
+    """Mutates `cleaned_topic['refs']`; returns dropped (topic_id, path, role).
+
+    Absent from the working tree is not the same as dead: a path carried by
+    another branch tip anchors work that merely isn't checked out, and deleting
+    it here is unrecoverable. Those are kept — the flag buys you the refs whose
+    file is genuinely gone (CAI-30).
+
+    `protected` scopes that to the refs the topic *already had*. What CAI-30
+    protects is existing curation, and a path the proposal is itself
+    introducing has none to lose. Sparing those too would strand the proposal:
+    the branch-owned ref is still an introduced error, so the diff stays
+    unapplyable while the one checkbox offered to clear it silently does
+    nothing.
+    """
+    refs = [r for r in cleaned_topic.get("refs", []) or [] if isinstance(r, dict)]
+    dead = _dead_ref_paths(refs, repo_path_obj, protected)
+    cleaned_topic["refs"] = [r for r in refs if not _is_dead_ref(r, dead)]
+    return [
+        (topic_id, r.get("path") or "", r.get("role", ""))
+        for r in refs if _is_dead_ref(r, dead)
+    ]
+
+
+def _is_dead_ref(ref: dict, dead: set[str]) -> bool:
+    path = ref.get("path")
+    return not isinstance(path, str) or path in dead
+
+
+def _dead_ref_paths(
+    refs: list[dict], repo_path_obj: Path, protected: frozenset[str],
+) -> set[str]:
+    """Of the ref paths absent from the working tree, the ones really gone. A
+    path in `protected` carried by another branch tip is not among them — it
+    anchors work that simply isn't checked out."""
+    absent = {
+        r["path"] for r in refs
+        if isinstance(r.get("path"), str)
+        and not (repo_path_obj / r["path"]).exists()
+    }
+    verdicts = classify_absent_paths(repo_path_obj, absent & protected)
+    return {p for p in absent if verdicts.get(p) != ABSENT_ELSEWHERE}
+
+
+def _existing_ref_paths(before: Optional[dict]) -> frozenset[str]:
+    """Ref paths the topic carried before this change."""
+    if not isinstance(before, dict):
+        return frozenset()
+    return frozenset(
+        r["path"] for r in before.get("refs") or []
+        if isinstance(r, dict) and isinstance(r.get("path"), str)
+    )
 
 
 def _sibling_alias_keys(new_topics: dict, exclude_topic_id: str) -> set[str]:
@@ -381,7 +424,8 @@ def _resolve_one_delta(
         if options.prune_orphan_edges else []
     )
     dead = (
-        _filter_dead_refs(cleaned, repo_path_obj, delta.topic_id)
+        _filter_dead_refs(cleaned, repo_path_obj, delta.topic_id,
+                          _existing_ref_paths(delta.before))
         if options.drop_dead_refs and repo_path_obj is not None else []
     )
     dups = (
@@ -421,6 +465,10 @@ def _recompute_post_resolution_issues(
     as accepted.
     """
     pre_keys = {i.identity for i in diff.graph_warnings}
+    # `identity` includes the code, so this pass has to classify branch-owned
+    # refs exactly as the diff that produced `pre_keys` did — audit the two
+    # sides differently and a carried-forward issue re-codes itself into a
+    # newly introduced error, blocking every apply (CAI-30).
     post_issues = audit_graph(new_graph, repo_path=repo_path_obj)
     new_warnings = tuple(i for i in post_issues if i.identity in pre_keys)
     carried_pre_errors = tuple(
@@ -445,8 +493,9 @@ def resolve_diff_with_options(
     Three filters, all opt-in via `options`:
       - `prune_orphan_edges`: drop edges whose target isn't in the
         prospective graph.
-      - `drop_dead_refs`: drop refs whose path doesn't exist on disk.
-        No-op when `repo_path is None`.
+      - `drop_dead_refs`: drop refs whose path doesn't exist on disk,
+        except an already-carried anchor whose file lives on another
+        branch tip (CAI-30). No-op when `repo_path is None`.
       - `dedupe_aliases`: drop aliases that collide with a sibling
         topic in the prospective graph (and within-topic duplicates).
 
