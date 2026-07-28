@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { fmtDuration, isEmptyThinkingSpan } from '../../../utils/traceFormatters.js'
+import CopyButton from './CopyButton.vue'
 
 const props = defineProps({
   span: { type: Object, required: true },
@@ -43,6 +44,11 @@ const selected = computed(() =>
   >
     <div class="flex items-center gap-2 mb-[5px]">
       <span class="font-bold uppercase tracking-[0.07em] text-[10px] text-amber-700">Thinking</span>
+      <CopyButton
+        v-if="span.attributes?.thinking_text"
+        :text="span.attributes.thinking_text"
+        tint="text-amber-700 hover:bg-amber-100"
+      />
       <span
         v-if="span.duration_ms"
         class="ml-auto font-mono text-[10.5px] text-slate-400"
