@@ -3,7 +3,9 @@
 // meta.task_list.final (the session's FINAL snapshot, computed server-side) —
 // never re-derived from the loaded tail, whose older task spans fold away.
 // Completed tasks sort last but STAY VISIBLE (struck ✓); pending ○,
-// in_progress ◔ with its active_form line.
+// in_progress ◔ with its active_form line. Status only sorts WITHIN an agent:
+// `final` arrives grouped per agent (main first) and a status-only sort would
+// braid a subagent's list back through the main one.
 import { computed } from 'vue'
 import { taskSummaryOf } from '../../utils/liveRows.js'
 
@@ -16,8 +18,20 @@ const MARK = { in_progress: '◔', completed: '✓', pending: '○' }
 const CLS = { in_progress: 'doing', completed: 'done', pending: 'pending' }
 
 const summary = computed(() => taskSummaryOf(props.tasks))
-const sorted = computed(() => [...props.tasks].sort(
-  (a, b) => (RANK[a.status] ?? 1) - (RANK[b.status] ?? 1)))
+const agentRank = computed(() => {
+  const ranks = new Map()
+  for (const t of props.tasks) {
+    const agent = t.agent_id || ''
+    if (!ranks.has(agent)) ranks.set(agent, ranks.size)
+  }
+  return ranks
+})
+const sorted = computed(() => [...props.tasks].sort((a, b) => {
+  const ra = agentRank.value.get(a.agent_id || '') ?? 0
+  const rb = agentRank.value.get(b.agent_id || '') ?? 0
+  if (ra !== rb) return ra - rb
+  return (RANK[a.status] ?? 1) - (RANK[b.status] ?? 1)
+}))
 
 function markOf(t) { return MARK[t.status] || '○' }
 function clsOf(t) { return CLS[t.status] || 'pending' }

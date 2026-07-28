@@ -3,11 +3,11 @@
 //
 // The payload ships events, not snapshots, on purpose: a 53-task-write session
 // would otherwise carry 53 near-identical list blobs. Each event is
-// `{span_id, timestamp, task_id, subject?, status?, order?}` and an absent
-// field means "this span didn't touch it" (`order` is a snapshot span's
-// payload position), so the fold mirrors the server's `_apply_task_row`:
-// first non-empty subject wins, every set status overwrites, latest order
-// overwrites.
+// `{span_id, timestamp, task_id, subject?, status?, order?, agent?}` and an
+// absent field means "this span didn't touch it" (`order` is a snapshot span's
+// payload position, `agent` the writing agent — absent for the main one), so
+// the fold mirrors the server's `_apply_task_row`: first non-empty subject
+// wins, every set status overwrites, latest order overwrites.
 //
 // A snapshot is the list AS OF that span — never future state.
 
@@ -15,16 +15,15 @@ const PENDING = 'pending'
 const DONE = 'completed'
 const ACTIVE = 'in_progress'
 // TaskUpdate → `deleted` retires a task; it leaves the list the model sees
-// rather than lingering as an open item. (The server's `final` snapshot keeps
-// the row, which is why the header badge can count one more task than the
-// last card.)
+// rather than lingering as an open item.
 const DELETED = 'deleted'
 
 function applyEvent(state, ev) {
   const id = ev?.task_id
   if (id === undefined || id === null) return
   const key = String(id)
-  const entry = state.get(key) || { task_id: key, subject: '', status: PENDING }
+  const entry = state.get(key)
+    || { task_id: key, subject: '', status: PENDING, agent: ev.agent || '' }
   if (ev.subject && !entry.subject) entry.subject = ev.subject
   if (ev.status) entry.status = ev.status
   // A snapshot event's `order` is the task's position in the LATEST whole-list
@@ -54,6 +53,19 @@ function byPositionThenId(a, b) {
   return byTaskId(a, b)
 }
 
+// Main agent first, then each subagent in the order its first still-live task
+// was created — two agents sharing the trace both number their payload
+// positions from 0, so sorting on position alone shuffles their two lists into
+// one (same grouping the server applies to `final`).
+function agentRanks(tasks) {
+  const ranks = new Map([['', 0]])
+  for (const t of tasks) {
+    const agent = t.agent || ''
+    if (!ranks.has(agent)) ranks.set(agent, ranks.size)
+  }
+  return ranks
+}
+
 function snapshotOf(state) {
   const tasks = []
   let done = 0
@@ -64,7 +76,12 @@ function snapshotOf(state) {
     if (entry.status === DONE) done++
     else if (entry.status === ACTIVE) active++
   }
-  tasks.sort(byPositionThenId)
+  const ranks = agentRanks(tasks)
+  tasks.sort((a, b) => {
+    const ra = ranks.get(a.agent || '')
+    const rb = ranks.get(b.agent || '')
+    return ra !== rb ? ra - rb : byPositionThenId(a, b)
+  })
   return { tasks, done, active, open: tasks.length - done - active }
 }
 

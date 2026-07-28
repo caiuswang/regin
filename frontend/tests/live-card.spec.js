@@ -2253,6 +2253,46 @@ test.describe('Header tasks chip + tasks sheet', () => {
     await expect(last).toContainText('Alpha task')
     await expect(last).toHaveClass(/live-task-item-done/)
   })
+
+  // CAI-44. Two failure modes at once, both invisible in a single-agent
+  // fixture: a superseded plan's finished tasks used to live on forever, and
+  // status-only sorting braided the subagent's list through the main one
+  // (both lists number their payload positions from 0).
+  test('a replaced plan drops out and each agent list stays whole', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const at = i => `2026-05-08T11:0${i}:00`
+    const todos = (...pairs) => pairs.map(([subject, status]) => ({ subject, status }))
+    const snap = (n, i, items, agent) => ({
+      trace_id: traceId, span_id: `${n}-${sfx}`, parent_id: null, name: 'tool.TodoList',
+      start_time: at(i),
+      attributes: {
+        tool_name: 'TodoList', todos: items, is_test: true,
+        ...(agent ? { agent_id: agent } : {}),
+      },
+    })
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: at(0), attributes: { text: 'two plans, two agents', is_test: true } },
+      snap('m1', 1, todos(['Old plan A', 'completed'], ['Old plan B', 'completed'])),
+      snap('s1', 2, todos(['Sub first', 'completed'], ['Sub second', 'in_progress']), 'ag1'),
+      snap('m2', 3, todos(['New plan A', 'completed'], ['New plan B', 'in_progress'])),
+    ])
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const chip = page.locator('[data-testid="live-tasks-chip"]')
+    await expect(chip).toBeVisible({ timeout: 10_000 })
+    // 4, not 6: the superseded plan is gone, not counted as open work.
+    await expect(chip).toContainText('2/4')
+    await chip.click()
+    const items = page.locator('[data-testid="live-task-item"]')
+    await expect(items).toHaveCount(4)
+    // Main list first (in_progress before completed WITHIN the agent), then
+    // the subagent's — never one agent's rows threaded through the other's.
+    await expect(page.locator('.live-task-subject')).toHaveText([
+      'New plan B', 'New plan A', 'Sub second', 'Sub first',
+    ])
+  })
 })
 
 test.describe('Header agents button + agents sheet', () => {

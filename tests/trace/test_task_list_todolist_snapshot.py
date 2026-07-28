@@ -6,9 +6,10 @@ returned None for a Kimi session — killing the inline TASK LIST card, the head
 `tasks N/M` badge and the mobile LiveTaskSheet at once. The per-task Task* fold
 must keep behaving identically.
 
-Snapshot identity is scoped per writing agent, and finished tasks are never
-retired: both are load-bearing, since main agent and subagents share one
-trace_id and the header badge filters `deleted` rows out entirely.
+Snapshot identity is scoped per writing agent — load-bearing, since main agent
+and subagents share one trace_id. A snapshot payload is the WHOLE list, so
+anything it drops retires whatever its status; `final` carries only live tasks,
+grouped per agent (CAI-44).
 """
 
 from __future__ import annotations
@@ -77,15 +78,19 @@ def test_replacing_the_list_keeps_subjects_with_their_own_task(tmp_db):
     _seed(tid, "B", "tool.TodoList", "2026-06-16 19:10:00",
           _todos(("Fresh plan step", "in_progress")))
 
-    final = _fetch_session_task_list(tid)['final']
-    by_subject = {t['subject']: t['status'] for t in final}
-    assert by_subject == {'Old plan step': 'deleted',
-                          'Fresh plan step': 'in_progress'}
+    out = _fetch_session_task_list(tid)
+    assert {t['subject']: t['status'] for t in out['final']} == {
+        'Fresh plan step': 'in_progress'}
+    # The old step is retired on the span that dropped it, so the card for A
+    # still replays it — only `final` moves on.
+    retired = [e for e in out['events'] if e.get('status') == 'deleted']
+    assert [(e['span_id'], e['task_id']) for e in retired] == [("B", "todo-1")]
 
 
-def test_completed_task_is_never_retired(tmp_db):
-    # The session header filters `deleted` out of the task badge, so retiring a
-    # finished task erases work that actually shipped.
+def test_completed_task_from_a_replaced_plan_is_retired(tmp_db):
+    # CAI-44: sparing `completed` kept every plan a long session ever wrote in
+    # one list, all numbered from position 0 — the header badge showed 61 tasks
+    # where the model's terminal showed 4.
     tid = "t-kimi-completed"
     _seed(tid, "A", "tool.TodoList", "2026-06-16 18:58:43",
           _todos(("Shipped it", "completed")))
@@ -94,8 +99,46 @@ def test_completed_task_is_never_retired(tmp_db):
 
     out = _fetch_session_task_list(tid)
     assert {t['subject']: t['status'] for t in out['final']} == {
-        'Shipped it': 'completed', 'Fresh plan step': 'in_progress'}
-    assert [e for e in out['events'] if e.get('status') == 'deleted'] == []
+        'Fresh plan step': 'in_progress'}
+    assert [e['span_id'] for e in out['events']
+            if e.get('status') == 'deleted'] == ["B"]
+
+
+def test_successive_plans_do_not_interleave_by_position(tmp_db):
+    # Three generations of a two-item list: without retirement all six tasks
+    # survive with orders 0,0,0,1,1,1 and sort into an unreadable braid.
+    tid = "t-kimi-generations"
+    for i, (span, plan) in enumerate((
+        ("A", (("Gen1 first", "completed"), ("Gen1 second", "completed"))),
+        ("B", (("Gen2 first", "completed"), ("Gen2 second", "completed"))),
+        ("C", (("Gen3 first", "completed"), ("Gen3 second", "in_progress"))),
+    )):
+        _seed(tid, span, "tool.TodoList", f"2026-06-16 19:0{i}:00", _todos(*plan))
+
+    final = _fetch_session_task_list(tid)['final']
+    assert [t['subject'] for t in final] == ["Gen3 first", "Gen3 second"]
+
+
+def test_final_groups_each_agents_list_instead_of_interleaving(tmp_db):
+    # Both agents number their payload positions from 0, so position-only
+    # sorting braids main/subagent rows together in the header list.
+    tid = "t-kimi-agent-grouping"
+    _seed(tid, "s1", "tool.TodoList", "2026-06-16 10:00:00",
+          _todos(("Main one", "completed"), ("Main two", "in_progress")))
+    _seed(tid, "s2", "tool.TodoList", "2026-06-16 10:01:00",
+          _todos(("Sub one", "completed"), ("Sub two", "in_progress")),
+          agent_id="ag1")
+
+    out = _fetch_session_task_list(tid)
+    assert [t['subject'] for t in out['final']] == [
+        "Main one", "Main two", "Sub one", "Sub two"]
+    assert [t.get('agent_id') for t in out['final']] == ['', '', 'ag1', 'ag1']
+    # The writing agent rides on the event too, so the client-side card replay
+    # can group the same way.
+    assert {e.get('agent') for e in out['events'] if e['span_id'] == "s2"} == {
+        "ag1"}
+    assert [e for e in out['events']
+            if e['span_id'] == "s1" and 'agent' in e] == []
 
 
 def test_dropped_task_is_retired_once(tmp_db):

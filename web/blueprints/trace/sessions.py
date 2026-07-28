@@ -603,10 +603,10 @@ def api_session_detail(trace_id):
 # a snapshot span at all (hook_manager/handlers/post_tool_trace.py).
 _TASK_SPAN_NAMES = ('tool.TaskCreate', 'tool.TaskUpdate', 'tool.TodoList')
 
-# Statuses a dropped task is never rewritten to `deleted` from. `completed` is
-# here because the session-header badge filters `deleted` out entirely, so
-# retiring finished work would silently erase it from the task counts.
-_UNRETIRABLE_STATUSES = frozenset({'completed', 'deleted'})
+# Statuses a dropped task is never rewritten to `deleted` from — only an
+# already-retired one, so a task retires on the snapshot that dropped it and
+# not on every snapshot after.
+_UNRETIRABLE_STATUSES = frozenset({'deleted'})
 
 
 def _fetch_session_task_list(trace_id: str) -> dict | None:
@@ -631,10 +631,12 @@ def _fetch_session_task_list(trace_id: str) -> dict | None:
 
     Returns `{events: [...], final: [...]}` or `None` if the session
     never used Task tools. Each event is `{span_id, timestamp, task_id,
-    subject?, status?, order?}`; absent fields mean "this span didn't touch
-    that field" (`order` is a snapshot span's payload position). `final` is
-    the snapshot after the last event, ordered the way the agent last wrote
-    the list (snapshot position, falling back to numeric task_id).
+    subject?, status?, order?, agent?}`; absent fields mean "this span didn't
+    touch that field" (`order` is a snapshot span's payload position, `agent`
+    the writing agent — absent for the main one). `final` is the LIVE snapshot
+    after the last event (retired tasks dropped), grouped by owning agent and
+    ordered the way that agent last wrote its list (snapshot position, falling
+    back to numeric task_id).
     """
     from sqlmodel import select as _select
     with SessionLocal() as session:
@@ -687,12 +689,12 @@ def _apply_task_row(r, events, state, last_span_by_status, todo_ids=None) -> Non
         attrs = json.loads(r.attributes) if r.attributes else {}
     except (ValueError, TypeError):
         attrs = {}
+    # The column is promoted from attributes at insert; rows written before
+    # that promotion only carry the attribute.
+    agent = _str_attr(getattr(r, 'agent_id', None)) or _str_attr(
+        attrs.get('agent_id'))
     todos = attrs.get('todos')
     if isinstance(todos, list) and todos:
-        # The column is promoted from attributes at insert; rows written before
-        # that promotion only carry the attribute.
-        agent = _str_attr(getattr(r, 'agent_id', None)) or _str_attr(
-            attrs.get('agent_id'))
         _apply_todo_snapshot(r, todos, agent, events, state,
                              last_span_by_status,
                              todo_ids if todo_ids is not None else {})
@@ -705,42 +707,45 @@ def _apply_task_row(r, events, state, last_span_by_status, todo_ids=None) -> Non
         'subject': _str_attr(attrs.get('subject')),
         'status': _str_attr(attrs.get('status')),
         'active_form': _str_attr(attrs.get('active_form')),
-    }, events, state, last_span_by_status)
+    }, events, state, last_span_by_status, agent)
 
 
-def _record_task_event(r, task: dict, events, state, last_span_by_status) -> None:
+def _record_task_event(r, task: dict, events, state, last_span_by_status,
+                       agent: str = '') -> None:
     """Append one task's event (omitting subject/status when absent) and update
     the running per-task entry: first non-empty subject wins, every set status
     both overwrites the entry and records the span_id under that status in
     `last_span_by_status`. A snapshot-supplied `order` overwrites — it is the
     task's position in the LATEST whole-list payload, so the rendered list
-    tracks the order the agent last wrote, not first-seen order.
+    tracks the order the agent last wrote, not first-seen order. `agent` rides
+    along so both surfaces can keep one agent's list whole instead of
+    interleaving two agents' payload positions.
     """
-    tid, subject, status = task['task_id'], task['subject'], task['status']
-    event: dict = {
+    tid, status = task['task_id'], task['status']
+    optional = {
+        'subject': task['subject'],
+        'status': status,
+        'order': task.get('order'),
+        'agent': agent,
+    }
+    events.append({
         'span_id': r.span_id,
         'timestamp': r.start_time,
         'task_id': tid,
-    }
-    if subject:
-        event['subject'] = subject
-    if status:
-        event['status'] = status
-    if task.get('order') is not None:
-        event['order'] = task['order']
-    events.append(event)
+        **{k: v for k, v in optional.items() if v is not None and v != ''},
+    })
     entry = state.setdefault(tid, {
         'task_id': tid,
         'subject': '',
         'status': 'pending',
         'active_form': '',
+        'agent_id': agent,
         # First TaskCreate's span_id — fallback for pending tasks.
         'created_span_id': r.span_id,
     })
-    if subject and not entry['subject']:
-        entry['subject'] = subject
-    if task['active_form'] and not entry['active_form']:
-        entry['active_form'] = task['active_form']
+    for field in ('subject', 'active_form'):
+        if task[field] and not entry[field]:
+            entry[field] = task[field]
     if task.get('order') is not None:
         entry['order'] = task['order']
     if status:
@@ -778,7 +783,7 @@ def _apply_todo_snapshot(r, todos, agent, events, state, last_span_by_status,
             'status': _str_attr(todo.get('status')) or 'pending',
             'active_form': _str_attr(todo.get('active_form')),
             'order': position,
-        }, events, state, last_span_by_status)
+        }, events, state, last_span_by_status, agent)
     _retire_missing_todos(r, agent, seen, events, state, last_span_by_status,
                           todo_ids)
 
@@ -788,6 +793,13 @@ def _retire_missing_todos(r, agent, seen, events, state, last_span_by_status,
     """A task the newest snapshot dropped is recorded `deleted` — that's how the
     task-list surfaces retire it, so the card keeps matching the list the model
     now sees instead of stranding the old plan's items as open work.
+
+    Finished tasks retire too: a snapshot payload IS the whole list, so a plan
+    the agent has moved on from is gone from its terminal regardless of how its
+    items ended. Sparing `completed` instead accumulated every plan a long
+    session ever wrote into one list, and their payload positions collided
+    (CAI-44). Nothing is lost — `events` still carries each write, so the card
+    for an earlier span replays that plan intact.
 
     Only the writing agent's OWN tasks are eligible: a subagent's list is a
     different list that happens to share the trace, and retiring across agents
@@ -801,32 +813,45 @@ def _retire_missing_todos(r, agent, seen, events, state, last_span_by_status,
         _record_task_event(r, {
             'task_id': tid, 'subject': '', 'status': 'deleted',
             'active_form': '',
-        }, events, state, last_span_by_status)
+        }, events, state, last_span_by_status, agent)
 
 
 def _finalize_task_state(state, last_span_by_status) -> list[dict]:
-    """Resolve `current_span_id` per task and return the sorted snapshot.
+    """Resolve `current_span_id` per task and return the sorted live snapshot.
+
+    Retired tasks are dropped: `final` is what the session's agents have on
+    their lists NOW, and every consumer either filtered `deleted` itself or
+    (the /live card) miscounted it as open work.
 
     `current_span_id` is the latest span that set the FINAL status,
-    falling back to the TaskCreate for pending tasks. Tasks a snapshot
-    span positioned (an `order` from the latest whole-list payload) sort
-    by that position — the order the agent last wrote; unpositioned
-    tasks (TaskCreate/TaskUpdate numeric ids) keep their legacy order:
-    numeric ids numerically, non-digit ids sunk to the end lexically.
+    falling back to the TaskCreate for pending tasks. Tasks group by owning
+    agent — main agent first, then each subagent in the order its first STILL-
+    LIVE task was created — because two agents' payload positions both start
+    at 0 and would otherwise interleave
+    into one unreadable list. Within an agent, tasks a snapshot span
+    positioned (an `order` from the latest whole-list payload) sort by that
+    position — the order the agent last wrote; unpositioned tasks
+    (TaskCreate/TaskUpdate numeric ids) keep their legacy order: numeric ids
+    numerically, non-digit ids sunk to the end lexically.
     """
-    for tid, entry in state.items():
-        per_status = last_span_by_status.get(tid, {})
+    live = [e for e in state.values() if e['status'] != 'deleted']
+    for entry in live:
+        per_status = last_span_by_status.get(entry['task_id'], {})
         entry['current_span_id'] = (
             per_status.get(entry['status']) or entry['created_span_id']
         )
-    return sorted(state.values(), key=_task_sort_key)
+    ranks: dict[str, int] = {'': 0}
+    for entry in live:
+        ranks.setdefault(entry.get('agent_id') or '', len(ranks))
+    return sorted(live, key=lambda t: _task_sort_key(t, ranks))
 
 
-def _task_sort_key(t: dict) -> tuple:
+def _task_sort_key(t: dict, ranks: dict[str, int]) -> tuple:
+    agent = ranks.get(t.get('agent_id') or '', 0)
     order = t.get('order')
     if order is not None:
-        return (0, order, t['task_id'])
-    return (1,
+        return (agent, 0, order, t['task_id'])
+    return (agent, 1,
             int(t['task_id']) if t['task_id'].isdigit() else 1_000_000,
             t['task_id'])
 
