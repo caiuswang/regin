@@ -76,9 +76,10 @@ test('stale wiring reads Needs repair and explains the fix', async ({ page }) =>
   await expect(card.locator('pre').last()).toContainText('--agent-type claude')
 })
 
-test('another checkout offers Adopt instead of Install (CAI-26)', async ({ page }) => {
+test('another checkout offers Adopt, with Install demoted (CAI-26)', async ({ page }) => {
   // A moved checkout reads as not-installed, so the card used to offer only
   // Install — which adds a second entry beside the old one, both then firing.
+  // Install stays reachable (two real checkouts is a real setup) but secondary.
   await page.route('**/api/hooks', async route => {
     await route.fulfill({
       json: {
@@ -97,7 +98,7 @@ test('another checkout offers Adopt instead of Install (CAI-26)', async ({ page 
             expected_commands: {},
             stale_events: [],
             missing_events: [],
-            foreign_events: ['PostToolUse'],
+            foreign_events: ['PostToolUse', 'Stop', 'SessionStart', 'PreToolUse', 'Notification'],
             foreign_roots: ['/old/regin'],
           },
           debug: {
@@ -117,5 +118,7 @@ test('another checkout offers Adopt instead of Install (CAI-26)', async ({ page 
   await expect(card.getByText('Other checkout')).toBeVisible()
   await expect(card.getByText(/runs out of \/old\/regin/)).toBeVisible()
   await expect(card.getByRole('button', { name: 'Adopt' })).toBeVisible()
-  await expect(card.getByRole('button', { name: 'Install' })).toHaveCount(0)
+  await expect(card.getByRole('button', { name: 'Install' })).toBeVisible()
+  // A moved checkout makes every event foreign — the list has to stay readable.
+  await expect(card.getByText(/PostToolUse, Stop, SessionStart \(\+2 more\)/)).toBeVisible()
 })

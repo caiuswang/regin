@@ -432,6 +432,17 @@ def _stale_skeleton_items() -> list[dict]:
              "present": True, "version": f"{seeded} match built-in defaults"}]
 
 
+_EVENT_PREVIEW = 3
+
+
+def _preview(events) -> str:
+    """Name a few events, then count the rest — a doctor hint prints on one
+    unwrapped line, so a full spec-event list pushes the fix off the screen."""
+    head = ', '.join(events[:_EVENT_PREVIEW])
+    extra = len(events) - _EVENT_PREVIEW
+    return f'{head} (+{extra} more)' if extra > 0 else head
+
+
 def _foreign_hint(provider, kind: str, status: dict) -> str | None:
     """The repair line for entries belonging to a *different* regin checkout.
 
@@ -442,9 +453,13 @@ def _foreign_hint(provider, kind: str, status: dict) -> str | None:
     events = status.get('foreign_events') or ()
     if not events:
         return None
-    where = ', '.join(status.get('foreign_roots') or ()) or 'another checkout'
+    roots = status.get('foreign_roots') or ()
+    # The whole point of the state is a checkout that moved, which makes
+    # *every* event foreign — the untruncated list buries the command that
+    # fixes it under 28 event names.
+    where = f"a regin checkout at {', '.join(roots)}" if roots else 'another regin checkout'
     flag = ' --only-debug' if kind == 'debug' else ''
-    return (f"{', '.join(events)} routed to a regin checkout at {where} — run "
+    return (f'{_preview(events)} routed to {where} — run '
             f'`regin hooks adopt --provider {provider.provider_id}{flag}` to take it over '
             '(install would add a second entry beside it, and both would fire)')
 
@@ -473,7 +488,7 @@ def _wiring_item(provider, kind: str, status: dict, active: bool) -> dict:
     if not status['stale']:
         return {**base, 'present': True,
                 'version': f"{len(status['routed_events'])} events routed"}
-    drifted = ', '.join(status['stale_events'] + status['missing_events'])
+    drifted = _preview(status['stale_events'] + status['missing_events'])
     return {**base, 'present': False, 'status_text': 'stale',
             'install_hint': f'installed, but differs from what install writes today '
                             f'({drifted}) — run `regin hooks repair '

@@ -917,3 +917,16 @@ def test_adopt_endpoint_takes_over_another_checkouts_entry(client):
 def test_adopt_endpoint_rejects_unknown_hook(client):
     c, _ = client
     assert c.post('/api/hooks/nope/adopt').status_code == 404
+
+
+def test_adopt_endpoint_survives_a_hand_mangled_event(client):
+    """A 500 here leaves the foreign entry firing with no way out of the UI."""
+    c, settings_path = client
+    settings_path.write_text(json.dumps({'hooks': {
+        'PostToolUse': [{'hooks': [{'type': 'command', 'command': _FOREIGN_CMD}]}],
+        'Stop': [{'hooks': 'hand-edited-typo'}],
+    }}))
+    resp = c.post('/api/hooks/hook_manager/adopt')
+    assert resp.status_code == 200
+    assert resp.get_json()['ok'] is True
+    assert c.get('/api/hooks/wiring').get_json()['hook_manager']['foreign_events'] == []

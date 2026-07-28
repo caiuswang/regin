@@ -213,6 +213,78 @@ def test_adopt_debug_hook_takes_over_the_debug_entry(claude):
     assert status['installed'] is True
 
 
+@pytest.mark.parametrize('mangled', [
+    ['not-an-entry'],
+    [{'hooks': 'nope'}],
+    [{'hooks': None}],
+])
+def test_adopt_survives_a_hand_mangled_event(claude, mangled):
+    """Doctor prints `hooks adopt`, so a traceback here strands the user at the
+    exact command the repair line sent them to — the CAI-21 lesson, restated."""
+    provider, path = claude
+    _write_json_hooks(path, {
+        'PostToolUse': [{'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER}]}],
+        'Stop': mangled,
+    })
+    result = hooks_wiring.adopt_hook_manager(provider, path)
+    assert result['ok'] is True
+    assert result['adopted'] == 1
+    # Preserved as written — install may add its own entry beside it, but the
+    # shape regin cannot read is never rewritten or dropped.
+    assert mangled[0] in json.load(open(path))['hooks']['Stop']
+    assert hooks_wiring.wiring_status(provider, path)['hook_manager']['foreign_events'] == []
+
+
+def test_uninstall_survives_a_hand_mangled_event(claude):
+    provider, path = claude
+    hooks_wiring.install_hook_manager(provider, path)
+    data = json.load(open(path))
+    data['hooks']['Stop'] = [{'hooks': None}]
+    with open(path, 'w') as f:
+        json.dump(data, f)
+
+    assert hooks_wiring.uninstall_hook_manager(provider, path)['ok'] is True
+    assert json.load(open(path))['hooks']['Stop'] == [{'hooks': None}]
+
+
+def test_adopt_keeps_an_empty_user_entry(claude):
+    provider, path = claude
+    _write_json_hooks(path, {'PostToolUse': [
+        {'matcher': 'Bash', 'hooks': []},
+        {'hooks': [{'type': 'command', 'command': _FOREIGN_MANAGER}]},
+    ]})
+    hooks_wiring.adopt_hook_manager(provider, path)
+    matchers = [e.get('matcher') for e in json.load(open(path))['hooks']['PostToolUse']]
+    assert 'Bash' in matchers
+
+
+def test_our_interpreter_behind_a_wrapper_is_not_another_checkout(claude):
+    """It would name *this* directory as the other checkout and offer to adopt
+    — i.e. delete — the user's own wrapper."""
+    provider, path = claude
+    wrapped = f'cd /tmp && {_PREFIX} -P -m hook_manager PostToolUse --agent-type claude'
+    _write_json_hooks(path, {'PostToolUse': [
+        {'hooks': [{'type': 'command', 'command': wrapped}]},
+    ]})
+    assert hooks_wiring.wiring_status(provider, path)['hook_manager']['foreign_events'] == []
+
+
+def test_a_lookalike_debug_script_is_not_ours_to_adopt(claude):
+    """`adopt --only-debug` deletes what this matches, so the predicate has to
+    name the script, not a prefix of it."""
+    provider, path = claude
+    lookalike = '/Users/me/bin/hook_payload_debug_wrapper.sh'
+    _write_json_hooks(path, {'UserPromptSubmit': [
+        {'hooks': [{'type': 'command', 'command': lookalike}]},
+    ]})
+    assert hooks_wiring.wiring_status(provider, path)['debug']['foreign_events'] == []
+
+    hooks_wiring.adopt_debug_hook(provider, path)
+    commands = [h['command'] for entry in json.load(open(path))['hooks']['UserPromptSubmit']
+                for h in entry['hooks']]
+    assert lookalike in commands
+
+
 def test_adopt_refuses_an_unparseable_settings_file(claude):
     provider, path = claude
     original = '{"model": "opus",}'

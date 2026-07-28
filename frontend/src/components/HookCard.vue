@@ -33,6 +33,14 @@ const foreign = computed(() => props.foreignEvents.length > 0)
 
 const foreignWhere = computed(() => props.foreignRoots.join(', ') || 'another checkout')
 
+// A moved checkout makes every event foreign, and the untruncated list pushes
+// the explanation out of the card.
+const foreignPreview = computed(() => {
+  const head = props.foreignEvents.slice(0, 3).join(', ')
+  const extra = props.foreignEvents.length - 3
+  return extra > 0 ? `${head} (+${extra} more)` : head
+})
+
 const state = computed(() => {
   if (foreign.value) return { color: 'yellow', label: 'Other checkout' }
   if (!props.installed) return { color: 'gray', label: 'Not installed' }
@@ -76,8 +84,8 @@ const eventRows = computed(() => {
           >{{ showWiring ? 'Hide' : 'Show' }} commands</Button>
         </div>
         <p v-if="foreign && !loading" class="text-xs text-amber-700 mt-1">
-          {{ foreignEvents.join(', ') }} runs out of {{ foreignWhere }} — installing here would add a
-          second entry beside it, and both would fire. Adopt takes it over.
+          {{ foreignPreview }} runs out of {{ foreignWhere }} — <strong>Adopt</strong> takes it over.
+          <strong>Install</strong> adds this checkout beside it, and then both fire.
         </p>
         <p v-else-if="stale && !loading" class="text-xs text-amber-700 mt-1">
           The installed command is not the one regin writes today. Refresh to rewrite it.
@@ -89,7 +97,9 @@ const eventRows = computed(() => {
           <Button :variant="stale ? 'primary' : 'secondary'" size="sm" @click="emit('refresh')">Refresh</Button>
           <Button variant="secondary" size="sm" @click="emit('toggle')">Remove</Button>
         </template>
-        <Button v-else-if="!foreign" variant="primary" size="sm" @click="emit('toggle')">Install</Button>
+        <!-- Still offered beside Adopt: two checkouts sharing one config is a
+             real setup, and only the user knows which case this is. -->
+        <Button v-else :variant="foreign ? 'secondary' : 'primary'" size="sm" @click="emit('toggle')">Install</Button>
       </div>
     </div>
 

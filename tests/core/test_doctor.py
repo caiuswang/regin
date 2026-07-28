@@ -606,7 +606,20 @@ def test_wiring_item_foreign_debug_scopes_the_adopt_flag():
     item = doctor._wiring_item(
         _StubProvider(), "debug", _wiring(foreign=("Stop",)), active=True)
     assert "--only-debug`" in item["install_hint"]
-    assert "another checkout" in item["install_hint"]
+    # No root to name, so the sentence must not read "at another checkout".
+    assert "routed to another regin checkout" in item["install_hint"]
+
+
+def test_wiring_item_foreign_hint_truncates_a_moved_checkouts_event_list():
+    """The primary CAI-26 case makes every event foreign; the untruncated list
+    buries the command that fixes it."""
+    events = tuple(f"Event{i}" for i in range(28))
+    item = doctor._wiring_item(
+        _StubProvider(), "hook_manager",
+        _wiring(foreign=events, foreign_roots=("/old/regin",)), active=True)
+    assert "Event0, Event1, Event2 (+25 more)" in item["install_hint"]
+    assert "Event27" not in item["install_hint"]
+    assert len(item["install_hint"]) < 250
 
 
 def test_hook_wiring_items_survives_a_failing_provider(monkeypatch):

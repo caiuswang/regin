@@ -31,7 +31,9 @@ DEBUG_TIMEOUT = 10
 DEBUG_LABEL = 'debug'
 
 _HOOK_MANAGER_CMD_RE = re.compile(r'(^|\s)-m\s+hook_manager(?:\s|$)')
-_DEBUG_SCRIPT_TOKEN = 'hook_payload_debug'
+# The script name, extension included: `adopt` deletes what this matches, so a
+# user's own `hook_payload_debug_wrapper.sh` must not look like our hook.
+_DEBUG_SCRIPT_TOKEN = 'hook_payload_debug.py'
 
 # Matches a stale `env KEY=VAL …` prefix from an earlier fix iteration. Kept
 # only for detection so uninstall/reinstall still sees those entries as ours
@@ -131,6 +133,17 @@ def _runs_debug_hook(command) -> bool:
     return isinstance(command, str) and _DEBUG_SCRIPT_TOKEN in command
 
 
+def _other_checkout(command: str) -> bool:
+    """Not ours, and not this checkout's interpreter behind a wrapper.
+
+    `_ours_prefix` only accepts the interpreter at the head of the command, so
+    a user's `cd /tmp && <our python> …` is "not ours" — but calling it
+    another checkout would name *this* directory as the other one and offer to
+    adopt the user's own wrapper. Drift we cannot name is better left unnamed.
+    """
+    return not _ours_prefix(command) and checkout_root(command) != str(settings.project_root)
+
+
 def is_hook_manager_command(command: str) -> bool:
     return _runs_hook_manager(command) and _ours_prefix(command)
 
@@ -153,11 +166,11 @@ def is_foreign_hook_manager_command(command: str) -> bool:
     one and both would fire. Surfacing it as its own state is what lets a
     caller offer `adopt` instead of a blind reinstall.
     """
-    return _runs_hook_manager(command) and not _ours_prefix(command)
+    return _runs_hook_manager(command) and _other_checkout(command)
 
 
 def is_foreign_debug_hook_command(command: str) -> bool:
-    return _runs_debug_hook(command) and not _ours_prefix(command)
+    return _runs_debug_hook(command) and _other_checkout(command)
 
 
 def checkout_root(command: str) -> str | None:
@@ -601,6 +614,23 @@ def install_hook_manager(provider, settings_path: str) -> dict:
     return _unreadable_error(settings_path) or _json_install_hook_manager(provider, settings_path)
 
 
+def _strip_entry(entry, is_match) -> tuple[object, int]:
+    """One matcher entry with our commands dropped, and how many went.
+
+    Every hand-mangled shape the readers tolerate reaches this writer too, and
+    `regin doctor` now prints `hooks adopt` — so a traceback here strands the
+    user exactly where the repair line told them to go. An entry it cannot
+    understand is returned untouched rather than rewritten or dropped.
+    """
+    if not isinstance(entry, dict) or not isinstance(entry.get('hooks'), list):
+        return entry, 0
+    kept = [h for h in entry['hooks']
+            if not (isinstance(h, dict) and is_match(h.get('command', '')))]
+    if len(kept) == len(entry['hooks']):
+        return entry, 0
+    return {**entry, 'hooks': kept}, len(entry['hooks']) - len(kept)
+
+
 def _strip_matching_blocks(hooks: dict, is_match) -> int:
     """Remove command blocks satisfying `is_match` from a settings.json `hooks` map."""
     removed = 0
@@ -610,12 +640,11 @@ def _strip_matching_blocks(hooks: dict, is_match) -> int:
             continue
         filtered = []
         for entry in entries:
-            entry_hooks = [h for h in entry.get('hooks', [])
-                           if not is_match(h.get('command', ''))]
-            removed += len(entry.get('hooks', [])) - len(entry_hooks)
-            if entry_hooks:
-                next_entry = dict(entry)
-                next_entry['hooks'] = entry_hooks
+            next_entry, dropped = _strip_entry(entry, is_match)
+            removed += dropped
+            # An entry we emptied goes; one that was already empty is the
+            # user's, and deleting it is not this function's business.
+            if dropped == 0 or next_entry['hooks']:
                 filtered.append(next_entry)
         if filtered:
             hooks[event_name] = filtered
