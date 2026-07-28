@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 
 from lib.topics.tree import UNCLASSIFIED, build_tree, is_bucket
 from lib.topics.validation import (
-    BRANCH_OWNED_REF_CODE,
+    UNDELETABLE_REF_CODES,
     audit_graph,
     split_by_severity,
 )
@@ -130,9 +130,10 @@ def _audit_prospective(plan: SplitPlan, graph: dict, repo_path) -> list[str]:
     new node that build_tree routes to `unclassified` (the 2-level trap).
 
     A split redistributes the leaf's existing anchors, so the new nodes inherit
-    whatever refs live on an unmerged branch. Blocking on those would make a
-    topic unsplittable until the branch merges (CAI-30) without protecting
-    anything — the refs were already in the graph.
+    whatever refs live on an unmerged branch — or that git could not answer for
+    at all. Blocking on those would make a topic unsplittable until the branch
+    merges, or for as long as the lookup keeps failing (CAI-30), without
+    protecting anything — the refs were already in the graph.
 
     The waiver is unconditional rather than restricted to inherited paths: a
     proposer that invents a path happening to exist on some branch tip is
@@ -148,7 +149,7 @@ def _audit_prospective(plan: SplitPlan, graph: dict, repo_path) -> list[str]:
     errs, _ = split_by_severity(issues)
     for e in errs:
         tids = set(e.topic_ids or ())
-        if e.code == BRANCH_OWNED_REF_CODE:
+        if e.code in UNDELETABLE_REF_CODES:
             continue
         if not tids or tids & new_ids:
             errors.append(f"audit error {e.code}: {e.message}")

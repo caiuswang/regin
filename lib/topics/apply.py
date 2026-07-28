@@ -48,7 +48,7 @@ from sqlmodel import Session, select
 
 from lib.orm import SessionLocal
 from lib.orm.models import GraphSnapshot, ProposalTopic, Repo, TopicAudit
-from lib.topics.branch_refs import ABSENT_ELSEWHERE, classify_absent_paths
+from lib.topics.branch_refs import UNDELETABLE_VERDICTS, classify_absent_paths
 from lib.topics.core import normalize as _normalize_alias
 from lib.topics.diff import GraphDiff, TopicDelta, compute_topic_delta, serialize_topic_delta
 from lib.topics.graph_io import export_overlay_to_disk, repo_path_for
@@ -344,14 +344,16 @@ def _dead_ref_paths(
 ) -> set[str]:
     """Of the ref paths absent from the working tree, the ones really gone. A
     path in `protected` carried by another branch tip is not among them — it
-    anchors work that simply isn't checked out."""
+    anchors work that simply isn't checked out — and neither is one the branch
+    lookup could not answer for: absence git never confirmed is not proof of
+    death."""
     absent = {
         r["path"] for r in refs
         if isinstance(r.get("path"), str)
         and not (repo_path_obj / r["path"]).exists()
     }
     verdicts = classify_absent_paths(repo_path_obj, absent & protected)
-    return {p for p in absent if verdicts.get(p) != ABSENT_ELSEWHERE}
+    return {p for p in absent if verdicts.get(p) not in UNDELETABLE_VERDICTS}
 
 
 def _existing_ref_paths(before: Optional[dict]) -> frozenset[str]:

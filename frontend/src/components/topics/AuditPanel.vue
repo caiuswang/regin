@@ -6,7 +6,8 @@
  * code is auto-fixable (dead refs, orphan edge targets). Everything else
  * renders a disabled checkbox and a tag saying why bulk-fix can't take
  * it: "manual" for a code needing a human decision (duplicate_alias),
- * "not checked out" for a ref that is not a defect at all.
+ * "not checked out" for a ref that is not a defect at all, "unverified"
+ * for one the branch-tip check could not run on.
  *
  * The "Fix selected" button posts to `/audit/fix` and refreshes.
  */
@@ -97,16 +98,29 @@ function isAutoFixable(code) {
 // rather than as the dead ref it now is.
 const BRANCH_OWNED_CODE = 'graph.ref_on_other_branch'
 
+// Absent here and git could not say whether any branch carries it — no repo,
+// unborn HEAD, git off PATH, or a ref spelled as something git refuses as a
+// pathspec. Same non-deletable treatment as the branch-owned case, but it must
+// read differently: telling the user the file "lives on another branch" when
+// the question was never answered is why the strip button appeared to do
+// nothing in a checkout with no branches to scan.
+const UNPROVABLE_CODE = 'graph.ref_unverifiable'
+
 function codeHint(code) {
   if (isAutoFixable(code)) return 'Auto-fixable — select to bulk fix'
   if (code === BRANCH_OWNED_CODE) {
     return 'Nothing to fix — the file lives on a branch that is not checked out; clears when it merges'
   }
+  if (code === UNPROVABLE_CODE) {
+    return 'Nothing to fix — the branch-tip check could not run here, so this ref cannot be proven dead'
+  }
   return 'Manual resolution only — fix via DiffPanel or the originating proposal'
 }
 
 function codeTag(code) {
-  return code === BRANCH_OWNED_CODE ? 'not checked out' : 'manual'
+  if (code === BRANCH_OWNED_CODE) return 'not checked out'
+  if (code === UNPROVABLE_CODE) return 'unverified'
+  return 'manual'
 }
 
 function severityForCode(code) {

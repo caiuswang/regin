@@ -29,7 +29,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from lib.topics.branch_refs import ABSENT_ELSEWHERE, classify_absent_paths
+from lib.topics.branch_refs import (
+    ABSENT_ELSEWHERE,
+    ABSENT_UNPROVABLE,
+    classify_absent_paths,
+)
 from lib.topics.core import (
     EDGE_TYPES,
     NON_DRIFTING_REF_TIERS,
@@ -50,6 +54,17 @@ Severity = str  # "error" | "warning" | "info"
 # of `graph.dead_ref` so remediation can refuse to delete it; see
 # `_recode_branch_owned_refs`.
 BRANCH_OWNED_REF_CODE = "graph.ref_on_other_branch"
+
+# A ref absent from this checkout whose branch-tip lookup git could not answer
+# (no repo, unborn HEAD, git off PATH, a path git refuses as a pathspec). Not
+# deletable either — but distinct, so nothing tells the user a file lives on a
+# branch when the question was never answered.
+UNPROVABLE_REF_CODE = "graph.ref_unverifiable"
+
+# The codes a ref absent from this checkout can carry instead of
+# `graph.dead_ref`. Neither is auto-fixable, and the split/group gates waive
+# both: the graph did not become unfileable because git could not answer.
+UNDELETABLE_REF_CODES = frozenset({BRANCH_OWNED_REF_CODE, UNPROVABLE_REF_CODE})
 
 
 @dataclass(frozen=True)
@@ -387,10 +402,10 @@ def audit_graph(
     `diff_against_graph` only reports issues the change *introduces*, so
     pre-existing dead refs never block an apply.
 
-    The two cases still get distinct codes (`graph.dead_ref` vs
-    `BRANCH_OWNED_REF_CODE`), because equal severity here does not mean equal
-    remediation: only a truly dead ref may be deleted. See
-    `_recode_branch_owned_refs`.
+    The cases still get distinct codes (`graph.dead_ref` vs
+    `BRANCH_OWNED_REF_CODE` vs `UNPROVABLE_REF_CODE`), because equal severity
+    here does not mean equal remediation: only a truly dead ref may be
+    deleted. See `_recode_branch_owned_refs`.
 
     Classification is unconditional. It costs one git pass per branch tip, and
     an earlier revision let set-diffing callers opt out to save it — on the
@@ -466,14 +481,20 @@ def _recode_branch_owned_refs(
     issues: list[ValidationIssue], repo_path: Optional[Path],
 ) -> list[ValidationIssue]:
     """Re-code the `graph.dead_ref` findings whose path is merely not checked
-    out as `graph.ref_on_other_branch`.
+    out as `graph.ref_on_other_branch`, and those git could not answer for as
+    `graph.ref_unverifiable`.
 
-    Both stay errors — this gate runs on authoring, and a proposal citing a
-    path this checkout cannot show is unreviewable either way. What the split
-    buys is that everything *downstream* of the finding can tell the two apart:
+    All three stay errors — this gate runs on authoring, and a proposal citing
+    a path this checkout cannot show is unreviewable either way. What the split
+    buys is that everything *downstream* of the finding can tell them apart:
     only `graph.dead_ref` is auto-fixable, so the audit panel's one-click strip
     can no longer delete an anchor whose file lives on an unmerged branch, and
-    the group/split gates can waive the branch-owned case (CAI-30).
+    the group/split gates can waive both non-dead cases (CAI-30).
+
+    The unverifiable code carries its own message because the branch-owned one
+    asserts something nobody checked: in a directory with no git at all, every
+    absent ref used to be reported as living on another branch, which also left
+    the strip button doing nothing with no way to see why.
 
     Costs nothing on a clean graph — no `graph.dead_ref` findings, no git.
     """
@@ -483,26 +504,33 @@ def _recode_branch_owned_refs(
     if not absent:
         return issues
     verdicts = classify_absent_paths(repo_path, absent)
-    return [
-        replace(
+    return [_recoded(issue, verdicts) for issue in issues]
+
+
+def _recoded(
+    issue: ValidationIssue, verdicts: dict[str, str],
+) -> ValidationIssue:
+    if (issue.code != "graph.dead_ref"
+            or not issue.topic_ids or len(issue.paths) != 1):
+        return issue
+    verdict = verdicts.get(issue.paths[0])
+    if verdict == ABSENT_ELSEWHERE:
+        return replace(
             issue,
             code=BRANCH_OWNED_REF_CODE,
             message=f"topic {issue.topic_ids[0]} ref does not exist in this "
                     f"checkout (it is present on another branch): "
                     f"{issue.paths[0]}",
         )
-        if _is_branch_owned(issue, verdicts) else issue
-        for issue in issues
-    ]
-
-
-def _is_branch_owned(issue: ValidationIssue, verdicts: dict[str, str]) -> bool:
-    return (
-        issue.code == "graph.dead_ref"
-        and bool(issue.topic_ids)
-        and len(issue.paths) == 1
-        and verdicts.get(issue.paths[0]) == ABSENT_ELSEWHERE
-    )
+    if verdict == ABSENT_UNPROVABLE:
+        return replace(
+            issue,
+            code=UNPROVABLE_REF_CODE,
+            message=f"topic {issue.topic_ids[0]} ref does not exist in this "
+                    f"checkout and could not be verified against branch "
+                    f"tips: {issue.paths[0]}",
+        )
+    return issue
 
 
 def _audit_taxonomy_placement(
@@ -628,6 +656,8 @@ def diff_issues(
 
 __all__ = [
     "BRANCH_OWNED_REF_CODE",
+    "UNDELETABLE_REF_CODES",
+    "UNPROVABLE_REF_CODE",
     "ValidationIssue",
     "GraphContext",
     "Severity",

@@ -517,6 +517,33 @@ def test_drop_dead_refs_strips_a_branch_owned_ref_the_proposal_itself_adds(
     assert resolved.is_applyable
 
 
+def test_drop_dead_refs_spares_a_ref_the_branch_check_could_not_run_for(
+    tmp_path,
+):
+    """`tmp_path` is not a git repo, so nothing can prove the anchor dead — and
+    an unanswered question must not authorise the same unrecoverable deletion
+    the branch-owned guard refuses (CAI-32)."""
+    (tmp_path / "here.py").write_text("x\n")
+    base = {**_base_graph(), "topics": {"t": _topic("t", refs=[
+        {"path": "unprovable.py", "role": "implementation"},
+    ])}}
+    incoming = {"id": "incoming", **_topic(
+        "incoming", refs=[{"path": "here.py", "role": "implementation"}],
+    )}
+
+    raw = diff_against_graph(
+        incoming, base, strategy="merge", target_topic_id="t",
+        repo_path=str(tmp_path),
+    )
+    resolved, dropped = resolve_diff_with_options(
+        raw, ApplyOptions(drop_dead_refs=True), repo_path=str(tmp_path),
+    )
+
+    assert [p for _, p, _ in dropped.dead_refs] == []
+    kept = resolved.prospective_graph["topics"]["t"]["refs"]
+    assert sorted(r["path"] for r in kept) == ["here.py", "unprovable.py"]
+
+
 def test_graph_warnings_name_a_branch_owned_ref_by_its_own_code(
     fake_git_repo, branch_owned_ref,
 ):

@@ -44,6 +44,7 @@ from lib.topics.branch_refs import (
     ABSENT_DEAD,
     ABSENT_ELSEWHERE,
     ABSENT_REMOVED,
+    ABSENT_UNPROVABLE,
     classify_absent_paths,
 )
 from lib.topics.graph_io import load_authoritative_graph, sync_snapshot_from_disk
@@ -107,6 +108,10 @@ def _classify_absent_refs(
     branch's topic wedged all five. A path no branch carries is genuinely
     dead — the file was deleted or renamed and its anchor never updated — and
     stays an error, or deletions would silently rot the graph.
+
+    A path the branch lookup could not answer for warns too, on the same
+    reasoning, but says so: claiming it "is present on another branch" in a
+    directory that has no branches is a lie the user cannot act on.
     """
     if not absent:
         return [], []
@@ -124,6 +129,11 @@ def _classify_absent_refs(
             warnings.append(
                 f"topic {topic_id} ref does not exist in this checkout "
                 f"(it is present on another branch): {path}"
+            )
+        elif verdict == ABSENT_UNPROVABLE:
+            warnings.append(
+                f"topic {topic_id} ref does not exist in this checkout and "
+                f"could not be verified against branch tips: {path}"
             )
         else:
             errors.append(f"topic {topic_id} ref does not exist: {path}")

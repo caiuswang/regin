@@ -37,7 +37,7 @@ from lib.topics.tree import (
     UNCLASSIFIED, build_tree, effective_parent, is_bucket,
 )
 from lib.topics.validation import (
-    BRANCH_OWNED_REF_CODE,
+    UNDELETABLE_REF_CODES,
     audit_graph,
     split_by_severity,
 )
@@ -365,10 +365,11 @@ def _audit_prospective(plan: GroupPlan, graph: dict, repo_path) -> list[str]:
     `unclassified` (the 2-level trap this gate exists to catch).
 
     Grouping only rewrites `parent_id`, so it cannot introduce a ref problem —
-    a topic whose anchors live on an unmerged branch is one this gate would
-    otherwise refuse to file forever (CAI-30), and waiving that code is what
-    keeps it groupable. Unlike the split gate's waiver this one cannot be
-    abused: no plan here authors a ref."""
+    a topic whose anchors live on an unmerged branch, or that the branch lookup
+    could not answer for, is one this gate would otherwise refuse to file
+    forever (CAI-30), and waiving those codes is what keeps it groupable.
+    Unlike the split gate's waiver this one cannot be abused: no plan here
+    authors a ref."""
     errors: list[str] = []
     prospective = _prospective(plan, graph)
     touched = set(plan.new_buckets) | set(plan.assignment)
@@ -377,7 +378,7 @@ def _audit_prospective(plan: GroupPlan, graph: dict, repo_path) -> list[str]:
     errs, _ = split_by_severity(issues)
     for e in errs:
         tids = set(e.topic_ids or ())
-        if e.code == BRANCH_OWNED_REF_CODE:
+        if e.code in UNDELETABLE_REF_CODES:
             continue
         if not tids or tids & touched:
             errors.append(f"audit error {e.code}: {e.message}")

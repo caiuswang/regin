@@ -87,3 +87,40 @@ test('a branch-owned ref offers no fix and is not labelled manual', async ({ pag
   await expect(group).not.toContainText('manual')
   await expect(group.locator('input[type=checkbox]')).toBeDisabled()
 })
+
+// The backend can only say "no branch carries this" when git answered. When it
+// could not — no repo, unborn HEAD, a ref git refuses as a pathspec — the ref
+// is equally unfixable here, but the branch-owned wording would explain the
+// absent fix button with a branch that may not exist.
+test('a ref the branch check could not verify says so', async ({ page }) => {
+  const unverifiable = [{
+    severity: 'error',
+    code: 'graph.ref_unverifiable',
+    message: 'topic live-session-mobile-card ref does not exist in this checkout '
+      + 'and could not be verified against branch tips: '
+      + 'frontend/src/components/live/LiveQaDecision.vue',
+    topic_ids: ['live-session-mobile-card'],
+    paths: ['frontend/src/components/live/LiveQaDecision.vue'],
+  }]
+  await page.route('**/api/repos/*/topics/audit', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        issues: unverifiable,
+        by_code: { 'graph.ref_unverifiable': unverifiable },
+        auto_fixable_codes: ['graph.dead_ref', 'graph.orphan_edge_target'],
+        error_count: 1,
+        warning_count: 0,
+      }),
+    }))
+  await page.goto('/repos/regin/topics?tab=audit')
+
+  const group = page.getByTestId('audit-group')
+  await expect(group).toContainText('graph.ref_unverifiable')
+  await expect(group).toContainText('unverified')
+  await expect(group).not.toContainText('manual')
+  await expect(group).not.toContainText('not checked out')
+  await expect(group.locator('input[type=checkbox]')).toBeDisabled()
+})

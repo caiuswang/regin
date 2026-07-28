@@ -16,6 +16,12 @@ in the UI can put it back (CAI-30). The audit list surfaces it under
 its own code with no fix offered; it resolves itself when the branch
 merges.
 
+`graph.ref_unverifiable` is absent for the same reason one step
+weaker: git never answered whether any branch carries the path (no
+repo, unborn HEAD, git off PATH, a ref git refuses as a pathspec), and
+an unanswered question is not grounds to delete. It clears once the
+lookup can run.
+
 `graph.duplicate_alias` is NOT auto-fixable. The right resolution
 depends on which topic the user considers canonical and whether
 the right answer is to rename one alias rather than drop it. The
