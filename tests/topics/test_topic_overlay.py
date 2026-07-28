@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from lib.topics.apply import apply_diff
 from lib.topics.core import (
     load_graph,
@@ -30,6 +32,7 @@ from lib.topics import (
     delete_topic,
     promote_all_topics,
     promote_topic,
+    update_topic,
 )
 from lib.topics.diff import diff_against_graph
 from lib.topics.graph_io import _graph_hash, load_authoritative_graph
@@ -335,6 +338,146 @@ def test_delete_overlay_only_topic_leaves_base_untouched(fake_git_repo):
     assert "a" in load_graph(fake_git_repo)["topics"]
     # base graph byte-untouched: an overlay-only delete never rewrites it.
     assert _base_files(fake_git_repo) == base_before
+
+
+def test_delete_rejected_by_validate_persists_nothing(fake_git_repo):
+    """A delete that fails validation must leave the graph, the overlay and
+    the wiki page exactly as they were — the caller is told it failed."""
+    wiki_dir = fake_git_repo / ".regin" / "topics" / "wiki"
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    # `b`'s ref is dead (no branch carries it), so validate() fails for a
+    # reason that has nothing to do with deleting `a`.
+    write_split_graph(fake_git_repo, _base(topics={
+        "a": _topic("a"),
+        "b": _topic("b", refs=[{"path": "gone.md"}]),
+    }))
+    (wiki_dir / "a.md").write_text("# A\n\nnarrative\n")
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+    base_before = _base_files(fake_git_repo)
+
+    with pytest.raises(TopicGraphError):
+        delete_topic(fake_git_repo, "a")
+
+    assert "a" in load_graph_merged(fake_git_repo)["topics"]
+    assert "a" in load_authoritative_graph(fake_git_repo)["topics"]
+    assert (wiki_dir / "a.md").exists()
+    assert _base_files(fake_git_repo) == base_before
+    assert not topic_local_path(fake_git_repo).exists()
+
+
+def test_delete_rejected_leaves_sibling_edges_intact(fake_git_repo):
+    """The inbound-edge prune is part of the rejected mutation and must not
+    survive it either."""
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={
+        "a": _topic("a"),
+        "b": _topic("b", edges=[{"target": "a", "type": "related"}],
+                    refs=[{"path": "gone.md"}]),
+    }))
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+
+    with pytest.raises(TopicGraphError):
+        delete_topic(fake_git_repo, "a")
+
+    edges = load_graph_merged(fake_git_repo)["topics"]["b"]["edges"]
+    assert edges == [{"target": "a", "type": "related"}]
+
+
+# ── update_topic (overlay-routed edit) ──────────────────────────────────
+
+
+def test_update_rejected_patch_persists_nothing(fake_git_repo):
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+    base_before = _base_files(fake_git_repo)
+
+    with pytest.raises(TopicGraphError):
+        update_topic(fake_git_repo, "a", {"status": "bogus"})
+
+    assert load_graph_merged(fake_git_repo)["topics"]["a"]["status"] == "active"
+    assert load_authoritative_graph(fake_git_repo)["topics"]["a"]["status"] == "active"
+    assert not topic_local_path(fake_git_repo).exists()
+    assert _base_files(fake_git_repo) == base_before
+
+
+def test_update_valid_patch_lands_in_overlay(fake_git_repo):
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+    base_before = _base_files(fake_git_repo)
+
+    result = update_topic(fake_git_repo, "a", {"label": "Renamed"})
+
+    assert result["label"] == "Renamed"
+    assert load_graph_merged(fake_git_repo)["topics"]["a"]["label"] == "Renamed"
+    assert load_authoritative_graph(fake_git_repo)["topics"]["a"]["label"] == "Renamed"
+    assert load_local_graph(fake_git_repo)["topics"]["a"]["label"] == "Renamed"
+    assert _base_files(fake_git_repo) == base_before
+
+
+def test_update_unknown_topic_raises(fake_git_repo):
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={"a": _topic("a")}))
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+
+    with pytest.raises(TopicGraphError, match="not found"):
+        update_topic(fake_git_repo, "nope", {"label": "x"})
+
+
+def test_delete_rejected_overlay_only_topic_survives(fake_git_repo):
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={
+        "a": _topic("a", refs=[{"path": "gone.md"}]),
+    }))
+    save_local_graph(fake_git_repo, {"topics": {"b": _topic("b")}, "deleted_topics": []})
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+
+    with pytest.raises(TopicGraphError):
+        delete_topic(fake_git_repo, "b")
+
+    assert "b" in load_local_graph(fake_git_repo)["topics"]
+    assert "b" in load_authoritative_graph(fake_git_repo)["topics"]
+
+
+def test_delete_rejected_without_repo_row_persists_nothing(fake_git_repo):
+    """Disk-only mode (no Repo row, so no snapshot) takes the same path."""
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={
+        "a": _topic("a"),
+        "b": _topic("b", refs=[{"path": "gone.md"}]),
+    }))
+    base_before = _base_files(fake_git_repo)
+
+    with pytest.raises(TopicGraphError):
+        delete_topic(fake_git_repo, "a")
+
+    assert "a" in load_graph_merged(fake_git_repo)["topics"]
+    assert _base_files(fake_git_repo) == base_before
+
+
+def test_update_patch_that_breaks_a_sibling_persists_nothing(fake_git_repo):
+    """The patch is well-formed on its own; it only fails against the rest of
+    the graph (duplicate alias), which is exactly the whole-graph check."""
+    (fake_git_repo / ".regin" / "topics").mkdir(parents=True, exist_ok=True)
+    write_split_graph(fake_git_repo, _base(topics={
+        "a": _topic("a", aliases=["shared"]),
+        "b": _topic("b"),
+    }))
+    resolve_or_create_repo(str(fake_git_repo))
+    load_authoritative_graph(fake_git_repo)
+
+    with pytest.raises(TopicGraphError):
+        update_topic(fake_git_repo, "b", {"aliases": ["shared"]})
+
+    assert load_graph_merged(fake_git_repo)["topics"]["b"]["aliases"] == []
+    assert not topic_local_path(fake_git_repo).exists()
 
 
 def test_delete_unknown_topic_raises(fake_git_repo):

@@ -55,13 +55,19 @@ def _topics_log():
     return _get_activity_logger("topics")
 
 
-def validate(repo_path: str | Path) -> ValidationResult:
+def validate(repo_path: str | Path, *, graph: dict[str, Any] | None = None) -> ValidationResult:
+    """Validate the persisted graph, or `graph` when a caller passes one.
+
+    Passing a prospective in-memory graph lets a mutation be checked
+    *before* it is persisted, so a rejected edit never lands.
+    """
     errors: list[str] = []
     warnings: list[str] = []
-    try:
-        graph = load_authoritative_graph(repo_path)
-    except TopicGraphError as exc:
-        return ValidationResult([str(exc)], [])
+    if graph is None:
+        try:
+            graph = load_authoritative_graph(repo_path)
+        except TopicGraphError as exc:
+            return ValidationResult([str(exc)], [])
 
     if graph.get("version") != SCHEMA_VERSION:
         errors.append("topic graph version must be 1")
@@ -402,18 +408,18 @@ def update_topic(repo_path: str | Path, topic_id: str, patch: dict[str, Any]) ->
     for key, value in patch.items():
         if key in allowed:
             topic[key] = value
+    # Validate the patched graph in memory first: persisting and *then*
+    # raising left the rejected edit on disk while telling the caller it
+    # had failed.
+    result = validate(repo_path, graph=graph)
+    if not result.ok:
+        raise TopicGraphError("; ".join(result.errors))
     # Single-topic edits route to the local overlay (whole-topic override),
     # leaving the git-tracked base graph untouched.
     overlay = load_local_graph(repo_path)
     overlay["topics"][topic_id] = topic
     save_local_graph(repo_path, overlay)
-    # Sync the snapshot BEFORE validate — `validate` now reads the
-    # authoritative graph (snapshot-first), so we must update the
-    # snapshot before validating or it sees the old state.
     sync_snapshot_from_disk(repo_path, reason="topic_update")
-    result = validate(repo_path)
-    if not result.ok:
-        raise TopicGraphError("; ".join(result.errors))
     _topics_log().write(
         "approved_topic_edited",
         topic_id=topic_id, repo_path=str(repo_path),
@@ -545,6 +551,15 @@ def delete_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     if topic_id not in merged.get("topics", {}):
         raise TopicGraphError(f"topic not found: {topic_id}")
 
+    # Validate the reduced graph in memory first. The old order wrote both
+    # stores and unlinked the wiki page before validating, so a rejected
+    # delete had already landed by the time the caller saw the error.
+    merged["topics"].pop(topic_id)
+    _prune_inbound_edges(merged["topics"], topic_id)
+    result = validate(repo_path, graph=merged)
+    if not result.ok:
+        raise TopicGraphError("; ".join(result.errors))
+
     try:
         base = load_graph(repo_path)
     except TopicGraphError:
@@ -575,9 +590,6 @@ def delete_topic(repo_path: str | Path, topic_id: str) -> dict[str, Any]:
     # Re-sync the snapshot to the reduced merged graph; a cold repo with no
     # snapshot yet auto-seeds on the next read, so a None return is fine.
     sync_snapshot_from_disk(repo_path, reason="delete")
-    result = validate(repo_path)
-    if not result.ok:
-        raise TopicGraphError("; ".join(result.errors))
     # Regenerate the wiki index so it no longer links the deleted topic.
     # Lazy import avoids a wiki<->scan import cycle. Best-effort: a failure
     # here must not undo the delete.
