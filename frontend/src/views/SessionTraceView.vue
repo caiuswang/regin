@@ -44,6 +44,11 @@ const route = useRoute()
 const router = useRouter()
 const session = ref(null)
 const loading = ref(true)
+// Detail of a failed INITIAL load. "Loading session…" is the view's only
+// loading affordance, so without an explicit failure exit a rejected first
+// /map leaves it on screen forever.
+const loadErrorDetail = ref('')
+const loadFailed = ref(false)
 const reloading = ref(false)
 // True while auto-reload (the live poll AND the scroll/wheel pull-to-refresh)
 // is still wanted. Flips false the moment live-sync self-terminates — an
@@ -549,12 +554,43 @@ async function ensureTurnsLoaded() {
   try { await fetchTurns() } finally { turnsLoading.value = false }
 }
 
-onMounted(async () => {
+// Trim a raw transport error down to something renderable: api.get throws with
+// the response BODY as its message, which for a 500 is a whole HTML traceback.
+const ERROR_DETAIL_MAX = 200
+function loadErrorText(err) {
+  const raw = (err?.message || '').replace(/\s+/g, ' ').trim()
+  if (!raw) return ''
+  return raw.length > ERROR_DETAIL_MAX ? `${raw.slice(0, ERROR_DETAIL_MAX)}…` : raw
+}
+
+// Stamped before the await, not after: Retry is a user-clickable control, and
+// a guard set post-await lets a double-click run two initial loads at once.
+let initialLoadInFlight = false
+
+async function runInitialLoad() {
+  if (initialLoadInFlight) return
+  initialLoadInFlight = true
+  loading.value = true
+  loadFailed.value = false
+  loadErrorDetail.value = ''
+  // These three swallow their own rejections, so they never need awaiting on
+  // the failure path.
   const rollupP = fetchToolRollup()
   const plansP = fetchPlans()
   const wfRunsP = fetchWorkflowRuns()
-  await loadSession()
-  loading.value = false
+  try {
+    await loadSession()
+  } catch (e) {
+    loadFailed.value = true
+    loadErrorDetail.value = loadErrorText(e)
+    // Nothing loaded, so there is no tail to reconcile: leaving the scroll
+    // pull-to-refresh armed would just re-throw against the same dead endpoint.
+    liveSyncActive.value = false
+    return
+  } finally {
+    loading.value = false
+    initialLoadInFlight = false
+  }
   await Promise.all([rollupP, plansP, wfRunsP])
   // A session that is already closed never needs the perpetual poll: run one
   // bounded catch-up (crash recovery) and stop. Live sessions keep the poll.
@@ -565,8 +601,13 @@ onMounted(async () => {
     // that has already ended. Reopening the view re-runs the catch-up.
     liveSyncActive.value = false
   } else {
+    liveSyncActive.value = true
     startLivePoll()
   }
+}
+
+onMounted(async () => {
+  await runInitialLoad()
   if (viewMode.value === 'terminal') ensureTerminalSpansLoaded()
   if (viewMode.value === 'messages') ensureAgentMessagesLoaded()
   // The watcher below only fires on a CHANGE, so a load that lands directly on
@@ -841,6 +882,15 @@ const {
 
 <template>
   <div v-if="loading" class="empty-state">Loading session…</div>
+  <div v-else-if="loadFailed" class="empty-state" data-testid="trace-load-error">
+    <p class="alert alert-error" role="alert">
+      Couldn’t load this session.
+      <!-- break-all, not break-words: a 500 body is often one unbroken token
+           (compact JSON, base64) with no break opportunity of its own. -->
+      <span v-if="loadErrorDetail" class="block mt-1 text-[12px] opacity-80 break-all">{{ loadErrorDetail }}</span>
+    </p>
+    <Button variant="secondary" @click="runInitialLoad">Retry</Button>
+  </div>
   <div v-else-if="!session || !allSpans.length" class="empty-state">
     No spans found for this session.
   </div>
