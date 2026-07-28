@@ -125,6 +125,82 @@ def _commit_on_branch(repo, branch, path, body="x\n"):
     subprocess.run(["git", "-C", str(repo), "checkout", "-q", here], check=True, env=env)
 
 
+def _git(repo, *args):
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    subprocess.run(["git", "-C", str(repo), *args], check=True, env=env)
+
+
+def _graph_with_ref(repo, path):
+    """Approve a single topic anchoring `path`, with another branch carrying an
+    unrelated file so the branch-tip lookup has something to walk."""
+    _commit_on_branch(repo, "feat/keeps-something", "unrelated.py")
+    topics.bootstrap(repo)
+    graph = topics.load_graph(repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": path, "role": "implementation"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(repo, graph)
+
+
+def test_validate_errors_when_this_commit_renames_an_anchored_file(fake_git_repo):
+    """`git mv` destroys the anchored path just as a delete does. Rename
+    detection reports it as `R`, so a delete-only filter let it through."""
+    (fake_git_repo / "movable.py").write_text("x\n" * 40)
+    _git(fake_git_repo, "add", "-f", "movable.py")
+    _git(fake_git_repo, "commit", "-q", "-m", "add")
+    _graph_with_ref(fake_git_repo, "movable.py")
+    _git(fake_git_repo, "mv", "movable.py", "moved.py")
+
+    result = topics.validate(fake_git_repo)
+
+    assert not result.ok
+    assert any("removed by this commit" in error for error in result.errors)
+
+
+def test_validate_errors_when_this_commit_deletes_a_dir_refs_subtree(fake_git_repo):
+    """A dir ref names a subtree, so `git rm -r` of it stages member deletions,
+    never the directory itself — matching on the members is what catches it."""
+    (fake_git_repo / "pkg").mkdir()
+    (fake_git_repo / "pkg" / "a.py").write_text("x\n")
+    (fake_git_repo / "pkg" / "b.py").write_text("y\n")
+    _git(fake_git_repo, "add", "-f", "pkg")
+    _git(fake_git_repo, "commit", "-q", "-m", "add")
+    _graph_with_ref(fake_git_repo, "pkg/")
+    _git(fake_git_repo, "rm", "-q", "-r", "pkg")
+
+    result = topics.validate(fake_git_repo)
+
+    assert not result.ok
+    assert any("removed by this commit" in error for error in result.errors)
+
+
+def test_validate_handles_non_ascii_ref_paths(fake_git_repo):
+    """git C-escapes non-ASCII paths unless asked not to, so a `café` anchor
+    matched nothing: its deletion went unnoticed and, worse, a branch-owned one
+    was reported dead — re-wedging commits."""
+    _commit_on_branch(fake_git_repo, "feat/uni", "docs/café_ünicode.md")
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {
+        "a": {
+            "label": "A", "aliases": [], "intent": "A", "status": "active",
+            "refs": [{"path": "docs/café_ünicode.md", "role": "implementation"}],
+            "edges": [], "commands": [], "include_globs": [], "exclude_globs": [],
+        },
+    }
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert result.ok
+    assert any("present on another branch" in w for w in result.warnings)
+
+
 def test_validate_warns_not_errors_on_ref_owned_by_another_branch(fake_git_repo):
     """A topic anchoring a file that lives on an unmerged branch must not make
     the whole graph invalid — that wedged the pre-commit hook and every other
@@ -174,7 +250,7 @@ def test_validate_errors_when_this_commit_deletes_an_anchored_file(fake_git_repo
     result = topics.validate(fake_git_repo)
 
     assert not result.ok
-    assert any("deleted by this commit" in error for error in result.errors)
+    assert any("removed by this commit" in error for error in result.errors)
 
 
 def test_validate_still_errors_on_ref_no_branch_carries(fake_git_repo):

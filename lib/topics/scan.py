@@ -101,16 +101,16 @@ def _classify_absent_refs(
     repo = Path(repo_path)
     paths = {path for _, path in absent}
     elsewhere = _paths_on_other_branches(repo, paths)
-    # A path this commit itself stages as deleted is dead by intent, whatever
+    # A path this commit itself stages as removed is dead by intent, whatever
     # other branches still carry — the anchor has to be updated here, so it
     # outranks the branch check.
-    deleted_here = _staged_deletions(repo) & paths
+    removed = _staged_removals(repo)
     errors: list[str] = []
     warnings: list[str] = []
     for topic_id, path in absent:
-        if path in deleted_here:
+        if _removed_by_commit(path, removed):
             errors.append(
-                f"topic {topic_id} ref is deleted by this commit; drop or "
+                f"topic {topic_id} ref is removed by this commit; drop or "
                 f"re-anchor it: {path}"
             )
         elif path in elsewhere:
@@ -123,17 +123,53 @@ def _classify_absent_refs(
     return errors, warnings
 
 
-def _staged_deletions(repo: Path) -> set[str]:
-    """Repo-relative paths staged for deletion. Empty outside a commit (and
-    for dir refs, which a single member's deletion does not invalidate)."""
+def _removed_by_commit(path: str, removed: set[str]) -> bool:
+    """Whether the staged change destroys what `path` anchors. A dir ref names
+    a subtree, so it dies with its last surviving member — the caller only asks
+    about refs already absent from the working tree, so any staged removal
+    beneath it means the whole subtree went."""
+    if is_dir_ref(path):
+        return any(gone.startswith(path) for gone in removed)
+    return path in removed
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True, text=True, check=True,
+    ).stdout
+
+
+def _staged_removals(repo: Path) -> set[str]:
+    """Repo-relative paths this commit removes. Empty outside a commit.
+
+    A rename counts: `git mv`ing an anchored file destroys the anchored path
+    just as surely as deleting it, and rename detection would otherwise report
+    it as `R` and slip past a delete-only filter. `-z` keeps paths verbatim —
+    without it git applies `core.quotePath`, and a non-ASCII path comes back
+    C-escaped and matches nothing.
+    """
     try:
-        out = subprocess.run(
-            ["git", "-C", str(repo), "diff", "--cached", "--name-only", "--diff-filter=D"],
-            capture_output=True, text=True, check=True,
-        ).stdout
+        out = _git_out(
+            repo, "diff", "--cached", "-z", "--name-status", "-M", "--diff-filter=DR",
+        )
     except (subprocess.CalledProcessError, OSError):
         return set()
-    return {line for line in out.splitlines() if line and not is_dir_ref(line)}
+    fields = [f for f in out.split("\0") if f]
+    removed: set[str] = set()
+    i = 0
+    while i < len(fields):
+        status = fields[i]
+        # A rename record is a triple (status, old, new); a deletion is a pair.
+        if status.startswith("R") and i + 2 < len(fields):
+            removed.add(fields[i + 1])
+            i += 3
+        elif i + 1 < len(fields):
+            removed.add(fields[i + 1])
+            i += 2
+        else:
+            break
+    return removed
 
 
 def _paths_on_other_branches(repo: Path, paths: set[str]) -> set[str]:
@@ -141,15 +177,10 @@ def _paths_on_other_branches(repo: Path, paths: set[str]) -> set[str]:
     the checked-out one. Unprovable (no git, unborn HEAD) means we cannot
     claim a path is dead, so every path is reported as found — absence then
     degrades to a warning rather than a spurious commit-blocking error."""
-    def _git(*args: str) -> str:
-        return subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True, text=True, check=True,
-        ).stdout
-
     try:
-        head = _git("rev-parse", "HEAD").strip()
-        oids = _git("for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes").split()
+        head = _git_out(repo, "rev-parse", "HEAD").strip()
+        oids = _git_out(repo, "for-each-ref", "--format=%(objectname)",
+                        "refs/heads", "refs/remotes").split()
     except (subprocess.CalledProcessError, OSError):
         return set(paths)
 
@@ -161,15 +192,25 @@ def _paths_on_other_branches(repo: Path, paths: set[str]) -> set[str]:
         if oid == head:
             continue
         try:
-            listed = set(_git("ls-tree", "-r", "--name-only", oid, "--", *remaining).splitlines())
+            # --literal-pathspecs so a ref spelled like pathspec magic
+            # (`:(foo)x.py`) can't fail the call and blank out every other
+            # path in the batch; -z for the same verbatim-path reason as above.
+            listed = set(_git_out(
+                repo, "--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z",
+                oid, "--", *remaining,
+            ).split("\0"))
         except (subprocess.CalledProcessError, OSError):
             continue
-        for path in remaining:
-            # A dir ref promises a subtree, so ls-tree reports its *members*,
-            # never the directory itself.
-            if any(name.startswith(path) for name in listed) if is_dir_ref(path) else path in listed:
-                found.add(path)
+        found |= {path for path in remaining if _listed_covers(path, listed)}
     return found
+
+
+def _listed_covers(path: str, listed: set[str]) -> bool:
+    """A dir ref promises a subtree, so ls-tree reports its *members*, never
+    the directory itself."""
+    if is_dir_ref(path):
+        return any(name.startswith(path) for name in listed)
+    return path in listed
 
 
 def _validate_topic(
