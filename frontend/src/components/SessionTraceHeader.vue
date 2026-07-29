@@ -25,6 +25,7 @@
 // still owns the data model.
 import { ref, computed } from 'vue'
 import { fmtTokens } from '../utils/traceFormatters.js'
+import { badgeScopeOf, badgeTasks, countTasks, taskAgentSections } from '../utils/taskScope.js'
 import Button from './ui/Button.vue'
 import Icon from './ui/Icon.vue'
 
@@ -156,28 +157,38 @@ const contextSubDiverges = computed(() => {
   return (full - main) > win * 0.01
 })
 
-// Tasks summary for the header badge: counts of every status across the
-// session's final task-list snapshot.
+// Tasks summary for the header badge: counts of every status across the list
+// the badge speaks for — the main agent's, not the session-wide roll-up
+// (taskScope.js). A `deleted` task was taken off the list by the model, so it
+// counts nowhere: reporting it as "open" would claim work that is no longer
+// planned, and would disagree with the per-span TASK LIST cards in the
+// conversation feed, which drop it.
 const taskSummary = computed(() => {
-  const all = props.session?.task_list?.final
-  if (!Array.isArray(all) || !all.length) return null
-  // A `deleted` task was taken off the list by the model — counting it as
-  // "open" would report work that is no longer planned, and would disagree
-  // with the per-span TASK LIST cards in the conversation feed, which drop it.
-  const tasks = all.filter(t => t.status !== 'deleted')
+  const tasks = badgeTasks(props.session?.task_list?.final)
   if (!tasks.length) return null
-  let completed = 0
-  let inProgress = 0
-  let pending = 0
-  for (const t of tasks) {
-    if (t.status === 'completed') completed++
-    else if (t.status === 'in_progress') inProgress++
-    else pending++
-  }
+  const c = countTasks(tasks)
   return {
-    total: tasks.length, completed, inProgress, pending,
-    pct: Math.round((completed / tasks.length) * 100) + '%',
+    total: c.total, completed: c.done, inProgress: c.inProgress, pending: c.open,
+    pct: Math.round((c.done / c.total) * 100) + '%',
   }
+})
+
+// The expanded list keeps EVERY agent's tasks — the badge counts one agent, so
+// the sections (each with its own count) are what make that number explicable
+// instead of a silent disagreement with the list it opens.
+const taskSections = computed(
+  () => taskAgentSections(props.session?.task_list?.final, props.session?.agent_roster))
+
+// Only worth saying once a second agent kept a list; the wording has to stay
+// honest about a session whose main agent never wrote one.
+const TASK_SCOPE_NOTE = { main: " (main agent's list)", all: ' (all agents)' }
+const taskBadgeScope = computed(() => badgeScopeOf(taskSections.value))
+const taskBadgeTitle = computed(() => {
+  const s = taskSummary.value
+  if (!s) return ''
+  const note = TASK_SCOPE_NOTE[taskBadgeScope.value] || ''
+  return `session task list${note} — ${s.completed} done · ${s.inProgress} in progress`
+    + ` · ${s.pending} open. Click to expand.`
 })
 
 function titleSourceLabel(src) {
@@ -402,7 +413,8 @@ function titleSourceTooltip(src) {
         <template v-if="taskSummary">
           <span
             class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium ml-1 cursor-pointer select-none border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-            :title="`session task list — ${taskSummary.completed} done · ${taskSummary.inProgress} in progress · ${taskSummary.pending} open. Click to expand.`"
+            data-testid="trace-tasks-badge"
+            :title="taskBadgeTitle"
             @click="tasksExpanded = !tasksExpanded"
           >tasks
             <span class="font-mono tabular-nums">{{ taskSummary.completed }}<span class="opacity-50">/</span>{{ taskSummary.total }}</span>
@@ -463,7 +475,11 @@ function titleSourceTooltip(src) {
           </li>
         </ul>
       </div>
-      <!-- Expanded task list (final state across the session).
+      <!-- Expanded task list (final state across the session), sectioned by
+           owning agent — the badge counts the main agent's section only, and a
+           heading per agent is what keeps that number explicable. Headings
+           appear only once a subagent kept its own list; a single-agent session
+           reads as one plain list.
            Each row is clickable: jumps the spine to that task's
            TaskCreate span and selects it, so the user can click a
            task in the summary and land on the moment it was opened
@@ -471,10 +487,33 @@ function titleSourceTooltip(src) {
       <div
         v-if="taskSummary && tasksExpanded"
         class="mt-2 rounded-md border border-indigo-200 bg-indigo-50/50 px-3 py-2 max-w-2xl"
+        data-testid="trace-task-list"
       >
+        <!-- With no main-agent list the badge counts the union, which is no
+             single agent's section — say the total outright rather than leave
+             the number matching nothing on screen. -->
+        <p
+          v-if="taskBadgeScope === 'all'"
+          class="flex items-baseline gap-2 text-[11px] font-medium text-indigo-700 mb-1"
+          data-testid="trace-task-total"
+        >
+          <span>all agents</span>
+          <span class="font-mono tabular-nums text-slate-500">{{ taskSummary.completed }}/{{ taskSummary.total }}</span>
+          <span class="text-slate-400 font-normal">counted in the badge</span>
+        </p>
+        <template v-for="s in taskSections" :key="s.agent_id">
+        <p
+          v-if="taskSections.length > 1"
+          class="flex items-baseline gap-2 text-[11px] font-medium text-indigo-700 mt-1.5 first:mt-0"
+          data-testid="trace-task-section"
+        >
+          <span class="truncate">{{ s.label }}</span>
+          <span class="font-mono tabular-nums text-slate-500">{{ s.summary.done }}/{{ s.summary.total }}</span>
+          <span v-if="s.isMain" class="text-slate-400 font-normal">counted in the badge</span>
+        </p>
         <ul class="text-[13px] text-slate-800 leading-snug">
           <li
-            v-for="t in (session.task_list?.final || []).filter(t => t.status !== 'deleted')"
+            v-for="t in s.tasks"
             :key="t.task_id"
             tabindex="0"
             class="flex items-baseline gap-2 rounded px-1 -mx-1 py-0.5 cursor-pointer hover:bg-indigo-100 focus-visible:outline-2 focus-visible:outline-indigo-400"
@@ -487,6 +526,7 @@ function titleSourceTooltip(src) {
             <span class="break-words flex-1 min-w-0" :class="t.status === 'completed' ? 'text-slate-500 line-through decoration-slate-300' : ''">{{ t.subject || '(no subject)' }}</span>
           </li>
         </ul>
+        </template>
       </div>
       </template>
     </div>

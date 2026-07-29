@@ -2282,8 +2282,9 @@ test.describe('Header tasks chip + tasks sheet', () => {
     await settle(page)
     const chip = page.locator('[data-testid="live-tasks-chip"]')
     await expect(chip).toBeVisible({ timeout: 10_000 })
-    // 4, not 6: the superseded plan is gone, not counted as open work.
-    await expect(chip).toContainText('2/4')
+    // 2, not 4 and never 6: the superseded plan is gone, and the chip speaks
+    // for the MAIN agent's list — the one the model's terminal shows (CAI-46).
+    await expect(chip).toContainText('1/2')
     await chip.click()
     const items = page.locator('[data-testid="live-task-item"]')
     await expect(items).toHaveCount(4)
@@ -2292,6 +2293,73 @@ test.describe('Header tasks chip + tasks sheet', () => {
     await expect(page.locator('.live-task-subject')).toHaveText([
       'New plan B', 'New plan A', 'Sub second', 'Sub first',
     ])
+    // The sheet still shows both lists; a heading per agent (with its own
+    // done/total) is what maps the chip's number onto a visible section.
+    await expect(page.locator('[data-testid="live-task-agent"]')).toHaveCount(2)
+    await expect(page.locator('[data-testid="live-task-agent"]').first())
+      .toContainText('main agent')
+    await expect(page.locator('[data-testid="live-task-counts"]'))
+      .toContainText('1 in progress · 0 open · 1 done')
+  })
+
+  // CAI-46: a subagent's plan is never retired when it finishes, so counting
+  // every agent's list left the chip reporting hours-old work as current.
+  test('a finished subagent plan no longer inflates the chip', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    const at = i => `2026-05-08T12:0${i}:00`
+    const snap = (n, i, items, agent) => ({
+      trace_id: traceId, span_id: `${n}-${sfx}`, parent_id: null, name: 'tool.TodoList',
+      start_time: at(i),
+      attributes: {
+        tool_name: 'TodoList', is_test: true,
+        todos: items.map(([subject, status]) => ({ subject, status })),
+        ...(agent ? { agent_id: agent } : {}),
+      },
+    })
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: at(0), attributes: { text: 'subagent plan lives on', is_test: true } },
+      snap('s1', 1, [['Sub 1', 'completed'], ['Sub 2', 'completed'],
+        ['Sub 3', 'completed'], ['Sub 4', 'completed']], 'ag1'),
+      snap('m1', 2, [['Main 1', 'completed'], ['Main 2', 'in_progress']]),
+    ])
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const chip = page.locator('[data-testid="live-tasks-chip"]')
+    await expect(chip).toBeVisible({ timeout: 10_000 })
+    await expect(chip).toContainText('1/2')
+    await chip.click()
+    // Nothing is hidden — all six rows stay, under two headings.
+    await expect(page.locator('[data-testid="live-task-item"]')).toHaveCount(6)
+    await expect(page.locator('[data-testid="live-task-agent"]')).toHaveCount(2)
+  })
+
+  // The fallback: with no main-agent list there is nothing else to report, so
+  // an empty chip would hide the session's only plan.
+  test('chip counts the subagent list when the main agent wrote none', async ({ page }) => {
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    await post(page, [
+      { trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null, name: 'prompt',
+        start_time: '2026-05-08T13:00:00', attributes: { text: 'subagent only', is_test: true } },
+      { trace_id: traceId, span_id: `s1-${sfx}`, parent_id: null, name: 'tool.TodoList',
+        start_time: '2026-05-08T13:01:00',
+        attributes: {
+          tool_name: 'TodoList', is_test: true, agent_id: 'ag1',
+          todos: [{ subject: 'Only 1', status: 'completed' },
+            { subject: 'Only 2', status: 'pending' }],
+        } },
+    ])
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const chip = page.locator('[data-testid="live-tasks-chip"]')
+    await expect(chip).toBeVisible({ timeout: 10_000 })
+    await expect(chip).toContainText('1/2')
+    await chip.click()
+    await expect(page.locator('[data-testid="live-task-item"]')).toHaveCount(2)
+    // One agent, so no headings to explain — the chip already counts that list.
+    await expect(page.locator('[data-testid="live-task-agent"]')).toHaveCount(0)
   })
 })
 

@@ -20,6 +20,7 @@ import {
   spanMatchesSearch,
   fmtDuration,
 } from './traceFormatters.js'
+import { badgeTasks, countTasks } from './taskScope.js'
 
 // The filter sheet renders the same 10 buckets as the desktop Terminal
 // (definitions live in traceFormatters.js — no duplicated maps).
@@ -410,16 +411,9 @@ export function agentStatusLabel(agent, elapsed, { compact = false } = {}) {
 }
 
 // done/total across the session's FINAL task snapshot (meta.task_list.final),
-// never re-derived from the loaded tail. Null when the session used no tasks.
+// never re-derived from the loaded tail. Scoped to the agent whose list the
+// badge speaks for (see taskScope.js). Null when the session used no tasks.
 export function taskSummaryOf(finalTasks) {
-  if (!Array.isArray(finalTasks) || !finalTasks.length) return null
-  let done = 0
-  let inProgress = 0
-  let open = 0
-  for (const t of finalTasks) {
-    if (t.status === 'completed') done += 1
-    else if (t.status === 'in_progress') inProgress += 1
-    else open += 1
-  }
-  return { total: finalTasks.length, done, inProgress, open }
+  const tasks = badgeTasks(finalTasks)
+  return tasks.length ? countTasks(tasks) : null
 }

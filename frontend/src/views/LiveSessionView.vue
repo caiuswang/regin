@@ -713,7 +713,10 @@ onUnmounted(() => {
         </template>
 
         <template v-else-if="sheetKind === 'tasks'">
-          <LiveTaskSheet :tasks="meta.task_list?.final || []" />
+          <LiveTaskSheet
+            :tasks="meta.task_list?.final || []"
+            :agents="meta.agent_roster || []"
+          />
         </template>
 
         <template v-else-if="sheetKind === 'sessions'">
