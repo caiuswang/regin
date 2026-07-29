@@ -50,6 +50,14 @@ const loading = ref(true)
 const loadErrorDetail = ref('')
 const loadFailed = ref(false)
 const reloading = ref(false)
+// Detail of a failed reload AFTER a good initial load. The loaded spans are
+// still worth reading, so this never replaces the pane the way `loadFailed`
+// does — it only marks the header's reload control as showing stale data.
+// Without it the unawaited callers (the live poll, useTraceScroll's
+// pull-to-refresh) turn every tick against a dead /map into an unhandled
+// rejection with nothing on screen to say the view has frozen.
+const reloadFailed = ref(false)
+const reloadErrorDetail = ref('')
 // True while auto-reload (the live poll AND the scroll/wheel pull-to-refresh)
 // is still wanted. Flips false the moment live-sync self-terminates — an
 // already-closed session after its bounded catch-up, or a live session that
@@ -470,7 +478,10 @@ const { toolRollupData, fetchToolRollup } = useToolRollup(route)
 // pull-older at the top). The composable owns the DOM mechanics + latches and
 // attaches its own document listeners on mount; we hand it the loader
 // callbacks and the gating refs it reads.
-useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload, loadOlder })
+useTraceScroll({
+  reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload,
+  loadOlder: () => guarded(loadOlder),
+})
 
 // General live poll. The trace view is a live dashboard but `reload()`
 // otherwise only fires on scroll/wheel — so a user parked at the bottom
@@ -563,9 +574,42 @@ function loadErrorText(err) {
   return raw.length > ERROR_DETAIL_MAX ? `${raw.slice(0, ERROR_DETAIL_MAX)}…` : raw
 }
 
+// Every /map-backed loader this view fires from an event handler — scroll,
+// tab watcher, jump-to-live, poll tick — is invoked unawaited, so an escaping
+// reject is an unhandled rejection and nothing else: no surface, no console
+// entry, just spans that quietly stop moving. Route them all through here so
+// one dead endpoint degrades the header instead.
+// Only ever SETS the marker — clearing belongs to reload(), the one call that
+// re-fetches the tail and can therefore vouch for the whole view being current.
+// A terminal-tab fetch succeeding says nothing about the poll still failing.
+async function guarded(fn) {
+  try {
+    await fn()
+  } catch (e) {
+    reloadFailed.value = true
+    reloadErrorDetail.value = loadErrorText(e)
+    // The tooltip carries the transport detail, but a genuine bug in the load
+    // chain deserves a stack a developer can open.
+    console.error('[trace] background load failed', e)
+  }
+}
+
 // Stamped before the await, not after: Retry is a user-clickable control, and
 // a guard set post-await lets a double-click run two initial loads at once.
 let initialLoadInFlight = false
+
+// Several screen readers do not announce a role="alert" that is inserted with
+// its text already in place, so the failure pane also takes focus — which both
+// announces it and puts Retry under the very next keypress.
+const retryButton = ref(null)
+watch(loadFailed, async (failed) => {
+  if (!failed) return
+  await nextTick()
+  // Button renders through reka-ui's Primitive, so the instance exposes the
+  // native element as $el rather than being one.
+  const el = retryButton.value?.$el ?? retryButton.value
+  el?.focus?.()
+})
 
 async function runInitialLoad() {
   if (initialLoadInFlight) return
@@ -608,13 +652,13 @@ async function runInitialLoad() {
 
 onMounted(async () => {
   await runInitialLoad()
-  if (viewMode.value === 'terminal') ensureTerminalSpansLoaded()
-  if (viewMode.value === 'messages') ensureAgentMessagesLoaded()
+  if (viewMode.value === 'terminal') guarded(ensureTerminalSpansLoaded)
+  if (viewMode.value === 'messages') guarded(ensureAgentMessagesLoaded)
   // The watcher below only fires on a CHANGE, so a load that lands directly on
   // the conversation tab (its localStorage default) never fetched turn_usage —
   // leaving the Turns rail without cost/token figures and every turn without
   // its usage footer.
-  if (viewMode.value === 'conversation') ensureTurnsLoaded()
+  if (viewMode.value === 'conversation') guarded(ensureTurnsLoaded)
   // Scroll/wheel/touch auto-reload listeners are attached by useTraceScroll();
   // the sticky-header ResizeObserver is owned by useStickyHeader.
   // Capture phase: scroll events don't bubble, and the scroller is the
@@ -646,11 +690,11 @@ onUnmounted(() => {
 // timeline, so trigger that load here too.
 watch(viewMode, async (mode) => {
   if (mode === 'terminal') {
-    await ensureTerminalSpansLoaded()
+    await guarded(ensureTerminalSpansLoaded)
   } else if (mode === 'messages') {
-    await ensureAgentMessagesLoaded()
+    await guarded(ensureAgentMessagesLoaded)
   } else if (mode === 'conversation') {
-    await ensureTurnsLoaded()
+    await guarded(ensureTurnsLoaded)
   }
 })
 
@@ -676,7 +720,20 @@ async function reload() {
     }
     await Promise.all(tasks)
     lastReloadedAt.value = new Date()
+    reloadFailed.value = false
+    reloadErrorDetail.value = ''
     maybeStopOnConverge()
+  } catch (e) {
+    // Swallowed on purpose: every caller but syncClosedSessionTail invokes
+    // this unawaited, so a rethrow is an unhandled rejection and nothing more.
+    // The poll keeps running — a /map that recovers clears the marker above.
+    // Logged on the false→true edge only: this runs every 4s, so logging
+    // unconditionally would bury the console during any outage — but staying
+    // silent would hide a genuine bug in the reload chain behind an amber
+    // tooltip that reads like a transport failure.
+    if (!reloadFailed.value) console.error('[trace] reload failed', e)
+    reloadFailed.value = true
+    reloadErrorDetail.value = loadErrorText(e)
   } finally {
     reloading.value = false
   }
@@ -697,7 +754,9 @@ function latestSpanByTime(spans) {
 async function jumpToLatestSpan() {
   setViewMode('conversation')
   await nextTick()
-  await reloadLiveTail()
+  // Jump to whatever IS loaded when the refresh fails, rather than throwing out
+  // of a click handler: the marker says the tail is stale, the jump still works.
+  await guarded(reloadLiveTail)
   const latest = latestSpanByTime(allSpans.value)
   if (latest) {
     if (selectedSpan.value?.span_id === latest.span_id) {
@@ -883,13 +942,21 @@ const {
 <template>
   <div v-if="loading" class="empty-state">Loading session…</div>
   <div v-else-if="loadFailed" class="empty-state" data-testid="trace-load-error">
-    <p class="alert alert-error" role="alert">
+    <!-- Retry is what takes focus, so it must carry the message: on its own its
+         accessible name is just "Retry", which announces the control and not
+         the failure. -->
+    <p id="trace-load-error-msg" class="alert alert-error" role="alert">
       Couldn’t load this session.
       <!-- break-all, not break-words: a 500 body is often one unbroken token
            (compact JSON, base64) with no break opportunity of its own. -->
       <span v-if="loadErrorDetail" class="block mt-1 text-[12px] opacity-80 break-all">{{ loadErrorDetail }}</span>
     </p>
-    <Button variant="secondary" @click="runInitialLoad">Retry</Button>
+    <Button
+      ref="retryButton"
+      variant="secondary"
+      aria-describedby="trace-load-error-msg"
+      @click="runInitialLoad"
+    >Retry</Button>
   </div>
   <div v-else-if="!session || !allSpans.length" class="empty-state">
     No spans found for this session.
@@ -923,6 +990,8 @@ const {
       :reloading="reloading"
       :loading="loading"
       :last-reloaded-at="lastReloadedAt"
+      :reload-failed="reloadFailed"
+      :reload-error-detail="reloadErrorDetail"
       :has-turns="turns != null"
       :snapshot-stale-at="snapshotStaleAt"
       :workflow-parent-to="workflowParentTo"

@@ -26,6 +26,7 @@
 import { ref, computed } from 'vue'
 import { fmtTokens } from '../utils/traceFormatters.js'
 import Button from './ui/Button.vue'
+import Icon from './ui/Icon.vue'
 
 // Date formatters kept local (exact copies of SessionTraceView's) rather than
 // imported: traceFormatters exposes a differently-behaved `fmtTime` (HH:MM), so
@@ -59,6 +60,11 @@ const props = defineProps({
   reloading: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
   lastReloadedAt: { type: Object, default: null },
+  // A reload that failed AFTER the session loaded. The spans on screen are
+  // still real, just frozen at `lastReloadedAt`, so this degrades the reload
+  // control rather than taking the pane.
+  reloadFailed: { type: Boolean, default: false },
+  reloadErrorDetail: { type: String, default: '' },
   hasTurns: { type: Boolean, default: false },
   snapshotStaleAt: { type: [String, null], default: null },
   workflowParentTo: { type: [Object, null], default: null },
@@ -542,6 +548,17 @@ function titleSourceTooltip(src) {
              width on every live poll, which can toggle a wrap in the row
              above and bounce everything below the header. -->
         <span v-if="lastReloadedAt" class="tabular-nums">updated {{ fmtLocalClock(lastReloadedAt.toISOString()) }}</span>
+        <!-- Degraded marker, not a banner: the spans behind it are still worth
+             reading. The transport detail rides the tooltip instead of the row
+             because a 500 body is often one unbroken token, and rendering it
+             inline would widen (or wrap) the header on every poll tick. -->
+        <span
+          v-if="reloadFailed"
+          data-testid="trace-reload-error"
+          role="status"
+          class="inline-flex items-center gap-1 text-warning-strong font-sans"
+          :title="reloadErrorDetail ? `Couldn’t refresh: ${reloadErrorDetail}` : 'Couldn’t refresh'"
+        ><Icon name="alert-triangle" :size="12" />not updating</span>
         <Button
           variant="link"
           size="sm"
