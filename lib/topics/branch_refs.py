@@ -1,8 +1,9 @@
 """Why a topic ref is absent from the working tree.
 
-Absence alone does not mean the anchor is dead. A path carried by the tip of
-some *other* branch belongs to work that simply isn't checked out; a path this
-commit stages as removed is dead by intent whatever other branches carry.
+Absence alone does not mean the anchor is dead. A path carried by HEAD's own
+tree, or by the tip of a branch *whose work has not landed here*, belongs to
+work this checkout simply isn't showing; a path this commit stages as removed
+is dead by intent whatever other trees carry.
 
 The verdict lives here rather than in one caller because four layers need the
 same answer and must not disagree: `scan.validate` (the whole-graph gate),
@@ -27,8 +28,9 @@ ABSENT_ELSEWHERE = "elsewhere"
 ABSENT_UNPROVABLE = "unprovable"
 ABSENT_DEAD = "dead"
 
-#: The verdicts no remediation may delete on. `elsewhere` is alive on another
-#: branch tip; `unprovable` is a path git never got to answer for, and
+#: The verdicts no remediation may delete on. `elsewhere` is alive at a commit
+#: this working tree is not showing; `unprovable` is a path git never got to
+#: answer for, and
 #: deleting on an unanswered question is how the graph loses curation nobody
 #: can put back (CAI-30).
 UNDELETABLE_VERDICTS = frozenset({ABSENT_ELSEWHERE, ABSENT_UNPROVABLE})
@@ -121,6 +123,10 @@ def _staged_removals(repo: Path) -> set[str]:
 #: paths shared its batch and would be wrong for a path asked about alone.
 _TIP_SCAN_CACHE: dict[tuple[str, str, tuple[str, ...]], dict[str, str]] = {}
 
+#: Which tips have landed, at the same repo/HEAD/ref-listing key and under the
+#: same lock and bound as the scan memo above (see `_landed_tips`).
+_LANDED_CACHE: dict[tuple[str, str, tuple[str, ...]], frozenset[str]] = {}
+
 #: The web server answers `/diff` and `/audit` from a thread pool, so every
 #: read and write of the cache above is serialised — an unguarded
 #: check-then-evict lets two threads pick the same victim key and raise out of
@@ -140,9 +146,9 @@ _TIP_SCAN_PATHS_MAX = 4096
 def _paths_on_other_branches(
     repo: Path, paths: set[str],
 ) -> tuple[set[str], set[str]]:
-    """`(found, unprovable)` — the subset of `paths` present in the tip tree of
-    a branch other than the checked-out one, and the subset git never answered
-    for.
+    """`(found, unprovable)` — the subset of `paths` carried by a tree that
+    still vouches for them (see `_vouching_trees`), and the subset git never
+    answered for.
 
     Fails *open* throughout: whenever git cannot answer — no repo, unborn
     HEAD, an argv too long for one batch, a ref spelled as something git
@@ -173,18 +179,17 @@ def _paths_on_other_branches(
     graph — because the alternative is a verdict that *deletes*, on the
     strength of git calls that all failed.
 
-    Two git calls resolve the tips; everything after them is either memoised
-    from an earlier call at these same oids or answered by `_scan_tips` — one
-    batch where git will take one, the per-tip sweep where it will not.
+    Three cheap git calls resolve the tips; everything after them is either
+    memoised from an earlier call at these same oids or answered by
+    `_scan_tips` — one batch where git will take one, the per-tip sweep where
+    it will not.
     """
     try:
         head = _git_out(repo, "rev-parse", "HEAD").strip()
-        oids = _git_out(repo, "for-each-ref", "--format=%(objectname)",
-                        "refs/heads", "refs/remotes").split()
+        tips = _vouching_trees(repo, head)
     except (subprocess.CalledProcessError, OSError):
         return set(), set(paths)
 
-    tips = tuple(oid for oid in dict.fromkeys(oids) if oid != head)
     verdicts = _memoised(repo, head, tips)
     unknown = paths - verdicts.keys()
     if unknown:
@@ -196,6 +201,90 @@ def _paths_on_other_branches(
         {p for p in paths if verdicts[p] == ABSENT_ELSEWHERE},
         {p for p in paths if verdicts[p] == ABSENT_UNPROVABLE},
     )
+
+
+def _vouching_trees(repo: Path, head: str) -> tuple[str, ...]:
+    """The trees entitled to vouch for a path missing from the working tree:
+    HEAD's own, then every branch tip whose work has not landed in it.
+
+    HEAD is one of them because "absent from the working tree" is not the same
+    as "not tracked here" — a sparse checkout, a `skip-worktree` bit or an
+    unstaged `rm` all hide a path this very commit still carries, and the
+    anchor for it is alive. That case used to be covered by accident, by
+    whichever merged sibling happened to carry the path too; asking HEAD
+    directly is what keeps it covered now that merged tips are retired. A path
+    deleted *and committed* is gone from HEAD's tree as well, so the state this
+    module exists to judge is untouched. It also means the scan is never
+    treeless while git can resolve HEAD, so a spelling git refuses as a
+    pathspec still reaches the sweep that reports it `unprovable`.
+
+    A tip reachable from HEAD has already contributed everything it carries, so
+    a path it lists that is nonetheless absent here was deleted *after* that
+    merge — dead by intent, not checked out elsewhere. Left unfiltered, one
+    merged branch nobody pruned kept such an anchor labelled "clears when it
+    merges" long after it had (CAI-37), with no remediation willing to touch
+    it. Dropping them also shrinks the scan: 121 tips to 32 on regin.
+
+    Reachability is what "landed" means here, so a branch squash-merged or
+    rebased in keeps vouching — its tip is no ancestor of HEAD, whatever became
+    of its content. Those states are no worse than before this filter existed;
+    ending them needs a patch-level comparison, not a walk (CAI-98).
+
+    Landed tips are *subtracted* rather than excluded by asking git for
+    `--no-merged` outright, because a ref git cannot read is absent from either
+    listing — it is neither provably merged nor provably not. Asking for the
+    unmerged set would therefore drop it silently, and losing a tip that way is
+    how the scan goes blind without knowing it: nothing reports the tip, and
+    every path it might have carried comes back `dead` — the deletable verdict
+    — on the strength of a ref nobody could open (CAI-25, CAI-36). Subtracting
+    keeps such a tip in the scan, where the existing unreadability handling
+    turns it into `unprovable` instead.
+    """
+    oids = tuple(dict.fromkeys(_git_out(
+        repo, "for-each-ref", "--format=%(objectname)",
+        "refs/heads", "refs/remotes").split()))
+    landed = _landed_tips(repo, head, oids)
+    return (head, *(oid for oid in oids
+                    if oid != head and oid not in landed))
+
+
+def _landed_tips(
+    repo: Path, head: str, oids: tuple[str, ...],
+) -> frozenset[str]:
+    """Which tips are reachable from HEAD, memoised on the listing they came
+    from.
+
+    Unlike the two listings around it, this one is a reachability walk — ~12 ms
+    against regin's 121 tips, where the plain listing is ~10 ms and the tip
+    scan it feeds is often already answered from `_TIP_SCAN_CACHE`. Uncached it
+    would become the entire cost of the second audit of a request, which is the
+    cost CAI-36 exists to have removed.
+
+    Serving it stale is safe in both directions. A tip is only dropped from the
+    scan while it is believed landed, and a landed tip's tree is one HEAD
+    already contains; the other way round it is merely scanned when it need not
+    be, for the undeletable verdict. Any answer that could change — a merge, a
+    push, a deleted branch — moves HEAD or the listing, and both are in the
+    key. The one thing the key cannot see is a tip's *readability* changing
+    under it: delete a landed tip's object mid-request and a warm entry keeps
+    calling it landed, where a cold one would find it unreadable and withhold
+    `dead` for the graph. That is the correct verdict either way — the tip did
+    land, so its tree is HEAD's — but it is the module's one `dead` that
+    survives a git object nobody can read, and it is deliberate.
+    """
+    key = _memo_key(repo, head, oids)
+    with _TIP_SCAN_LOCK:
+        cached = _LANDED_CACHE.get(key)
+    if cached is not None:
+        return cached
+    landed = frozenset(_git_out(
+        repo, "for-each-ref", "--merged", "HEAD", "--format=%(objectname)",
+        "refs/heads", "refs/remotes").split())
+    with _TIP_SCAN_LOCK:
+        while len(_LANDED_CACHE) >= _TIP_SCAN_CACHE_MAX:
+            _LANDED_CACHE.pop(next(iter(_LANDED_CACHE)), None)
+        _LANDED_CACHE[key] = landed
+    return landed
 
 
 def _memo_key(
@@ -249,9 +338,14 @@ def _scan_tips(
     smaller batch a verdict that was never asked about *that* path. Getting
     that backwards is the deletable direction: a cached `dead` is auto-fixable
     and the anchor is gone before anyone re-asks.
+
+    No trees at all cannot happen while `_vouching_trees` can resolve HEAD, and
+    the answer is `unprovable` rather than `dead` for the same reason: a scan
+    that asked nothing has proven nothing, and only one of the two verdicts is
+    recoverable if that ever stops being unreachable.
     """
     if not tips:
-        return True, dict.fromkeys(paths, ABSENT_DEAD)
+        return True, dict.fromkeys(paths, ABSENT_UNPROVABLE)
     batched = _batched_tip_lookup(repo, tips, paths)
     if batched is not None:
         return True, batched

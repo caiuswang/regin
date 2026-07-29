@@ -101,17 +101,18 @@ def _classify_absent_refs(
 ) -> tuple[list[str], list[str]]:
     """Split refs missing from the working tree into (errors, warnings).
 
-    A path carried by the tip of some *other* branch belongs to work that
-    simply isn't checked out — a warning, because failing here made the whole
-    graph invalid for every `validate().ok` gate (pre-commit hook, topic
-    edit/delete, proposal downgrade, wiki generation), so one unmerged
-    branch's topic wedged all five. A path no branch carries is genuinely
-    dead — the file was deleted or renamed and its anchor never updated — and
-    stays an error, or deletions would silently rot the graph.
+    A path carried by the tip of some branch that has *not* merged here, or by
+    HEAD's own tree, belongs to work this checkout simply isn't showing — a
+    warning, because failing here made the whole graph invalid for every
+    `validate().ok` gate (pre-commit hook, topic edit/delete, proposal
+    downgrade, wiki generation), so one unmerged branch's topic wedged all
+    five. A path no such tree carries is genuinely dead — the file was deleted
+    or renamed and its anchor never updated — and stays an error, or deletions
+    would silently rot the graph.
 
     A path the branch lookup could not answer for warns too, on the same
-    reasoning, but says so: claiming it "is present on another branch" in a
-    directory that has no branches is a lie the user cannot act on.
+    reasoning, but says so: claiming the file "is present on another branch" in
+    a directory that has no branches is a lie the user cannot act on.
     """
     if not absent:
         return [], []
@@ -127,8 +128,9 @@ def _classify_absent_refs(
             )
         elif verdict == ABSENT_ELSEWHERE:
             warnings.append(
-                f"topic {topic_id} ref does not exist in this checkout "
-                f"(it is present on another branch): {path}"
+                f"topic {topic_id} ref does not exist in this working tree "
+                f"(it is present on an unmerged branch, or tracked at HEAD "
+                f"but not checked out): {path}"
             )
         elif verdict == ABSENT_UNPROVABLE:
             warnings.append(

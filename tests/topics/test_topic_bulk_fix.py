@@ -139,7 +139,8 @@ def test_audit_separates_branch_owned_refs_from_dead_ones(
 
     assert by_code[BRANCH_OWNED_REF_CODE].paths == (branch_owned_ref,)
     assert by_code["graph.dead_ref"].paths == ("gone.py",)
-    assert "present on another branch" in by_code[BRANCH_OWNED_REF_CODE].message
+    assert "present on an unmerged branch" \
+        in by_code[BRANCH_OWNED_REF_CODE].message
 
 
 def test_compose_fix_refuses_to_strip_a_branch_owned_ref(

@@ -68,8 +68,9 @@ test('a branch-owned ref offers no fix and is not labelled manual', async ({ pag
   const branchOwned = [{
     severity: 'error',
     code: 'graph.ref_on_other_branch',
-    message: 'topic live-session-mobile-card ref does not exist in this checkout '
-      + '(it is present on another branch): frontend/src/components/live/LiveQaDecision.vue',
+    message: 'topic live-session-mobile-card ref does not exist in this working tree '
+      + '(it is present on an unmerged branch, or tracked at HEAD but not checked out): '
+      + 'frontend/src/components/live/LiveQaDecision.vue',
     topic_ids: ['live-session-mobile-card'],
     paths: ['frontend/src/components/live/LiveQaDecision.vue'],
   }]
@@ -93,6 +94,11 @@ test('a branch-owned ref offers no fix and is not labelled manual', async ({ pag
   const group = page.getByTestId('audit-group')
   await expect(group).toContainText('graph.ref_on_other_branch')
   await expect(group).toContainText('not checked out')
+  // The hint has to survive saying why there is nothing to fix: "clears when
+  // it merges" was false for a ref deleted after its branch merged (CAI-37),
+  // and for one HEAD tracks but the checkout hides there is no merge coming.
+  await expect(group.locator('[title]').first())
+    .toHaveAttribute('title', /git still has it \(an unmerged branch, or HEAD\)/)
   await expect(group).not.toContainText('manual')
   await expect(group.locator('input[type=checkbox]')).toBeDisabled()
 

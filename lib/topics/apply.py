@@ -101,9 +101,10 @@ class ApplyOptions:
       in Phase C; the diff layer's job is to make damage visible. It stays
       opt-in because dropping a ref is unrecoverable from the UI, but it is
       no longer indiscriminate: an anchor the topic *already carried* that
-      is merely absent from this checkout — the file lives on another
-      branch tip — survives the filter. One the proposal itself introduces
-      does not; there is no curation to lose, and sparing it would strand
+      is merely absent from this checkout — the file lives on an unmerged
+      branch tip, or at HEAD behind a sparse checkout — survives the
+      filter. One the proposal itself introduces does not; there is no
+      curation to lose, and sparing it would strand
       the diff (CAI-30). See `_filter_dead_refs`.
     - `dedupe_aliases=False` — within-topic normalize-duplicates are
       always collapsed at the shape layer (`diff._approved_shape`), so
@@ -313,10 +314,10 @@ def _filter_dead_refs(
 ) -> list[tuple[str, str, str]]:
     """Mutates `cleaned_topic['refs']`; returns dropped (topic_id, path, role).
 
-    Absent from the working tree is not the same as dead: a path carried by
-    another branch tip anchors work that merely isn't checked out, and deleting
-    it here is unrecoverable. Those are kept — the flag buys you the refs whose
-    file is genuinely gone (CAI-30).
+    Absent from the working tree is not the same as dead: a path carried by an
+    unmerged branch tip, or by HEAD itself, anchors work this checkout merely
+    isn't showing, and deleting it here is unrecoverable. Those are kept — the
+    flag buys you the refs whose file is genuinely gone (CAI-30).
 
     `protected` scopes that to the refs the topic *already had*. What CAI-30
     protects is existing curation, and a path the proposal is itself
@@ -343,10 +344,10 @@ def _dead_ref_paths(
     refs: list[dict], repo_path_obj: Path, protected: frozenset[str],
 ) -> set[str]:
     """Of the ref paths absent from the working tree, the ones really gone. A
-    path in `protected` carried by another branch tip is not among them — it
-    anchors work that simply isn't checked out — and neither is one the branch
-    lookup could not answer for: absence git never confirmed is not proof of
-    death."""
+    path in `protected` that an unmerged branch tip or HEAD still carries is
+    not among them — it anchors work this checkout simply isn't showing — and
+    neither is one the branch lookup could not answer for: absence git never
+    confirmed is not proof of death."""
     absent = {
         r["path"] for r in refs
         if isinstance(r.get("path"), str)
@@ -496,8 +497,8 @@ def resolve_diff_with_options(
       - `prune_orphan_edges`: drop edges whose target isn't in the
         prospective graph.
       - `drop_dead_refs`: drop refs whose path doesn't exist on disk,
-        except an already-carried anchor whose file lives on another
-        branch tip (CAI-30). No-op when `repo_path is None`.
+        except an already-carried anchor whose file lives on an unmerged
+        branch tip or at HEAD (CAI-30). No-op when `repo_path is None`.
       - `dedupe_aliases`: drop aliases that collide with a sibling
         topic in the prospective graph (and within-topic duplicates).
 

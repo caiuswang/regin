@@ -41,8 +41,10 @@ def _cold_tip_cache():
     """The tip scan memoises across calls (CAI-36), and every test here asserts
     on what git was asked — so each starts from a cold cache."""
     branch_refs._TIP_SCAN_CACHE.clear()
+    branch_refs._LANDED_CACHE.clear()
     yield
     branch_refs._TIP_SCAN_CACHE.clear()
+    branch_refs._LANDED_CACHE.clear()
 
 
 def _commit_on_branch(repo, branch, files):
@@ -60,6 +62,23 @@ def _commit_on_branch(repo, branch, files):
     subprocess.check_call(
         ["git", "-C", str(repo), "commit", "-q", "-m", f"add on {branch}"])
     subprocess.check_call(["git", "-C", str(repo), "checkout", "-q", here])
+
+
+def _merge_branch(repo, branch, strategy=None):
+    """Merge `branch` into the checked-out one and *leave the branch in place*
+    — the un-pruned merged tip CAI-37 is about. `--no-ff` so the tip is a
+    distinct oid from HEAD's, which is what makes it a merged-branch test
+    rather than a re-run of the "a tip that is HEAD" filter."""
+    subprocess.check_call([
+        "git", "-C", str(repo), "merge", "-q", "--no-ff",
+        *(("-s", strategy) if strategy else ()),
+        "-m", f"merge {branch}", branch,
+    ])
+
+
+def _commit_all(repo, message):
+    subprocess.check_call(
+        ["git", "-C", str(repo), "commit", "-q", "-a", "-m", message])
 
 
 def _rev_parse(repo, spec):
@@ -384,6 +403,22 @@ def test_a_second_audit_answers_from_the_first_without_reading_a_tree(
     assert ls_tree == []
 
 
+def test_a_second_audit_does_not_repeat_the_reachability_walk(
+    fake_git_repo, branch_owned_ref, monkeypatch,
+):
+    """Retiring landed tips costs a `--merged` listing, and that one is a
+    reachability walk rather than a listing — ~12 ms against regin's 121 tips.
+    Run on every call it becomes the entire cost of the second audit of a
+    request, which is the cost CAI-36 exists to have removed."""
+    absent = {branch_owned_ref, "gone.py"}
+    classify_absent_paths(fake_git_repo, absent)
+
+    calls = _count_calls(monkeypatch, "_git_out")
+    classify_absent_paths(fake_git_repo, absent)
+
+    assert not [call for call in calls if "--merged" in call]
+
+
 def test_the_memo_is_keyed_on_the_tips_so_a_moved_ref_re_answers(
     fake_git_repo,
 ):
@@ -398,6 +433,176 @@ def test_the_memo_is_keyed_on_the_tips_so_a_moved_ref_re_answers(
 
     assert classify_absent_paths(fake_git_repo, {"later.py"}) == {
         "later.py": ABSENT_ELSEWHERE,
+    }
+
+
+def test_a_ref_deleted_after_its_branch_merged_is_no_longer_branch_owned(
+    fake_git_repo,
+):
+    """The state CAI-37 is about: `feat/landed` merged, nobody pruned the
+    branch, and the file it brought was deleted afterwards. Its tip still
+    carries the path, so a scan over every tip called the anchor branch-owned —
+    "nothing to fix, clears when it merges" — about a file that had merged and
+    then died, and no remediation would strip it. A tip that has *not* landed
+    still vouches, which is the protection this must not trade away."""
+    _commit_on_branch(fake_git_repo, "feat/landed", {"landed.py": "x\n"})
+    _commit_on_branch(fake_git_repo, "feat/open", {"open.py": "x\n"})
+    _merge_branch(fake_git_repo, "feat/landed")
+    (fake_git_repo / "landed.py").unlink()
+    _commit_all(fake_git_repo, "delete the merged file")
+
+    assert classify_absent_paths(fake_git_repo, {"landed.py", "open.py"}) == {
+        "landed.py": ABSENT_DEAD,
+        "open.py": ABSENT_ELSEWHERE,
+    }
+
+
+def test_a_path_head_still_tracks_is_alive_however_it_left_the_worktree(
+    fake_git_repo,
+):
+    """A sparse checkout, a `skip-worktree` bit or an unstaged `rm` hides a
+    path this very commit still tracks, and the caller cannot tell — all it did
+    was look on disk. Retiring merged tips takes away the sibling that used to
+    cover this by accident, so HEAD's own tree has to answer for it: the ref is
+    alive, and `dead` here is a commit-blocking error whose one-click fix
+    deletes a perfectly good anchor."""
+    _commit_on_branch(fake_git_repo, "feat/landed", {"tracked.py": "x\n"})
+    _merge_branch(fake_git_repo, "feat/landed")
+    (fake_git_repo / "tracked.py").unlink()
+
+    assert classify_absent_paths(fake_git_repo, {"tracked.py"}) == {
+        "tracked.py": ABSENT_ELSEWHERE,
+    }
+
+
+def test_head_answers_for_its_own_tree_with_no_other_branch_in_the_repo(
+    fake_git_repo,
+):
+    """The same case with nothing else in the repo to cover it — one branch,
+    the file tracked at HEAD and hidden by `skip-worktree`. Nothing but HEAD's
+    own tree can say the anchor is alive here, so this is what fails if HEAD
+    ever stops being asked."""
+    (fake_git_repo / "hidden.py").write_text("x\n")
+    subprocess.check_call(
+        ["git", "-C", str(fake_git_repo), "add", "hidden.py"])
+    _commit_all(fake_git_repo, "track a file")
+    subprocess.check_call(
+        ["git", "-C", str(fake_git_repo), "update-index",
+         "--skip-worktree", "hidden.py"])
+    (fake_git_repo / "hidden.py").unlink()
+
+    assert classify_absent_paths(fake_git_repo, {"hidden.py", "gone.py"}) == {
+        "hidden.py": ABSENT_ELSEWHERE,
+        "gone.py": ABSENT_DEAD,
+    }
+
+
+def test_the_warning_does_not_claim_another_branch_when_head_is_the_carrier(
+    fake_git_repo,
+):
+    """Claiming "it is present on another branch" in a repo whose only ref is
+    the one checked out is the CAI-32 lie again, in the shape the HEAD carrier
+    creates — the scan warning is what the pre-commit hook prints, so it is the
+    wording most users see."""
+    (fake_git_repo / "hidden.py").write_text("x\n")
+    subprocess.check_call(
+        ["git", "-C", str(fake_git_repo), "add", "hidden.py"])
+    _commit_all(fake_git_repo, "track a file")
+    subprocess.check_call(
+        ["git", "-C", str(fake_git_repo), "update-index",
+         "--skip-worktree", "hidden.py"])
+    (fake_git_repo / "hidden.py").unlink()
+
+    topics.bootstrap(fake_git_repo)
+    graph = topics.load_graph(fake_git_repo)
+    graph["topics"] = {"a": _topic_with_ref("hidden.py")}
+    topics.save_graph(fake_git_repo, graph)
+
+    result = topics.validate(fake_git_repo)
+
+    assert result.ok
+    assert any("tracked at HEAD but not checked out" in w
+               for w in result.warnings), result.warnings
+    assert not any("present on another branch" in w for w in result.warnings)
+
+
+def test_a_spelling_git_refuses_stays_unprovable_with_every_branch_merged(
+    fake_git_repo,
+):
+    """Only the sweep can tell a spelling `ls-tree` refuses from a path no tree
+    carries — `cat-file` answers a flat `missing` for both — and the sweep only
+    runs while there is a tree left to ask. Retiring merged tips can empty that
+    set on a repo sitting on mainline, which is why HEAD is always in it:
+    `apply._filter_dead_refs` classifies without a canonicality guard of its
+    own, so an empty scan would hand it `dead` for `../outside.py`."""
+    _commit_on_branch(fake_git_repo, "feat/landed", {"landed.py": "x\n"})
+    _merge_branch(fake_git_repo, "feat/landed")
+    (fake_git_repo / "landed.py").unlink()
+    _commit_all(fake_git_repo, "delete the merged file")
+
+    assert classify_absent_paths(
+        fake_git_repo, {"../outside.py", "/etc/passwd", "landed.py"},
+    ) == {
+        "../outside.py": ABSENT_UNPROVABLE,
+        "/etc/passwd": ABSENT_UNPROVABLE,
+        "landed.py": ABSENT_DEAD,
+    }
+
+
+def test_merging_the_branch_that_carried_a_ref_re_answers_the_memo(
+    fake_git_repo,
+):
+    """The verdict a merge invalidates must not be served from the tip memo.
+    It is not, because merging moves HEAD and retires the tip from the scanned
+    set — both halves of the key — so the second call is a different question,
+    not a cache hit."""
+    _commit_on_branch(fake_git_repo, "feat/landed", {"landed.py": "x\n"})
+    assert classify_absent_paths(fake_git_repo, {"landed.py"}) == {
+        "landed.py": ABSENT_ELSEWHERE,
+    }
+
+    _merge_branch(fake_git_repo, "feat/landed")
+    (fake_git_repo / "landed.py").unlink()
+    _commit_all(fake_git_repo, "delete the merged file")
+
+    assert classify_absent_paths(fake_git_repo, {"landed.py"}) == {
+        "landed.py": ABSENT_DEAD,
+    }
+
+
+def test_a_tip_git_cannot_read_is_not_mistaken_for_one_that_landed(
+    fake_git_repo, branch_owned_ref,
+):
+    """Retiring merged tips must not retire unreadable ones with them. A ref
+    pointing at a missing object is listed by neither `--merged` nor
+    `--no-merged`, so asking git for the unmerged set directly would drop it
+    silently — and a tip that is never scanned cannot report itself unreadable,
+    which turns every unaccounted path into `dead`, the one verdict that
+    deletes. Subtracting the merged set instead leaves it in the scan."""
+    _break_a_tip(fake_git_repo)
+    _commit_on_branch(fake_git_repo, "feat/landed", {"landed.py": "x\n"})
+    _merge_branch(fake_git_repo, "feat/landed")
+
+    verdicts = classify_absent_paths(
+        fake_git_repo, {branch_owned_ref, "gone.py"})
+
+    assert verdicts[branch_owned_ref] == ABSENT_ELSEWHERE
+    assert verdicts["gone.py"] == ABSENT_UNPROVABLE
+
+
+def test_a_merge_that_took_none_of_the_branch_s_files_still_ends_the_vouching(
+    fake_git_repo,
+):
+    """The tradeoff this fix accepts: `-s ours` records the merge without
+    taking the file, so the tip carries a path HEAD never had. `dead` is the
+    intended reading — the branch landed, and this line of development
+    deliberately does not carry the file, so waiting for a merge that already
+    happened would leave the anchor stuck forever."""
+    _commit_on_branch(fake_git_repo, "feat/ours", {"ours.py": "x\n"})
+    _merge_branch(fake_git_repo, "feat/ours", strategy="ours")
+
+    assert classify_absent_paths(fake_git_repo, {"ours.py"}) == {
+        "ours.py": ABSENT_DEAD,
     }
 
 
@@ -526,6 +731,7 @@ def test_a_submodule_ref_reads_as_present_and_keeps_the_batch(
 @pytest.mark.parametrize("call", [
     lambda repo: branch_refs._memoise(repo, "h", ("a",), {"x.py": ABSENT_DEAD}),
     lambda repo: branch_refs._memoised(repo, "h", ("a",)),
+    lambda repo: branch_refs._landed_tips(repo, "h", ("a",)),
 ])
 def test_every_memo_access_takes_the_lock(fake_git_repo, call):
     """The dashboard answers `/diff` and `/audit` from Flask's thread pool, and

@@ -50,9 +50,9 @@ from lib.topics.core import (
 
 Severity = str  # "error" | "warning" | "info"
 
-# A ref absent from this checkout but carried by another branch tip. Split out
-# of `graph.dead_ref` so remediation can refuse to delete it; see
-# `_recode_branch_owned_refs`.
+# A ref absent from the working tree but carried by an unmerged branch tip or
+# by HEAD itself. Split out of `graph.dead_ref` so remediation can refuse to
+# delete it; see `_recode_branch_owned_refs`.
 BRANCH_OWNED_REF_CODE = "graph.ref_on_other_branch"
 
 # A ref absent from this checkout whose branch-tip lookup git could not answer
@@ -563,8 +563,8 @@ def _recoded(
             issue,
             code=BRANCH_OWNED_REF_CODE,
             message=f"topic {issue.topic_ids[0]} ref does not exist in this "
-                    f"checkout (it is present on another branch): "
-                    f"{issue.paths[0]}",
+                    f"working tree (it is present on an unmerged branch, or "
+                    f"tracked at HEAD but not checked out): {issue.paths[0]}",
         )
     if verdict == ABSENT_UNPROVABLE:
         return replace(

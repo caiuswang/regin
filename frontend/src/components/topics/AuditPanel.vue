@@ -101,14 +101,13 @@ function isInformational(code) {
   return informationalSet.value.has(code)
 }
 
-// Absent from this checkout but alive on another branch tip. Not a defect and
-// not something to "resolve" — it clears once that branch merges and the file
-// lands in the working tree, and the one thing you must not do is strip the
-// anchor. A stale branch carrying the path does not by itself keep the finding
-// alive: it also needs the file to be absent here. What can outlive the merge
-// is a path deleted afterwards — a stale tip still carries it, so the backend
-// scans refs/heads+refs/remotes with no merged filter and reports it here
-// rather than as the dead ref it now is.
+// Absent from this working tree but alive in git — on the tip of a branch that
+// has not merged here, or in HEAD's own tree behind a sparse checkout. Not a
+// defect and not something to "resolve": the branch case clears when that
+// branch merges, the HEAD case when the checkout materialises the path, and
+// the one thing you must not do is strip the anchor. A path deleted *after*
+// its branch merged is no longer one of these — the backend retires merged
+// tips, so it reports the dead ref it now is (CAI-37).
 const BRANCH_OWNED_CODE = 'graph.ref_on_other_branch'
 
 // Absent here and git could not say whether any branch carries it — no repo,
@@ -122,7 +121,7 @@ const UNPROVABLE_CODE = 'graph.ref_unverifiable'
 function codeHint(code) {
   if (isAutoFixable(code)) return 'Auto-fixable — select to bulk fix'
   if (code === BRANCH_OWNED_CODE) {
-    return 'Nothing to fix — the file lives on a branch that is not checked out; clears when it merges'
+    return 'Nothing to fix — the file is not checked out here, but git still has it (an unmerged branch, or HEAD)'
   }
   if (code === UNPROVABLE_CODE) {
     return 'Nothing to fix — the branch-tip check could not run here, so this ref cannot be proven dead'

@@ -10,11 +10,12 @@ issue codes whose resolution is unambiguous.
 
 `graph.ref_on_other_branch` is deliberately absent. It reads as the
 same shape of finding — a ref whose path this checkout cannot show —
-but the file is alive on another branch tip, so deleting the anchor
-destroys curation for work that merely isn't checked out, and nothing
-in the UI can put it back (CAI-30). The audit list surfaces it under
-its own code with no fix offered; it resolves itself when the branch
-merges.
+but the file is alive in git — on the tip of a branch that has not
+merged here, or in HEAD's own tree — so deleting the anchor destroys
+curation for work that merely isn't checked out, and nothing in the UI
+can put it back (CAI-30). The audit list surfaces it under its own code
+with no fix offered; it resolves itself when the branch merges, or when
+the checkout stops hiding the path.
 
 `graph.ref_unverifiable` is absent for the same reason one step
 weaker: git never answered whether any branch carries the path (no

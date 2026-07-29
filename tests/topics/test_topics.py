@@ -198,7 +198,7 @@ def test_validate_handles_non_ascii_ref_paths(fake_git_repo):
     result = topics.validate(fake_git_repo)
 
     assert result.ok
-    assert any("present on another branch" in w for w in result.warnings)
+    assert any("present on an unmerged branch" in w for w in result.warnings)
 
 
 def test_validate_does_not_let_an_unusable_ref_path_condemn_the_others(fake_git_repo):
@@ -243,7 +243,7 @@ def test_validate_warns_not_errors_on_ref_owned_by_another_branch(fake_git_repo)
 
     assert result.ok
     assert not (fake_git_repo / "elsewhere.py").exists()
-    assert any("present on another branch" in w for w in result.warnings)
+    assert any("present on an unmerged branch" in w for w in result.warnings)
 
 
 def test_validate_errors_when_this_commit_deletes_an_anchored_file(fake_git_repo):
