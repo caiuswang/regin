@@ -1064,15 +1064,28 @@ def _roster_interrupted(launches, open_entries) -> set[str]:
     return out
 
 
-def _ambiguous_launch_types(launches) -> set:
+class _EveryType:
+    """Set-like that contains every agent_type. An unresolved launch that names
+    no `subagent_type` (Kimi omits it whenever the call didn't pass one) could
+    have spawned ANY still-open agent, so no type is safely attributable."""
+
+    def __contains__(self, _agent_type) -> bool:
+        return True
+
+
+def _ambiguous_launch_types(launches):
     """agent_types whose implicit-stop attribution is unsafe: any type with a
     `tool.Agent` launch that has NOT cleanly resolved (still PENDING, or
     ERROR/denied). Only when EVERY same-type launch resolved is the launch↔agent
-    mapping unambiguous — see `_apply_implicit_stops`."""
+    mapping unambiguous — see `_apply_implicit_stops`. An unresolved launch of
+    UNKNOWN type poisons every type: it is exactly the running agent the
+    heuristic must not convict."""
     resolved_by_type: dict = {}
     for r in launches:
         typ = _launch_type(r['attrs'])
         if not typ:
+            if not _launch_resolved(r):
+                return _EveryType()
             continue
         resolved_by_type[typ] = (
             resolved_by_type.get(typ, True) and _launch_resolved(r))

@@ -99,6 +99,20 @@ class AgentProvider:
         matches = glob.glob(str(Path(base) / '*' / f'{session_id}.jsonl'))
         return matches[0] if matches else None
 
+    def subagent_transcript_paths(self, main_path: str) -> list[str]:
+        """Every subagent transcript belonging to the session at `main_path`.
+
+        The live rescan stats these for freshness: a subagent streaming while
+        the main transcript sits still (the parent blocked on an Agent tool) is
+        the one case where the main file alone says "nothing happened". The
+        default is Claude's `<session>/subagents/agent-*.jsonl` layout;
+        providers that write a subagent elsewhere (Kimi: a sibling `agent-N/`
+        directory) override this.
+        """
+        from pathlib import Path
+        return glob.glob(
+            str(Path(main_path).with_suffix('') / 'subagents' / 'agent-*.jsonl'))
+
     def parse_transcript(self, transcript_path: str, *, max_text_bytes: int | None = None):
         """Parse a transcript file into a `lib.trace.transcript_models.TranscriptUsage`.
 
@@ -186,7 +200,7 @@ class AgentProvider:
         """
         return None
 
-    def reconcile_subagents(self, session_id: str) -> None:
+    def reconcile_subagents(self, session_id: str, *, live: bool = False) -> None:
         """Re-nest a subagent's flat tool/turn spans under its subagent trace.
 
         Most CLIs (Claude) emit a subagent's tool calls against the subagent's
@@ -195,6 +209,10 @@ class AgentProvider:
         (Kimi) overrides this to trigger the server-side reconciler — keeping
         that provider-specific quirk in the adapter instead of an
         ``if provider_id == 'kimi'`` branch in the shared SubagentStop handler.
+
+        ``live=True`` is set by callers that can fire while a subagent is still
+        running (the trace view's rescan poll), so the reconciler must not
+        record an end for it.
         """
         return None
 

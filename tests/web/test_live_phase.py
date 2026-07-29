@@ -302,6 +302,39 @@ def test_roster_real_stop_marker_unchanged_by_resolved_launch(trace_db):
     assert entry['duration_ms'] == expected_ms
 
 
+def test_roster_untyped_pending_launch_blocks_demotion(trace_db):
+    """A running agent whose own launch names no `subagent_type` — Kimi omits
+    it whenever the Agent call didn't pass one — must not be demoted by an
+    EARLIER launch of a known type that has since resolved. The untyped
+    PENDING launch is exactly the running agent; typing the ambiguity check on
+    `subagent_type` alone made it invisible, so the resolved launch's implicit
+    stop landed on the live agent."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tR5', last_seen=now.isoformat())
+        _seed_span(conn, 'tR5', 'launch1', 'tool.Agent',
+                   start=(now - timedelta(seconds=300)).isoformat(),
+                   end=(now - timedelta(seconds=200)).isoformat(), status='OK',
+                   attrs={'subagent_type': 'coder'})
+        _seed_span(conn, 'tR5', 'launch2', 'tool.Agent',
+                   start=(now - timedelta(seconds=100)).isoformat(),
+                   status='PENDING', attrs={'description': 'no type given'})
+        _seed_span(conn, 'tR5', 'sa-start-b1', 'subagent.start',
+                   start=(now - timedelta(seconds=99)).isoformat(),
+                   attrs={'agent_id': 'b1', 'agent_type': 'coder'},
+                   agent_id_col='b1')
+        _seed_span(conn, 'tR5', 'sa-tool-b1', 'tool.Read',
+                   start=(now - timedelta(seconds=2)).isoformat(),
+                   attrs={'agent_id': 'b1'}, agent_id_col='b1')
+        conn.commit()
+    finally:
+        conn.close()
+    entry = _roster_by_id('tR5')['b1']
+    assert entry['status'] == 'running'
+    assert entry['duration_ms'] is None
+
+
 def test_roster_parallel_same_type_pending_sibling_no_misattribution(trace_db):
     """Two concurrent same-type launches — launch1 RESOLVED (its agent
     finished), launch2 still PENDING (its agent running) — with the

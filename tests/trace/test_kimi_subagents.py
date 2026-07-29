@@ -75,6 +75,47 @@ def _subagent_wire(path: Path, prefix: str, first_prompt: str,
     path.write_text("\n".join(json.dumps(r) for r in records))
 
 
+def _run_records(prefix: str, prompt: str, tool_ids: list[str],
+                 final_text: str, base_ms: int) -> list[dict]:
+    """The records of ONE subagent run: its `turn.prompt`, a tool step and a
+    text step. Kimi reuses an `agent-N` slot, appending a later subagent's run
+    to the same wire, so a wire is a concatenation of these."""
+    s1, s2 = f"{prefix}-s1", f"{prefix}-s2"
+    records: list[dict] = [
+        {"type": "turn.prompt", "input": [{"type": "text", "text": prompt}],
+         "time": base_ms},
+        _loop({"type": "step.begin", "uuid": s1}),
+        _loop({"type": "content.part", "stepUuid": s1,
+               "part": {"type": "think", "think": "working"}}),
+    ]
+    for tid in tool_ids:
+        records.append(_loop({"type": "tool.call", "stepUuid": s1,
+                              "toolCallId": tid, "name": "Read",
+                              "args": {"file_path": "/x"}}))
+        records.append(_loop({"type": "tool.result", "toolCallId": tid,
+                              "result": {"output": "data"}}))
+    records += [
+        _loop({"type": "step.end", "uuid": s1,
+               "usage": {"inputOther": 10, "output": 5}}, time=base_ms + 1_000),
+        _loop({"type": "step.begin", "uuid": s2}),
+        _loop({"type": "content.part", "stepUuid": s2,
+               "part": {"type": "text", "text": final_text}}),
+        _loop({"type": "step.end", "uuid": s2,
+               "usage": {"inputOther": 5, "output": 5}}, time=base_ms + 2_000),
+        {"type": "usage.record", "model": "kimi-code/kimi-for-coding"},
+    ]
+    return records
+
+
+def _append_run(path: Path, prefix: str, prompt: str, tool_ids: list[str],
+                final_text: str, base_ms: int = 100_000) -> None:
+    """Append a SECOND subagent's run to an existing wire — a reused slot."""
+    with path.open("a") as fh:
+        fh.write("\n" + "\n".join(
+            json.dumps(r) for r in
+            _run_records(prefix, prompt, tool_ids, final_text, base_ms)))
+
+
 @pytest.fixture
 def kimi_home(tmp_path, monkeypatch):
     """Point the Kimi provider's sessions dir at a temp tree with two
@@ -272,6 +313,16 @@ def test_discover_finds_session_with_subagents(tmp_db, kimi_home):
     assert discover_subagent_sessions() == [_SID]
 
 
+def test_provider_lists_subagent_wires_beside_main(kimi_home):
+    """The live rescan stats these for freshness. Kimi puts a subagent in a
+    SIBLING of `main/`, so the Claude default (`<session>/subagents/*.jsonl`)
+    finds nothing and a streaming subagent looks idle."""
+    paths = kimi_provider.KimiProvider().subagent_transcript_paths(
+        str(kimi_home / "main" / "wire.jsonl"))
+    assert paths == [str(kimi_home / "agent-0" / "wire.jsonl"),
+                     str(kimi_home / "agent-1" / "wire.jsonl")]
+
+
 def test_no_subagents_is_noop(tmp_db, monkeypatch, tmp_path):
     monkeypatch.setattr(kimi_provider, "_KIMI_HOME", tmp_path)
     assert reconcile_kimi_subagents("session_missing") == {
@@ -454,6 +505,114 @@ def test_hook_markers_are_never_claimed_by_two_agents(tmp_db, kimi_home):
     assert {r["agent_id"] for r in stops} == {"launch-0", "launch-1"}
     # The agent still waiting on its hook keeps its synthetic stand-in.
     assert {r["span_id"] for r in stops} == {"hookstop-0", "sa-stop-launch-1"}
+
+
+# ── reused agent slots + live (mid-run) passes ─────────────────────────────
+
+def _seed_reused_slot(db_path, agents: Path) -> None:
+    """A session whose SECOND subagent was appended to the FIRST one's wire
+    (Kimi reuses `agent-N` once its run ended), with the parent-side spans the
+    hooks leave: two launches, both runs' tool calls flat under the prompt, and
+    a `subagent.start` per run."""
+    _append_run(agents / "agent-0" / "wire.jsonl", "c",
+                "<git-context>x</git-context>\nExplore gamma subsystem now",
+                ["call-c1"], "gamma done")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen) "
+            "VALUES (?, ?, ?)", (_SID, "2026-06-01T00:00:00", "2026-06-01T00:00:00"))
+
+        def span(span_id, name, ts, attrs, tool_use_id=None, status="OK"):
+            conn.execute(
+                "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
+                "attributes, tool_use_id, status_code) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (_SID, span_id, name, ts, json.dumps(attrs), tool_use_id, status))
+
+        for n, kind in (("0", "alpha"), ("1", "beta"), ("2", "gamma")):
+            span(f"pending-launch-{n}", "tool.Agent", f"2026-06-01T00:00:0{n}",
+                 {"prompt": f"Explore {kind} subsystem now",
+                  "subagent_type": "explore", "tool_use_id": f"launch-{n}"},
+                 status="PENDING")
+            span(f"S{n}", "subagent.start", f"2026-06-01T00:00:1{n}",
+                 {"agent_type": "kimi",
+                  "prompt_preview": f"Explore {kind} subsystem now"})
+        for tid in ("call-a1", "call-a2", "call-b1", "call-c1"):
+            span(f"tsp-{tid}", "tool.Read", "2026-06-01T00:00:04",
+                 {"tool_name": "Read"}, tool_use_id=tid)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_reused_agent_slot_is_split_into_one_agent_per_run(tmp_db, kimi_home):
+    """A wire dir is a SLOT, not a subagent. Reconciling a reused slot as one
+    subagent handed the second run's spans to the first run's agent_id and left
+    the second with no identity at all — so its tool calls read as the main
+    agent's and the roster could not see it."""
+    _seed_reused_slot(tmp_db, kimi_home)
+    result = reconcile_kimi_subagents(_SID)
+    assert result["subagents"] == 3  # 2 runs in agent-0's slot + agent-1
+    assert _agent_id_of(tmp_db, "call-a1") == "launch-0"
+    assert _agent_id_of(tmp_db, "call-c1") == "launch-2"
+    starts = {r["span_id"]: r["agent_id"] for r in _rows(
+        tmp_db, "SELECT span_id, agent_id FROM session_spans "
+                "WHERE trace_id = ? AND name = 'subagent.start' "
+                "AND span_id IN ('S0', 'S2')")}
+    assert starts == {"S0": "launch-0", "S2": "launch-2"}
+
+
+def test_reused_slot_keeps_each_runs_task_prompt(tmp_db, kimi_home):
+    """Each run's scoped view must open on ITS OWN task prompt, not the prompt
+    of whichever run happened to write the slot first."""
+    _seed_reused_slot(tmp_db, kimi_home)
+    reconcile_kimi_subagents(_SID)
+    prompts = {r["span_id"]: r["text"] for r in _rows(
+        tmp_db, "SELECT span_id, json_extract(attributes, '$.text') AS text "
+                "FROM session_spans WHERE trace_id = ? AND name = 'prompt' "
+                "AND span_id LIKE 'prompt-sa-launch-%'")}
+    assert prompts["prompt-sa-launch-0"] == "Explore alpha subsystem now"
+    assert prompts["prompt-sa-launch-2"] == "Explore gamma subsystem now"
+
+
+def test_live_pass_leaves_the_newest_run_open(tmp_db, kimi_home):
+    """A pass that can catch a subagent mid-flight (the trace view's rescan)
+    must not record an end for it: a synthesized stop or a closed launch both
+    render a running agent as 'finished'."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    result = reconcile_kimi_subagents(_SID, live=True)
+    assert result["launches_closed"] == 0
+    assert _rows(tmp_db, "SELECT span_id FROM session_spans "
+                         "WHERE trace_id = ? AND name = 'subagent.stop'") == []
+    # ...while still binding what IS known, so the roster sees the agent at all.
+    assert _agent_id_of(tmp_db, "call-a1") == "launch-0"
+    assert {r["status_code"] for r in _rows(
+        tmp_db, "SELECT status_code FROM session_spans WHERE trace_id = ? "
+                "AND name = 'tool.Agent'")} == {"PENDING"}
+
+
+def test_live_pass_clears_a_synthetic_stop_over_a_live_run(tmp_db, kimi_home):
+    """A synthetic stop left by an earlier (non-live) pass has to go once a live
+    pass sees the run still writing — otherwise the agent stays 'finished'."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    reconcile_kimi_subagents(_SID)
+    assert len(_rows(tmp_db, "SELECT span_id FROM session_spans "
+                             "WHERE trace_id = ? AND name = 'subagent.stop'")) == 2
+    reconcile_kimi_subagents(_SID, live=True)
+    assert _rows(tmp_db, "SELECT span_id FROM session_spans "
+                         "WHERE trace_id = ? AND name = 'subagent.stop'") == []
+
+
+def test_live_pass_still_binds_a_hook_stop_that_landed(tmp_db, kimi_home):
+    """`live` is 'may be running', not 'assume running': a real SubagentStop
+    marker already in the trace still closes its agent."""
+    _seed(tmp_db, with_prompt_preview=True, with_stops=False)
+    _add_stop_markers(tmp_db, "alpha done", "beta done")
+    reconcile_kimi_subagents(_SID, live=True)
+    stops = _rows(tmp_db, "SELECT span_id, agent_id FROM session_spans "
+                          "WHERE trace_id = ? AND name = 'subagent.stop'")
+    assert {r["span_id"]: r["agent_id"] for r in stops} == {
+        "hookstop-0": "launch-0", "hookstop-1": "launch-1"}
 
 
 def test_stale_synthetic_is_swept_when_the_agent_id_rekeys(tmp_db, kimi_home):

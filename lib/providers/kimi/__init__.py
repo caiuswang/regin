@@ -324,14 +324,21 @@ class KimiProvider(AgentProvider):
             or 'was not run because the user' in msg
         )
 
-    def reconcile_subagents(self, session_id: str) -> None:
+    def reconcile_subagents(self, session_id: str, *, live: bool = False) -> None:
         """Kimi fires a subagent's PreToolUse/PostToolUse under the PARENT
         session_id, so the sub-tool/turn spans land flat on the parent trace.
         Trigger the server-side reconciler to read this subagent's own wire and
-        nest them under the subagent trace. See
+        nest them under the subagent trace. `live=True` marks a pass that may
+        catch a subagent mid-flight, so it must not be declared finished. See
         lib/trace/kimi_subagents.reconcile_kimi_subagents."""
         from lib.hook_plugin import post_event  # type: ignore
-        post_event('kimi_subagents', {'trace_id': session_id})
+        post_event('kimi_subagents', {'trace_id': session_id, 'live': live})
+
+    def subagent_transcript_paths(self, main_path: str) -> list[str]:
+        """Kimi writes each subagent to a sibling of the session's `main` dir
+        (`agents/agent-N/wire.jsonl`), not under the main transcript."""
+        agents = Path(main_path).parent.parent
+        return [str(p) for p in sorted(agents.glob('agent-*/wire.jsonl'))]
 
     def _path(self, key: str, default: Path) -> Path:
         raw = self._overrides.get(key)

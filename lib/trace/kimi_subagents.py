@@ -30,6 +30,18 @@ by matching that span's stored ``prompt`` as a substring of the subagent
 wire's first prompt. Idempotent: deterministic span ids + value-stable UPDATEs,
 safe to re-run on every ``SubagentStart``/``SubagentStop``, on the
 ``Stop``/``SessionEnd`` sweep, and during backfill.
+
+A wire dir is a SLOT, not a subagent: Kimi reuses ``agent-N`` for a later
+subagent and appends that run to the same file, so one wire can hold several
+subagents back to back (each opening with its own ``turn.prompt``). Runs are
+therefore split out before anything is bound — see :func:`_split_runs`.
+
+``live=True`` marks a pass that can see a subagent mid-flight (the trace
+view's rescan poll). The newest run of each wire is then left OPEN: no
+synthetic ``subagent.stop``, no closing of its ``tool.Agent`` launch, and no
+order-fallback claim on a stop marker — all three would render a running
+agent as finished. A later ``SubagentStop``/``Stop``/``SessionEnd`` pass runs
+with ``live=False`` and closes it for real.
 """
 
 from __future__ import annotations
@@ -53,6 +65,10 @@ _PROMPT_MATCH_CHARS = 200
 # the anchor.
 _PROMPT_TEXT_MAX_BYTES = 8 * 1024
 _EMPTY_RESULT = {"subagents": 0, "tool_spans": 0, "turns": 0, "launches_closed": 0}
+# Prompt-anchor uuids the Kimi parser mints for a `turn.prompt` record. A
+# `turn.steer` anchors on `katt-*` instead, which is why a steer cannot be
+# mistaken for the start of the next subagent in a reused slot.
+_RUN_ANCHOR_PREFIX = "kprompt-"
 
 
 def discover_subagent_sessions() -> list[str]:
@@ -131,6 +147,69 @@ def _match_launch(first_prompt: str, launches: list[dict], used: set[str]) -> di
         if head and lc["tool_use_id"] not in used and head in first_prompt:
             return lc
     return None
+
+
+def _is_launch_prompt(text: str, launches: list[dict]) -> bool:
+    """True when some `tool.Agent` launch prompt opens `text` — i.e. this wire
+    prompt is a subagent LAUNCH rather than a continuation of the current run."""
+    return any(
+        lc["prompt"][:_PROMPT_MATCH_CHARS]
+        and lc["prompt"][:_PROMPT_MATCH_CHARS] in text
+        for lc in launches
+    )
+
+
+def _run_anchors(usage, launches: list[dict]) -> list[str]:
+    """The prompt anchors that each open a subagent run, in turn order.
+
+    The wire's first prompt always opens one; a later prompt only does when it
+    carries a launch prompt, so a wire prompt with no `tool.Agent` behind it
+    stays inside the run it interrupted rather than splitting off a phantom
+    subagent that would then claim someone else's marker."""
+    anchors: list[str] = []
+    for turn in usage.turns:
+        uid = turn.prompt_uuid
+        if not (isinstance(uid, str) and uid.startswith(_RUN_ANCHOR_PREFIX)):
+            continue
+        if uid in anchors:
+            continue
+        if anchors and not _is_launch_prompt(usage.prompt_texts.get(uid, ""), launches):
+            continue
+        anchors.append(uid)
+    return anchors
+
+
+def _run_usage(usage, anchor: str, turns: list):
+    """`usage` narrowed to one run — its own turns and its own launch prompt."""
+    from dataclasses import replace
+    return replace(
+        usage,
+        turns=turns,
+        prompt_texts={anchor: usage.prompt_texts[anchor]}
+        if anchor in usage.prompt_texts else {},
+        prompt_timestamps={anchor: usage.prompt_timestamps[anchor]}
+        if anchor in usage.prompt_timestamps else {},
+    )
+
+
+def _split_runs(usage, launches: list[dict]) -> list:
+    """One usage per subagent RUN in a wire — usually the wire itself.
+
+    Kimi reuses an `agent-N` slot for a later subagent, appending that run to
+    the same wire. Reconciling the file as one subagent hands the second run's
+    tool spans, turns and stop marker to the first run's `agent_id` and leaves
+    the second with no identity at all (its `subagent.start` never gets an
+    `agent_id`, so the roster cannot see it)."""
+    anchors = _run_anchors(usage, launches)
+    if len(anchors) < 2:
+        return [usage]
+    runs: list[tuple[str, list]] = [(anchors[0], [])]
+    for turn in usage.turns:
+        uid = turn.prompt_uuid
+        if uid in anchors and uid != runs[-1][0]:
+            runs.append((uid, []))
+        runs[-1][1].append(turn)
+    return [_run_usage(usage, uid, turns) for uid, turns in runs]
 
 
 def _first_prompt(usage) -> str:
@@ -328,7 +407,7 @@ def _overlap(a: str, b: str, n: int = 80) -> bool:
     return bool(a and b and (a[:n] in b or b[:n] in a))
 
 
-def _match_marker(pool: list, key: str | None, attr: str):
+def _match_marker(pool: list, key: str | None, attr: str, *, by_content_only=False):
     """Claim one HOOK marker from `pool` (removing it): the marker whose stored
     `attr` overlaps `key` (robust against out-of-order parallel subagents),
     else the first remaining (creation-order fallback for older markers that
@@ -336,7 +415,9 @@ def _match_marker(pool: list, key: str | None, attr: str):
 
     Synthetic markers are skipped — each agent claims its own by id first, and
     letting the content/order fallback adopt a leftover synthetic is what used
-    to bind a marker to the wrong agent."""
+    to bind a marker to the wrong agent. `by_content_only` drops the order
+    fallback: a run that may still be live must not adopt a stray stop marker
+    just because it is next in line."""
     hooks = [m for m in pool if not _is_synthetic(m["span_id"])]
     if not hooks:
         return None
@@ -346,42 +427,56 @@ def _match_marker(pool: list, key: str | None, attr: str):
             if _overlap(value, key):
                 pool.remove(m)
                 return m
+    if by_content_only:
+        return None
     pool.remove(hooks[0])
     return hooks[0]
 
 
 def _place_one_marker(conn, trace_id: str, kind: str, agent_id: str, info: dict,
-                      pool: list, key: str | None, attr: str, ts: str | None) -> None:
+                      pool: list, key: str | None, attr: str, ts: str | None,
+                      closed: bool = True) -> None:
     """Bind this subagent to exactly ONE marker span of `kind`.
 
     A synthetic marker is inserted when the hook's marker hasn't landed yet
     (Kimi fires `SubagentStop` late, and sometimes never). Once the real one
     does arrive both describe the same event, so the synthetic is dropped
     rather than left behind — without that, every reconcile pass that ran
-    before the hook permanently doubled the subagent's marker count."""
+    before the hook permanently doubled the subagent's marker count.
+
+    `closed=False` marks a run that may still be executing: only a marker whose
+    content matches it is claimed, nothing is synthesized, and a synthetic left
+    by an earlier pass is deleted — a synthetic stop over a live subagent reads
+    as 'finished' in the roster."""
     name = f"subagent.{kind}"
     mine = _take_own_synthetic(pool, kind, agent_id)
-    hook = _match_marker(pool, key, attr)
+    hook = _match_marker(pool, key, attr, by_content_only=not closed)
     if hook is not None:
         _enrich_marker(conn, hook, agent_id, info)
         if mine is not None:
             _delete_marker(conn, trace_id, mine["span_id"])
-    elif mine is not None:
+    elif mine is not None and closed:
         _enrich_marker(conn, mine, agent_id, info)
-    elif ts:
+    elif mine is not None:
+        _delete_marker(conn, trace_id, mine["span_id"])
+    elif ts and closed:
         _insert_marker(conn, trace_id, name, agent_id, ts, info)
 
 
 def _place_markers(conn, trace_id: str, agent_id: str, info: dict, usage,
-                   starts: list, stops: list, launch_prompt: str | None) -> None:
+                   starts: list, stops: list, launch_prompt: str | None,
+                   closed: bool = True) -> None:
     """Claim + enrich this subagent's start/stop markers, or insert fresh ones
     when the session recorded none. `starts`/`stops` are mutated (claimed
-    markers are popped) so each is bound to exactly one subagent."""
+    markers are popped) so each is bound to exactly one subagent. A start
+    marker is placed either way — a run that is still executing has already
+    started."""
     first_ts, last_ts = _turn_bounds(usage)
     _place_one_marker(conn, trace_id, "start", agent_id, info, starts,
                       launch_prompt, "prompt_preview", first_ts)
     _place_one_marker(conn, trace_id, "stop", agent_id, info, stops,
-                      info.get("result_preview"), "result_preview", last_ts)
+                      info.get("result_preview"), "result_preview", last_ts,
+                      closed)
 
 
 def _drop_stale_synthetics(conn, trace_id: str, unclaimed: list) -> int:
@@ -524,34 +619,65 @@ def _identity(trace_id: str, wire_path: str, usage, launches: list[dict],
     }
 
 
-def _reconcile_one(conn, trace_id: str, wire_path: str, launches: list[dict],
-                   used: set[str], starts: list, stops: list, idx: int) -> dict:
-    """Reconcile a single subagent wire. Returns a small stats dict."""
-    from lib.trace.kimi_transcript import read_usage_kimi
-    usage = read_usage_kimi(wire_path)
-    if usage is None:
-        return {"agent_id": None, "tool_spans": 0, "turns": 0, "launches_closed": 0}
-    info = _identity(trace_id, wire_path, usage, launches, used, idx)
+def _reconcile_one(conn, trace_id: str, run: dict, launches: list[dict],
+                   used: set[str], starts: list, stops: list, idx: int,
+                   live: bool) -> dict:
+    """Reconcile a single subagent run. Returns a small stats dict."""
+    usage = run["usage"]
+    closed = not (live and run["open"])
+    info = _identity(trace_id, run["wire"], usage, launches, used, idx)
     agent_id = info["agent_id"]
     touched = _stamp_tool_spans(conn, trace_id, agent_id, _tool_ids(usage))
     _place_markers(conn, trace_id, agent_id, info, usage,
-                   starts, stops, info["launch_prompt"])
+                   starts, stops, info["launch_prompt"], closed)
     _emit_launch_prompt(conn, trace_id, agent_id, info, usage)
     turns = _emit_subagent_turns(conn, trace_id, agent_id, usage)
-    closed = _close_launch_span(
-        conn, trace_id, info["tool_use_id"], _turn_bounds(usage)[1])
+    launches_closed = _close_launch_span(
+        conn, trace_id, info["tool_use_id"], _turn_bounds(usage)[1]) if closed else 0
     return {"agent_id": agent_id, "tool_spans": touched, "turns": turns,
-            "launches_closed": closed}
+            "launches_closed": launches_closed}
 
 
-def reconcile_kimi_subagents(trace_id: str) -> dict:
+def _collect_runs(wires: list[tuple[str, str]], launches: list[dict]) -> list[dict]:
+    """Every subagent run across the session's wires, oldest first.
+
+    Chronological order (not wire order) is what the marker pools are claimed
+    in, so a run bound by the creation-order fallback lands on a marker from
+    its own era. `open` flags the newest run of a slot — the only one that can
+    still be executing, since a slot is reused only once its run has ended."""
+    from lib.trace.kimi_transcript import read_usage_kimi
+    runs: list[dict] = []
+    for _name, wire_path in wires:
+        usage = read_usage_kimi(wire_path)
+        if usage is None:
+            continue
+        parts = _split_runs(usage, launches)
+        for pos, part in enumerate(parts):
+            runs.append({
+                "wire": wire_path,
+                "usage": part,
+                "open": pos == len(parts) - 1,
+                "ts": _turn_bounds(part)[0] or _first_prompt_ts(part) or "",
+            })
+    # A run whose time cannot be read sorts LAST (and keeps wire order among
+    # its peers, the sort being stable): floating it to the front would let it
+    # claim an older agent's marker through the creation-order fallback.
+    runs.sort(key=lambda r: (not r["ts"], r["ts"]))
+    return runs
+
+
+def reconcile_kimi_subagents(trace_id: str, live: bool = False) -> dict:
     """Nest a Kimi session's flat subagent spans under their subagent trace.
 
-    Reads the session's sibling ``agents/agent-*/wire.jsonl`` streams, stamps
-    ``agent_id`` onto the subagent-owned tool spans, enriches the
-    ``subagent.start`` / ``subagent.stop`` markers, and replays the subagents'
-    assistant turns. Returns ``{subagents, tool_spans, turns}`` counts. A no-op
-    (``subagents: 0``) when the session has no subagent dirs. Idempotent.
+    Reads the session's sibling ``agents/agent-*/wire.jsonl`` streams, splits
+    each into its subagent runs, stamps ``agent_id`` onto the subagent-owned
+    tool spans, enriches the ``subagent.start`` / ``subagent.stop`` markers,
+    and replays the subagents' assistant turns. ``subagents`` counts RUNS, not
+    wire dirs (a reused slot holds several). A no-op (``subagents: 0``) when
+    the session has no subagent dirs. Idempotent.
+
+    ``live=True`` (the trace view's rescan poll) leaves each slot's newest run
+    open rather than declaring it finished — see the module docstring.
     """
     if not isinstance(trace_id, str) or not trace_id:
         return _EMPTY_RESULT.copy()
@@ -568,11 +694,12 @@ def reconcile_kimi_subagents(trace_id: str) -> dict:
         launches = _load_launches(conn, trace_id)
         starts = _claim_markers(conn, trace_id, "subagent.start")
         stops = _claim_markers(conn, trace_id, "subagent.stop")
+        runs = _collect_runs(wires, launches)
         used: set[str] = set()
         tool_spans = turns = closed = 0
-        for idx, (_name, wire_path) in enumerate(wires):
+        for idx, run in enumerate(runs):
             stats = _reconcile_one(
-                conn, trace_id, wire_path, launches, used, starts, stops, idx,
+                conn, trace_id, run, launches, used, starts, stops, idx, live,
             )
             tool_spans += stats["tool_spans"]
             turns += stats["turns"]
@@ -588,7 +715,7 @@ def reconcile_kimi_subagents(trace_id: str) -> dict:
     finally:
         conn.close()
 
-    result = {"subagents": len(wires), "tool_spans": tool_spans,
+    result = {"subagents": len(runs), "tool_spans": tool_spans,
               "turns": turns, "launches_closed": closed}
     _log.write("kimi_subagents_reconciled", trace_id=trace_id, **result)
     return result

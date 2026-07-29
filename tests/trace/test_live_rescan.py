@@ -89,6 +89,63 @@ def test_throttle_gate_sees_subagent_freshness(tmp_path, monkeypatch):
     lr._rescan_gate.clear()
 
 
+class _ForeignProvider:
+    """A non-Claude-shaped session (Kimi): one event-sourced transcript per
+    agent, the subagents in sibling directories rather than under the main
+    file."""
+
+    transcript_format = 'wire'
+
+    def __init__(self, subagents):
+        self.subagents = [str(p) for p in subagents]
+        self.reconciled: list[bool] = []
+
+    def subagent_transcript_paths(self, _main_path):
+        return self.subagents
+
+    def reconcile_subagents(self, _session_id, *, live=False):
+        self.reconciled.append(live)
+
+
+def test_foreign_rescan_renests_subagents_while_they_run(tmp_path, monkeypatch):
+    """Kimi fires a subagent's tool hooks under the PARENT session, so until the
+    reconciler stamps `agent_id` those calls read as the main agent's and the
+    subagent is absent from the roster. Hanging that off the lifecycle hooks
+    alone landed it only after the subagent had finished — the poll has to
+    re-nest a RUNNING one, and must say so (`live=True`) so the reconciler
+    doesn't record an end for it."""
+    main = tmp_path / 'main' / 'wire.jsonl'
+    main.parent.mkdir(parents=True)
+    main.write_text('{}\n')
+    sub = tmp_path / 'agent-0' / 'wire.jsonl'
+    sub.parent.mkdir(parents=True)
+    sub.write_text('{}\n')
+    provider = _ForeignProvider([sub])
+
+    monkeypatch.setattr(lr, '_find_main_transcript', lambda tid: str(main))
+    monkeypatch.setattr(lr, '_session_provider', lambda tid: provider)
+    monkeypatch.setattr(
+        'hook_manager.handlers.turn_trace.entry._ingest_transcript_usage',
+        lambda *a, **k: None,
+    )
+    lr._last_mtime.clear()
+    lr._rescan_gate.clear()
+    lr._running.clear()
+
+    lr._do_rescan('t-foreign')
+    assert provider.reconciled == [True]
+
+    lr._do_rescan('t-foreign')          # nothing changed → no repeat reconcile
+    assert provider.reconciled == [True]
+
+    future = 9_999_999_999
+    os.utime(sub, (future, future))
+    lr._do_rescan('t-foreign')          # the subagent wrote again → re-nest
+    assert provider.reconciled == [True, True]
+    lr._last_mtime.clear()
+    lr._rescan_gate.clear()
+
+
 def test_bound_tracked_evicts_least_recently_rescanned():
     lr._scan_states.clear()
     lr._sub_scan_states.clear()

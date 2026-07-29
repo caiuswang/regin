@@ -58,7 +58,7 @@ class ClaudeProvider(AgentProvider):
         from lib.trace.claude_version import current_claude_version
         return current_claude_version()
 
-    def reconcile_subagents(self, session_id: str) -> None:
+    def reconcile_subagents(self, session_id: str, *, live: bool = False) -> None:
         """Attribute Task-tool subagent API spend onto the session bill.
 
         Claude writes each subagent's conversation to a sibling

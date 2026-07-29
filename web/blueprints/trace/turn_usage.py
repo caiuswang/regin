@@ -94,13 +94,15 @@ def api_ingest_tool_attribution():
 def api_ingest_kimi_subagents():
     """Nest a Kimi session's flat subagent spans under their subagent trace.
 
-    Body: `{trace_id}`. Posted by the Kimi `SubagentStop` hook (and the
-    backfill CLI). The service reads the session's sibling
-    `agents/agent-*/wire.jsonl` streams, stamps `agent_id` onto the
-    subagent-owned tool spans, enriches the `subagent.start` / `subagent.stop`
-    markers, and replays the subagents' assistant turns. Idempotent; a no-op
-    for non-Kimi sessions or sessions without subagents. See
-    `lib.trace.kimi_subagents.reconcile_kimi_subagents`.
+    Body: `{trace_id, live?}`. Posted by the Kimi `SubagentStop` hook, the
+    trace view's live rescan (`live: true`) and the backfill CLI. The service
+    reads the session's sibling `agents/agent-*/wire.jsonl` streams, stamps
+    `agent_id` onto the subagent-owned tool spans, enriches the
+    `subagent.start` / `subagent.stop` markers, and replays the subagents'
+    assistant turns. `live` marks a pass that can catch a subagent mid-run, so
+    the newest run of each wire is left open instead of being closed.
+    Idempotent; a no-op for non-Kimi sessions or sessions without subagents.
+    See `lib.trace.kimi_subagents.reconcile_kimi_subagents`.
     """
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -110,7 +112,7 @@ def api_ingest_kimi_subagents():
         return jsonify({'ok': False, 'error': 'trace_id is required'}), 400
     try:
         from lib.trace.kimi_subagents import reconcile_kimi_subagents
-        result = reconcile_kimi_subagents(trace_id)
+        result = reconcile_kimi_subagents(trace_id, bool(data.get('live')))
     except Exception as exc:
         return jsonify({
             'ok': False,

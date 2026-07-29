@@ -83,18 +83,28 @@ def _file_changed(path: str) -> bool:
 
 def _subagent_glob(main_path: str) -> str:
     """Glob for a session's subagent transcripts (`<session>/subagents/
-    agent-*.jsonl`). Shared by the rescan (which parses them) and the throttle
-    gate (which stats them for freshness)."""
+    agent-*.jsonl`). Used by the Claude-format rescan, which parses them; the
+    throttle gate goes through the provider so a non-Claude layout is stat'd
+    where it actually lives."""
     return str(Path(main_path).with_suffix('') / 'subagents' / 'agent-*.jsonl')
 
 
-def _max_transcript_mtime(main_path: str) -> float | None:
+def _subagent_paths(trace_id: str, main_path: str) -> list[str]:
+    """This session's subagent transcripts, per its provider. Guarded: a
+    provider that cannot resolve them must not sink the whole rescan."""
+    try:
+        return _session_provider(trace_id).subagent_transcript_paths(main_path)
+    except Exception:
+        return []
+
+
+def _max_transcript_mtime(trace_id: str, main_path: str) -> float | None:
     """Newest mtime across the main transcript AND every subagent transcript.
     The gate compares this (not the main mtime alone) so a subagent streaming
     while the main file is static — the agent blocked on an Agent tool — still
     defeats the throttle and gets rescanned. Cheap: one stat per small glob."""
     newest: float | None = None
-    for path in (main_path, *glob.glob(_subagent_glob(main_path))):
+    for path in (main_path, *_subagent_paths(trace_id, main_path)):
         try:
             mtime = os.path.getmtime(path)
         except OSError:
@@ -172,11 +182,29 @@ def _rescan_foreign_format(trace_id: str, provider, main: str) -> None:
     e.g. Kimi's event-sourced wire.jsonl, so those are skipped and the session
     gets the same full provider parse the hook path already uses. The
     seen-uuid cache makes a poll with no new rows cost a parse and zero posts.
+
+    A subagent's own stream is re-nested here too: Kimi fires its tool hooks
+    under the PARENT session, so until the reconciler stamps `agent_id` those
+    calls read as the main agent's and the subagent is missing from the roster
+    entirely. Hanging that off the lifecycle hooks alone made it land only
+    once the subagent had already finished.
     """
     if _file_changed(main):
         from hook_manager.handlers.turn_trace.entry import _ingest_transcript_usage
         _ingest_transcript_usage(trace_id, main, None, provider)
+    if any(_file_changed(p) for p in _subagent_paths(trace_id, main)):
+        _reconcile_live_subagents(trace_id, provider)
     _record_rescan_gate(trace_id, main)
+
+
+def _reconcile_live_subagents(trace_id: str, provider) -> None:
+    """Re-nest the session's subagent spans, declaring nothing finished (a
+    subagent whose wire just grew is by definition still writing). Own guard:
+    a reconcile failure must not cost the caller its scan states."""
+    try:
+        provider.reconcile_subagents(trace_id, live=True)
+    except Exception:
+        pass
 
 
 def _do_rescan(trace_id: str) -> None:
@@ -243,7 +271,7 @@ def _do_rescan(trace_id: str) -> None:
 def _record_rescan_gate(trace_id: str, main_path: str) -> None:
     """Stamp the newest transcript mtime (main + subagents) + wall-clock at
     rescan completion so `trigger_rescan` can throttle the next poll."""
-    mtime = _max_transcript_mtime(main_path)
+    mtime = _max_transcript_mtime(trace_id, main_path)
     if mtime is None:
         return
     _rescan_gate[trace_id] = (mtime, time.monotonic())
@@ -260,7 +288,7 @@ def _should_skip_rescan(trace_id: str, main_path: str) -> bool:
     if prev is None:
         return False
     prev_mtime, prev_wall = prev
-    mtime = _max_transcript_mtime(main_path)
+    mtime = _max_transcript_mtime(trace_id, main_path)
     if mtime is None or mtime != prev_mtime:
         return False
     return (time.monotonic() - prev_wall) < _MIN_RESCAN_INTERVAL_SEC
