@@ -206,3 +206,39 @@ test('below lg the header never auto-collapses — it scrolls away whole instead
   await expect(page.getByTestId('trace-header-digest')).toHaveCount(0)
   await expect(vitals).toBeAttached()
 })
+
+// The expanded title column is `flex-1` beside a ~500-600px intrinsic actions
+// column. With a basis of 0 it never overflowed the header's own flex line, so
+// instead of wrapping the actions onto a second row the title shrank — to 41px
+// at 1024px, where a 22-character title rendered as a 0×630px column of single
+// characters. A zero-width h1 also reads as hidden, so it took
+// `trace-agent-pane.spec.js`'s <xl deep-link case down with it.
+//
+// The bar is deliberately stated for a SHORT title on a session with no
+// subagents (the narrower actions column): a long title beside the extra
+// Agents button legitimately wraps to several lines at some widths.
+test('a short expanded title keeps a readable column below xl', async ({ page }) => {
+  // A short, fixed title so the geometry bar is about the COLUMN width, not
+  // about how many lines this particular string happens to need.
+  const traceId = randomUUID()
+  await page.goto('/trace/sessions')
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.post('/api/session-spans', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: [{
+      trace_id: traceId, span_id: `p-${traceId.slice(0, 8)}`, parent_id: null,
+      name: 'prompt', start_time: '2026-05-09T10:00:00',
+      attributes: { text: 'header width fixture', is_test: true },
+    }],
+  })).ok()).toBeTruthy()
+
+  for (const width of [1024, 1152, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto(`/trace/sessions/${traceId}`)
+    const title = page.locator('header h1.text-2xl')
+    await expect(title, `expanded title must render at ${width}px`).toBeVisible({ timeout: 10_000 })
+    const box = await title.boundingBox()
+    expect(box.width, `title must keep a readable width at ${width}px`).toBeGreaterThan(240)
+    expect(box.height, `a 20-char title must fit one line at ${width}px`).toBeLessThan(40)
+  }
+})

@@ -200,7 +200,18 @@ function titleSourceTooltip(src) {
     <!-- Keyed by fold state: the two layouts share no DOM, so only a fresh
          subtree can restart the enter fade; the height glide across the swap
          is the parent view's useFoldTransition tween. -->
-    <div :key="collapsed ? 'compact' : 'full'" class="min-w-0 flex-1 trace-fold-enter">
+    <!-- basis-80 is what makes the header's flex-wrap fire: the actions column
+         is ~600px intrinsic, so a basis-0 `flex-1` title never overflows the
+         line and instead shrinks to ~40px, wrapping the title one character
+         per line below xl. The floor drops the actions onto their own row
+         there, and is low enough that ≥xl still lays out on one row. The
+         compact row is exempt: it truncates rather than wraps, so it wants
+         to keep sharing the row. -->
+    <div
+      :key="collapsed ? 'compact' : 'full'"
+      class="min-w-0 flex-1 trace-fold-enter"
+      :class="collapsed ? '' : 'basis-80'"
+    >
       <!-- Compact identity row: status dot + title + mono digest. Everything
            else (eyebrow, title row, meta chips, expanded lists) only renders
            in the full state. -->

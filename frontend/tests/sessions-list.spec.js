@@ -100,13 +100,19 @@ test('mobile card also carries the Live link', async ({ page }) => {
     page.locator(`li a[href="/live/${id}"]`, { hasText: 'Live' })).toBeVisible()
 })
 
+// The facet is `ui/Select.vue` (Reka), not a native <select>: the trigger is a
+// button and the items only exist in the DOM — portalled to <body> — while the
+// listbox is open. The label and its count are separate elements, so assert
+// them separately rather than on a joined string.
 test('tag facet lists the workflow custom tag with its count', async ({ page }) => {
   await mockList(page, [row(randomUUID())])
   await page.goto('/trace/sessions')
-  const facet = page.locator('select[aria-label="Filter by session tag"]')
+  const facet = page.locator('[aria-label="Filter by session tag"]')
   await expect(facet).toBeVisible()
-  const labels = await facet.locator('option').allTextContents()
-  expect(labels.some(t => t.includes('#workflow (57)'))).toBeTruthy()
+  await facet.click()
+  const item = page.locator('.ds-select-item', { hasText: '#workflow' })
+  await expect(item).toHaveCount(1)
+  await expect(item.locator('.ds-select-count')).toHaveText('57')
 })
 
 test('invalid tag add surfaces the server reason, not a silent no-op', async ({ page }) => {
