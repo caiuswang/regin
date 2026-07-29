@@ -100,3 +100,14 @@ Run a single checker against one file (the runner's JSON-stdin contract):
 echo '{"file_path":"/abs/path/Foo.vue","rule":{"checker":"template_max_depth","options":{"threshold":10}}}' \
   | node bin/vue-complexity-runner.mjs
 ```
+
+A relative `file_path` is resolved against `repo_root`, not the shell's cwd — so
+the same payload measures whichever checkout you name:
+
+```bash
+echo '{"repo_root":"/path/to/repo","file_path":"frontend/src/Foo.vue","rule":{"checker":"template_max_depth","options":{"threshold":10}}}' \
+  | node bin/vue-complexity-runner.mjs
+```
+
+A target that doesn't exist exits `2` with the resolved path on stderr rather
+than reporting zero matches.

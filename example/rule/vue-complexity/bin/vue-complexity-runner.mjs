@@ -2,6 +2,7 @@
 // as frontend-ux-runner.mjs:
 //   stdin:  {"repo_root": str, "file_path": str, "rule": {"checker": str, "options": {...}}}
 //   stdout: {"matches": int, "details": [str, ...]}
+// `file_path` may be absolute or relative to `repo_root`.
 // A checker that throws or a file that won't parse degrades to matches:0 —
 // a complexity probe must never break the edit hook.
 import fs from 'node:fs'
@@ -24,6 +25,28 @@ async function loadChecker(checkerName) {
   return import(pathToFileURL(checkerPath).href)
 }
 
+// A relative `file_path` is relative to the caller's `repo_root`, never to
+// this process's cwd — BundleEngine spawns the runner with cwd set to the
+// bundle dir, so resolving against cwd would read the wrong tree (or nothing).
+// An absolute `file_path` needs no root, so a junk `repo_root` alongside one
+// is ignored rather than rejected. Returns null when the payload can't name a
+// single unambiguous file.
+function resolveTarget(filePath, repoRoot) {
+  if (path.isAbsolute(filePath)) return filePath
+  if (repoRoot === undefined || repoRoot === null) return path.resolve(filePath)
+  if (typeof repoRoot !== 'string' || !path.isAbsolute(repoRoot)) return null
+  return path.resolve(repoRoot, filePath)
+}
+
+// A directory satisfies existsSync but not the checkers, which read it as a file.
+function statOrNull(target) {
+  try {
+    return fs.statSync(target)
+  } catch {
+    return null
+  }
+}
+
 const raw = await readStdin()
 if (!raw) {
   console.error('vue-complexity-runner: expected JSON on stdin')
@@ -44,6 +67,20 @@ if (!checkerName) {
   process.exit(0)
 }
 
+if (typeof payload.file_path !== 'string' || !payload.file_path) {
+  console.error('vue-complexity-runner: payload is missing file_path')
+  process.exit(2)
+}
+const targetPath = resolveTarget(payload.file_path, payload.repo_root)
+if (targetPath === null) {
+  console.error('vue-complexity-runner: relative file_path needs an absolute repo_root')
+  process.exit(2)
+}
+if (!statOrNull(targetPath)?.isFile()) {
+  console.error(`vue-complexity-runner: no such file: ${targetPath}`)
+  process.exit(2)
+}
+
 const mod = await loadChecker(checkerName)
 if (!mod?.run) {
   process.stdout.write(JSON.stringify({ matches: 0, details: [] }))
@@ -53,7 +90,7 @@ if (!mod?.run) {
 let result
 try {
   result = await mod.run({
-    filePath: payload.file_path,
+    filePath: targetPath,
     repoRoot: payload.repo_root,
     rule: payload.rule,
     options: payload.rule?.options || {},

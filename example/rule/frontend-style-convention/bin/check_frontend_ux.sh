@@ -3,6 +3,8 @@
 #
 # Usage:
 #   ./bin/check_frontend_ux.sh <repo-root> <target-file> <rule-json>
+#
+# A relative <target-file> is resolved against <repo-root>, not the cwd.
 
 set -euo pipefail
 
@@ -15,7 +17,14 @@ RULE_JSON="${3:?Usage: check_frontend_ux.sh <repo-root> <target-file> <rule-json
 
 if [ ! -f "$RUNNER" ]; then echo "Error: runner not found: $RUNNER" >&2; exit 2; fi
 if [ ! -d "$REPO_ROOT" ]; then echo "Error: repo not found: $REPO_ROOT" >&2; exit 2; fi
-if [ ! -f "$TARGET_FILE" ]; then echo "Error: target file not found: $TARGET_FILE" >&2; exit 2; fi
+# The runner only joins a relative target onto an absolute root, so `.` and
+# other relative roots have to be absolutized here or they are refused.
+REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+case "$TARGET_FILE" in
+  /*) RESOLVED_TARGET="$TARGET_FILE" ;;
+  *)  RESOLVED_TARGET="$REPO_ROOT/$TARGET_FILE" ;;
+esac
+if [ ! -f "$RESOLVED_TARGET" ]; then echo "Error: target file not found: $RESOLVED_TARGET" >&2; exit 2; fi
 if [ ! -f "$RULE_JSON" ]; then echo "Error: rule json not found: $RULE_JSON" >&2; exit 2; fi
 
 RULE_BODY="$(cat "$RULE_JSON")"

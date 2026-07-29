@@ -18,6 +18,28 @@ async function loadChecker(checkerName) {
   return import(pathToFileURL(checkerPath).href)
 }
 
+// A relative `file_path` is relative to the caller's `repo_root`, never to
+// this process's cwd — BundleEngine spawns the runner with cwd set to the
+// bundle dir, so resolving against cwd would read the wrong tree (or nothing).
+// An absolute `file_path` needs no root, so a junk `repo_root` alongside one
+// is ignored rather than rejected. Returns null when the payload can't name a
+// single unambiguous file.
+function resolveTarget(filePath, repoRoot) {
+  if (path.isAbsolute(filePath)) return filePath
+  if (repoRoot === undefined || repoRoot === null) return path.resolve(filePath)
+  if (typeof repoRoot !== 'string' || !path.isAbsolute(repoRoot)) return null
+  return path.resolve(repoRoot, filePath)
+}
+
+// A directory satisfies existsSync but not the checkers, which read it as a file.
+function statOrNull(target) {
+  try {
+    return fs.statSync(target)
+  } catch {
+    return null
+  }
+}
+
 const raw = await readStdin()
 if (!raw) {
   console.error('frontend-ux-runner: expected JSON on stdin')
@@ -38,6 +60,20 @@ if (!checkerName) {
   process.exit(0)
 }
 
+if (typeof payload.file_path !== 'string' || !payload.file_path) {
+  console.error('frontend-ux-runner: payload is missing file_path')
+  process.exit(2)
+}
+const targetPath = resolveTarget(payload.file_path, payload.repo_root)
+if (targetPath === null) {
+  console.error('frontend-ux-runner: relative file_path needs an absolute repo_root')
+  process.exit(2)
+}
+if (!statOrNull(targetPath)?.isFile()) {
+  console.error(`frontend-ux-runner: no such file: ${targetPath}`)
+  process.exit(2)
+}
+
 const mod = await loadChecker(checkerName)
 if (!mod?.run) {
   process.stdout.write(JSON.stringify({ matches: 0, details: [] }))
@@ -45,7 +81,7 @@ if (!mod?.run) {
 }
 
 const result = await mod.run({
-  filePath: payload.file_path,
+  filePath: targetPath,
   repoRoot: payload.repo_root,
   rule: payload.rule,
   options: payload.rule?.options || {},
