@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import glob
 import os
+from datetime import datetime, timedelta
 
 import typer
 
@@ -739,6 +740,302 @@ def cmd_prune(
         purge_test=purge_test, orphans=orphans, days=days,
         drop_sessions=drop_sessions, dry_run=dry_run, vacuum=vacuum)
     _print_prune_result(result, dry_run)
+
+
+# Each provider's ended-session repair path: the module holding its
+# `discover_subagent_sessions()` work list, its reconciler, and the result
+# counters worth printing per session. Those counters are totals RE-stamped,
+# not deltas — the reconcilers report no mutation count, so nothing here can
+# honestly claim a session "changed" (see `_SUBAGENT_IDEMPOTENT_NOTE`).
+_SUBAGENT_BACKFILL = {
+    "kimi": ("lib.trace.kimi_subagents", "reconcile_kimi_subagents",
+             ("tool_spans", "turns", "launches_closed")),
+    "claude": ("lib.trace.claude_subagents", "reconcile_claude_subagents",
+               ("stamped", "nested_parented")),
+}
+
+# sqlite's SQLITE_MAX_VARIABLE_NUMBER is 999 on builds before 3.32; the trace
+# store only grows, so chunk rather than trust the local build's ceiling.
+_SQL_VARS_PER_CHUNK = 900
+
+# Same "this session has gone quiet" window the serve-time merge uses
+# (`lib.trace.pending_spans.INACTIVE_THRESHOLD_SEC`), so the CLI and the
+# renderer agree on which sessions count as still running.
+_DEFAULT_IDLE_MINUTES = 10
+
+_STALE_SERVER_NOTE = (
+    "restart `regin serve` on current code before a real run — a hook that "
+    "reaches a server still running the OLD reconciler re-applies its "
+    "nesting, silently undoing this backfill."
+)
+
+_SUBAGENT_IDEMPOTENT_NOTE = (
+    "Counters are totals (re)stamped, not deltas: the reconcilers are "
+    "idempotent and report the same numbers on a repeat run."
+)
+
+
+def _subagent_providers(provider: str) -> list[str]:
+    """Provider names selected by `--provider` (`all` = every reconciler)."""
+    if provider == "all":
+        return list(_SUBAGENT_BACKFILL)
+    if provider not in _SUBAGENT_BACKFILL:
+        raise typer.BadParameter(
+            f"unknown provider '{provider}'; expected one of "
+            f"{', '.join([*_SUBAGENT_BACKFILL, 'all'])}")
+    return [provider]
+
+
+def _idle_cutoff(idle_minutes: int) -> datetime:
+    """A session quiet since before this instant is not live."""
+    # Cap so an absurd --idle-minutes reports as "nothing is eligible" rather
+    # than an OverflowError traceback.
+    return datetime.now() - timedelta(minutes=min(idle_minutes, 5_000_000))
+
+
+def _has_tz_marker(stamp) -> bool:
+    """Does an ISO stamp state its own zone? (`...Z` / `±HH:MM`, never the
+    hyphens in the date part.)"""
+    if not isinstance(stamp, str):
+        return False
+    time_part = stamp[10:]
+    return stamp.endswith("Z") or "+" in time_part or "-" in time_part
+
+
+def _is_live_session(status, last_seen, cutoff: datetime) -> bool:
+    """Inverse of `lib.trace.merge._session_is_inactive`, and it must stay
+    that way — the CLI and the renderer disagreeing about who is running is
+    exactly how a live session gets synthetic `subagent.stop` markers.
+
+    `last_seen` arrives in several shapes (naive local from the hook path,
+    `...Z` and space-separated UTC from sqlite's `datetime('now')`), so it is
+    parsed, never compared as a string. An unreadable stamp counts as live:
+    the safe direction.
+
+    For a stamp that names no zone the effective window is
+    `idle_minutes + the host's UTC offset`, since either reading has to be
+    stale before the session is touched. East of UTC that widens the window
+    by up to 14 hours — it only delays a repair, where the opposite error
+    stamps a running subagent as finished.
+    """
+    from lib.trace.pending_spans import parse_naive_ts
+    if status == "ended":
+        return False
+    seen = parse_naive_ts(last_seen)
+    if seen is None or seen > cutoff:
+        return True
+    if _has_tz_marker(last_seen):
+        return False
+    offset = datetime.now().astimezone().utcoffset()
+    return offset is not None and seen + offset > cutoff
+
+
+def _session_backfill_state(trace_ids: list[str],
+                            cutoff: datetime) -> tuple[set[str], set[str]]:
+    """`(ids that have a sessions row, of those the ones still live)`."""
+    if not trace_ids:
+        return set(), set()
+    from lib.orm.engine import get_connection
+    known: set[str] = set()
+    live: set[str] = set()
+    conn = get_connection()
+    try:
+        for start in range(0, len(trace_ids), _SQL_VARS_PER_CHUNK):
+            chunk = trace_ids[start:start + _SQL_VARS_PER_CHUNK]
+            rows = conn.execute(
+                "SELECT trace_id, status, last_seen FROM sessions "
+                f"WHERE trace_id IN ({','.join('?' * len(chunk))})",
+                chunk).fetchall()
+            for row in rows:
+                known.add(row["trace_id"])
+                if _is_live_session(row["status"], row["last_seen"], cutoff):
+                    live.add(row["trace_id"])
+    finally:
+        conn.close()
+    return known, live
+
+
+def _subagent_work_list(module, session: str | None,
+                        cutoff: datetime) -> tuple[list[str], int, int]:
+    """`(trace_ids to reconcile, skipped for no row, skipped for still live)`.
+
+    Reconciling a LIVE session here would be actively harmful: the reconcilers
+    run in their non-`live` mode, which mints synthetic `subagent.stop`
+    markers, so a subagent still running would render as finished.
+    """
+    # dict.fromkeys so the skip counts below stay set-arithmetic-safe even if
+    # a discoverer ever stops de-duplicating.
+    found = list(dict.fromkeys(module.discover_subagent_sessions()))
+    if session:
+        found = [t for t in found if t == session]
+    known, live = _session_backfill_state(found, cutoff)
+    todo = [t for t in found if t in known and t not in live]
+    return todo, len(found) - len(known), len(live)
+
+
+def _reconcile_subagent_sessions(reconcile, report_keys: tuple,
+                                 trace_ids: list[str], limit: int) -> dict:
+    """Run one provider's reconciler over `trace_ids`, summing its result
+    counters and printing the sessions that reported any work.
+
+    A session whose reconcile raises is counted and reported, not fatal: a
+    single unreadable transcript must not abandon the rest of the sweep.
+    """
+    totals: dict[str, float] = {}
+    scanned = failed = 0
+    for trace_id in trace_ids[:limit or None]:
+        try:
+            result = reconcile(trace_id)
+            # Sum into a scratch dict first: a half-summed malformed result
+            # must not leave phantom counters in a summary that reports the
+            # session as failed.
+            merged = {**totals,
+                      **{k: totals.get(k, 0) + v for k, v in result.items()}}
+        except Exception as exc:
+            failed += 1
+            print(f"    {trace_id}: FAILED — {type(exc).__name__}: {exc}")
+            continue
+        totals = merged
+        scanned += 1
+        if any(result.get(k) for k in report_keys):
+            print(f"    {trace_id}: {result}")
+    return {"scanned": scanned, "failed": failed, "totals": totals}
+
+
+def _skip_suffix(no_row: int, live: int) -> str:
+    """The `, N skipped (…)` tail of a provider's work-list line."""
+    parts = []
+    if no_row:
+        parts.append(f"{no_row} with no `sessions` row")
+    if live:
+        parts.append(f"{live} still live")
+    return f", skipped {' and '.join(parts)}" if parts else ""
+
+
+def _run_subagent_backfill(name: str, session: str | None, limit: int,
+                           dry_run: bool,
+                           cutoff: datetime) -> tuple[int, int]:
+    """Reconcile one provider's ended sessions (or list them, when dry-run).
+
+    Returns `(sessions whose reconcile raised, sessions reconciled)`.
+    """
+    import importlib
+    module_path, fn_name, report_keys = _SUBAGENT_BACKFILL[name]
+    module = importlib.import_module(module_path)
+    trace_ids, no_row, live = _subagent_work_list(module, session, cutoff)
+    print(f"  {name}: {len(trace_ids)} eligible session(s) with subagent "
+          f"transcripts{_skip_suffix(no_row, live)}")
+    if not trace_ids:
+        return 0, 0
+    if dry_run:
+        for trace_id in trace_ids[:limit or None]:
+            print(f"    would reconcile {trace_id}")
+        return 0, 0
+    stats = _reconcile_subagent_sessions(
+        getattr(module, fn_name), report_keys, trace_ids, limit)
+    detail = " ".join(f"{k}={v}" for k, v in sorted(stats["totals"].items()))
+    failed = f", {stats['failed']} failed" if stats["failed"] else ""
+    print(f"  {name}: reconciled {stats['scanned']} session(s){failed}"
+          f"{' — ' + detail if detail else ''}")
+    return stats["failed"], stats["scanned"]
+
+
+def _sweep_providers(names: list[str], session: str | None, limit: int,
+                     dry_run: bool,
+                     cutoff: datetime) -> tuple[int, int]:
+    """Run every selected provider, isolating a provider-level failure so one
+    provider's unreadable transcript dir cannot abandon the other's sweep."""
+    failed = reconciled = 0
+    for name in names:
+        try:
+            provider_failed, provider_done = _run_subagent_backfill(
+                name, session, limit, dry_run, cutoff)
+        except Exception as exc:
+            failed += 1
+            print(f"  {name}: FAILED — {type(exc).__name__}: {exc}")
+            continue
+        failed += provider_failed
+        reconciled += provider_done
+    return failed, reconciled
+
+
+@trace_app.command(
+    "backfill-subagents",
+    help="Re-run subagent nesting/attribution over already-ended sessions — "
+         "the repair path for sessions ingested under an older reconciler. "
+         "Writes only with --yes, and only after you restart `regin serve` on "
+         "current code (a hook reaching the old server undoes the backfill)")
+def cmd_backfill_subagents(
+    provider: str = typer.Option(
+        "all", "--provider", "-p",
+        help="Whose reconciler to run: kimi, claude, or all"),
+    session: str = typer.Option(
+        None, "--session", "-s",
+        help="Limit to one trace_id (default: every discovered session)"),
+    limit: int = typer.Option(
+        0, "--limit",
+        help="Stop after this many sessions per provider (0 = no limit)"),
+    idle_minutes: int = typer.Option(
+        _DEFAULT_IDLE_MINUTES, "--idle-minutes",
+        help="Treat a session quiet for at least this long as ended. 0 drops "
+             "the quiet window entirely — only safe against a stopped server; "
+             "a row with an unreadable last_seen is skipped either way"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Report the work list without writing"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Confirm a real (non-dry-run) run; required to actually write"),
+) -> None:
+    """Walk each provider's `discover_subagent_sessions()` and re-run its
+    reconciler over sessions that have already ended.
+
+    Every live trigger point (`SubagentStart` / `SubagentStop`, the `Stop` +
+    `SessionEnd` sweep, the trace view's rescan poll) needs a *live* session,
+    so a session that already ended keeps whatever attribution the reconciler
+    produced at ingest time — forever, including attribution from a reconciler
+    that has since been fixed. This is the supported way to repair those.
+    Idempotent.
+
+    Skipped: trace ids with no `sessions` row, and sessions that are still
+    live. The liveness guard is not cosmetic — the reconcilers run in their
+    non-`live` mode here, which mints synthetic `subagent.stop` markers, so
+    reconciling a running session would render its in-flight subagents as
+    finished until the next rescan pass repaired them.
+
+    Writing requires `--yes`; without it the run is forced to `--dry-run`,
+    mirroring `reap-pending` / `prune`, because it rewrites span parentage on
+    the live DB.
+
+    Restart `regin serve` on current code before a real run: a hook that
+    reaches a server still running the old reconciler re-applies that server's
+    nesting, silently undoing the backfill.
+
+    The printed counters are what each reconciler (re)stamped, not a diff —
+    they do not shrink on a second run. A session whose reconcile raises is
+    reported and skipped rather than aborting the sweep; the command exits 1
+    if any did.
+    """
+    names = _subagent_providers(provider)
+    if session is not None and not session.strip():
+        raise typer.BadParameter("--session was empty; omit it to sweep every "
+                                 "discovered session")
+    limit = max(limit, 0)
+    if not dry_run and not yes:
+        print("Refusing to rewrite spans without confirmation. Re-run with "
+              "--dry-run to preview, or add --yes to commit the backfill. "
+              f"Either way, {_STALE_SERVER_NOTE}")
+        dry_run = True
+    if not dry_run:
+        print(f"Note: {_STALE_SERVER_NOTE}")
+    verb = "Would reconcile" if dry_run else "Reconciling"
+    print(f"{verb} ended sessions for: {', '.join(names)}")
+    failed, reconciled = _sweep_providers(
+        names, session, limit, dry_run, _idle_cutoff(max(idle_minutes, 0)))
+    if reconciled:
+        print(_SUBAGENT_IDEMPOTENT_NOTE)
+    if failed:
+        print(f"{failed} session(s)/provider(s) failed; re-run to retry.")
+        raise typer.Exit(1)
 
 
 def register_trace(app: typer.Typer) -> None:
