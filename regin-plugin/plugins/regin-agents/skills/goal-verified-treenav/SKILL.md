@@ -73,6 +73,7 @@ runs wherever regin's CLI does:
 | flat recall | `mcp__memory__recall`, `memory_read` | `regin memory recall`, `regin memory read` |
 | anti-skip gate | `mcp__memory__gate(…)` | `regin gate recall-ran --session "$SID"` — exit 0 PASS, 1 FAIL, 2 INCONCLUSIVE |
 | fresh-context verify | `goal-verifier` subagent, `/code-review high` | a **second process** of your CLI, started clean, handed the goal + acceptance checklist + `git diff` and told it did not write the code. The fresh process is the isolation that matters; the subagent tool is only the convenient way to get one. |
+| agent-arm workers | `goal-refiner` / `goal-builder` / `goal-verifier` subagents | `regin goal spawn <role> --task-file …` — same charter, same tool grant, run as a fresh subprocess |
 
 Pass `--session "$SID"` to the `memory` commands: that is what leaves the span
 the gate counts, so a run with no MCP at all that did the recall arm honestly
@@ -82,10 +83,26 @@ refused prints a warning on stderr (start `regin serve`, re-run), and
 `regin gate` with an empty `--session` returns **INCONCLUSIVE**, not FAIL —
 without an id there is nothing to count, so that is not evidence you skipped.
 
-**Agent-arm mode stays Claude-only.** Steps 1.5 / 3 / 4 dispatch named
-subagents, which needs a harness-level subagent tool. On any other harness run
-**inline mode** and get the fresh context for step 4 from a second CLI process;
-everything else in the loop is identical.
+**Agent-arm mode is portable too.** Steps 1.5 / 3 / 4 dispatch named subagents
+where the harness has that tool; everywhere else, run the same worker as a
+subprocess:
+
+```bash
+regin goal spawn verifier --task-file worker-prompt.md   # refiner | builder | verifier
+```
+
+It reads the role's charter *and* its tool grant from the same `goal-<role>`
+agent definition the subagent arm dispatches — one source of truth, so the two
+arms run the same worker — appends your payload (goal + approved roadmap +
+stage-scoped recall block + `git diff`) as a `<task>` block, and launches your
+configured agent CLI in a **fresh process**, which is the isolation the arm
+exists for. The worker's output is the only thing on stdout (so
+`VERDICT=$(regin goal spawn verifier --task-file …)` works); stderr carries the
+worker's own generated session id, so its spans stay attributable to it rather
+than to you. `--print-prompt` renders what would be sent without spawning, and
+`--agent <id>` picks which configured CLI runs it. An agent CLI with no
+`--allowedTools` flag gets no grant and must auto-approve the role's tools
+itself.
 
 ## Procedure
 

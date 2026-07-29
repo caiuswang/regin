@@ -10,6 +10,7 @@ file-keyed table in CLAUDE.local.md. See `lib/goal_preflight.py` for the why.
 from __future__ import annotations
 
 import json as _json
+from pathlib import Path
 
 import typer
 
@@ -101,6 +102,93 @@ def cmd_goal_feedback(
         print(_json.dumps(outcome_to_dict(result), indent=2))
     else:
         print(render_summary(result))
+
+
+@goal_app.command(
+    "spawn",
+    help="Run a /goal-verified agent-arm worker (refiner|builder|verifier) "
+         "as a subprocess — the portable form of the subagent dispatch",
+)
+def cmd_goal_spawn(
+    role: str = typer.Argument(..., help="refiner | builder | verifier"),
+    task: str = typer.Option(
+        None, "--task",
+        help="The worker's payload: goal + approved roadmap + recall block "
+             "(+ the diff, for the verifier)"),
+    task_file: str = typer.Option(
+        None, "--task-file",
+        help="Read the payload from a file instead of --task ('-' for stdin)"),
+    agent: str = typer.Option(
+        None, "--agent",
+        help="Which configured external agent to run as "
+             "(key in `topic_proposal_external_agents`); default: the first"),
+    cwd: str = typer.Option(
+        None, "--cwd",
+        help="Working directory for the worker; default: the current one"),
+    session_id: str = typer.Option(
+        None, "--session-id",
+        help="Session id to stamp the worker with (default: a generated one, "
+             "printed on stderr so you can gate on the worker's own spans)"),
+    timeout: int = typer.Option(
+        None, "--timeout", help="Override the agent's configured timeout (s)"),
+    print_prompt: bool = typer.Option(
+        False, "--print-prompt",
+        help="Render the composed worker prompt and exit without spawning"),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON"),
+) -> None:
+    import os
+    import sys
+
+    from lib.goal_spawn import (
+        GoalSpawnError, compose_prompt, role_definition, spawn_role,
+    )
+
+    try:
+        payload = _read_task(task, task_file)
+        definition = role_definition(role)
+        if print_prompt:
+            print(compose_prompt(definition, payload))
+            return
+        result = spawn_role(
+            role, payload, agent_id=agent, cwd=cwd or os.getcwd(),
+            session_id=session_id, timeout=timeout)
+    except GoalSpawnError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    if json:
+        print(_json.dumps({
+            "role": result.role,
+            "agent": result.agent_id,
+            "session_id": result.session_id,
+            "allowed_tools": list(result.allowed_tools),
+            "stdout": result.stdout,
+        }, indent=2))
+        return
+    # The worker's output is the only thing on stdout, so `$(regin goal spawn
+    # …)` is the verdict; the attribution header goes to stderr.
+    typer.echo(
+        f"worker session: {result.session_id} "
+        f"(role={result.role}, agent={result.agent_id})", err=True)
+    sys.stdout.write(result.stdout)
+
+
+def _read_task(task: str | None, task_file: str | None) -> str:
+    """The worker payload from --task, --task-file, or stdin ('-')."""
+    import sys
+
+    from lib.goal_spawn import GoalSpawnError
+
+    if task_file:
+        if task_file == "-":
+            return sys.stdin.read()
+        path = Path(task_file)
+        if not path.is_file():
+            raise GoalSpawnError(f"--task-file not found: {task_file}")
+        return path.read_text(encoding="utf-8")
+    if task:
+        return task
+    raise GoalSpawnError("pass the worker's payload with --task or --task-file")
 
 
 def register(app: typer.Typer) -> None:
