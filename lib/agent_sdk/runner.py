@@ -111,6 +111,9 @@ class AgentRunner:
         # for a turn that made several. Reset per turn.
         self._call_context: int | None = None
         self._stop_reason = "exited"
+        # The CLI's own name for this session, learned from the first message
+        # that carries it — see `_note_session`.
+        self._session_id: str | None = None
         self._stopping = asyncio.Event()
         self._stopped = False
         self._queue_closed = False
@@ -498,6 +501,23 @@ class AgentRunner:
             log.error("sdk_turn_failed_after_stop", trace_id=self.trace_id,
                       detail=str(exc))
 
+    def _note_session(self, message) -> None:
+        """Alias the CLI's session id onto this run the first time it appears.
+
+        The child loads the user's hooks, so it reports a session of its own
+        and an operator can open `/live` on *that* id. Without the alias the
+        composer there falls through to the tmux bridge — which resolves to
+        whatever pane regin's server was started from, not the agent.
+        """
+        session_id = getattr(message, 'session_id', None)
+        if not session_id:
+            data = getattr(message, 'data', None)
+            session_id = data.get('session_id') if isinstance(data, dict) else None
+        if not session_id or session_id == self._session_id:
+            return
+        self._session_id = session_id
+        registry.register_alias(session_id, self.trace_id)
+
     async def _run_turn(self, text: str) -> None:
         """Send one prompt and drain the turn it produces."""
         self._turn_index += 1
@@ -505,6 +525,7 @@ class AgentRunner:
         await self._emit(prompt_event(self.trace_id, text))
         await self._client.query(text)
         async for message in self._client.receive_response():
+            self._note_session(message)
             for event in from_sdk_message(self.trace_id, message):
                 await self._handle(event)
 

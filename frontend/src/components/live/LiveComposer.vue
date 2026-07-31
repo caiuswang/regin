@@ -218,6 +218,7 @@ function onKeydown(e) {
       @blur="menu.close"
     ></textarea>
     <Button
+      v-if="pane"
       variant="ghost"
       size="sm"
       class="live-esc-btn"
@@ -256,7 +257,8 @@ function onKeydown(e) {
       <span v-else-if="phase === 'delivered'">✓ {{ detail }}</span>
       <span v-else-if="phase === 'failed'">✗ {{ detail }}</span>
       <span v-else>
-        bridge<template v-if="pane"> · <span class="live-mono">{{ pane }}</span></template>
+        <template v-if="pane">bridge · <span class="live-mono">{{ pane }}</span></template>
+        <template v-else>agent session</template>
         · {{ idleMeta }}
       </span>
     </div>

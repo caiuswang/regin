@@ -31,6 +31,13 @@ log = get_activity_logger("agent_sdk")
 
 _lock = threading.Lock()
 _runs: dict[str, object] = {}
+# CLI session id → the run it belongs to. A regin-launched agent is traced
+# twice: once as this run, and once as the `claude` session the child reports
+# through the hooks it loads. An operator on `/live` can be looking at either
+# id, so both have to reach the one live channel — an unaliased child id falls
+# through to the tmux bridge, which knows only the pane the server was started
+# from.
+_aliases: dict[str, str] = {}
 # Insertion-ordered so an untargeted resolve takes the oldest match. Keyed by a
 # counter rather than by (trace_id, tool_use_id): a permission context can
 # arrive without a tool_use_id, and two unnamed parks must still coexist rather
@@ -72,11 +79,36 @@ def unregister_run(trace_id: str) -> None:
         _runs.pop(trace_id, None)
         for key in [k for k, ask in _asks.items() if ask.trace_id == trace_id]:
             _asks.pop(key, None)
+        for alias in [a for a, run in _aliases.items() if run == trace_id]:
+            _aliases.pop(alias, None)
     log.write("sdk_run_unregistered", trace_id=trace_id)
+
+
+def register_alias(session_id: str, trace_id: str) -> None:
+    """Record that `session_id` — the CLI's own name for the child — is this
+    run. Idempotent, so the runner may call it for every message it sees."""
+    if not session_id or session_id == trace_id:
+        return
+    with _lock:
+        if _aliases.get(session_id) == trace_id:
+            return
+        _aliases[session_id] = trace_id
+    log.write("sdk_session_aliased", trace_id=trace_id, session_id=session_id)
+
+
+def owning_run(trace_id: str) -> str:
+    """The run `trace_id` names — itself, or the run it is a child session of.
+
+    Every entry point normalizes through this, so a caller holding either id
+    reaches the same runner.
+    """
+    with _lock:
+        return _aliases.get(trace_id, trace_id)
 
 
 def is_sdk_owned(trace_id: str) -> bool:
     """True when this process holds a live typed channel for `trace_id`."""
+    trace_id = owning_run(trace_id)
     with _lock:
         return trace_id in _runs
 
@@ -99,6 +131,7 @@ def register_ask(ask: PendingAsk) -> int:
 
 def get_ask(trace_id: str) -> PendingAsk | None:
     """The session's oldest parked call, whatever its kind."""
+    trace_id = owning_run(trace_id)
     with _lock:
         return next((ask for ask in _asks.values()
                      if ask.trace_id == trace_id), None)
@@ -106,6 +139,7 @@ def get_ask(trace_id: str) -> PendingAsk | None:
 
 def pending_asks(trace_id: str) -> list[PendingAsk]:
     """Every call this session is parked on, oldest first."""
+    trace_id = owning_run(trace_id)
     with _lock:
         return [ask for ask in _asks.values() if ask.trace_id == trace_id]
 
@@ -126,6 +160,7 @@ def _live_runner(trace_id: str):
     `resolve_ask` guards, which is the difference between refusing and
     telling the operator their prompt was delivered to nothing.
     """
+    trace_id = owning_run(trace_id)
     with _lock:
         runner = _runs.get(trace_id)
     if runner is None:
@@ -229,6 +264,7 @@ def _take(trace_id: str, kinds: frozenset,
     The park is *not* popped here: a resolve can still fail on a dead loop, and
     consuming the only handle to the call on the way to refusing would leave it
     unresolvable by anyone. `_resolve` drops it once delivery is certain."""
+    trace_id = owning_run(trace_id)
     with _lock:
         key = next((k for k, ask in _asks.items()
                     if _matches(ask, trace_id, kinds, tool_use_id)), None)

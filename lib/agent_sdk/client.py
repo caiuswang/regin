@@ -33,6 +33,13 @@ class ClaudeCliNotFound(RuntimeError):
 PERMISSION_MODES = ('default', 'acceptEdits', 'plan', 'bypassPermissions',
                     'dontAsk', 'auto')
 
+# The child inherits this process's environment, `TMUX_PANE` included, so its
+# own SessionStart hook would register the pane regin's *server* runs in as the
+# session's bridge pane. A steer aimed at the agent would then be typed into the
+# operator's terminal. A launched session has no pane of its own — the typed
+# channel is how it is reached — so the bridge is switched off for the child.
+_CHILD_ENV = {"REGIN_BRIDGE": "0"}
+
 
 @dataclass(frozen=True)
 class RunOptions:
@@ -111,6 +118,7 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
     if settings.agent_sdk.model:
         kwargs["model"] = settings.agent_sdk.model
     kwargs.update(_run_overrides(options))
+    kwargs["env"] = {**_CHILD_ENV, **kwargs.get("env", {})}
     return ClaudeAgentOptions(**kwargs)
 
 

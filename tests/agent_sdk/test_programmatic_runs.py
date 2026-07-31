@@ -123,7 +123,7 @@ def test_a_run_carries_its_own_env_permission_mode_and_model(enabled):
 
     built = client.build_options(cwd="/repo", options=options)
 
-    assert built.env == {"REGIN_LLM_SURFACE": "drafting"}
+    assert built.env["REGIN_LLM_SURFACE"] == "drafting"
     assert built.permission_mode == "bypassPermissions"
     assert built.model == "claude-haiku-4-5"
     assert built.cwd == "/repo"
@@ -136,7 +136,7 @@ def test_without_overrides_the_global_settings_still_decide(enabled,
 
     built = client.build_options()
 
-    assert built.env == {}
+    assert built.env == {"REGIN_BRIDGE": "0"}
     assert built.model == "claude-opus-5"
     assert built.permission_mode == "acceptEdits"
 
@@ -175,7 +175,7 @@ def test_a_launched_runs_env_reaches_the_agent_it_starts(enabled, monkeypatch):
         permission_mode="bypassPermissions").wait(timeout=10)
 
     options = built["options"]
-    assert options.env == {"REGIN_LLM_SURFACE": "topic-proposal-drafting"}
+    assert options.env["REGIN_LLM_SURFACE"] == "topic-proposal-drafting"
     assert options.permission_mode == "bypassPermissions"
     assert options.cwd == "/repo"
 
