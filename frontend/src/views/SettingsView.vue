@@ -39,7 +39,7 @@ const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
-const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'topic-evolution', 'debug']
+const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-sdk', 'topic-evolution', 'debug']
 const activeSection = useTabRoute({ param: 'section', default: 'config', valid: SECTIONS })
 
 // ── Nested settings blocks (Agent Memory, Agent Messages) ──────
@@ -56,6 +56,10 @@ const BLOCK_META = {
   'agent-messages': {
     title: 'Agent Messages',
     description: 'The send_to_user → human channel. The webhook pushes high-severity messages (ntfy / Slack / phone) and is off until a URL is set. Stored machine-local, since the URL can carry a secret token.',
+  },
+  'agent-sdk': {
+    title: 'Agent SDK',
+    description: 'Sessions regin launches and owns through the Claude Agent SDK — a strictly larger capability than the rest of regin, which only observes sessions you drive. Off until enabled; stored machine-local, since the CLI path is machine-specific and a shared enable would arm process-spawning for everyone who pulls.',
   },
   'topic-evolution': {
     title: 'Topic Evolution',
@@ -123,7 +127,10 @@ async function loadBlock(name) {
   const fields = data.fields || []
   const form = {}
   for (const f of fields) form[f.key] = f.value
-  blocks.value = { ...blocks.value, [name]: { fields, form, saving: false } }
+  blocks.value = {
+    ...blocks.value,
+    [name]: { fields, form, saving: false, warnings: data.warnings || [] },
+  }
 }
 
 function onSelectBlock(name) {
@@ -409,6 +416,15 @@ watch([activeSection, selectedProvider], ([section]) => {
         <button
           type="button"
           class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'agent-sdk' }"
+          @click="onSelectBlock('agent-sdk')"
+        >
+          Agent SDK
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
           :class="{ active: activeSection === 'topic-evolution' }"
           @click="onSelectBlock('topic-evolution')"
         >
@@ -528,6 +544,7 @@ watch([activeSection, selectedProvider], ([section]) => {
           :fields="blocks[activeSection]?.fields || []"
           :form="blocks[activeSection]?.form || null"
           :saving="blocks[activeSection]?.saving || false"
+          :warnings="blocks[activeSection]?.warnings || []"
           @save="saveBlock(activeSection)"
         />
       </template>

@@ -420,3 +420,122 @@ def test_agent_messages_channel_enable_switches(
     assert local["agent_messages"]["telegram_enabled"] is False
 
 
+# ── /api/settings/agent-sdk ──────────────────────────────────
+
+def _agent_sdk_fields(flask_client):
+    body = flask_client.get("/api/settings/agent-sdk").get_json()
+    return {f["key"]: f for f in body["fields"]}
+
+
+def test_agent_sdk_get_exposes_every_model_field(
+        flask_client, isolated_settings_files):
+    """The block surfaces the whole config, defaults-off."""
+    from lib.settings import AgentSdkConfig
+    fields = _agent_sdk_fields(flask_client)
+    assert set(fields) == set(AgentSdkConfig.model_fields)
+    assert fields["enabled"]["value"] is False
+    assert fields["gate_plan"]["value"] is False
+    assert fields["gated_tools"]["type"] == "list"
+    assert fields["gated_tools"]["value"] == []
+    assert fields["cli_path"]["type"] == "string"
+    assert fields["max_concurrent_runs"]["type"] == "int"
+
+
+def test_agent_sdk_permission_mode_offers_the_cli_vocabulary(
+        flask_client, isolated_settings_files):
+    """The picker's options are the launch surface's own accepted modes, so a
+    choice made here can never be one the launch route rejects."""
+    from lib.agent_sdk.client import PERMISSION_MODES
+    mode = _agent_sdk_fields(flask_client)["permission_mode"]
+    assert mode["type"] == "choice"
+    assert mode["options"] == list(PERMISSION_MODES)
+
+
+def test_agent_sdk_put_persists_to_local(
+        flask_client, isolated_settings_files):
+    """Enabling the tier persists to the machine-local scope, never the
+    git-tracked file."""
+    resp = flask_client.put(
+        "/api/settings/agent-sdk",
+        json={"enabled": True, "max_concurrent_runs": 2,
+              "gated_tools": ["Bash", " Write "]},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    local = json.loads(isolated_settings_files["local"].read_text())
+    assert local["agent_sdk"]["enabled"] is True
+    assert local["agent_sdk"]["max_concurrent_runs"] == 2
+    assert local["agent_sdk"]["gated_tools"] == ["Bash", "Write"]
+    assert not isolated_settings_files["shared"].exists()
+
+
+def test_agent_sdk_partial_put_keeps_unsent_fields(
+        flask_client, isolated_settings_files):
+    """A single-key PUT merges against the scope's own file instead of
+    dropping every field it did not send."""
+    isolated_settings_files["local"].write_text(json.dumps(
+        {"agent_sdk": {"cli_path": "/opt/claude", "gated_tools": ["Write"]}}))
+    resp = flask_client.put(
+        "/api/settings/agent-sdk",
+        json={"enabled": True},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 200
+    block = json.loads(isolated_settings_files["local"].read_text())["agent_sdk"]
+    assert block == {"cli_path": "/opt/claude", "gated_tools": ["Write"],
+                     "enabled": True}
+
+
+def test_agent_sdk_put_rejects_unknown_permission_mode(
+        flask_client, isolated_settings_files):
+    resp = flask_client.put(
+        "/api/settings/agent-sdk",
+        json={"permission_mode": "yolo"},
+        headers=_editor_auth_header(),
+    )
+    assert resp.status_code == 400
+    assert not isolated_settings_files["local"].exists()
+
+
+def test_agent_sdk_put_requires_auth(anon_client, isolated_settings_files):
+    resp = anon_client.put(
+        "/api/settings/agent-sdk", json={"enabled": True})
+    assert resp.status_code == 401
+    assert not isolated_settings_files["local"].exists()
+
+
+def test_agent_sdk_get_warns_when_gating_is_shadowed(
+        flask_client, isolated_settings_files, monkeypatch):
+    """Configuring gating under a mode that skips the permission callback is
+    exactly the inert combination this page can create, so the same GET that
+    renders the fields has to say so."""
+    from lib.settings import AgentSdkConfig, settings
+    assert flask_client.get(
+        "/api/settings/agent-sdk").get_json()["warnings"] == []
+
+    monkeypatch.setattr(settings, "agent_sdk", AgentSdkConfig(
+        gate_plan=True, permission_mode="acceptEdits"))
+    warnings = flask_client.get("/api/settings/agent-sdk").get_json()["warnings"]
+    assert len(warnings) == 1
+    assert "acceptEdits" in warnings[0]
+
+
+def test_agent_sdk_get_does_not_warn_when_gating_can_take_effect(
+        flask_client, isolated_settings_files, monkeypatch):
+    """Gating under a mode that consults the callback is not shadowed — the
+    warning must not fire on every gated install."""
+    from lib.settings import AgentSdkConfig, settings
+    monkeypatch.setattr(settings, "agent_sdk", AgentSdkConfig(
+        gate_plan=True, gated_tools=["Bash"], permission_mode="default"))
+    assert flask_client.get(
+        "/api/settings/agent-sdk").get_json()["warnings"] == []
+
+
+def test_settings_block_get_carries_a_warnings_list(
+        flask_client, isolated_settings_files):
+    """Every block's GET answers the same shape, warn-less blocks included."""
+    body = flask_client.get("/api/settings/agent-memory").get_json()
+    assert body["warnings"] == []
+
+

@@ -17,6 +17,7 @@ const props = defineProps({
   fields: { type: Array, default: () => [] },
   form: { type: Object, default: null },
   saving: { type: Boolean, default: false },
+  warnings: { type: Array, default: () => [] },
 })
 
 defineEmits(['save'])
@@ -41,6 +42,15 @@ const groups = computed(() => {
 
   <div v-if="!form" class="text-sm text-gray-500">Loading…</div>
   <template v-else>
+    <div
+      v-for="w in warnings"
+      :key="w"
+      role="status"
+      class="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+    >
+      {{ w }}
+    </div>
+
     <div
       v-for="(g, i) in groups"
       :key="g.name"
@@ -87,9 +97,9 @@ const groups = computed(() => {
                 >
                   <ListInput
                     v-model="form[f.key]"
-                    placeholder="/command"
+                    :placeholder="f.placeholder || '/command'"
                     :entry-label="`${f.key} entry`"
-                    add-label="+ Add command"
+                    :add-label="f.add_label || '+ Add command'"
                   />
                 </div>
                 <input

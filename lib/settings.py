@@ -793,7 +793,7 @@ class AgentSdkConfig(BaseModel):
     so an allowlisted pattern or a sandbox-approved read-only Bash never
     reaches the policy — measured: three `Bash echo` calls invoked it zero
     times, three `Write` calls three times. A shadowing `permission_mode`
-    (`acceptEdits`, `bypassPermissions`) skips it entirely; `shadowed_gating()`
+    (`acceptEdits`, `bypassPermissions`, `dontAsk`) bypasses it; `shadowed_gating()`
     reports that combination, because a security control that silently does
     nothing is worse than one that refuses.
 
@@ -821,7 +821,9 @@ class AgentSdkConfig(BaseModel):
 
         `bypassPermissions` at least makes the SDK warn; `acceptEdits` is
         silent, so an operator can configure `gated_tools` and get a UI that
-        promises approval over a runtime that never asks.
+        promises approval over a runtime that never asks. `dontAsk` is inert
+        the other way round — "deny if not pre-approved" means the call is
+        refused instead of parked, so the operator is never asked either.
 
         `mode` is a per-run override (`RunOptions.permission_mode`), which wins
         over this config — so a report keyed only on the configured mode would
@@ -833,6 +835,9 @@ class AgentSdkConfig(BaseModel):
         if effective in ("acceptEdits", "bypassPermissions"):
             return (f"permission_mode={effective!r} skips the "
                     "permission callback, so nothing is gated")
+        if effective == "dontAsk":
+            return ("permission_mode='dontAsk' denies anything not "
+                    "pre-approved instead of asking, so nothing is gated")
         return ""
 
 

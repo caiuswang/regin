@@ -143,12 +143,23 @@ def test_a_shadowing_permission_mode_is_reported_not_silently_obeyed(
     operator can configure gating and get a runtime that gates nothing."""
     monkeypatch.setattr(settings.agent_sdk, "gated_tools", ["Write"])
 
-    for mode in ("acceptEdits", "bypassPermissions"):
+    for mode in ("acceptEdits", "bypassPermissions", "dontAsk"):
         monkeypatch.setattr(settings.agent_sdk, "permission_mode", mode)
         assert mode in settings.agent_sdk.shadowed_gating()
 
     monkeypatch.setattr(settings.agent_sdk, "permission_mode", "default")
     assert settings.agent_sdk.shadowed_gating() == ""
+
+
+def test_dont_ask_is_reported_as_denying_not_as_auto_approving(monkeypatch):
+    """`dontAsk` is inert for the opposite reason to `acceptEdits` — it denies
+    what isn't pre-approved rather than approving it — and an operator reading
+    the warning has to be told which one happened to their gated call."""
+    monkeypatch.setattr(settings.agent_sdk, "gate_plan", True)
+    monkeypatch.setattr(settings.agent_sdk, "permission_mode", "dontAsk")
+
+    reason = settings.agent_sdk.shadowed_gating()
+    assert "denies" in reason and "nothing is gated" in reason
 
 
 def test_gating_nothing_is_never_reported_as_shadowed(monkeypatch):

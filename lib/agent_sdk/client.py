@@ -12,6 +12,7 @@ different settings, plugins and version behaviour.
 
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass, field
 
@@ -63,10 +64,15 @@ def _run_overrides(run: RunOptions | None) -> dict:
 
 
 def resolve_cli_path() -> str:
-    """Absolute path to the `claude` the user actually installed."""
+    """Absolute path to the `claude` the user actually installed.
+
+    `~` is expanded here rather than at the settings layer: `cli_path` is typed
+    into the settings UI by hand, where a tilde path is the natural thing to
+    write, and an unexpanded one saves fine and only fails at launch.
+    """
     configured = (settings.agent_sdk.cli_path or "").strip()
     if configured:
-        return configured
+        return os.path.expanduser(configured)
     found = shutil.which("claude")
     if not found:
         raise ClaudeCliNotFound(

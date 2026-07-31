@@ -141,10 +141,11 @@ def _default_feature_config(monkeypatch):
     behaviour, so it cannot break a test that passes in CI; a test that needs a
     non-default value still sets it explicitly (its own monkeypatch wins and
     reverts first, LIFO)."""
-    from lib.settings import (AgentMessagesConfig, TopicEvolutionConfig,
-                              settings)
+    from lib.settings import (AgentMessagesConfig, AgentSdkConfig,
+                              TopicEvolutionConfig, settings)
     monkeypatch.setattr(settings, "topic_evolution", TopicEvolutionConfig())
     monkeypatch.setattr(settings, "agent_messages", AgentMessagesConfig())
+    monkeypatch.setattr(settings, "agent_sdk", AgentSdkConfig())
     yield
 
 

@@ -309,12 +309,93 @@ _TOPIC_EVOLUTION_FIELDS: list[dict] = [
 ]
 
 
+def _agent_sdk_fields() -> list[dict]:
+    """Built rather than declared: `permission_mode`'s options are the CLI's own
+    vocabulary, and restating them here would let the picker drift into offering
+    a mode the launch surface rejects."""
+    from lib.agent_sdk.client import PERMISSION_MODES
+    return [
+        # ── General ──
+        {"key": "enabled", "group": "General", "type": "bool",
+         "label": "SDK-launched sessions enabled",
+         "description": "Master switch for sessions regin starts and owns "
+                        "through the Claude Agent SDK. Strictly more capability "
+                        "than the rest of regin: this spawns a claude process "
+                        "and holds its input stream."},
+        {"key": "cli_path", "group": "General", "type": "string",
+         "label": "claude CLI path",
+         "description": "Absolute path to the user's claude binary. Empty = "
+                        "resolve off PATH. Leave empty unless the CLI is "
+                        "somewhere unusual — the SDK otherwise prefers the "
+                        "claude it ships, so traces would record a build that "
+                        "was never installed."},
+        {"key": "model", "group": "General", "type": "string",
+         "label": "Model override",
+         "description": "Model id for launched runs. Empty = whatever the CLI "
+                        "would pick for itself."},
+        {"key": "max_concurrent_runs", "group": "General", "type": "int",
+         "min": 1, "step": 1, "label": "Max concurrent runs",
+         "description": "Ceiling on live runners. Each is a real child "
+                        "process, so an unbounded launcher is a fork bomb."},
+        {"key": "permission_mode", "group": "General", "type": "choice",
+         "options": list(PERMISSION_MODES),
+         "label": "Permission mode",
+         "description": "Default permission mode for launched runs (a run may "
+                        "override it). acceptEdits, bypassPermissions and "
+                        "dontAsk bypass the permission callback — with them, "
+                        "nothing below is gated. plan runs no tools at all."},
+        # ── Lifecycle ──
+        {"key": "idle_timeout_sec", "group": "Lifecycle", "type": "int",
+         "min": 0, "step": 60, "label": "Idle timeout (s)",
+         "description": "How long a run with nothing to do keeps its child "
+                        "process. A run stays open for follow-ups, so without "
+                        "this an abandoned session holds a concurrency slot for "
+                        "the life of the server. 0 waits forever."},
+        {"key": "stop_grace_sec", "group": "Lifecycle", "type": "int",
+         "min": 0, "step": 1, "label": "Stop grace (s)",
+         "description": "How long a stop waits on an interrupted turn to end "
+                        "itself before abandoning it, so a wedged turn can't "
+                        "make stop a promise nothing keeps."},
+        {"key": "park_timeout_sec", "group": "Lifecycle", "type": "int",
+         "min": 0, "step": 60, "label": "Park timeout (s)",
+         "description": "How long a held question or gated call waits for an "
+                        "answer before it is declined — nobody said yes. The "
+                        "idle timeout cannot cover this: a park lives inside a "
+                        "turn. 0 waits forever, which is right only when an "
+                        "operator is actually watching."},
+        # ── Gating ──
+        {"key": "gate_plan", "group": "Gating", "type": "bool",
+         "label": "Hold ExitPlanMode for approval",
+         "description": "Park a plan for an approve/reject decision from /live "
+                        "instead of letting the run start building."},
+        {"key": "gated_tools", "group": "Gating", "type": "list",
+         "placeholder": "Bash", "add_label": "+ Add tool",
+         "label": "Tools held for approval",
+         "description": "Named tools parked for an allow/deny from /live, "
+                        "matched exactly and case-sensitively ('bash' never "
+                        "matches Bash). Empty = only AskUserQuestion parks. "
+                        "'*' gates every call — the only way to cover tools "
+                        "regin cannot enumerate, since MCP tools arrive with "
+                        "server-specific names. Gating is a veto the CLI "
+                        "offers, not a hook: a call the CLI would not have "
+                        "prompted about (an allowlisted or sandboxed one) "
+                        "never reaches it."},
+    ]
+
+
+def _agent_sdk_warnings(current) -> list[str]:
+    reason = current.shadowed_gating()
+    return [f"Gating is configured but inert: {reason}."] if reason else []
+
+
 def _settings_blocks() -> dict:
     """Registry of round-trippable nested settings blocks. `scope` routes the
     write: agent_messages goes local because webhook_url can hold a secret
-    token that must not land in git-tracked settings.json."""
+    token that must not land in git-tracked settings.json; agent_sdk because
+    cli_path is a machine path and a git-tracked `enabled` would arm
+    process-spawning for everyone who pulls."""
     from lib.settings import (AgentMemoryConfig, AgentMessagesConfig,
-                              TopicEvolutionConfig)
+                              AgentSdkConfig, TopicEvolutionConfig)
     return {
         "agent-memory": {"attr": "agent_memory", "model": AgentMemoryConfig,
                          "fields": _AGENT_MEMORY_FIELDS, "scope": "shared",
@@ -326,6 +407,10 @@ def _settings_blocks() -> dict:
                             "model": TopicEvolutionConfig,
                             "fields": _TOPIC_EVOLUTION_FIELDS, "scope": "shared",
                             "label": "Topic evolution settings"},
+        "agent-sdk": {"attr": "agent_sdk", "model": AgentSdkConfig,
+                      "fields": _agent_sdk_fields(), "scope": "local",
+                      "warn": _agent_sdk_warnings,
+                      "label": "Agent SDK settings"},
     }
 
 
@@ -427,7 +512,9 @@ def _block_get(name: str):
     current = getattr(_settings, block['attr'])
     defaults = block['model']()
     fields = [_field_payload(current, defaults, f) for f in block['fields']]
-    return jsonify({"fields": fields})
+    warn = block.get('warn')
+    return jsonify({"fields": fields,
+                    "warnings": warn(current) if warn else []})
 
 
 def _scope_block_base(attr: str, scope: str) -> dict:
@@ -498,6 +585,17 @@ def api_topic_evolution_settings():
 @require_editor
 def api_update_topic_evolution_settings():
     return _block_put('topic-evolution')
+
+
+@settings_bp.route('/api/settings/agent-sdk')
+def api_agent_sdk_settings():
+    return _block_get('agent-sdk')
+
+
+@settings_bp.route('/api/settings/agent-sdk', methods=['PUT'])
+@require_editor
+def api_update_agent_sdk_settings():
+    return _block_put('agent-sdk')
 
 
 @settings_bp.route('/api/settings')

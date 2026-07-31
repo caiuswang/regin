@@ -111,13 +111,18 @@ async function _mutate(method, path, body, options = {}) {
   }
   if (!res.ok) {
     const text = await res.text()
-    let msg, detail
+    let msg, detail, errors
     try {
       const parsed = JSON.parse(text)
       msg = parsed.error || parsed.msg
       detail = parsed.detail
+      // Field-level validation lists, so a caller that renders them (the
+      // settings blocks) shows "max_concurrent_runs must be ≥ 1" rather than
+      // a bare "Failed to save".
+      errors = Array.isArray(parsed.errors) ? parsed.errors : undefined
     } catch { msg = text }
-    return { ok: false, msg: msg || `Server error (${res.status})`, detail }
+    return { ok: false, msg: msg || errors?.join('; ') || `Server error (${res.status})`,
+             detail, errors }
   }
   return res.json()
 }
