@@ -18,6 +18,13 @@ function buildSkillFolder(slug) {
 }
 
 test.describe('Pattern import conflict', () => {
+  // These three share one slug, one server-side pattern row, and one
+  // directory under ~/.local/share/regin/patterns — and beforeEach deletes
+  // all of it. Run them concurrently and they delete each other's fixture
+  // mid-test, so the ordering the file already relies on is stated rather
+  // than inherited from the runner's default.
+  test.describe.configure({ mode: 'serial' })
+
   const testSlug = 'e2e-import-conflict'
   let built
 

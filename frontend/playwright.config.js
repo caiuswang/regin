@@ -2,6 +2,12 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
+  // Tests within a file run concurrently too, not just across files: measured
+  // 3.2m -> 1.4m over the whole suite, with the same set of failures. A file
+  // whose tests genuinely share state says so itself with
+  // `test.describe.configure({ mode: 'serial' })` — see import-conflict.spec.js,
+  // which shares one pattern slug and one directory on disk.
+  fullyParallel: true,
   timeout: 30000,
   use: {
     baseURL: 'http://localhost:5173',
