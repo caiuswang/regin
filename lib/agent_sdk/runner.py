@@ -101,6 +101,9 @@ class AgentRunner:
         self.loop: asyncio.AbstractEventLoop | None = None
         self._client = None
         self._tool_names: dict[str, str] = {}
+        # tool_use_id → the answered Q&A, held until the tool's result span is
+        # emitted — see `_enrich_answer`.
+        self._answered_asks: dict[str, dict] = {}
         self._prompts: asyncio.Queue = asyncio.Queue()
         self._model = settings.agent_sdk.model or None
         self._row_model = self._model
@@ -131,7 +134,23 @@ class AgentRunner:
         span = to_span(self._name_tool(event))
         _enrich_ask(span, event)
         _enrich_permission(span, event)
+        self._enrich_answer(span, event)
         await self._post(span)
+
+    def _enrich_answer(self, span: dict | None, event) -> None:
+        """Carry the answered Q&A onto the ask's *resolved* span.
+
+        The pending row is the one holding the questions, and the serve-time
+        merge retires it once this row lands — so without both halves here an
+        answered question renders as a bare tool row with nothing in it. The
+        hook tier's PostToolUse span carries `questions` + `answers`; this is
+        the same pair, from the answer regin itself handed back.
+        """
+        if not span or not isinstance(event, ToolResult):
+            return
+        answered = self._answered_asks.pop(event.tool_use_id, None)
+        if answered:
+            span['attributes'].update(answered)
 
     async def _handle(self, event) -> None:
         """Route one event to whichever sink records it.
@@ -242,7 +261,7 @@ class AgentRunner:
         finally:
             await self._dismiss_park_notice()
         if kind == "question":
-            return self._answered(tool_input, resolution)
+            return self._answered(tool_use_id, tool_input, resolution)
         return await self._decided(tool_name, tool_use_id, tool_input,
                                    resolution)
 
@@ -337,10 +356,15 @@ class AgentRunner:
             # deliver an answer to.
             registry.discard_ask(ask_id)
 
-    def _answered(self, tool_input: dict, answers):
+    def _answered(self, tool_use_id: str, tool_input: dict, answers):
         if answers is None:
             return client.deny("Dismissed by operator")
-        return client.allow(build_updated_input(tool_input, answers))
+        updated = build_updated_input(tool_input, answers)
+        self._answered_asks[tool_use_id] = {
+            'questions': (tool_input or {}).get('questions') or [],
+            'answers': updated.get('answers') or {},
+        }
+        return client.allow(updated)
 
     async def _decided(self, tool_name: str, tool_use_id: str,
                        tool_input: dict, decision):
