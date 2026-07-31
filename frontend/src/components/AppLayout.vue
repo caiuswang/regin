@@ -141,7 +141,13 @@ const navGroups = computed(() => [
           <router-link to="/" class="mobile-brand no-underline">regin</router-link>
         </div>
 
-        <div class="content-scroll" :class="{ 'content-scroll-fixed': route.name === 'live' }">
+        <div
+          class="content-scroll"
+          :class="{
+            'content-scroll-fixed': route.meta.fixedViewport === true,
+            'content-scroll-fixed-lg': route.meta.fixedViewport === 'lg',
+          }"
+        >
           <FlashMessage />
           <router-view />
         </div>
@@ -366,13 +372,25 @@ const navGroups = computed(() => [
   padding: 1.5rem 2rem;
 }
 
-/* /live route (LiveSessionView): freeze the app-shell scroll and drop the
-   padding so the card fills the viewport exactly and only .live-tail scrolls.
-   Compound selector so it beats the scoped `.content-scroll` above. */
+/* Routes flagged `meta.fixedViewport` (/live, /inbox): freeze the app-shell
+   scroll and drop the padding so the view fills the viewport exactly and only
+   its own inner region scrolls. Such a view must re-add whatever padding it
+   wants. Compound selector so it beats the scoped `.content-scroll` above. */
 .content-scroll.content-scroll-fixed {
   overflow: hidden;
   padding: 0;
   overscroll-behavior: contain;
+}
+
+/* Same freeze, but only where there is room for the view's own panes; below
+   that the shell scrolls as usual. The padding is handed to the view at every
+   width so it doesn't shift across the breakpoint. */
+.content-scroll.content-scroll-fixed-lg { padding: 0; }
+@media (min-width: 1200px) {
+  .content-scroll.content-scroll-fixed-lg {
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
 }
 
 @media (max-width: 767px) {

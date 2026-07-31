@@ -16,7 +16,7 @@ defineProps({
   highlightedSpan: { type: String, default: null },
 })
 
-// Pill colour for a non-progress message type (matches InboxMessageCard).
+// Pill colour for a non-progress message type (matches constants/inboxTypes).
 const MESSAGE_TYPE_CLASS = {
   result: 'bg-emerald-100 text-emerald-700',
   summary: 'bg-indigo-100 text-indigo-700',

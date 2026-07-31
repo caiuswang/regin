@@ -59,8 +59,13 @@ const routes = [
   { path: '/experiments/:id', name: 'experiment-detail', component: ExperimentDetailView },
   { path: '/plans', name: 'plans', component: PlansView },
   { path: '/plans/:filename(.*)', name: 'plan-detail', component: PlanDetailView },
-  { path: '/live/:id?', name: 'live', component: LiveSessionView },
-  { path: '/inbox', name: 'inbox', component: InboxView },
+  // fixedViewport: the view owns its own scroll regions, so the app-shell
+  // scroller must not also scroll (see AppLayout `.content-scroll-fixed`).
+  // `'lg'` applies that only from 1200px up — below it the inbox's two panes
+  // collapse to one column and a nested scroller would leave the list a few
+  // rows tall under the header, so the page scrolls normally instead.
+  { path: '/live/:id?', name: 'live', component: LiveSessionView, meta: { fixedViewport: true } },
+  { path: '/inbox', name: 'inbox', component: InboxView, meta: { fixedViewport: 'lg' } },
   { path: '/memory', name: 'memory', component: MemoryView },
   { path: '/grades', name: 'grades', component: GradesView },
   {
