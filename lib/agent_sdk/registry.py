@@ -187,6 +187,22 @@ def submit_prompt(trace_id: str, text: str) -> tuple[bool, str]:
     return True, "prompt queued"
 
 
+def queued_prompts(trace_id: str) -> list[str]:
+    """Prompts waiting behind this run's current turn, oldest first.
+
+    Read straight off the runner rather than through `_live_runner`: this is a
+    read, and a session whose loop has stopped still holds prompts nothing will
+    ever run — reporting them is more honest than an empty queue, and the
+    caller is a status poll, not a delivery.
+    """
+    trace_id = owning_run(trace_id)
+    with _lock:
+        runner = _runs.get(trace_id)
+    if runner is None:
+        return []
+    return list(getattr(runner, "pending_prompts", list)())
+
+
 def stop_run(trace_id: str) -> tuple[bool, str]:
     """End the session, including one that is mid-turn.
 

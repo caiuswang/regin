@@ -2409,6 +2409,28 @@ details summary {
 }
 .live-now-attention .live-now-more { color: var(--color-amber-700); }
 
+/* Stop control (SDK-tier runs only). Wraps rather than overflows: the armed
+   confirm is three items wide and the card is a ~390px phone surface. */
+.live-stop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 6px;
+    min-width: 0;
+}
+.live-stop-btn { color: var(--color-danger); }
+.live-stop-btn:hover { color: var(--color-danger-strong); }
+.live-stop-ask { font-size: 11px; color: var(--color-fg-subtle); }
+.live-stop-confirm { font-weight: 600; }
+.live-stop-cancel { color: var(--color-fg-subtle); }
+.live-stop-meta {
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+    overflow-wrap: anywhere;
+}
+.live-stop-failed { color: var(--color-danger); }
+
 /* v5 bridge composer — full-width when idle, compact steer while working.
    Dedicated .live-composer-* classes on purpose: the shared `.input` class
    sets the `padding` shorthand and would override per-variant padding at

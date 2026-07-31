@@ -21,6 +21,7 @@
 import { computed, ref, watch, onUnmounted } from 'vue'
 import Button from '../ui/Button.vue'
 import LiveComposer from './LiveComposer.vue'
+import LiveStopControl from './LiveStopControl.vue'
 import {
   fmtClock, fmtElapsedSeconds, terminalSpanLabel, terminalSpanDetail,
   toolDisplayName,
@@ -59,6 +60,10 @@ const props = defineProps({
   // session with running/waiting agents must say so.
   agentsRunning: { type: Number, default: 0 },
   agentsWaiting: { type: Number, default: 0 },
+  // True only for a session regin launched and still holds a typed channel to
+  // — the one tier a browser can actually end. Everything else regin merely
+  // observes, so it gets no Stop.
+  sdkOwned: { type: Boolean, default: false },
 })
 const emit = defineEmits([
   'open-response', 'open-question', 'exit-scope', 'open-agents', 'sent',
@@ -155,6 +160,11 @@ const composerMode = computed(() => {
 // It only resets when the view switches sessions.
 const composerDraft = ref('')
 watch(() => props.sessionId, () => { composerDraft.value = '' })
+
+// A finished run has nothing left to stop, and the scoped view addresses a
+// subagent rather than the session the Stop route would end.
+const canStop = computed(() =>
+  props.sdkOwned && !props.scopeAgent && state.value !== 'finished')
 
 const permLabel = computed(() => {
   const tool = pendingPerm.value?.attributes?.tool_name
@@ -401,6 +411,11 @@ const elapsed = computed(() => {
         >more ▾</Button>
       </div>
     </template>
+
+    <!-- Outside the per-state branches: a run must be stoppable in EVERY
+         state it can be stuck in, including the blocked ones (a question or
+         permission nobody will answer is exactly when Stop is needed). -->
+    <LiveStopControl v-if="canStop" :session-id="sessionId" />
 
     <LiveComposer
       v-if="composerMode"

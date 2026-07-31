@@ -669,6 +669,7 @@ onUnmounted(() => {
         :session-id="sessionId || ''"
         :bridge-reachable="!!meta.bridge_reachable"
         :bridge-pane="meta.bridge_pane || ''"
+        :sdk-owned="!!meta.sdk_owned"
         :server-now="meta.server_now || ''"
         :server-now-at="meta.server_now_at || 0"
         :ctx-pct="ctxPct"

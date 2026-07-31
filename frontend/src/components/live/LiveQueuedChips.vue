@@ -19,7 +19,10 @@ const props = defineProps({
 })
 
 const rows = computed(() => props.items.map((q, i) => {
-  const steer = q.source === 'bridge' || q.optimistic
+  // 'sdk' reads the same as 'bridge' deliberately: both are a message the
+  // operator sent that is waiting to be picked up, so the label doesn't flip
+  // when the optimistic echo hands over to the server's copy.
+  const steer = q.source === 'bridge' || q.source === 'sdk' || q.optimistic
   return {
     key: `${i}-${q.content?.slice(0, 24) || ''}`,
     steer,

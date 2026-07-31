@@ -117,5 +117,9 @@ def test_sdk_session_reads_as_reachable_without_a_tmux_pane(sdk_session,
     monkeypatch.setattr(settings.agent_bridge, "enabled", False)
 
     assert _bridge_reachability(_TRACE) == {"bridge_reachable": True,
-                                            "bridge_pane": None}
+                                            "bridge_pane": None,
+                                            "sdk_owned": True}
     assert _bridge_reachability("not-ours")["bridge_reachable"] is False
+    # The Stop control keys off this: only a run regin still holds a channel
+    # to can be ended from the browser.
+    assert _bridge_reachability("not-ours")["sdk_owned"] is False

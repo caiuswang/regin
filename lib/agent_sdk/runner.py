@@ -105,6 +105,12 @@ class AgentRunner:
         # emitted — see `_enrich_answer`.
         self._answered_asks: dict[str, dict] = {}
         self._prompts: asyncio.Queue = asyncio.Queue()
+        # The same texts, readable from another thread. An SDK run writes no
+        # transcript `queue-operation` entries, so this list is the only thing
+        # `/live` can derive "still waiting" from — without it a queued steer is
+        # represented solely by the client's optimistic echo and vanishes when
+        # that TTL lapses, while the prompt is in fact still queued.
+        self._pending: list[str] = []
         self._model = settings.agent_sdk.model or None
         self._row_model = self._model
         # The turn currently draining. Also the usage row's identity, so it is
@@ -428,10 +434,24 @@ class AgentRunner:
         at launch and which therefore *finished* rather than being stopped."""
         return self._stopping.is_set()
 
-    def enqueue(self, text: str) -> None:
+    def enqueue(self, text: str, *, waiting: bool = True) -> None:
         """Queue a prompt. Must run on this runner's loop — see
-        `registry.submit_prompt` for the cross-thread entry point."""
+        `registry.submit_prompt` for the cross-thread entry point.
+
+        `waiting=False` for the prompt a run was launched with: it is the
+        run's first turn, not a message queued behind one, and reporting it as
+        waiting puts a steering chip on the card for the gap between the run
+        becoming reachable and its pump starting — which is exactly when an
+        operator opens `/live` on a run they just launched.
+        """
         self._prompts.put_nowait(text)
+        if waiting:
+            self._pending.append(text)
+
+    def pending_prompts(self) -> list[str]:
+        """Prompts queued behind the running turn, oldest first. Safe to call
+        from any thread — a snapshot, never the live list."""
+        return list(self._pending)
 
     def close(self) -> None:
         """End the session once everything already queued has run."""
@@ -453,6 +473,7 @@ class AgentRunner:
         "run three more prompts first".
         """
         self._stopping.set()
+        self._pending.clear()
         self.close()
         if self._client is None:
             return
@@ -470,13 +491,18 @@ class AgentRunner:
         forever. Set `idle_timeout_sec` to 0 to wait indefinitely.
         """
         timeout = int(settings.agent_sdk.idle_timeout_sec or 0)
-        if timeout <= 0:
-            return await self._prompts.get()
         try:
-            return await asyncio.wait_for(self._prompts.get(), timeout)
+            text = (await self._prompts.get() if timeout <= 0
+                    else await asyncio.wait_for(self._prompts.get(), timeout))
         except asyncio.TimeoutError:
             self._stop_reason = "idle timeout"
             return None
+        # The mirror pops with the queue, so a prompt stops reading as "waiting"
+        # the moment its turn starts — the same poll the real prompt span lands.
+        # `_CLOSE` was never mirrored, so it falls through as a no-op.
+        if self._pending and self._pending[0] is text:
+            del self._pending[0]
+        return text
 
     async def pump(self) -> None:
         """Run queued prompts one at a time until the session ends."""
@@ -602,7 +628,7 @@ async def run_session(trace_id: str, prompt: str, *,
     runner = AgentRunner(trace_id, cwd=cwd, options=options, resume=resume)
     # Queued before the session is reachable, so a follow-up arriving during
     # `start()` cannot overtake the prompt the run was launched for.
-    runner.enqueue(prompt)
+    runner.enqueue(prompt, waiting=False)
     if one_shot:
         # The terminator queues behind the prompt, so the pump stops at the
         # end of that turn rather than waiting out the idle timeout.

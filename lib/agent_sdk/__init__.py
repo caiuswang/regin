@@ -12,11 +12,12 @@ raw SDK import is confined to one module.
 from .registry import (
     interrupt_run,
     is_sdk_owned,
+    queued_prompts,
     resolve_ask,
     resolve_permission,
     stop_run,
     submit_prompt,
 )
 
-__all__ = ['interrupt_run', 'is_sdk_owned', 'resolve_ask',
+__all__ = ['interrupt_run', 'is_sdk_owned', 'queued_prompts', 'resolve_ask',
            'resolve_permission', 'stop_run', 'submit_prompt']

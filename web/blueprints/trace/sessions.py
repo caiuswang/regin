@@ -1715,13 +1715,16 @@ def _bridge_reachability(trace_id: str) -> dict:
     from lib import agent_sdk
     from lib.settings import settings
     if agent_sdk.is_sdk_owned(trace_id):
-        return {'bridge_reachable': True, 'bridge_pane': None}
+        return {'bridge_reachable': True, 'bridge_pane': None,
+                'sdk_owned': True}
     if not settings.agent_bridge.enabled:
-        return {'bridge_reachable': False, 'bridge_pane': None}
+        return {'bridge_reachable': False, 'bridge_pane': None,
+                'sdk_owned': False}
     from lib.agent_bridge import store as bridge_store
     pane = bridge_store.get_reachable_pane(trace_id)
     return {'bridge_reachable': pane is not None,
-            'bridge_pane': pane['pane_id'] if pane else None}
+            'bridge_pane': pane['pane_id'] if pane else None,
+            'sdk_owned': False}
 
 
 def _shallow_map_response(trace_id: str):
@@ -1797,11 +1800,48 @@ _BRIDGE_STEER_WINDOW_SEC = 90
 
 def _queued_prompts(trace_id: str) -> list:
     from lib.trace.queued_prompts import current_queued_prompts
+    sdk_queue = _sdk_queue(trace_id)
+    if sdk_queue is not None:
+        return sdk_queue
     try:
         queued = current_queued_prompts(trace_id)
     except Exception:
         queued = []
     return _merge_bridge_steers(trace_id, queued)
+
+
+def _sdk_queue(trace_id: str) -> list | None:
+    """What an SDK-owned run still holds behind its current turn, or None when
+    this is not such a run.
+
+    A run regin launched queues prompts in memory, so this list IS the queue:
+    an entry appears when the prompt is accepted and disappears when its turn
+    starts. Neither other source can stand in for it, and both actively
+    mislead here, which is why an owned run takes this path *instead of* them
+    rather than merging with them:
+
+    - the transcript path sees nothing — a launched run writes no
+      `queue-operation` entries — so a queued steer had no server
+      representation at all and the card fell back to the client's optimistic
+      echo, which expires on a timer while the prompt is still waiting.
+    - the bridge path sees every SDK steer, because `bridge.py` records one as
+      a delivered `bridge_messages` row for the audit trail — but the window
+      that retires such a row is transcript-derived, so for a run with no
+      transcript it *never* retires: a consumed steer would keep its chip for
+      the full 90s window, and `list_bridge_messages` is newest-first, which
+      would invert the queue's real order.
+
+    Identical prompts are deliberately not collapsed: two "continue"s are two
+    queue entries and must drop one at a time.
+    """
+    from lib import agent_sdk
+    try:
+        if not agent_sdk.is_sdk_owned(trace_id):
+            return None
+        pending = agent_sdk.queued_prompts(trace_id)
+    except Exception:
+        return None
+    return [{'content': text, 'source': 'sdk'} for text in pending]
 
 
 def _steer_key(content) -> str:

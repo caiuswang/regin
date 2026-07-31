@@ -255,7 +255,7 @@ export function useLiveTail(getRouteId) {
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
       'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now',
       'task_list', 'agent_roster', 'model', 'repo', 'context_pct',
-      'phase', 'agent_phase', 'queued_prompts']
+      'phase', 'agent_phase', 'queued_prompts', 'sdk_owned']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }
