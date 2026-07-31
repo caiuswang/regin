@@ -201,8 +201,17 @@ test.describe('Fold row — 0 / <=5 turns / N turns (acceptance #2, v7.2)', () =
     // remainder is counted in SPANS even though pagination is in turns.
     const remainder = initialMap.span_count_total - initialMap.span_count
     expect(remainder, 'fixture must exceed the 5-turn initial window for this test to be meaningful').toBeGreaterThan(0)
-    const foldNum = parseLeadingNumber(await fold.textContent())
-    expect(foldNum, `fold row text vs API remainder ${remainder}`).toBe(remainder)
+    // Poll rather than read once, for the same reason the unfold below does:
+    // the initial window also lands in two beats — the map response, then the
+    // per-root children merged in — so the counter CONVERGES on the remainder
+    // instead of arriving at it. A single read races that second beat and
+    // catches a mid-merge figure whenever the server is under load (measured
+    // under a saturated worker pool: 1207 against a settled 1172).
+    const foldCount = async () => parseLeadingNumber(await fold.textContent())
+    await expect
+      .poll(foldCount, { timeout: 15_000, message: `fold row text vs API remainder ${remainder}` })
+      .toBe(remainder)
+    const foldNum = remainder
 
     // Scroll to the TOP first — how a user actually reaches the fold row.
     // This also unpins follow-tail, so a live append during the measurement
@@ -227,7 +236,6 @@ test.describe('Fold row — 0 / <=5 turns / N turns (acceptance #2, v7.2)', () =
     // unfold stages the older roots + all their children into one atomic
     // merge, so the counter (and DOM prepend) land well after the map
     // response while the per-root children fetches are still in flight.
-    const foldCount = async () => parseLeadingNumber(await fold.textContent())
     await fold.click()
     await expect.poll(foldCount, { timeout: 15_000 })
       .toBeLessThan(foldNum)
