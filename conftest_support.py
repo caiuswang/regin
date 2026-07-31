@@ -19,12 +19,10 @@ def spawning_modules():
     hole. `proposal_external` is the primary drafting launcher and was the
     one originally missed.
     """
-    import lib.goal_spawn as goal_spawn
     from lib.grader import adapters as grader_adapters
     from lib.memory import adapters as memory_adapters
     from lib.topics import proposal_external, proposal_review
-    return (memory_adapters, grader_adapters, proposal_review,
-            proposal_external, goal_spawn)
+    return (memory_adapters, grader_adapters, proposal_review, proposal_external)
 
 
 class ExternalAgentSpawnBlocked(BaseException):
