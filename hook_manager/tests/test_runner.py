@@ -312,3 +312,36 @@ def test_claude_observation_event_still_emits_json():
     run('UserPromptSubmit', [h],
         _payload(event='UserPromptSubmit'), out, agent_type='claude')
     assert _drain(out) == {'suppressOutput': True}
+
+
+# ── STDOUT_IS_DATA events (CAI-122) ───────────────────────────────────
+# The harness reads a WorktreeCreate hook's last stdout line as the path of
+# the worktree it created, so anything the runner prints there is parsed as
+# a directory name.
+
+def test_worktree_create_writes_nothing_to_stdout():
+    h = Handler(name='trace', events=['WorktreeCreate'], kind='trace',
+                fn=lambda p: HookResponse(suppress_output=True))
+    out = io.StringIO()
+    rc = run('WorktreeCreate', [h], _payload(event='WorktreeCreate'), out,
+             agent_type='claude')
+    assert rc == 0
+    assert out.getvalue() == ''
+
+
+def test_worktree_create_stays_silent_on_malformed_stdin():
+    out = io.StringIO()
+    rc = run('WorktreeCreate', [], 'not json', out, agent_type='claude')
+    assert rc == 0
+    assert out.getvalue() == ''
+
+
+def test_worktree_create_still_dispatches_handlers():
+    seen = []
+    h = Handler(name='trace', events=['WorktreeCreate'], kind='trace',
+                fn=lambda p: seen.append(p.event))
+    out = io.StringIO()
+    run('WorktreeCreate', [h], _payload(event='WorktreeCreate'), out,
+        agent_type='claude')
+    assert seen == ['WorktreeCreate']
+    assert out.getvalue() == ''

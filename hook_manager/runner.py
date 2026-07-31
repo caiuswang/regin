@@ -13,7 +13,14 @@ from typing import Sequence
 from lib.providers import get_active_provider
 
 from .config import filter_enabled, priority_overrides
-from .core import BLOCKABLE_VIA_EXIT_2, Handler, HookPayload, HookResponse, SPEC_EVENTS
+from .core import (
+    BLOCKABLE_VIA_EXIT_2,
+    Handler,
+    HookPayload,
+    HookResponse,
+    SPEC_EVENTS,
+    STDOUT_IS_DATA,
+)
 from .merge import (
     kimi_block_reason,
     kimi_response_text,
@@ -81,17 +88,19 @@ def _out_format(payload: dict) -> str:
     return getattr(resolve_provider(payload), 'hook_output_format', 'claude')
 
 
-def _parse_stdin(stdin_text: str, agent_type: str | None, stdout) -> dict | None:
+def _parse_stdin(event: str, stdin_text: str, agent_type: str | None, stdout) -> dict | None:
     """Parsed payload, or None when it was unreadable and we already answered.
 
     The unreadable answer is dialect-specific: Kimi renders raw hook stdout in
     its UI (and feeds it back as prompt context), so even a bare `{}` is user-
-    visible junk there.
+    visible junk there. On a STDOUT_IS_DATA event a bare `{}` is worse still —
+    the harness would read it as the path the hook created.
     """
     try:
         return json.loads(stdin_text) if stdin_text.strip() else {}
     except (json.JSONDecodeError, ValueError):
-        if _out_format({'agent_type': agent_type}) != 'kimi':
+        quiet = event in STDOUT_IS_DATA or _out_format({'agent_type': agent_type}) == 'kimi'
+        if not quiet:
             stdout.write('{}\n')
         return None
 
@@ -106,7 +115,7 @@ def run(
     """Core runner (pure w.r.t. I/O — stdin and stdout are explicit).
 
     Returns the process exit code."""
-    data = _parse_stdin(stdin_text, agent_type, stdout)
+    data = _parse_stdin(event_hint, stdin_text, agent_type, stdout)
     if data is None:
         return 0
 
@@ -185,7 +194,12 @@ def _write_response(out_format, event, merged, exit_code, stdout) -> None:
     Claude/Codex get the full JSON object on stdout. Kimi gets only its tiny
     recognized surface (or nothing), plus the block reason on stderr — printing
     Claude-only fields there would render as raw JSON in the Kimi UI.
+
+    STDOUT_IS_DATA events get nothing at all in any dialect: their stdout is an
+    input channel back into the harness, not a place to answer.
     """
+    if event in STDOUT_IS_DATA:
+        return
     if out_format == 'kimi':
         text = kimi_response_text(event, merged)
         if text:

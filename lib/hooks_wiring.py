@@ -101,9 +101,15 @@ def hook_manager_command(event_name: str, provider) -> str:
 
 
 def hook_manager_events(provider) -> tuple[str, ...]:
-    """Events install routes to hook_manager for this provider."""
-    from hook_manager.core import SPEC_EVENTS
-    return tuple(provider.hook_events() or tuple(sorted(SPEC_EVENTS)))
+    """Events install routes to hook_manager for this provider.
+
+    STDOUT_IS_DATA events are withheld even from a provider that names them:
+    the harness reads such a hook's stdout as a value it must act on, and a
+    hook wired there is one an older regin could only answer with JSON.
+    """
+    from hook_manager.core import SPEC_EVENTS, STDOUT_IS_DATA
+    events = provider.hook_events() or tuple(sorted(SPEC_EVENTS))
+    return tuple(e for e in events if e not in STDOUT_IS_DATA)
 
 
 def expected_hook_manager_commands(provider) -> dict[str, str]:
@@ -382,15 +388,29 @@ def timeout_drift_events(expected: dict[str, str], expected_timeout: int,
     return sorted(e for e, values in timeouts.items() if e in expected and drifted(values))
 
 
+def retractable_events(current) -> list[str]:
+    """Routed events install actively un-wires, rather than merely stops writing.
+
+    A route install no longer emits is otherwise left alone, but one on a
+    STDOUT_IS_DATA event is a live defect — an older regin wired
+    `WorktreeCreate`, whose stdout the harness reads as the path of the
+    worktree the hook created — so install retracts these and status must
+    call them stale for repair to reach them.
+    """
+    from hook_manager.core import STDOUT_IS_DATA
+    return sorted(set(current) & STDOUT_IS_DATA)
+
+
 def _stale_events(expected: dict[str, str], current: dict[str, list[str]],
                   duplicates: list[str], timeout_drift: list[str]) -> list[str]:
-    """Routed events install would rewrite: drifted command or timeout, or a duplicate.
+    """Routed events install would rewrite or retract: drifted command or
+    timeout, a duplicate, or a route install now un-wires.
 
     Duplicates count even when every copy is correct — two entries under one
     matcher fire the hook twice per event, and comparing command *sets* (the
     obvious implementation) reports that as healthy.
     """
-    redundant = set(duplicates) | set(timeout_drift)
+    redundant = set(duplicates) | set(timeout_drift) | set(retractable_events(current))
 
     def differs(event: str) -> bool:
         if event in redundant:
@@ -411,7 +431,8 @@ def _kind_status(provider, settings_path: str, spec: dict, malformed: list[str])
     install cannot clear any of them and gating on them would leave doctor
     permanently red pointing at a repair that answers "already installed":
     `unexpected_events` (routes install would no longer write — the JSON
-    installer only adds and refreshes), `malformed_events` (an event key
+    installer only adds and refreshes, except for the `retractable_events`
+    subset it un-wires, which `stale` does carry), `malformed_events` (an event key
     whose value is not a list, which only a human edit can have produced and
     only a human edit should undo), and `foreign_events` (another checkout's
     entries, which only `adopt` may touch).
@@ -576,11 +597,29 @@ def _merge_hook_manager_blocks(hooks: dict, events, provider) -> tuple[int, int]
     return outcomes.count('added'), outcomes.count('updated')
 
 
+def _retract_unwired_routes(hooks: dict) -> int:
+    """Drop our command from the events install now un-wires; count removed.
+
+    Scoped to those event keys so the generic stripper cannot reach a route
+    that is merely unexpected — another checkout's, or a hand-written one.
+    """
+    present = retractable_events(hooks)
+    scoped = {e: hooks[e] for e in present}
+    removed = _strip_matching_blocks(scoped, is_hook_manager_command)
+    for event_name in present:
+        if event_name in scoped:
+            hooks[event_name] = scoped[event_name]
+        else:
+            del hooks[event_name]
+    return removed
+
+
 def _json_install_hook_manager(provider, settings_path: str) -> dict:
     data = read_json_settings(settings_path)
     hooks = data.setdefault('hooks', {})
     added, updated = _merge_hook_manager_blocks(hooks, hook_manager_events(provider), provider)
-    if added == 0 and updated == 0:
+    retracted = _retract_unwired_routes(hooks)
+    if added == 0 and updated == 0 and retracted == 0:
         return {'ok': True, 'msg': 'Hook manager already installed'}
     write_json_settings(data, settings_path)
     parts = []
@@ -588,6 +627,8 @@ def _json_install_hook_manager(provider, settings_path: str) -> dict:
         parts.append(f'{added} added')
     if updated:
         parts.append(f'{updated} updated')
+    if retracted:
+        parts.append(f'{retracted} retracted')
     return {'ok': True,
             'msg': f"Hook manager installed for {provider.display_name} events ({', '.join(parts)})"}
 

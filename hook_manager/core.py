@@ -54,6 +54,17 @@ SPEC_EVENTS: frozenset[str] = frozenset({
     'ElicitationResult',
 })
 
+# Events whose stdout the harness reads as *data* rather than as a hook
+# response. WorktreeCreate's last stdout line is taken as the path of the
+# worktree the hook created, so the runner's ordinary JSON response is parsed
+# as a directory name and the harness then fails to chdir into
+# `<repo>/{"suppressOutput": true}`. The runner writes nothing for these; a
+# hook that supplies no path leaves the harness on its built-in git-worktree
+# provisioning.
+STDOUT_IS_DATA: frozenset[str] = frozenset({
+    'WorktreeCreate',
+})
+
 # Events where exit-code 2 produces a blocking behavior per the spec table.
 BLOCKABLE_VIA_EXIT_2: frozenset[str] = frozenset({
     'PreToolUse',

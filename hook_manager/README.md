@@ -5,10 +5,12 @@ hook behavior across the 28 Claude Code hook events
 (https://code.claude.com/docs/en/hooks). Most events have concrete
 handlers today; the provider-kind hooks (`WorktreeCreate`, `WorktreeRemove`,
 `Elicitation`, `ElicitationResult`) are intentionally unwired — registering
-them without a real provider causes Claude Code to fail (the harness parses
-the hook stdout as a path/payload, and the runner's default
-`{"suppressOutput": true}` JSON response gets interpreted as that path,
-breaking `EnterWorktree` with `chdir ENOENT`). See `registry.py` for the
+them without a real provider causes Claude Code to fail, because the harness
+parses the hook stdout as a path/payload and a JSON response is read as that
+path (`claude -w <branch>` then aborts with `chdir ENOENT`). `WorktreeCreate`
+is guarded twice over: install never routes it and `regin hooks repair`
+retracts a route left by an older regin, and the runner writes nothing to
+stdout for every event in `core.STDOUT_IS_DATA`. See `registry.py` for the
 live handler list.
 
 In the current architecture, event payload semantics are Claude-spec, while

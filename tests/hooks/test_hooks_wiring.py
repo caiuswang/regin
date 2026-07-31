@@ -594,3 +594,61 @@ def test_writers_still_accept_an_empty_settings_file(claude):
 
     assert hooks_wiring.install_hook_manager(provider, path)['ok'] is True
     assert json.load(open(path))['hooks']
+
+
+# ── WorktreeCreate retraction (CAI-122) ──────────────────────
+# The harness reads a WorktreeCreate hook's stdout as the path of the worktree
+# it created, so an older regin's route there broke `claude -w <branch>` with
+# `worktree directory <repo>/{"suppressOutput": true} does not exist`.
+
+def _install_with_legacy_worktree_route(provider, path) -> None:
+    hooks_wiring.install_hook_manager(provider, path)
+    data = json.load(open(path))
+    data['hooks']['WorktreeCreate'] = [{'hooks': [{
+        'type': 'command',
+        'command': hooks_wiring.hook_manager_command('WorktreeCreate', provider),
+        'timeout': 60,
+    }]}]
+    with open(path, 'w') as f:
+        json.dump(data, f)
+
+
+def test_install_does_not_wire_worktree_create(claude):
+    provider, path = claude
+    assert 'WorktreeCreate' not in hooks_wiring.hook_manager_events(provider)
+    hooks_wiring.install_hook_manager(provider, path)
+    assert 'WorktreeCreate' not in json.load(open(path))['hooks']
+
+
+def test_legacy_worktree_route_reads_stale(claude):
+    provider, path = claude
+    _install_with_legacy_worktree_route(provider, path)
+    status = hooks_wiring.wiring_status(provider, path)
+    assert 'WorktreeCreate' in status['hook_manager']['stale_events']
+    assert status['hook_manager']['stale'] is True
+
+
+def test_repair_retracts_legacy_worktree_route(claude):
+    provider, path = claude
+    _install_with_legacy_worktree_route(provider, path)
+    result = hooks_wiring.install_hook_manager(provider, path)
+    assert result['ok'] is True
+    assert 'retracted' in result['msg']
+    assert 'WorktreeCreate' not in json.load(open(path))['hooks']
+    assert hooks_wiring.wiring_status(provider, path)['hook_manager']['stale'] is False
+
+
+def test_retraction_spares_a_foreign_worktree_hook(claude):
+    provider, path = claude
+    foreign = '/somewhere/else/bin/python -m their_tool WorktreeCreate'
+    _install_with_legacy_worktree_route(provider, path)
+    data = json.load(open(path))
+    data['hooks']['WorktreeCreate'].append(
+        {'hooks': [{'type': 'command', 'command': foreign}]})
+    with open(path, 'w') as f:
+        json.dump(data, f)
+
+    hooks_wiring.install_hook_manager(provider, path)
+    entries = json.load(open(path))['hooks']['WorktreeCreate']
+    commands = [h['command'] for e in entries for h in e['hooks']]
+    assert commands == [foreign]

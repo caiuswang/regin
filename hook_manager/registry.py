@@ -507,13 +507,13 @@ REGISTRY: list[Handler] = [
         priority=50,
         fn=misc_events.config_change,
     ),
-    # WorktreeCreate/WorktreeRemove are DEPRECATED for hook_manager.
-    # The harness reads the WorktreeCreate hook's stdout as the new worktree's
-    # path; hook_manager's default `{"suppressOutput": true}` response gets
-    # parsed as a path and breaks EnterWorktree (chdir ENOENT). The runner
-    # cannot tell which event response shape applies without per-event opt-out
-    # logic, so the safest fix is to leave both events unwired and let the
-    # Claude Code harness use its built-in git-worktree path.
+    # WorktreeCreate/WorktreeRemove stay unregistered, and install no longer
+    # wires WorktreeCreate at all (`core.STDOUT_IS_DATA`): the harness reads
+    # that hook's stdout as the path of the worktree it created, so a response
+    # there is a directory name as far as it is concerned. The runner is now
+    # silent on those events, but a handler emitting one would still be a
+    # handler whose only contract is to provision a worktree — which regin
+    # does not do; the Claude Code harness's built-in path is the right one.
     # The handler below is kept commented for reference; do not re-register.
     # Handler(
     #     name='worktree_remove',

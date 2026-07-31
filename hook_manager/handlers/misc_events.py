@@ -9,7 +9,8 @@ Wiring note: WorktreeCreate, Elicitation, and ElicitationResult are NOT in
 this module. They are *provider* hooks where the spec requires the handler
 to emit structured output (worktree path, form action/content) — a
 default-no-op handler would break the default Claude Code flow for users
-who didn't opt in. Leave them unwired.
+who didn't opt in. Leave them unwired; install skips WorktreeCreate outright
+(`core.STDOUT_IS_DATA`).
 """
 
 from __future__ import annotations

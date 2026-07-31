@@ -19,7 +19,7 @@
     "PostCompact":      [{"hooks":[{"type":"command","command":"python -m hook_manager PostCompact","timeout":5}]}],
     "FileChanged":      [{"hooks":[{"type":"command","command":"python -m hook_manager FileChanged","timeout":5}]}],
     "CwdChanged":       [{"hooks":[{"type":"command","command":"python -m hook_manager CwdChanged","timeout":5}]}],
-    "_note_worktree_hooks": "DEPRECATED — DO NOT wire WorktreeCreate or WorktreeRemove to hook_manager. The harness reads WorktreeCreate's stdout as the new worktree path, and hook_manager's default `{\"suppressOutput\": true}` response gets parsed as that path, breaking EnterWorktree (chdir ENOENT). Both events are intentionally unwired; the Claude Code harness handles git-worktree provisioning itself.",
+    "_note_worktree_hooks": "DO NOT wire WorktreeCreate or WorktreeRemove to hook_manager. The harness reads WorktreeCreate's stdout as the new worktree path, so a response there is parsed as that path and breaks `claude -w` / EnterWorktree with chdir ENOENT. `regin hooks repair` retracts any such route it finds, and the runner keeps stdout empty for the events in hook_manager.core.STDOUT_IS_DATA; the Claude Code harness handles git-worktree provisioning itself.",
     "ConfigChange":     [{"hooks":[{"type":"command","command":"python -m hook_manager ConfigChange","timeout":5}]}],
     "InstructionsLoaded": [{"hooks":[{"type":"command","command":"python -m hook_manager InstructionsLoaded","timeout":5}]}],
     "TeammateIdle":     [{"hooks":[{"type":"command","command":"python -m hook_manager TeammateIdle","timeout":5}]}]
