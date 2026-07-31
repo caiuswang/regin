@@ -26,6 +26,7 @@ writing to the developer's real `db/regin.db`:
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import subprocess
 import threading
@@ -40,8 +41,34 @@ from conftest_support import (
 
 # ── DB isolation (applies to every testpath) ──────────────────
 
+@pytest.fixture(scope="session")
+def _schema_template(tmp_path_factory) -> Path | None:
+    """`db/schema.sql` executed once per session, as a file to copy from.
+
+    Applying the script per test cost ~73ms — 126 DDL statements — which
+    across the suite was the single largest line item in the run, larger than
+    every slow test combined. Copying the built file is ~1ms.
+
+    The schema carries no pragmas, so a byte-copy of the closed template is
+    indistinguishable from having run the script: journal mode and page size
+    are defaults either way, and no test mutates the template.
+    """
+    schema_path = Path(__file__).resolve().parent / "db" / "schema.sql"
+    if not schema_path.exists():
+        return None
+
+    template = tmp_path_factory.mktemp("schema") / "template.db"
+    conn = sqlite3.connect(str(template))
+    try:
+        conn.executescript(schema_path.read_text())
+        conn.commit()
+    finally:
+        conn.close()
+    return template
+
+
 @pytest.fixture(autouse=True)
-def tmp_db(tmp_path, monkeypatch) -> Path:
+def tmp_db(tmp_path, monkeypatch, _schema_template) -> Path:
     """Isolated SQLite file applied to every test (autouse).
 
     `lib.orm.engine.DB_PATH` and the `lib.orm` engine cache point at a fresh
@@ -55,14 +82,8 @@ def tmp_db(tmp_path, monkeypatch) -> Path:
     """
     db_path = tmp_path / "test.db"
 
-    schema_path = Path(__file__).resolve().parent / "db" / "schema.sql"
-    if schema_path.exists():
-        conn = sqlite3.connect(str(db_path))
-        try:
-            conn.executescript(schema_path.read_text())
-            conn.commit()
-        finally:
-            conn.close()
+    if _schema_template is not None:
+        shutil.copyfile(_schema_template, db_path)
 
     import lib.orm.engine as _db_module
     monkeypatch.setattr(_db_module, "DB_PATH", str(db_path))

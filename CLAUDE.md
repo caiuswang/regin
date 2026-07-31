@@ -66,6 +66,10 @@ CLI mirror is `regin memory supersede <old-id> --body … `. Internals: *Agent M
 .venv/bin/python cli/regin.py hooks repair  # Rewrite any hook command that has drifted
 .venv/bin/python cli/regin.py serve         # Web dashboard on :8321
 
+# Tests — run the whole suite in parallel; ~35s vs ~4m serial.
+# Omit the flags (or pass `-n 0`) when you need --pdb or readable single-test output.
+.venv/bin/python -m pytest -q -n auto --dist=loadfile
+
 # Frontend (Vue 3 SPA in frontend/, Flask serves /api)
 cd frontend && npx vite                                  # dev on :5173, proxies /api → :8321
 cd frontend && npx vite build                            # → web/static/dist/
