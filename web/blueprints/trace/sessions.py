@@ -21,6 +21,117 @@ from lib.orm.models import (
 )
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace import trace_service
+from lib.trace.alias import (
+    ORIGIN_KEY, aliased_run_ids, strip_origin, trace_group,
+)
+
+
+_VAGUE_END_REASONS = frozenset({None, '', 'other', 'unknown'})
+
+
+def _group_ended_reason(group: list[str], stored):
+    """Why the session ended, taking the concrete answer from either writer.
+
+    The child's hook can only report the generic `other` for a run the SDK
+    ended deliberately — only the runner knows it was an idle timeout. The span
+    merge already prefers the concrete reason (`merge._fill_vague_attrs`), so
+    without this the header and the session list contradict the `session.end`
+    span in the very same response.
+
+    Takes the caller's already-resolved group: a live session's reason is NULL,
+    i.e. vague, so the early return below does not fire for it and re-resolving
+    here would add a connection to every poll of every session.
+    """
+    if stored not in _VAGUE_END_REASONS or len(group) < 2:
+        return stored
+    from sqlmodel import select as _sel
+    with SessionLocal() as session:
+        for reason in session.exec(
+                _sel(SessionModel.ended_reason)
+                .where(SessionModel.trace_id.in_(group))).all():
+            if reason not in _VAGUE_END_REASONS:
+                return reason
+    return stored
+
+
+def _total_span_count(session, trace_id: str, loaded: int = 0) -> int:
+    """Denominator for the "N of M loaded" indicator.
+
+    Excludes PENDING placeholders (the append-only store keeps them).
+
+    For an alias group the raw row count is the WRONG total: it sums both
+    writers, so it double-counts every event they both recorded and would read
+    "134 of 236" against a merged view. The merged count is what
+    `sessions.span_count` holds for the canonical row, so use that — the same
+    number the session list shows, which is also what makes the two agree.
+    """
+    from sqlalchemy import func as _fn
+    from sqlmodel import select as _sel
+
+    def raw_for(tid):
+        return session.exec(
+            _sel(_fn.count())
+            .select_from(SessionSpan)
+            .where(SessionSpan.trace_id == tid)
+            .where(SessionSpan.status_code != 'PENDING')
+        ).one()
+
+    group = _alias_group_ids(trace_id)
+    if len(group) < 2:
+        return raw_for(trace_id)
+    # Summing the group would double-count every event both writers recorded.
+    # The exact answer is the merged count in `sessions.span_count`, but that
+    # is only refreshed when the session ends — so for the whole life of a live
+    # run it is one writer's stale figure and can fall BELOW what is on screen.
+    # Merging per poll is far too slow, so take the best lower bounds we have:
+    # the merge keeps every row of the larger writer plus the smaller writer's
+    # unpaired ones, so it is never less than either raw count, and never less
+    # than what the caller already loaded.
+    stored = session.exec(
+        _sel(SessionModel.span_count)
+        .where(SessionModel.trace_id == group[0])
+    ).first()
+    return max(stored or 0, loaded, *(raw_for(t) for t in group))
+
+
+def _expand_alias_groups(trace_ids: list[str]) -> list[str]:
+    """Every trace id these sessions are actually made of, de-duplicated."""
+    out: list[str] = []
+    for trace_id in trace_ids:
+        for member in _alias_group_ids(trace_id):
+            if member not in out:
+                out.append(member)
+    return out
+
+
+def _map_row_to_span(row, canonical: str) -> dict:
+    """One `/map` row as a projection span dict.
+
+    Re-keys to the canonical id and tags the writer, the same contract as
+    `_fetch_spans_for_group` — without the tag `merge_spans` sees a single
+    origin and reconciles nothing, leaving this view double-rendered where the
+    other readers are not.
+    """
+    d = dict(row)
+    try:
+        d['attributes'] = json.loads(d['attributes']) if d.get('attributes') else {}
+    except (TypeError, ValueError):
+        d['attributes'] = {}
+    d[ORIGIN_KEY] = 'hook' if d['trace_id'] == canonical else 'sdk'
+    d['trace_id'] = canonical
+    return d
+
+
+def _alias_group_ids(trace_id: str) -> list[str]:
+    """Every trace id whose spans belong to this session — itself for an
+    ordinary one. Opens its own connection so the SQLModel-side readers can
+    scope to the group without threading one through."""
+    from lib.orm.engine import get_connection
+    conn = get_connection()
+    try:
+        return trace_group(conn, trace_id)
+    finally:
+        conn.close()
 from web.helpers import (
     _is_non_blank_str, _is_iso_timestamp, _normalize_is_test,
     _ingest_max_batch_size, _ingest_max_attributes_bytes,
@@ -404,6 +515,15 @@ def api_sessions():
             s = s.where(SessionModel.is_test == 1)
         if trace_id_q:
             s = s.where(SessionModel.trace_id.ilike(f"{trace_id_q}%"))
+        elif hidden_alias_ids:
+            # A regin-launched run is traced twice — once by the runner, once
+            # by the child `claude`'s own hooks — and the reader serves both
+            # ids as one merged session. Listing both would show the same run
+            # twice. The alias is hidden, never the canonical row, and only
+            # when the caller is browsing: an explicit `trace_id` prefix is a
+            # deep link and must still resolve the run's own id, which is what
+            # `/live` links carry.
+            s = s.where(SessionModel.trace_id.notin_(hidden_alias_ids))
         if active_filter != 'all':
             # Mirror the frontend's `isActive(s)` rule so the server-side
             # filter matches the green badge: status='active' is always
@@ -451,6 +571,7 @@ def api_sessions():
         return _filter_sessions_by_repo(s, request.args.get('repo'))
 
     with SessionLocal() as session:
+        hidden_alias_ids = aliased_run_ids(session)
         stmt = _apply_filters(_select(
             SessionModel.trace_id, SessionModel.title, SessionModel.title_source,
             SessionModel.status, SessionModel.ended_at, SessionModel.ended_reason,
@@ -1470,6 +1591,7 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
     """
     from sqlmodel import select as _select
     from lib.tokens.model_windows import infer_window as _infer_window
+    group = _alias_group_ids(trace_id)
     with SessionLocal() as session:
         row = session.exec(
             _select(
@@ -1489,7 +1611,15 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
                 SessionModel.title,
                 SessionModel.title_source,
                 SessionModel.origin,
-            ).where(SessionModel.trace_id == trace_id)
+            )
+            # Prefer the canonical row, but fall back to whichever member of
+            # the group HAS one. A regin-launched run whose child never wrote a
+            # hook trace — an install where regin's hooks aren't wired for that
+            # cwd — has no canonical row at all, and keying on it blindly wiped
+            # the whole header (status, title, model, phase all null) for every
+            # such run.
+            .where(SessionModel.trace_id.in_(group))
+            .order_by((SessionModel.trace_id == group[0]).desc())
         ).first()
     if not row:
         return {}
@@ -1497,6 +1627,7 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
      cache_read, cache_creation, peak, peak_main, live, active_work_ms,
      started_at, ended_at, last_seen, status, ended_reason,
      title, title_source, origin) = row
+    ended_reason = _group_ended_reason(group, ended_reason)
     # Compute window at read time from the session's richer `model` id —
     # see _row_to_dict() for the rationale. Window inference uses the
     # all-inclusive peak; the headline `context_pct` divides the *live*
@@ -1657,6 +1788,8 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
     from lib.trace.merge import merge_spans
     from lib.trace.trace_service.queries import _attach_prompt_expansions
 
+    group = _alias_group_ids(trace_id)
+    canonical = group[0]
     with SessionLocal() as session:
         rows = session.execute(
             _select(
@@ -1666,29 +1799,31 @@ def _structural_map_spans(trace_id: str) -> list[dict]:
                 SessionSpan.start_time, SessionSpan.end_time,
                 SessionSpan.duration_ms, SessionSpan.status_code,
                 SessionSpan.status_message, SessionSpan.attributes,
-                SessionSpan.turn_uuid, SessionSpan.source,
+                SessionSpan.turn_uuid, SessionSpan.tool_use_id,
+                SessionSpan.source,
             )
-            .where(SessionSpan.trace_id == trace_id)
+            .where(SessionSpan.trace_id.in_(group))
             .order_by(SessionSpan.start_time.asc(), SessionSpan.id.asc())
         ).mappings().all()
         act_row = session.exec(
             _select(SessionModel.status, SessionModel.last_seen)
-            .where(SessionModel.trace_id == trace_id)
+            .where(SessionModel.trace_id.in_(group))
+            .order_by(SessionModel.last_seen.desc())
         ).first()
     session_activity = (
         {'status': act_row[0], 'last_seen': act_row[1]} if act_row else None)
-    spans = []
-    for r in rows:
-        d = dict(r)
-        try:
-            d['attributes'] = json.loads(d['attributes']) if d.get('attributes') else {}
-        except (TypeError, ValueError):
-            d['attributes'] = {}
-        spans.append(d)
-    grafted = merge_spans(spans, session_activity=session_activity)
-    _attach_prompt_expansions(trace_id, grafted)
+    spans = [_map_row_to_span(r, canonical) for r in rows]
+    # `tool_use_id` is fetched only so the cross-source reconcile can join on
+    # it; this endpoint's span dict never carried it, and a guard test pins
+    # that shape. Dropped with the origin marker rather than widened here.
+    grafted = [{k: v for k, v in s.items() if k != 'tool_use_id'}
+               for s in strip_origin(
+                   merge_spans(spans, session_activity=session_activity))]
+    _attach_prompt_expansions(canonical, grafted)
     from lib.trace.workflow_labels import attach_workflow_agent_attrs
-    attach_workflow_agent_attrs(trace_id, grafted)
+    # Canonical, like the spans it annotates — the URL id would make the two
+    # entry points diverge for a session carrying bare workflow markers.
+    attach_workflow_agent_attrs(canonical, grafted)
     from lib.trace.wakeup_links import annotate_wakeup_resumes
     annotate_wakeup_resumes(grafted)
     for s in grafted:
@@ -1764,12 +1899,7 @@ def _shallow_map_response(trace_id: str):
     newest_loaded_id = max(ids) if ids else None
     with SessionLocal() as session:
         # span_count_total excludes PENDING placeholders (append-only keeps them).
-        span_count_total = session.exec(
-            _select(_func.count())
-            .select_from(SessionSpan)
-            .where(SessionSpan.trace_id == trace_id)
-            .where(SessionSpan.status_code != 'PENDING')
-        ).one()
+        span_count_total = _total_span_count(session, trace_id, len(widened))
     return jsonify({
         'trace_id': trace_id,
         'spans': [s for s in widened if s['span_id'] in root_ids],
@@ -2188,7 +2318,12 @@ def api_session_batch_delete():
     totals = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
     try:
         with SessionLocal() as session:
-            for trace_id in trace_ids:
+            # A regin-launched run is two trace ids shown as one row, so
+            # deleting the row the user sees has to take both halves. Removing
+            # only the canonical one left the other holding the session's
+            # spans, and it surfaced as a NEW row where the deleted one had
+            # been — the same session, apparently undeletable.
+            for trace_id in _expand_alias_groups(trace_ids):
                 for key, count in _delete_session_rows(session, trace_id).items():
                     totals[key] += count
             session.commit()
@@ -2219,7 +2354,11 @@ def api_session_delete(trace_id):
     """
     try:
         with SessionLocal() as session:
-            deleted = _delete_session_rows(session, trace_id)
+            deleted = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
+            # Both halves of a regin-launched run — see the batch endpoint.
+            for member in _alias_group_ids(trace_id):
+                for key, count in _delete_session_rows(session, member).items():
+                    deleted[key] += count
             session.commit()
     except Exception as exc:
         return jsonify({

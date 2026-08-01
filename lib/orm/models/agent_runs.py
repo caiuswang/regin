@@ -42,6 +42,11 @@ class AgentRun(Base, table=True):
     model: Optional[str] = Field(default=None, sa_column=Column("model", Text))
     detail: Optional[str] = Field(default=None,
                                   sa_column=Column("detail", Text))
+    # The child `claude` session this run is also traced as. NULL until the
+    # child reports its id, so readers treat NULL as "not aliased" rather than
+    # as a missing write.
+    cli_session_id: Optional[str] = Field(
+        default=None, sa_column=Column("cli_session_id", Text, index=True))
     created_at: str = Field(
         sa_column=Column("created_at", String, nullable=False,
                          server_default=text("(datetime('now'))")))

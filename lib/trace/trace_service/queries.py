@@ -277,18 +277,23 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
     that want the cleanup persisted use `materialize_session`.
     """
     from lib.orm.engine import get_connection
+    from lib.trace.alias import strip_origin, trace_group
     from lib.trace.merge import merge_spans
     from lib.trace.projection import (
-        _build_span_tree, _fetch_spans, _widen_envelopes,
+        _build_span_tree, _fetch_spans_for_group, _widen_envelopes,
     )
 
     conn = get_connection()
     try:
-        raw = _fetch_spans(conn, trace_id)
-        grafted = merge_spans(
-            raw, prompt_id_ceiling=_prompt_ceiling(conn, trace_id),
-            session_activity=_session_activity(conn, trace_id),
-        )
+        # A regin-launched run is traced twice; both ids resolve to the same
+        # group, and an ordinary session resolves to just itself.
+        group = trace_group(conn, trace_id)
+        trace_id = group[0]
+        raw = _fetch_spans_for_group(conn, group)
+        grafted = strip_origin(merge_spans(
+            raw, prompt_id_ceiling=_prompt_ceiling(conn, group),
+            session_activity=_session_activity(conn, group),
+        ))
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)
@@ -336,41 +341,43 @@ def _page_anchors(conn, trace_id, *, limit, before_id, after_id):
     up by `id > ?`. The frontend prunes the stale placeholder when
     the real anchor arrives, so there's no duplicate.
     """
+    from lib.trace.alias import sql_in
+    traces, tparams = sql_in(trace_id)
     placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
     if after_id is not None:
         after_placeholders = ','.join('?' for _ in _AFTER_ID_ANCHOR_NAMES)
         return conn.execute(
             f"""
             SELECT id, start_time FROM session_spans
-            WHERE trace_id = ?
+            WHERE trace_id IN {traces}
               AND name IN ({after_placeholders})
               AND (id > ? OR status_code = 'PENDING')
             ORDER BY start_time ASC, id ASC
             LIMIT 500
             """,
-            (trace_id, *_AFTER_ID_ANCHOR_NAMES, after_id),
+            (*tparams, *_AFTER_ID_ANCHOR_NAMES, after_id),
         ).fetchall()
     if before_id is not None:
         return conn.execute(
             f"""
             SELECT id, start_time FROM session_spans
-            WHERE trace_id = ?
+            WHERE trace_id IN {traces}
               AND name IN ({placeholders})
               AND id < ?
             ORDER BY start_time DESC, id DESC
             LIMIT ?
             """,
-            (trace_id, *_TURN_ANCHOR_NAMES, before_id, limit),
+            (*tparams, *_TURN_ANCHOR_NAMES, before_id, limit),
         ).fetchall()
     return conn.execute(
         f"""
         SELECT id, start_time FROM session_spans
-        WHERE trace_id = ?
+        WHERE trace_id IN {traces}
           AND name IN ({placeholders})
         ORDER BY start_time DESC, id DESC
         LIMIT ?
         """,
-        (trace_id, *_TURN_ANCHOR_NAMES, limit),
+        (*tparams, *_TURN_ANCHOR_NAMES, limit),
     ).fetchall()
 
 
@@ -383,12 +390,14 @@ def _window_end_for(conn, trace_id, before_id):
     after_id pages, no upper bound — we want everything from the window
     start onward.
     """
+    from lib.trace.alias import sql_in
     if before_id is None:
         return None
+    traces, tparams = sql_in(trace_id)
     cursor_row = conn.execute(
         "SELECT start_time FROM session_spans "
-        "WHERE trace_id = ? AND id = ?",
-        (trace_id, before_id),
+        f"WHERE trace_id IN {traces} AND id = ?",
+        (*tparams, before_id),
     ).fetchone()
     return cursor_row['start_time'] if cursor_row else None
 
@@ -400,58 +409,34 @@ def _compute_has_more_older(conn, trace_id, after_id, window_start):
     Reload (after_id) doesn't care about older history — that's already
     rendered. Caller passes in its existing has_more_older.
     """
+    from lib.trace.alias import sql_in
     if after_id is not None:
         return False
+    traces, tparams = sql_in(trace_id)
     placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
     older = conn.execute(
         f"""
         SELECT 1 FROM session_spans
-        WHERE trace_id = ?
+        WHERE trace_id IN {traces}
           AND name IN ({placeholders})
           AND start_time < ?
         LIMIT 1
         """,
-        (trace_id, *_TURN_ANCHOR_NAMES, window_start),
+        (*tparams, *_TURN_ANCHOR_NAMES, window_start),
     ).fetchone()
     return older is not None
 
 
 def _fetch_window_rows(conn, trace_id, window_start, window_end):
-    """Step 4: fetch every span in the window, with attributes decoded."""
-    if window_end is not None:
-        raw_rows = conn.execute(
-            """
-            SELECT id, trace_id, span_id, parent_id, name, kind,
-                   start_time, end_time, duration_ms, attributes,
-                   status_code, status_message, turn_uuid,
-                   output_tokens, input_tokens, image_tokens, cost_usd,
-                   source_prompt_id, source
-            FROM session_spans
-            WHERE trace_id = ?
-              AND start_time >= ?
-              AND start_time < ?
-            ORDER BY start_time ASC, id ASC
-            """,
-            (trace_id, window_start, window_end),
-        ).fetchall()
-    else:
-        raw_rows = conn.execute(
-            """
-            SELECT id, trace_id, span_id, parent_id, name, kind,
-                   start_time, end_time, duration_ms, attributes,
-                   status_code, status_message, turn_uuid,
-                   output_tokens, input_tokens, image_tokens, cost_usd,
-                   source_prompt_id, source
-            FROM session_spans
-            WHERE trace_id = ? AND start_time >= ?
-            ORDER BY start_time ASC, id ASC
-            """,
-            (trace_id, window_start),
-        ).fetchall()
-    return [
-        {**dict(r), 'attributes': json.loads(r['attributes'])}
-        for r in raw_rows
-    ]
+    """Step 4: fetch every span in the window, with attributes decoded.
+
+    Delegates so this reader and the whole-session one share ONE column list:
+    they had already drifted apart (`tool_use_id` was absent here), and a
+    column the SELECT omits is invisible to the projection downstream.
+    """
+    from lib.trace.projection import _fetch_spans_for_group
+    return _fetch_spans_for_group(conn, trace_id, window_start=window_start,
+                                  window_end=window_end)
 
 
 def _prompt_ceiling(conn, trace_id):
@@ -462,11 +447,14 @@ def _prompt_ceiling(conn, trace_id):
     agent_id set) are excluded: they are not main turn anchors, so a subagent
     prompt with a higher id must never raise the cutoff and drop the user's
     live main placeholder."""
+    from lib.trace.alias import sql_in
     from lib.trace.pending_spans import AGENT_ID_SQL
+    placeholders, params = sql_in(trace_id)
     ceiling_row = conn.execute(
         "SELECT MAX(id) FROM session_spans "
-        f"WHERE trace_id = ? AND name = 'prompt' AND {AGENT_ID_SQL} IS NULL",
-        (trace_id,),
+        f"WHERE trace_id IN {placeholders} AND name = 'prompt' "
+        f"AND {AGENT_ID_SQL} IS NULL",
+        params,
     ).fetchone()
     return ceiling_row[0] if ceiling_row else None
 
@@ -477,9 +465,15 @@ def _session_activity(conn, trace_id):
     an inactive/ended one (demote old blockers). None when the row is absent
     (a not-yet-summarised trace) — demotion then falls back to the
     same-agent-moved-on path alone."""
+    from lib.trace.alias import sql_in
+    placeholders, params = sql_in(trace_id)
+    # Over an alias group the two rows are summarised independently, so the
+    # freshest one is the session's real activity — taking the canonical row
+    # alone would call a live run idle whenever the child's row lags.
     row = conn.execute(
-        "SELECT status, last_seen FROM sessions WHERE trace_id = ?",
-        (trace_id,),
+        f"SELECT status, last_seen FROM sessions WHERE trace_id IN {placeholders} "
+        "ORDER BY last_seen DESC LIMIT 1",
+        params,
     ).fetchone()
     if row is None:
         return None
@@ -533,9 +527,19 @@ def fetch_session_paginated(
 
     conn = get_connection()
     try:
+        # Both ids of a regin-launched run page as one session; an ordinary
+        # session resolves to just itself. Every helper below takes the group,
+        # so an anchor on the SDK side can't be paged past.
+        from lib.trace.alias import strip_origin, trace_group
+        group = trace_group(conn, trace_id)
+        # `group` addresses the store (every span-level query below);
+        # `trace_id` stays the canonical id for the session-level joins, which
+        # key on one session and would break on a list.
+        trace_id = group[0]
+
         # Step 1: page the turn anchors.
         anchors = _page_anchors(
-            conn, trace_id,
+            conn, group,
             limit=limit, before_id=before_id, after_id=after_id,
         )
         if not anchors:
@@ -543,23 +547,23 @@ def fetch_session_paginated(
 
         # Step 2: window = [earliest_anchor_in_page, upper_bound).
         window_start = min(a['start_time'] for a in anchors)
-        window_end = _window_end_for(conn, trace_id, before_id)
+        window_end = _window_end_for(conn, group, before_id)
 
         # Step 3: do we have any older anchors?
         has_more_older = _compute_has_more_older(
-            conn, trace_id, after_id, window_start,
+            conn, group, after_id, window_start,
         )
 
         # Step 4: fetch every span in the window.
-        raw = _fetch_window_rows(conn, trace_id, window_start, window_end)
+        raw = _fetch_window_rows(conn, group, window_start, window_end)
 
         # Step 5: standard projection on the windowed subset. merge_spans
         # dedups coexisting placeholder/pending rows (append-only store) then
         # runs the deterministic reparent ladder.
-        grafted = merge_spans(
-            raw, prompt_id_ceiling=_prompt_ceiling(conn, trace_id),
-            session_activity=_session_activity(conn, trace_id),
-        )
+        grafted = strip_origin(merge_spans(
+            raw, prompt_id_ceiling=_prompt_ceiling(conn, group),
+            session_activity=_session_activity(conn, group),
+        ))
         widened = _widen_envelopes(grafted)
         _attach_compaction_reclaim(conn, trace_id, widened)
         _attach_subagent_impact(widened)

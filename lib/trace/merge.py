@@ -44,6 +44,7 @@ from lib.trace.pending_spans import (
     parse_naive_ts as _merge_ts,
     pending_id_for_resolved,
 )
+from lib.trace.alias import ORIGIN_KEY as _ORIGIN_KEY
 from lib.trace.projection import _graft_orphans
 
 # A bare slash command echo, e.g. `/goal-verified`, `/git:commit`. The resolved
@@ -291,6 +292,13 @@ def _is_expansion_anchor(candidate: dict, placeholder: dict, ph_text: str) -> bo
     text (its `/command` echo or its truncated head) is a strict prefix of the
     placeholder's fuller text, and whose id is not below the placeholder's (the
     placeholder is minted just before its anchor)."""
+    # Same-writer check. `trace_id` alone no longer distinguishes them: an
+    # alias group's rows are re-keyed to the canonical id at fetch, so this
+    # compared equal across the two writers and let a placeholder pair with the
+    # OTHER writer's anchor — parking the expansion on the SDK row and leaving
+    # the canonical anchor holding the bare echo.
+    if candidate.get(_ORIGIN_KEY) != placeholder.get(_ORIGIN_KEY):
+        return False
     if candidate.get('trace_id') != placeholder.get('trace_id'):
         return False
     prefix = _anchor_match_prefix(candidate)
@@ -564,6 +572,222 @@ def _demote_stale_pending(
     ]
 
 
+_CROSS_SOURCE_TEXT_NAMES = frozenset({'assistant_response', 'prompt'})
+# `assistant.thinking` carries no text on EITHER writer (reasoning is stored as
+# a signature + block count, never verbatim), so it is matched on its shape
+# instead. Keying it on a `text` attribute silently matched nothing and left
+# every reasoning card double-rendered.
+_CROSS_SOURCE_SHAPE_NAMES = frozenset({'assistant.thinking'})
+_CROSS_SOURCE_SINGLETON_NAMES = frozenset({'session.start', 'session.end'})
+# How far apart the two writers may stamp the same event. Measured skew on real
+# sessions is 1ms-3s (both derive from one model emission; the hook side waits
+# for a hook to fire). Deliberately far below the gap between two genuine
+# repeats — a user typing `continue` twice, a session restarting — so those
+# stay two spans instead of collapsing into one.
+_CROSS_SOURCE_SKEW_SEC = 5.0
+# Attribute values that carry no information, so a twin's concrete value wins.
+# `session.end` is the case that matters: the child's hook reports the generic
+# 'other' for a run the SDK ended deliberately, and only the runner knows it was
+# an idle timeout. Dropping the SDK row without this would delete the only
+# record of WHY a session stopped.
+_VAGUE_ATTR_VALUES = frozenset({None, '', 'other', 'unknown'})
+
+
+def _cross_source_text(name: str, attrs: dict) -> str:
+    """The text two writers can be expected to agree on for this span.
+
+    A `/command` prompt is the exception. `_absorb_slash_command_expansions`
+    runs first and REWRITES the hook anchor's text to the full expansion, while
+    the SDK row still holds the bare echo — so the raw texts no longer match and
+    the turn anchor rendered twice. Both sides collapse to the echo, which
+    neither pass alters.
+    """
+    text = (attrs.get('text') or '').strip()
+    if name != 'prompt' or not text:
+        return text
+    first = text.split('\n', 1)[0].strip()
+    return first if _SLASH_COMMAND_RE.match(first) else text
+
+
+def _cross_source_key(span: dict):
+    """What makes a span the same EVENT across the two writers, or None.
+
+    Only `tool_use_id` is a shared identifier — genuinely the same `toolu_*`
+    namespace on both sides, and globally unique, so it needs no further
+    qualification. `turn_uuid`, `parent_id` and `span_id` are NOT shared.
+
+    Everything else returns a *class*, not an identity: many spans share it
+    within one session (three `session.start`s after two resumes, `continue`
+    typed twice). Pairing inside a class is positional and time-bounded — see
+    `_pair_cross_source` — because a class key alone would collapse genuine
+    repeats into one.
+    """
+    name = span.get('name') or ''
+    call_id = _tool_use_id(span)
+    if call_id and (name.startswith('tool.') or name == 'permission.request'):
+        return ('id', name, call_id)
+    attrs = _attrs(span)
+    if name in _CROSS_SOURCE_TEXT_NAMES:
+        text = _cross_source_text(name, attrs)
+        return ('cls', name, text) if text else None
+    if name in _CROSS_SOURCE_SHAPE_NAMES:
+        # The signature length is a per-emission fingerprint and is byte-equal
+        # on both writers. `output_tokens` and `turn_index` are NOT usable: the
+        # SDK's usage is a streaming partial (it reports 0 where the hook reports
+        # 208) and the two number their turns independently.
+        return ('cls', name, attrs.get('thinking_signature_bytes'),
+                attrs.get('thinking_blocks'))
+    if name in _CROSS_SOURCE_SINGLETON_NAMES:
+        return ('cls', name)
+    return None
+
+
+def _prefer_cross_source(a: dict, b: dict) -> tuple[dict, dict]:
+    """(survivor, dropped) for one duplicated pair.
+
+    A resolved row always beats a pending one, whichever writer produced it —
+    that is what keeps the SDK's liveness: its span lands the moment the model
+    emits it, while the hook twin can still be a placeholder waiting on the
+    next hook to fire. Only when the two are at the same stage does the hook
+    row win, for its richer attributes and turn linkage.
+    """
+    a_pending = is_pending_span_id(a.get('span_id') or '')
+    b_pending = is_pending_span_id(b.get('span_id') or '')
+    if a_pending != b_pending:
+        return (b, a) if a_pending else (a, b)
+    return (a, b) if a.get(_ORIGIN_KEY) == 'hook' else (b, a)
+
+
+def _is_vague(value) -> bool:
+    """True for a value that carries no information.
+
+    Attributes are arbitrary JSON, so dicts and lists reach here and a bare
+    `in` against a set raises `TypeError` on them. They are never vague.
+    """
+    return isinstance(value, (str, type(None))) and value in _VAGUE_ATTR_VALUES
+
+
+def _fill_vague_attrs(survivor: dict, dropped: dict) -> dict:
+    """Carry the dropped twin's concrete attributes onto the survivor."""
+    kept, lost = _attrs(survivor), _attrs(dropped)
+    fills = {k: v for k, v in lost.items()
+             if not _is_vague(v) and (k not in kept or _is_vague(kept.get(k)))}
+    if not fills:
+        return survivor
+    return {**survivor, 'attributes': {**kept, **fills}}
+
+
+def _pair_cross_source(hooks: list[dict], sdks: list[dict],
+                       skew=_CROSS_SOURCE_SKEW_SEC) -> list[dict]:
+    """Reconcile one key's rows from the two writers, in time order.
+
+    Both lists are the SAME class of event (see `_cross_source_key`), so the
+    n-th occurrence on one side is the n-th on the other — but only if they are
+    close enough in time to be one emission. Walking both in order and pairing
+    on proximity is what lets a session hold three `session.start`s, or the
+    same prompt typed twice, without the second collapsing into the first.
+
+    `skew=None` drops the time bound, for a key that is already an identity
+    (`tool_use_id`): the rows under it belong to one call however far apart the
+    two writers stamped them.
+
+    An unpaired row on either side survives untouched: it is an event only that
+    writer saw, which is the whole reason both traces are kept.
+    """
+    out, i, j = [], 0, 0
+    while i < len(hooks) and j < len(sdks):
+        gap = _delta_sec(hooks[i], sdks[j])
+        if skew is not None and (gap is None or gap > skew):
+            # Too far apart to be one emission — retire whichever is older on
+            # its own rather than pairing across an unrelated occurrence.
+            older = hooks if _starts_before(hooks[i], sdks[j]) else sdks
+            out.append(hooks[i] if older is hooks else sdks[j])
+            i, j = (i + 1, j) if older is hooks else (i, j + 1)
+            continue
+        keep, drop = _prefer_cross_source(hooks[i], sdks[j])
+        out.append(_fill_vague_attrs(keep, drop))
+        i, j = i + 1, j + 1
+    return out + hooks[i:] + sdks[j:]
+
+
+def _delta_sec(a: dict, b: dict):
+    ta, tb = _merge_ts(a.get('start_time')), _merge_ts(b.get('start_time'))
+    return None if ta is None or tb is None else abs((ta - tb).total_seconds())
+
+
+def _starts_before(a: dict, b: dict) -> bool:
+    return (a.get('start_time') or '') <= (b.get('start_time') or '')
+
+
+def _dedup_cross_source(spans: list[dict]) -> list[dict]:
+    """Collapse the same event recorded by both writers of one session.
+
+    A regin-launched run is traced twice (`lib/trace/alias.py`), so the union
+    the read path hands us holds two rows for most events. Runs LATE in
+    `merge_spans` — after each writer's own placeholder/pending rules have
+    settled — because those rules read span-id conventions that only hold
+    within one writer: collapsing a cross-writer pair first would strip the
+    `pending-` row that `_inherit_turn_linkage` reads turn linkage from, and
+    hand `_absorb_slash_command_expansions` a survivor it can't pair.
+
+    A no-op unless the window actually mixes writers, which is what keeps every
+    ordinary session's output identical.
+    """
+    origins = {s.get(_ORIGIN_KEY) for s in spans}
+    if 'sdk' not in origins or 'hook' not in origins:
+        return spans
+    merged, buckets = _bucket_by_cross_source_key(spans)
+    for key, rows in buckets.items():
+        merged.extend(_reconcile_bucket(key, rows))
+    return sorted(merged, key=lambda s: (s.get('start_time') or '',
+                                         s.get('id') or 0))
+
+
+def _bucket_by_cross_source_key(spans: list[dict]):
+    """`(unkeyed, {key: rows})`. A span with no cross-source identity — most of
+    the enrichment the hooks add — passes straight through."""
+    unkeyed: list[dict] = []
+    buckets: dict = {}
+    for span in spans:
+        key = _cross_source_key(span)
+        if key is None:
+            unkeyed.append(span)
+        else:
+            buckets.setdefault(key, []).append(span)
+    return unkeyed, buckets
+
+
+def _settled(rows: list[dict]) -> list[dict]:
+    """One writer's rows for an event, minus its own placeholders once it has
+    resolved the event.
+
+    Positional pairing would otherwise match the OTHER writer's resolved row
+    against this writer's leftover placeholder — which wins on
+    `_prefer_cross_source` for being resolved — and leave this writer's real
+    anchor unpaired and rendered a second time. Keeping the placeholders when
+    NOTHING resolved is what preserves liveness: the SDK's resolved row still
+    pairs with a hook side that is still only a placeholder.
+    """
+    resolved = [r for r in rows
+                if not is_pending_span_id(r.get('span_id') or '')]
+    return resolved or rows
+
+
+def _reconcile_bucket(key, rows: list[dict]) -> list[dict]:
+    """The surviving rows for one cross-source key."""
+    hooks = _settled([r for r in rows if r.get(_ORIGIN_KEY) == 'hook'])
+    sdks = _settled([r for r in rows if r.get(_ORIGIN_KEY) != 'hook'])
+    if not hooks or not sdks:
+        return rows
+    # Positional pairing for BOTH kinds. A `tool_use_id` identifies the call,
+    # not the row: one call legitimately leaves several rows per writer (real
+    # traces carry up to 31 under one id), and collapsing only the first pair
+    # left the rest standing as duplicates.
+    return _pair_cross_source(hooks, sdks,
+                              skew=None if key[0] == 'id'
+                              else _CROSS_SOURCE_SKEW_SEC)
+
+
 def merge_spans(
     raw: list[dict], prompt_id_ceiling=None, session_activity=None,
 ) -> list[dict]:
@@ -590,6 +814,11 @@ def merge_spans(
     spans = _drop_resolved_permission_requests(spans)
     spans = _drop_denied_tool_failures(spans)
     spans = _absorb_slash_command_expansions(spans)
+    # After each writer's own placeholder rules have settled: they key on
+    # span-id conventions that only hold within one writer, so collapsing a
+    # cross-writer pair earlier strips the `pending-` row `_inherit_turn_linkage`
+    # reads from and leaves a slash expansion stranded on the SDK row.
+    spans = _dedup_cross_source(spans)
     spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling)
     spans = _demote_stale_pending(spans, session_activity=session_activity)
     return _graft_orphans(spans)

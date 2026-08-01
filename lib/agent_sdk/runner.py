@@ -567,6 +567,10 @@ class AgentRunner:
             return
         self._session_id = session_id
         registry.register_alias(session_id, self.trace_id)
+        # The registry's alias is process-local and dies with the server; the
+        # serve-time reader that unions the two traces into one session runs
+        # long after this process is gone, so the link has to be durable.
+        store.set_cli_session(self.trace_id, session_id)
 
     async def _run_turn(self, text: str) -> None:
         """Send one prompt and drain the turn it produces."""

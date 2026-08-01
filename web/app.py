@@ -188,6 +188,15 @@ def _reap_orphaned_agent_runs() -> None:
     except Exception:
         get_activity_logger("agent_sdk").error("sdk_reap_failed", exc_info=True)
 
+    # Re-runnable rather than a one-shot migration backfill: rows that need
+    # linking keep arriving — every run recorded before the column existed, and
+    # any run whose child died before it named itself. A migration would heal
+    # the rows present the instant it ran and leak every one after.
+    try:
+        agent_sdk_store.heal_cli_session_ids()
+    except Exception:
+        get_activity_logger("agent_sdk").error("sdk_heal_failed", exc_info=True)
+
 
 def _start_memory_warmup() -> None:
     """Eagerly load the dense recall models in a background thread.

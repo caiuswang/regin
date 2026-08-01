@@ -62,6 +62,61 @@ def _fetch_spans(conn, trace_id: str) -> list[dict]:
     ]
 
 
+_SPAN_COLUMNS = """
+    id, trace_id, span_id, parent_id, name, kind,
+    start_time, end_time, duration_ms, attributes,
+    status_code, status_message,
+    output_tokens, input_tokens, image_tokens, cost_usd,
+    tool_use_id, turn_uuid, source_prompt_id, source
+"""
+
+
+def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
+                           window_end=None) -> list[dict]:
+    """Span rows for a whole alias group, re-keyed to the canonical id.
+
+    An SDK run's two traces are one session (see `lib/trace/alias.py`). The
+    projection below groups by `trace_id`, so leaving the run's rows under
+    their own id would render one session as two unrelated conversations.
+
+    Each row is tagged with which writer produced it, because the reconcile in
+    `merge.py` has to know which of a duplicate pair to keep — and the `source`
+    column can't tell it (the runner's rows persist under the default
+    `'hook'`). A single-id group tags everything `'hook'`, so the cross-source
+    rules downstream are a no-op and unaliased sessions read exactly as before.
+
+    `window_start`/`window_end` bound the paginated reader's window. Both
+    readers share this one explicit column list: a column added to the store
+    but not to the SELECT is invisible to the projection, and the two lists
+    had already drifted (`tool_use_id` was missing from the windowed one).
+    """
+    from lib.trace.alias import ORIGIN_KEY, sql_in
+
+    if not trace_ids:
+        return []
+    placeholders, params = sql_in(trace_ids)
+    clauses = [f"trace_id IN {placeholders}"]
+    if window_start is not None:
+        clauses.append("start_time >= ?")
+        params.append(window_start)
+    if window_end is not None:
+        clauses.append("start_time < ?")
+        params.append(window_end)
+    rows = conn.execute(f"""
+        SELECT {_SPAN_COLUMNS}
+        FROM session_spans
+        WHERE {' AND '.join(clauses)}
+        ORDER BY start_time ASC, id ASC
+    """, params).fetchall()
+    canonical = params[0]
+    return [
+        {**dict(r), 'attributes': json.loads(r['attributes']),
+         'trace_id': canonical,
+         ORIGIN_KEY: 'hook' if r['trace_id'] == canonical else 'sdk'}
+        for r in rows
+    ]
+
+
 _SESSION_LIFECYCLE_NAMES = frozenset({'session.start', 'session.end'})
 _COMPACT_BOUNDARY_NAMES = frozenset({'compact.pre', 'compact.post'})
 # A `/rewind` marker: a conversation-level divider at the fork point. Like

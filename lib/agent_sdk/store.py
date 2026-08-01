@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
@@ -63,6 +64,196 @@ def reap_orphaned_runs(detail: str = "server restarted") -> int:
     if count:
         log.write("sdk_runs_reaped", count=count)
     return count
+
+
+def set_cli_session(trace_id: str, cli_session_id: str) -> None:
+    """Record the child `claude` session this run is also traced as.
+
+    Written the first time the child names itself, which is what lets the
+    serve-time reader union the run's SDK-stream spans with the trace the
+    child's own hooks write. Idempotent: the runner calls it for every message
+    it sees, so a value that hasn't changed must not churn `updated_at`.
+    """
+    if not trace_id or not cli_session_id or trace_id == cli_session_id:
+        return
+    try:
+        with SessionLocal() as session:
+            row = session.exec(
+                select(AgentRun).where(AgentRun.trace_id == trace_id)).first()
+            if row is None or row.cli_session_id == cli_session_id:
+                return
+            row.cli_session_id = cli_session_id
+            session.commit()
+    except OperationalError:
+        # A DB that predates migration 0012 has no such column. This runs on
+        # the first message of the first turn, so raising would propagate out
+        # of the turn and kill the run — an unmigrated install could not hold a
+        # session at all. The alias is an optimisation for the trace view; the
+        # run itself does not need it. Booting the server does not migrate, so
+        # this state is reachable, and every reader already defends it.
+        log.error("sdk_cli_session_link_unavailable", trace_id=trace_id,
+                  detail="agent_runs.cli_session_id missing — run `regin migrate`")
+        return
+    log.write("sdk_cli_session_linked", trace_id=trace_id,
+              cli_session_id=cli_session_id)
+
+
+# How far apart the two sessions' `started_at` may be and still be the same
+# run. The child is spawned from `connect()` and its SessionStart hook fires
+# before the runner emits its own `session.start`, so the real gap is
+# sub-second; 15s is slack for a loaded machine, still far tighter than the
+# gap between two separately launched runs.
+_HEAL_WINDOW_SEC = 15.0
+
+
+def _shared_call_candidates(conn, run) -> list[str]:
+    """Sessions sharing a `toolu_*` with this run — the strongest signal there
+    is, though not proof.
+
+    A `toolu_*` is minted once by the model, so two traces holding one recorded
+    the same call. They are still not necessarily the same *session*: a resume
+    or a fork copies the call into a second trace, and this store has 459 such
+    ids spread across sibling traces. So the caller's "exactly one candidate"
+    rule stays load-bearing — with a fork twin present the run is left
+    unaliased rather than linked to the wrong half.
+
+    Silent on a run that called no tools (a one-line answer, a smoke test);
+    those fall back to `_heal_candidates`.
+    """
+    mine = _call_ids(conn, run)
+    if not mine:
+        return []
+    # Checked per candidate rather than as one self-join across the store: the
+    # join form is quadratic over `session_spans` (measured 80s on a 2k-session
+    # DB) and this runs at every server start.
+    return [tid for tid in _nearby_sessions(conn, run)
+            if _call_ids(conn, tid) & mine]
+
+
+def _call_ids(conn, trace_id: str) -> set:
+    """Every `toolu_*` this trace recorded.
+
+    COALESCE because only the hook writer fills the promoted column; the runner
+    leaves it NULL and carries the id in `attributes` alone, so reading the
+    column alone would come back empty for exactly the rows this has to match.
+    """
+    return {r[0] for r in conn.execute("""
+        SELECT DISTINCT COALESCE(tool_use_id,
+                                 json_extract(attributes, '$.tool_use_id'))
+        FROM session_spans WHERE trace_id = ?
+    """, (trace_id,)).fetchall() if r[0]}
+
+
+# Wider than `_HEAL_WINDOW_SEC` because it only narrows which sessions get
+# checked — the shared-call proof, not this bound, decides the match.
+_HEAL_PROOF_WINDOW_SEC = 120.0
+
+
+def _nearby_sessions(conn, run) -> list[str]:
+    """Unclaimed non-SDK sessions that started near this run."""
+    return [r["trace_id"] for r in conn.execute("""
+        SELECT child.trace_id
+        FROM sessions AS child
+        JOIN sessions AS run ON run.trace_id = ?
+        WHERE child.trace_id <> run.trace_id
+          AND child.trace_id NOT LIKE 'sdk-%'
+          AND ABS(julianday(child.started_at)
+                  - julianday(run.started_at)) * 86400.0 < ?
+          AND child.trace_id NOT IN (
+              SELECT cli_session_id FROM agent_runs
+              WHERE cli_session_id IS NOT NULL)
+    """, (run, _HEAL_PROOF_WINDOW_SEC)).fetchall()]
+
+
+def _heal_candidates(conn, run) -> list[str]:
+    """Hook sessions that could be `run`'s child, closest-first.
+
+    Compared through the two rows' `sessions.started_at` rather than
+    `agent_runs.created_at`: that column is `datetime('now')` (UTC) while
+    `sessions.started_at` is local, and correlating across the two would drift
+    by the machine's whole UTC offset.
+
+    Title equality is the load-bearing condition, not the timestamp. Both rows
+    title themselves from the same first prompt, so an unrelated session the
+    user happened to start seconds later in the same directory — which time and
+    cwd alone cannot rule out — does not match. `cwd` is compared NULL-safely
+    with no escape hatch: a run with no recorded cwd matches only a child that
+    also has none, because a mis-link fuses two unrelated sessions into one
+    trace and nothing in the data can undo it afterwards.
+    """
+    return [r["trace_id"] for r in conn.execute("""
+        SELECT child.trace_id
+        FROM sessions AS child
+        JOIN sessions AS run ON run.trace_id = ?
+        WHERE child.trace_id <> run.trace_id
+          AND child.trace_id NOT LIKE 'sdk-%'
+          AND child.cwd IS run.cwd
+          AND child.title IS run.title
+          AND run.title IS NOT NULL
+          AND ABS(julianday(child.started_at)
+                  - julianday(run.started_at)) * 86400.0 < ?
+          AND child.trace_id NOT IN (
+              SELECT cli_session_id FROM agent_runs
+              WHERE cli_session_id IS NOT NULL)
+        ORDER BY ABS(julianday(child.started_at)
+                     - julianday(run.started_at)) ASC
+    """, (run, _HEAL_WINDOW_SEC)).fetchall()]
+
+
+def _resolve_children(conn, pending: list[str]) -> dict:
+    """`{run: child}` for the runs that resolve to exactly one candidate."""
+    linked: dict = {}
+    for run in pending:
+        # Proof first, correlation only for a run that called no tools.
+        candidates = (_shared_call_candidates(conn, run)
+                      or _heal_candidates(conn, run))
+        # Both queries exclude children already claimed in the DB, but two runs
+        # in THIS pass can still reach for the same one — a claim made a moment
+        # ago isn't committed yet.
+        claimed = set(linked.values())
+        candidates = [c for c in candidates if c not in claimed]
+        # Exactly one, or nothing: see the ambiguity note in the caller.
+        if len(candidates) == 1:
+            linked[run] = candidates[0]
+    return linked
+
+
+def heal_cli_session_ids(conn=None) -> int:
+    """Link `sdk-*` runs to their child session where the runner never did.
+
+    Re-runnable and EXISTS-gated (only `cli_session_id IS NULL` rows are
+    considered) rather than a one-shot migration backfill: rows keep arriving
+    from code paths that predate the write — a run whose child died before its
+    first message, a server killed mid-run, and every run recorded before this
+    column existed. A migration-gated backfill would heal the rows present the
+    moment it ran and silently leak every one after.
+
+    Ambiguity is refused, not guessed: a run matching two plausible children is
+    left NULL, because mis-linking merges two unrelated sessions into one trace
+    and there is no signal in the data to undo that later. Returns how many
+    rows were linked.
+    """
+    from lib.orm.engine import get_connection
+
+    owned = conn is None
+    conn = get_connection() if owned else conn
+    try:
+        pending = [r["trace_id"] for r in conn.execute("""
+            SELECT trace_id FROM agent_runs
+            WHERE cli_session_id IS NULL AND trace_id LIKE 'sdk-%'
+        """).fetchall()]
+        linked = _resolve_children(conn, pending)
+        for run, child in linked.items():
+            conn.execute(
+                "UPDATE agent_runs SET cli_session_id = ? WHERE trace_id = ?",
+                (child, run))
+        conn.commit()
+    finally:
+        if owned:
+            conn.close()
+    if linked:
+        log.write("sdk_cli_sessions_healed", count=len(linked))
+    return len(linked)
 
 
 def get_run(trace_id: str) -> dict | None:

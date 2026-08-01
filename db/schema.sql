@@ -210,19 +210,27 @@ CREATE INDEX IF NOT EXISTS idx_bridge_messages_created ON bridge_messages(create
 -- be reached by typing into its pane. `pid` is the `claude` child; `status`
 -- ('starting' | 'running' | 'exited' | 'failed') keeps a crashed runner's row
 -- distinguishable from a live one after a server restart.
+-- `cli_session_id` is the child `claude` session this run is ALSO traced as.
+-- The child loads the user's hooks, so it writes a second trace under its own
+-- id; the serve-time reader unions the pair into one session. NULL until the
+-- child reports its id (first message of the first turn), and forever for a
+-- run whose child never spoke — readers treat NULL as "not aliased".
 CREATE TABLE IF NOT EXISTS agent_runs (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    trace_id   TEXT NOT NULL UNIQUE,
-    status     TEXT NOT NULL DEFAULT 'starting',
-    pid        INTEGER,
-    cwd        TEXT,
-    model      TEXT,
-    detail     TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id       TEXT NOT NULL UNIQUE,
+    status         TEXT NOT NULL DEFAULT 'starting',
+    pid            INTEGER,
+    cwd            TEXT,
+    model          TEXT,
+    detail         TEXT,
+    cli_session_id TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_cli_session_id
+    ON agent_runs(cli_session_id);
 
 -- Post-hoc rubric grades for captured sessions (lib/grader/). Two
 -- independent axes per session — 'correctness' (claim groundedness /

@@ -50,6 +50,7 @@ def materialize_session(trace_id: str) -> dict:
             "UPDATE sessions SET active_work_ms = ? WHERE trace_id = ?",
             (active_ms, trace_id),
         )
+        _refresh_group_span_count(conn, trace_id)
         conn.commit()
         updated['active_work_ms'] = active_ms
         _trace_log().write(
@@ -66,6 +67,32 @@ def materialize_session(trace_id: str) -> dict:
         raise
     finally:
         conn.close()
+
+
+def _refresh_group_span_count(conn, trace_id) -> None:
+    """Re-point an aliased session's `span_count` at what its trace renders.
+
+    The counter is maintained per-`trace_id` and incrementally, so for a
+    regin-launched run it counts only the writer that happened to file under
+    that id — while the trace view serves the two merged. Left alone the list
+    would claim one number and the trace show another, with nothing to explain
+    the gap.
+
+    A no-op for an ordinary session — one indexed lookup on a tiny table, then
+    return — so the 99% case pays almost nothing and cannot be perturbed. Only
+    the canonical row is touched; the alias row keeps its own counters and is
+    hidden from the list anyway.
+    """
+    from lib.trace.alias import trace_group
+    from lib.trace.merge import merge_spans
+    from lib.trace.projection import _fetch_spans_for_group
+
+    group = trace_group(conn, trace_id)
+    if len(group) < 2:
+        return
+    merged = merge_spans(_fetch_spans_for_group(conn, group))
+    conn.execute("UPDATE sessions SET span_count = ? WHERE trace_id = ?",
+                 (len(merged), group[0]))
 
 
 def _refresh_active_work_ms(conn, trace_ids) -> None:
@@ -1601,6 +1628,15 @@ def ingest_session_spans(normalised: list[tuple]) -> tuple[int, int]:
         # without waiting for materialize. Cost scales with spans-per-
         # trace, not session lifetime — typical traces are <1k spans.
         _refresh_active_work_ms(conn, buckets.keys())
+        # Only on the batch that ends the session. Re-merging the whole union
+        # costs ~2x `_refresh_active_work_ms` and would run on EVERY batch from
+        # BOTH writers, inside this exclusive write transaction — quadratic in
+        # session length for exactly the long runs the SDK tier produces. The
+        # served counts are group-aware on their own (`_shallow_map_response`),
+        # so the stored counter only has to be right once the session is over.
+        if any(span.get('name') == 'session.end' for span, _ in normalised):
+            for _tid in buckets:
+                _refresh_group_span_count(conn, _tid)
         _resolve_session_repos(conn, normalised, existing_set)
         conn.commit()
     except Exception:
