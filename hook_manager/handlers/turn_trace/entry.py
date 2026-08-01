@@ -1,16 +1,17 @@
 """Hook dispatch entry points + global model + title emitters.
 
-The handler runs on every UserPromptSubmit, SessionEnd, Stop, and
-PostToolUse event. UserPromptSubmit/SessionEnd/Stop take the full path
-(`_emit_span`): emit the `turn` model span, refresh the `session.title`
-span if the title changed, then ingest the whole transcript's turn /
-attachment / system-event / local-command rows.
+The handler runs on every UserPromptSubmit, SessionEnd, Stop, PreToolUse,
+PostToolUse, PermissionRequest, and Notification event.
+UserPromptSubmit/SessionEnd/Stop take the full path (`_emit_span`): emit
+the `turn` model span, refresh the `session.title` span if the title
+changed, then ingest the whole transcript's turn / attachment /
+system-event / local-command rows.
 
-PostToolUse takes the lean fast path (`_emit_assistant_response_only`):
-the transcript scan still runs, but the global `turn` model span is
-skipped — a /model switch can only happen on a user prompt, not while
-tools are mid-flight. The seen-uuid cache makes the typical case (no
-new turn since the last tool call) cost one transcript scan plus zero
+The rest take the lean fast path (`_emit_assistant_response_only`): the
+transcript scan still runs, but the global `turn` model span is skipped —
+a /model switch can only happen on a user prompt, not while tools are
+mid-flight or a prompt is blocking. The seen-uuid cache makes the typical
+case (no new turn since the last tick) cost one transcript scan plus zero
 HTTP calls.
 """
 
@@ -43,12 +44,24 @@ _TAIL_BYTES = 64 * 1024  # cap the read at 64 KiB — only need the last turn
 
 def handle(payload: HookPayload) -> HookResponse | None:
     try:
-        if payload.event in ('PostToolUse', 'PreToolUse'):
+        if payload.event in ('PostToolUse', 'PreToolUse',
+                             'PermissionRequest', 'Notification'):
             # Lean fast path on both tool boundaries. PreToolUse fires when a
             # tool is *proposed* — before any permission prompt resolves — so
             # the thinking/response the agent just wrote lands immediately
             # instead of waiting (potentially minutes) for the user to approve
             # and PostToolUse to fire. Throttled by the seen-uuid cache.
+            #
+            # PermissionRequest/Notification are the SECOND chance at that same
+            # moment. PreToolUse fires as the call is proposed, which can beat
+            # Claude Code's flush of the text block that preceded it — measured
+            # on a real park: the PreToolUse tick posted the pending tool span
+            # and no response span, and the text only landed 111s later, once
+            # the answer arrived. These two fire while the prompt SITS there, so
+            # a flush that lost the race to PreToolUse is picked up seconds
+            # later instead of waiting on the user. Same seen-uuid cache, so a
+            # park that already posted its text costs one transcript read and
+            # zero HTTP calls.
             _emit_assistant_response_only(payload)
         else:
             _emit_span(payload)

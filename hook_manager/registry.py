@@ -412,6 +412,18 @@ REGISTRY: list[Handler] = [
     # PostToolUse tick then catches the tool result. Throttled by the
     # per-session seen-uuid cache (turn_trace.py).
     #
+    # PermissionRequest + Notification cover the case where PreToolUse fires
+    # BEFORE Claude Code has flushed the text block it is meant to pick up.
+    # Measured on a real AskUserQuestion park: the PreToolUse tick posted the
+    # pending tool span and no response span; the text landed 111s later, when
+    # the answer arrived. Both of these fire while the prompt SITS there —
+    # PermissionRequest ~2s in (it already writes `permission.request` on that
+    # very park), Notification for the idle case — so a flush that lost the
+    # race to PreToolUse is read seconds later instead of waiting on the user.
+    # This does NOT rescue a turn Claude never flushed at all: that text is not
+    # on disk to be read, and only a live event stream (the SDK runner's own
+    # trace) carries it.
+    #
     # Priority 150 so on UserPromptSubmit it runs AFTER prompt_trace
     # (priority 100). Otherwise the `turn` span's timestamp lands a
     # few microseconds BEFORE the new `prompt` span, sorts earlier in
@@ -423,8 +435,10 @@ REGISTRY: list[Handler] = [
         name='turn_trace',
         label='Turn Usage Trace',
         summary='Backfills per-turn usage spans from the transcript file.',
-        match_hint='UserPromptSubmit, SessionEnd, Stop, PreToolUse, and PostToolUse events',
-        events=['UserPromptSubmit', 'SessionEnd', 'Stop', 'PreToolUse', 'PostToolUse'],
+        match_hint='UserPromptSubmit, SessionEnd, Stop, PreToolUse, '
+                   'PostToolUse, PermissionRequest, and Notification events',
+        events=['UserPromptSubmit', 'SessionEnd', 'Stop', 'PreToolUse',
+                'PostToolUse', 'PermissionRequest', 'Notification'],
         kind='trace',
         priority=150,
         fn=turn_trace.handle,

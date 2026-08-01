@@ -428,6 +428,39 @@ def test_post_tool_use_emits_assistant_response_span(captured_spans, tmp_path):
     assert not any(s.get('name') == 'turn' for s in captured_spans)
 
 
+@pytest.mark.parametrize('event', ['PermissionRequest', 'Notification'])
+def test_park_event_emits_assistant_response_span(captured_spans, tmp_path, event):
+    """A blocking prompt (AskUserQuestion, a permission ask) parks the session:
+    PreToolUse has already fired and no further tool boundary arrives until the
+    user answers. When Claude Code flushes the preceding text AFTER that
+    PreToolUse tick, the response span waits on the human — measured at 111s on
+    a real park. These two events fire while the prompt is still sitting there,
+    so the flush is picked up then instead."""
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        _assistant_with_usage(msg_id='m1', text='Here are the options.',
+                              uuid='asst-uuid-parked12345', parent_uuid='u1'),
+    ])
+    turn_trace.handle(_p(event, session_id='s-park',
+                         transcript_path=str(transcript)))
+    response_spans = [s for s in captured_spans if s.get('name') == 'assistant_response']
+    assert len(response_spans) == 1
+    assert response_spans[0]['attributes']['text'] == 'Here are the options.'
+    # Lean path: no global `turn` model span (a /model switch can't happen
+    # while the session is blocked on a prompt).
+    assert not any(s.get('name') == 'turn' for s in captured_spans)
+
+
+def test_park_events_are_registered_for_turn_trace():
+    """The handler only ever sees these events if the registry subscribes to
+    them — the fast-path branch alone is dead code otherwise."""
+    from hook_manager.registry import REGISTRY
+    handler = next(h for h in REGISTRY if h.name == 'turn_trace')
+    assert 'PermissionRequest' in handler.events
+    assert 'Notification' in handler.events
+
+
 def test_post_tool_use_emits_tool_attribution_and_turn_usage(
     captured_spans, tmp_path, monkeypatch,
 ):
