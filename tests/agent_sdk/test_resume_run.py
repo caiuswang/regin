@@ -287,7 +287,61 @@ def test_a_live_run_is_not_resumed_out_from_under_itself(flask_client, enabled,
         registry.unregister_run(_TRACE)
 
     assert res.status_code == 400
+    # A registered run *can* be stopped, so this one keeps the actionable
+    # advice its starting twin cannot honestly give.
+    assert "stop it before resuming" in res.get_json()["error"]
     assert "prompt" not in stub_launch
+
+
+def test_a_resume_arriving_while_the_run_is_still_starting_is_refused(
+        flask_client, enabled, stub_launch):
+    """The window the liveness check used to miss: the first resume has been
+    scheduled, but its runner registers only after `connect()` has spawned the
+    child. Admitting the second puts two runners on one trace id."""
+    store.upsert_run(_TRACE, status="exited")
+    store.set_cli_session(_TRACE, _CHILD)
+    registry.reserve_run(_TRACE)
+    try:
+        res = flask_client.post("/api/agent-runs",
+                                json={"prompt": "carry on", "resume": _TRACE})
+    finally:
+        registry.release_run(_TRACE)
+
+    assert res.status_code == 400
+    # Not "stop it before resuming": a run that has not registered yet cannot
+    # be stopped, so that advice would send the operator to a dead control.
+    assert "starting" in res.get_json()["error"]
+    assert "prompt" not in stub_launch
+
+
+def test_a_resume_by_child_id_is_refused_while_the_run_is_starting(
+        flask_client, enabled, stub_launch):
+    store.upsert_run(_TRACE, status="exited")
+    store.set_cli_session(_TRACE, _CHILD)
+    registry.reserve_run(_TRACE)
+    try:
+        res = flask_client.post("/api/agent-runs",
+                                json={"prompt": "carry on", "resume": _CHILD})
+    finally:
+        registry.release_run(_TRACE)
+
+    assert res.status_code == 400
+    assert "prompt" not in stub_launch
+
+
+def test_a_starting_run_reports_itself_as_owned_and_not_resumable(flask_client):
+    """`resumable` is what the launch sheet offers, so it has to go false the
+    moment the run is claimed — not when its child finally exists."""
+    store.upsert_run(_TRACE, status="running")
+    store.set_cli_session(_TRACE, _CHILD)
+    registry.reserve_run(_TRACE)
+    try:
+        body = flask_client.get(f"/api/agent-runs/{_TRACE}").get_json()
+    finally:
+        registry.release_run(_TRACE)
+
+    assert body["owned"] is True
+    assert body["resumable"] is False
 
 
 def test_a_terminal_session_still_resumes_into_a_fresh_trace(flask_client,

@@ -11,13 +11,18 @@ spawns a real agent.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import threading
 import time
 from dataclasses import dataclass, field
 
 import pytest
 
-from lib.agent_sdk import client, runner as runner_mod, supervisor
+from lib.agent_sdk import client, registry, runner as runner_mod, supervisor
 from lib.settings import settings
+
+# An id a test launches under twice, standing in for a resumed run's own.
+_HELD = "sdk-held00001"
 
 
 @dataclass
@@ -104,6 +109,12 @@ def sdk_store(monkeypatch):
     monkeypatch.setattr(runner_mod.store, "upsert_run", _upsert)
     monkeypatch.setattr(runner_mod.store, "get_run", lambda tid: rows.get(tid))
     return rows
+
+
+@pytest.fixture(autouse=True)
+def _free_the_held_id():
+    yield
+    registry.unregister_run(_HELD)
 
 
 @pytest.fixture
@@ -286,3 +297,153 @@ def test_a_disabled_tier_refuses_a_programmatic_launch(monkeypatch):
 
     with pytest.raises(supervisor.LaunchRefused):
         supervisor.launch_run("draft it", one_shot=True)
+
+
+# ── the id a launch holds ─────────────────────────────────────────────
+#
+# A runner registers only after `connect()` has spawned its child. A launch
+# therefore claims its trace id up front, or a second launch reusing that id —
+# which is what a resume is — would be admitted into the gap.
+
+
+class StallingClient(FakeClient):
+    """Parks inside `connect()`: the run is scheduled and running, but its
+    runner has not registered."""
+
+    def __init__(self, connecting, release):
+        super().__init__()
+        self._connecting = connecting
+        self._release = release
+
+    async def connect(self):
+        self._connecting.set()
+        while not self._release.is_set():
+            await asyncio.sleep(0.01)
+
+
+def test_a_run_still_starting_already_owns_its_trace_id(enabled, monkeypatch):
+    connecting, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(runner_mod.client, "new_client",
+                        lambda **kw: StallingClient(connecting, release))
+    handle = supervisor.launch_run("draft it", trace_id=_HELD, one_shot=True)
+    try:
+        assert connecting.wait(5) is True
+
+        assert registry.is_sdk_owned(_HELD) is True
+    finally:
+        release.set()
+    handle.wait(timeout=10)
+
+
+def test_a_second_launch_on_a_starting_runs_id_is_refused(enabled, monkeypatch):
+    """Two resumes of one stopped run, arriving together: admitting the second
+    leaves two runners on one id, and the first to tear down evicts the other's
+    entry — a live child `/live` can no longer stop or steer."""
+    connecting, release = threading.Event(), threading.Event()
+    made = []
+
+    def _new_client(**kwargs):
+        made.append(StallingClient(connecting, release))
+        return made[-1]
+
+    monkeypatch.setattr(runner_mod.client, "new_client", _new_client)
+    handle = supervisor.launch_run("draft it", trace_id=_HELD, one_shot=True)
+    try:
+        assert connecting.wait(5) is True
+
+        with pytest.raises(supervisor.LaunchRefused, match="already starting"):
+            supervisor.launch_run("draft it too", trace_id=_HELD,
+                                  one_shot=True)
+    finally:
+        release.set()
+    handle.wait(timeout=10)
+    assert len(made) == 1
+
+
+def test_a_starting_run_counts_against_capacity(enabled, monkeypatch):
+    connecting, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(runner_mod.client, "new_client",
+                        lambda **kw: StallingClient(connecting, release))
+    monkeypatch.setattr(settings.agent_sdk, "max_concurrent_runs", 1)
+    handle = supervisor.launch_run("draft it", trace_id=_HELD, one_shot=True)
+    try:
+        assert connecting.wait(5) is True
+
+        with pytest.raises(supervisor.LaunchRefused,
+                           match="max_concurrent_runs"):
+            supervisor.launch_run("draft it too", one_shot=True)
+    finally:
+        release.set()
+    # The run's own reservation is not one of the slots it is competing for.
+    assert handle.wait(timeout=10).status == "exited"
+
+
+def test_a_finished_run_leaves_its_id_free_to_launch_again(fake_client):
+    supervisor.launch_run("draft it", trace_id=_HELD,
+                          one_shot=True).wait(timeout=10)
+
+    again = supervisor.launch_run("carry on", trace_id=_HELD, one_shot=True)
+
+    assert again.wait(timeout=10).status == "exited"
+
+
+def test_a_crashed_run_leaves_its_id_free_to_launch_again(fake_client,
+                                                          monkeypatch):
+    turns = []
+
+    async def dies_once(text):
+        turns.append(text)
+        if len(turns) == 1:
+            raise RuntimeError("client died")
+
+    monkeypatch.setattr(fake_client, "query", dies_once)
+
+    crashed = supervisor.launch_run("draft it", trace_id=_HELD,
+                                    one_shot=True).wait(timeout=10)
+    resumed = supervisor.launch_run("carry on", trace_id=_HELD,
+                                    one_shot=True).wait(timeout=10)
+
+    assert crashed.status == "failed"
+    assert resumed.status == "exited"
+
+
+def test_a_run_that_never_reached_its_runner_still_gives_the_id_back(
+        enabled, monkeypatch):
+    """No runner means no `unregister_run`, so the launch's own completion
+    callback is the only thing that can hand the id back."""
+    async def _explode(trace_id, prompt, **kwargs):
+        raise RuntimeError("never started")
+
+    monkeypatch.setattr(supervisor, "run_session", _explode)
+
+    outcome = supervisor.launch_run("draft it", trace_id=_HELD,
+                                    one_shot=True).wait(timeout=10)
+
+    assert outcome.status == "failed"
+    assert registry.is_sdk_owned(_HELD) is False
+
+
+def test_a_launch_that_cannot_be_scheduled_gives_the_id_back(enabled,
+                                                             monkeypatch):
+    def _no_loop():
+        raise RuntimeError("loop is gone")
+
+    monkeypatch.setattr(supervisor, "_ensure_loop", _no_loop)
+
+    with pytest.raises(RuntimeError, match="loop is gone"):
+        supervisor.launch_run("draft it", trace_id=_HELD, one_shot=True)
+
+    assert registry.is_sdk_owned(_HELD) is False
+
+
+def test_a_cancelled_run_gives_the_id_back():
+    """Cancellation is a terminal path like any other, and the one that skips
+    the coroutine entirely — an id held through it is held forever."""
+    token = object()
+    registry.reserve_run(_HELD, token)
+    future = concurrent.futures.Future()
+    future.add_done_callback(lambda f: supervisor._on_done(_HELD, token, f))
+
+    assert future.cancel() is True
+
+    assert registry.is_sdk_owned(_HELD) is False

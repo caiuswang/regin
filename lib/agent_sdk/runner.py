@@ -395,7 +395,8 @@ class AgentRunner:
     # ── lifecycle ──────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
+        others = registry.active_run_count(exclude=self.trace_id)
+        if others >= settings.agent_sdk.max_concurrent_runs:
             raise RunnerBusy("max_concurrent_runs reached")
         self.loop = asyncio.get_running_loop()
         shadowed = settings.agent_sdk.shadowed_gating(self._permission_mode)

@@ -54,9 +54,15 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
         return _loop
 
 
-def _on_done(trace_id: str, future) -> None:
-    """Drain the run's result so a failure is logged rather than swallowed by
-    the loop's default exception handler."""
+def _on_done(trace_id: str, token: object, future) -> None:
+    """Give the trace id back, and drain the run's result so a failure is
+    logged rather than swallowed by the loop's default exception handler.
+
+    Runs on every terminal path — returned, raised and cancelled — which is
+    what the reservation needs: one that outlived its run would refuse every
+    later resume of that id for the life of the process.
+    """
+    registry.release_run(trace_id, token)
     error = future.exception() if not future.cancelled() else None
     if error is not None:
         log.error("sdk_run_crashed", trace_id=trace_id, detail=repr(error))
@@ -159,18 +165,33 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     `trace_id` reuses an earlier run's identity rather than minting one, which
     is what makes resuming a stopped run *the same session* to every reader:
     the row is revived, the spans keep landing on one trace, and the child
-    keeps its own session id, so the pair stays aliased. Callers must pass an
-    id they mean to continue — a live run's would fuse two sessions.
+    keeps its own session id, so the pair stays aliased. An id this process is
+    already running — or already starting — under is refused rather than fused
+    into the run holding it.
     """
     _refuse_unless_launchable(prompt)
     trace_id = trace_id or f"sdk-{uuid.uuid4().hex[:12]}"
-    options = client.RunOptions(env=dict(env or {}),
-                                permission_mode=permission_mode, model=model)
-    future = asyncio.run_coroutine_threadsafe(
-        run_session(trace_id, prompt, cwd=cwd, options=options,
-                    one_shot=one_shot, resume=resume),
-        _ensure_loop())
-    future.add_done_callback(lambda f: _on_done(trace_id, f))
+    # Claimed before the run is scheduled, because ownership has to be true
+    # before the child exists: the runner registers only after `connect()` has
+    # spawned it, and two launches reusing one trace id inside that window
+    # would both be admitted — the second runner replacing the first, whose
+    # teardown then evicts it, orphaning a live child.
+    token = object()
+    if not registry.reserve_run(trace_id, token):
+        raise LaunchRefused("that run is already starting")
+    try:
+        loop = _ensure_loop()
+        options = client.RunOptions(env=dict(env or {}),
+                                    permission_mode=permission_mode,
+                                    model=model)
+        future = asyncio.run_coroutine_threadsafe(
+            run_session(trace_id, prompt, cwd=cwd, options=options,
+                        one_shot=one_shot, resume=resume),
+            loop)
+    except BaseException:
+        registry.release_run(trace_id, token)
+        raise
+    future.add_done_callback(lambda f: _on_done(trace_id, token, f))
     log.write("sdk_run_launched", trace_id=trace_id, cwd=cwd,
               one_shot=one_shot, resumed_from=resume)
     return RunHandle(trace_id, future)

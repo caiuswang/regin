@@ -31,6 +31,15 @@ log = get_activity_logger("agent_sdk")
 
 _lock = threading.Lock()
 _runs: dict[str, object] = {}
+# Ids claimed by a launch whose runner does not exist yet, → the token that
+# claimed each. A runner registers only after `connect()` has spawned its
+# child, so without this an id is unowned for the whole of its startup — long
+# enough for a second launch reusing that id (a resume) to be admitted, whose
+# runner then replaces the first in `_runs` and leaves a live child nothing can
+# stop or steer. Deliberately not a placeholder in `_runs`: `_live_runner`
+# calls methods on whatever it finds, and a reserved run is genuinely not
+# reachable yet.
+_reserved: dict[str, object] = {}
 # CLI session id → the run it belongs to. A regin-launched agent is traced
 # twice: once as this run, and once as the `claude` session the child reports
 # through the hooks it loads. An operator on `/live` can be looking at either
@@ -64,19 +73,50 @@ class PendingAsk:
     kind: str = 'question'
 
 
+_MISSING = object()
 _ANSWER_KINDS = frozenset({'question'})
 _DECISION_KINDS = frozenset({'plan', 'tool'})
+
+
+def reserve_run(trace_id: str, token: object = None) -> bool:
+    """Claim `trace_id` for a launch whose runner does not exist yet.
+
+    False when the id is already live or already claimed. The test and the
+    claim happen under one `_lock` acquisition, so of two callers racing for
+    the same id exactly one is told to proceed.
+
+    `token` identifies this claim. A release names it, so a launch that ends
+    late cannot drop a reservation a *later* launch of the same id now holds.
+    """
+    with _lock:
+        if trace_id in _runs or trace_id in _reserved:
+            return False
+        _reserved[trace_id] = token
+    log.write("sdk_run_reserved", trace_id=trace_id)
+    return True
+
+
+def release_run(trace_id: str, token: object = None) -> None:
+    """Give a claimed id back. Idempotent, and a no-op against a claim held
+    under a different token."""
+    with _lock:
+        if _reserved.get(trace_id, _MISSING) is not token:
+            return
+        _reserved.pop(trace_id, None)
+    log.write("sdk_run_released", trace_id=trace_id)
 
 
 def register_run(trace_id: str, runner) -> None:
     with _lock:
         _runs[trace_id] = runner
+        _reserved.pop(trace_id, None)
     log.write("sdk_run_registered", trace_id=trace_id)
 
 
 def unregister_run(trace_id: str) -> None:
     with _lock:
         _runs.pop(trace_id, None)
+        _reserved.pop(trace_id, None)
         for key in [k for k, ask in _asks.items() if ask.trace_id == trace_id]:
             _asks.pop(key, None)
         for alias in [a for a, run in _aliases.items() if run == trace_id]:
@@ -107,15 +147,36 @@ def owning_run(trace_id: str) -> str:
 
 
 def is_sdk_owned(trace_id: str) -> bool:
-    """True when this process holds a live typed channel for `trace_id`."""
+    """True when this process holds a live typed channel for `trace_id`, or is
+    starting one: a reserved id belongs to a launch already under way, and a
+    caller asking who owns it is deciding whether to launch another."""
     trace_id = owning_run(trace_id)
     with _lock:
-        return trace_id in _runs
+        return trace_id in _runs or trace_id in _reserved
 
 
-def active_run_count() -> int:
+def is_starting(trace_id: str) -> bool:
+    """True when a launch holds `trace_id` but its channel is not up yet.
+
+    `is_sdk_owned` covers both states because a caller deciding whether to
+    launch treats them alike. A caller *refusing* cannot: only a registered
+    run can be stopped, so telling an operator to stop a starting one sends
+    them to a control that will answer "no live agent session".
+    """
+    trace_id = owning_run(trace_id)
     with _lock:
-        return len(_runs)
+        return trace_id not in _runs and trace_id in _reserved
+
+
+def active_run_count(exclude: str = "") -> int:
+    """Live runners plus the ids reserved for runs still starting.
+
+    `exclude` drops one id from the tally: a run checking capacity for itself
+    already holds its own reservation, and counting it would deny the last
+    slot to the run that legitimately claimed it.
+    """
+    with _lock:
+        return len({*_runs, *_reserved} - {exclude})
 
 
 def register_ask(ask: PendingAsk) -> int:

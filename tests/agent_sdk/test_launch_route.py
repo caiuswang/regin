@@ -8,6 +8,8 @@ stubbed so no test spawns a real agent.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from lib.agent_sdk import registry, store, supervisor
@@ -71,6 +73,29 @@ def test_capacity_refusal_is_surfaced(flask_client, enabled, monkeypatch):
     body = flask_client.post("/api/agent-runs", json={"prompt": "hi"}).get_json()
 
     assert body == {"launched": False, "detail": "max_concurrent_runs reached"}
+
+
+def test_an_id_already_claimed_by_another_launch_is_a_structured_refusal(
+        flask_client, enabled, monkeypatch):
+    """The narrow-window twin of `_resume_target`'s "that run is still live":
+    the id was taken by a launch already under way. An operator gets a
+    sentence in the sheet, not a 500."""
+    class _FixedUuid:
+        @staticmethod
+        def uuid4():
+            return uuid.UUID(int=0xC0FFEE)
+
+    monkeypatch.setattr(supervisor, "uuid", _FixedUuid)
+    minted = f"sdk-{uuid.UUID(int=0xC0FFEE).hex[:12]}"
+    registry.reserve_run(minted)
+    try:
+        res = flask_client.post("/api/agent-runs", json={"prompt": "hi"})
+    finally:
+        registry.release_run(minted)
+
+    assert res.status_code == 200
+    assert res.get_json() == {"launched": False,
+                              "detail": "that run is already starting"}
 
 
 def test_missing_sdk_package_explains_the_extra(flask_client, enabled,

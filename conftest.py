@@ -240,11 +240,11 @@ def _no_external_agent_spawn(monkeypatch):
     from lib.agent_sdk import supervisor as agent_sdk_supervisor
     prior_on_done = agent_sdk_supervisor._on_done
 
-    def _record_run(trace_id, future):
+    def _record_run(trace_id, token, future):
         error = future.exception() if not future.cancelled() else None
         if isinstance(error, ExternalAgentSpawnBlocked):
             escaped.append(str(error))
-        return prior_on_done(trace_id, future)
+        return prior_on_done(trace_id, token, future)
 
     monkeypatch.setattr(agent_sdk_supervisor, "_on_done", _record_run)
     prior_hook = threading.excepthook

@@ -67,6 +67,9 @@ def _resume_target(resume: str) -> tuple[str | None, str | None]:
             raise _BadRequest(f"no run recorded for {resume}")
         return resume, None
     trace_id = row["trace_id"]
+    if agent_sdk.is_starting(trace_id):
+        raise _BadRequest("that run is starting — it cannot be stopped until "
+                          "its session is up")
     if agent_sdk.is_sdk_owned(trace_id):
         raise _BadRequest("that run is still live — stop it before resuming")
     child = row.get("cli_session_id")

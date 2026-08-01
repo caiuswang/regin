@@ -570,5 +570,34 @@ def test_a_one_shot_run_refuses_a_follow_up_it_could_never_run(
     assert fake_client.prompts == ["the job"]
 
 
+def test_the_runner_will_not_start_past_max_concurrent_runs(
+        captured, fake_client, monkeypatch):
+    """The supervisor refuses a launch before scheduling it; this gate catches
+    a runner constructed directly, which the programmatic API allows."""
+    monkeypatch.setattr(settings.agent_sdk, "max_concurrent_runs", 1)
+    registry.register_run("sdk-occupant", object())
+    try:
+        with pytest.raises(runner_mod.RunnerBusy):
+            _run(runner_mod.AgentRunner("sdk-capped").start())
+    finally:
+        registry.unregister_run("sdk-occupant")
+
+    assert fake_client.connects == 0
+
+
+def test_a_runs_own_claim_does_not_deny_it_the_last_slot(
+        captured, fake_client, monkeypatch):
+    """A launch reserves its id before the runner exists, so counting that
+    reservation would make the run compete with itself for the slot it holds."""
+    monkeypatch.setattr(settings.agent_sdk, "max_concurrent_runs", 1)
+    token = object()
+    assert registry.reserve_run("sdk-claimed", token) is True
+    try:
+        _run(runner_mod.AgentRunner("sdk-claimed").start())
+        assert fake_client.connects == 1
+    finally:
+        registry.unregister_run("sdk-claimed")
+
+
 async def _noop_post(_span):
     return None
