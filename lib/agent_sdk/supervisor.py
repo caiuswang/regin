@@ -146,7 +146,8 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                env: dict[str, str] | None = None,
                permission_mode: str = "", model: str = "",
                one_shot: bool = False,
-               resume: str | None = None) -> RunHandle:
+               resume: str | None = None,
+               trace_id: str | None = None) -> RunHandle:
     """Schedule a run on the shared loop and return its completion handle.
 
     This is the programmatic entry point: `env` reaches the launched agent's
@@ -154,9 +155,15 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     override the global defaults for this run alone. `one_shot` ends the
     session with its first turn instead of leaving it open for follow-ups.
     `resume` continues an earlier session instead of starting a fresh one.
+
+    `trace_id` reuses an earlier run's identity rather than minting one, which
+    is what makes resuming a stopped run *the same session* to every reader:
+    the row is revived, the spans keep landing on one trace, and the child
+    keeps its own session id, so the pair stays aliased. Callers must pass an
+    id they mean to continue — a live run's would fuse two sessions.
     """
     _refuse_unless_launchable(prompt)
-    trace_id = f"sdk-{uuid.uuid4().hex[:12]}"
+    trace_id = trace_id or f"sdk-{uuid.uuid4().hex[:12]}"
     options = client.RunOptions(env=dict(env or {}),
                                 permission_mode=permission_mode, model=model)
     future = asyncio.run_coroutine_threadsafe(
@@ -171,7 +178,8 @@ def launch_run(prompt: str, *, cwd: str | None = None,
 
 def launch(prompt: str, *, cwd: str | None = None,
            model: str = "", permission_mode: str = "",
-           one_shot: bool = False, resume: str | None = None) -> str:
+           one_shot: bool = False, resume: str | None = None,
+           trace_id: str | None = None) -> str:
     """Start a session for `prompt` and return its trace id immediately.
 
     Returns as soon as the run is scheduled — the agent works on the shared
@@ -185,7 +193,7 @@ def launch(prompt: str, *, cwd: str | None = None,
     """
     return launch_run(prompt, cwd=cwd, model=model,
                       permission_mode=permission_mode, one_shot=one_shot,
-                      resume=resume).trace_id
+                      resume=resume, trace_id=trace_id).trace_id
 
 
 def send_prompt(trace_id: str, text: str) -> tuple[bool, str]:

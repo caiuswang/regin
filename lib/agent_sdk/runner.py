@@ -93,10 +93,10 @@ class AgentRunner:
         self.trace_id = trace_id
         self.cwd = cwd
         self.options = options
-        # The session this run continues, if any. It is *not* this run's trace
-        # id: whether `--resume` keeps the CLI's own session id is that build's
-        # business, so the continuation gets its own trace and names its parent
-        # instead of assuming it inherits one.
+        # The CLI session this run continues, if any — never this run's own
+        # trace id, which the CLI has no session under. A resumed run may reuse
+        # the trace id it continues, so `resumed_from` naming that would be
+        # self-referential and tell a later reader nothing.
         self.resume = resume
         self.loop: asyncio.AbstractEventLoop | None = None
         self._client = None

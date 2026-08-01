@@ -134,9 +134,11 @@ def test_unknown_permission_mode_is_a_400_not_a_dead_run(flask_client, enabled,
     assert "prompt" not in stub_launch
 
 
-def test_resuming_a_regin_launched_run_is_refused(flask_client, enabled,
-                                                  stub_launch):
-    """`sdk-…` is regin's name for a run, not a session the CLI can reopen."""
+def test_resuming_a_run_regin_never_recorded_is_refused(flask_client, enabled,
+                                                        stub_launch):
+    """`sdk-…` is regin's name for a run, not a session the CLI can reopen — so
+    with no row naming the child behind it there is nothing to resume. Reviving
+    a run regin DOES have a row for is `test_resume_run.py`."""
     res = flask_client.post("/api/agent-runs",
                             json={"prompt": "go", "resume": "sdk-abc123"})
 

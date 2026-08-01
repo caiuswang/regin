@@ -33,6 +33,10 @@ def upsert_run(trace_id: str, *, status: str, pid: int | None = None,
             row.model = model
         if detail is not None:
             row.detail = detail
+        elif status == "running":
+            # `detail` explains how a run ended, so a revived row would keep
+            # answering pollers with why its *previous* life stopped.
+            row.detail = None
         session.commit()
     log.write("sdk_run_status", trace_id=trace_id, status=status)
 
@@ -73,6 +77,13 @@ def set_cli_session(trace_id: str, cli_session_id: str) -> None:
     serve-time reader union the run's SDK-stream spans with the trace the
     child's own hooks write. Idempotent: the runner calls it for every message
     it sees, so a value that hasn't changed must not churn `updated_at`.
+
+    A *different* id on an already-linked row is refused rather than written.
+    Resuming keeps the child's session id (`fork_session=False`), so a second
+    id means either the CLI forked anyway or two runs claimed one row —
+    overwriting would silently re-point the trace group at a session the run's
+    earlier half was never part of, and the spans it leaves behind become
+    unreachable from either id.
     """
     if not trace_id or not cli_session_id or trace_id == cli_session_id:
         return
@@ -81,6 +92,11 @@ def set_cli_session(trace_id: str, cli_session_id: str) -> None:
             row = session.exec(
                 select(AgentRun).where(AgentRun.trace_id == trace_id)).first()
             if row is None or row.cli_session_id == cli_session_id:
+                return
+            if row.cli_session_id:
+                log.error("sdk_cli_session_conflict", trace_id=trace_id,
+                          detail=f"holds {row.cli_session_id}, "
+                                 f"refused {cli_session_id}")
                 return
             row.cli_session_id = cli_session_id
             session.commit()
@@ -269,4 +285,46 @@ def get_run(trace_id: str) -> dict | None:
             "cwd": row.cwd,
             "model": row.model,
             "detail": row.detail,
+            "cli_session_id": row.cli_session_id,
         }
+
+
+def find_run(session_id: str) -> dict | None:
+    """The run `session_id` names, by *either* of the two ids it is traced as.
+
+    A merged run's canonical id is the child's — the session list hides the
+    `sdk-…` half — so every id an operator can arrive with has to resolve here,
+    not just the one the row is keyed on.
+
+    `cli_session_id` carries a plain index, not a unique one, and rows claiming
+    one child already exist from before the alias was written. The tiebreak is
+    therefore the same `ORDER BY trace_id LIMIT 1` as
+    `lib.trace.alias.trace_group`: resolving to a different row than the one
+    the trace view treats as canonical would resume a conversation into a trace
+    nothing renders.
+
+    A DB that predates migration 0012 answers "no run" rather than raising:
+    booting the server does not migrate, and callers read that as an id regin
+    never launched — which is what such an install can honestly say, and leaves
+    a terminal session resumable there instead of failing the whole launch.
+    """
+    if not session_id:
+        return None
+    try:
+        exact = get_run(session_id)
+        if exact is not None:
+            return exact
+        with SessionLocal() as session:
+            aliased = session.exec(
+                select(AgentRun.trace_id)
+                .where(AgentRun.cli_session_id == session_id)
+                .order_by(AgentRun.trace_id)).first()
+        return get_run(aliased) if aliased else None
+    except OperationalError as exc:
+        # Answering "no run" sends the caller down the pass-through path, which
+        # mints a second trace against a child that already has one. That is
+        # the right trade for a missing column — the alternative is failing
+        # every launch — but a transient error must not do it invisibly.
+        log.error("sdk_run_lookup_unavailable", session_id=session_id,
+                  detail=f"{exc} — if the column is missing, run `regin migrate`")
+        return None

@@ -29,7 +29,8 @@ _PROMPT_MAX = 8000
 _ID_MAX = 200
 _PATH_MAX = 2000
 # regin's own name for a run it launched (`supervisor.launch_run`). The CLI has
-# no session under that id, so resuming one could only fail at start.
+# no session under that id, so it names an `agent_runs` row to resume *through*
+# rather than a session id to hand the CLI.
 _SYNTHETIC_PREFIX = 'sdk-'
 
 
@@ -42,6 +43,38 @@ def _text(payload: dict, key: str, limit: int) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
 
+def _resume_target(resume: str) -> tuple[str | None, str | None]:
+    """`(cli session to resume, trace id to run it under)`.
+
+    A stopped run regin launched is continued as *itself*: the CLI session
+    behind it is reopened (`fork_session=False`, so the child keeps its id) and
+    the run's own `sdk-…` id is reused, so one conversation stays one trace
+    instead of splitting into a second session with no visible link to its
+    first half. Either of the run's ids resolves it, because the id an operator
+    arrives with is usually the child's — that is the one the session list and
+    `/live` route on.
+
+    An id regin has no record of is passed through untouched — that is a
+    session the user drove in a terminal, whose trace id *is* the CLI's.
+    """
+    if not resume:
+        return None, None
+    from lib import agent_sdk
+
+    row = store.find_run(resume)
+    if row is None:
+        if resume.startswith(_SYNTHETIC_PREFIX):
+            raise _BadRequest(f"no run recorded for {resume}")
+        return resume, None
+    trace_id = row["trace_id"]
+    if agent_sdk.is_sdk_owned(trace_id):
+        raise _BadRequest("that run is still live — stop it before resuming")
+    child = row.get("cli_session_id")
+    if not child:
+        raise _BadRequest("that run never reported a CLI session to resume")
+    return child, trace_id
+
+
 def _launch_params(payload: dict) -> dict:
     """Validated per-run overrides for `supervisor.launch`.
 
@@ -52,15 +85,14 @@ def _launch_params(payload: dict) -> dict:
     mode = _text(payload, "permission_mode", _ID_MAX)
     if mode and mode not in client.PERMISSION_MODES:
         raise _BadRequest(f"unknown permission_mode {mode!r}")
-    resume = _text(payload, "resume", _ID_MAX)
-    if resume.startswith(_SYNTHETIC_PREFIX):
-        raise _BadRequest("a regin-launched run has no CLI session to resume")
+    resume, trace_id = _resume_target(_text(payload, "resume", _ID_MAX))
     return {
         "cwd": _text(payload, "cwd", _PATH_MAX) or None,
         "model": _text(payload, "model", _ID_MAX),
         "permission_mode": mode,
         "one_shot": bool(payload.get("one_shot")),
-        "resume": resume or None,
+        "resume": resume,
+        "trace_id": trace_id,
     }
 
 
@@ -172,10 +204,21 @@ def api_get_agent_run(trace_id):
     `owned` is the routing fact, not `status`: a runner killed with the server
     leaves a `running` row behind, so the row records intent while `owned`
     records reachability.
+
+    `resumable` is served derived rather than left to the client to infer from
+    `cli_session_id`: the two conditions that rule a continuation out — a child
+    that never named itself, and a run still live under this process — are the
+    launch route's, and a client re-deriving them would drift from it.
+
+    Answers for the child's session id as well as the run's own, since that is
+    the id the session list offers and `/live` navigates to; the `trace_id` in
+    the body is then the run's, which is what the launch route resumes under.
     """
     from lib import agent_sdk
 
-    row = store.get_run(trace_id)
+    row = store.find_run(trace_id)
     if row is None:
         return jsonify({"error": "not found"}), 404
-    return jsonify({**row, "owned": agent_sdk.is_sdk_owned(trace_id)})
+    owned = agent_sdk.is_sdk_owned(row["trace_id"])
+    return jsonify({**row, "owned": owned,
+                    "resumable": bool(row.get("cli_session_id")) and not owned})

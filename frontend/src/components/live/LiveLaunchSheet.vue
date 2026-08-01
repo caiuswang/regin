@@ -6,10 +6,11 @@
 // the install this browser is driving, and a client that guessed them would
 // drift from it.
 //
-// `resumeFrom` turns the same form into "continue this session": the run still
-// gets its own trace id (whether `--resume` keeps the CLI's own session id is
-// that build's business), so the sheet says so instead of implying the tail
-// below will keep growing.
+// `resumeFrom` turns the same form into "continue this session". Whether that
+// is possible, and whether it continues the trace in view or opens a new one,
+// is the server's answer (`GET /agent-runs/<id>`): a stopped run regin
+// launched is resumed as itself, while a session the user drove in a terminal
+// is reopened by id under a fresh trace.
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -57,11 +58,28 @@ const modeOptions = computed(() => {
   ]
 })
 
-// A run regin launched carries a synthetic `sdk-…` trace id, which is regin's
-// own name for it and not a CLI session — `--resume` would fail on it. Only a
-// session the user drove in a terminal has an id the CLI can reopen.
-const canResume = computed(() => (
-  !!props.resumeFrom && !props.resumeFrom.startsWith('sdk-')
+// The run row for the session in view, when regin launched it; null when it
+// has no record of one.
+const resumeRun = ref(null)
+
+// Only regin can say whether one of its own runs is resumable — it depends on
+// the CLI session the child reported, which lives in the run row. The row
+// answers for either of the run's two ids, so reaching the fallback means
+// regin has no row at all: a `sdk-…` id then names a run that died before it
+// was recorded, anything else is a session the user drove and the CLI can
+// reopen by id.
+const canResume = computed(() => {
+  if (!props.resumeFrom) return false
+  if (resumeRun.value) return !!resumeRun.value.resumable
+  return !props.resumeFrom.startsWith('sdk-')
+})
+
+// A resumed run keeps the trace it continues; a reopened terminal session does
+// not. Saying which stops the checkbox implying the tail below will keep
+// growing when it will not.
+const resumeLabel = computed(() => (
+  `continue ${shortTraceId(props.resumeFrom)} `
+  + (resumeRun.value ? '(same trace)' : '(opens a new trace)')
 ))
 
 // Only worth saying when something is actually gated — otherwise "this mode
@@ -75,9 +93,23 @@ const shadowWarning = computed(() => (
 
 const canLaunch = computed(() => !!prompt.value.trim() && !launching.value)
 
+// Resolved before the form renders, not alongside it: the resume option would
+// otherwise appear and then withdraw itself a tick later, on the one control
+// whose meaning an operator has to read before ticking it.
+async function loadResumeRun() {
+  if (!props.resumeFrom) return
+  try {
+    resumeRun.value = await api.get(
+      `/agent-runs/${encodeURIComponent(props.resumeFrom)}`)
+  } catch {
+    resumeRun.value = null // regin launched no run under this id
+  }
+}
+
 onMounted(async () => {
   try {
     opts.value = await api.get('/agent-runs/launch-options')
+    await loadResumeRun()
   } catch (e) {
     error.value = e?.message || 'Failed to load launch options.'
   } finally {
@@ -85,29 +117,39 @@ onMounted(async () => {
   }
 })
 
+function launchBody() {
+  return {
+    prompt: prompt.value.trim(),
+    cwd: cwd.value || undefined,
+    model: model.value.trim() || undefined,
+    permission_mode: mode.value || undefined,
+    one_shot: oneShot.value || undefined,
+    resume: (resume.value && canResume.value && props.resumeFrom) || undefined,
+  }
+}
+
 async function launch() {
   if (!canLaunch.value) return
   launching.value = true
   refusal.value = null
   try {
-    const body = {
-      prompt: prompt.value.trim(),
-      cwd: cwd.value || undefined,
-      model: model.value.trim() || undefined,
-      permission_mode: mode.value || undefined,
-      one_shot: oneShot.value || undefined,
-      resume: (resume.value && canResume.value && props.resumeFrom) || undefined,
-    }
-    const data = await api.post('/agent-runs', body)
+    const data = await api.post('/agent-runs', launchBody())
     if (!data.launched) {
       refusal.value = data.detail || 'Launch refused.'
       return
     }
+    // A resumed run comes back under its own `sdk-…` id, which is not the id
+    // the card is open on when that is the child's — same session, different
+    // name for it, so the caller must not navigate away.
+    const launched = {
+      traceId: data.trace_id,
+      sameSession: !!resumeRun.value && data.trace_id === resumeRun.value.trace_id,
+    }
     if (data.warning) {
-      held.value = { traceId: data.trace_id, warning: data.warning }
+      held.value = { launched, warning: data.warning }
       return
     }
-    emit('launched', { traceId: data.trace_id })
+    emit('launched', launched)
   } catch (e) {
     refusal.value = e?.message || 'Launch failed.'
   } finally {
@@ -129,7 +171,7 @@ async function launch() {
       <Button
         class="live-launch-go"
         data-testid="live-launch-open"
-        @click="emit('launched', { traceId: held.traceId })"
+        @click="emit('launched', held.launched)"
       >
         Open the run anyway
       </Button>
@@ -183,7 +225,7 @@ async function launch() {
       </label>
       <label v-if="canResume" class="live-launch-check">
         <Checkbox v-model="resume" data-testid="live-launch-resume" />
-        <span>continue {{ shortTraceId(resumeFrom) }} (opens a new trace)</span>
+        <span data-testid="live-launch-resume-label">{{ resumeLabel }}</span>
       </label>
 
       <p v-if="refusal" class="live-launch-warn" data-testid="live-launch-refusal">

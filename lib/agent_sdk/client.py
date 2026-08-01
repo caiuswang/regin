@@ -102,6 +102,12 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
     `options` wins over the global settings: those are the defaults for an
     operator-launched session, not a ceiling on what regin's own spawns may
     ask for.
+
+    `fork_session` is pinned rather than left to the SDK's default: forking
+    gives the resumed session a NEW child id, which would strand the trace the
+    run's first half was recorded under — the two halves would render as
+    unrelated sessions. regin's own default has to survive a change in the
+    SDK's.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -110,6 +116,7 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
         "setting_sources": ["user", "project", "local"],
         "permission_mode": settings.agent_sdk.permission_mode or "default",
         "can_use_tool": can_use_tool,
+        "fork_session": False,
     }
     if cwd:
         kwargs["cwd"] = cwd

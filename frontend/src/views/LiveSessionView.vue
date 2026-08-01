@@ -322,9 +322,18 @@ function onPickSession(row) {
 // A launched run exists before it has done anything, so navigate straight to
 // its trace: the sheet's job ends at "it started", and everything after that —
 // including the questions it parks — is the card's normal live path.
-function onLaunched({ traceId }) {
+//
+// A *resumed* run continues the session already in view, so stay on it and
+// re-init: the route does not change and the watcher below never fires, which
+// would leave the card showing the ended tail it had before the run restarted.
+// `sameSession` rather than an id comparison because a merged run answers to
+// two ids — the card is usually open on the child's while the run relaunches
+// under its own — and both render the same trace.
+function onLaunched({ traceId, sameSession }) {
   closeSheet()
-  if (traceId) router.push('/live/' + traceId)
+  if (!traceId) return
+  if (sameSession || traceId === route.params.id) init()
+  else router.push('/live/' + traceId)
 }
 
 // Sheet title/copy are dispatch tables keyed on kind (not if-ladders): the
