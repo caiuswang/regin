@@ -96,6 +96,42 @@ def test_a_run_still_live_here_is_not_offered(flask_client, on_disk):
     assert resumable.list_resumable() == []
 
 
+@pytest.fixture
+def in_a_pane(monkeypatch):
+    """Control which ids the pane registry reports as live in a terminal.
+
+    Stubbed at `delivery.session_is_live` rather than seeded into
+    `bridge_panes`: the real predicate re-reads the pane's foreground command
+    over tmux, which a unit test has no business spawning."""
+    live: set[str] = set()
+    from lib.agent_bridge import delivery
+
+    monkeypatch.setattr(delivery, "session_is_live", lambda tid: tid in live)
+    return live
+
+
+def test_a_session_a_terminal_is_still_driving_is_not_offered(
+        flask_client, on_disk, in_a_pane):
+    """Resuming it would put a second process on one session id — and the
+    resume claims that id for the run, redirecting the live session's own
+    composer at the copy."""
+    _seed(_ON_DISK)
+    on_disk.add(_ON_DISK)
+    in_a_pane.add(_ON_DISK)
+
+    assert resumable.list_resumable() == []
+
+
+def test_the_same_session_is_offered_once_its_terminal_exits(
+        flask_client, on_disk, in_a_pane):
+    """The exclusion tracks the pane, not the session: nothing about the row
+    changes when the CLI exits, so a stale rule would hide it forever."""
+    _seed(_ON_DISK)
+    on_disk.add(_ON_DISK)
+
+    assert _ids(resumable.list_resumable()) == [_ON_DISK]
+
+
 def test_the_same_run_is_offered_once_it_is_stopped(flask_client, on_disk):
     _seed(_LAUNCHED)
     on_disk.add(_LAUNCHED)

@@ -402,6 +402,23 @@ def test_a_promptless_resume_runs_no_turn_and_waits(flask_client, captured,
     assert sdk_clients[0].resume == _CHILD
 
 
+def test_a_session_its_terminal_is_still_driving_is_refused(
+        flask_client, enabled, stub_launch, monkeypatch):
+    """The picker hides these, but the route is the authority: a direct POST —
+    or a list that went stale between render and pick — would otherwise put a
+    second process on one session id."""
+    from lib.agent_bridge import delivery
+
+    monkeypatch.setattr(delivery, "session_is_live", lambda tid: tid == "abc-123")
+
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "carry on", "resume": "abc-123"})
+
+    assert res.status_code == 400
+    assert "live in a terminal" in res.get_json()["error"]
+    assert "prompt" not in stub_launch
+
+
 def test_a_terminal_session_still_resumes_into_a_fresh_trace(flask_client,
                                                              enabled,
                                                              stub_launch):

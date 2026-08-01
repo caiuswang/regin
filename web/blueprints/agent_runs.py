@@ -43,6 +43,21 @@ def _text(payload: dict, key: str, limit: int) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
 
+def _refuse_if_live_in_terminal(session_id: str) -> None:
+    """Refuse a session a terminal is still driving.
+
+    The picker already hides these, so reaching this is a direct POST or a
+    list that went stale between render and pick — the window is small but the
+    outcome is not: two processes on one session id, and the live session's own
+    composer redirected at the copy that just claimed its id.
+    """
+    from lib.agent_bridge import delivery
+
+    if delivery.session_is_live(session_id):
+        raise _BadRequest("that session is live in a terminal — exit it "
+                          "before resuming")
+
+
 def _resume_target(resume: str) -> tuple[str | None, str | None]:
     """`(cli session to resume, trace id to run it under)`.
 
@@ -55,7 +70,9 @@ def _resume_target(resume: str) -> tuple[str | None, str | None]:
     `/live` route on.
 
     An id regin has no record of is passed through untouched — that is a
-    session the user drove in a terminal, whose trace id *is* the CLI's.
+    session the user drove in a terminal, whose trace id *is* the CLI's —
+    unless that terminal is still driving it, which is refused for the same
+    reason a live run is.
     """
     if not resume:
         return None, None
@@ -65,6 +82,7 @@ def _resume_target(resume: str) -> tuple[str | None, str | None]:
     if row is None:
         if resume.startswith(_SYNTHETIC_PREFIX):
             raise _BadRequest(f"no run recorded for {resume}")
+        _refuse_if_live_in_terminal(resume)
         return resume, None
     trace_id = row["trace_id"]
     if agent_sdk.is_starting(trace_id):

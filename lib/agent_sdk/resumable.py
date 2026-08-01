@@ -97,12 +97,19 @@ def _offerable(session_id: str, run_trace: str | None, provider) -> bool:
     """Whether this candidate would survive the launch route's own checks.
 
     A run still live under this process is refused there ("stop it before
-    resuming"), so listing it would offer an option that cannot be taken.
+    resuming"), so listing it would offer an option that cannot be taken. A
+    session live in a *terminal* is refused for the same reason and reads the
+    same way to an operator, but liveness is a different fact about it: regin
+    holds no run for a session it never launched, so the pane registry is what
+    answers.
     """
     from lib import agent_sdk
+    from lib.agent_bridge import delivery
 
     if run_trace and (agent_sdk.is_sdk_owned(run_trace)
                       or agent_sdk.is_starting(run_trace)):
+        return False
+    if delivery.session_is_live(session_id):
         return False
     return bool(provider.find_session_transcript(session_id))
 

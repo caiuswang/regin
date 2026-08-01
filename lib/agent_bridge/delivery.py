@@ -554,6 +554,30 @@ def deliver(trace_id: str, text: str) -> DeliveryResult:
     return result
 
 
+def session_is_live(trace_id: str) -> bool:
+    """True when `trace_id` is the session a terminal is driving right now.
+
+    The resume gate: reopening a conversation a live CLI still holds puts two
+    processes on one session id — and, because a resume claims the id for the
+    run, redirects the real session's own composer at the copy.
+
+    The registry alone cannot answer it. A pane whose claude has exited keeps
+    its row until the next session claims the pane, so a row means "this
+    session was last in that pane", not "it is still running". The foreground
+    command is therefore re-read — the same evidence `deliver` demands before
+    it types anything.
+
+    False when the bridge is off: with no registry there is no evidence either
+    way, and refusing every resume on a hunch costs more than it saves.
+    """
+    if not settings.agent_bridge.enabled:
+        return False
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return False
+    return _verify_identity(row)["ok"]
+
+
 def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:
     """Read-only `capture-pane` snapshot of `trace_id`'s reachable pane.
 

@@ -645,3 +645,50 @@ def test_capture_screen_stale_identity_refuses(monkeypatch):
 
     assert res.ok is False and "stale" in res.detail
     assert not any("capture-pane" in c for c in calls)
+
+
+# ── 9. is this session live in a terminal (the resume gate) ──
+def test_session_is_live_when_its_pane_still_runs_claude(monkeypatch):
+    _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.session_is_live("t1") is True
+
+
+def test_session_is_not_live_once_the_pane_is_back_to_a_shell(monkeypatch):
+    """The registry row outlives the CLI — a pane keeps its last session until
+    the next one claims it — so the foreground command is the deciding fact.
+    Reading the row alone would hide a resumable session forever."""
+    _install_tmux(monkeypatch, command="fish")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.session_is_live("t1") is False
+
+
+def test_session_is_not_live_when_it_holds_no_pane(monkeypatch):
+    calls = _install_tmux(monkeypatch)
+    _set_row(monkeypatch, None)
+
+    assert delivery.session_is_live("t1") is False
+    assert calls == []
+
+
+def test_session_is_not_live_when_the_pane_id_was_recycled(monkeypatch):
+    """A tmux server restart reissues pane ids: `%7` under the new server is a
+    different pane, and whatever runs there is not this session."""
+    _install_tmux(monkeypatch, server_pid=999)
+    _set_row(monkeypatch, _pane_row(tmux_server_pid=111))
+
+    assert delivery.session_is_live("t1") is False
+
+
+def test_liveness_is_unknown_rather_than_asserted_with_the_bridge_off(
+        monkeypatch):
+    """No registry, no evidence — and refusing every resume on a hunch costs
+    more than the collision it would avoid."""
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    calls = _install_tmux(monkeypatch)
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.session_is_live("t1") is False
+    assert calls == []
