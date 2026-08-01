@@ -24,10 +24,34 @@ def _env_truthy(name: str) -> bool:
     return (os.environ.get(name) or '').strip().lower() in {
         '1', 'true', 'yes', 'on'}
 
-_REACHABLE_SQL = """
+# A pane hosts one claude at a time, but a row is keyed by trace_id and never
+# retired — so a pane the operator keeps open accumulates a row per session
+# that ever ran there. Delivery's identity guard cannot separate them: the
+# tmux server pid, the `pane_pid` (the pane's shell) and the foreground
+# command are all properties of the PANE, unchanged when the next session
+# takes it over. Without this, steering any of those older ids reaches
+# whoever occupies the pane now — a `/exit` meant for a finished session
+# killed a live one. The pane's current occupant is its newest registration:
+# the SessionStart hook re-upserts on every turn event, so the live session's
+# row keeps moving ahead of the ones it displaced.
+_NOT_DISPLACED = """
+AND NOT EXISTS (
+    SELECT 1 FROM bridge_panes AS newer
+    WHERE newer.pane_id = p.pane_id
+      AND newer.tmux_server_pid = p.tmux_server_pid
+      AND newer.tmux_socket IS p.tmux_socket
+      AND newer.trace_id <> p.trace_id
+      AND newer.reachable = 1
+      AND (newer.updated_at > p.updated_at
+           OR (newer.updated_at = p.updated_at AND newer.id > p.id))
+)
+"""
+
+_REACHABLE_SQL = f"""
 SELECT pane_id, tmux_socket, tmux_server_pid, pane_pid
-FROM bridge_panes
+FROM bridge_panes AS p
 WHERE trace_id = ? AND reachable = 1
+{_NOT_DISPLACED}
 """
 
 _INSERT_MESSAGE_SQL = """
@@ -51,10 +75,11 @@ ORDER BY created_at DESC, id DESC
 LIMIT ?
 """
 
-_REACHABLE_SESSIONS_SQL = """
+_REACHABLE_SESSIONS_SQL = f"""
 SELECT trace_id, pane_id, cwd, tmux_socket, updated_at
-FROM bridge_panes
+FROM bridge_panes AS p
 WHERE reachable = 1
+{_NOT_DISPLACED}
 ORDER BY updated_at DESC
 """
 
@@ -78,7 +103,8 @@ LIMIT 1
 def get_reachable_pane(trace_id: str) -> dict | None:
     """The bridge-reachable pane identity for a session, or None.
 
-    None when the session never registered, isn't marked reachable, or the
+    None when the session never registered, isn't marked reachable, has been
+    displaced from its pane by a session that registered there later, or the
     schema is absent/drifted (table missing, or an old shape lacking a
     column this SELECT names — e.g. `tmux_socket` on a pre-migration DB).
     Callers treat None as "no reachable session" and refuse delivery —

@@ -103,6 +103,11 @@ def release_run(trace_id: str, token: object = None) -> None:
         if _reserved.get(trace_id, _MISSING) is not token:
             return
         _reserved.pop(trace_id, None)
+        # A resume aliases the session it continues at claim time, before any
+        # runner exists; a launch that dies in that window never reaches
+        # `unregister_run`, so the alias is dropped here too or it outlives
+        # the run and keeps pointing that session at an id nothing holds.
+        _drop_aliases(trace_id)
     log.write("sdk_run_released", trace_id=trace_id)
 
 
@@ -113,14 +118,20 @@ def register_run(trace_id: str, runner) -> None:
     log.write("sdk_run_registered", trace_id=trace_id)
 
 
+def _drop_aliases(trace_id: str) -> None:
+    """Forget every CLI session id pointing at `trace_id`. Caller holds
+    `_lock`."""
+    for alias in [a for a, run in _aliases.items() if run == trace_id]:
+        _aliases.pop(alias, None)
+
+
 def unregister_run(trace_id: str) -> None:
     with _lock:
         _runs.pop(trace_id, None)
         _reserved.pop(trace_id, None)
         for key in [k for k, ask in _asks.items() if ask.trace_id == trace_id]:
             _asks.pop(key, None)
-        for alias in [a for a, run in _aliases.items() if run == trace_id]:
-            _aliases.pop(alias, None)
+        _drop_aliases(trace_id)
     log.write("sdk_run_unregistered", trace_id=trace_id)
 
 

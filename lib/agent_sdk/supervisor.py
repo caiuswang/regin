@@ -182,6 +182,13 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     token = object()
     if not registry.reserve_run(trace_id, token):
         raise LaunchRefused("that run is already starting")
+    # The child keeps the id it is resumed under (`fork_session=False`), so
+    # the alias the runner would learn from the first message is already known
+    # here — and a resume may carry no prompt at all, in which case no message
+    # ever arrives and it would never be learned. Until it is registered, the
+    # operator's card is open on an id nothing owns, and its first prompt falls
+    # through to the tmux bridge: a pane, not this run.
+    registry.register_alias(resume or "", trace_id)
     try:
         loop = _ensure_loop()
         options = client.RunOptions(env=dict(env or {}),

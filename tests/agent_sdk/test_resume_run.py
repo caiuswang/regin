@@ -652,6 +652,113 @@ def test_launch_run_reuses_a_supplied_trace_id_instead_of_minting_one(
     assert seen == {"trace_id": _TRACE, "resume": _CHILD}
 
 
+def test_a_resume_claims_its_session_before_the_child_says_anything(
+        tmp_db, monkeypatch):
+    """The alias cannot wait for the first message.
+
+    `_note_session` learns the child's id from a message, and a resume may
+    carry no prompt at all — so there is no first message, and the id the
+    operator's card is open on stays unowned. The id is known at launch
+    (`fork_session=False`, so the child keeps it), so it is claimed here.
+    """
+    seen = {}
+
+    async def _run_session(trace_id, prompt, **kwargs):
+        seen["owned"] = registry.is_sdk_owned(_CHILD)
+        seen["owner"] = registry.owning_run(_CHILD)
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+
+    supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD).wait(timeout=10)
+
+    assert seen == {"owned": True, "owner": _TRACE}
+
+
+def test_the_claim_is_given_back_when_the_run_ends(tmp_db, monkeypatch):
+    """An alias outliving its run would keep pointing that session at an id
+    nothing holds — steering it would then reach neither the run nor the
+    pane the session is actually sitting in."""
+    async def _run_session(trace_id, prompt, **kwargs):
+        pass
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+
+    supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD).wait(timeout=10)
+
+    assert registry.owning_run(_CHILD) == _CHILD
+    assert registry.is_sdk_owned(_CHILD) is False
+
+
+def test_a_promptless_resume_steers_the_run_not_the_pane_it_came_from(
+        flask_client, monkeypatch):
+    """The reported bug, end to end.
+
+    A session driven in a terminal leaves a `bridge_panes` row behind. Resume
+    it with no prompt and — until the alias is claimed at launch — the card is
+    open on an id the SDK does not own, so the operator's first prompt is typed
+    into that pane instead. The pane is long since occupied by whatever session
+    started there next, which is what received the `/exit`.
+    """
+    import threading
+
+    from lib.agent_bridge import delivery, store as bridge_store
+    from lib.orm.engine import get_connection
+    from web.blueprints import bridge as bridge_bp
+
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO bridge_panes (trace_id, pane_id, tmux_server_pid, "
+            "pane_pid, tmux_socket, reachable, cwd) "
+            "VALUES (?, '%0', 111, 222, NULL, 1, '/work')", (_CHILD,))
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr(settings.agent_bridge, "enabled", True)
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+
+    typed: list[tuple[str, str]] = []
+    queued: list[tuple[str, str]] = []
+
+    def _deliver(trace_id, text):
+        typed.append((trace_id, text))
+        return delivery.DeliveryResult(True, "delivered to %0")
+
+    def _submit(trace_id, text):
+        queued.append((trace_id, text))
+        return True, "prompt queued"
+
+    monkeypatch.setattr(delivery, "deliver", _deliver)
+    monkeypatch.setattr(bridge_bp.agent_sdk, "submit_prompt", _submit)
+
+    running, release = threading.Event(), threading.Event()
+
+    async def _run_session(trace_id, prompt, **kwargs):
+        running.set()
+        await asyncio.get_running_loop().run_in_executor(None, release.wait)
+
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+    handle = supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD)
+    assert running.wait(timeout=10)
+    try:
+        res = flask_client.post(f"/api/sessions/{_CHILD}/bridge-send",
+                                json={"text": "/exit"})
+    finally:
+        release.set()
+        handle.wait(timeout=10)
+
+    assert res.status_code == 200
+    # The route hands the id it was called with straight through; the registry
+    # resolves the alias to the run.
+    assert queued == [(_CHILD, "/exit")]
+    assert typed == []
+    # The pane row is real and still resolves — routing, not reachability, is
+    # what keeps the keystrokes out of it.
+    assert bridge_store.get_reachable_pane(_CHILD) is not None
+
+
 def test_an_ordinary_launch_still_mints_its_own_trace_id(tmp_db, monkeypatch):
     seen = {}
 
