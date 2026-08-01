@@ -344,6 +344,64 @@ def test_a_starting_run_reports_itself_as_owned_and_not_resumable(flask_client):
     assert body["resumable"] is False
 
 
+# ── a resume with nothing to say ──────────────────────────────────────
+
+def test_a_resume_needs_no_prompt(flask_client, enabled, stub_launch):
+    """Reopening the session *is* the act. Demanding a first turn to get there
+    would make an operator invent one, and the card they land on already has a
+    composer for the turn they actually want."""
+    store.upsert_run(_TRACE, status="exited")
+    store.set_cli_session(_TRACE, _CHILD)
+
+    res = flask_client.post("/api/agent-runs", json={"resume": _TRACE})
+
+    assert res.status_code == 200
+    assert stub_launch["prompt"] == ""
+    assert stub_launch["resume"] == _CHILD
+
+
+def test_a_fresh_run_still_needs_a_prompt(flask_client, enabled, stub_launch):
+    """The relaxation is scoped to resume — a run with no session behind it and
+    nothing to do would connect and idle out."""
+    res = flask_client.post("/api/agent-runs", json={})
+
+    assert res.status_code == 400
+    assert "prompt" not in stub_launch
+
+
+def test_a_one_shot_resume_still_needs_a_prompt(flask_client, enabled,
+                                                stub_launch):
+    """`one_shot` ends the session with its first turn; with no turn to run it
+    would connect and immediately disconnect, which is never what was meant."""
+    store.upsert_run(_TRACE, status="exited")
+    store.set_cli_session(_TRACE, _CHILD)
+
+    res = flask_client.post("/api/agent-runs",
+                            json={"resume": _TRACE, "one_shot": True})
+
+    assert res.status_code == 400
+    assert "prompt" not in stub_launch
+
+
+def test_a_promptless_resume_runs_no_turn_and_waits(flask_client, captured,
+                                                    sdk_clients):
+    """The session comes up and stops there: the conversation is reopened, and
+    the next turn arrives from the composer rather than from the launch."""
+    async def _reopen():
+        run = runner_mod.AgentRunner(_TRACE, resume=_CHILD)
+        run.close()  # nothing queued; the terminator is all the pump will see
+        await run.start()
+        await run.pump()
+        await run.stop()
+        return run
+
+    asyncio.run(_reopen())
+
+    assert sdk_clients[0].connects == 1
+    assert sdk_clients[0].prompts == []
+    assert sdk_clients[0].resume == _CHILD
+
+
 def test_a_terminal_session_still_resumes_into_a_fresh_trace(flask_client,
                                                              enabled,
                                                              stub_launch):

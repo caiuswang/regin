@@ -3030,6 +3030,86 @@ button.live-qa-pick.live-qa-staged {
     color: var(--color-danger);
 }
 .live-launch-go { margin-top: 12px; width: 100%; }
+.live-launch-pick {
+    justify-content: flex-start;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px dashed var(--color-border);
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--color-fg-muted);
+}
+.live-launch-resumed {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 6px 7px 10px;
+    border: 1px solid var(--color-blue-500);
+    border-radius: 8px;
+    background: var(--color-blue-50);
+}
+.live-launch-resumed-txt {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
+    font-size: 12.5px;
+    color: var(--color-blue-600);
+}
+/* Only the title clips: the kind is the shorter line and the one the chip is
+   there to say, so it must not be the half an ellipsis eats. */
+.live-launch-resumed-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.live-launch-resumed-kind {
+    font-size: 11px;
+    opacity: 0.8;
+}
+
+/* resume picker (searchable session list inside the launch sheet) */
+.live-resume { display: flex; flex-direction: column; gap: 8px; }
+.live-resume-search { width: 100%; font-size: 13px; }
+.live-resume-list { max-height: 46vh; overflow-y: auto; }
+.live-resume-row { align-items: flex-start; }
+.live-resume-main {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+.live-resume-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 10.5px;
+    color: var(--color-fg-faint);
+}
+.live-resume-kind {
+    flex-shrink: 0;
+    padding: 1px 6px;
+    border-radius: 99px;
+    background: var(--color-surface-2);
+    color: var(--color-fg-subtle);
+}
+.live-resume-kind[data-kind="run"] {
+    background: var(--color-blue-50);
+    color: var(--color-blue-600);
+}
+.live-resume-cwd {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, Menlo, monospace;
+    direction: rtl; /* a long path is identified by its tail, so clip the head */
+    text-align: left;
+}
+.live-resume-cancel { align-self: flex-start; font-size: 12px; }
 
 /* filter sheet */
 .live-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

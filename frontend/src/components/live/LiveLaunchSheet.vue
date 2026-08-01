@@ -6,18 +6,22 @@
 // the install this browser is driving, and a client that guessed them would
 // drift from it.
 //
-// `resumeFrom` turns the same form into "continue this session". Whether that
-// is possible, and whether it continues the trace in view or opens a new one,
-// is the server's answer (`GET /agent-runs/<id>`): a stopped run regin
-// launched is resumed as itself, while a session the user drove in a terminal
-// is reopened by id under a fresh trace.
+// The same form doubles as "continue a session": any session the CLI can still
+// reopen is a candidate, picked from a searchable list (`LiveResumePicker`),
+// not just whichever one /live happens to be open on. Whether a pick continues
+// the trace in view or opens a new one is the server's answer, carried on the
+// row — a stopped run regin launched is resumed as itself, while a session the
+// user drove in a terminal is reopened by id under a fresh trace.
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
+import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
+import LiveResumePicker from './LiveResumePicker.vue'
 import Select from '../ui/Select.vue'
 import Textarea from '../ui/Textarea.vue'
+import { resumeKindLabel } from '../../utils/resumeKind.js'
 import { shortTraceId } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
@@ -40,12 +44,26 @@ const cwd = ref('')
 const model = ref('')
 const mode = ref('')
 const oneShot = ref(false)
-const resume = ref(false)
+// The picked session row, or null for a fresh run. Holding the whole row (not
+// just its id) is what lets the form say which trace a pick lands on and adopt
+// its cwd without a second fetch.
+const resume = ref(null)
+const picking = ref(false)
 
-const cwdOptions = computed(() => [
-  { value: '', label: 'server working directory' },
-  ...(opts.value?.cwds || []).map(p => ({ value: p, label: p })),
-])
+// A resumed session's cwd is not a preference — `claude --resume` resolves the
+// id relative to the working directory, so launching from anywhere else finds
+// no session. The pick therefore sets it, and an entry is added for a path the
+// install has not registered as a repo rather than silently falling back to the
+// server default.
+const cwdOptions = computed(() => {
+  const known = opts.value?.cwds || []
+  const picked = resume.value?.cwd
+  const extra = picked && !known.includes(picked) ? [picked] : []
+  return [
+    { value: '', label: 'server working directory' },
+    ...[...known, ...extra].map(p => ({ value: p, label: p })),
+  ]
+})
 
 // The sentinel is named for what it *does* (defer to the install) rather than
 // labelled "default", which the CLI also has as a real mode — two options
@@ -58,29 +76,34 @@ const modeOptions = computed(() => {
   ]
 })
 
-// The run row for the session in view, when regin launched it; null when it
-// has no record of one.
-const resumeRun = ref(null)
-
-// Only regin can say whether one of its own runs is resumable — it depends on
-// the CLI session the child reported, which lives in the run row. The row
-// answers for either of the run's two ids, so reaching the fallback means
-// regin has no row at all: a `sdk-…` id then names a run that died before it
-// was recorded, anything else is a session the user drove and the CLI can
-// reopen by id.
-const canResume = computed(() => {
-  if (!props.resumeFrom) return false
-  if (resumeRun.value) return !!resumeRun.value.resumable
-  return !props.resumeFrom.startsWith('sdk-')
-})
-
 // A resumed run keeps the trace it continues; a reopened terminal session does
-// not. Saying which stops the checkbox implying the tail below will keep
-// growing when it will not.
-const resumeLabel = computed(() => (
-  `continue ${shortTraceId(props.resumeFrom)} `
-  + (resumeRun.value ? '(same trace)' : '(opens a new trace)')
-))
+// not. Saying which stops the chip implying the tail below will keep growing
+// when it will not — so the kind gets its own line rather than a suffix on the
+// title, which a session title long enough to be worth reading clips away.
+const resumeTitle = computed(() => {
+  const row = resume.value
+  return row ? row.title || shortTraceId(row.session_id) : ''
+})
+const resumeKind = computed(() => (
+  resume.value ? resumeKindLabel(resume.value.kind) : ''))
+
+function pickResume(row) {
+  resume.value = row
+  // Adopting the session's cwd is not a convenience: resume resolves the id
+  // relative to it, so keeping the previous selection would launch a run that
+  // finds nothing to continue.
+  if (row.cwd) cwd.value = row.cwd
+  // The model is inherited for a weaker but real reason: continuing a
+  // conversation on a different model than it was held on is a change the
+  // operator did not ask for and would not see. Only a run regin launched
+  // recorded one, so a terminal session still falls back to the install's.
+  if (row.model) model.value = row.model
+  picking.value = false
+}
+
+function clearResume() {
+  resume.value = null
+}
 
 // Only worth saying when something is actually gated — otherwise "this mode
 // skips the permission callback" warns about the loss of a control the install
@@ -91,25 +114,15 @@ const shadowWarning = computed(() => (
     : null
 ))
 
-const canLaunch = computed(() => !!prompt.value.trim() && !launching.value)
-
-// Resolved before the form renders, not alongside it: the resume option would
-// otherwise appear and then withdraw itself a tick later, on the one control
-// whose meaning an operator has to read before ticking it.
-async function loadResumeRun() {
-  if (!props.resumeFrom) return
-  try {
-    resumeRun.value = await api.get(
-      `/agent-runs/${encodeURIComponent(props.resumeFrom)}`)
-  } catch {
-    resumeRun.value = null // regin launched no run under this id
-  }
-}
+// A resume needs no prompt: reopening the session *is* the act, and the card
+// it lands on has a composer. Requiring one would make "just pick this back
+// up" impossible to express — the operator would have to invent a first turn.
+const canLaunch = computed(() => (
+  (!!prompt.value.trim() || !!resume.value) && !launching.value))
 
 onMounted(async () => {
   try {
     opts.value = await api.get('/agent-runs/launch-options')
-    await loadResumeRun()
   } catch (e) {
     error.value = e?.message || 'Failed to load launch options.'
   } finally {
@@ -124,7 +137,7 @@ function launchBody() {
     model: model.value.trim() || undefined,
     permission_mode: mode.value || undefined,
     one_shot: oneShot.value || undefined,
-    resume: (resume.value && canResume.value && props.resumeFrom) || undefined,
+    resume: resume.value?.session_id || undefined,
   }
 }
 
@@ -140,10 +153,14 @@ async function launch() {
     }
     // A resumed run comes back under its own `sdk-…` id, which is not the id
     // the card is open on when that is the child's — same session, different
-    // name for it, so the caller must not navigate away.
+    // name for it, so the caller must not navigate away. The picked row is
+    // matched on both of its ids for that reason.
+    const picked = resume.value
     const launched = {
       traceId: data.trace_id,
-      sameSession: !!resumeRun.value && data.trace_id === resumeRun.value.trace_id,
+      sameSession: !!picked && !!props.resumeFrom
+        && (picked.session_id === props.resumeFrom
+          || picked.run_trace_id === props.resumeFrom),
     }
     if (data.warning) {
       held.value = { launched, warning: data.warning }
@@ -177,13 +194,23 @@ async function launch() {
       </Button>
     </template>
 
+    <LiveResumePicker
+      v-else-if="picking"
+      :current-id="resumeFrom"
+      :selected-id="resume?.session_id || ''"
+      @select="pickResume"
+      @cancel="picking = false"
+    />
+
     <template v-else>
       <Textarea
         v-model="prompt"
         class="live-launch-prompt"
         data-testid="live-launch-prompt"
         rows="4"
-        placeholder="What should the agent do?"
+        :placeholder="resume
+          ? 'What next? — optional, leave blank to just reopen the session'
+          : 'What should the agent do?'"
         aria-label="Prompt for the new run"
       />
 
@@ -223,10 +250,30 @@ async function launch() {
         <Checkbox v-model="oneShot" data-testid="live-launch-oneshot" />
         <span>end after the first turn</span>
       </label>
-      <label v-if="canResume" class="live-launch-check">
-        <Checkbox v-model="resume" data-testid="live-launch-resume" />
-        <span data-testid="live-launch-resume-label">{{ resumeLabel }}</span>
-      </label>
+
+      <label class="live-launch-lbl">continue a session</label>
+      <div v-if="resume" class="live-launch-resumed" data-testid="live-launch-resumed">
+        <span class="live-launch-resumed-txt" data-testid="live-launch-resume-label">
+          <span class="live-launch-resumed-title">{{ resumeTitle }}</span>
+          <span class="live-launch-resumed-kind">{{ resumeKind }}</span>
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Start a fresh session instead"
+          data-testid="live-launch-resume-clear"
+          @click="clearResume"
+        >
+          <Icon name="x" :size="13" />
+        </Button>
+      </div>
+      <Button
+        v-else
+        variant="ghost"
+        class="live-launch-pick"
+        data-testid="live-launch-resume-open"
+        @click="picking = true"
+      >Pick a session to continue…</Button>
 
       <p v-if="refusal" class="live-launch-warn" data-testid="live-launch-refusal">
         {{ refusal }}

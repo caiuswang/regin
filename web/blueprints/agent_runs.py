@@ -16,7 +16,7 @@ from __future__ import annotations
 from flask import Blueprint, request, jsonify
 
 from lib.auth import require_editor
-from lib.agent_sdk import client, store, supervisor
+from lib.agent_sdk import client, resumable, store, supervisor
 from lib.settings import settings
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
@@ -99,6 +99,24 @@ def _launch_params(payload: dict) -> dict:
     }
 
 
+def _require_prompt_unless_resuming(prompt: str, params: dict) -> None:
+    """A fresh run needs something to do; a resume does not.
+
+    Reopening a session is itself the act an operator asked for — the run comes
+    up on `/live` with a composer, and demanding a first turn to get there
+    would make them invent one. `one_shot` is the exception: a run told to end
+    with its first turn and given no turn to run would connect and immediately
+    disconnect, which is never what the caller meant.
+    """
+    if prompt.strip():
+        return
+    if not params["resume"]:
+        raise _BadRequest("prompt required")
+    if params["one_shot"]:
+        raise _BadRequest("a one-shot run needs a prompt — it ends with its "
+                          "first turn")
+
+
 @agent_runs_bp.route('/api/agent-runs/launch-options', methods=['GET'])
 @require_editor
 def api_launch_options():
@@ -120,6 +138,27 @@ def api_launch_options():
     })
 
 
+@agent_runs_bp.route('/api/agent-runs/resumable', methods=['GET'])
+@require_editor
+def api_resumable_sessions():
+    """Sessions the launch sheet may offer to continue, newest first.
+
+    Served rather than derived from `/api/sessions`: a trace row exists for
+    every session regin ever saw, and only some of those can still be handed to
+    `--resume` (see `lib.agent_sdk.resumable`). A client filtering the general
+    session list would offer ids that die on launch.
+
+    `q` searches title, id and cwd; it runs in SQL, so it reaches past the page.
+    """
+    limit = 30
+    try:
+        limit = max(1, min(int(request.args.get('limit', limit)), 100))
+    except (TypeError, ValueError):
+        pass  # a malformed limit falls back to the default rather than 400ing
+    query = (request.args.get('q') or '').strip()[:_ID_MAX]
+    return jsonify({"sessions": resumable.list_resumable(query, limit)})
+
+
 @agent_runs_bp.route('/api/agent-runs', methods=['POST'])
 @require_editor
 def api_launch_agent_run():
@@ -132,10 +171,10 @@ def api_launch_agent_run():
         return jsonify({"launched": False, "detail": "agent_sdk disabled"})
     payload = request.get_json(silent=True) or {}
     prompt = payload.get("prompt")
-    if not isinstance(prompt, str) or not prompt.strip():
-        return jsonify({"error": "prompt required"}), 400
+    prompt = prompt if isinstance(prompt, str) else ""
     try:
         params = _launch_params(payload)
+        _require_prompt_unless_resuming(prompt, params)
     except _BadRequest as exc:
         return jsonify({"error": str(exc)}), 400
     try:

@@ -170,130 +170,201 @@ test('picking a shadowing mode warns before launching, not after', async ({ page
   await expect(page.getByTestId('live-launch-shadow')).toBeVisible()
 })
 
-test('resume is offered for a terminal session and withheld for an unrecorded sdk one', async ({ page }) => {
+// ── continuing a session ──────────────────────────────────────────────
+//
+// The sheet no longer asks whether the session in view is resumable; it lists
+// what /api/agent-runs/resumable says can be continued, so these tests drive
+// that list. Which rows qualify is the server's rule and is pinned in
+// tests/agent_sdk/test_resumable_list.py.
+
+// A stopped run regin launched: the picker names the child session, and carries
+// the run's own `sdk-…` id so the client can recognise the trace it is on.
+const RESUMABLE_RUN = 'sdk-resumable01'
+
+const RUN_ROW = {
+  session_id: 'child-session-1', title: 'a launched run',
+  cwd: '/Users/dev/repo-a', last_seen: '2026-01-01T11:00:00', prompts: 5,
+  kind: 'run', run_trace_id: RESUMABLE_RUN,
+}
+// A session the operator drove in a terminal, in a directory the install has
+// not registered as a repo.
+const TERMINAL_ROW = {
+  session_id: 'terminal-session-9', title: 'a terminal session',
+  cwd: '/Users/dev/worktree-x', last_seen: '2026-01-01T10:00:00', prompts: 3,
+  kind: 'session', run_trace_id: '',
+}
+
+/** Serve the picker's list. Registered after any `**\/api/agent-runs` mock so
+ *  the more specific pattern wins. Records the query it was asked for. */
+async function mockResumable(page, rows, seen = {}) {
+  await page.route('**/api/agent-runs/resumable*', (route) => {
+    const q = new URL(route.request().url()).searchParams.get('q') || ''
+    seen.q = q
+    const list = q
+      ? rows.filter(r => r.title.includes(q) || r.cwd.includes(q))
+      : rows
+    return route.fulfill({ json: { sessions: list } })
+  })
+  return seen
+}
+
+async function openPicker(page, traceId) {
+  await openSheet(page, traceId)
+  await page.getByTestId('live-launch-resume-open').click()
+  await settle(page)
+}
+
+test('the picker lists what can be continued and says what each pick does to the trace',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await mockOptions(page)
+    await mockResumable(page, [RUN_ROW, TERMINAL_ROW])
+
+    await openPicker(page, traceId)
+
+    await expect(page.getByTestId('live-resume-row')).toHaveCount(2)
+    // The distinction an operator can only act on before picking: one keeps the
+    // conversation on its trace, the other starts a second one. Each row names
+    // what the session *is* as well as what picking it does — the effect alone
+    // has no referent in a list of sessions unrelated to the card.
+    await expect(page.getByTestId('live-resume-row').first())
+      .toContainText('regin run · keeps its trace')
+    await expect(page.getByTestId('live-resume-row').nth(1))
+      .toContainText('terminal session · new trace')
+  })
+
+test('picking a session sends its id and adopts its working directory', async ({ page }) => {
+  const traceId = await postSession(page)
+  await mockOptions(page)
+  let body = null
+  await page.route('**/api/agent-runs', async (route) => {
+    body = route.request().postDataJSON()
+    await route.fulfill({ json: { launched: true, trace_id: 'sdk-new01' } })
+  })
+  await mockResumable(page, [TERMINAL_ROW])
+
+  await openPicker(page, traceId)
+  await page.getByTestId('live-resume-row').click()
+  await settle(page)
+  await page.getByTestId('live-launch-prompt').fill('pick it back up')
+  await page.getByTestId('live-launch-go').click()
+  await settle(page)
+
+  expect(body.resume).toBe(TERMINAL_ROW.session_id)
+  // Not a convenience: `claude --resume` resolves the id relative to the
+  // working directory, so launching from anywhere else continues nothing —
+  // including from a path the launch options never offered.
+  expect(body.cwd).toBe(TERMINAL_ROW.cwd)
+})
+
+test('a picked session launches with no prompt, and adopts the model it ran on',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await mockOptions(page)
+    let body = null
+    await page.route('**/api/agent-runs', async (route) => {
+      body = route.request().postDataJSON()
+      await route.fulfill({ json: { launched: true, trace_id: 'sdk-new01' } })
+    })
+    await mockResumable(page, [{ ...RUN_ROW, model: 'claude-opus-5' }])
+
+    await openPicker(page, traceId)
+    await page.getByTestId('live-resume-row').click()
+    await settle(page)
+    // No prompt typed: reopening the conversation is the act, and the card it
+    // lands on has a composer for whatever comes next.
+    await page.getByTestId('live-launch-go').click()
+    await settle(page)
+
+    expect(body.resume).toBe(RUN_ROW.session_id)
+    // Continuing on a different model than the half being continued is a
+    // change nobody asked for and nothing on the card would show.
+    expect(body.model).toBe('claude-opus-5')
+  })
+
+test('a fresh run still cannot launch with nothing to do', async ({ page }) => {
   const traceId = await postSession(page)
   await mockOptions(page)
 
   await openSheet(page, traceId)
-  // A session the user drove: its trace id IS the CLI's session id.
-  await expect(page.getByTestId('live-launch-resume')).toBeVisible()
-  await expect(page.getByTestId('live-launch-resume-label'))
-    .toContainText('opens a new trace')
 
-  // An `sdk-…` id regin has no run row for names nothing the CLI can reopen,
-  // so the option must not be offered at all.
-  await page.goto('/live/sdk-abc123def456')
-  await settle(page)
-  await page.getByTestId('live-launch-btn').click()
-  await settle(page)
-  await expect(page.getByTestId('live-launch-resume')).toHaveCount(0)
+  await expect(page.getByTestId('live-launch-go')).toBeDisabled()
 })
 
-// A stopped run regin launched, as the server reports it: the child named
-// itself, so the conversation behind it can be reopened.
-const RESUMABLE_RUN = 'sdk-resumable01'
+test('searching asks the server rather than filtering the page it already has',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await mockOptions(page)
+    const seen = await mockResumable(page, [RUN_ROW, TERMINAL_ROW])
 
-async function mockRun(page, body) {
-  await page.route('**/api/agent-runs/sdk-*', (route) =>
-    route.fulfill({ json: { trace_id: RESUMABLE_RUN, status: 'exited', owned: false, ...body } }))
-}
+    await openPicker(page, traceId)
+    await page.getByTestId('live-resume-search').fill('worktree-x')
+    await settle(page)
 
-test('a stopped run regin launched is continued in the trace already open', async ({ page }) => {
+    // Server-side, so the search reaches sessions past the first page.
+    expect(seen.q).toBe('worktree-x')
+    await expect(page.getByTestId('live-resume-row')).toHaveCount(1)
+    await expect(page.getByTestId('live-resume-row')).toContainText('a terminal session')
+  })
+
+test('a picked session can be dropped again before launching', async ({ page }) => {
+  const traceId = await postSession(page)
   await mockOptions(page)
-  await mockRun(page, { cli_session_id: 'child-session-1', resumable: true })
   let body = null
   await page.route('**/api/agent-runs', async (route) => {
     body = route.request().postDataJSON()
-    await route.fulfill({ json: { launched: true, trace_id: RESUMABLE_RUN } })
+    await route.fulfill({ json: { launched: true, trace_id: 'sdk-new01' } })
   })
+  await mockResumable(page, [TERMINAL_ROW])
 
-  await page.goto(`/live/${RESUMABLE_RUN}`)
+  await openPicker(page, traceId)
+  await page.getByTestId('live-resume-row').click()
   await settle(page)
-  await page.getByTestId('live-launch-btn').click()
-  await settle(page)
-
-  await expect(page.getByTestId('live-launch-resume-label')).toContainText('same trace')
-  await page.getByTestId('live-launch-prompt').fill('pick it back up')
-  await page.getByTestId('live-launch-resume').click()
+  await page.getByTestId('live-launch-resume-clear').click()
+  await page.getByTestId('live-launch-prompt').fill('start fresh after all')
   await page.getByTestId('live-launch-go').click()
   await settle(page)
 
-  // The run's own id is what the server is asked to resume — it resolves the
-  // CLI session behind it, which this client has no business knowing.
-  expect(body.resume).toBe(RESUMABLE_RUN)
-  await expect(page).toHaveURL(new RegExp(`/live/${RESUMABLE_RUN}$`))
+  expect(body.resume).toBeUndefined()
 })
 
-test('resuming into the open trace reloads the card instead of sitting on the ended tail',
+test('resuming the session already open reloads the card instead of navigating away',
   async ({ page }) => {
+    // The id the session list offers — the `sdk-…` half is hidden — so this is
+    // the id `/live` is normally open on. Relaunching returns the run's OWN id,
+    // which renders the same merged trace; moving the card to it would be a
+    // navigation with nothing behind it.
+    const child = await postSession(page)
     await mockOptions(page)
-    await mockRun(page, { cli_session_id: 'child-session-1', resumable: true })
     await page.route('**/api/agent-runs', (route) =>
       route.fulfill({ json: { launched: true, trace_id: RESUMABLE_RUN } }))
+    await mockResumable(page, [{ ...RUN_ROW, session_id: child }])
     // The session-row fetch `start()` opens with. The route does not change on
     // a resume, so nothing but an explicit re-init can produce a second one.
     let reloads = 0
     page.on('request', (r) => { if (/\/api\/sessions\?/.test(r.url())) reloads += 1 })
 
-    await page.goto(`/live/${RESUMABLE_RUN}`)
-    await settle(page)
-    await page.getByTestId('live-launch-btn').click()
-    await settle(page)
+    await openPicker(page, child)
     const before = reloads
-
+    await page.getByTestId('live-resume-row').click()
+    await settle(page)
     await page.getByTestId('live-launch-prompt').fill('pick it back up')
-    await page.getByTestId('live-launch-resume').click()
     await page.getByTestId('live-launch-go').click()
     await settle(page)
 
     expect(reloads).toBeGreaterThan(before)
-  })
-
-test('a run reached by its child id is continued where the operator already is',
-  async ({ page }) => {
-    // The id the session list offers — the `sdk-…` half is hidden — so this is
-    // the id `/live` is normally open on.
-    const child = await postSession(page)
-    await mockOptions(page)
-    await page.route(`**/api/agent-runs/${child}`, (route) =>
-      route.fulfill({
-        json: {
-          trace_id: RESUMABLE_RUN, status: 'exited', owned: false,
-          cli_session_id: child, resumable: true,
-        },
-      }))
-    let body = null
-    await page.route('**/api/agent-runs', async (route) => {
-      body = route.request().postDataJSON()
-      await route.fulfill({ json: { launched: true, trace_id: RESUMABLE_RUN } })
-    })
-
-    await openSheet(page, child)
-
-    await expect(page.getByTestId('live-launch-resume-label')).toContainText('same trace')
-    await page.getByTestId('live-launch-prompt').fill('pick it back up')
-    await page.getByTestId('live-launch-resume').click()
-    await page.getByTestId('live-launch-go').click()
-    await settle(page)
-
-    expect(body.resume).toBe(child)
-    // Relaunched under the run's own id, which renders the same merged trace —
-    // moving the card to it would be a navigation with nothing behind it.
     await expect(page).toHaveURL(new RegExp(`/live/${child}$`))
   })
 
-test('a run whose child never reported is not offered as resumable', async ({ page }) => {
+test('nothing resumable says so instead of rendering a dead list', async ({ page }) => {
+  const traceId = await postSession(page)
   await mockOptions(page)
-  await mockRun(page, { cli_session_id: null, resumable: false })
+  await mockResumable(page, [])
 
-  await page.goto(`/live/${RESUMABLE_RUN}`)
-  await settle(page)
-  await page.getByTestId('live-launch-btn').click()
-  await settle(page)
+  await openPicker(page, traceId)
 
-  // The server's answer, not a shape the client inferred: there is no
-  // conversation behind this run to continue.
-  await expect(page.getByTestId('live-launch-resume')).toHaveCount(0)
+  await expect(page.getByTestId('live-resume-empty')).toBeVisible()
+  await expect(page.getByTestId('live-resume-row')).toHaveCount(0)
 })
 
 test('no shadow warning when the install gates nothing', async ({ page }) => {

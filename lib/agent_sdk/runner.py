@@ -633,7 +633,13 @@ async def run_session(trace_id: str, prompt: str, *,
     runner = AgentRunner(trace_id, cwd=cwd, options=options, resume=resume)
     # Queued before the session is reachable, so a follow-up arriving during
     # `start()` cannot overtake the prompt the run was launched for.
-    runner.enqueue(prompt, waiting=False)
+    #
+    # A resume may carry no prompt at all — reopening the conversation is the
+    # act, and the next turn comes from the card's composer. The pump then
+    # waits on an empty queue, which is the same state it reaches between any
+    # two turns, so `idle_timeout_sec` still reclaims one nobody comes back to.
+    if prompt.strip():
+        runner.enqueue(prompt, waiting=False)
     if one_shot:
         # The terminator queues behind the prompt, so the pump stops at the
         # end of that turn rather than waiting out the idle timeout.

@@ -139,10 +139,13 @@ class RunHandle:
                           row.get("detail") or "")
 
 
-def _refuse_unless_launchable(prompt: str) -> None:
+def _refuse_unless_launchable(prompt: str, resume: str | None) -> None:
+    """A run with nothing to do is refused — unless it is a resume, where
+    reopening the session is the whole act and the first turn can arrive later
+    through `send_prompt`."""
     if not settings.agent_sdk.enabled:
         raise LaunchRefused("agent_sdk disabled")
-    if not (prompt or "").strip():
+    if not (prompt or "").strip() and not resume:
         raise LaunchRefused("prompt required")
     if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
         raise LaunchRefused("max_concurrent_runs reached")
@@ -169,7 +172,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     already running — or already starting — under is refused rather than fused
     into the run holding it.
     """
-    _refuse_unless_launchable(prompt)
+    _refuse_unless_launchable(prompt, resume)
     trace_id = trace_id or f"sdk-{uuid.uuid4().hex[:12]}"
     # Claimed before the run is scheduled, because ownership has to be true
     # before the child exists: the runner registers only after `connect()` has
