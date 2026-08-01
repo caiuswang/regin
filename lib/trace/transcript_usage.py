@@ -191,6 +191,8 @@ class _TurnBuilder:
     # `input_token_estimate` is None until the matching tool_result is
     # observed; on results that are *images only*, `image_token_estimate`
     # equals `input_token_estimate` so consumers can split text vs image.
+    # A `Skill` call also accumulates its injected body here — see
+    # `_patch_skill_payload`.
     tool_calls: list[dict] = field(default_factory=list)
 
 
@@ -803,6 +805,7 @@ class _TranscriptScan:
         the full expansion text so it reaches the conversation view."""
         self._note_tool_interrupt(entry_n)
         self._handle_user_message(entry_n)
+        self._patch_skill_payload(entry_n)
         if entry_n.get('is_meta') and eparent:
             self.meta_expansion_parents.add(eparent)
             # Capture the isMeta child's text keyed by parent so expansions
@@ -892,13 +895,50 @@ class _TranscriptScan:
             if call.get('id') != tu_id:
                 continue
             call['is_error'] = is_error
-            call['input_token_estimate'] = input_est
+            # A Skill body may already have been attributed here; the
+            # tool_result measures only the one-line launch acknowledgement,
+            # so re-add it rather than clobbering.
+            call['input_token_estimate'] = (
+                input_est + (call.get('skill_payload_token_estimate') or 0)
+            )
             call['image_token_estimate'] = image_est
             if result_text is not None:
                 call['result_text'] = result_text
             if is_error:
                 self._capture_deny_input(call, tu_id)
             return
+
+    def _patch_skill_payload(self, entry_n: dict) -> None:
+        """Attribute a `Skill` launch's injected body to its own tool call.
+
+        Claude Code does not deliver a skill's content as the Skill
+        tool_result — that is a one-liner ("Launching skill: foo"). The body
+        arrives as a *separate* isMeta user entry carrying `sourceToolUseID`,
+        which no other branch of the scan claims, so without this the cost is
+        unattributed: a skill injecting 150k tokens reports the 8 tokens of
+        its one-line result. Additive because the tool_result patch can land
+        either side of the body in the linear scan.
+        """
+        if not entry_n.get('is_meta'):
+            return
+        tu_id = _maybe_str(entry_n.get('source_tool_use_id'))
+        if not tu_id:
+            return
+        owner = self.tool_use_to_turn.get(tu_id)
+        if owner is None:
+            return
+        msg = _normalize_dict_keys(entry_n.get('message'))
+        est = estimate_content_tokens(msg.get('content'))
+        if not est:
+            return
+        for call in owner.tool_calls:
+            if call.get('id') == tu_id:
+                prior = call.get('skill_payload_token_estimate') or 0
+                call['skill_payload_token_estimate'] = prior + est
+                call['input_token_estimate'] = (
+                    (call.get('input_token_estimate') or 0) + est
+                )
+                return
 
     def _capture_deny_input(self, call: dict, tu_id: str) -> None:
         raw_input = self.tool_use_inputs.get(tu_id)

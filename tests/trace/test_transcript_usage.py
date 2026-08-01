@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from lib.tokens.token_estimator import estimate_text_tokens
 from lib.trace.transcript_usage import (
     ResumableScanState,
     _TranscriptScan,
@@ -890,6 +891,80 @@ def test_tool_result_patches_input_token_estimate(tmp_path):
     assert call["input_token_estimate"] is not None
     assert call["input_token_estimate"] > 0
     assert call["image_token_estimate"] == 0
+
+
+def _skill_launch(tmp_path, body: str, *, tail_result: bool = False):
+    """A Skill launch: one-line tool_result plus the isMeta body entry
+    Claude Code delivers it in. `tail_result` puts the result *after* the
+    body to cover the reversed arrival order."""
+    result = {"type": "user", "uuid": "tr-1", "parentUuid": "asst-1",
+              "message": {"content": [
+                  {"type": "tool_result", "tool_use_id": "tu_s",
+                   "content": "Launching skill: demo"},
+              ]}}
+    payload = {"type": "user", "uuid": "meta-1", "parentUuid": "tr-1",
+               "isMeta": True, "sourceToolUseID": "tu_s",
+               "message": {"content": [{"type": "text", "text": body}]}}
+    entries = [
+        _user("user-1", None),
+        _asst_with_content(msg_id="m1", uuid="asst-1", parent="user-1", content=[
+            {"type": "tool_use", "id": "tu_s", "name": "Skill",
+             "input": {"skill": "demo"}},
+        ]),
+    ]
+    entries += [payload, result] if tail_result else [result, payload]
+    return _write(tmp_path, *entries)
+
+
+def test_skill_payload_attributed_to_its_tool_call(tmp_path):
+    """A skill's body arrives as a separate isMeta entry keyed by
+    `sourceToolUseID`, not as the Skill tool_result. Without attribution a
+    skill that injects a huge body reports only its one-line result."""
+    body = "SKILL DOC BODY. " * 4000
+    u = read_usage(_skill_launch(tmp_path, body))
+    assert u is not None
+    call = u.turns[0].tool_calls[0]
+    assert call["name"] == "Skill"
+    body_est = estimate_text_tokens(body)
+    assert body_est > 1000
+    # one-line result + body, and the body dominates
+    assert call["input_token_estimate"] >= body_est
+    assert call["input_token_estimate"] < body_est + 100
+
+
+def test_skill_payload_attributed_regardless_of_arrival_order(tmp_path):
+    """The body and the one-line tool_result can land either side of each
+    other in the linear scan; the estimate accumulates, never overwrites."""
+    body = "SKILL DOC BODY. " * 4000
+    first = read_usage(_skill_launch(tmp_path, body))
+    second = read_usage(_skill_launch(tmp_path, body, tail_result=True))
+    assert first is not None and second is not None
+    assert (first.turns[0].tool_calls[0]["input_token_estimate"]
+            == second.turns[0].tool_calls[0]["input_token_estimate"])
+
+
+def test_meta_entry_without_source_tool_use_id_is_not_attributed(tmp_path):
+    """isMeta entries also carry unrelated harness injections; only those
+    naming a `sourceToolUseID` belong to a tool call."""
+    path = _write(
+        tmp_path,
+        _user("user-1", None),
+        _asst_with_content(msg_id="m1", uuid="asst-1", parent="user-1", content=[
+            {"type": "tool_use", "id": "tu_s", "name": "Skill",
+             "input": {"skill": "demo"}},
+        ]),
+        {"type": "user", "uuid": "tr-1", "parentUuid": "asst-1",
+         "message": {"content": [
+             {"type": "tool_result", "tool_use_id": "tu_s",
+              "content": "Launching skill: demo"},
+         ]}},
+        {"type": "user", "uuid": "meta-1", "parentUuid": "tr-1", "isMeta": True,
+         "message": {"content": [{"type": "text", "text": "unrelated " * 3000}]}},
+    )
+    u = read_usage(path)
+    assert u is not None
+    call = u.turns[0].tool_calls[0]
+    assert call["input_token_estimate"] < 50
 
 
 def test_tool_result_with_image_charges_image_tokens(tmp_path):

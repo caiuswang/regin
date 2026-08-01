@@ -237,6 +237,86 @@ def cmd_backfill_tokens(
     )
 
 
+def _skill_attribution_payloads(trace_id: str, usage) -> list[dict]:
+    """One `tool_attribution` payload per turn that launched a skill.
+
+    Scoped to `Skill` calls so a re-scan can only ever correct a skill's
+    own row — every other tool's live attribution is left untouched.
+    """
+    payloads = []
+    for turn in usage.turns:
+        calls = [
+            {'tool_use_id': c.get('id'), 'name': c.get('name'),
+             'input_tokens': c.get('input_token_estimate'),
+             'output_tokens': c.get('output_token_estimate'),
+             'image_tokens': c.get('image_token_estimate')}
+            for c in turn.tool_calls
+            if c.get('name') == 'Skill' and isinstance(c.get('id'), str)
+            and c.get('skill_payload_token_estimate')
+        ]
+        if calls:
+            payloads.append({'trace_id': trace_id, 'turn_uuid': turn.uuid,
+                             'tool_calls': calls})
+    return payloads
+
+
+def _backfill_skill_one(provider, ingest, trace_id: str, counts: dict) -> None:
+    """Re-attribute one session's skill launches, mutating `counts`."""
+    transcript = _find_transcript(trace_id)
+    if transcript is None:
+        counts['skipped'] += 1
+        return
+    usage = provider.parse_transcript(transcript)
+    if usage is None or not usage.turns:
+        counts['skipped'] += 1
+        return
+    payloads = _skill_attribution_payloads(trace_id, usage)
+    if not payloads:
+        counts['skipped'] += 1
+        return
+    for payload in payloads:
+        ingest(payload)
+    counts['updated'] += 1
+
+
+@trace_app.command("backfill-skill-tokens",
+                   help="Re-attribute Skill launches' injected bodies to their "
+                        "tool.Skill spans for existing sessions (the body "
+                        "arrives separately from the one-line tool_result, so "
+                        "sessions traced before this landed under-report it)")
+def cmd_backfill_skill_tokens(
+    session: str = typer.Option(
+        "", "--session", help="Only this trace id (default: every session)",
+    ),
+    limit: int = typer.Option(
+        0, "--limit", help="Stop after this many sessions (0 = no limit)",
+    ),
+) -> None:
+    provider = get_active_provider()
+    if not provider.capabilities.transcript_usage:
+        print(f"not supported for provider: {provider.display_name}")
+        raise typer.Exit(2)
+
+    from lib.orm.engine import get_connection
+    from lib.trace.trace_service import ingest_tool_attribution
+
+    conn = get_connection()
+    if session:
+        trace_ids = [session]
+    else:
+        trace_ids = [r['trace_id'] for r in conn.execute(
+            "SELECT DISTINCT trace_id FROM session_spans WHERE name = 'tool.Skill'"
+        ).fetchall()]
+
+    counts = {'updated': 0, 'skipped': 0}
+    for trace_id in trace_ids:
+        if limit and counts['updated'] >= limit:
+            break
+        _backfill_skill_one(provider, ingest_tool_attribution, trace_id, counts)
+    print(f"Done. sessions_updated={counts['updated']} "
+          f"skipped={counts['skipped']}")
+
+
 @trace_app.command("backfill-model",
                    help="Set sessions.model from stored transcript spans for "
                         "sessions that never resolved one (e.g. llm-stage runs "

@@ -635,11 +635,19 @@ def _agent_target(attrs: dict) -> tuple[str, str] | None:
     return (desc, desc) if desc else None
 
 
+def _skill_target(attrs: dict) -> tuple[str, str] | None:
+    name = _nonempty_str(attrs.get('skill_name'))
+    return (name, name) if name else None
+
+
 def _span_target(attrs: dict) -> tuple[str, str] | None:
     """`(full_target, display_label)` a tool call drills into, or None when
     the tool has no meaningful per-call target. file_path for file tools,
-    the command for Bash/Grep/Glob, the description for subagents."""
+    the command for Bash/Grep/Glob, the description for subagents, the
+    skill name for Skill launches."""
     tool = attrs.get('tool_name')
+    if tool == 'Skill':
+        return _skill_target(attrs)
     if tool in _FILE_TOOLS:
         return _file_target(attrs)
     if tool in _CMD_TOOLS:
