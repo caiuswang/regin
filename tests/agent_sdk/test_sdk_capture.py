@@ -52,6 +52,7 @@ class AssistantMessage:
     model: str | None = None
     parent_tool_use_id: str | None = None
     usage: dict | None = None
+    message_id: str | None = None
 
 
 @dataclass
@@ -78,6 +79,31 @@ def test_every_block_becomes_an_event_in_emission_order():
         "AssistantThinking", "AssistantText", "ToolCall"]
     assert events[1].text == "PICKED=MySQL"
     assert events[1].model == "claude-opus-5"
+
+
+def test_assistant_blocks_carry_the_api_message_id():
+    """The one identifier this writer shares with the child `claude`'s
+    transcript, which keys its own turns on the same `message.id`. Without it
+    on the span, an SDK-launched session's two traces can only be paired by
+    matching text against a time bound — and a long answer beats any bound."""
+    message = AssistantMessage(
+        content=[ThinkingBlock(signature="ab"), TextBlock(text="hi")],
+        model="claude-opus-5", message_id="msg_011Cdb",
+    )
+
+    events = from_sdk_message("t1", message)
+
+    assert [e.message_id for e in events] == ["msg_011Cdb", "msg_011Cdb"]
+    assert to_span(events[1])['attributes']['message_id'] == "msg_011Cdb"
+    assert to_span(events[0])['attributes']['message_id'] == "msg_011Cdb"
+
+
+def test_a_message_without_an_id_omits_the_attribute():
+    """Absent, not empty: `_cross_source_key` reads presence to decide whether
+    it has an identity or must fall back to matching text."""
+    events = from_sdk_message("t1", AssistantMessage(content=[TextBlock("hi")]))
+
+    assert 'message_id' not in to_span(events[0])['attributes']
 
 
 def test_subagent_text_carries_the_agent_id():

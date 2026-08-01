@@ -1041,6 +1041,20 @@ def _add_durations(turn, attrs: dict) -> None:
         attrs['inference_duration_ms'] = int(turn.inference_duration_ms)
 
 
+def _add_message_id(turn, attrs: dict) -> None:
+    """The API `message.id` this turn was built from.
+
+    Cross-writer identity, not display: an SDK-launched run is traced twice and
+    this is the only id both writers see for one assistant message
+    (`lib.trace.merge._row_identity`). Absent on turns the transcript keyed by
+    request-id or entry-uuid instead. Every hook-side writer of an assistant
+    span must stamp it — including `subagent_lifecycle` — because the merge
+    reads a missing id as "no opinion", so a pair where only one side names
+    itself falls back to matching text against the clock."""
+    if getattr(turn, 'message_id', None):
+        attrs['message_id'] = turn.message_id
+
+
 def _build_response_attrs(turn, idx: int, fallback_model: str | None) -> dict:
     attrs: dict = {
         'turn_uuid': turn.uuid,
@@ -1051,6 +1065,7 @@ def _build_response_attrs(turn, idx: int, fallback_model: str | None) -> dict:
         'truncated': turn.text_truncated,
         'response_chars': len(turn.text),
     }
+    _add_message_id(turn, attrs)
     _add_tool_summary(turn, attrs)
     _add_durations(turn, attrs)
     return attrs
@@ -1074,6 +1089,7 @@ def _build_thinking_attrs(
         'thinking_blocks': turn.thinking_blocks,
         'thinking_signature_bytes': turn.thinking_signature_bytes,
     }
+    _add_message_id(turn, attrs)
     if turn.thinking_text:
         attrs['thinking_text'] = turn.thinking_text
         attrs['thinking_truncated'] = turn.thinking_text_truncated

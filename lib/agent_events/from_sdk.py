@@ -28,25 +28,26 @@ def _block_type(block) -> str:
     return type(block).__name__
 
 
-def _text_event(trace_id, block, agent_id, model) -> AgentEvent | None:
+def _text_event(trace_id, block, agent_id, model, message_id='') -> AgentEvent | None:
     text = getattr(block, 'text', '') or ''
     if not text.strip():
         return None
     return AssistantText(trace_id=trace_id, text=text, model=model,
-                         agent_id=agent_id)
+                         agent_id=agent_id, message_id=message_id)
 
 
-def _thinking_event(trace_id, block, agent_id, model) -> AgentEvent | None:
+def _thinking_event(trace_id, block, agent_id, model,
+                    message_id='') -> AgentEvent | None:
     text = getattr(block, 'thinking', '') or ''
     signature = getattr(block, 'signature', '') or ''
     if not text and not signature:
         return None
     return AssistantThinking(trace_id=trace_id, text=text,
                              signature_bytes=len(signature), model=model,
-                             agent_id=agent_id)
+                             agent_id=agent_id, message_id=message_id)
 
 
-def _tool_use_event(trace_id, block, agent_id, model) -> AgentEvent:
+def _tool_use_event(trace_id, block, agent_id, model, message_id='') -> AgentEvent:
     return ToolCall(
         trace_id=trace_id,
         tool_name=getattr(block, 'name', '') or '',
@@ -74,10 +75,15 @@ def _assistant_events(trace_id: str, message) -> list[AgentEvent]:
     """
     agent_id = getattr(message, 'parent_tool_use_id', None)
     model = getattr(message, 'model', None) or None
+    # The child `claude` writing this session's other trace derives its turns
+    # from the same id (`transcript_usage._resolve_dedup_key`), so carrying it
+    # is what lets the serve-time union pair the two on identity.
+    message_id = getattr(message, 'message_id', None) or ''
     out: list[AgentEvent] = []
     for block in getattr(message, 'content', None) or []:
         builder = _BLOCK_EVENTS.get(_block_type(block))
-        event = builder(trace_id, block, agent_id, model) if builder else None
+        event = (builder(trace_id, block, agent_id, model, message_id)
+                 if builder else None)
         if event is not None:
             out.append(event)
     # Emitted even when the message produced no events of its own: a call

@@ -364,12 +364,18 @@ def _subagent_thinking_output_tokens(turn) -> int | None:
 
 def _subagent_turn_base_attributes(turn, idx, agent_id, fallback_model) -> dict:
     """The attributes both spans of one subagent turn carry."""
+    from .turn_trace.span_posters import _add_message_id
+
     attributes = {
         'turn_uuid': turn.uuid,
         'turn_index': idx,
         'model': turn.model or fallback_model,
         'agent_id': agent_id,
     }
+    # The main-agent spans carry it too: a subagent's messages reach the SDK
+    # writer like any other, so leaving it off here left one writer's row
+    # identified and the other's not.
+    _add_message_id(turn, attributes)
     if turn.tool_calls:
         attributes['tool_calls'] = [
             {'name': t['name'], 'is_error': t['is_error']}

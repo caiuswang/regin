@@ -225,6 +225,32 @@ def _assistant_with_usage(*, msg_id, model='claude-opus-4-7', text='hello',
     }
 
 
+def test_assistant_spans_carry_the_api_message_id(captured_spans, tmp_path):
+    """The transcript already keys each turn on `message.id`
+    (`_resolve_dedup_key`); the span has to carry it too. It is the only
+    identifier shared with the SDK writer of a regin-launched run, so without
+    it that session's two traces pair by matching text against a time bound —
+    which duplicated every long response."""
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'user-uuid-abcdef0123456', 'parentUuid': None,
+         'message': {'content': 'go'}},
+        _assistant_with_usage(
+            msg_id='msg_011Cdb', text='here you go',
+            uuid='asst-uuid-9876543210xyz',
+            parent_uuid='user-uuid-abcdef0123456',
+            extra_blocks=[{'type': 'thinking', 'thinking': 'hmm',
+                           'signature': 'ab'}]),
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    named = {s['name']: s for s in captured_spans
+             if s.get('name') in ('assistant_response', 'assistant.thinking')}
+    assert named, 'expected assistant spans'
+    for span in named.values():
+        assert span['attributes']['message_id'] == 'msg_011Cdb'
+
+
 def test_emits_assistant_response_span_with_text_and_parent_link(
     captured_spans, tmp_path,
 ):

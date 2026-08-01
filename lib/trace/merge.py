@@ -579,12 +579,37 @@ _CROSS_SOURCE_TEXT_NAMES = frozenset({'assistant_response', 'prompt'})
 # every reasoning card double-rendered.
 _CROSS_SOURCE_SHAPE_NAMES = frozenset({'assistant.thinking'})
 _CROSS_SOURCE_SINGLETON_NAMES = frozenset({'session.start', 'session.end'})
-# How far apart the two writers may stamp the same event. Measured skew on real
-# sessions is 1ms-3s (both derive from one model emission; the hook side waits
-# for a hook to fire). Deliberately far below the gap between two genuine
-# repeats — a user typing `continue` twice, a session restarting — so those
-# stay two spans instead of collapsing into one.
+# Assistant spans both writers derive from one API message, so the message's own
+# id pairs them exactly — see `_cross_source_key`.
+_CROSS_SOURCE_MESSAGE_NAMES = frozenset({'assistant_response',
+                                         'assistant.thinking'})
+# How far apart the two writers may stamp the same event, for the keys that name
+# a CLASS rather than an identity. Bounded because such a key repeats within one
+# session — `continue` typed twice, a session resumed three times — and pairing
+# across two unrelated occurrences would render one where there were two.
+#
+# NOT a clock-skew allowance, and it does not bound `assistant_response`: one API
+# message is written to the transcript as SEVERAL entries (thinking block, then
+# text block), and the two writers latch onto different ones, so their stamps sit
+# a whole generation apart — measured +0.03s at 73 chars rising to +16.03s at
+# 3418 chars, with the transcript side always first. That distance has no useful
+# maximum, which is why those pair on identity instead (`_bucket_skew`).
 _CROSS_SOURCE_SKEW_SEC = 5.0
+# Below this, an `assistant_response`'s text is too generic to be an identity on
+# its own ("Done.", "Yes."), so a row predating `message_id` capture keeps the
+# time bound. Above it, byte-identical text IS the proof of one emission.
+_TEXT_IDENTITY_CHARS = 200
+# Session lifecycle markers get their own ceiling: the SDK ends the run, then
+# the child process exits and its hook fires. That IS a lag (unlike the
+# assistant gap), so a bound is the right instrument — it just has to clear
+# process teardown rather than one API call.
+#
+# Sized from both sides, which overlap: the widest real teardown is 5.49s
+# (0.37-5.49s across every SDK run), while the corpus holds genuinely distinct
+# same-kind markers as little as 5.02s apart. No value separates those
+# perfectly, so this sits just above the teardown it must cover and well below
+# a minute — 60s would have swallowed 17 real sub-minute pairs.
+_LIFECYCLE_SKEW_SEC = 15.0
 # Attribute values that carry no information, so a twin's concrete value wins.
 # `session.end` is the case that matters: the child's hook reports the generic
 # 'other' for a run the SDK ended deliberately, and only the runner knows it was
@@ -609,30 +634,81 @@ def _cross_source_text(name: str, attrs: dict) -> str:
     return first if _SLASH_COMMAND_RE.match(first) else text
 
 
-def _cross_source_key(span: dict):
-    """What makes a span the same EVENT across the two writers, or None.
+def _tool_span_class(name: str, attrs: dict) -> str:
+    """One name for a call, whichever writer described it.
 
-    Only `tool_use_id` is a shared identifier — genuinely the same `toolu_*`
-    namespace on both sides, and globally unique, so it needs no further
-    qualification. `turn_uuid`, `parent_id` and `span_id` are NOT shared.
-
-    Everything else returns a *class*, not an identity: many spans share it
-    within one session (three `session.start`s after two resumes, `continue`
-    typed twice). Pairing inside a class is positional and time-bounded — see
-    `_pair_cross_source` — because a class key alone would collapse genuine
-    repeats into one.
+    A FAILED call has two shapes: the hook writes `tool.failure` carrying the
+    real tool in `attrs.tool_name`, while the SDK keeps `tool.<Name>` and sets
+    ERROR (`post_tool_failure.py`; the same split that made
+    `lib/grader/evidence.py` blind to hook-side failures). Keying on the raw
+    name filed one call's two rows under different keys, so the failure rendered
+    twice — once per writer.
     """
-    name = span.get('name') or ''
+    if name != 'tool.failure':
+        return name
+    tool = attrs.get('tool_name')
+    return f'tool.{tool}' if isinstance(tool, str) and tool else name
+
+
+def _row_identity(span: dict, name: str, attrs: dict):
+    """The identifier this row shares with its twin, or None.
+
+    Deliberately NOT part of the bucket key. An identity is available
+    per-writer, not per-event: a subagent turn is stamped with `message_id` by
+    the SDK writer and (before this) not by the hook one, and Claude Code's
+    PermissionRequest payload carries no `tool_use_id` at all. Keying the
+    bucket on it therefore filed a row apart from its own twin, and each
+    landed in a single-origin bucket that reconciles to itself — a duplicate,
+    which is the bug this whole module exists to prevent.
+
+    So it decides PAIRING instead (`_may_pair`): two rows that both name
+    themselves must agree, and when they do the agreement outranks any clock
+    reasoning.
+    """
+    if name in _CROSS_SOURCE_MESSAGE_NAMES:
+        return attrs.get('message_id') or None
+    if name == 'permission.request':
+        return _tool_use_id(span)
+    return None
+
+
+def _cross_source_identity(span: dict, name: str, attrs: dict):
+    """The key that names one EVENT outright, or None.
+
+    Only `tool_use_id` on a tool span qualifies: it is the same `toolu_*` on
+    both sides, globally unique, and — unlike the identities above — recorded
+    by both writers on every row, so bucketing on it strands nothing.
+    """
     call_id = _tool_use_id(span)
-    if call_id and (name.startswith('tool.') or name == 'permission.request'):
-        return ('id', name, call_id)
-    attrs = _attrs(span)
+    if call_id and name.startswith('tool.'):
+        return ('id', _tool_span_class(name, attrs), call_id)
+    return None
+
+
+def _cross_source_class(name: str, attrs: dict):
+    """The key that names a CLASS of event, or None.
+
+    Many spans share one within a session (three `session.start`s after two
+    resumes, `continue` typed twice), so pairing inside a class is positional
+    and mostly time-bounded — see `_pair_cross_source` and `_bucket_skew`.
+    """
+    if name == 'permission.request':
+        # Deliberately NOT keyed on `tool_use_id` even when one is present:
+        # Claude Code's PermissionRequest payload omits it (32 of 947 hook rows
+        # carry one), so an id key would file the SDK's row apart from the
+        # hook's and pair neither. `tool_name` is what both always record, and
+        # `_may_pair` still refuses two rows whose ids disagree.
+        tool = attrs.get('tool_name')
+        # Attributes are arbitrary JSON: an unhashable value here would raise
+        # inside the bucket dict and 500 the whole trace read.
+        return ('cls', name, tool if isinstance(tool, str) else '')
     if name in _CROSS_SOURCE_TEXT_NAMES:
         text = _cross_source_text(name, attrs)
         return ('cls', name, text) if text else None
     if name in _CROSS_SOURCE_SHAPE_NAMES:
-        # The signature length is a per-emission fingerprint and is byte-equal
-        # on both writers. `output_tokens` and `turn_index` are NOT usable: the
+        # Fallback for rows written before `message_id` was captured. The
+        # signature length is a per-emission fingerprint and is byte-equal on
+        # both writers. `output_tokens` and `turn_index` are NOT usable: the
         # SDK's usage is a streaming partial (it reports 0 where the hook reports
         # 208) and the two number their turns independently.
         return ('cls', name, attrs.get('thinking_signature_bytes'),
@@ -640,6 +716,19 @@ def _cross_source_key(span: dict):
     if name in _CROSS_SOURCE_SINGLETON_NAMES:
         return ('cls', name)
     return None
+
+
+def _cross_source_key(span: dict):
+    """What makes a span the same EVENT across the two writers, or None.
+
+    An identity wins where one exists; otherwise the span falls back to its
+    class. A `permission.request` is class-keyed even when it carries an id,
+    for the reason given in `_cross_source_class`.
+    """
+    name = span.get('name') or ''
+    attrs = _attrs(span)
+    return (_cross_source_identity(span, name, attrs)
+            or _cross_source_class(name, attrs))
 
 
 def _prefer_cross_source(a: dict, b: dict) -> tuple[dict, dict]:
@@ -677,6 +766,37 @@ def _fill_vague_attrs(survivor: dict, dropped: dict) -> dict:
     return {**survivor, 'attributes': {**kept, **fills}}
 
 
+def _identity_agreement(a: dict, b: dict):
+    """`True`/`False` when both rows name themselves, else `None` (unknown).
+
+    Asymmetry is the normal state during an upgrade — one writer stamps the id
+    for rows written from now on, the other's older rows have none — so a
+    missing id must read as "no opinion", never as disagreement.
+    """
+    ia = _row_identity(a, a.get('name') or '', _attrs(a))
+    ib = _row_identity(b, b.get('name') or '', _attrs(b))
+    if ia is None or ib is None:
+        return None
+    return ia == ib
+
+
+def _may_pair(a: dict, b: dict, skew) -> bool:
+    """Are these two rows the same event?
+
+    A shared identity settles it either way and outranks the clock: agreeing
+    ids pair however far apart the writers stamped them, and DIFFERING ids stay
+    two rows however close — two permission requests from one parallel tool
+    block are seconds apart and must both survive.
+    """
+    agreed = _identity_agreement(a, b)
+    if agreed is not None:
+        return agreed
+    if skew is None:
+        return True
+    gap = _delta_sec(a, b)
+    return gap is not None and gap <= skew
+
+
 def _pair_cross_source(hooks: list[dict], sdks: list[dict],
                        skew=_CROSS_SOURCE_SKEW_SEC) -> list[dict]:
     """Reconcile one key's rows from the two writers, in time order.
@@ -696,10 +816,9 @@ def _pair_cross_source(hooks: list[dict], sdks: list[dict],
     """
     out, i, j = [], 0, 0
     while i < len(hooks) and j < len(sdks):
-        gap = _delta_sec(hooks[i], sdks[j])
-        if skew is not None and (gap is None or gap > skew):
-            # Too far apart to be one emission — retire whichever is older on
-            # its own rather than pairing across an unrelated occurrence.
+        if not _may_pair(hooks[i], sdks[j], skew):
+            # Not one emission — retire whichever is older on its own rather
+            # than pairing across an unrelated occurrence.
             older = hooks if _starts_before(hooks[i], sdks[j]) else sdks
             out.append(hooks[i] if older is hooks else sdks[j])
             i, j = (i + 1, j) if older is hooks else (i, j + 1)
@@ -773,6 +892,35 @@ def _settled(rows: list[dict]) -> list[dict]:
     return resolved or rows
 
 
+def _bucket_skew(key):
+    """How far apart the two writers may stamp one event, under this key.
+
+    Only consulted for rows that named no identity between them — with one,
+    `_may_pair` has already decided.
+
+    `None` — no bound — for a key that already names the event (`tool_use_id`),
+    and for an `assistant_response` whose text is long enough that byte-identical
+    content is itself the proof. The latter is the fallback for rows written
+    before `message_id` was captured, and it cannot be a fixed number of
+    seconds: those two stamps sit a whole generation apart by construction, so
+    any finite bound is a duplicate waiting on a long enough answer.
+
+    A session lifecycle marker gets a wider bound instead of no bound. Its gap
+    IS a lag — the SDK ends the run, then the child process exits and its hook
+    fires, measured at 5.5s where the rest of the corpus is under 0.6s — so a
+    ceiling is the right instrument; it just has to clear process teardown
+    rather than one API call.
+    """
+    if key[0] == 'id':
+        return None
+    if (key[1] == 'assistant_response'
+            and len(key[2] or '') >= _TEXT_IDENTITY_CHARS):
+        return None
+    if key[1] in _CROSS_SOURCE_SINGLETON_NAMES:
+        return _LIFECYCLE_SKEW_SEC
+    return _CROSS_SOURCE_SKEW_SEC
+
+
 def _reconcile_bucket(key, rows: list[dict]) -> list[dict]:
     """The surviving rows for one cross-source key."""
     hooks = _settled([r for r in rows if r.get(_ORIGIN_KEY) == 'hook'])
@@ -783,9 +931,7 @@ def _reconcile_bucket(key, rows: list[dict]) -> list[dict]:
     # not the row: one call legitimately leaves several rows per writer (real
     # traces carry up to 31 under one id), and collapsing only the first pair
     # left the rest standing as duplicates.
-    return _pair_cross_source(hooks, sdks,
-                              skew=None if key[0] == 'id'
-                              else _CROSS_SOURCE_SKEW_SEC)
+    return _pair_cross_source(hooks, sdks, skew=_bucket_skew(key))
 
 
 def merge_spans(

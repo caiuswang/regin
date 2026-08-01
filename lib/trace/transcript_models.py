@@ -46,6 +46,11 @@ class TurnUsage:
     uuid: str | None = None
     timestamp: str | None = None
     request_id: str | None = None
+    # The API's `message.id` (`msg_…`) — this turn's dedup key, and the one
+    # identifier an SDK-launched run's OTHER writer also knows
+    # (`AssistantMessage.message_id`). Carried onto the turn's spans so the two
+    # traces of one session pair on identity instead of matching text.
+    message_id: str | None = None
     # Assistant response text (text-blocks only) and truncation flag.
     # Used by `assistant_response` spans in the trace dashboard.
     text: str | None = None

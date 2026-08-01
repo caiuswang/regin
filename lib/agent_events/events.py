@@ -48,6 +48,10 @@ class AssistantText(AgentEvent):
 
     `turn_uuid` is the producer's turn identity — the value that joins this row
     to its `turn_usage` row and groups a turn's spans for the serve-time ladder.
+
+    `message_id` is the API's own `msg_…`, and unlike `turn_uuid` it is the
+    SAME value across producers — the join that lets the two traces of one
+    SDK-launched session collapse to one.
     """
 
     text: str = ''
@@ -55,6 +59,7 @@ class AssistantText(AgentEvent):
     agent_id: str | None = None
     turn_uuid: str = ''
     turn_index: int = -1
+    message_id: str = ''
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,7 @@ class AssistantThinking(AgentEvent):
     agent_id: str | None = None
     turn_uuid: str = ''
     turn_index: int = -1
+    message_id: str = ''
 
 
 @dataclass(frozen=True)

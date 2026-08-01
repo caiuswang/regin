@@ -152,11 +152,17 @@ def _capture_policy() -> tuple[bool, int]:
 
 def _turn_attrs(attrs: dict, event) -> None:
     """The turn identity every hook-tier assistant span carries, so a row's
-    turn is readable whichever producer wrote it."""
+    turn is readable whichever producer wrote it.
+
+    `message_id` is the cross-PRODUCER one: `turn_uuid` is each writer's own
+    numbering, while the API's `msg_…` is the same string on both, which is how
+    an SDK-launched session's two traces pair (`lib.trace.merge`)."""
     if getattr(event, 'turn_uuid', ''):
         attrs['turn_uuid'] = event.turn_uuid
     if getattr(event, 'turn_index', -1) >= 0:
         attrs['turn_index'] = event.turn_index
+    if getattr(event, 'message_id', ''):
+        attrs['message_id'] = event.message_id
 
 
 def _assistant_text_span(event: AssistantText) -> dict | None:

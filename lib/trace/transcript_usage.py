@@ -158,6 +158,7 @@ class _TurnBuilder:
     uuid: str | None = None
     timestamp: str | None = None
     request_id: str | None = None
+    message_id: str | None = None
     parent_uuid: str | None = None
     prompt_uuid: str | None = None
     text_parts: list[str] = field(default_factory=list)
@@ -606,6 +607,7 @@ def _builder_to_turn_usage(
         uuid=builder.uuid,
         timestamp=builder.timestamp,
         request_id=builder.request_id,
+        message_id=builder.message_id,
         text=text,
         text_truncated=truncated,
         thinking_text=thinking_text,
@@ -1108,6 +1110,18 @@ class _TranscriptScan:
         top_model = entry_n.get('model')
         return top_model if isinstance(top_model, str) else None
 
+    @staticmethod
+    def _message_id(msg: dict) -> str | None:
+        """The API's own `msg_…` id, or None for the shapes that lack one.
+
+        Only the real `message.id` qualifies — never the `request_id` /
+        entry-uuid the dedup key falls back to. It is handed across writers as
+        an identity, and a fallback value the SDK side cannot possibly produce
+        would be a key that never matches at best, and a wrong match at worst.
+        """
+        mid = msg.get('id')
+        return mid if isinstance(mid, str) and mid else None
+
     def _resolve_dedup_key(self, msg: dict, entry_n: dict, euuid: str | None) -> str:
         key = msg.get('id') or entry_n.get('request_id')
         if isinstance(key, str) and key:
@@ -1141,6 +1155,7 @@ class _TranscriptScan:
         builder = self.builders.get(dedup_key) or self._new_builder(
             dedup_key, entry_n, euuid, eparent, model,
         )
+        builder.message_id = builder.message_id or self._message_id(msg)
         self._apply_usage_once(builder, usage)
         content = msg.get('content')
         self._accumulate_text_and_thinking(builder, content)

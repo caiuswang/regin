@@ -314,6 +314,232 @@ def test_dict_valued_attributes_do_not_crash_the_fill():
     assert merged[0]['attributes']['tool_input'] == {'command': 'ls'}
 
 
+# ── one message, two writers ─────────────────────────────────────────
+
+def test_one_message_pairs_however_long_the_generation_took():
+    """The gap between the two writers is a GENERATION, not clock skew.
+
+    One API message is written to the transcript as several entries and the two
+    writers latch onto different ones, so their stamps sit as far apart as the
+    answer took to produce — measured +0.03s at 73 chars up to +16.03s at 3418.
+    A 5s bound therefore duplicated the majority of long responses (7 of 13 in
+    one real session); `message_id` pairs them outright.
+    """
+    rows = [
+        _row('hook-r', 'assistant_response',
+             {'text': 'x' * 3418, 'message_id': 'msg_01'}, origin='hook',
+             start='2026-08-01T10:00:00', id=1),
+        _row('sdk-r', 'assistant_response',
+             {'text': 'x' * 3418, 'message_id': 'msg_01'}, origin='sdk',
+             start='2026-08-01T10:00:16', id=2),
+    ]
+    assert [s['span_id'] for s in merge_spans(rows)] == ['hook-r']
+
+
+def test_two_messages_are_never_paired_however_alike():
+    """The other direction: identical text under two ids is two emissions."""
+    rows = [
+        _row('hook-a', 'assistant_response',
+             {'text': 'Done.', 'message_id': 'msg_01'}, origin='hook',
+             start='2026-08-01T10:00:00', id=1),
+        _row('sdk-b', 'assistant_response',
+             {'text': 'Done.', 'message_id': 'msg_02'}, origin='sdk',
+             start='2026-08-01T10:00:00', id=2),
+    ]
+    assert len(merge_spans(rows)) == 2
+
+
+def test_a_long_response_predating_message_id_still_pairs():
+    """Rows written before the id was captured must still heal, so the text
+    itself carries the identity once it is long enough to be one."""
+    rows = [
+        _row('hook-r', 'assistant_response', {'text': 'y' * 2006},
+             origin='hook', start='2026-08-01T10:00:00', id=1),
+        _row('sdk-r', 'assistant_response', {'text': 'y' * 2006},
+             origin='sdk', start='2026-08-01T10:00:09', id=2),
+    ]
+    assert [s['span_id'] for s in merge_spans(rows)] == ['hook-r']
+
+
+def test_a_short_reply_repeated_without_an_id_stays_two():
+    """The limit of the text fallback: "Done." is not an identity, so two of
+    them 20 minutes apart keep the time bound and stay two cards."""
+    rows = [
+        _row('hook-1', 'assistant_response', {'text': 'Done.'},
+             origin='hook', start='2026-08-01T10:00:00', id=1),
+        _row('sdk-2', 'assistant_response', {'text': 'Done.'},
+             origin='sdk', start='2026-08-01T10:20:00', id=2),
+    ]
+    assert len(merge_spans(rows)) == 2
+
+
+def test_a_failed_call_renders_once_not_once_per_writer():
+    """A failure has two shapes: the hook names the span `tool.failure` and puts
+    the tool in `attrs.tool_name`; the SDK keeps `tool.<Name>` and sets ERROR.
+    Keying on the raw name filed one call under two keys."""
+    rows = [
+        _row('hook-f', 'tool.failure',
+             {'tool_name': 'Bash', 'error': 'Exit code 1', 'command': 'ls'},
+             origin='hook', status='ERROR', start='2026-08-01T10:00:00', id=1,
+             tool_use_id='toolu_7'),
+        _row('sdk-f', 'tool.Bash', {'tool_name': 'Bash', 'error': 'Exit code 1'},
+             origin='sdk', status='ERROR', start='2026-08-01T10:00:00', id=2,
+             tool_use_id='toolu_7'),
+    ]
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['hook-f']
+    assert merged[0]['attributes']['error'] == 'Exit code 1'
+
+
+def test_permission_request_pairs_when_only_the_sdk_knows_the_call_id():
+    """Claude Code's PermissionRequest payload carries no `tool_use_id` (32 of
+    947 real hook rows have one), so keying on it filed the two writers apart
+    and paired neither."""
+    rows = [
+        _row('permreq-toolu_3', 'permission.request',
+             {'tool_name': 'AskUserQuestion', 'tool_use_id': 'toolu_3'},
+             origin='sdk', start='2026-08-01T10:00:00', id=1),
+        _row('hook-perm', 'permission.request',
+             {'tool_name': 'AskUserQuestion', 'option_count': 1},
+             origin='hook', start='2026-08-01T10:00:02', id=2),
+    ]
+    assert [s['span_id'] for s in merge_spans(rows)] == ['hook-perm']
+
+
+def test_repeated_requests_for_one_tool_are_not_collapsed():
+    """Asking the same tool four more times is four more cards — only the
+    writer's twin may be dropped."""
+    rows = [
+        _row('permreq-toolu_3', 'permission.request',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_3'}, origin='sdk',
+             start='2026-08-01T10:00:00', id=1),
+    ] + [
+        _row(f'hook-perm-{n}', 'permission.request', {'tool_name': 'Bash'},
+             origin='hook', start=f'2026-08-01T10:0{n}:02', id=10 + n)
+        for n in range(5)
+    ]
+    merged = merge_spans(rows)
+    assert len(merged) == 5
+    assert all(s.get(ORIGIN_KEY) == 'hook' for s in merged)
+
+
+def test_lifecycle_markers_pair_across_a_slow_child_exit():
+    """The SDK ends the run, then the child process exits and its hook fires —
+    5.5s later in a real session, which the 5s bound refused, rendering the end
+    twice. Lifecycle markers get a ceiling sized for process teardown instead;
+    `test_lifecycle_markers_hours_apart_are_never_fused` pins the other end."""
+    rows = [
+        _row('sdk-end', 'session.end', {'reason': 'idle timeout'},
+             origin='sdk', start='2026-08-01T10:23:20', id=1),
+        _row('hook-end', 'session.end', {'reason': 'other'}, origin='hook',
+             start='2026-08-01T10:23:26', id=2),
+    ]
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['hook-end']
+    assert merged[0]['attributes']['reason'] == 'idle timeout'
+
+
+def test_one_writer_stamping_the_id_first_does_not_double_render():
+    """The upgrade state, and why the identity is not part of the bucket key.
+
+    Rows stamped with `message_id` and rows predating it coexist for as long as
+    a session spans the deploy — and a subagent turn reaches the SDK writer
+    with an id while `subagent_lifecycle` had none. Bucketing on the id filed
+    each row apart from its own twin, into a single-origin bucket that
+    reconciles to itself: the exact duplicate this module exists to remove.
+    """
+    for attrs_hook, attrs_sdk in (
+        ({'text': 'hi', 'message_id': 'msg_01'}, {'text': 'hi'}),
+        ({'text': 'hi'}, {'text': 'hi', 'message_id': 'msg_01'}),
+    ):
+        rows = [
+            _row('hook-r', 'assistant_response', attrs_hook, origin='hook',
+                 start='2026-08-01T10:00:00', id=1),
+            _row('sdk-r', 'assistant_response', attrs_sdk, origin='sdk',
+                 start='2026-08-01T10:00:00', id=2),
+        ]
+        assert [s['span_id'] for s in merge_spans(rows)] == ['hook-r']
+
+
+def test_two_requests_from_one_tool_block_both_survive():
+    """Differing ids outrank proximity. A parallel tool block gates two calls
+    seconds apart under one tool name — pairing them on the name alone deleted
+    the second outright."""
+    rows = [
+        _row('hook-p', 'permission.request',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_A'}, origin='hook',
+             start='2026-08-01T10:00:00', id=1),
+        _row('permreq-toolu_B', 'permission.request',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_B'}, origin='sdk',
+             start='2026-08-01T10:00:02', id=2),
+    ]
+    assert len(merge_spans(rows)) == 2
+
+
+def test_one_request_pairs_however_late_the_answer_came():
+    """The other side of the same rule: agreeing ids pair regardless of the
+    clock, which is what the id key gave a `permission.request` before it had
+    to become a class key.
+
+    The SDK row deliberately does NOT use its real `permreq-` span_id here —
+    that prefix marks a placeholder, so `_drop_superseded_placeholders` would
+    retire the row before pairing is ever consulted and the test would pass
+    without exercising the identity path at all.
+    """
+    rows = [
+        _row('sdk-perm', 'permission.request',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_A'}, origin='sdk',
+             start='2026-08-01T10:00:30', id=2),
+        _row('hook-p', 'permission.request',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_A'}, origin='hook',
+             start='2026-08-01T10:00:00', id=1),
+    ]
+    assert [s['span_id'] for s in merge_spans(rows)] == ['hook-p']
+
+
+def test_an_unhashable_tool_name_does_not_crash_the_read():
+    """Attributes are arbitrary JSON. `tool_name` goes into a bucket key, so a
+    dict-valued one raised `unhashable type` and 500'd the whole trace."""
+    rows = [
+        _row('hook-p', 'permission.request', {'tool_name': {'weird': 1}},
+             origin='hook', start='2026-08-01T10:00:00', id=1),
+        _row('sdk-p', 'permission.request', {'tool_name': 'Bash'},
+             origin='sdk', start='2026-08-01T10:00:00', id=2),
+    ]
+    assert len(merge_spans(rows)) == 2
+
+
+def test_lifecycle_markers_hours_apart_are_never_fused():
+    """The teardown ceiling is a ceiling. Two runs of one session — or two
+    writers whose marker lists are misaligned — must not collapse just because
+    the counts happen to match."""
+    rows = [
+        _row('hook-s1', 'session.start', {'source': 'startup'}, origin='hook',
+             start='2026-08-01T10:00:00', id=1),
+        _row('sdk-s1', 'session.start', {}, origin='sdk',
+             start='2026-08-01T14:00:00', id=2),
+        _row('hook-s2', 'session.start', {'source': 'resume'}, origin='hook',
+             start='2026-08-01T18:00:00', id=3),
+        _row('sdk-s2', 'session.start', {}, origin='sdk',
+             start='2026-08-01T22:00:00', id=4),
+    ]
+    assert len(merge_spans(rows)) == 4
+
+
+def test_an_end_only_one_writer_saw_keeps_the_bound():
+    """Unequal counts mean a writer missed an event, so the bound comes back —
+    without it the lone SDK row would pair with an unrelated later end."""
+    rows = [
+        _row('sdk-end', 'session.end', {'reason': 'idle timeout'},
+             origin='sdk', start='2026-08-01T10:00:00', id=1),
+        _row('hook-end-1', 'session.end', {'reason': 'other'}, origin='hook',
+             start='2026-08-01T12:00:00', id=2),
+        _row('hook-end-2', 'session.end', {'reason': 'other'}, origin='hook',
+             start='2026-08-01T13:00:00', id=3),
+    ]
+    assert len(merge_spans(rows)) == 3
+
+
 # ── heal ─────────────────────────────────────────────────────────────
 
 def _seed_session(conn, tid, started, *, cwd='/w', title='do the thing',
