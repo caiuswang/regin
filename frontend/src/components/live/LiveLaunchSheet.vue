@@ -21,6 +21,7 @@ import Input from '../ui/Input.vue'
 import LiveResumePicker from './LiveResumePicker.vue'
 import Select from '../ui/Select.vue'
 import Textarea from '../ui/Textarea.vue'
+import { useLaunchDraft } from '../../composables/useLaunchDraft.js'
 import { resumeKindLabel } from '../../utils/resumeKind.js'
 import { shortTraceId } from '../../utils/traceFormatters.js'
 
@@ -39,15 +40,14 @@ const refusal = ref(null)
 // operator must not miss by being scrolled off a card they just opened.
 const held = ref(null)
 
-const prompt = ref('')
-const cwd = ref('')
-const model = ref('')
-const mode = ref('')
-const oneShot = ref(false)
-// The picked session row, or null for a fresh run. Holding the whole row (not
-// just its id) is what lets the form say which trace a pick lands on and adopt
-// its cwd without a second fetch.
-const resume = ref(null)
+// Everything the operator typed or picked lives in the module-scoped draft, so
+// dismissing the sheet does not discard it (see useLaunchDraft). `picking` is
+// deliberately NOT in there: which step the form was on is a view position, and
+// reopening should land on the form the draft describes, not back inside the
+// picker the operator was leaving.
+const {
+  prompt, cwd, model, mode, oneShot, resume, beforePick, resetDraft,
+} = useLaunchDraft(props.resumeFrom)
 const picking = ref(false)
 
 // A resumed session's cwd is not a preference — `claude --resume` resolves the
@@ -88,6 +88,7 @@ const resumeKind = computed(() => (
   resume.value ? resumeKindLabel(resume.value.kind) : ''))
 
 function pickResume(row) {
+  if (!resume.value) beforePick.value = { cwd: cwd.value, model: model.value }
   resume.value = row
   // Adopting the session's cwd is not a convenience: resume resolves the id
   // relative to it, so keeping the previous selection would launch a run that
@@ -103,6 +104,13 @@ function pickResume(row) {
 
 function clearResume() {
   resume.value = null
+  // The adopted working directory belongs to the session that was picked;
+  // left behind, it silently becomes the cwd of the next, unrelated launch.
+  if (beforePick.value) {
+    cwd.value = beforePick.value.cwd
+    model.value = beforePick.value.model
+    beforePick.value = null
+  }
 }
 
 // Only worth saying when something is actually gated — otherwise "this mode
@@ -168,6 +176,10 @@ async function launch() {
         && (picked.session_id === props.resumeFrom
           || picked.run_trace_id === props.resumeFrom),
     }
+    // The run exists now, so the draft that produced it is spent — reset before
+    // either exit, or the held-warning path would leave it to seed the next
+    // launch with a prompt that has already been sent.
+    resetDraft()
     if (data.warning) {
       held.value = { launched, warning: data.warning }
       return

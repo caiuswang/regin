@@ -778,3 +778,289 @@ def test_an_ordinary_launch_still_mints_its_own_trace_id(tmp_db, monkeypatch):
 
     assert seen["trace_id"].startswith("sdk-")
     assert seen["trace_id"] != _TRACE
+
+
+# ── the trace row /live polls ─────────────────────────────────────────
+# Reviving the `agent_runs` row is not enough: the card reads the `sessions`
+# row, and that one still carries the end marker of the run's previous life
+# until the runner emits `session.start` — which happens only after `connect()`
+# has spawned the child. `useLiveTail` stops polling for good on an ended
+# session, so a card that reads the stale marker never notices the run start
+# and shows no composer until the page is reloaded by hand.
+
+_ENDED_AT = "2026-08-02T11:30:02.367710"
+
+
+def _put_trace_session(trace_id: str, **overrides) -> None:
+    from lib.orm import SessionLocal
+    from lib.orm.models import Session as TraceSession
+    fields = dict(
+        trace_id=trace_id, status="ended", ended_at=_ENDED_AT,
+        ended_reason="completed", started_at="2026-08-02T11:29:55",
+        last_seen=_ENDED_AT, last_start_at="2026-08-02T11:29:55",
+        span_count=4, skill_reads=0, file_edits=0, rule_checks=0,
+        plan_enters=0, prompts=1, tool_calls=0, is_test=0,
+    )
+    fields.update(overrides)
+    with SessionLocal() as session:
+        session.add(TraceSession(**fields))
+        session.commit()
+
+
+def _settle(predicate, timeout: float = 5.0) -> bool:
+    """Poll `predicate` until it holds. For state a done-callback writes: the
+    future releases its waiters before it invokes them."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _trace_session(trace_id: str):
+    from sqlmodel import select as _select
+
+    from lib.orm import SessionLocal
+    from lib.orm.models import Session as TraceSession
+    with SessionLocal() as session:
+        return session.exec(
+            _select(TraceSession).where(
+                TraceSession.trace_id == trace_id)).first()
+
+
+def test_reviving_clears_the_end_marker_the_card_stops_polling_on(tmp_db):
+    _put_trace_session(_TRACE)
+
+    store.revive_trace_session(_TRACE)
+
+    row = _trace_session(_TRACE)
+    assert (row.status, row.ended_at, row.ended_reason) == ("active", None, None)
+
+
+def test_reviving_covers_the_child_row_a_trace_read_resolves_to(tmp_db):
+    """`alias.trace_group` makes the CHILD's id canonical, so the `sdk-…` row
+    is not the one `/live` reads. Reviving it alone leaves both entry points
+    still looking at an ended session."""
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+
+    store.revive_trace_session(_TRACE, _CHILD)
+
+    for trace_id in (_TRACE, _CHILD):
+        row = _trace_session(trace_id)
+        assert (row.status, row.ended_at) == ("active", None), trace_id
+
+
+def test_reviving_leaves_a_session_that_never_claimed_to_end(tmp_db):
+    """A blank status is not an end marker. Stamping one 'active' would invent
+    liveness the launch has no evidence for."""
+    _put_trace_session("never-ended", status=None, ended_at=None,
+                       ended_reason=None)
+
+    store.revive_trace_session("never-ended")
+
+    assert _trace_session("never-ended").status is None
+
+
+def test_reviving_a_trace_with_no_row_yet_is_a_no_op(tmp_db):
+    """A session reopened by id runs under a brand-new trace, so there is
+    nothing to revive — and nothing to create either: the row is the ingest's
+    to write, and a stub here would show an empty session in every listing."""
+    store.revive_trace_session("sdk-nosuchrow")
+
+    assert _trace_session("sdk-nosuchrow") is None
+
+
+def test_a_resumed_launch_revives_the_row_before_the_route_answers(
+        tmp_db, monkeypatch):
+    """Synchronously, not from the runner: the client navigates to `/live` the
+    instant the launch returns, and its first read decides whether the card
+    keeps polling at all."""
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+    seen = {}
+
+    async def _run_session(trace_id, prompt, **kwargs):
+        seen["ran"] = True
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+
+    supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD)
+
+    assert (_trace_session(_TRACE).status, _trace_session(_TRACE).ended_at) \
+        == ("active", None)
+    assert (_trace_session(_CHILD).status, _trace_session(_CHILD).ended_at) \
+        == ("active", None)
+
+
+def test_a_launch_that_dies_before_connecting_puts_the_end_marker_back(
+        tmp_db, monkeypatch):
+    """The revive is optimistic — it declares the session live before the child
+    exists. A spawn that fails writes no `session.end` (there is no session to
+    close), so without this the row stays 'active' forever and every listing
+    shows a green session nobody can reach."""
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+
+    def _explode(**kwargs):
+        raise runner_mod.client.ClaudeCliNotFound("no claude on PATH")
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(runner_mod.client, "new_client", _explode)
+
+    supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD).wait(timeout=10)
+
+    # The restore rides the future's done-callback, which `concurrent.futures`
+    # invokes *after* it releases waiters — so `wait()` returning is not the
+    # signal, the row is.
+    for trace_id in (_TRACE, _CHILD):
+        marker = _settle(lambda: _trace_session(trace_id).ended_at is not None)
+        assert marker, trace_id
+        row = _trace_session(trace_id)
+        assert (row.status, row.ended_at, row.ended_reason) \
+            == ("ended", _ENDED_AT, "completed"), trace_id
+
+
+def test_a_run_that_really_ran_keeps_its_own_end_marker(tmp_db, monkeypatch):
+    """The restore must never overwrite a fresher verdict: a run that connected
+    wrote its own `session.end`, and that is the truth about this life of the
+    session, not the marker the launch cleared."""
+    _put_trace_session(_TRACE)
+    revived = store.revive_trace_session(_TRACE)
+    # What the ingest does when the resumed run finally ends.
+    with_new_end = "2026-08-02T15:00:00"
+    row = _trace_session(_TRACE)
+    from lib.orm import SessionLocal
+    with SessionLocal() as session:
+        live = session.get(type(row), _TRACE)
+        live.status, live.ended_at, live.ended_reason = (
+            "ended", with_new_end, "stopped")
+        session.commit()
+
+    store.restore_trace_session(revived)
+
+    assert _trace_session(_TRACE).ended_at == with_new_end
+
+
+def test_a_fresh_launch_leaves_other_sessions_alone(tmp_db, monkeypatch):
+    """Only the trace being relaunched is touched — a minted id has no row, and
+    an unrelated ended session must not be resurrected by someone else's
+    launch."""
+    _put_trace_session("some-other-session")
+
+    async def _run_session(trace_id, prompt, **kwargs):
+        pass
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+
+    supervisor.launch_run("start fresh").wait(timeout=10)
+
+    other = _trace_session("some-other-session")
+    assert (other.status, other.ended_at) == ("ended", _ENDED_AT)
+
+
+def test_the_card_reads_a_live_session_the_moment_the_launch_returns(
+        flask_client, monkeypatch):
+    """End to end over the surface the operator actually drives: launch a
+    resume, then read the same shallow map `/live` polls. An `ended` verdict
+    here is what killed the poll loop and hid the composer until a reload."""
+    # Both halves, the way every real resumable run is stored: the child's row
+    # is the canonical one a trace read resolves the group to.
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+    store.upsert_run(_TRACE, status="exited", cwd="/tmp")
+    store.set_cli_session(_TRACE, _CHILD)
+
+    # Held open across the read: a run that had already finished would hand
+    # back its reservation, and the composer's other gate would read False for
+    # a reason this test is not about.
+    import threading
+    running, release = threading.Event(), threading.Event()
+
+    async def _run_session(trace_id, prompt, **kwargs):
+        running.set()
+        await asyncio.get_running_loop().run_in_executor(None, release.wait)
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+
+    launched = flask_client.post("/api/agent-runs", json={"resume": _CHILD})
+    assert launched.get_json()["trace_id"] == _TRACE
+    assert running.wait(timeout=10)
+    try:
+        # Both entry points, because the card may be open on either: the run's
+        # own id, or the child's (which is where `onLaunched` stays when the
+        # resume continues the session already in view).
+        cards = {tid: flask_client.get(
+            f"/api/sessions/{tid}/map?shallow=1&limit=50").get_json()
+            for tid in (_TRACE, _CHILD)}
+    finally:
+        release.set()
+    for tid, card in cards.items():
+        assert card["status"] == "active", tid
+        assert card["ended_at"] is None, tid
+        assert card["phase"] != "ended", tid
+        # The composer needs both halves: a session that is not over, and a
+        # channel regin can steer it through.
+        assert card["bridge_reachable"] is True, tid
+
+
+def test_the_undo_stands_down_once_the_id_belongs_to_another_run(tmp_db):
+    """A stopped run can be resumed AGAIN while the previous one is still
+    tearing down, so the second launch finds the row already live and captures
+    nothing to restore. An unconditional undo from the first would then stamp a
+    running session 'ended' — killing its card's poll loop, which is the bug
+    this whole change exists to fix."""
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+    revived = store.revive_trace_session(_TRACE, _CHILD)
+    assert len(revived) == 2
+
+    token = object()
+    assert registry.reserve_run(_TRACE, token)
+    try:
+        supervisor._undo_revive(_TRACE, revived)
+    finally:
+        registry.release_run(_TRACE, token)
+
+    for trace_id in (_TRACE, _CHILD):
+        assert _trace_session(trace_id).ended_at is None, trace_id
+
+
+def test_the_undo_runs_once_nobody_holds_the_id(tmp_db):
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+    revived = store.revive_trace_session(_TRACE, _CHILD)
+
+    supervisor._undo_revive(_TRACE, revived)
+
+    for trace_id in (_TRACE, _CHILD):
+        assert _trace_session(trace_id).ended_at == _ENDED_AT, trace_id
+
+
+def test_a_failing_on_done_still_puts_the_end_marker_back(tmp_db, monkeypatch):
+    """The undo runs in a `finally`: a raise from the reservation half must not
+    be the reason a session is left claiming to be live forever."""
+    _put_trace_session(_TRACE)
+    _put_trace_session(_CHILD)
+
+    def _boom(*a, **kw):
+        registry.release_run(a[0], a[1])
+        raise RuntimeError("callback blew up")
+
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(supervisor, "_on_done", _boom)
+
+    async def _run_session(trace_id, prompt, **kwargs):
+        raise runner_mod.client.ClaudeCliNotFound("no claude on PATH")
+
+    monkeypatch.setattr(supervisor, "run_session", _run_session)
+    supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD).wait(timeout=10)
+
+    for trace_id in (_TRACE, _CHILD):
+        assert _settle(
+            lambda: _trace_session(trace_id).ended_at == _ENDED_AT), trace_id

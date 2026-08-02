@@ -392,3 +392,180 @@ test('no shadow warning when the install gates nothing', async ({ page }) => {
 
   await expect(page.getByTestId('live-launch-shadow')).toHaveCount(0)
 })
+
+// ── the draft outlives the sheet ──────────────────────────────────────
+// The sheet's slot is a v-if, so dismissing it unmounts the form. Backing out
+// of the picker by tapping the backdrop (Escape here) is the natural gesture
+// for "never mind" — and it used to take the typed prompt and the picked
+// session with it, with no way to get either back.
+
+test('dismissing the sheet mid-pick keeps what was already typed', async ({ page }) => {
+  const traceId = await postSession(page)
+  await mockOptions(page)
+  await mockResumable(page, [TERMINAL_ROW])
+
+  await openSheet(page, traceId)
+  await page.getByTestId('live-launch-prompt').fill('half-written instruction')
+  await page.getByTestId('live-launch-model').fill('claude-sonnet-4')
+  await page.getByTestId('live-launch-resume-open').click()
+  await settle(page)
+  await page.keyboard.press('Escape')
+  await settle(page)
+  await page.getByTestId('live-launch-btn').click()
+  await settle(page)
+
+  // Reopening lands on the form, not back inside the picker being left.
+  await expect(page.getByTestId('live-launch-prompt'))
+    .toHaveValue('half-written instruction')
+  await expect(page.getByTestId('live-launch-model')).toHaveValue('claude-sonnet-4')
+})
+
+test('a session picked before the sheet was dismissed is still picked', async ({ page }) => {
+  const traceId = await postSession(page)
+  await mockOptions(page)
+  let body = null
+  await page.route('**/api/agent-runs', async (route) => {
+    body = route.request().postDataJSON()
+    await route.fulfill({ json: { launched: true, trace_id: 'sdk-new01' } })
+  })
+  await mockResumable(page, [TERMINAL_ROW])
+
+  await openPicker(page, traceId)
+  await page.getByTestId('live-resume-row').click()
+  await settle(page)
+  await page.getByTestId('live-launch-prompt').fill('carry on')
+  await page.keyboard.press('Escape')
+  await settle(page)
+  await page.getByTestId('live-launch-btn').click()
+  await settle(page)
+
+  await expect(page.getByTestId('live-launch-resume-label'))
+    .toContainText(TERMINAL_ROW.title)
+  await page.getByTestId('live-launch-go').click()
+  await settle(page)
+  expect(body.resume).toBe(TERMINAL_ROW.session_id)
+  expect(body.prompt).toBe('carry on')
+})
+
+test('a launch that started clears the draft for the next one', async ({ page }) => {
+  const traceId = await postSession(page)
+  await mockOptions(page)
+  await page.route('**/api/agent-runs', (route) =>
+    route.fulfill({ json: { launched: true, trace_id: traceId } }))
+
+  await openSheet(page, traceId)
+  await page.getByTestId('live-launch-prompt').fill('already sent')
+  await page.getByTestId('live-launch-go').click()
+  await settle(page)
+  await page.getByTestId('live-launch-btn').click()
+  await settle(page)
+
+  await expect(page.getByTestId('live-launch-prompt')).toHaveValue('')
+})
+
+test('a refused launch keeps the prompt so it can be retried', async ({ page }) => {
+  const traceId = await postSession(page)
+  await mockOptions(page)
+  await page.route('**/api/agent-runs', (route) =>
+    route.fulfill({ json: { launched: false, detail: 'at capacity' } }))
+
+  await openSheet(page, traceId)
+  await page.getByTestId('live-launch-prompt').fill('worth retrying')
+  await page.getByTestId('live-launch-go').click()
+  await settle(page)
+
+  await expect(page.getByTestId('live-launch-refusal')).toContainText('at capacity')
+  await expect(page.getByTestId('live-launch-prompt')).toHaveValue('worth retrying')
+})
+
+test('the draft does not follow the operator onto another session\'s card',
+  async ({ page }) => {
+    const cardA = await postSession(page)
+    const cardB = await postSession(page)
+    await mockOptions(page)
+    await mockResumable(page, [TERMINAL_ROW])
+
+    await openPicker(page, cardA)
+    await page.getByTestId('live-resume-row').click()
+    await settle(page)
+    await page.getByTestId('live-launch-prompt').fill('meant for card A')
+    await page.keyboard.press('Escape')
+    await settle(page)
+
+    // Walked to in-app (the switch sheet), not reloaded: a full page load
+    // would clear the draft anyway and prove nothing. A pick made on card A is
+    // one Launch away from continuing a session the operator never chose here,
+    // in a working directory they never chose either.
+    // The switcher lists `kind=real` only, which excludes the span fixtures
+    // above — served here so the walk lands on a known card.
+    await page.route(/\/api\/sessions\?kind=real/, (route) =>
+      route.fulfill({ json: { sessions: [
+        { trace_id: cardB, title: 'card B', last_seen: '2026-01-01T10:00:00',
+          status: 'ended', span_count: 1 },
+      ] } }))
+    await page.getByTestId('live-switch').click()
+    await settle(page)
+    await page.locator(`[data-testid="live-picker-row"][data-trace-id="${cardB}"]`).click()
+    await settle(page)
+    await expect(page).toHaveURL(new RegExp(`/live/${cardB}$`))
+    await page.getByTestId('live-launch-btn').click()
+    await settle(page)
+
+    await expect(page.getByTestId('live-launch-prompt')).toHaveValue('')
+    await expect(page.getByTestId('live-launch-resumed')).toHaveCount(0)
+    await expect(page.getByTestId('live-launch-resume-open')).toBeVisible()
+  })
+
+test('a draft typed before the session id resolves is not wiped when it lands',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await mockOptions(page)
+    // The view resolves its session row asynchronously and the launch button
+    // is live before that lands, so the sheet's first mount sees an empty id.
+    // Treating that as "a different card" would discard the draft the instant
+    // the real id arrived — the same loss, by a different route.
+    let release = null
+    await page.route(/\/api\/sessions\?trace_id=/, async (route) => {
+      await new Promise((r) => { release = r })
+      await route.continue()
+    })
+    await page.goto(`/live/${traceId}`)
+    await page.getByTestId('live-launch-btn').click()
+    await page.getByTestId('live-launch-prompt').fill('typed while resolving')
+    await page.keyboard.press('Escape')
+
+    release()
+    await settle(page)
+    await page.getByTestId('live-launch-btn').click()
+    await settle(page)
+
+    await expect(page.getByTestId('live-launch-prompt'))
+      .toHaveValue('typed while resolving')
+  })
+
+test('dropping a pick gives back the working directory it overwrote',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await mockOptions(page)
+    let body = null
+    await page.route('**/api/agent-runs', async (route) => {
+      body = route.request().postDataJSON()
+      await route.fulfill({ json: { launched: true, trace_id: 'sdk-new01' } })
+    })
+    await mockResumable(page, [TERMINAL_ROW])
+
+    await openSheet(page, traceId)
+    await page.getByTestId('live-launch-cwd').click()
+    await page.getByRole('option', { name: OPTIONS.cwds[0] }).click()
+    await page.getByTestId('live-launch-resume-open').click()
+    await settle(page)
+    await page.getByTestId('live-resume-row').click()
+    await settle(page)
+    await page.getByTestId('live-launch-resume-clear').click()
+    await page.getByTestId('live-launch-go').click()
+    await settle(page)
+
+    // Not TERMINAL_ROW.cwd: that directory belonged to the session that was
+    // dropped, and left behind it silently becomes the next launch's.
+    expect(body.cwd).toBe(OPTIONS.cwds[0])
+  })

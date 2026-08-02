@@ -54,6 +54,25 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
         return _loop
 
 
+def _undo_revive(trace_id: str, revived: list[dict]) -> None:
+    """Put back the end markers a resume cleared, unless the id has moved on.
+
+    A stopped run can be resumed AGAIN while the previous one is still tearing
+    down — `unregister_run` happens before the grace period, so the trace id is
+    unowned for that whole stretch. The second launch then finds the row
+    already live and captures nothing to restore, so an unconditional undo from
+    the first would stamp a *running* session 'ended' and kill its card's poll
+    loop: the very bug this change exists to fix, reintroduced.
+
+    Ownership is the discriminator the row cannot supply — it says only "not
+    marked", which is equally true of a session nothing wrote yet and one a
+    newer run just revived.
+    """
+    if registry.is_sdk_owned(trace_id):
+        return
+    store.restore_trace_session(revived)
+
+
 def _on_done(trace_id: str, token: object, future) -> None:
     """Give the trace id back, and drain the run's result so a failure is
     logged rather than swallowed by the loop's default exception handler.
@@ -175,6 +194,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     into the run holding it.
     """
     _refuse_unless_launchable(prompt, one_shot)
+    reused = bool(trace_id)
     trace_id = trace_id or f"sdk-{uuid.uuid4().hex[:12]}"
     # Claimed before the run is scheduled, because ownership has to be true
     # before the child exists: the runner registers only after `connect()` has
@@ -191,6 +211,9 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     # operator's card is open on an id nothing owns, and its first prompt falls
     # through to the tmux bridge: a pane, not this run.
     registry.register_alias(resume or "", trace_id)
+    # Both halves of the alias group: `resume` is the child session id, which
+    # is the one a trace read resolves to.
+    revived = store.revive_trace_session(trace_id, resume or "") if reused else []
     try:
         loop = _ensure_loop()
         options = client.RunOptions(env=dict(env or {}),
@@ -202,8 +225,20 @@ def launch_run(prompt: str, *, cwd: str | None = None,
             loop)
     except BaseException:
         registry.release_run(trace_id, token)
+        _undo_revive(trace_id, revived)
         raise
-    future.add_done_callback(lambda f: _on_done(trace_id, token, f))
+    # The revive is optimistic — it declared the session live before the child
+    # existed — so its undo has to run on every terminal path, hence the
+    # `finally`: a raise inside `_on_done` must not be the reason a session is
+    # left claiming to be live forever. Chained beside `_on_done` rather than
+    # inside it because the test suite's spawn guard replaces that function.
+    def _finish(f):
+        try:
+            _on_done(trace_id, token, f)
+        finally:
+            _undo_revive(trace_id, revived)
+
+    future.add_done_callback(_finish)
     log.write("sdk_run_launched", trace_id=trace_id, cwd=cwd,
               one_shot=one_shot, resumed_from=resume)
     return RunHandle(trace_id, future)

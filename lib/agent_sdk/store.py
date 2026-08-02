@@ -9,9 +9,102 @@ from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
-from lib.orm.models import AgentRun
+from lib.orm.models import AgentRun, Session as TraceSession
 
 log = get_activity_logger("agent_sdk")
+
+
+def revive_trace_session(*trace_ids: str) -> list[dict]:
+    """Clear the end marker on the `sessions` rows a run is relaunching under.
+
+    A run resumed as itself keeps its trace id, so the row already carries the
+    `ended_at`/`status='ended'` of its previous life. The runner only clears
+    that by emitting `session.start` — and it emits that *after* `connect()`
+    has spawned the child, seconds later or never if the spawn fails. Every
+    reader in between believes the session is over, and `/live` does more than
+    render it wrong: `useLiveTail.scheduleNext()` stops polling for good on an
+    ended session, so the card never notices the run start and shows no
+    composer until the operator reloads the page.
+
+    Takes EVERY id in the run's alias group, not just the one the launch names.
+    A trace read resolves a group to its canonical member — the child's session
+    id (`lib/trace/alias.trace_group`) — so reviving the `sdk-…` row alone
+    leaves both entry points still reading the child's ended one.
+
+    Called synchronously from the launch, before the route answers, so the
+    client's first read already sees a live session. Returns the markers it
+    cleared, which `restore_trace_session` puts back if the run never starts.
+    """
+    wanted = {t for t in trace_ids if t}
+    if not wanted:
+        return []
+    cleared = []
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(TraceSession).where(TraceSession.trace_id.in_(wanted))).all()
+        for row in rows:
+            # Only a row that actually claims to be over. A session that never
+            # recorded a status is not ended, and stamping one 'active' would
+            # invent liveness the launch has no evidence for.
+            if row.ended_at is None and row.status != "ended":
+                continue
+            cleared.append({"trace_id": row.trace_id, "status": row.status,
+                            "ended_at": row.ended_at,
+                            "ended_reason": row.ended_reason})
+            row.status = "active"
+            row.ended_at = None
+            row.ended_reason = None
+        if cleared:
+            session.commit()
+    for marker in cleared:
+        log.write("sdk_trace_session_revived", trace_id=marker["trace_id"])
+    return cleared
+
+
+def restore_trace_session(markers: list[dict]) -> None:
+    """Put back markers `revive_trace_session` cleared, for a run that is over.
+
+    The revive is optimistic: it declares the session live before the child
+    exists, so a launch that dies before `connect()` — no `claude` on PATH, the
+    SDK not installed, a capacity refusal on the loop — would strand a
+    permanently 'active' session no `session.end` ever closes, green in every
+    listing forever.
+
+    Applied only while the row is still unmarked. A run that genuinely ran
+    wrote its own `session.end`, and that verdict — the *new* one — must win
+    over the stale marker being restored here.
+
+    The caller owns the other half of that check: whether the id still belongs
+    to the run being undone. This function cannot tell a row nothing wrote yet
+    from one a *newer* run just revived.
+    """
+    if not markers:
+        return
+    ids = [m["trace_id"] for m in markers]
+    restored = []
+    try:
+        with SessionLocal() as session:
+            rows = {r.trace_id: r for r in session.exec(
+                select(TraceSession).where(TraceSession.trace_id.in_(ids))).all()}
+            for marker in markers:
+                row = rows.get(marker["trace_id"])
+                if row is None or row.ended_at is not None:
+                    continue
+                row.status = marker["status"]
+                row.ended_at = marker["ended_at"]
+                row.ended_reason = marker["ended_reason"]
+                restored.append(row.trace_id)
+            if restored:
+                session.commit()
+    except OperationalError:
+        # Runs from the shared SDK loop's done-callback, where an escaping
+        # exception is logged by the loop and drops every later callback in
+        # the chain. A locked DB costs one stale row; it must not cost the
+        # teardown of every other run.
+        log.error("sdk_trace_session_restore_failed", trace_ids=",".join(ids))
+        return
+    for trace_id in restored:
+        log.write("sdk_trace_session_end_restored", trace_id=trace_id)
 
 
 def upsert_run(trace_id: str, *, status: str, pid: int | None = None,
