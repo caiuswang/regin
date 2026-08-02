@@ -79,17 +79,40 @@ test('the form offers exactly the working directories the server named', async (
   await page.keyboard.press('Escape')
 })
 
-test('launch is refused until there is a prompt', async ({ page }) => {
+test('a promptless launch is allowed — except as a one-shot', async ({ page }) => {
   const traceId = await postSession(page)
   await mockOptions(page)
 
   await openSheet(page, traceId)
 
-  await expect(page.getByTestId('live-launch-go')).toBeDisabled()
-  await page.getByTestId('live-launch-prompt').fill('   ')
+  // Nothing typed is a launch, the way bare `claude` is at a terminal: the
+  // session comes up and the first turn arrives from the card's composer.
+  await expect(page.getByTestId('live-launch-go')).toBeEnabled()
+  await page.getByTestId('live-launch-oneshot').click()
+  // A run that ends with its first turn, given no turn, would connect and
+  // immediately disconnect — refused here so the reason precedes the click.
+  await expect(page.getByTestId('live-launch-oneshot-hint')).toBeVisible()
   await expect(page.getByTestId('live-launch-go')).toBeDisabled()
   await page.getByTestId('live-launch-prompt').fill('audit the trace merge')
   await expect(page.getByTestId('live-launch-go')).toBeEnabled()
+})
+
+test('a promptless launch posts no prompt and opens the run', async ({ page }) => {
+  const traceId = await postSession(page)
+  await mockOptions(page)
+  let body = null
+  await page.route('**/api/agent-runs', async (route) => {
+    body = route.request().postDataJSON()
+    await route.fulfill({ json: { launched: true, trace_id: 'sdk-abc123def456' } })
+  })
+
+  await openSheet(page, traceId)
+  await page.getByTestId('live-launch-go').click()
+  await settle(page)
+
+  expect(body.prompt).toBe('')
+  expect(body.resume).toBeUndefined()
+  await expect(page).toHaveURL(/\/live\/sdk-abc123def456$/)
 })
 
 test('the chosen overrides reach the launch route, then it opens the run', async ({ page }) => {
@@ -281,15 +304,6 @@ test('a picked session launches with no prompt, and adopts the model it ran on',
     // change nobody asked for and nothing on the card would show.
     expect(body.model).toBe('claude-opus-5')
   })
-
-test('a fresh run still cannot launch with nothing to do', async ({ page }) => {
-  const traceId = await postSession(page)
-  await mockOptions(page)
-
-  await openSheet(page, traceId)
-
-  await expect(page.getByTestId('live-launch-go')).toBeDisabled()
-})
 
 test('searching asks the server rather than filtering the page it already has',
   async ({ page }) => {

@@ -114,11 +114,17 @@ const shadowWarning = computed(() => (
     : null
 ))
 
-// A resume needs no prompt: reopening the session *is* the act, and the card
-// it lands on has a composer. Requiring one would make "just pick this back
-// up" impossible to express — the operator would have to invent a first turn.
-const canLaunch = computed(() => (
-  (!!prompt.value.trim() || !!resume.value) && !launching.value))
+// The prompt is optional, for a fresh run as much as a resume: opening the
+// session *is* the act — the same one a bare `claude` performs at a terminal —
+// and the card it lands on has a composer for the first turn. Requiring one
+// would make "just start me a session here" impossible to express.
+//
+// `one_shot` is the single combination that stays refused, and it is refused
+// here as well as at the server so the reason is legible before the click: a
+// run that ends with its first turn, given no turn, would connect and
+// immediately disconnect.
+const oneShotNeedsPrompt = computed(() => oneShot.value && !prompt.value.trim())
+const canLaunch = computed(() => !oneShotNeedsPrompt.value && !launching.value)
 
 onMounted(async () => {
   try {
@@ -210,8 +216,8 @@ async function launch() {
         rows="4"
         :placeholder="resume
           ? 'What next? — optional, leave blank to just reopen the session'
-          : 'What should the agent do?'"
-        aria-label="Prompt for the new run"
+          : 'What should the agent do? — optional, leave blank to just start the session'"
+        aria-label="Prompt for the new run (optional)"
       />
 
       <label class="live-launch-lbl" for="live-launch-cwd">working directory</label>
@@ -250,6 +256,13 @@ async function launch() {
         <Checkbox v-model="oneShot" data-testid="live-launch-oneshot" />
         <span>end after the first turn</span>
       </label>
+      <p
+        v-if="oneShotNeedsPrompt"
+        class="live-launch-warn"
+        data-testid="live-launch-oneshot-hint"
+      >
+        a one-shot run needs a prompt — it ends with its first turn.
+      </p>
 
       <label class="live-launch-lbl">continue a session</label>
       <div v-if="resume" class="live-launch-resumed" data-testid="live-launch-resumed">

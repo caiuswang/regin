@@ -117,20 +117,17 @@ def _launch_params(payload: dict) -> dict:
     }
 
 
-def _require_prompt_unless_resuming(prompt: str, params: dict) -> None:
-    """A fresh run needs something to do; a resume does not.
+def _require_prompt_only_for_one_shot(prompt: str, params: dict) -> None:
+    """The prompt is optional — starting the session is itself an act.
 
-    Reopening a session is itself the act an operator asked for — the run comes
-    up on `/live` with a composer, and demanding a first turn to get there
-    would make them invent one. `one_shot` is the exception: a run told to end
-    with its first turn and given no turn to run would connect and immediately
-    disconnect, which is never what the caller meant.
+    That is what a terminal does: `claude` with no argument comes up and waits,
+    and the run launched from `/live` lands on a card with a composer, so
+    demanding a first turn here would make an operator invent one. `one_shot`
+    is the exception: a run told to end with its first turn and given no turn
+    to run would connect and immediately disconnect, which is never what the
+    caller meant.
     """
-    if prompt.strip():
-        return
-    if not params["resume"]:
-        raise _BadRequest("prompt required")
-    if params["one_shot"]:
+    if not prompt.strip() and params["one_shot"]:
         raise _BadRequest("a one-shot run needs a prompt — it ends with its "
                           "first turn")
 
@@ -192,7 +189,7 @@ def api_launch_agent_run():
     prompt = prompt if isinstance(prompt, str) else ""
     try:
         params = _launch_params(payload)
-        _require_prompt_unless_resuming(prompt, params)
+        _require_prompt_only_for_one_shot(prompt, params)
     except _BadRequest as exc:
         return jsonify({"error": str(exc)}), 400
     try:

@@ -360,13 +360,14 @@ def test_a_resume_needs_no_prompt(flask_client, enabled, stub_launch):
     assert stub_launch["resume"] == _CHILD
 
 
-def test_a_fresh_run_still_needs_a_prompt(flask_client, enabled, stub_launch):
-    """The relaxation is scoped to resume — a run with no session behind it and
-    nothing to do would connect and idle out."""
+def test_a_fresh_run_needs_no_prompt_either(flask_client, enabled, stub_launch):
+    """The same relaxation covers a fresh run: it comes up waiting on its
+    composer rather than being refused for having nothing to say yet."""
     res = flask_client.post("/api/agent-runs", json={})
 
-    assert res.status_code == 400
-    assert "prompt" not in stub_launch
+    assert res.status_code == 200
+    assert stub_launch["prompt"] == ""
+    assert stub_launch["resume"] is None
 
 
 def test_a_one_shot_resume_still_needs_a_prompt(flask_client, enabled,

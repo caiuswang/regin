@@ -139,14 +139,16 @@ class RunHandle:
                           row.get("detail") or "")
 
 
-def _refuse_unless_launchable(prompt: str, resume: str | None) -> None:
-    """A run with nothing to do is refused — unless it is a resume, where
-    reopening the session is the whole act and the first turn can arrive later
-    through `send_prompt`."""
+def _refuse_unless_launchable(prompt: str, one_shot: bool) -> None:
+    """A run may start with nothing to say — bare `claude` in a terminal does,
+    and the first turn then arrives through `send_prompt`. `one_shot` is the
+    exception: a run told to end with its first turn and given no turn to run
+    would connect and immediately disconnect."""
     if not settings.agent_sdk.enabled:
         raise LaunchRefused("agent_sdk disabled")
-    if not (prompt or "").strip() and not resume:
-        raise LaunchRefused("prompt required")
+    if one_shot and not (prompt or "").strip():
+        raise LaunchRefused("a one-shot run needs a prompt — it ends with its "
+                            "first turn")
     if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
         raise LaunchRefused("max_concurrent_runs reached")
 
@@ -172,7 +174,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     already running — or already starting — under is refused rather than fused
     into the run holding it.
     """
-    _refuse_unless_launchable(prompt, resume)
+    _refuse_unless_launchable(prompt, one_shot)
     trace_id = trace_id or f"sdk-{uuid.uuid4().hex[:12]}"
     # Claimed before the run is scheduled, because ownership has to be true
     # before the child exists: the runner registers only after `connect()` has

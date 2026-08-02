@@ -634,10 +634,10 @@ async def run_session(trace_id: str, prompt: str, *,
     # Queued before the session is reachable, so a follow-up arriving during
     # `start()` cannot overtake the prompt the run was launched for.
     #
-    # A resume may carry no prompt at all — reopening the conversation is the
-    # act, and the next turn comes from the card's composer. The pump then
-    # waits on an empty queue, which is the same state it reaches between any
-    # two turns, so `idle_timeout_sec` still reclaims one nobody comes back to.
+    # A launch may carry no prompt at all — opening the session is the act,
+    # and the next turn comes from the card's composer. The pump then waits on
+    # an empty queue, which is the same state it reaches between any two turns,
+    # so `idle_timeout_sec` still reclaims one nobody comes back to.
     if prompt.strip():
         runner.enqueue(prompt, waiting=False)
     if one_shot:

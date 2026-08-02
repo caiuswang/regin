@@ -52,10 +52,23 @@ def test_disabled_tier_is_a_structured_refusal_not_a_404(flask_client,
     assert res.get_json() == {"launched": False, "detail": "agent_sdk disabled"}
 
 
-def test_empty_prompt_is_rejected(flask_client, enabled, stub_launch):
+def test_a_promptless_launch_starts_a_waiting_session(flask_client, enabled,
+                                                      stub_launch):
+    """Opening the session is itself the act, the way bare `claude` is at a
+    terminal — the run comes up on a card with a composer for the first turn."""
     assert flask_client.post("/api/agent-runs",
-                             json={"prompt": "   "}).status_code == 400
-    assert flask_client.post("/api/agent-runs", json={}).status_code == 400
+                             json={"prompt": "   "}).status_code == 200
+    assert flask_client.post("/api/agent-runs", json={}).status_code == 200
+    assert stub_launch["prompt"] == ""
+
+
+def test_a_promptless_one_shot_is_rejected(flask_client, enabled, stub_launch):
+    """It would connect and immediately disconnect: the turn it was told to end
+    with was never given."""
+    res = flask_client.post("/api/agent-runs", json={"one_shot": True})
+
+    assert res.status_code == 400
+    assert "prompt" not in stub_launch
 
 
 def test_prompt_is_bounded(flask_client, enabled, stub_launch):
