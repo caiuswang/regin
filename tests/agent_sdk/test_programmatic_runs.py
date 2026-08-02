@@ -49,26 +49,41 @@ class ResultMessage:
     })
 
 
+_END = object()
+
+
 class FakeClient:
+    """One session-long stream, fed a turn's frames per prompt — the shape the
+    runner drains."""
+
     def __init__(self):
         self.prompts: list[str] = []
         self.disconnects = 0
+        self.frames: asyncio.Queue = asyncio.Queue()
 
     async def connect(self):
-        pass
+        # A relaunch on the same fake starts a fresh stream, so the previous
+        # session's end sentinel cannot close this one at once.
+        self.frames = asyncio.Queue()
 
     async def query(self, text):
         self.prompts.append(text)
+        self.frames.put_nowait(AssistantMessage(content=[TextBlock("drafted")]))
+        self.frames.put_nowait(ResultMessage())
 
-    async def receive_response(self):
-        yield AssistantMessage(content=[TextBlock("drafted")])
-        yield ResultMessage()
+    async def receive_messages(self):
+        while True:
+            message = await self.frames.get()
+            if message is _END:
+                return
+            yield message
 
     async def interrupt(self):
         pass
 
     async def disconnect(self):
         self.disconnects += 1
+        self.frames.put_nowait(_END)
 
 
 @pytest.fixture(autouse=True)
@@ -390,11 +405,13 @@ def test_a_finished_run_leaves_its_id_free_to_launch_again(fake_client):
 def test_a_crashed_run_leaves_its_id_free_to_launch_again(fake_client,
                                                           monkeypatch):
     turns = []
+    answers = fake_client.query
 
     async def dies_once(text):
         turns.append(text)
         if len(turns) == 1:
             raise RuntimeError("client died")
+        await answers(text)
 
     monkeypatch.setattr(fake_client, "query", dies_once)
 

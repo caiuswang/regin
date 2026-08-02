@@ -49,6 +49,9 @@ class ResultMessage:
     session_id: str | None = None
 
 
+_END = object()
+
+
 class FakeClient:
     """Replays `messages` for every prompt, calling `probe` after each one has
     been handled — the only window in which a run is still registered, since
@@ -58,24 +61,30 @@ class FakeClient:
         self.messages = messages
         self.probe = probe
         self.prompts: list[str] = []
+        self.turns: asyncio.Queue = asyncio.Queue()
 
     async def connect(self):
         return None
 
     async def query(self, text):
         self.prompts.append(text)
+        self.turns.put_nowait(self.messages)
 
-    async def receive_response(self):
-        for message in self.messages:
-            yield message
-            if self.probe:
-                self.probe()
+    async def receive_messages(self):
+        while True:
+            turn = await self.turns.get()
+            if turn is _END:
+                return
+            for message in turn:
+                yield message
+                if self.probe:
+                    self.probe()
 
     async def interrupt(self):
         return None
 
     async def disconnect(self):
-        return None
+        self.turns.put_nowait(_END)
 
 
 @pytest.fixture(autouse=True)

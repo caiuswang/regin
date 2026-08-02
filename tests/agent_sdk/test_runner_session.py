@@ -42,33 +42,59 @@ class ResultMessage:
     })
 
 
+_END = object()
+
+
 class FakeClient:
-    """Answers every prompt with one sentence and a result."""
+    """Answers every prompt with one sentence and a result.
+
+    One session-long `receive_messages()` fed by a queue, like the real
+    client's: frames belong to the session, not to the turn that asked for
+    them, so a fake can also emit them *after* a turn's result.
+    """
 
     def __init__(self):
         self.connects = 0
         self.disconnects = 0
         self.interrupts = 0
         self.prompts: list[str] = []
+        self.frames: asyncio.Queue = asyncio.Queue()
+
+    def push(self, *messages):
+        for message in messages:
+            self.frames.put_nowait(message)
+
+    def turn_frames(self):
+        return (AssistantMessage(content=[TextBlock(f"answer {len(self.prompts)}")]),
+                ResultMessage())
 
     async def connect(self):
         self.connects += 1
+        # A relaunch on the same fake starts a fresh stream: the previous
+        # session's end sentinel would otherwise close this one at once.
+        self.frames = asyncio.Queue()
 
     async def query(self, text):
         self.prompts.append(text)
+        self.push(*self.turn_frames())
 
-    async def receive_response(self):
-        for message in (
-            AssistantMessage(content=[TextBlock(f"answer {len(self.prompts)}")]),
-            ResultMessage(),
-        ):
+    async def receive_messages(self):
+        while True:
+            message = await self.frames.get()
+            if message is _END:
+                return
             yield message
 
     async def interrupt(self):
         self.interrupts += 1
 
+    async def end_stream(self):
+        """The SDK's own end sentinel: this transport will send nothing more."""
+        await self.frames.put(_END)
+
     async def disconnect(self):
         self.disconnects += 1
+        self.push(_END)
 
 
 @pytest.fixture
@@ -235,8 +261,8 @@ class SubagentClient(FakeClient):
     """A turn whose Task subagent answers on a cheaper model, and whose two
     API calls report different prompt sizes."""
 
-    async def receive_response(self):
-        for message in (
+    def turn_frames(self):
+        return (
             AssistantMessage(
                 content=[ThinkingBlock(thinking="planning")],
                 usage={"input_tokens": 2, "cache_read_input_tokens": 0,
@@ -257,8 +283,7 @@ class SubagentClient(FakeClient):
                 "cache_read_input_tokens": 30663,
                 "cache_creation_input_tokens": 31030,
             }),
-        ):
-            yield message
+        )
 
 
 @pytest.fixture
@@ -313,15 +338,17 @@ def test_assistant_spans_carry_the_turn_identity(subagent_run):
 class InterruptedClient(FakeClient):
     """A turn the operator cut short — real tokens spent, no answer."""
 
-    async def receive_response(self):
-        yield AssistantMessage(
-            content=[TextBlock("half an ans")],
-            usage={"input_tokens": 2, "cache_read_input_tokens": 5000},
+    def turn_frames(self):
+        return (
+            AssistantMessage(
+                content=[TextBlock("half an ans")],
+                usage={"input_tokens": 2, "cache_read_input_tokens": 5000},
+            ),
+            ResultMessage(is_error=True, result="Interrupted by user",
+                          usage={"input_tokens": 2, "output_tokens": 512,
+                                 "cache_read_input_tokens": 5000,
+                                 "cache_creation_input_tokens": 0}),
         )
-        yield ResultMessage(is_error=True, result="Interrupted by user",
-                            usage={"input_tokens": 2, "output_tokens": 512,
-                                   "cache_read_input_tokens": 5000,
-                                   "cache_creation_input_tokens": 0})
 
 
 def test_an_interrupted_turn_still_records_its_spend(captured, fake_client,
@@ -377,20 +404,24 @@ def test_the_run_row_learns_the_model_the_agent_answered_on(captured,
 
 
 class WedgedClient(FakeClient):
-    """A turn that never yields a result — the shape the SDK documents as
+    """A turn whose result never comes — the shape the SDK documents as
     iterating indefinitely, and the one a stop has to survive."""
 
     def __init__(self):
         super().__init__()
         self.released = asyncio.Event()
 
-    async def receive_response(self):
+    async def query(self, text):
+        self.prompts.append(text)
+        asyncio.ensure_future(self._answer_when_released())
+
+    async def _answer_when_released(self):
         await self.released.wait()
-        yield ResultMessage()
+        self.push(ResultMessage())
 
     async def interrupt(self):
         self.interrupts += 1
-        # A CLI that ignores the interrupt: the stream stays open.
+        # A CLI that ignores the interrupt: the turn stays open.
 
 
 @pytest.fixture

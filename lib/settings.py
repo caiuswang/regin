@@ -780,6 +780,22 @@ class AgentSdkConfig(BaseModel):
     result message and otherwise iterates indefinitely, so without a timer a
     wedged turn would make `stop` a promise nothing keeps.
 
+    `teardown_settle_sec` is the lull a *graceful* teardown reads as "the child
+    has stopped talking". Two top-level turns can be owed results at once — the
+    operator's and the one a finished background task woke the agent for — and
+    no field on a `ResultMessage` says which turn it ends, so the first result
+    to arrive ends the pump's wait whichever turn it really belonged to.
+    Disconnecting on it cuts off an answer that is still streaming; for a
+    `one_shot` run that is a silent false success.
+
+    A lull alone is a weak signal — measured against a live child, 15% of gaps
+    between frames exceeded a quarter-second and the gap from a task settling
+    to the wake turn's first frame was 6.4s. So a lull only ends the wait once
+    no delegated task is still in flight; while one is, the wait runs to the
+    `stop_grace_sec` deadline instead, because the agent has work it can still
+    be woken to speak about. An operator's Stop never waits: they asked for the
+    session to end. 0 disables the wait, restoring the immediate disconnect.
+
     `gate_plan` and `gated_tools` extend the typed channel from answering
     questions to *deciding* — an `ExitPlanMode` held for approval, and named
     tools held for an allow/deny from `/live` (`lib/agent_sdk/policy.py`). Both
@@ -812,6 +828,7 @@ class AgentSdkConfig(BaseModel):
     permission_mode: str = "default"
     idle_timeout_sec: int = 1800
     stop_grace_sec: int = 10
+    teardown_settle_sec: float = 0.25
     gate_plan: bool = False
     gated_tools: list[str] = Field(default_factory=list)
     park_timeout_sec: int = 900

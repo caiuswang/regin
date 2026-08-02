@@ -12,6 +12,24 @@ ends with its first prompt and an agent you can keep talking to. It is also
 what lets a follow-up arrive from a Flask thread mid-run: the sender hops onto
 this loop and pushes, and the pump picks it up when the current turn ends.
 
+The other half of that shape is one **session-long reader**: every frame the
+CLI sends is drained by `_read_messages`, never by the turn that asked for it.
+`receive_response()` stops at the first `ResultMessage`, but a background
+`Agent` subagent keeps emitting long after its parent turn has ended, and the
+SDK holds those frames in a 100-slot stream shared with the `control_request`
+frames that carry permission asks. A turn that abandons the iterator therefore
+wedges the whole child at the buffer's high-water mark: nothing answers
+`can_use_tool`, the subagent hangs mid-tool-call, and it only moves again when
+a new prompt restarts the drain. So the reader owns the stream, and a turn ends
+when the reader routes a result to its slot.
+
+Two turns can be open at once: a finished background task wakes the agent for a
+follow-up turn of its own, with no prompt behind it, while the operator's turn
+is still being answered. Nothing on a `ResultMessage` says which of the two it
+ends, so `_WakeLedger` reads the CLI's `system` task-lifecycle frames to know
+when one is owed — without it a wake's result ends the operator's turn, and
+their question, its answer and the wake's spend scatter across three rows.
+
 Spans are posted over HTTP by `lib.hook_plugin.post_span`, which is blocking, so
 every write is pushed to a worker thread — a blocked event loop would stall the
 `can_use_tool` callback the answer path depends on.
@@ -21,7 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from lib.activity_log import get_activity_logger
 from lib.agent_events import (
@@ -55,6 +73,132 @@ _CLOSE = None
 
 class RunnerBusy(RuntimeError):
     """`max_concurrent_runs` reached."""
+
+
+@dataclass
+class _Turn:
+    """One turn in flight, and the identity every row it produces carries.
+
+    `context` lives here rather than on the session because two turns can be
+    open at once — a background subagent's and the operator's — and the last
+    API call either one made is not the other's context size.
+
+    `done` is the pump's future. Only a prompted turn has one: it is the only
+    turn anybody is waiting on.
+    """
+
+    index: int
+    done: asyncio.Future | None = None
+    context: int | None = None
+
+
+# `claude_agent_sdk._internal.query.DEFERRING_TASK_TYPES`. Copied rather than
+# imported: it is private to the SDK, and this module must stay importable
+# where the SDK is not installed.
+_WAKING_TASK_TYPES = frozenset({"local_agent", "local_workflow"})
+# `claude_agent_sdk.types.TERMINAL_TASK_STATUSES` — every status meaning the
+# task has finished. A killed task is finished too: leaving it tracked would
+# pin the teardown gate open for the rest of the session.
+_TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "stopped",
+                                     "killed"})
+# The narrower set that is also owed a turn. A task somebody killed did not
+# finish with something to report, and a wake owed that never arrives costs
+# the operator their own result.
+_WAKING_TASK_STATUSES = frozenset({"completed", "failed"})
+
+
+class _WakeLedger:
+    """Which finished background tasks are owed a turn of their own.
+
+    A delegated agent task's completion wakes the parent for a follow-up turn
+    that ends in its own top-level result; the SDK's own stdin close depends on
+    that extra result existing (`query.wait_for_result_and_end_input`). The CLI
+    reports those completions on `system` task-lifecycle frames, and they are
+    the only thing that can tell one turn's result from another's — nothing on
+    a `ResultMessage` says which turn it ends.
+
+    Only delegated agent work counts. A background *shell* —
+    `Bash(run_in_background=True)`, `tail -f` — travels the same frames but may
+    never reach a terminal status, so owing a wake for one would hold the
+    operator's turn open for the life of the session. Terminal state arrives as
+    a `task_notification` *or* a `task_updated` patch and not reliably both, so
+    either can retire a task — on its status, never on which frame carried it,
+    since `task_updated` also reports a task merely starting or pausing.
+    """
+
+    def __init__(self) -> None:
+        self._tracked: set[str] = set()
+        self._owed = 0
+
+    def observe(self, message, *, idle: bool) -> None:
+        """Track one lifecycle frame.
+
+        `idle` — nothing is mid-turn — is what makes a completion a *wake*. A
+        CLI session runs one turn at a time: a task that finishes while a turn
+        is already running is folded into that turn and reported inside it, so
+        it is owed no result of its own, and holding a debt for it would let it
+        consume the answer the operator is waiting for. Only a task that
+        finishes with the agent idle wakes it for a follow-up turn.
+        """
+        task_id = getattr(message, 'task_id', '') or ''
+        subtype = getattr(message, 'subtype', '') or ''
+        if not task_id:
+            return
+        if subtype == 'task_started':
+            self._track(task_id, message)
+        elif subtype in ('task_notification', 'task_updated'):
+            self._settle(task_id, message, idle=idle)
+
+    def _track(self, task_id: str, message) -> None:
+        data = getattr(message, 'data', None) or {}
+        if data.get('task_type') in _WAKING_TASK_TYPES:
+            self._tracked.add(task_id)
+
+    def _settle(self, task_id: str, message, *, idle: bool) -> None:
+        """Retire a task that has reached a terminal status, and only then.
+
+        `task_updated` reports every state change, not just the last one, so
+        the status decides this and not the frame it arrived on — clearing a
+        `running` patch would drop a live task twice over: the teardown gate
+        would go back to trusting a lull, and the terminal frame that follows
+        would find nothing to clear and owe no wake.
+        """
+        status = self._status(message)
+        if task_id not in self._tracked or status not in _TERMINAL_TASK_STATUSES:
+            return
+        self._tracked.discard(task_id)
+        if idle and status in _WAKING_TASK_STATUSES:
+            self._owed += 1
+
+    @staticmethod
+    def _status(message) -> str:
+        """A task's status, from whichever frame carried it."""
+        patch = getattr(message, 'patch', None)
+        if isinstance(patch, dict) and patch.get('status'):
+            return str(patch['status'])
+        return str(getattr(message, 'status', '') or '')
+
+    def take(self) -> bool:
+        """Claim one owed wake."""
+        if self._owed <= 0:
+            return False
+        self._owed -= 1
+        return True
+
+    @property
+    def in_flight(self) -> bool:
+        """Whether delegated work the agent could still speak about is running.
+
+        A task that has not reported terminal yet is one the agent may still be
+        woken by, and the gap between that wake and its first frame is measured
+        in seconds — far longer than any lull a teardown should read as "the
+        child has finished talking".
+        """
+        return bool(self._tracked)
+
+    def forget(self) -> None:
+        self._tracked.clear()
+        self._owed = 0
 
 
 def _enrich_ask(span: dict | None, event) -> None:
@@ -113,19 +257,30 @@ class AgentRunner:
         self._pending: list[str] = []
         self._model = settings.agent_sdk.model or None
         self._row_model = self._model
-        # The turn currently draining. Also the usage row's identity, so it is
-        # assigned once per prompt rather than derived from a running count.
+        # The last turn index handed out, not the turn currently running: an
+        # index is the usage row's identity, so it is allocated once and never
+        # reused.
         self._turn_index = -1
-        # Prompt size of the most recent API call — the honest context figure
-        # for a turn that made several. Reset per turn.
-        self._call_context: int | None = None
         self._stop_reason = "exited"
+        self._stop_status = "exited"
         # The CLI's own name for this session, learned from the first message
         # that carries it — see `_note_session`.
         self._session_id: str | None = None
         self._stopping = asyncio.Event()
         self._stopped = False
         self._queue_closed = False
+        self._reader: asyncio.Task | None = None
+        # Turns in flight, oldest first. Two can overlap: the prompt the pump
+        # is waiting on, and one the agent opened for itself.
+        self._open: list[_Turn] = []
+        # The turn a finished background task was woken for, while it runs.
+        self._wake: _Turn | None = None
+        self._wakes = _WakeLedger()
+        # Set once the CLI will send nothing further — see `_stream_closed`.
+        self._stream_dead = False
+        # Frames seen over the life of the session. Only its movement is read
+        # (`_await_prompt`), never its value.
+        self._frames = 0
 
     # ── capture ────────────────────────────────────────────────────────
 
@@ -158,7 +313,7 @@ class AgentRunner:
         if answered:
             span['attributes'].update(answered)
 
-    async def _handle(self, event) -> None:
+    async def _handle(self, event, turn: _Turn | None) -> None:
         """Route one event to whichever sink records it.
 
         Everything is a span except token accounting: a per-call `UsageUpdated`
@@ -167,17 +322,18 @@ class AgentRunner:
         meter read.
         """
         if isinstance(event, UsageUpdated):
-            self._call_context = context_tokens(event.usage)
+            if turn is not None:
+                turn.context = context_tokens(event.usage)
             return
         if isinstance(event, TurnCompleted):
-            await self._ingest_usage(event)
+            await self._ingest_usage(event, turn)
             return
         self._track_model(event)
-        await self._emit(self._stamp_turn(event))
+        await self._emit(self._stamp_turn(event, turn))
         if isinstance(event, TurnFailed):
             # An interrupted turn spent its tokens too, and it has a span AND a
             # usage row — the only event that produces both.
-            await self._ingest_usage(event)
+            await self._ingest_usage(event, turn)
 
     def _track_model(self, event) -> None:
         """Remember the model the agent is answering on, so the turn-usage row
@@ -193,28 +349,28 @@ class AgentRunner:
         if model:
             self._model = model
 
-    def _stamp_turn(self, event):
+    def _stamp_turn(self, event, turn: _Turn | None):
         """Stamp the turn identity the hook tier's assistant spans carry.
 
         `turn_uuid` is what joins a span to its `turn_usage` row and what the
         serve-time ladder groups a turn's rows by; without it these spans have
         no anchor and fall through to the chronological fallback.
         """
-        if not isinstance(event, (AssistantText, AssistantThinking)):
+        if turn is None or not isinstance(event, (AssistantText,
+                                                  AssistantThinking)):
             return event
-        return replace(event, turn_uuid=turn_uuid(self.trace_id,
-                                                  self._turn_index),
-                       turn_index=self._turn_index)
+        return replace(event, turn_uuid=turn_uuid(self.trace_id, turn.index),
+                       turn_index=turn.index)
 
-    async def _ingest_usage(self, event) -> None:
+    async def _ingest_usage(self, event, turn: _Turn | None) -> None:
         """A usage roll-up that arrives outside a turn has no row to belong to
         — dropping it beats inventing a turn the session never ran."""
         from lib.hook_plugin import post_event
 
-        if self._turn_index < 0:
+        if turn is None:
             return
-        row = turn_usage_row(event, self._turn_index, model=self._model,
-                             context_used=self._call_context)
+        row = turn_usage_row(event, turn.index, model=self._model,
+                             context_used=turn.context)
         await asyncio.to_thread(lambda: post_event('turn_usage', [row]))
         await self._persist_model()
 
@@ -241,6 +397,198 @@ class AgentRunner:
             name = self._tool_names.pop(event.tool_use_id, '') or 'unknown'
             return replace(event, tool_name=name)
         return event
+
+    # ── the stream ─────────────────────────────────────────────────────
+
+    async def _read_messages(self) -> None:
+        """Drain the CLI for the life of the session.
+
+        `receive_messages()` ends only on the SDK's own end sentinel, so this
+        outlives every turn — which is the point: the frames a background
+        subagent emits after its turn's result share the SDK's bounded message
+        stream with the control frames that answer permission asks, and nobody
+        else is draining them.
+
+        Whatever ends the stream ends the session with it — see
+        `_stream_closed`.
+        """
+        try:
+            async for message in self._client.receive_messages():
+                self._frames += 1
+                self._note_session(message)
+                await self._route(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — reported as the run's end
+            log.error("sdk_reader_failed", trace_id=self.trace_id,
+                      detail=str(exc))
+            self._stream_closed(f"agent stream failed: {exc}")
+        else:
+            self._stream_closed("agent stream ended")
+
+    def _stream_closed(self, detail: str) -> None:
+        """End the session a stream will send nothing more for.
+
+        A turn waits on its result and the prompt queue waits on an operator;
+        `idle_timeout_sec` bounds only the second. So a child that exits — or a
+        transport the operator's own interrupt closed — would otherwise leave a
+        `running` row nothing backs, holding a `max_concurrent_runs` slot and
+        accepting steers it can never run.
+
+        Releasing the turns in flight is not enough on its own: a prompt queued
+        before the death is still waiting, and running it would open a turn
+        nothing can close. So the death is latched, and `_run_turn` reads the
+        latch before it opens anything.
+
+        An ending the session was already headed for is not a failure. That is
+        an operator's Stop, whose interrupt is what closed the transport, and a
+        run whose queue was closed with no turn left unanswered — a `one_shot`
+        that answered and exited. Anything else is a child that died on us:
+        `_queue_closed` alone would file a one-shot crashed mid-answer as a
+        clean exit.
+        """
+        expected = self._stopping.is_set() or (self._queue_closed
+                                               and not self._open)
+        self._stream_dead = True
+        self._release_open_turns(None if expected else RuntimeError(detail))
+        if not expected:
+            self._stop_reason = detail
+            self._stop_status = "failed"
+        # Not `close()`: that reason belongs to an operator's Stop, and this
+        # session ended without one.
+        self._queue_closed = True
+        self._prompts.put_nowait(_CLOSE)
+
+    async def _route(self, message) -> None:
+        """Attribute one frame to a turn, then record it.
+
+        The turn is read once for the whole message: a span POST is a thread
+        hop, and re-reading it per event tears one model message across two
+        turns when the pump drops one in the gap.
+        """
+        self._wakes.observe(message, idle=not self._open)
+        events = from_sdk_message(self.trace_id, message)
+        terminal = any(isinstance(e, (TurnCompleted, TurnFailed))
+                       for e in events)
+        recorded, turn = self._admit(message, terminal)
+        if not recorded:
+            return
+        for event in events:
+            await self._handle(event, turn)
+        if terminal and turn is not None:
+            self._close_turn(turn)
+
+    def _admit(self, message, terminal: bool) -> tuple[bool, _Turn | None]:
+        """Whether this frame is recorded, and the turn it belongs to.
+
+        Only the **main agent's** frames are a turn's. `parent_tool_use_id` is
+        the subagent marker (`agent_events.from_sdk`, and the same guard
+        `_track_model` reads), and a backgrounded subagent's messages are
+        assistant messages like any other — but the CLI owes them no top-level
+        result, so opening a turn for one strands the pump on a result that is
+        never coming. Their spans are still emitted: `agent_id` is what the
+        trace attributes them by. `ResultMessage` carries no
+        `parent_tool_use_id` (`claude_agent_sdk.types`), so every result is
+        top-level by construction and a subagent can never close a turn.
+        """
+        if getattr(message, 'parent_tool_use_id', None):
+            return True, self._frame_turn()
+        if terminal:
+            return self._result_turn()
+        if type(message).__name__ == 'AssistantMessage':
+            self._open_frame_turn()
+        return True, self._frame_turn()
+
+    def _frame_turn(self) -> _Turn | None:
+        """The turn a non-terminal frame belongs to: a wake's own while it is
+        running, since the operator's turn was already waiting when the CLI
+        woke for it."""
+        return self._wake or (self._open[0] if self._open else None)
+
+    def _open_frame_turn(self) -> None:
+        """Open the turn this assistant frame belongs to, if it needs one.
+
+        Two shapes need one. Nothing is open at all — the agent speaking with
+        no prompt behind it. Or a wake is owed while the operator's turn is
+        still open: the ledger is the only thing that can tell that frame apart
+        from a continuation of the operator's own answer, and without it the
+        wake's text, its spend and its result all land on the operator's turn —
+        that last one ending it early.
+        """
+        if self._wake is not None:
+            return
+        if self._wakes.take():
+            self._wake = self._open_turn()
+        elif not self._open:
+            self._open_turn()
+
+    def _result_turn(self) -> tuple[bool, _Turn | None]:
+        """Which turn a result ends, if any. Not recorded means dropped.
+
+        A wake's own turn takes it, so this result ends the follow-up turn
+        rather than the answer the operator is still waiting for. A wake that
+        was owed but never spoke takes the result away with it and leaves no
+        row: a turn that produced no frames has no spend of its own worth
+        recording, and billing it to the operator's turn is the double-count
+        this exists to prevent. Otherwise the oldest open turn takes it — a
+        turn that started earlier also ends earlier.
+        """
+        if self._wake is not None:
+            return True, self._wake
+        if self._wakes.take():
+            return False, None
+        if self._open:
+            return True, self._open[0]
+        return False, None
+
+    def _open_turn(self, done: asyncio.Future | None = None) -> _Turn:
+        """Start a turn on its own index.
+
+        Allocated before the frame's events are handled so `_stamp_turn` puts
+        this turn's `turn_uuid` on its assistant spans; stamping them with the
+        previous turn's would file a subagent's work under a turn that ended
+        hours earlier.
+        """
+        turn = _Turn(index=self._turn_index + 1, done=done)
+        self._turn_index = turn.index
+        self._open.append(turn)
+        return turn
+
+    def _close_turn(self, turn: _Turn) -> None:
+        """Retire one turn, releasing the pump if it was waiting on it.
+
+        Which turn a result ends is `_result_turn`'s decision. When it
+        falls to the oldest open one that is because a turn started earlier
+        also ends earlier: closing the *prompted* turn on whichever result
+        arrives first releases the pump on someone else's result — the next
+        queued prompt then goes out while this one is still running, and the
+        session stays one result out of phase for the rest of its life.
+        """
+        self._drop_turn(turn)
+        if turn.done is not None and not turn.done.done():
+            turn.done.set_result(None)
+
+    def _drop_turn(self, turn: _Turn) -> None:
+        """Forget a turn nobody is waiting on any more — an abandoned one. Its
+        result, if it ever comes, then closes whatever is open in its place."""
+        if turn is self._wake:
+            self._wake = None
+        if turn in self._open:
+            self._open.remove(turn)
+
+    def _release_open_turns(self, exc: BaseException | None) -> None:
+        """Let go of every turn in flight, so the pump is not left waiting on a
+        result that can no longer arrive."""
+        self._wake = None
+        self._wakes.forget()
+        open_turns, self._open = self._open, []
+        for turn in open_turns:
+            if turn.done is None or turn.done.done():
+                continue
+            if exc is None:
+                turn.done.set_result(None)
+            else:
+                turn.done.set_exception(exc)
 
     # ── permissions ────────────────────────────────────────────────────
 
@@ -407,6 +755,7 @@ class AgentRunner:
             cwd=self.cwd, can_use_tool=self._can_use_tool,
             options=self.options, resume=self.resume)
         await self._client.connect()
+        self._reader = asyncio.ensure_future(self._read_messages())
         registry.register_run(self.trace_id, self)
         # The pid is what makes the reaper safe: it distinguishes a row this
         # process still backs from one a dead process left behind.
@@ -484,17 +833,35 @@ class AgentRunner:
             log.error("sdk_run_interrupt_failed", trace_id=self.trace_id,
                       detail=str(exc))
 
+    async def _await_prompt(self) -> str | None:
+        """Block for the next prompt, raising `TimeoutError` on real silence.
+
+        Idle is measured against *frames*, not against the prompt queue: a
+        background subagent can work for far longer than `idle_timeout_sec`
+        with nothing queued behind it, and reaping that session would kill a
+        child mid-tool-call. Only a session the agent has also gone quiet on is
+        abandoned. `idle_timeout_sec` of 0 still waits indefinitely.
+        """
+        timeout = int(settings.agent_sdk.idle_timeout_sec or 0)
+        if timeout <= 0:
+            return await self._prompts.get()
+        while True:
+            seen = self._frames
+            try:
+                return await asyncio.wait_for(self._prompts.get(), timeout)
+            except asyncio.TimeoutError:
+                if self._frames == seen:
+                    raise
+
     async def _next_prompt(self) -> str | None:
         """The next queued prompt, or None when the session should end.
 
         An idle session still holds a `claude` child process, so an abandoned
         one is reclaimed rather than pinned against `max_concurrent_runs`
-        forever. Set `idle_timeout_sec` to 0 to wait indefinitely.
+        forever.
         """
-        timeout = int(settings.agent_sdk.idle_timeout_sec or 0)
         try:
-            text = (await self._prompts.get() if timeout <= 0
-                    else await asyncio.wait_for(self._prompts.get(), timeout))
+            text = await self._await_prompt()
         except asyncio.TimeoutError:
             self._stop_reason = "idle timeout"
             return None
@@ -518,10 +885,9 @@ class AgentRunner:
     async def _drain_turn(self, text: str) -> None:
         """Run one turn, abandoning it if the session is stopped mid-flight.
 
-        `receive_response()` ends when the CLI sends a result — the SDK is
-        explicit that without one the iterator continues indefinitely. That is
-        a turn no interrupt can be proven to end, so a stop that has already
-        been asked for is honoured on a timer rather than on the CLI's
+        A turn ends when the CLI sends its result, and a CLI that sends none
+        leaves a turn no interrupt can be proven to end. So a stop that has
+        already been asked for is honoured on a timer rather than on the CLI's
         cooperation.
         """
         turn = asyncio.ensure_future(self._run_turn(text))
@@ -574,32 +940,114 @@ class AgentRunner:
         store.set_cli_session(self.trace_id, session_id)
 
     async def _run_turn(self, text: str) -> None:
-        """Send one prompt and drain the turn it produces."""
-        self._turn_index += 1
-        self._call_context = None
+        """Send one prompt and wait for the reader to close its turn.
+
+        The turn is opened before the prompt goes out, or a turn the CLI
+        answers immediately would resolve nothing and be waited on forever. A
+        background turn still running keeps its own slot: its work is the
+        agent's, not this prompt's, and folding the two together would bill its
+        spend here and hand the pump its result.
+
+        A prompt queued before the stream died is dropped here rather than in
+        the pump: this runs as its own task, scheduled *behind* the reader, so
+        the pump can pick a prompt up while the child is still alive and reach
+        this line after it has died. `_release_open_turns` cannot save a turn
+        that had not been opened yet, and nothing else bounds the wait — a
+        turn's result is not what `idle_timeout_sec` covers.
+        """
+        if self._stream_dead:
+            return
+        done = asyncio.get_running_loop().create_future()
+        turn = self._open_turn(done)
         await self._emit(prompt_event(self.trace_id, text))
-        await self._client.query(text)
-        async for message in self._client.receive_response():
-            self._note_session(message)
-            for event in from_sdk_message(self.trace_id, message):
-                await self._handle(event)
+        try:
+            await self._client.query(text)
+            await done
+        finally:
+            self._drop_turn(turn)
 
     async def interrupt(self) -> None:
         await self._client.interrupt()
 
-    async def stop(self, *, status: str = "exited", detail: str = "") -> None:
+    async def _settle_stream(self, status: str) -> None:
+        """Let an answer still in flight land before the transport closes.
+
+        The pump's turn ending is not proof this prompt was answered. Two
+        top-level turns can be owed results at once — the operator's, and the
+        one a finished background task woke the agent for — and no field on a
+        `ResultMessage` says which turn it ends, so the first result to arrive
+        ends the pump's wait whichever turn it really belonged to. Tearing down
+        on it disconnects a child that is still writing the answer: the trace
+        keeps a `prompt` with no reply, and a `one_shot` run returns nothing to
+        its caller under a row that reads `completed`.
+
+        So a graceful ending waits for the stream to go quiet first. What
+        counts as quiet depends on whether the agent still has delegated work
+        running: measured against a live child, the gap between a task settling
+        and the wake turn's first frame was 6.4s, and 15% of that run's gaps
+        exceeded a quarter-second. A lull is therefore only taken as the end of
+        the conversation once nothing is in flight — while a task is still
+        running the wait runs to the `stop_grace_sec` deadline, because the
+        child has work it can still speak about.
+
+        A crashed run has nothing to wait for, a dead stream has nothing left
+        to send, and an operator's Stop asked for the session to end rather
+        than for one more answer.
+        """
+        window = float(settings.agent_sdk.teardown_settle_sec or 0)
+        if self._waits_for_the_child(status, window):
+            await self._await_quiet(window)
+
+    def _waits_for_the_child(self, status: str, window: float) -> bool:
+        """Whether this ending waits at all — see `_settle_stream`."""
+        return not (window <= 0 or status != "exited" or self._reader is None
+                    or self._stopping.is_set() or self._stream_dead)
+
+    async def _await_quiet(self, window: float) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(float(settings.agent_sdk.stop_grace_sec
+                                           or 0), window)
+        while loop.time() < deadline:
+            seen = self._frames
+            await asyncio.sleep(window)
+            if self._frames == seen and not self._wakes.in_flight:
+                return
+
+    async def _close_reader(self) -> None:
+        """Stop draining before the session's last span is written, so nothing
+        the child is still emitting lands after `session.end`."""
+        reader, self._reader = self._reader, None
+        if reader is None:
+            return
+        reader.cancel()
+        try:
+            await reader
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — teardown must still finish
+            log.error("sdk_reader_teardown_failed", trace_id=self.trace_id,
+                      detail=str(exc))
+
+    async def stop(self, *, status: str = "", detail: str = "") -> None:
         """Tear the session down. Idempotent, and the row is written even when
         teardown fails part-way: a `running` row nothing backs is the one state
-        that outlives the process and misleads every later reader."""
+        that outlives the process and misleads every later reader.
+
+        The caller names the status only when it knows better than the session
+        does; a session whose child died already knows it failed.
+        """
         if self._stopped:
             return
         self._stopped = True
+        status = status or self._stop_status
         reason = detail or self._stop_reason
         registry.unregister_run(self.trace_id)
         # A park cancelled with the session never reaches its own dismissal, so
         # without this a dead session can leave a "waiting on you" card standing
         # — the one moment the notice is most misleading.
         await self._dismiss_park_notice()
+        await self._settle_stream(status)
+        await self._close_reader()
         if self._client is None:
             # Refused before it ever connected (at capacity): there is no
             # session to close, so `session.end` would bracket nothing.

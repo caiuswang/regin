@@ -23,7 +23,7 @@ from lib.agent_sdk import client, registry, runner as runner_mod, store, supervi
 from lib.settings import settings
 
 from tests.agent_sdk.test_runner_session import (  # noqa: F401
-    AssistantMessage, ResultMessage, TextBlock, captured,
+    AssistantMessage, FakeClient, ResultMessage, TextBlock, captured,
 )
 
 _TRACE = "sdk-resume01"
@@ -39,31 +39,18 @@ class SystemInit:
     session_id: str
 
 
-class NamedClient:
+class NamedClient(FakeClient):
     """A fake SDK client whose session announces its own id."""
 
     def __init__(self, session_id: str = _CHILD):
+        super().__init__()
         self.session_id = session_id
-        self.prompts: list[str] = []
         self.resume: str | None = None
-        self.connects = 0
 
-    async def connect(self):
-        self.connects += 1
-
-    async def query(self, text):
-        self.prompts.append(text)
-
-    async def receive_response(self):
-        yield SystemInit(session_id=self.session_id)
-        yield AssistantMessage(content=[TextBlock("done")])
-        yield ResultMessage()
-
-    async def interrupt(self):
-        pass
-
-    async def disconnect(self):
-        pass
+    def turn_frames(self):
+        return (SystemInit(session_id=self.session_id),
+                AssistantMessage(content=[TextBlock("done")]),
+                ResultMessage())
 
 
 @pytest.fixture

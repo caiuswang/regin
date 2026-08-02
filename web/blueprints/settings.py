@@ -356,6 +356,16 @@ def _agent_sdk_fields() -> list[dict]:
          "description": "How long a stop waits on an interrupted turn to end "
                         "itself before abandoning it, so a wedged turn can't "
                         "make stop a promise nothing keeps."},
+        {"key": "teardown_settle_sec", "group": "Lifecycle", "type": "float",
+         "min": 0, "step": 0.25, "label": "Teardown settle (s)",
+         "description": "The lull a graceful teardown reads as 'the child has "
+                        "stopped talking'. A background task finishing wakes "
+                        "the agent for a turn of its own whose result is "
+                        "indistinguishable from the prompt's, so without this "
+                        "an answer still streaming is cut off. While a "
+                        "delegated task is still running a lull proves "
+                        "nothing, and the wait runs to the stop grace instead. "
+                        "A Stop never waits. 0 disconnects immediately."},
         {"key": "park_timeout_sec", "group": "Lifecycle", "type": "int",
          "min": 0, "step": 60, "label": "Park timeout (s)",
          "description": "How long a held question or gated call waits for an "
