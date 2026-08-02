@@ -7,11 +7,16 @@ frames that carry permission asks. A session that stops draining at a result
 therefore wedges its whole child once that buffer fills: nothing answers
 `can_use_tool` and the subagent hangs mid-tool-call.
 
-So the stream is drained for the life of the session; a turn waits only for its
-own result; the agent's own background work is a turn of its own rather than
-spend billed to whichever prompt ran last; and a stream that ends takes the
-session with it instead of leaving a turn waiting on a result nothing will
-send.
+So the stream is drained for the life of the session; the agent's own
+background work is a turn of its own rather than spend billed to whichever
+prompt ran last; and a stream that ends takes the session with it instead of
+leaving a turn waiting on a result nothing will send.
+
+One turn is open at a time. A prompt sent into a turn already running is folded
+into it by the CLI and the pair answered with a single `ResultMessage` that
+names no turn, so a second turn held open alongside can only wait on a result
+nobody owes — which is the session hanging with a full queue and nothing
+running.
 """
 
 from __future__ import annotations
@@ -187,10 +192,10 @@ def _result(output_tokens: int):
 
 
 async def _prompt_behind_background(captured, trace_id, fake, text):
-    """A background turn already open, then an operator's prompt behind it.
+    """A turn the agent opened for itself, then an operator's prompt behind it.
 
     The overlap the CLI produces whenever a steer arrives while a subagent is
-    still working — and the state in which two results are owed.
+    still working — and the state in which the floor changes hands.
     """
     run, pump = await _live(trace_id)
     await fake.emit(AssistantMessage(content=[TextBlock("bg working")]))
@@ -209,10 +214,12 @@ def _clean():
                      "sdk-dead2", "sdk-stopclose", "sdk-interleaved2",
                      "sdk-attr", "sdk-stillborn", "sdk-dead3",
                      "sdk-oneshot-clean", "sdk-oneshot-dead",
-                     "sdk-queued-stop2", "sdk-oneshot-wake",
-                     "sdk-stop-nowait", "sdk-wake1", "sdk-wake2", "sdk-wake4",
+                     "sdk-queued-stop2", "sdk-oneshot-wake", "sdk-window",
+                     "sdk-dead-window",
+                     "sdk-stop-nowait", "sdk-wake2", "sdk-wake4",
                      "sdk-wake-shell", "sdk-wake-upd", "sdk-wake-stale",
-                     "sdk-settle-inflight", "sdk-wake-running"):
+                     "sdk-settle-inflight", "sdk-wake-running",
+                     "sdk-wake-yield", "sdk-wake-strand"):
         registry.unregister_run(trace_id)
 
 
@@ -274,18 +281,23 @@ def test_a_permission_ask_after_the_result_still_gets_a_decision(
 # ── whose turn a frame belongs to ──────────────────────────────────────
 
 
-def test_an_orphan_result_writes_no_usage_row(captured, background_client):
+def test_an_orphan_result_is_dropped_whole(captured, background_client):
     """A result with no turn open belongs to no turn — billing it to the
-    previous one would double-count that turn's spend."""
+    previous one would double-count that turn's spend. It is dropped rather
+    than merely left unbilled: a failed one still carries an error the trace
+    would otherwise file under a turn that had already ended."""
     async def scenario():
         run, pump = await _live("sdk-orphan")
-        await background_client.emit(ResultMessage())
+        await background_client.emit(ResultMessage(),
+                                     ResultMessage(is_error=True,
+                                                   result="boom"))
         assert await _settle(lambda: background_client.frames.empty())
         await _shut_down(run, pump)
 
     _run(scenario())
 
     assert _rows(captured) == []
+    assert [s for s in captured["spans"] if s["name"].startswith("turn")] == []
 
 
 def test_a_background_turn_gets_its_own_identity(captured, background_client):
@@ -335,76 +347,80 @@ def test_background_work_between_prompts_bills_only_itself(captured,
         "sdk-interleaved:turn-2"]
 
 
-# ── the wake ledger ────────────────────────────────────────────────────
+# ── the wake, and the floor it has to give up ──────────────────────────
 #
 # A delegated agent task's completion wakes the agent for a follow-up turn of
-# its own, ending in its own top-level result. Nothing on that result says so,
-# and the operator's turn is usually still open when it lands — so the CLI's
-# `system` task-lifecycle frames are the only thing that can tell the two
-# results apart.
+# its own, ending in its own top-level result. That turn is real work and gets
+# its own identity — but only while nothing else is running. A prompt sent into
+# it is folded in by the CLI and the pair is answered with a single result, so
+# the turn it woke for has to hand the floor over rather than wait for a second
+# result that is never sent.
 
 
 async def _wake_owed(fake, task_id="task_a46", terminal=None):
-    """A tracked agent task that finishes while the agent is idle.
-
-    That is what wakes it for a follow-up turn of its own; a task that settles
-    while a turn is already running is folded into that turn instead.
-    """
+    """A tracked agent task that finishes while the agent is idle — what wakes
+    it for a follow-up turn of its own."""
     await fake.emit(TaskStarted(task_id=task_id),
                     terminal or TaskNotification(task_id=task_id))
     assert await _settle(lambda: fake.frames.empty())
 
 
-def test_a_wake_result_does_not_end_the_prompt_it_interrupts(captured,
-                                                             scripted_client,
-                                                             monkeypatch):
-    """The core of it: the operator's turn stays open, and their next queued
-    prompt does not go out on a result that was never theirs."""
+def test_a_folded_answer_releases_the_prompt_it_was_folded_into(
+        captured, scripted_client, monkeypatch):
+    """The strand this whole invariant exists for.
+
+    A task finishes while the agent is idle, the operator prompts, and the CLI
+    answers the pair with one result. Holding a second turn open for the wake
+    gives that result to a turn nobody is waiting on: the pump waits forever on
+    a result the CLI has already sent, and every later prompt stacks up behind
+    it — the session hangs with its queue full and nothing running.
+    """
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
     async def scenario():
-        run, pump = await _live("sdk-wake1")
+        run, pump = await _live("sdk-wake-strand")
         await _wake_owed(scripted_client)
         run.enqueue("p2")
         assert await _settle(lambda: scripted_client.prompts)
         run.enqueue("p3")
 
         await scripted_client.emit(
-            AssistantMessage(content=[TextBlock("subagent a46 finished")]),
+            AssistantMessage(content=[TextBlock("a46 finished; and p2 is …")]),
             _result(11))
-        assert await _settle(lambda: _rows(captured))
-        mid = (list(scripted_client.prompts), run.pending_prompts())
+        released = await _settle(
+            lambda: scripted_client.prompts == ["p2", "p3"])
 
         await scripted_client.emit(
-            AssistantMessage(content=[TextBlock("the answer to p2")]),
+            AssistantMessage(content=[TextBlock("the answer to p3")]),
             _result(22))
-        assert await _settle(lambda: scripted_client.prompts == ["p2", "p3"])
-        await run.request_stop()
-        await asyncio.wait_for(pump, timeout=5)
-        await run.stop()
-        return mid
+        assert await _settle(lambda: len(_rows(captured)) == 2)
+        await _shut_down(run, pump)
+        return released
 
-    sent, queued = _run(scenario())
-
-    assert sent == ["p2"]
-    assert queued == ["p3"]
+    assert _run(scenario()) is True
+    # One result, one row, billed to the prompt it answered.
+    assert [(r["turn_uuid"], r["output_tokens"]) for r in _rows(captured)] == [
+        ("sdk-wake-strand:turn-0", 11), ("sdk-wake-strand:turn-1", 22)]
 
 
 def test_a_wake_gets_its_own_turn_and_its_own_usage_row(captured,
                                                         scripted_client,
                                                         monkeypatch):
-    """The wake's text and spend are its own work, not the operator's."""
+    """With the floor free, the agent's own work is its own work: its text and
+    its spend belong to a turn of their own, not to whichever prompt ran
+    last."""
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
     async def scenario():
         run, pump = await _live("sdk-wake2")
         await _wake_owed(scripted_client)
-        run.enqueue("what is 2+2?")
-        assert await _settle(lambda: scripted_client.prompts)
-
         await scripted_client.emit(
             AssistantMessage(content=[TextBlock("subagent a46 finished")]),
             _result(11))
+        assert await _settle(lambda: _rows(captured))
+
+        run.enqueue("what is 2+2?")
+        assert await _settle(lambda: scripted_client.prompts)
         await scripted_client.emit(AssistantMessage(content=[TextBlock("4")]),
                                    _result(22))
         assert await _settle(lambda: len(_rows(captured)) == 2)
@@ -415,18 +431,18 @@ def test_a_wake_gets_its_own_turn_and_its_own_usage_row(captured,
     said = {s["attributes"]["text"]: s["attributes"].get("turn_uuid")
             for s in _spans(captured, "assistant_response")}
     prompt = _spans(captured, "prompt")[0]["attributes"]
-    # The wake is turn-1: the operator's prompt opened turn-0 and kept it.
-    assert said == {"subagent a46 finished": "sdk-wake2:turn-1",
-                    "4": "sdk-wake2:turn-0"}
-    assert prompt.get("turn_uuid") in (None, "sdk-wake2:turn-0")
+    assert said == {"subagent a46 finished": "sdk-wake2:turn-0",
+                    "4": "sdk-wake2:turn-1"}
+    assert prompt.get("turn_uuid") in (None, "sdk-wake2:turn-1")
     assert [(r["turn_uuid"], r["output_tokens"]) for r in _rows(captured)] == [
-        ("sdk-wake2:turn-1", 11), ("sdk-wake2:turn-0", 22)]
+        ("sdk-wake2:turn-0", 11), ("sdk-wake2:turn-1", 22)]
 
 
-def test_four_prompts_around_four_wakes_keep_four_answers(captured,
-                                                          scripted_client,
-                                                          monkeypatch):
-    """The phase shift never re-paired on its own: every question landed on one
+def test_four_prompts_around_four_wakes_stay_in_phase(captured,
+                                                      scripted_client,
+                                                      monkeypatch):
+    """Nothing accumulates. A session that answers a prompt with a turn other
+    than its own never re-pairs on its own — every later question lands on one
     turn and its answer on the next, for the life of the session."""
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
@@ -437,39 +453,161 @@ def test_four_prompts_around_four_wakes_keep_four_answers(captured,
             run.enqueue(f"q{i}")
             assert await _settle(lambda: len(scripted_client.prompts) == i + 1)
             await scripted_client.emit(
-                AssistantMessage(content=[TextBlock(f"wake {i}")]), _result(1))
-            await scripted_client.emit(
                 AssistantMessage(content=[TextBlock(f"a{i}")]), _result(2))
-            assert await _settle(lambda: len(_rows(captured)) == 2 * (i + 1))
+            assert await _settle(lambda: len(_rows(captured)) == i + 1)
         await _shut_down(run, pump)
 
     _run(scenario())
 
     assert scripted_client.prompts == ["q0", "q1", "q2", "q3"]
-    answers = {s["attributes"]["text"]: s["attributes"]["turn_uuid"]
-               for s in _spans(captured, "assistant_response")
-               if s["attributes"]["text"].startswith("a")}
-    # Four answers on four distinct turns, and none of them a wake's.
-    assert len(set(answers.values())) == 4
-    wakes = {s["attributes"]["turn_uuid"]
-             for s in _spans(captured, "assistant_response")
-             if s["attributes"]["text"].startswith("wake")}
-    assert wakes.isdisjoint(answers.values())
+    answers = [(s["attributes"]["text"], s["attributes"]["turn_uuid"])
+               for s in _spans(captured, "assistant_response")]
+    assert answers == [(f"a{i}", f"sdk-wake4:turn-{i}") for i in range(4)]
+    assert [r["turn_uuid"] for r in _rows(captured)] == [
+        f"sdk-wake4:turn-{i}" for i in range(4)]
 
 
-def test_a_background_shell_is_never_owed_a_wake(captured, scripted_client,
+def test_a_wake_turn_gives_the_floor_to_a_prompt(captured, scripted_client,
                                                  monkeypatch):
+    """The handover itself. The wake is already talking when the prompt goes
+    out, so the CLI folds the two together — and what it says next is this
+    prompt's turn, because that is where the CLI has put it."""
+    monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
+
+    async def scenario():
+        run, pump = await _live("sdk-wake-yield")
+        await _wake_owed(scripted_client)
+        await scripted_client.emit(
+            AssistantMessage(content=[TextBlock("a46 finished")]))
+        assert await _settle(lambda: _spans(captured, "assistant_response"))
+
+        run.enqueue("and what is 2+2?")
+        assert await _settle(lambda: scripted_client.prompts)
+        await scripted_client.emit(
+            AssistantMessage(content=[TextBlock("4")]), _result(22))
+        assert await _settle(lambda: _rows(captured))
+        await _shut_down(run, pump)
+
+    _run(scenario())
+
+    said = {s["attributes"]["text"]: s["attributes"].get("turn_uuid")
+            for s in _spans(captured, "assistant_response")}
+    assert said == {"a46 finished": "sdk-wake-yield:turn-0",
+                    "4": "sdk-wake-yield:turn-1"}
+    # The wake turn ended without a result of its own, so it writes no row.
+    assert [r["turn_uuid"] for r in _rows(captured)] == ["sdk-wake-yield:turn-1"]
+
+
+def test_the_floor_is_taken_only_once_the_prompt_can_go_out(captured,
+                                                            scripted_client,
+                                                            monkeypatch):
+    """Posting the prompt's span is a thread hop, so a result can land while it
+    is in flight — and that result is the wake's, because the CLI has not been
+    handed the prompt yet. Taking the floor ahead of the post gives it to a
+    turn that has said nothing: the pump is released before its prompt is even
+    sent, and the wake's spend is billed to it."""
+    import lib.hook_plugin as hook_plugin
+
+    monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
+    posting, released = threading.Event(), threading.Event()
+
+    def post_span(**kw):
+        captured["spans"].append(kw)
+        if kw["name"] == "prompt":
+            posting.set()
+            released.wait(5)
+        return True
+
+    monkeypatch.setattr(hook_plugin, "post_span", post_span)
+
+    async def scenario():
+        run, pump = await _live("sdk-window")
+        await _wake_owed(scripted_client)
+        await scripted_client.emit(
+            AssistantMessage(content=[TextBlock("wake talking")]))
+        assert await _settle(lambda: _spans(captured, "assistant_response"))
+
+        run.enqueue("p1")
+        await asyncio.to_thread(posting.wait, 5)
+        await scripted_client.emit(_result(11))
+        assert await _settle(lambda: _rows(captured))
+        released.set()
+
+        assert await _settle(lambda: scripted_client.prompts == ["p1"])
+        await scripted_client.emit(
+            AssistantMessage(content=[TextBlock("answer to p1")]), _result(22))
+        assert await _settle(lambda: len(_rows(captured)) == 2)
+        await _shut_down(run, pump)
+
+    _run(scenario())
+
+    said = {s["attributes"]["text"]: s["attributes"].get("turn_uuid")
+            for s in _spans(captured, "assistant_response")}
+    assert said == {"wake talking": "sdk-window:turn-0",
+                    "answer to p1": "sdk-window:turn-1"}
+    assert [(r["turn_uuid"], r["output_tokens"]) for r in _rows(captured)] == [
+        ("sdk-window:turn-0", 11), ("sdk-window:turn-1", 22)]
+
+
+def test_a_child_that_dies_while_the_prompt_span_posts_opens_no_turn(
+        captured, scripted_client, monkeypatch):
+    """The death latch has to be read again after that post.
+
+    `_release_open_turns` runs once, from the stream's own end. A turn opened
+    after it cannot be reached by it, and nothing else bounds a turn's wait —
+    so a child that dies during the prompt's span POST would leave the pump
+    waiting forever on a result that can never come, holding its
+    `max_concurrent_runs` slot until an operator pressed Stop.
+    """
+    import lib.hook_plugin as hook_plugin
+
+    posting, released = threading.Event(), threading.Event()
+
+    def post_span(**kw):
+        captured["spans"].append(kw)
+        if kw["name"] == "prompt":
+            posting.set()
+            released.wait(5)
+        return True
+
+    monkeypatch.setattr(hook_plugin, "post_span", post_span)
+
+    async def scenario():
+        run, pump = await _live("sdk-dead-window")
+        run.enqueue("go")
+        await asyncio.to_thread(posting.wait, 5)
+
+        await scripted_client.end_stream()
+        assert await _settle(lambda: run._stream_dead)
+        released.set()
+        await asyncio.wait_for(pump, timeout=5)
+        await run.stop()
+
+    _run(scenario())
+
+    # The prompt never reached a child that could not answer it.
+    assert scripted_client.prompts == []
+    assert scripted_client.rows[-1]["status"] == "failed"
+
+
+def test_a_background_shell_is_never_tracked(captured, scripted_client,
+                                             monkeypatch):
     """`Bash(run_in_background=True)` travels the same frames but may never
-    reach a terminal status, so owing a wake for one would hold the operator's
-    turn open for the life of the session."""
+    reach a terminal status, so tracking one would pin the teardown gate open
+    for the life of the session."""
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
     async def scenario():
         run, pump = await _live("sdk-wake-shell")
         await scripted_client.emit(TaskStarted(task_id="shell_1",
-                                               task_type="local_shell"),
-                                   TaskNotification(task_id="shell_1"))
+                                               task_type="local_shell"))
         assert await _settle(lambda: scripted_client.frames.empty())
+        tracked = run._tasks.in_flight
+        # A shell that does reach a terminal status retires nothing, because
+        # it was never held against the gate.
+        await scripted_client.emit(TaskNotification(task_id="shell_1"))
+        assert await _settle(lambda: scripted_client.frames.empty())
+        tracked = tracked or run._tasks.in_flight
         run.enqueue("tail the log")
         assert await _settle(lambda: scripted_client.prompts)
 
@@ -478,9 +616,9 @@ def test_a_background_shell_is_never_owed_a_wake(captured, scripted_client,
             _result(7))
         assert await _settle(lambda: _rows(captured))
         await _shut_down(run, pump)
+        return tracked
 
-    _run(scenario())
-
+    assert _run(scenario()) is False
     # One turn, the operator's: the shell never opened one of its own.
     assert [r["turn_uuid"] for r in _rows(captured)] == ["sdk-wake-shell:turn-0"]
 
@@ -488,13 +626,9 @@ def test_a_background_shell_is_never_owed_a_wake(captured, scripted_client,
 def test_a_progress_update_leaves_a_running_task_tracked(captured,
                                                          scripted_client,
                                                          monkeypatch):
-    """`task_updated` reports every state change, not only the last one.
-
-    Retiring a task on a `running` patch costs twice over: the teardown gate
-    goes back to trusting a lull while the agent still has work that can speak,
-    and the terminal frame that does arrive finds nothing to clear — so the
-    wake it should have owed is lost and its result ends the operator's turn.
-    """
+    """`task_updated` reports every state change, not only the last one, so a
+    `running` patch must not retire a task: the teardown gate would go back to
+    trusting a lull while the agent still has work that can speak."""
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
     async def scenario():
@@ -503,80 +637,48 @@ def test_a_progress_update_leaves_a_running_task_tracked(captured,
                                    TaskUpdated(task_id="task_r",
                                                patch={"status": "running"}))
         assert await _settle(lambda: scripted_client.frames.empty())
-        mid_flight = run._wakes.in_flight
+        mid_flight = run._tasks.in_flight
 
         await scripted_client.emit(TaskNotification(task_id="task_r"))
         assert await _settle(lambda: scripted_client.frames.empty())
-        run.enqueue("p1")
-        assert await _settle(lambda: scripted_client.prompts)
-        run.enqueue("p2")
+        settled = run._tasks.in_flight
+        await _shut_down(run, pump)
+        return mid_flight, settled
 
-        await scripted_client.emit(
-            AssistantMessage(content=[TextBlock("task_r finished")]),
-            _result(11))
-        assert await _settle(lambda: _rows(captured))
-        # A beat for a pump this result had wrongly released to send p2.
-        await asyncio.sleep(0.05)
-        sent = list(scripted_client.prompts)
-
-        await scripted_client.emit(
-            AssistantMessage(content=[TextBlock("p1 answered")]), _result(22))
-        assert await _settle(lambda: scripted_client.prompts == ["p1", "p2"])
-        await run.request_stop()
-        await asyncio.wait_for(pump, timeout=5)
-        await run.stop()
-        return mid_flight, sent
-
-    in_flight, sent = _run(scenario())
-
-    assert in_flight is True
-    # The wake was still owed, so its result did not end the operator's turn.
-    assert sent == ["p1"]
-    assert [r["turn_uuid"] for r in _rows(captured)] == [
-        "sdk-wake-running:turn-1", "sdk-wake-running:turn-0"]
+    assert _run(scenario()) == (True, False)
 
 
-def test_a_terminal_task_update_alone_still_owes_the_wake(captured,
-                                                          scripted_client,
-                                                          monkeypatch):
+def test_a_terminal_task_update_alone_retires_the_task(captured,
+                                                       scripted_client,
+                                                       monkeypatch):
     """Not every terminal task emits a notification — some report only through
-    a `task_updated` patch."""
+    a `task_updated` patch, and a task never retired holds teardown to the full
+    grace period on every ending that follows."""
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
     async def scenario():
         run, pump = await _live("sdk-wake-upd")
-        await _wake_owed(scripted_client, task_id="task_u",
-                         terminal=TaskUpdated(task_id="task_u",
-                                              patch={"status": "completed"}))
-        run.enqueue("p1")
-        assert await _settle(lambda: scripted_client.prompts)
+        await scripted_client.emit(TaskStarted(task_id="task_u"))
+        assert await _settle(lambda: scripted_client.frames.empty())
+        started = run._tasks.in_flight
 
-        await scripted_client.emit(
-            AssistantMessage(content=[TextBlock("task_u finished")]),
-            _result(11))
-        assert await _settle(lambda: _rows(captured))
-        still_open = run._open and run._open[0].done is not None
-        await scripted_client.emit(
-            AssistantMessage(content=[TextBlock("p1 answered")]), _result(22))
-        assert await _settle(lambda: len(_rows(captured)) == 2)
+        await scripted_client.emit(TaskUpdated(task_id="task_u",
+                                               patch={"status": "completed"}))
+        assert await _settle(lambda: scripted_client.frames.empty())
+        settled = run._tasks.in_flight
         await _shut_down(run, pump)
-        return still_open
+        return started, settled
 
-    assert _run(scenario()) is True
-    assert [r["turn_uuid"] for r in _rows(captured)] == [
-        "sdk-wake-upd:turn-1", "sdk-wake-upd:turn-0"]
+    assert _run(scenario()) == (True, False)
 
 
-def test_a_completion_inside_a_running_turn_is_owed_nothing(captured,
-                                                            scripted_client,
-                                                            monkeypatch):
-    """The guard on the ledger: a task that settles while a turn is already
-    running is reported inside that turn, not on one of its own.
-
-    Owing a wake for it would be the same early release from the other side —
-    the debt would consume the operator's own result, leaving their turn open
-    on an answer that had already arrived and their next prompt queued behind
-    it for the life of the session.
+def test_a_completion_inside_a_running_turn_opens_no_turn(captured,
+                                                          scripted_client,
+                                                          monkeypatch):
+    """A task that settles while a turn is already running is reported inside
+    that turn. Opening one for it would strand the operator's: their result
+    would end the wake's turn instead, leaving their own open on an answer that
+    had already arrived and their next prompt queued behind it for good.
     """
     monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0)
 
@@ -660,52 +762,51 @@ def test_a_subagents_frames_do_not_own_the_operators_answer(captured,
     assert [r["turn_uuid"] for r in _rows(captured)] == ["sdk-attr:turn-0"]
 
 
-# ── two turns at once ──────────────────────────────────────────────────
+# ── the floor changes hands ────────────────────────────────────────────
 
 
-def test_a_background_result_does_not_release_the_prompted_turn(
+def test_a_prompt_sent_mid_flight_is_the_turn_that_gets_answered(
         captured, scripted_client, monkeypatch):
-    """One prompt at a time is the pump's whole contract. A result owed to the
-    background turn must not stand in for the operator's: the next queued
-    prompt would go out while this one was still running, and the session would
-    stay one result out of phase for the rest of its life."""
+    """One prompt at a time is the pump's whole contract, and the CLI's fold is
+    what it has to be read against: the single result the fold produces ends
+    the prompt's turn, and only then does the next queued one go out."""
     monkeypatch.setattr(settings.agent_sdk, "stop_grace_sec", 1)
 
     async def scenario():
         run, pump = await _prompt_behind_background(
             captured, "sdk-phase", scripted_client, "p2")
         run.enqueue("p3")
+        # p3 is queued while p2 is still running, and `/live` reports it as
+        # waiting — because it is.
+        queued = run.pending_prompts()
 
         await scripted_client.emit(_result(11))
-        assert await _settle(lambda: len(_rows(captured)) == 1)
-        mid = (list(scripted_client.prompts), run.pending_prompts())
+        assert await _settle(lambda: scripted_client.prompts == ["p2", "p3"])
 
         await scripted_client.emit(_result(22))
-        assert await _settle(lambda: scripted_client.prompts == ["p2", "p3"])
+        assert await _settle(lambda: len(_rows(captured)) == 2)
         await run.request_stop()
         await asyncio.wait_for(pump, timeout=5)
         await run.stop()
-        return mid
+        return queued
 
-    sent, queued = _run(scenario())
-
-    assert sent == ["p2"]
-    # And `/live` still reports the steer as waiting, because it is.
-    assert queued == ["p3"]
+    assert _run(scenario()) == ["p3"]
 
 
-def test_each_turn_bills_the_result_that_was_owed_to_it(captured,
-                                                        scripted_client,
-                                                        monkeypatch):
-    """The background turn is billed the first result and the prompt's turn the
-    second, each on its own index — the order they were opened in."""
+def test_each_prompt_bills_the_result_that_answered_it(captured,
+                                                       scripted_client,
+                                                       monkeypatch):
+    """The background turn was folded into p2, so p2's turn is billed the
+    result — and a straggler that arrives with nothing open is dropped rather
+    than billed to a turn it never belonged to."""
     monkeypatch.setattr(settings.agent_sdk, "stop_grace_sec", 1)
 
     async def scenario():
         run, pump = await _prompt_behind_background(
             captured, "sdk-phase2", scripted_client, "p2")
         await scripted_client.emit(_result(11), _result(22))
-        assert await _settle(lambda: len(_rows(captured)) == 2)
+        assert await _settle(lambda: _rows(captured))
+        await asyncio.sleep(0.05)
         await run.request_stop()
         await asyncio.wait_for(pump, timeout=5)
         await run.stop()
@@ -714,23 +815,24 @@ def test_each_turn_bills_the_result_that_was_owed_to_it(captured,
 
     rows = _rows(captured)
     assert [(r["turn_uuid"], r["output_tokens"]) for r in rows] == [
-        ("sdk-phase2:turn-0", 11), ("sdk-phase2:turn-1", 22)]
+        ("sdk-phase2:turn-1", 11)]
 
 
 def test_a_queued_stop_cannot_disconnect_a_turn_that_is_still_running(
         captured, scripted_client):
     """An operator's Stop queued behind a steer — and the `one_shot`
-    terminator, which is the same queue entry. Ending the pump on the
-    background turn's result would disconnect the child mid-turn and destroy
-    the steer, leaving a trace whose last two rows are `prompt` and
-    `session.end`."""
+    terminator, which is the same queue entry. A turn ends on its result and
+    nothing else: reading the child's own chatter as the end of it would
+    disconnect it mid-turn and destroy the steer, leaving a trace whose last
+    two rows are `prompt` and `session.end`."""
     async def scenario():
         run, pump = await _prompt_behind_background(
             captured, "sdk-queued-stop", scripted_client, "p2")
         run.close()
 
-        await scripted_client.emit(_result(11))
-        assert await _settle(lambda: len(_rows(captured)) == 1)
+        await scripted_client.emit(*_chatter(3))
+        assert await _settle(
+            lambda: len(_spans(captured, "assistant_response")) == 4)
         mid = (pump.done(), scripted_client.disconnects)
 
         await scripted_client.emit(

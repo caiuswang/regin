@@ -23,12 +23,15 @@ wedges the whole child at the buffer's high-water mark: nothing answers
 a new prompt restarts the drain. So the reader owns the stream, and a turn ends
 when the reader routes a result to its slot.
 
-Two turns can be open at once: a finished background task wakes the agent for a
-follow-up turn of its own, with no prompt behind it, while the operator's turn
-is still being answered. Nothing on a `ResultMessage` says which of the two it
-ends, so `_WakeLedger` reads the CLI's `system` task-lifecycle frames to know
-when one is owed — without it a wake's result ends the operator's turn, and
-their question, its answer and the wake's spend scatter across three rows.
+**One turn is open at a time.** The agent also speaks with no prompt behind it
+— a finished background task wakes it for a follow-up turn of its own — so a
+turn is opened lazily for whatever the CLI says while nothing is running. But a
+prompt that arrives mid-flight is folded into what the CLI is already saying and
+the pair is answered with a single `ResultMessage` carrying no turn label, so a
+second turn opened alongside can only end up waiting on a result nobody owes.
+The floor is therefore handed over rather than shared: a prompt going out
+retires whatever turn was open, and a result with nothing open is dropped
+instead of ending a turn it never belonged to.
 
 Spans are posted over HTTP by `lib.hook_plugin.post_span`, which is blocking, so
 every write is pushed to a worker thread — a blocked event loop would stall the
@@ -79,9 +82,9 @@ class RunnerBusy(RuntimeError):
 class _Turn:
     """One turn in flight, and the identity every row it produces carries.
 
-    `context` lives here rather than on the session because two turns can be
-    open at once — a background subagent's and the operator's — and the last
-    API call either one made is not the other's context size.
+    `context` lives here rather than on the session because the last API call
+    the previous turn made is not this turn's context size, and a usage row is
+    stamped with the turn it belongs to.
 
     `done` is the pump's future. Only a prompted turn has one: it is the only
     turn anybody is waiting on.
@@ -95,51 +98,39 @@ class _Turn:
 # `claude_agent_sdk._internal.query.DEFERRING_TASK_TYPES`. Copied rather than
 # imported: it is private to the SDK, and this module must stay importable
 # where the SDK is not installed.
-_WAKING_TASK_TYPES = frozenset({"local_agent", "local_workflow"})
+_TRACKED_TASK_TYPES = frozenset({"local_agent", "local_workflow"})
 # `claude_agent_sdk.types.TERMINAL_TASK_STATUSES` — every status meaning the
 # task has finished. A killed task is finished too: leaving it tracked would
 # pin the teardown gate open for the rest of the session.
 _TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "stopped",
                                      "killed"})
-# The narrower set that is also owed a turn. A task somebody killed did not
-# finish with something to report, and a wake owed that never arrives costs
-# the operator their own result.
-_WAKING_TASK_STATUSES = frozenset({"completed", "failed"})
 
 
-class _WakeLedger:
-    """Which finished background tasks are owed a turn of their own.
+class _TaskLedger:
+    """Which delegated background tasks are still running.
 
     A delegated agent task's completion wakes the parent for a follow-up turn
     that ends in its own top-level result; the SDK's own stdin close depends on
-    that extra result existing (`query.wait_for_result_and_end_input`). The CLI
-    reports those completions on `system` task-lifecycle frames, and they are
-    the only thing that can tell one turn's result from another's — nothing on
-    a `ResultMessage` says which turn it ends.
+    that extra result existing (`query.wait_for_result_and_end_input`). Which
+    turn any given result ends is not this ledger's business — nothing on a
+    `ResultMessage` says, and the runner keeps one turn open at a time so it
+    never has to guess. What is read from here is whether the agent still has
+    work that can speak, which is what the teardown gate needs.
 
     Only delegated agent work counts. A background *shell* —
     `Bash(run_in_background=True)`, `tail -f` — travels the same frames but may
-    never reach a terminal status, so owing a wake for one would hold the
-    operator's turn open for the life of the session. Terminal state arrives as
-    a `task_notification` *or* a `task_updated` patch and not reliably both, so
-    either can retire a task — on its status, never on which frame carried it,
-    since `task_updated` also reports a task merely starting or pausing.
+    never reach a terminal status, so tracking one would pin that gate open for
+    the life of the session. Terminal state arrives as a `task_notification`
+    *or* a `task_updated` patch and not reliably both, so either can retire a
+    task — on its status, never on which frame carried it, since `task_updated`
+    also reports a task merely starting or pausing.
     """
 
     def __init__(self) -> None:
         self._tracked: set[str] = set()
-        self._owed = 0
 
-    def observe(self, message, *, idle: bool) -> None:
-        """Track one lifecycle frame.
-
-        `idle` — nothing is mid-turn — is what makes a completion a *wake*. A
-        CLI session runs one turn at a time: a task that finishes while a turn
-        is already running is folded into that turn and reported inside it, so
-        it is owed no result of its own, and holding a debt for it would let it
-        consume the answer the operator is waiting for. Only a task that
-        finishes with the agent idle wakes it for a follow-up turn.
-        """
+    def observe(self, message) -> None:
+        """Track one lifecycle frame."""
         task_id = getattr(message, 'task_id', '') or ''
         subtype = getattr(message, 'subtype', '') or ''
         if not task_id:
@@ -147,28 +138,26 @@ class _WakeLedger:
         if subtype == 'task_started':
             self._track(task_id, message)
         elif subtype in ('task_notification', 'task_updated'):
-            self._settle(task_id, message, idle=idle)
+            self._settle(task_id, message)
 
     def _track(self, task_id: str, message) -> None:
         data = getattr(message, 'data', None) or {}
-        if data.get('task_type') in _WAKING_TASK_TYPES:
+        if data.get('task_type') in _TRACKED_TASK_TYPES:
             self._tracked.add(task_id)
 
-    def _settle(self, task_id: str, message, *, idle: bool) -> None:
+    def _settle(self, task_id: str, message) -> None:
         """Retire a task that has reached a terminal status, and only then.
 
         `task_updated` reports every state change, not just the last one, so
         the status decides this and not the frame it arrived on — clearing a
-        `running` patch would drop a live task twice over: the teardown gate
-        would go back to trusting a lull, and the terminal frame that follows
-        would find nothing to clear and owe no wake.
+        `running` patch would send the teardown gate back to trusting a lull
+        while the agent still has work that can speak. A task never tracked —
+        a background shell — is not retired by reaching one either, since it
+        was never held against the gate to begin with.
         """
-        status = self._status(message)
-        if task_id not in self._tracked or status not in _TERMINAL_TASK_STATUSES:
+        if self._status(message) not in _TERMINAL_TASK_STATUSES:
             return
         self._tracked.discard(task_id)
-        if idle and status in _WAKING_TASK_STATUSES:
-            self._owed += 1
 
     @staticmethod
     def _status(message) -> str:
@@ -177,13 +166,6 @@ class _WakeLedger:
         if isinstance(patch, dict) and patch.get('status'):
             return str(patch['status'])
         return str(getattr(message, 'status', '') or '')
-
-    def take(self) -> bool:
-        """Claim one owed wake."""
-        if self._owed <= 0:
-            return False
-        self._owed -= 1
-        return True
 
     @property
     def in_flight(self) -> bool:
@@ -198,7 +180,6 @@ class _WakeLedger:
 
     def forget(self) -> None:
         self._tracked.clear()
-        self._owed = 0
 
 
 def _enrich_ask(span: dict | None, event) -> None:
@@ -270,12 +251,9 @@ class AgentRunner:
         self._stopped = False
         self._queue_closed = False
         self._reader: asyncio.Task | None = None
-        # Turns in flight, oldest first. Two can overlap: the prompt the pump
-        # is waiting on, and one the agent opened for itself.
+        # The turn in flight, if any. At most one: see `_open_frame_turn`.
         self._open: list[_Turn] = []
-        # The turn a finished background task was woken for, while it runs.
-        self._wake: _Turn | None = None
-        self._wakes = _WakeLedger()
+        self._tasks = _TaskLedger()
         # Set once the CLI will send nothing further — see `_stream_closed`.
         self._stream_dead = False
         # Frames seen over the life of the session. Only its movement is read
@@ -438,7 +416,9 @@ class AgentRunner:
         Releasing the turns in flight is not enough on its own: a prompt queued
         before the death is still waiting, and running it would open a turn
         nothing can close. So the death is latched, and `_run_turn` reads the
-        latch before it opens anything.
+        latch on either side of the one await it takes before opening its turn
+        — the prompt's span post. Its remaining awaits need no such read: by
+        then the turn is in `_open`, which is what this releases.
 
         An ending the session was already headed for is not a failure. That is
         an operator's Stop, whose interrupt is what closed the transport, and a
@@ -466,7 +446,7 @@ class AgentRunner:
         hop, and re-reading it per event tears one model message across two
         turns when the pump drops one in the gap.
         """
-        self._wakes.observe(message, idle=not self._open)
+        self._tasks.observe(message)
         events = from_sdk_message(self.trace_id, message)
         terminal = any(isinstance(e, (TurnCompleted, TurnFailed))
                        for e in events)
@@ -500,43 +480,35 @@ class AgentRunner:
         return True, self._frame_turn()
 
     def _frame_turn(self) -> _Turn | None:
-        """The turn a non-terminal frame belongs to: a wake's own while it is
-        running, since the operator's turn was already waiting when the CLI
-        woke for it."""
-        return self._wake or (self._open[0] if self._open else None)
+        """The turn a non-terminal frame belongs to: the one that is open."""
+        return self._open[0] if self._open else None
 
     def _open_frame_turn(self) -> None:
-        """Open the turn this assistant frame belongs to, if it needs one.
+        """Open a turn for this assistant frame if nothing is running.
 
-        Two shapes need one. Nothing is open at all — the agent speaking with
-        no prompt behind it. Or a wake is owed while the operator's turn is
-        still open: the ledger is the only thing that can tell that frame apart
-        from a continuation of the operator's own answer, and without it the
-        wake's text, its spend and its result all land on the operator's turn —
-        that last one ending it early.
+        The agent speaks with no prompt behind it — a finished background task
+        wakes it for a follow-up turn of its own — and that work is its own,
+        not spend billed to whichever prompt ran last. But it gets a turn only
+        while the floor is free. Two turns open at once is the state that
+        cannot be resolved: a `ResultMessage` carries no turn label, so a CLI
+        that answers both with a single result leaves the pump waiting on a
+        result nobody owes. Measured against the bundled CLI — a prompt sent 4s
+        into a running turn came back as one `result` with `num_turns=2`, and
+        the first prompt's answer was never spoken at all.
         """
-        if self._wake is not None:
+        if self._open:
             return
-        if self._wakes.take():
-            self._wake = self._open_turn()
-        elif not self._open:
-            self._open_turn()
+        self._open_turn()
 
     def _result_turn(self) -> tuple[bool, _Turn | None]:
         """Which turn a result ends, if any. Not recorded means dropped.
 
-        A wake's own turn takes it, so this result ends the follow-up turn
-        rather than the answer the operator is still waiting for. A wake that
-        was owed but never spoke takes the result away with it and leaves no
-        row: a turn that produced no frames has no spend of its own worth
-        recording, and billing it to the operator's turn is the double-count
-        this exists to prevent. Otherwise the oldest open turn takes it — a
-        turn that started earlier also ends earlier.
+        Whichever turn is open takes it; only one ever is. A result arriving
+        with nothing open is dropped rather than held against the next turn —
+        a turn that produced no frames has no spend worth recording, and a
+        result that outlives its turn would otherwise end someone else's and
+        leave the session one result out of phase for good.
         """
-        if self._wake is not None:
-            return True, self._wake
-        if self._wakes.take():
-            return False, None
         if self._open:
             return True, self._open[0]
         return False, None
@@ -557,12 +529,9 @@ class AgentRunner:
     def _close_turn(self, turn: _Turn) -> None:
         """Retire one turn, releasing the pump if it was waiting on it.
 
-        Which turn a result ends is `_result_turn`'s decision. When it
-        falls to the oldest open one that is because a turn started earlier
-        also ends earlier: closing the *prompted* turn on whichever result
-        arrives first releases the pump on someone else's result — the next
-        queued prompt then goes out while this one is still running, and the
-        session stays one result out of phase for the rest of its life.
+        Only a prompted turn carries a `done`, so this is a no-op for the pump
+        on any other. Which turn a result ends is `_result_turn`'s decision;
+        this only carries it out.
         """
         self._drop_turn(turn)
         if turn.done is not None and not turn.done.done():
@@ -571,16 +540,13 @@ class AgentRunner:
     def _drop_turn(self, turn: _Turn) -> None:
         """Forget a turn nobody is waiting on any more — an abandoned one. Its
         result, if it ever comes, then closes whatever is open in its place."""
-        if turn is self._wake:
-            self._wake = None
         if turn in self._open:
             self._open.remove(turn)
 
     def _release_open_turns(self, exc: BaseException | None) -> None:
         """Let go of every turn in flight, so the pump is not left waiting on a
         result that can no longer arrive."""
-        self._wake = None
-        self._wakes.forget()
+        self._tasks.forget()
         open_turns, self._open = self._open, []
         for turn in open_turns:
             if turn.done is None or turn.done.done():
@@ -943,28 +909,52 @@ class AgentRunner:
         """Send one prompt and wait for the reader to close its turn.
 
         The turn is opened before the prompt goes out, or a turn the CLI
-        answers immediately would resolve nothing and be waited on forever. A
-        background turn still running keeps its own slot: its work is the
-        agent's, not this prompt's, and folding the two together would bill its
-        spend here and hand the pump its result.
+        answers immediately would resolve nothing and be waited on forever —
+        but nothing may be awaited between taking the floor and sending, which
+        is why the prompt's own span is posted first. That post is a thread
+        hop; a result landing during it belongs to the turn that was speaking
+        before this prompt existed, and taking the floor ahead of it would hand
+        that result to a prompt the CLI has not yet been given. Sending is a
+        yield point too, so that window is narrowed rather than closed — a
+        result crossing `query` still ends this turn early. It is bounded by a
+        write to the child's stdin instead of by an HTTP POST.
 
         A prompt queued before the stream died is dropped here rather than in
         the pump: this runs as its own task, scheduled *behind* the reader, so
         the pump can pick a prompt up while the child is still alive and reach
-        this line after it has died. `_release_open_turns` cannot save a turn
-        that had not been opened yet, and nothing else bounds the wait — a
-        turn's result is not what `idle_timeout_sec` covers.
+        this line after it has died. The latch is read again after the span
+        post for the same reason it is read at all — the child can die during
+        it, and `_release_open_turns` cannot save a turn that had not been
+        opened yet. Nothing else bounds the wait: a turn's result is not what
+        `idle_timeout_sec` covers.
         """
         if self._stream_dead:
             return
+        await self._emit(prompt_event(self.trace_id, text))
+        if self._stream_dead:
+            return
+        self._take_the_floor()
         done = asyncio.get_running_loop().create_future()
         turn = self._open_turn(done)
-        await self._emit(prompt_event(self.trace_id, text))
         try:
             await self._client.query(text)
             await done
         finally:
             self._drop_turn(turn)
+
+    def _take_the_floor(self) -> None:
+        """Retire whatever turn was running, for the prompt about to go out.
+
+        The CLI folds an inbound prompt into whatever it is already saying and
+        answers the pair with one result, so a turn left open would take the
+        result this prompt is waiting on and strand the pump forever. Retiring
+        it costs that turn nothing: its remaining frames land on this one,
+        which is where the CLI has put them anyway. Nothing is waiting on it
+        either — the pump is serial, so only a turn the agent opened for itself
+        can still be open here, and those carry no `done`.
+        """
+        for turn in list(self._open):
+            self._close_turn(turn)
 
     async def interrupt(self) -> None:
         await self._client.interrupt()
@@ -972,14 +962,12 @@ class AgentRunner:
     async def _settle_stream(self, status: str) -> None:
         """Let an answer still in flight land before the transport closes.
 
-        The pump's turn ending is not proof this prompt was answered. Two
-        top-level turns can be owed results at once — the operator's, and the
-        one a finished background task woke the agent for — and no field on a
-        `ResultMessage` says which turn it ends, so the first result to arrive
-        ends the pump's wait whichever turn it really belonged to. Tearing down
-        on it disconnects a child that is still writing the answer: the trace
-        keeps a `prompt` with no reply, and a `one_shot` run returns nothing to
-        its caller under a row that reads `completed`.
+        The pump's turn ending is not proof the conversation is over. A
+        finished background task wakes the agent for a follow-up turn of its
+        own, which starts after the result the pump was waiting on. Tearing
+        down on that result disconnects a child that is still writing: the
+        trace keeps a `prompt` with no reply, and a `one_shot` run returns
+        nothing to its caller under a row that reads `completed`.
 
         So a graceful ending waits for the stream to go quiet first. What
         counts as quiet depends on whether the agent still has delegated work
@@ -1010,7 +998,7 @@ class AgentRunner:
         while loop.time() < deadline:
             seen = self._frames
             await asyncio.sleep(window)
-            if self._frames == seen and not self._wakes.in_flight:
+            if self._frames == seen and not self._tasks.in_flight:
                 return
 
     async def _close_reader(self) -> None:
