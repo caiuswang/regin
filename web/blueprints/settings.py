@@ -366,13 +366,6 @@ def _agent_sdk_fields() -> list[dict]:
                         "delegated task is still running a lull proves "
                         "nothing, and the wait runs to the stop grace instead. "
                         "A Stop never waits. 0 disconnects immediately."},
-        {"key": "park_timeout_sec", "group": "Lifecycle", "type": "int",
-         "min": 0, "step": 60, "label": "Park timeout (s)",
-         "description": "How long a held question or gated call waits for an "
-                        "answer before it is declined — nobody said yes. The "
-                        "idle timeout cannot cover this: a park lives inside a "
-                        "turn. 0 waits forever, which is right only when an "
-                        "operator is actually watching."},
         # ── Gating ──
         {"key": "gate_plan", "group": "Gating", "type": "bool",
          "label": "Hold ExitPlanMode for approval",

@@ -32,7 +32,11 @@ _COMMAND_PREVIEW_MAX = 200
 _PLAN_MAX = 8000
 _PATH_TOOLS = frozenset({'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'})
 
-_DISMISSED = 'Dismissed by operator'
+# A park has no clock, so this is the teardown reading and nothing else: the
+# session went away under an operator who never answered. Nothing may report a
+# refusal the human did not make — a timer that declined an unseen question
+# had the agent narrating "you dismissed this" to someone who never saw it.
+DISMISSED = 'Dismissed by operator'
 _DENIED = 'Denied by operator'
 
 
@@ -128,7 +132,7 @@ def decision_outcome(decision) -> tuple[str, str]:
     alternative runs a gated tool nobody approved.
     """
     if not isinstance(decision, dict):
-        return 'deny', _DISMISSED
+        return 'deny', DISMISSED
     behavior = 'allow' if decision.get('behavior') == 'allow' else 'deny'
     reason = decision.get('reason')
     detail = reason.strip()[:_PREVIEW_MAX] if isinstance(reason, str) else ''

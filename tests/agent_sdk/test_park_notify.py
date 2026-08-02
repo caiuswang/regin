@@ -2,8 +2,9 @@
 
 Approve-from-phone is only a feature if the phone rings: the hook tier pushes
 `permission.pending` for a session the user drives, so before this a session
-regin *owned* was the one that waited silently until `park_timeout_sec`
-declined it. These tests pin the push, the dismissal, and — the part that is
+regin *owned* was the one that waited silently. A park never expires on its
+own, so this push is the only thing that turns a held call into something a
+human knows about. These tests pin the push, the dismissal, and — the part that is
 easy to get wrong — that the session-keyed card is not retired while other
 calls in the same session are still parked.
 """
@@ -118,7 +119,6 @@ def test_park_pushes_then_dismisses_around_the_wait(notices, monkeypatch):
     # The answer is handed back as a real `PermissionResultAllow`, so this one
     # test needs the optional `[agent-sdk]` extra the rest of the suite doesn't.
     pytest.importorskip("claude_agent_sdk")
-    monkeypatch.setattr(settings.agent_sdk, "park_timeout_sec", 5)
     posted: list[dict] = []
     monkeypatch.setattr(runner_mod.AgentRunner, "_post",
                         lambda self, span: _noop(posted, span))

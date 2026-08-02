@@ -594,10 +594,10 @@ class AgentRunner:
                            tool_use_id: str) -> None:
         """Tell the operator out-of-band that a call is waiting on them.
 
-        Without this the tier can hold a call for the whole
-        `park_timeout_sec` and then decline it, while the only signal a human
-        ever got was a row in a trace nobody had open — the hook tier pushes
-        this event, so a session regin owns would be the *quiet* one.
+        A park waits indefinitely, so this push is what keeps that from
+        meaning "hangs": without it the only signal a human ever got was a row
+        in a trace nobody had open — the hook tier pushes this event, so a
+        session regin owns would be the *quiet* one.
 
         Off the loop thread: the push channels do network I/O and every run on
         this process shares one loop.
@@ -632,31 +632,19 @@ class AgentRunner:
             log.error("sdk_park_dismiss_failed", trace_id=self.trace_id,
                       exc_info=True)
 
-    async def _wait_for_operator(self, future):
-        """Wait for a decision, but not forever when nobody is watching.
-
-        `idle_timeout_sec` cannot cover this: it bounds the wait *between*
-        turns, and a park lives inside one. An unattended run — regin's own
-        spawns, which no operator has `/live` open for — would otherwise hold
-        its worker, its child process and a `max_concurrent_runs` slot until
-        the server restarted. Timing out declines the call rather than
-        approving it: nobody said yes.
-        """
-        timeout = int(settings.agent_sdk.park_timeout_sec or 0)
-        if timeout <= 0:
-            return await future
-        try:
-            return await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
-            log.write("sdk_park_timed_out", trace_id=self.trace_id,
-                      timeout_sec=timeout)
-            return None
-
     async def _await_operator(self, kind: str, tool_use_id: str,
                               tool_input: dict):
-        """Park this call and wait. One assistant message can carry several
-        gated calls, so each waits on its own future and drops only its own
-        park — the session's other parked calls are still someone's to answer.
+        """Park this call and wait for the human — with no clock on it.
+
+        One assistant message can carry several gated calls, so each waits on
+        its own future and drops only its own park; the session's other parked
+        calls are still someone's to answer.
+
+        A park deliberately never expires. Declining one on a timer refuses a
+        call the operator may never have been shown, and the model is told it
+        was refused — so the agent goes on to narrate a decision the human did
+        not make. An unattended park therefore holds its worker and a
+        `max_concurrent_runs` slot until it is answered or the run is stopped.
         """
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         ask_id = registry.register_ask(registry.PendingAsk(
@@ -668,17 +656,18 @@ class AgentRunner:
             kind=kind,
         ))
         try:
-            return await self._wait_for_operator(future)
+            return await future
         finally:
             # Every exit drops this park and only this one: resolved (already
-            # popped, so a no-op), timed out, or cancelled. A park left behind
+            # popped, so a no-op) or cancelled by teardown. A park left behind
             # is a call the operator can still be offered and nothing can
             # deliver an answer to.
             registry.discard_ask(ask_id)
 
     def _answered(self, tool_use_id: str, tool_input: dict, answers):
+        # Reachable only on teardown: nothing else ends a park unresolved.
         if answers is None:
-            return client.deny("Dismissed by operator")
+            return client.deny(policy.DISMISSED)
         updated = build_updated_input(tool_input, answers)
         self._answered_asks[tool_use_id] = {
             'questions': (tool_input or {}).get('questions') or [],

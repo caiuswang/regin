@@ -818,13 +818,12 @@ class AgentSdkConfig(BaseModel):
     reports that combination, because a security control that silently does
     nothing is worse than one that refuses.
 
-    `park_timeout_sec` bounds a held call. `idle_timeout_sec` (usually 0)
-    cannot: it bounds the wait *between* turns and a park lives inside one,
-    so without this an unattended run — regin's own spawns, which nobody has
-    `/live` open for — holds its worker and a `max_concurrent_runs` slot
-    until the server restarts. Timing out declines the call: nobody said yes.
-    0 waits forever, which is right only when an operator is actually
-    watching.
+    **A park has no clock.** A held question waits for the human, however
+    long that takes: expiring one declines a call the operator never saw and
+    reports it to the model as a refusal, so the agent goes on to narrate a
+    decision nobody made. The cost is real and accepted — an unattended park
+    holds its worker and a `max_concurrent_runs` slot until it is answered or
+    the run is stopped from `/live`.
     """
 
     enabled: bool = False
@@ -837,7 +836,6 @@ class AgentSdkConfig(BaseModel):
     teardown_settle_sec: float = 0.25
     gate_plan: bool = False
     gated_tools: list[str] = Field(default_factory=list)
-    park_timeout_sec: int = 900
 
     def shadowed_gating(self, mode: str = "") -> str:
         """The reason gating is inert, or "" when it can take effect.

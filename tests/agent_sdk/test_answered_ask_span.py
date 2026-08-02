@@ -42,7 +42,6 @@ def posted(monkeypatch):
             spans.append(span)
 
     monkeypatch.setattr(runner_mod.AgentRunner, "_post", _post)
-    monkeypatch.setattr(settings.agent_sdk, "park_timeout_sec", 5)
     return spans
 
 

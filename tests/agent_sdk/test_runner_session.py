@@ -556,11 +556,15 @@ def test_a_failed_turn_ends_the_session_as_failed(captured, fake_client,
     assert registry.is_sdk_owned("sdk-t9") is False
 
 
-def test_an_unattended_park_is_declined_rather_than_held_forever(
+def test_an_unattended_park_keeps_waiting_instead_of_declining_itself(
         captured, fake_client, monkeypatch):
-    """`idle_timeout_sec` bounds the wait BETWEEN turns; a park lives inside
-    one, so an unattended run would hold its slot until the server restarted."""
-    monkeypatch.setattr(settings.agent_sdk, "park_timeout_sec", 1)
+    """A park has no clock: it waits for the human however long that takes.
+
+    Expiring one declined a call the operator may never have been shown and
+    told the model it was refused, so the agent went on to report a decision
+    nobody made ("dismissed by operator" to someone who never saw the
+    question). The slot it holds is the accepted cost.
+    """
     monkeypatch.setattr(settings.agent_sdk, "gated_tools", ["Bash"])
 
     class Ctx:
@@ -570,14 +574,16 @@ def test_an_unattended_park_is_declined_rather_than_held_forever(
         run = runner_mod.AgentRunner("sdk-unattended")
         run.loop = asyncio.get_running_loop()
         run._post = _noop_post
-        return await asyncio.wait_for(
-            run._can_use_tool("Bash", {"command": "ls"}, Ctx()), timeout=6)
+        call = asyncio.create_task(
+            run._can_use_tool("Bash", {"command": "ls"}, Ctx()))
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(call), timeout=0.5)
+        # Still parked and still resolvable — nothing decided it in absentia.
+        parked = registry.pending_asks("sdk-unattended")
+        call.cancel()
+        return parked
 
-    result = _run(scenario())
-
-    # Nobody said yes, so the call is declined — not approved by default.
-    assert type(result).__name__ == "PermissionResultDeny"
-    assert registry.pending_asks("sdk-unattended") == []
+    assert len(_run(scenario())) == 1
 
 
 def test_a_one_shot_run_refuses_a_follow_up_it_could_never_run(
