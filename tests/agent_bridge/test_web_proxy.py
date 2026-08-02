@@ -560,6 +560,61 @@ def test_bridge_files_disabled_structured_refusal(flask_client, monkeypatch):
     assert resp.get_json() == {"files": [], "detail": "bridge disabled"}
 
 
+# ── a session regin launched itself (no pane, ever) ──────────
+
+
+def _seed_run(trace_id, cwd):
+    """An SDK run row — the tier's identity record, written by `lib/agent_sdk`.
+
+    Its child is spawned with `REGIN_BRIDGE=0`, so no `bridge_panes` row exists
+    for either of its ids and the pane registry cannot root these menus.
+    """
+    from lib.agent_sdk import store as sdk_store
+    sdk_store.upsert_run(trace_id, status="running", cwd=str(cwd))
+
+
+def test_bridge_commands_answers_a_spawned_session(flask_client, monkeypatch,
+                                                   tmp_path):
+    _write = (tmp_path / ".claude" / "commands" / "deploy.md")
+    _write.parent.mkdir(parents=True)
+    _write.write_text("Ship it.\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _seed_run("sdk-deadbeef", tmp_path)
+    rows = flask_client.get(
+        "/api/sessions/sdk-deadbeef/bridge-commands").get_json()["commands"]
+    assert [r["name"] for r in rows] == ["deploy"]
+
+
+def test_bridge_files_answers_a_spawned_session(flask_client, tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("x", encoding="utf-8")
+    _seed_run("sdk-deadbeef", tmp_path)
+    rows = flask_client.get(
+        "/api/sessions/sdk-deadbeef/bridge-files?q=app").get_json()["files"]
+    assert rows == [{"path": "src/app.py", "kind": "file"}]
+
+
+def test_catalogs_ignore_a_disabled_bridge_for_an_owned_session(flask_client,
+                                                                monkeypatch,
+                                                                tmp_path):
+    """`agent_bridge.enabled` authorizes typing into someone's terminal, which
+    listing what a regin-owned process accepts never does — same carve-out as
+    `bridge-send`. Gating it left an owned run steerable but uncompletable."""
+    from lib import agent_sdk
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _enable(monkeypatch, enabled=False)
+    monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: True)
+    _seed_run("sdk-deadbeef", tmp_path)
+    files_resp = flask_client.get(
+        "/api/sessions/sdk-deadbeef/bridge-files?q=app").get_json()
+    commands_resp = flask_client.get(
+        "/api/sessions/sdk-deadbeef/bridge-commands").get_json()
+    assert files_resp == {"files": [{"path": "src/app.py", "kind": "file"}]}
+    assert "detail" not in commands_resp
+
+
 # ── terminal peek: one-shot raw screen snapshot (editor-gated) ──
 
 

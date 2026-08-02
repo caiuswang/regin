@@ -9,6 +9,11 @@ cache is emptied between tests; the SDK-path tests re-patch
 The `@`-suggestion directory-listing cache is emptied on the same boundary:
 it is keyed by absolute path and TTL'd, so a route test hitting a `tmp_path`
 a previous test also used would otherwise read that test's listing.
+
+Root resolution now also asks the SDK tier (`agent_runs`) when no pane row
+answers, which is a DB read — so a test that took no database gets that lookup
+stubbed to "no such run". Requesting `tmp_db` (directly or through
+`flask_client`) opts back into the real query against the temp DB.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from lib.agent_bridge import commands, files
+from lib.agent_sdk import store as sdk_store
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +33,14 @@ def _no_sdk_handshake(monkeypatch):
     monkeypatch.setattr(commands, "_server_info_commands", _unavailable)
     yield
     commands._sdk_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_sdk_run(request, monkeypatch):
+    """No SDK run behind a DB-free test's trace id — and no DB read for it."""
+    if "tmp_db" in request.fixturenames:
+        return
+    monkeypatch.setattr(sdk_store, "find_run", lambda session_id: None)
 
 
 @pytest.fixture(autouse=True)

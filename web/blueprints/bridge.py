@@ -400,19 +400,29 @@ def api_session_bridge_decide(trace_id):
     return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
 
 
+def _catalog_allowed(trace_id: str) -> bool:
+    """May the read-only `/` and `@` catalogs be answered for this session?"""
+    return (settings.agent_bridge.enabled
+            or agent_sdk.is_sdk_owned(trace_id))
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-commands', methods=['GET'])
 @require_editor
 def api_session_bridge_commands(trace_id):
     """The /live composer's `/`-autocomplete accept list (editor+ only).
 
     The slash commands + skills the target session would accept, enumerated
-    in its own cwd (from the pane registry). Same JWT + `require_editor` gate
-    as `bridge-send`;
+    in its own cwd (a registered pane's, or an SDK run's). Same JWT +
+    `require_editor` gate as `bridge-send`;
     read-only and fail-closed — any error collapses to `{"commands": []}` so
     the composer just shows no menu, never an error. A disabled bridge is the
-    same clean structured refusal the sibling routes return.
+    same clean structured refusal the sibling routes return — except for a
+    session regin owns, on the same reasoning as `bridge-send`: that flag
+    authorizes keystroke injection into someone's terminal, which listing what
+    a process regin launched would accept never performs. Gating it there left
+    the composer able to steer an owned run but unable to complete a `/`.
     """
-    if not settings.agent_bridge.enabled:
+    if not _catalog_allowed(trace_id):
         return jsonify({"commands": [], "detail": "bridge disabled"})
     try:
         rows = commands.list_session_commands(trace_id)
@@ -426,15 +436,16 @@ def api_session_bridge_commands(trace_id):
 def api_session_bridge_files(trace_id):
     """The /live composer's `@`-autocomplete path suggestions (editor+ only).
 
-    Files and directories under the target session's own cwd (from the pane
-    registry), so an `@`-reference typed on the phone names what the raw
-    terminal would name. Confined to that root — editors are not trusted to
-    browse the host filesystem. Same JWT + `require_editor` gate and the same
+    Files and directories under the target session's own cwd (a registered
+    pane's, or an SDK run's), so an `@`-reference typed on the phone names what
+    the raw terminal would name. Confined to that root — editors are not
+    trusted to browse the host filesystem. Same JWT + `require_editor` gate,
+    the same disabled-bridge carve-out for an owned session, and the same
     fail-closed contract as `bridge-commands`: any error, and a session with
-    no registered cwd, collapse to `{"files": []}` rather than a 500, so the
+    no known cwd, collapse to `{"files": []}` rather than a 500, so the
     composer just shows no menu.
     """
-    if not settings.agent_bridge.enabled:
+    if not _catalog_allowed(trace_id):
         return jsonify({"files": [], "detail": "bridge disabled"})
     try:
         rows = files.list_session_files(trace_id, request.args.get("q", ""),
