@@ -6,6 +6,10 @@
 // option tinted, a free-typed answer as ✎, the denial reason as an amber
 // block.
 //
+// "Ask" is a property of the span's `kind`, not its name — an SDK-owned
+// session parks its AskUserQuestion as a `permission.request` and the merge
+// retires the `tool.AskUserQuestion` twin, so both shapes land here.
+//
 // When the span is a PENDING ask over a reachable bridge whose questions are
 // all single-select, the sheet delegates to the interactive operator surface:
 // LiveQaAnswer for one question (pick · note · type-your-own · chat), or
@@ -29,6 +33,7 @@ import {
   askOptLabel, askOptDescription, askIsChosen, askFreeText, askNote,
   toolDisplayName,
 } from '../../utils/traceFormatters.js'
+import { isAskSpan } from '../../utils/liveRows.js'
 
 const props = defineProps({
   span: { type: Object, required: true },
@@ -38,7 +43,10 @@ const props = defineProps({
 defineEmits(['answered'])
 
 const a = computed(() => props.span?.attributes || {})
-const isAsk = computed(() => props.span?.name === 'tool.AskUserQuestion')
+// Not the span name: a parked ask arrives as a `permission.request` whose
+// `kind` is `question` (liveRows.isAskSpan) — allow/deny means nothing to it,
+// and the backend refuses a decision aimed at a question park.
+const isAsk = computed(() => isAskSpan(props.span))
 const pending = computed(() => props.span?.status_code === 'PENDING')
 // Same rule as liveRows.permRowModel: the backend never writes decision
 // fields onto permission spans — the denial IS the permission.denied span.

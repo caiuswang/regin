@@ -258,3 +258,84 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
     expect(errors, `console errors: ${errors.join(' | ')}`).toEqual([])
   })
 })
+
+// An SDK-owned session parks EVERY gated call through one `permission.request`
+// — including `AskUserQuestion`, which parks as `kind: 'question'` — and the
+// serve-time merge then retires the `tool.AskUserQuestion` placeholder as that
+// row's duplicate. So the parked ask reaches the card ONLY as a permission
+// span, and a surface keyed on the span NAME showed it the allow/deny card:
+// "Waiting for your decision", three options sitting unreachable in
+// `attributes.questions`, and no way to answer from the phone at all.
+const QUESTION_ATTRS = {
+  kind: 'question',
+  tool_name: 'AskUserQuestion',
+  requested_permission: 'Use tool: AskUserQuestion',
+  questions: [{
+    question: 'What should happen to the commit?',
+    header: 'Commit',
+    multiSelect: false,
+    options: [
+      { label: 'Keep it', description: 'Leave it on the branch' },
+      { label: 'Uncommit', description: 'Soft reset, keep the edits' },
+    ],
+  }],
+}
+
+async function stubAnswer(page, traceId, result = { delivered: true, detail: 'answer delivered' }) {
+  const posts = []
+  await page.route(`**/api/sessions/${traceId}/bridge-answer`, async (route) => {
+    posts.push(route.request().postDataJSON())
+    await route.fulfill({ json: { id: 1, ...result } })
+  })
+  return posts
+}
+
+test.describe('A parked question is answerable, not a decision', () => {
+  test('the sheet offers the options and sends the pick to bridge-answer', async ({ page }) => {
+    const { traceId, spanId } = await seedPending(page, QUESTION_ATTRS)
+    const answers = await stubAnswer(page, traceId)
+    const decisions = await stubDecide(page, traceId)
+
+    const sheet = await openSheet(page, traceId, spanId)
+    // Allow/deny means nothing to a question — the backend refuses a decision
+    // aimed at a question park, so offering one would be a dead button.
+    await expect(sheet.locator('[data-testid="live-qa-decision"]')).toHaveCount(0)
+    await expect(sheet).not.toContainText('Waiting for your decision')
+
+    const picks = sheet.locator('[data-testid="live-qa-pick"]')
+    await expect(picks).toHaveCount(2)
+    await expect(picks.first()).toContainText('Keep it')
+
+    await picks.first().click()
+    await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
+
+    await expect.poll(() => answers.length).toBe(1)
+    expect(answers[0].option_index).toBe(0)
+    expect(answers[0].label).toBe('Keep it')
+    expect(decisions.length).toBe(0)
+  })
+
+  test('the tail row reads as the question, not as a permission', async ({ page }) => {
+    const { traceId, spanId } = await seedPending(page, QUESTION_ATTRS)
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const row = page.locator(`[data-testid="live-row"][data-span-id="${spanId}"]`)
+    await expect(row).toBeVisible({ timeout: 10_000 })
+    await expect(row).toContainText('Ask user')
+    await expect(row).toContainText('What should happen to the commit?')
+  })
+
+  test('the NOW zone opens the options even though the phase says waiting-permission', async ({ page }) => {
+    // The server reports a parked ask as `waiting-permission` — it IS parked in
+    // can_use_tool — so a zone that mapped that phase to the permission card
+    // alone left the one span the session is blocked on unreachable.
+    const { traceId } = await seedPending(page, QUESTION_ATTRS,
+      { phase: 'waiting-permission' })
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    const options = page.locator('[data-testid="live-now-options"]')
+    await expect(options).toBeVisible({ timeout: 10_000 })
+    await options.click()
+    await expect(page.locator('[data-testid="live-qa-answer"]')).toBeVisible()
+  })
+})

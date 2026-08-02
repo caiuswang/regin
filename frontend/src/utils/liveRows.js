@@ -57,6 +57,18 @@ export function isQaSpan(span) {
     || (span?.span_id || '').startsWith('permreq-')
 }
 
+// Which of those spans is a QUESTION — answered with a pick, not allowed or
+// denied. The name alone can't say: an SDK-owned session parks every gated
+// call through one `permission.request`, and for `AskUserQuestion` the
+// serve-time merge then retires the `tool.AskUserQuestion` placeholder as its
+// duplicate, so the parked ask reaches the card ONLY as a permission span
+// carrying `kind: 'question'`. Keying the answer surface on the name left
+// those with no selectable options at all.
+export function isAskSpan(span) {
+  if ((span?.name || '') === 'tool.AskUserQuestion') return true
+  return isQaSpan(span) && span?.attributes?.kind === 'question'
+}
+
 // Pure projection for the qa mini row: glyph + eyebrow, the question (or
 // requested command), and the outcome line. Full detail lives in the sheet.
 function askRowOutcome(a, chosen, pending) {
@@ -65,6 +77,10 @@ function askRowOutcome(a, chosen, pending) {
     return { mark: '✗', answer: label }
   }
   if (chosen) return { mark: '✓', answer: chosen }
+  // An ask that ended with no pick is NOT "answered" — it was declined (the
+  // session was torn down under it, say). Claiming otherwise credits the
+  // operator with an answer they never gave.
+  if (!pending && a.error) return { mark: '✗', answer: a.error }
   return { mark: '…', answer: pending ? 'waiting for your answer' : 'answered' }
 }
 
@@ -117,7 +133,7 @@ function permRowModel(span, a, pending) {
 export function qaRowModel(span) {
   const a = span?.attributes || {}
   const pending = span?.status_code === 'PENDING'
-  return span?.name === 'tool.AskUserQuestion'
+  return isAskSpan(span)
     ? askRowModel(a, pending)
     : permRowModel(span, a, pending)
 }

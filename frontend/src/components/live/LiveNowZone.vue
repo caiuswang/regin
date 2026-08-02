@@ -1,7 +1,7 @@
 <script setup>
 // Sticky "now" zone at the /live card's bottom edge — a pure projection of
 // the already-loaded tail, one state at a time by priority:
-//   permreq-* PENDING → permission  ›  pending-* AskUserQuestion → question
+//   PENDING ask (either shape) → question  ›  other permreq-* → permission
 //   › pending-* PENDING tool → tool  ›  promptlive-* PENDING → prompt
 //   › session ended → finished
 //   › alive + bridge-reachable → idle (full composer; steady dot upstream)
@@ -26,7 +26,9 @@ import {
   fmtClock, fmtElapsedSeconds, terminalSpanLabel, terminalSpanDetail,
   toolDisplayName,
 } from '../../utils/traceFormatters.js'
-import { stripMarkdown, findLastSpan, agentStatusLabel } from '../../utils/liveRows.js'
+import {
+  stripMarkdown, findLastSpan, agentStatusLabel, isAskSpan,
+} from '../../utils/liveRows.js'
 import { parseLocalIso } from '../../utils/sessionActivity.js'
 import { useAgentElapsed } from '../../composables/useAgentElapsed.js'
 
@@ -83,18 +85,19 @@ const scopeStatus = computed(() => (props.scopeAgent
   ? `agent ${agentStatusLabel(props.scopeAgent, scopeElapsed.value)}`
   : ''))
 
-function isPendingAsk(s) {
-  return s.attributes?.tool_name === 'AskUserQuestion'
-}
+// A parked ask is a question wherever it came from: as its own `pending-`
+// AskUserQuestion placeholder, or — for an SDK-owned session, whose ask
+// placeholder the merge retires — as the `permission.request` that parked it.
+// Sorting it under `permission` sent it to the allow/deny card, which has no
+// options to offer and cannot resolve a question park anyway.
 const pendingPerm = computed(() => findLastSpan(props.spans, s =>
-  s.status_code === 'PENDING'
+  s.status_code === 'PENDING' && !isAskSpan(s)
   && (s.name === 'permission.request' || (s.span_id || '').startsWith('permreq-'))))
 const pendingQuestion = computed(() => findLastSpan(props.spans, s =>
-  s.status_code === 'PENDING' && (s.span_id || '').startsWith('pending-')
-  && isPendingAsk(s)))
+  s.status_code === 'PENDING' && isAskSpan(s)))
 const pendingTool = computed(() => findLastSpan(props.spans, s =>
   s.status_code === 'PENDING' && (s.span_id || '').startsWith('pending-')
-  && !isPendingAsk(s)))
+  && !isAskSpan(s)))
 const livePrompt = computed(() => findLastSpan(props.spans, s =>
   s.status_code === 'PENDING' && (s.span_id || '').startsWith('promptlive-')))
 const lastResponse = computed(() => findLastSpan(props.spans, s =>
@@ -117,7 +120,11 @@ const pendingState = computed(() => {
 const PHASE_STATE = {
   ended: () => 'finished',
   'inactive-stale': () => 'inactive',
-  'waiting-permission': () => (pendingPerm.value ? 'permission' : 'response'),
+  // The server reports a parked ask as `waiting-permission` (it IS parked in
+  // can_use_tool), so this phase must still resolve to the question state —
+  // otherwise the one span the session is blocked on renders as a response.
+  'waiting-permission': () => pendingPerm.value ? 'permission'
+    : (pendingQuestion.value ? 'question' : 'response'),
   'waiting-input': () => (pendingQuestion.value ? 'question' : 'response'),
   idle: () => 'idle',
   working: () => (['tool', 'prompt'].includes(pendingState.value)

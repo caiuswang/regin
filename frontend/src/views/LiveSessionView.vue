@@ -32,7 +32,7 @@ import { fmtClock, fmtDuration, fmtModel, terminalSpanLabel } from '../utils/tra
 import { parseLocalIso } from '../utils/sessionActivity.js'
 import {
   CATEGORIES, filterSpans, countByCategory, isSignal, rowKind, isQaSpan,
-  activityCopyPayload, taskSummaryOf,
+  isAskSpan, activityCopyPayload, taskSummaryOf,
 } from '../utils/liveRows.js'
 import { categoryOf } from '../utils/traceFormatters.js'
 
@@ -356,7 +356,7 @@ const sheetTitle = computed(() => {
   const s = sheetSpan.value
   if (!s) return ''
   if (sheetKind.value === 'qa') {
-    const ask = s.name === 'tool.AskUserQuestion'
+    const ask = isAskSpan(s)
     if (ask && s.status_code === 'PENDING') return 'Ask user · waiting'
     return `${ask ? 'Ask user' : 'Permission'} · ${fmtClock(s.start_time)}`
   }
@@ -373,7 +373,7 @@ const sheetCopy = computed(() => {
   const byKind = {
     message: () => s?.attributes?.text || '',
     detail: () => (s ? activityCopyPayload(s) : null),
-    qa: () => (s?.name === 'tool.AskUserQuestion'
+    qa: () => (isAskSpan(s)
       ? JSON.stringify({ questions: a.questions || [], answers: a.answers || null }, null, 2)
       : (a.command_preview || a.requested_permission || null)),
     agent: () => (liveAgents.agents.find(x => x.agentId === sheet.value?.agentId)
@@ -398,9 +398,10 @@ function onRowSelect(span) {
   }
   if (isQaSpan(span)) {
     openSheet('qa', span)
-    // Only ask spans lazy-load: a shallow ask lacks `questions`; permission
-    // spans never carry them, so this guard would refetch on every tap.
-    if (span.name === 'tool.AskUserQuestion'
+    // Only ask spans lazy-load: a shallow ask lacks `questions`; an allow/deny
+    // permission span never carries them, so this guard would refetch on every
+    // tap.
+    if (isAskSpan(span)
       && !(span.attributes?.questions || []).length) fetchContent(span)
     return
   }
