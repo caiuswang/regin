@@ -5,6 +5,12 @@ The /live composer never holds the bridge bearer token: the browser POSTs
 to `/api/sessions/<id>/bridge-send` under the normal web JWT, and the view
 calls the delivery layer in-process. These tests pin:
 
+  suggest   — the `/` accept list and the `@` path suggestions ride the same
+              gate and the same fail-closed contract (`{"commands"|"files":
+              []}`), `bridge-files` clamps its limit end to end, is confined
+              to the session's own cwd for an editor token (no `~`/absolute
+              browsing of the host), and answers an unknown session with an
+              empty menu rather than regin's own tree,
   gate      — anonymous request 401s (the app-wide JWT gate applies: the
               endpoint is NOT in PUBLIC_API_ENDPOINTS), viewer-role JWT
               403s (require_editor — steering outranks editor mutations),
@@ -27,7 +33,10 @@ and panes are seeded straight into `bridge_panes` — both idioms from
 
 from __future__ import annotations
 
-from lib.agent_bridge import commands, delivery
+import os
+from urllib.parse import quote
+
+from lib.agent_bridge import commands, delivery, files, roots
 from lib.orm.engine import get_connection
 from lib.settings import settings
 
@@ -398,6 +407,22 @@ def test_bridge_commands_editor_returns_catalog(flask_client, monkeypatch):
     assert resp.get_json() == {"commands": fixture}
 
 
+def test_bridge_commands_unresolvable_trace_id_is_empty(flask_client, monkeypatch):
+    """Exactly what `bridge-files` does for the same ids. An editor may name
+    ANY trace id here, so answering an unregistered / vanished one out of
+    regin's own root leaks this host's local command and skill catalog.
+
+    `settings.project_root` is deliberately left pointing at regin's live tree,
+    so this is empty *because* there is no fallback.
+    """
+    assert os.path.isdir(str(settings.project_root))
+    for cwd in (None, "", str(settings.project_root / "no-such-dir")):
+        monkeypatch.setattr(roots.store, "get_pane_cwd", lambda tid, c=cwd: c)
+        resp = flask_client.get("/api/sessions/totally-unknown-id/bridge-commands")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"commands": []}, cwd
+
+
 def test_bridge_commands_fail_closed_to_empty(flask_client, monkeypatch):
     """Any enumeration error degrades to {commands: []}, never a 500."""
     def _boom(trace_id):
@@ -406,6 +431,133 @@ def test_bridge_commands_fail_closed_to_empty(flask_client, monkeypatch):
     resp = flask_client.get("/api/sessions/T-9/bridge-commands")
     assert resp.status_code == 200
     assert resp.get_json() == {"commands": []}
+
+
+# ── `@` suggestions: workspace paths (editor-gated, fail-closed) ──
+
+
+def test_bridge_files_anonymous_401(anon_client):
+    resp = anon_client.get("/api/sessions/T-1/bridge-files?q=app")
+    assert resp.status_code == 401
+
+
+def test_bridge_files_viewer_403(flask_client):
+    from lib.auth import create_token
+    viewer = {"Authorization":
+              f"Bearer {create_token(2, 'viewer-tester', 'viewer')}"}
+    resp = flask_client.get("/api/sessions/T-1/bridge-files", headers=viewer)
+    assert resp.status_code == 403
+
+
+def test_bridge_files_editor_returns_rows(flask_client, monkeypatch):
+    fixture = [{"path": "src/app.py", "kind": "file"}]
+    seen: list[tuple] = []
+
+    def _fake(trace_id, query, limit):
+        seen.append((trace_id, query, limit))
+        return fixture
+
+    monkeypatch.setattr(files, "list_session_files", _fake)
+    resp = flask_client.get("/api/sessions/T-9/bridge-files?q=app&limit=5")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"files": fixture}
+    assert seen == [("T-9", "app", "5")]   # raw args; clamping is the lib's job
+
+
+def test_bridge_files_defaults_query_and_limit(flask_client, monkeypatch):
+    seen: list[tuple] = []
+    monkeypatch.setattr(files, "list_session_files",
+                        lambda t, q, limit: seen.append((t, q, limit)) or [])
+    flask_client.get("/api/sessions/T-9/bridge-files")
+    assert seen == [("T-9", "", files.DEFAULT_LIMIT)]
+
+
+def test_bridge_files_limit_clamped_end_to_end(flask_client, monkeypatch, tmp_path):
+    """An absurd `limit` can't drag the whole tree back through the route."""
+    for index in range(140):
+        (tmp_path / f"item_{index:03d}.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(roots.store, "get_pane_cwd", lambda tid: str(tmp_path))
+    resp = flask_client.get("/api/sessions/T-9/bridge-files?q=item&limit=9999")
+    assert len(resp.get_json()["files"]) == 100
+
+
+def test_bridge_files_unresolvable_trace_id_is_empty(flask_client, monkeypatch):
+    """An unknown session has no root, so it gets no menu.
+
+    `settings.project_root` is deliberately left pointing at regin's own live
+    tree: falling back to it would serve regin's source to a session that is
+    not regin's, so this must be empty *because* there is no fallback.
+    """
+    monkeypatch.setattr(roots.store, "get_pane_cwd", lambda tid: None)
+    assert os.path.isdir(str(settings.project_root))
+    resp = flask_client.get("/api/sessions/T-ghost/bridge-files?q=settings")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"files": []}
+
+
+def test_bridge_files_ignore_list_holds_for_a_typed_path(flask_client,
+                                                         monkeypatch, tmp_path):
+    """An editor typing a path must not reach what the walk refuses to show —
+    `.git/`, `.venv/`, `node_modules/`, `__pycache__/` stay unreachable."""
+    from lib.auth import create_token
+    editor = {"Authorization":
+              f"Bearer {create_token(3, 'editor-tester', 'editor')}"}
+    cwd = tmp_path / "proj"
+    for rel in (".git/hooks/pre-commit", ".git/config", ".venv/bin/python",
+                "node_modules/left-pad/index.js", "lib/__pycache__/m.pyc",
+                ".claude/commands/deploy.md"):
+        path = cwd / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(roots.store, "get_pane_cwd", lambda tid: str(cwd))
+    for query in (".git/", ".git/hooks/", ".venv/", "lib/__pycache__/",
+                  "node_modules/"):
+        rows = flask_client.get(
+            f"/api/sessions/T-9/bridge-files?q={quote(query)}",
+            headers=editor).get_json()["files"]
+        assert rows == [], f"{query} browsed an ignored directory: {rows}"
+    # The allowlisted hidden dir is still reachable — that is what it is for.
+    assert flask_client.get(
+        "/api/sessions/T-9/bridge-files?q=.claude/commands/",
+        headers=editor).get_json()["files"] == [
+            {"path": ".claude/commands/deploy.md", "kind": "file"}]
+
+
+def test_bridge_files_confined_to_the_session_root(flask_client, monkeypatch, tmp_path):
+    """An *editor* token must not be able to enumerate the host filesystem —
+    every `~`/absolute/`..` query is confined to the session's own cwd."""
+    from lib.auth import create_token
+    editor = {"Authorization":
+              f"Bearer {create_token(3, 'editor-tester', 'editor')}"}
+    cwd = tmp_path / "proj"
+    (cwd / "src").mkdir(parents=True)
+    (cwd / "src" / "app.py").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(roots.store, "get_pane_cwd", lambda tid: str(cwd))
+    for query in ("~/.ssh/", "/etc/passwd", "/Users/", "../", "~/", "~"):
+        rows = flask_client.get(
+            f"/api/sessions/T-9/bridge-files?q={quote(query)}",
+            headers=editor).get_json()["files"]
+        assert rows == [], f"{query} escaped the session root: {rows}"
+    # `/` is not the filesystem root here — it can only mean the session's own.
+    listing = flask_client.get("/api/sessions/T-9/bridge-files?q=%2F",
+                               headers=editor).get_json()["files"]
+    assert listing == [{"path": "src", "kind": "directory"}]
+
+
+def test_bridge_files_fail_closed_to_empty(flask_client, monkeypatch):
+    def _boom(trace_id, query, limit):
+        raise RuntimeError("disk gone")
+    monkeypatch.setattr(files, "list_session_files", _boom)
+    resp = flask_client.get("/api/sessions/T-9/bridge-files?q=x")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"files": []}
+
+
+def test_bridge_files_disabled_structured_refusal(flask_client, monkeypatch):
+    _enable(monkeypatch, enabled=False)
+    resp = flask_client.get("/api/sessions/T-9/bridge-files?q=x")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"files": [], "detail": "bridge disabled"}
 
 
 # ── terminal peek: one-shot raw screen snapshot (editor-gated) ──

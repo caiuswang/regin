@@ -2,29 +2,57 @@
 
 Powers the `/live` composer's `/`-triggered autocomplete: the set of slash
 commands and skills the *target session* would accept after a leading `/`.
-We enumerate the very directories Claude Code itself reads to resolve them —
-project `.claude/` (scoped to the session's own project via the pane
-registry's recorded `cwd`) plus the user's `~/.claude/` — so the list matches
-what that session actually accepts, not a regin-local approximation.
 
-Read-only and fail-closed: any missing dir / unreadable file / drifted
-registry degrades to a shorter (or empty) list, never an exception. The route
-turns that into `{"commands": []}` so the composer simply shows no menu.
+The authoritative source is the Claude Agent SDK: a handshake in the target
+session's own cwd returns exactly what the raw terminal offers there —
+built-ins, plugin commands, and project/user commands + skills. Falling back to
+reading `.claude/` ourselves only approximates that (it can never know the
+built-ins), so the filesystem scan is now the *degraded* path: it runs when the
+SDK is unavailable, and otherwise only supplies provenance (project / user /
+plugin / builtin) for badging, which the SDK payload itself does not carry.
+
+Read-only and fail-closed: a failed handshake, missing dir, unreadable file or
+drifted registry degrades to a shorter (or empty) list, never an exception.
+The route turns that into `{"commands": []}` so the composer shows no menu.
+A session with no registered (or no longer existing) cwd is the empty case,
+not regin's own root: this endpoint is editor-reachable by trace id, and
+answering an unknown one out of regin's tree both leaks the host's local
+catalog and offers commands that session could not run.
 """
 
 from __future__ import annotations
 
 import glob
 import os
+import re
+import threading
+import time
 from pathlib import Path
 
+import anyio
 import yaml
 
 from lib.activity_log import get_activity_logger
-from lib.agent_bridge import store
-from lib.settings import settings
+from lib.agent_bridge import roots
 
 log = get_activity_logger("agent_bridge")
+
+SDK_CACHE_TTL_SECONDS = 300.0
+# A failed handshake is remembered far more briefly than a good list: it must
+# not cost every request the full timeout, but a transient auth/spawn failure
+# should not pin the session to the degraded list for the whole 5 minutes.
+SDK_FAILURE_TTL_SECONDS = 30.0
+SDK_TIMEOUT_SECONDS = 20.0
+
+# Built-ins that end or discard the session's state; the composer badges them.
+DESTRUCTIVE_COMMANDS = frozenset({"clear", "exit", "logout"})
+
+_META_DESCRIPTION_RE = re.compile(
+    r"""description\s*:\s*(['"])(.*?)\1""", re.DOTALL)
+
+_sdk_cache: dict[str, tuple[float, list[dict]]] = {}
+_sdk_locks: dict[str, threading.Lock] = {}
+_sdk_locks_guard = threading.Lock()
 
 
 def _read_file(filepath: str) -> str:
@@ -81,22 +109,6 @@ def _read_description(filepath: str) -> str:
     return _frontmatter_description(content) or _first_prose_line(content)
 
 
-def _resolve_project_root(trace_id: str) -> Path:
-    """The target session's project root, falling back to regin's own.
-
-    Walks up from the pane registry's recorded `cwd` to the nearest ancestor
-    holding a `.claude/` dir (how Claude Code locates project commands). No
-    registered cwd, or none on the path, → `settings.project_root`.
-    """
-    cwd = store.get_pane_cwd(trace_id)
-    if cwd:
-        here = Path(cwd)
-        for candidate in (here, *here.parents):
-            if (candidate / ".claude").is_dir():
-                return candidate
-    return Path(settings.project_root)
-
-
 def _scan_commands(base: Path, scope: str) -> list[dict]:
     """`<base>/.claude/commands/**/*.md` → command rows.
 
@@ -128,23 +140,228 @@ def _scan_skills(base: Path, scope: str) -> list[dict]:
     return rows
 
 
+def _meta_description(content: str) -> str:
+    """The `description` of a workflow's `export const meta = {…}` block.
+
+    A workflow is JS, not frontmatter'd markdown, so there is nothing to parse
+    structurally without executing it. Only the single-line quoted form is
+    read; anything else degrades to no description, like an unreadable file.
+    """
+    match = _META_DESCRIPTION_RE.search(content)
+    return match.group(2).strip() if match else ""
+
+
+def _scan_workflows(base: Path, scope: str) -> list[dict]:
+    """`<base>/.claude/workflows/*.js` → workflow rows (name = file stem).
+
+    Workflows are offered after a leading `/` exactly like commands, so leaving
+    them out of the scan does not hide them — it just badges them `builtin`,
+    which is what an SDK name no scan knows falls back to.
+    """
+    root = base / ".claude" / "workflows"
+    rows = []
+    for path in sorted(glob.glob(str(root / "*.js"))):
+        name = os.path.splitext(os.path.basename(path))[0]
+        if name.startswith("_"):
+            continue
+        rows.append({"name": name,
+                     "description": _meta_description(_read_file(path)),
+                     "kind": "workflow", "scope": scope})
+    return rows
+
+
+async def _server_info_commands(root: str) -> list[dict]:
+    """The SDK's command list for `root` — the raw terminal's own catalog."""
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+    async with ClaudeSDKClient(options=ClaudeAgentOptions(cwd=root)) as client:
+        info = await client.get_server_info()
+    entries = (info or {}).get("commands") or []
+    return [dict(entry) for entry in entries
+            if isinstance(entry, dict) and entry.get("name")]
+
+
+async def _sdk_handshake(root: str) -> list[dict]:
+    with anyio.fail_after(SDK_TIMEOUT_SECONDS):
+        return await _server_info_commands(root)
+
+
+def _fetch_sdk_commands(root: str) -> list[dict]:
+    """Sync bridge to the async handshake; [] on ANY failure (never raises).
+
+    Import error, missing CLI, auth failure, a child that never answers — all
+    collapse to the empty list so the caller falls back to the scan. The route
+    is sync Flask, hence `anyio.run` rather than an awaited call.
+    """
+    try:
+        return anyio.run(_sdk_handshake, root)
+    except Exception:  # noqa: BLE001 — degrade to the filesystem scan
+        log.error("bridge_sdk_commands_failed", exc_info=True)
+        return []
+
+
+def _cached_sdk_commands(root: str) -> list[dict] | None:
+    cached = _sdk_cache.get(root)
+    return cached[1] if cached and cached[0] > time.monotonic() else None
+
+
+def _root_lock(root: str) -> threading.Lock:
+    with _sdk_locks_guard:
+        return _sdk_locks.setdefault(root, threading.Lock())
+
+
+def _sdk_commands(root: str) -> list[dict]:
+    """`_fetch_sdk_commands` behind a per-root TTL cache (the handshake is ~3s).
+
+    The lock is per root and held across the handshake so a burst of cold
+    requests for one session spawns one `claude` child, not N; a *different*
+    root meanwhile is never blocked behind it.
+    """
+    hit = _cached_sdk_commands(root)
+    if hit is not None:
+        return hit
+    with _root_lock(root):
+        hit = _cached_sdk_commands(root)
+        if hit is not None:
+            return hit
+        rows = _fetch_sdk_commands(root)
+        ttl = SDK_CACHE_TTL_SECONDS if rows else SDK_FAILURE_TTL_SECONDS
+        _sdk_cache[root] = (time.monotonic() + ttl, rows)
+        return rows
+
+
+def _scan_scope(base: Path, scope: str) -> list[dict]:
+    return (_scan_commands(base, scope) + _scan_skills(base, scope)
+            + _scan_workflows(base, scope))
+
+
+def _scan_rows(project: Path | None, home: Path) -> list[dict]:
+    """Filesystem-scanned rows, project scope first (so it shadows user).
+
+    `project` is None for a session with no `.claude/` ancestor: it then has no
+    project scope at all, and every row it can see is a user one.
+    """
+    project_rows = _scan_scope(project, "project") if project else []
+    return project_rows + _scan_scope(home, "user")
+
+
+def _provenance(scanned: list[dict]) -> dict[str, tuple[str, str]]:
+    """name → (kind, scope) from the scan; project wins over user."""
+    index: dict[str, tuple[str, str]] = {}
+    for row in scanned:
+        index.setdefault(row["name"], (row["kind"], row["scope"]))
+    return index
+
+
+def _classify(name: str, index: dict[str, tuple[str, str]]) -> tuple[str, str]:
+    """Kind + scope for an SDK command, which carries neither.
+
+    The scan is asked first and wins: a project command in a nested directory
+    is namespaced `parent:child` too, so treating every colon as Claude's
+    plugin namespacing mislabels real project commands. The heuristic only
+    decides names neither scan knows.
+    """
+    known = index.get(name)
+    if known:
+        return known
+    return ("plugin", "plugin") if ":" in name else ("builtin", "builtin")
+
+
+def _row(name: str, description: str, argument_hint: str,
+         kind: str, scope: str, aliases: list[str] | None = None) -> dict:
+    destructive = kind == "builtin" and name in DESTRUCTIVE_COMMANDS
+    return {"name": name, "description": description,
+            "argumentHint": argument_hint, "kind": kind, "scope": scope,
+            "aliases": aliases or [],
+            "risk": "destructive" if destructive else None}
+
+
+def _aliases(entry: dict) -> list[str]:
+    """The SDK's alternate names for a command (`/new` for `/clear`).
+
+    The terminal accepts them, so the menu has to be able to match them; the
+    canonical `name` is still what gets inserted.
+    """
+    raw = entry.get("aliases")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(alias) for alias in raw if isinstance(alias, str) and alias]
+
+
+def _sdk_row(entry: dict, index: dict[str, tuple[str, str]]) -> dict:
+    name = str(entry.get("name") or "")
+    kind, scope = _classify(name, index)
+    return _row(name, str(entry.get("description") or ""),
+                str(entry.get("argumentHint") or ""), kind, scope,
+                _aliases(entry))
+
+
+def _matches_scope(entry: dict, provenance: tuple[str, str] | None) -> bool:
+    """Does this SDK row describe the scope the badge will claim?
+
+    The SDK reports a name shadowed across scopes twice, distinguished only by
+    a `(project)` / `(user)` suffix on the description.
+    """
+    if not provenance:
+        return False
+    description = str(entry.get("description") or "").rstrip()
+    return description.endswith(f"({provenance[1]})")
+
+
+def _pick_variants(entries: list[dict],
+                   index: dict[str, tuple[str, str]]) -> list[dict]:
+    """One entry per name, preferring the variant whose description matches
+    the scope the scan resolves — the terminal runs the project one, so
+    keeping the SDK's first (user) row would contradict the badge."""
+    chosen: dict[str, dict] = {}
+    for entry in entries:
+        name = str(entry.get("name") or "")
+        if name not in chosen or _matches_scope(entry, index.get(name)):
+            chosen[name] = entry
+    return list(chosen.values())
+
+
+def _scanned_row(entry: dict) -> dict:
+    return _row(entry["name"], entry.get("description", ""), "",
+                entry["kind"], entry["scope"])
+
+
+def _ordered(rows: list[dict]) -> list[dict]:
+    """Dedup by name (first writer wins) and sort: built-ins last, then kind, name."""
+    seen: dict[str, dict] = {}
+    for row in rows:
+        seen.setdefault(row["name"], row)
+    return sorted(seen.values(),
+                  key=lambda r: (r["scope"] == "builtin", r["kind"], r["name"]))
+
+
 def list_session_commands(trace_id: str) -> list[dict]:
     """The dedup'd, sorted accept list for a session.
 
-    Union of project (`cwd`-scoped) and user (`~/.claude`) commands + skills.
-    A project entry shadows a user entry of the same name. Sorted by kind
-    (command before skill) then name. Never raises.
+    Prefers the SDK handshake in the session's own cwd — that list is what the
+    raw terminal would offer *there*, which is the whole point; handshaking
+    somewhere else (regin's root) offers commands the session cannot run. The
+    `.claude/` scan is cross-referenced only to label each row's kind/scope,
+    and for that the nearest `.claude/` ancestor is the right base. With no SDK
+    answer the scan itself becomes the list (project entries shadowing
+    same-named user ones), which loses built-ins and plugins but never raises.
+
+    A session with no usable cwd gets an EMPTY catalog, exactly like
+    `list_session_files`: there is no directory to enumerate for, and standing
+    regin's own root in its place would answer an arbitrary trace id with this
+    host's local command and skill names.
     """
-    project = _resolve_project_root(trace_id)
-    home = Path.home()
-    rows = (_scan_commands(project, "project") + _scan_skills(project, "project")
-            + _scan_commands(home, "user") + _scan_skills(home, "user"))
-    seen: dict[str, dict] = {}
-    for row in rows:
-        # First writer wins: project sources precede user sources above, so a
-        # project entry shadows a same-named user one.
-        seen.setdefault(row["name"], row)
-    ordered = sorted(seen.values(),
-                     key=lambda r: (0 if r["kind"] == "command" else 1, r["name"]))
-    log.read("bridge_commands_listed", trace_id=trace_id, count=len(ordered))
+    cwd = roots.session_dir(trace_id)
+    if cwd is None:
+        log.read("bridge_commands_listed", trace_id=trace_id, count=0,
+                 source="none")
+        return []
+    scanned = _scan_rows(roots.project_root(cwd), Path.home())
+    sdk = _sdk_commands(str(cwd))
+    index = _provenance(scanned)
+    rows = ([_sdk_row(entry, index) for entry in _pick_variants(sdk, index)]
+            if sdk else [_scanned_row(entry) for entry in scanned])
+    ordered = _ordered(rows)
+    log.read("bridge_commands_listed", trace_id=trace_id, count=len(ordered),
+             source="sdk" if sdk else "scan")
     return ordered

@@ -19,13 +19,14 @@
 // text typed mid-draft survives this component unmounting — a reachability
 // blip for one poll, or the state flipping to question/permission — and is
 // restored on remount.
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import LiveCommandMenu from './LiveCommandMenu.vue'
 import LiveCtxMeter from './LiveCtxMeter.vue'
 import { useSlashCommands } from '../../composables/useSlashCommands'
+import { useFileMentions } from '../../composables/useFileMentions'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -43,12 +44,34 @@ const detail = ref('')
 const taEl = ref(null)
 let confirmTimer = null
 
-// Slash-command / skill autocomplete. The composable owns the popup state;
-// this component only wires textarea events into it and applies accepted text.
-const menu = useSlashCommands()
-const { open: menuOpen, filtered: menuItems, activeIndex: menuActive } = menu
-// The teleported menu is fixed-positioned above the textarea (recomputed each
-// time the popup opens or the textarea grows).
+// Autocomplete: `/` commands+skills and `@` file mentions. Both composables own
+// their popup state; this component only wires textarea events into whichever
+// one is active and applies the accepted text. An `@` mention outranks `/`
+// (a draft can hold both, and the mention is where the caret is).
+const cmds = useSlashCommands()
+const files = useFileMentions()
+const active = computed(() => (files.open.value ? files : cmds.open.value ? cmds : null))
+const menuOpen = computed(() => active.value !== null)
+const fileMode = computed(() => files.open.value)
+const menuItems = computed(() => (active.value ? active.value.filtered.value : []))
+const menuActive = computed(() => (active.value ? active.value.activeIndex.value : 0))
+const menuQuery = computed(() => (active.value ? active.value.query.value : ''))
+const menuLoading = computed(() => (active.value ? active.value.loading.value : false))
+const menuStale = computed(() => (active.value ? active.value.stale.value : false))
+// aria-activedescendant must name a rendered `role=option`; the loading and
+// empty branches of the menu render none, so it is emitted only when the list
+// actually has rows.
+const activeOptionId = computed(() => (
+  menuOpen.value && menuActive.value < menuItems.value.length
+    ? `live-cmd-opt-${menuActive.value}`
+    : undefined))
+
+// The teleported menu is fixed-positioned above the textarea. Recomputed on
+// open/input AND on resize while open — it is `position: fixed`, so anything
+// that moves the composer would otherwise leave it stranded. The capture-phase
+// `scroll` half is purely defensive and currently unreachable: at both 375px
+// and desktop the only scrollable ancestor is chrome that does not move the
+// composer. Kept so a future layout that does scroll it cannot strand the menu.
 const menuStyle = ref({})
 function updateMenuPos() {
   const el = taEl.value
@@ -59,6 +82,19 @@ function updateMenuPos() {
     width: `${r.width}px`,
     bottom: `${window.innerHeight - r.top + 6}px`,
   }
+}
+function onViewportShift() { if (menuOpen.value) updateMenuPos() }
+function trackViewport(on) {
+  const fn = on ? window.addEventListener : window.removeEventListener
+  fn.call(window, 'scroll', onViewportShift, true)
+  fn.call(window, 'resize', onViewportShift)
+}
+watch(menuOpen, trackViewport)
+onUnmounted(() => trackViewport(false))
+
+function closeMenus() {
+  cmds.close()
+  files.close()
 }
 
 const delivering = computed(() => phase.value === 'delivering')
@@ -103,7 +139,7 @@ async function send() {
     // meanwhile so a busy-agent steer isn't invisible.
     emit('sent', text)
     draft.value = ''
-    menu.close()
+    closeMenus()
     if (taEl.value) taEl.value.style.height = 'auto'
     confirmTimer = setTimeout(() => { phase.value = 'ready' }, 2000)
   } else {
@@ -141,42 +177,70 @@ function caret() {
   return taEl.value?.selectionStart ?? draft.value.length
 }
 
+// Resolve which popup (if any) the caret is in. Mentions get first refusal;
+// only when there is no live `@` token does the leading-`/` menu get a say.
+function syncMenus() {
+  files.ensureLoaded(props.sessionId)
+  files.sync(draft.value, caret())
+  if (files.open.value) { cmds.close(); return }
+  cmds.ensureLoaded(props.sessionId)
+  cmds.sync(draft.value, caret())
+}
+
 // Recompute the popup on every draft change; lazily load the catalog once.
 function onInput() {
   autogrow()
-  menu.ensureLoaded(props.sessionId)
-  menu.sync(draft.value, caret())
+  syncMenus()
   if (menuOpen.value) updateMenuPos()
 }
 
 // Caret moved without editing (arrow keys, click): only re-evaluate an
-// already-open menu so it dismisses when the caret leaves the leading
-// `/token`. Never re-opens a closed menu — otherwise the keyup after Escape
-// would immediately re-trigger it. Typing (onInput) is what opens it.
+// already-open menu so it dismisses when the caret leaves its token. Never
+// re-opens a closed menu — otherwise the keyup after Escape would immediately
+// re-trigger it. Typing (onInput) is what opens it.
 function onCaretSync() {
   if (!menuOpen.value) return
-  menu.sync(draft.value, caret())
+  syncMenus()
   if (menuOpen.value) updateMenuPos()
 }
 
-// Apply an accepted `/command ` draft and restore the caret after it.
+// Apply an accepted draft and restore the caret after the insert (a mention
+// mid-draft must not fling the cursor to the end).
 function applyAccepted(text, pos) {
   draft.value = text
   nextTick(() => {
     const el = taEl.value
     if (el) { el.focus(); el.setSelectionRange(pos, pos) }
     autogrow()
+    if (menuOpen.value) updateMenuPos()
   })
 }
 
+// An Enter/Tab pressed while the mention list was stale is armed rather than
+// dropped; when the rows for that same query land, the accept it stands for is
+// applied here — the composable defers because the draft text lives here.
+watch(files.armedResolved, () => {
+  const res = files.accept(draft.value)
+  if (res) applyAccepted(res.text, res.caret)
+})
+
 function onMenuSelect(item) {
-  const res = menu.accept(draft.value, item)
+  const m = active.value
+  const res = m && m.accept(draft.value, item)
   if (res) applyAccepted(res.text, res.caret)
 }
 
+function onMenuHover(i) {
+  if (active.value) active.value.setActive(i)
+}
+
 function onKeydown(e) {
+  // Mid-composition keys belong to the IME: a CJK user pressing Enter to commit
+  // a candidate must not have it swallowed as a menu accept.
+  if (e.isComposing || e.keyCode === 229) return
   // The open menu claims nav/accept/dismiss keys before send handling.
-  const r = menu.handleKeydown(e, draft.value)
+  const m = active.value
+  const r = m ? m.handleKeydown(e, draft.value) : { handled: false }
   if (r.handled) {
     e.preventDefault()
     if (r.text !== undefined) applyAccepted(r.text, r.caret)
@@ -192,10 +256,15 @@ function onKeydown(e) {
       v-if="menuOpen"
       :items="menuItems"
       :active-index="menuActive"
-      :query="menu.query.value"
+      :query="menuQuery"
+      :loading="menuLoading"
+      :stale="menuStale"
+      :prefix="fileMode ? '@' : '/'"
+      :aria-label="fileMode ? 'Project files and directories' : 'Slash commands and skills'"
+      :empty-text="fileMode ? 'no file matches' : 'no command matches'"
       :anchor-style="menuStyle"
       @select="onMenuSelect"
-      @hover="menu.setActive"
+      @hover="onMenuHover"
     />
     <textarea
       ref="taEl"
@@ -207,15 +276,15 @@ function onKeydown(e) {
       :disabled="delivering"
       role="combobox"
       aria-autocomplete="list"
-      aria-controls="live-command-menu"
+      :aria-controls="menuOpen ? 'live-command-menu' : undefined"
       :aria-expanded="menuOpen"
-      :aria-activedescendant="menuOpen ? `live-cmd-opt-${menuActive}` : undefined"
+      :aria-activedescendant="activeOptionId"
       data-testid="live-composer-ta"
       @input="onInput"
       @keydown="onKeydown"
       @keyup="onCaretSync"
       @click="onCaretSync"
-      @blur="menu.close"
+      @blur="closeMenus"
     ></textarea>
     <Button
       v-if="pane"

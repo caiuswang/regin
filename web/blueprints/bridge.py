@@ -35,7 +35,7 @@ from flask import Blueprint, request, jsonify
 
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
-from lib.agent_bridge import store, delivery, commands, ansi_html
+from lib.agent_bridge import store, delivery, commands, files, ansi_html
 from lib import agent_sdk
 
 bridge_bp = Blueprint('bridge', __name__)
@@ -406,8 +406,8 @@ def api_session_bridge_commands(trace_id):
     """The /live composer's `/`-autocomplete accept list (editor+ only).
 
     The slash commands + skills the target session would accept, enumerated
-    from its own project `.claude/` (resolved via the pane registry's cwd)
-    plus `~/.claude/`. Same JWT + `require_editor` gate as `bridge-send`;
+    in its own cwd (from the pane registry). Same JWT + `require_editor` gate
+    as `bridge-send`;
     read-only and fail-closed — any error collapses to `{"commands": []}` so
     the composer just shows no menu, never an error. A disabled bridge is the
     same clean structured refusal the sibling routes return.
@@ -419,6 +419,30 @@ def api_session_bridge_commands(trace_id):
     except Exception:  # noqa: BLE001 — read-only convenience list, never 500
         rows = []
     return jsonify({"commands": rows})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-files', methods=['GET'])
+@require_editor
+def api_session_bridge_files(trace_id):
+    """The /live composer's `@`-autocomplete path suggestions (editor+ only).
+
+    Files and directories under the target session's own cwd (from the pane
+    registry), so an `@`-reference typed on the phone names what the raw
+    terminal would name. Confined to that root — editors are not trusted to
+    browse the host filesystem. Same JWT + `require_editor` gate and the same
+    fail-closed contract as `bridge-commands`: any error, and a session with
+    no registered cwd, collapse to `{"files": []}` rather than a 500, so the
+    composer just shows no menu.
+    """
+    if not settings.agent_bridge.enabled:
+        return jsonify({"files": [], "detail": "bridge disabled"})
+    try:
+        rows = files.list_session_files(trace_id, request.args.get("q", ""),
+                                        request.args.get("limit",
+                                                         files.DEFAULT_LIMIT))
+    except Exception:  # noqa: BLE001 — read-only convenience list, never 500
+        rows = []
+    return jsonify({"files": rows})
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-screen', methods=['GET'])
