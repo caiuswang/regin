@@ -770,10 +770,15 @@ class AgentSdkConfig(BaseModel):
     `max_concurrent_runs` bounds live runners — each is a real child process,
     and an unbounded launcher is a fork bomb with extra steps.
 
-    `idle_timeout_sec` bounds how long a session with nothing to do keeps its
-    child process. A run stays open for follow-ups after its first prompt, so
-    without a bound an abandoned session holds a slot against
-    `max_concurrent_runs` for the life of the server. 0 waits forever.
+    `idle_timeout_sec` is 0 — wait forever — because only interactive runs
+    ever wait between turns (`one_shot` runs close their queue at launch), and
+    an interactive run belongs to the operator until they stop it. A quiet
+    stream is also not proof of a quiet session: background subagents and
+    long shell tasks emit no frames while they work, so any idle timer here
+    can kill their child mid-run (it did — the frame guard in
+    `runner._await_prompt` never saw them). Set it only for a run nobody is
+    attending, accepting that in-flight background work dies with it; the
+    reclaim path for an abandoned session is the operator's Stop in `/live`.
 
     `stop_grace_sec` bounds how long a stop waits on an interrupted turn to end
     itself before abandoning it. The SDK ends a response stream on the CLI's
@@ -813,12 +818,13 @@ class AgentSdkConfig(BaseModel):
     reports that combination, because a security control that silently does
     nothing is worse than one that refuses.
 
-    `park_timeout_sec` bounds a held call. `idle_timeout_sec` cannot: it
-    bounds the wait *between* turns and a park lives inside one, so without
-    this an unattended run — regin's own spawns, which nobody has `/live` open
-    for — holds its worker and a `max_concurrent_runs` slot until the server
-    restarts. Timing out declines the call: nobody said yes. 0 waits forever,
-    which is right only when an operator is actually watching.
+    `park_timeout_sec` bounds a held call. `idle_timeout_sec` (usually 0)
+    cannot: it bounds the wait *between* turns and a park lives inside one,
+    so without this an unattended run — regin's own spawns, which nobody has
+    `/live` open for — holds its worker and a `max_concurrent_runs` slot
+    until the server restarts. Timing out declines the call: nobody said yes.
+    0 waits forever, which is right only when an operator is actually
+    watching.
     """
 
     enabled: bool = False
@@ -826,7 +832,7 @@ class AgentSdkConfig(BaseModel):
     model: str = ""
     max_concurrent_runs: int = 4
     permission_mode: str = "default"
-    idle_timeout_sec: int = 1800
+    idle_timeout_sec: int = 0
     stop_grace_sec: int = 10
     teardown_settle_sec: float = 0.25
     gate_plan: bool = False

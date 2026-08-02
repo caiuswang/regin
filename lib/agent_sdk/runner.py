@@ -800,13 +800,15 @@ class AgentRunner:
                       detail=str(exc))
 
     async def _await_prompt(self) -> str | None:
-        """Block for the next prompt, raising `TimeoutError` on real silence.
+        """Block for the next prompt, raising `TimeoutError` on stream silence.
 
-        Idle is measured against *frames*, not against the prompt queue: a
-        background subagent can work for far longer than `idle_timeout_sec`
-        with nothing queued behind it, and reaping that session would kill a
-        child mid-tool-call. Only a session the agent has also gone quiet on is
-        abandoned. `idle_timeout_sec` of 0 still waits indefinitely.
+        With `idle_timeout_sec` 0 — the default — this waits indefinitely: an
+        interactive session belongs to the operator until they stop it. A
+        configured timeout measures *frames*, not the prompt queue, but frames
+        are a weak liveness signal — a background subagent or long shell task
+        emits none between task notifications — so a timeout can still reap a
+        session whose child is mid-work. That trade is acceptable only for
+        unattended runs.
         """
         timeout = int(settings.agent_sdk.idle_timeout_sec or 0)
         if timeout <= 0:
