@@ -56,6 +56,100 @@ _RECOMMENDATION_RE = re.compile(
 )
 
 
+# Horizontal whitespace only ([ \t], never \s): a class that can match a newline
+# runs the reason group onto the following line and swallows the verdict there.
+_VERDICT_RE = re.compile(
+    r"^[ \t]*VERDICT[ \t]*[:=][ \t]*([A-Za-z0-9._-]+)[ \t]*=[ \t]*(PASS|FAIL)\b"
+    r"[ \t]*(?:[—–:-][ \t]*)?(.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _topic_wiki_digest(topic: dict[str, Any]) -> str:
+    """Short content digest of one proposed topic's wiki body.
+
+    Derived, never stored: it exists only to answer "is this page byte-identical
+    to the one a previous round already judged?", and `proposal_revision_topics`
+    already holds the body it hashes.
+    """
+    import hashlib
+    body = (topic.get("wiki") or "") if isinstance(topic, dict) else ""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+
+
+def _draft_digests(proposal: dict[str, Any] | None) -> dict[str, str]:
+    """`{topic_id: wiki digest}` for every topic in a draft."""
+    return {
+        topic["id"]: _topic_wiki_digest(topic)
+        for topic in (proposal or {}).get("topics") or []
+        if isinstance(topic, dict) and topic.get("id")
+    }
+
+
+def _parse_topic_verdicts(
+    answer: str, digests: dict[str, str],
+) -> dict[str, dict[str, str]]:
+    """Per-topic ``VERDICT: <id> = PASS|FAIL — reason`` lines from the reviewer.
+
+    Ids absent from the draft are dropped rather than passed through: they flow
+    on to become a regenerate scope, and `_scope_for_regenerate` treats a scope
+    that resolves to nothing as "no scope" — i.e. a hallucinated id would
+    silently widen a two-topic fix back into a full re-draft, which is the exact
+    failure this protocol exists to prevent. Each verdict records the digest of
+    the page it judged, so a later round can tell whether it still applies.
+    """
+    verdicts: dict[str, dict[str, str]] = {}
+    dropped: list[str] = []
+    for match in _VERDICT_RE.finditer(answer or ""):
+        topic_id, outcome, reason = match.group(1), match.group(2), match.group(3)
+        if topic_id not in digests:
+            dropped.append(topic_id)
+            continue
+        verdicts[topic_id] = {
+            "verdict": outcome.upper(),
+            "reason": reason.strip(),
+            "wiki_sha": digests[topic_id],
+        }
+    if dropped:
+        log.write("proposal_review_verdict_unknown_topics", topics=sorted(set(dropped)))
+    return verdicts
+
+
+def _carried_verdicts(
+    threads: list[dict[str, Any]], digests: dict[str, str],
+) -> dict[str, dict[str, str]]:
+    """PASS verdicts from earlier rounds that still describe the current page.
+
+    A topic whose wiki is byte-identical to the one a prior review passed does
+    not get looked at again — re-deriving and re-sampling unchanged pages is
+    what turned this loop into a random walk. A digest mismatch voids the
+    verdict, so any redraft puts the page back in front of the reviewer.
+    Only PASS carries: an unfixed FAIL should keep being reported.
+    """
+    carried: dict[str, dict[str, str]] = {}
+    for thread in threads:
+        for topic_id, entry in _stored_pass_verdicts(thread):
+            if topic_id not in carried and entry["wiki_sha"] == digests.get(topic_id):
+                carried[topic_id] = dict(entry)
+    return carried
+
+
+def _stored_pass_verdicts(thread: dict[str, Any]) -> list[tuple[str, dict[str, str]]]:
+    """The `(topic_id, entry)` PASS verdicts recorded on one review-note thread,
+    skipping entries with no digest — those predate the protocol and can't be
+    matched against current content."""
+    if thread.get("kind") != "review_note":
+        return []
+    stored = (thread.get("metadata") or {}).get("topic_verdicts") or {}
+    return [
+        (topic_id, entry)
+        for topic_id, entry in stored.items()
+        if isinstance(entry, dict)
+        and entry.get("verdict") == "PASS"
+        and entry.get("wiki_sha")
+    ]
+
+
 def _open_feedback_lines(threads: list[dict[str, Any]]) -> str:
     """One bullet per still-open human thread, so the reviewer doesn't
     re-raise issues the user already flagged (and can note if a draft
@@ -212,6 +306,83 @@ def _build_prompt(proposal: dict[str, Any], open_feedback: str,
     return render_surface(SURFACE_ID, context)
 
 
+def _proposal_wiki_command(repo: Path, proposal_id: str) -> str:
+    """The command the reviewer runs to pull one proposed page. Built like
+    ``_review_finish_command`` so it works with no ``regin`` on PATH."""
+    cli = settings.project_root / "cli" / "regin.py"
+    parts = [
+        sys.executable, str(cli), "topics", "proposal-wiki",
+        proposal_id, "--repo", str(repo),
+    ]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def _draft_manifest_lines(
+    proposal: dict[str, Any], digests: dict[str, str],
+    carried: dict[str, dict[str, str]],
+) -> str:
+    lines: list[str] = []
+    for topic in proposal.get("topics") or []:
+        topic_id = topic.get("id")
+        if not topic_id:
+            continue
+        size = len((topic.get("wiki") or "").encode("utf-8"))
+        state = ("[passed a previous round and byte-identical since — "
+                 "do NOT re-review]" if topic_id in carried else "[unreviewed]")
+        lines.append(f"- {topic_id}  ({size}B  sha={digests.get(topic_id, '?')})  {state}")
+    return "\n".join(lines)
+
+
+def _draft_block(repo: Path, proposal_id: str, proposal: dict[str, Any]) -> str:
+    """The ``<draft_wiki>`` + ``<per_topic_verdict>`` block.
+
+    Appended *outside* ``render_surface`` for the same reason ``_finish_block``
+    is (see ``_build_prompt``): a stored/edited review-prompt row wins over the
+    registry default, so a placeholder in the body would silently vanish on any
+    install seeded before this existed — and both halves here are mechanically
+    load-bearing (the verdict lines are parsed, and without the manifest the
+    reviewer hunts the run directory and judges a superseded draft).
+
+    It hands over *pointers plus a retrieval command*, never the pages: a
+    five-topic draft runs ~40KB of markdown, which would dominate the prompt,
+    while this stays around 80 bytes a topic and lets the reviewer read only
+    what it must.
+    """
+    from lib.topics.proposals import list_proposal_feedback_threads
+
+    digests = _draft_digests(proposal)
+    try:
+        threads = list_proposal_feedback_threads(repo, proposal_id)
+    except Exception:  # noqa: BLE001 - a prompt extra must never break the review
+        threads = []
+    carried = _carried_verdicts(threads, digests)
+    return (
+        "\n\n<draft_wiki>\n"
+        "The pages under review, with each page's content digest:\n"
+        f"{_draft_manifest_lines(proposal, digests, carried)}\n\n"
+        "Read a page with this command — it prints the current draft straight "
+        "from the database:\n"
+        f"  {_proposal_wiki_command(repo, proposal_id)} --topic <topic-id>\n"
+        "Do not go looking for draft files in the run directory. It also holds "
+        "superseded copies and agent scratch, and judging one of those reports "
+        "problems the current draft has already fixed.\n"
+        "</draft_wiki>\n\n"
+        "<per_topic_verdict>\n"
+        "Judge each page marked [unreviewed]. Skip the do-NOT-re-review ones "
+        "entirely — they are byte-identical to a page a previous round already "
+        "passed, and re-litigating them is pure cost.\n"
+        "Immediately before the RECOMMENDATION line, emit one line per page you "
+        "judged, using the exact ids listed above:\n"
+        "  VERDICT: <topic-id> = PASS\n"
+        "  VERDICT: <topic-id> = FAIL — <one line: what is wrong>\n"
+        "Only the pages you mark FAIL are re-drafted; every other page is kept "
+        "byte-for-byte. A page you FAIL gets rewritten in full, which can "
+        "introduce new errors — so FAIL only what is actually wrong, and say "
+        "precisely what to fix.\n"
+        "</per_topic_verdict>"
+    )
+
+
 def _parse_recommendation(answer: str) -> str:
     """Pull the recommendation token from the reviewer's text. Prefer the
     explicit ``RECOMMENDATION:`` line; else first token seen; else the neutral
@@ -229,6 +400,7 @@ def _parse_recommendation(answer: str) -> str:
 def _write_review_note(
     repo_path: str | Path, proposal_id: str, recommendation: str, answer: str,
     *, agent_trace_id: str | None = None,
+    topic_verdicts: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Persist one ``review_note`` feedback thread (``created_by='agent'``).
     The single writer shared by the synchronous and notify-on-finish paths, so
@@ -243,6 +415,10 @@ def _write_review_note(
     # Structured copy of the recommendation so the UI badge reads a field
     # instead of regexing the LLM's prose body.
     metadata: dict[str, Any] = {"recommendation": recommendation}
+    # Per-topic verdicts are what let the Regenerate action redraft only the
+    # pages that failed, and let the next round skip the ones that passed.
+    if topic_verdicts:
+        metadata["topic_verdicts"] = topic_verdicts
     if agent_trace_id:
         metadata["agent_trace_id"] = agent_trace_id
         metadata["agent_trace_url"] = f"/trace/sessions/{agent_trace_id}"
@@ -281,7 +457,8 @@ def generate_review_note(
         from lib.memory.adapters import resolve_proposal_reviewer
         llm = resolve_proposal_reviewer()
     answer = llm.complete(
-        _build_prompt(proposal, open_feedback, sibling_block),
+        _build_prompt(proposal, open_feedback, sibling_block)
+        + _draft_block(repo, proposal_id, proposal),
         max_tokens=1024, cwd=repo_path,
     )
     if not answer or not str(answer).strip():
@@ -291,6 +468,8 @@ def generate_review_note(
 
     return _write_review_note(
         repo, proposal_id, _parse_recommendation(str(answer)), str(answer),
+        topic_verdicts=_parse_topic_verdicts(
+            str(answer), _draft_digests(proposal)),
     )
 
 
@@ -416,6 +595,8 @@ def finish_review_note(
     thread = _write_review_note(
         repo, proposal_id, recommendation, str(answer),
         agent_trace_id=_resolve_review_trace_id(source),
+        topic_verdicts=_parse_topic_verdicts(
+            str(answer), _draft_digests(proposal)),
     )
     _write_review_status(repo, proposal_id, {
         **status, "state": "completed", "signaled": True, "signaled_by": source,
@@ -506,6 +687,7 @@ def start_review_run(
     # when the review prompt has a stored/edited row (which render_surface
     # prefers over the registry default). See `_build_prompt`.
     prompt = (_build_prompt(proposal, open_feedback, sibling_block)
+              + _draft_block(repo, proposal_id, proposal)
               + _finish_block(repo, proposal_id))
     # Reset per-launch state: drop a stale verdict file and clear the signaled
     # marker so this run's finish can land (a prior run may have signaled).
@@ -531,6 +713,30 @@ def _precheck_note_body(
     for issue in errors:
         lines.append(f"- **{issue.code}**: {issue.message}")
     return "\n".join(lines)
+
+
+def _precheck_verdicts(
+    issues: tuple[Any, ...], proposal: dict[str, Any],
+) -> dict[str, dict[str, str]]:
+    """FAIL verdicts for the topics a gate bounce actually implicates.
+
+    Every ``ValidationIssue`` carries the ids it was raised against, so a
+    mechanical bounce can scope its redraft exactly like an agent review does
+    instead of condemning the whole draft. Topics the audit never named keep
+    whatever verdict an earlier round gave them.
+    """
+    digests = _draft_digests(proposal)
+    verdicts: dict[str, dict[str, str]] = {}
+    for issue in issues:
+        for topic_id in getattr(issue, "topic_ids", ()) or ():
+            if topic_id not in digests:
+                continue
+            verdicts.setdefault(topic_id, {
+                "verdict": "FAIL",
+                "reason": f"{issue.code}: {issue.message}",
+                "wiki_sha": digests[topic_id],
+            })
+    return verdicts
 
 
 def _mechanical_precheck(
@@ -562,6 +768,7 @@ def _mechanical_precheck(
     # through to the caller and spawn the agent on top of the note it wrote.
     note = _write_review_note(
         repo, proposal_id, "REGENERATE", _precheck_note_body(errors, boundary),
+        topic_verdicts=_precheck_verdicts(errors + boundary, proposal),
     )
     try:
         log.write("proposal_review_precheck_bounced", proposal_id=proposal_id,

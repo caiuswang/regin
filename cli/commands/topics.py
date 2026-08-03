@@ -596,6 +596,49 @@ def cmd_topics_proposal_show(
     _print_proposal_show(proposal_id, status, review_state, topic_rows, thread_rows)
 
 
+@topics_app.command(
+    "proposal-wiki",
+    help="Print a proposed topic's wiki page (the review agent pulls pages "
+         "with this instead of hunting for a draft file on disk)")
+def cmd_topics_proposal_wiki(
+    proposal_id: str = typer.Argument(..., help="Proposal run id"),
+    topic: str | None = typer.Option(
+        None, "--topic", help="Topic id; omit to list the ids in the draft"),
+    repo: str | None = typer.Option(None, "--repo", help="Repository path"),
+    revision: int | None = typer.Option(
+        None, "--revision", help="Revision id (default: the latest)"),
+) -> None:
+    rp = _repo_path(repo)
+    proposal = _load_proposal_revision_or_none(rp, proposal_id, revision)
+    if proposal is None:
+        print(f"Proposal wiki failed: no such proposal run: {proposal_id}")
+        raise typer.Exit(1)
+    topics = proposal.get("topics") or []
+    if not topic:
+        for entry in topics:
+            print(entry.get("id", "?"))
+        return
+    for entry in topics:
+        if entry.get("id") == topic:
+            print((entry.get("wiki") or "").strip())
+            return
+    known = ", ".join(t.get("id", "?") for t in topics) or "(none)"
+    print(f"Proposal wiki failed: no topic {topic!r} in this draft. Known ids: {known}")
+    raise typer.Exit(1)
+
+
+def _load_proposal_revision_or_none(
+    rp: Path, proposal_id: str, revision: int | None,
+) -> dict | None:
+    if revision is None:
+        return _load_proposal_or_none(rp, proposal_id)
+    from lib.topics.proposals import load_proposal_revision
+    try:
+        return load_proposal_revision(rp, proposal_id, revision)
+    except (OSError, ValueError, TopicGraphError):
+        return None
+
+
 def _print_topic_delta_line(delta: dict) -> None:
     changes = []
     for key, label in (("ref_adds", "+ref"), ("ref_removes", "-ref"),

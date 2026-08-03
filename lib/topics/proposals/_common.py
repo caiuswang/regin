@@ -105,10 +105,28 @@ def _resolve_prompt_templates(slugs: list[str] | None) -> list[dict[str, Any]]:
 
     Unknown slugs are silently dropped — a deleted custom template
     should not crash an in-flight or regenerated run.
+
+    A slug that names a registered prompt *surface* is dropped too: every
+    surface is seeded as a `prompt_templates` row, so picking one would
+    interpolate a regin-owned prompt body into another prompt's
+    `{{custom_instructions}}` slot — and picking the drafting surface itself
+    renders it inside its own slot, yielding a doubled prompt whose second copy
+    still carries literal `{{…}}` placeholders. The `kind` column does not
+    catch this on its own (nothing validates it, and `topic-authoring-standards`
+    is a surface registered as a fragment). This guard is the shared chokepoint
+    for both the fresh and regenerate paths, so a run whose stored
+    `prompt_template_slugs` already names a surface heals on its next
+    regenerate instead of replaying the bad prompt forever.
     """
     if not slugs:
         return []
-    return get_templates_by_slugs(slugs)
+    from lib.prompts.registry import get_surface
+
+    kept = [slug for slug in slugs if get_surface(slug) is None]
+    dropped = [slug for slug in slugs if slug not in kept]
+    if dropped:
+        _topics_log().write("prompt_template_surface_dropped", slugs=dropped)
+    return get_templates_by_slugs(kept)
 
 
 def _persist_per_topic_wiki(

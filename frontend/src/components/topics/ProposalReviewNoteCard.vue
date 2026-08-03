@@ -38,6 +38,27 @@ const recommendationColor = computed(() => {
   return 'blue'
 })
 
+// Topics the reviewer failed. Regenerating only these keeps every other page
+// byte-identical through the splice — a full redraft rewrites pages nobody
+// objected to and can introduce fresh errors in them.
+const failedTopicIds = computed(() => {
+  const verdicts = props.thread?.metadata?.topic_verdicts
+  if (!verdicts || typeof verdicts !== 'object') return []
+  return Object.keys(verdicts).filter((id) => verdicts[id]?.verdict === 'FAIL')
+})
+
+const passedTopicCount = computed(() => {
+  const verdicts = props.thread?.metadata?.topic_verdicts
+  if (!verdicts || typeof verdicts !== 'object') return 0
+  return Object.values(verdicts).filter((v) => v?.verdict === 'PASS').length
+})
+
+const regenerateLabel = computed(() => (
+  failedTopicIds.value.length
+    ? `Regenerate ${failedTopicIds.value.length} topic${failedTopicIds.value.length > 1 ? 's' : ''}`
+    : 'Regenerate'
+))
+
 const isClosed = computed(() => (
   props.thread.resolution_state === 'resolved'
   || props.thread.resolution_state === 'dismissed'
@@ -91,6 +112,18 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
       </ClampedText>
     </article>
 
+    <div
+      v-if="failedTopicIds.length"
+      class="rounded border border-indigo-200 bg-white/70 px-2 py-1.5 text-[11px] text-slate-600"
+      data-testid="review-note-verdicts"
+    >
+      <span class="font-medium text-slate-700">Redrafts:</span>
+      <code v-for="id in failedTopicIds" :key="id" class="ml-1 text-rose-700">{{ id }}</code>
+      <span v-if="passedTopicCount" class="ml-1 text-slate-500">
+        · {{ passedTopicCount }} page{{ passedTopicCount > 1 ? 's' : '' }} passed and stay unchanged
+      </span>
+    </div>
+
     <div v-if="showActions" class="flex justify-end gap-2">
       <Button
         variant="secondary"
@@ -104,9 +137,9 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
         variant="primary"
         size="sm"
         :disabled="busy"
-        @click="emit('regenerate')"
+        @click="emit('regenerate', failedTopicIds.length ? failedTopicIds : undefined)"
       >
-        Regenerate
+        {{ regenerateLabel }}
       </Button>
     </div>
   </div>

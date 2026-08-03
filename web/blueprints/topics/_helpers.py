@@ -526,7 +526,7 @@ def _proposal_workspace_payload(
     return {
         "repo": Path(repo_path).name,
         "providers": list_proposal_providers(),
-        "prompt_templates": list_templates(),
+        "prompt_templates": list_templates("fragment"),
         "buckets": _list_buckets(repo_path),
         "runs": runs,
         "selected_proposal_id": selected_proposal_id,

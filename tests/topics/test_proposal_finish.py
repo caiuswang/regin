@@ -614,3 +614,27 @@ def test_reap_clears_stale_validation_marker(fake_git_repo, tmp_db):
     result = finish_proposal_run(fake_git_repo, "run1")
     assert result["ingested"] is False
     assert load_proposal_status(fake_git_repo, "run1")["state"] == "failed"
+
+
+def test_canonical_output_is_refreshed_on_every_ingest(fake_git_repo, tmp_db):
+    """A regenerate reuses the run id and therefore the run directory. The
+    canonical `agent-output.json` used to be written only when absent, so it
+    stayed frozen at the first draft while the temp file moved on — and an
+    agent reading the directory would then judge a superseded draft."""
+    from lib.topics.proposals.finish import _parse_agent_output
+
+    _commit_service(fake_git_repo)
+    out_dir = _seed_run(fake_git_repo, "regen1")
+    canonical = out_dir / "agent-output.json"
+
+    _write_temp_output(out_dir)
+    _parse_agent_output(fake_git_repo, out_dir)
+    assert json.loads(canonical.read_text())["topics"][0]["intent"] == \
+        "Curated context for Service."
+
+    redraft = json.loads(json.dumps(_PAYLOAD))
+    redraft["topics"][0]["intent"] = "Redrafted intent."
+    _write_temp_output(out_dir, redraft)
+    _parse_agent_output(fake_git_repo, out_dir)
+    assert json.loads(canonical.read_text())["topics"][0]["intent"] == \
+        "Redrafted intent."

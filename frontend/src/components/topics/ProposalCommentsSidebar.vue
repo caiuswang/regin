@@ -383,7 +383,7 @@ watch(
         :thread="thread"
         :readonly="readonly"
         :busy="resolveBusyThreadId === thread.id"
-        @regenerate="emit('regenerate')"
+        @regenerate="(topicIds) => emit('regenerate', topicIds)"
         @dismiss="setResolution(thread.id, 'dismissed')"
       />
       <div v-else class="rounded border border-slate-200 bg-white p-3 space-y-3">

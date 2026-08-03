@@ -76,7 +76,12 @@ def _parse_agent_output(repo: Path, out_dir: Path) -> tuple[dict[str, Any], str]
     # prior full draft so untouched wikis stay verbatim. Must run here too —
     # the agent self-ingests in its own process on the notify-on-finish path.
     proposal, wiki = _apply_regenerate_scope(repo, out_dir, proposal, wiki)
-    if temp_output.exists() and not canonical.exists():
+    # Refresh the canonical artifact on EVERY ingest. A regenerate reuses the
+    # run id and therefore the directory, so a "only when absent" guard here
+    # left `agent-output.json` frozen at the first draft while the temp file
+    # moved on — and an agent reading the run directory would then review a
+    # superseded draft and re-report issues the current one had already fixed.
+    if temp_output.exists():
         canonical.write_text(temp_output.read_text())
     return proposal, wiki
 

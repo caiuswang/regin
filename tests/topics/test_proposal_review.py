@@ -20,6 +20,10 @@ from lib.topics.core import write_split_graph
 from lib.topics.proposal_drafting import format_review_feedback_for_prompt
 from lib.topics.proposal_review import (
     _build_prompt,
+    _carried_verdicts,
+    _draft_block,
+    _parse_topic_verdicts,
+    _precheck_verdicts,
     _finish_block,
     _parse_recommendation,
     _review_finish_command,
@@ -375,3 +379,81 @@ def test_auto_review_note_on_create_run(stub_proposal_provider, fake_git_repo, m
     assert len(notes) == 1
     assert notes[0]["created_by"] == "agent"
     assert "recommendation: ACCEPT" in notes[0]["comments"][0]["body"]
+
+
+# ── per-topic verdicts, the draft manifest, and carry-forward ────
+
+
+def test_verdict_lines_parse_and_unknown_topic_ids_are_dropped():
+    """Each VERDICT line must stand alone. A separator class that can match a
+    newline swallows the following line, so half the verdicts vanish — and a
+    hallucinated id must never reach the regenerate scope, where an id that
+    resolves to nothing silently widens a scoped fix back to a full redraft."""
+    digests = {"alpha": "aaa", "beta": "bbb", "gamma": "ccc"}
+    answer = (
+        "VERDICT: alpha = PASS\n"
+        "VERDICT: beta = PASS\n"
+        "VERDICT: gamma = FAIL - wrong route name\n"
+        "VERDICT: not-in-this-draft = FAIL - hallucinated\n"
+        "RECOMMENDATION: REGENERATE\n"
+    )
+    verdicts = _parse_topic_verdicts(answer, digests)
+    assert set(verdicts) == {"alpha", "beta", "gamma"}
+    assert [v["verdict"] for v in verdicts.values()] == ["PASS", "PASS", "FAIL"]
+    assert verdicts["gamma"]["reason"] == "wrong route name"
+    assert verdicts["alpha"]["wiki_sha"] == "aaa"
+
+
+def test_passing_verdict_carries_only_while_the_page_is_unchanged():
+    digests = {"alpha": "aaa", "beta": "bbb"}
+    threads = [{"kind": "review_note", "metadata": {"topic_verdicts": {
+        "alpha": {"verdict": "PASS", "reason": "", "wiki_sha": "aaa"},
+        "beta": {"verdict": "FAIL", "reason": "bad", "wiki_sha": "bbb"},
+    }}}]
+    # Unchanged + PASS carries; a FAIL never does (it should keep being raised).
+    assert set(_carried_verdicts(threads, digests)) == {"alpha"}
+    # Redrafting alpha changes its digest, which voids the verdict.
+    assert _carried_verdicts(threads, {"alpha": "zzz", "beta": "bbb"}) == {}
+
+
+def test_review_note_records_per_topic_verdicts(fake_git_repo):
+    pid = _make_proposal(fake_git_repo)
+    thread = generate_review_note(
+        fake_git_repo, pid,
+        llm=_StubLLM("VERDICT: t1 = FAIL - stale ref\nRECOMMENDATION: REGENERATE"),
+    )
+    assert thread["metadata"]["topic_verdicts"]["t1"]["verdict"] == "FAIL"
+    assert thread["metadata"]["topic_verdicts"]["t1"]["reason"] == "stale ref"
+
+
+def test_draft_block_hands_over_pointers_not_wiki_bodies(fake_git_repo):
+    """The reviewer gets a manifest plus a pull command. Inlining the pages
+    would put tens of KB of markdown in every review prompt."""
+    from lib.topics.proposals import load_proposal
+
+    pid = _make_proposal(fake_git_repo)
+    proposal = load_proposal(fake_git_repo, pid)
+    block = _draft_block(Path(fake_git_repo), pid, proposal)
+    assert "<draft_wiki>" in block and "<per_topic_verdict>" in block
+    assert "topics proposal-wiki" in block
+    assert "VERDICT: <topic-id> = PASS" in block
+    for topic in proposal["topics"]:
+        assert topic["id"] in block
+        body = (topic.get("wiki") or "").strip()
+        if len(body) > 80:
+            assert body not in block
+
+
+def test_mechanical_precheck_scopes_its_bounce_to_the_offending_topics(fake_git_repo):
+    """A gate bounce names the topics the audit implicated, so it redrafts
+    only those instead of condemning the whole draft."""
+    class _Issue:
+        code = "graph.dead_ref"
+        message = "topic t1 ref does not exist: gone.py"
+        topic_ids = ("t1", "not-in-draft")
+
+    proposal = {"topics": [{"id": "t1", "wiki": "body"}, {"id": "t2", "wiki": "x"}]}
+    verdicts = _precheck_verdicts((_Issue(),), proposal)
+    assert set(verdicts) == {"t1"}
+    assert verdicts["t1"]["verdict"] == "FAIL"
+    assert "graph.dead_ref" in verdicts["t1"]["reason"]

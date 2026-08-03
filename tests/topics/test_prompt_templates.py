@@ -221,3 +221,36 @@ def test_create_proposal_run_persists_prompt_template_ids_on_metadata(tmp_db, tm
     assert [t["slug"] for t in captured["prompt_templates"]] == ["gitnexus"]
     saved = proposals_mod.load_proposal(repo, paths["dir"].name)
     assert saved["metadata"]["prompt_template_ids"] == ["gitnexus"]
+
+
+# ── surfaces are not injectable custom instructions ─────────────
+
+
+def test_selecting_a_surface_slug_cannot_inject_it_into_its_own_prompt(tmp_db):
+    """Every prompt surface is seeded as a `prompt_templates` row, so the
+    drafting skeleton was selectable as a custom instruction and rendered into
+    its own `{{custom_instructions}}` slot — doubling the prompt and leaving the
+    second copy's `{{…}}` placeholders unrendered."""
+    from lib.prompt_templates import seed_builtin_skeletons
+    from lib.topics.proposals._common import _resolve_prompt_templates
+
+    seed_builtin_skeletons()
+    assert _resolve_prompt_templates(["topic-proposal-drafting"]) == []
+    # A surface registered as a fragment is still regin-owned, so `kind` alone
+    # is not a sufficient guard.
+    assert _resolve_prompt_templates(["topic-authoring-standards"]) == []
+    # Genuine user fragments survive, including alongside a dropped surface.
+    kept = _resolve_prompt_templates(["topic-proposal-drafting", "gitnexus-usage"])
+    assert [t["slug"] for t in kept] == ["gitnexus-usage"]
+
+
+def test_proposal_launcher_offers_no_skeletons(tmp_db, fake_git_repo):
+    from lib.prompt_templates import seed_builtin_skeletons
+    from web.blueprints.topics._helpers import _proposal_workspace_payload
+
+    seed_builtin_skeletons()
+    payload = _proposal_workspace_payload(
+        str(fake_git_repo), selected_proposal_id=None,
+        selected_draft_topic_id=None, selected_revision_id=None)
+    kinds = {t["kind"] for t in payload["prompt_templates"]}
+    assert "skeleton" not in kinds
