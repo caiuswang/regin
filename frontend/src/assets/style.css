@@ -2301,6 +2301,40 @@ details summary {
     overflow-y: auto;
 }
 .live-queued-steer .live-msg-eyebrow { color: var(--color-amber-700); }
+/* Edit/remove ride the eyebrow line so a row's height is unchanged until it
+   actually opens for editing. Only rows the server gave an id render them. */
+.live-queued-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+.live-queued-spacer { flex: 1 1 auto; }
+.live-queued-act {
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+    flex-shrink: 0;
+}
+.live-queued-act:hover { color: var(--color-fg); }
+.live-queued-remove:hover { color: var(--color-danger); }
+.live-queued-editing { background: var(--color-surface-hover); }
+.live-queued-edit-act {
+    display: flex;
+    gap: 10px;
+    margin-top: 4px;
+}
+.live-queued-discard { color: var(--color-fg-subtle); }
+/* A refusal ("that prompt is already running") belongs above the list: the
+   row it is about is usually the one that has just stopped existing. */
+.live-queued-notice {
+    flex-shrink: 0;
+    padding: 4px 14px;
+    font-size: 11px;
+    color: var(--color-danger);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    overflow-wrap: anywhere;
+}
 
 .live-now {
     flex-shrink: 0;
@@ -2408,6 +2442,35 @@ details summary {
     font-variant-numeric: tabular-nums;
 }
 .live-now-attention .live-now-more { color: var(--color-amber-700); }
+
+/* Cancel + Stop share one row. Cancel is turn-level and works on BOTH tiers;
+   Stop is session-level and SDK-only, so either may be absent and the row
+   wraps rather than overflowing a ~390px phone surface. */
+.live-now-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 14px;
+    min-width: 0;
+}
+.live-now-controls .live-stop { margin-top: 0; }
+.live-cancel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 6px;
+    min-width: 0;
+}
+.live-cancel-btn { color: var(--color-amber-700); }
+.live-cancel-btn:hover { color: var(--color-fg); }
+.live-cancel-again { color: var(--color-fg-subtle); }
+.live-cancel-meta {
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+    overflow-wrap: anywhere;
+}
+.live-cancel-failed { color: var(--color-danger); }
 
 /* Stop control (SDK-tier runs only). Wraps rather than overflows: the armed
    confirm is three items wide and the card is a ~390px phone surface. */

@@ -18,6 +18,8 @@ from lib.agent_events import ToolResult
 from lib.agent_sdk import registry, runner as runner_mod
 from lib.settings import settings
 
+from tests.agent_sdk.conftest import await_parks
+
 
 class _Ctx:
     def __init__(self, tool_use_id="tu-ask"):
@@ -51,10 +53,7 @@ async def _answer(run, answers):
     run.loop = asyncio.get_running_loop()
     task = asyncio.create_task(
         run._park("question", "AskUserQuestion", QUESTION_INPUT, _Ctx()))
-    for _ in range(200):
-        if registry.pending_asks(run.trace_id):
-            break
-        await asyncio.sleep(0)
+    await await_parks(run.trace_id)
     assert registry.resolve_ask(run.trace_id, answers)[0]
     await task
     await run._emit(ToolResult(trace_id=run.trace_id,

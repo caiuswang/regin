@@ -1453,8 +1453,11 @@ IDLE_SETTLE_SEC = 6
 INACTIVE_THRESHOLD_SEC = _AGENT_STALE_AFTER_SEC
 
 # Rollup precedence: a blocked subagent surfaces while main is idle.
+# `starting` and `stopping` are reachable only for a run regin owns — nothing
+# span-derived can see either — and rank beside `working` because both mean the
+# session is busy with something the operator cannot type into.
 _PHASE_PRECEDENCE = (
-    'waiting-permission', 'waiting-input', 'working',
+    'waiting-permission', 'waiting-input', 'working', 'starting', 'stopping',
     'idle', 'inactive-stale', 'ended',
 )
 
@@ -1516,17 +1519,26 @@ def _phase_rollup(phases) -> str | None:
     return None
 
 
-def _session_phase(by_aid: dict, roster, ended: bool) -> tuple:
+def _session_phase(by_aid: dict, roster, ended: bool,
+                   main_override: str | None = None) -> tuple:
     """(rollup phase, agent_phase map). Main from its own activity; each
     subagent from its roster status. `by_aid` is the shared per-agent activity
     map (main under None) so no third scan is needed.
+
+    `main_override` is the live runner's own verdict for a session regin
+    launched (`agent_sdk.run_phase`), and it *replaces* the span-derived one
+    rather than competing with it: the runner knows, and the heuristic's
+    staleness window is exactly wrong for it — a long tool call emits no spans,
+    so an agent plainly at work reads `inactive-stale`. Subagents keep their
+    roster-derived phases either way; the roster is the only source for those.
 
     Rollup = highest-precedence phase across all agents, EXCEPT that an ended
     session always rolls up to 'ended': once the session itself ended nothing
     can be genuinely waiting, so a ghost unstopped subagent (rolled up as
     inactive-stale) must not mask the 'ended' verdict."""
     now = datetime.now()
-    agent_phase = {'main': _main_phase(by_aid.get(None), now, ended)}
+    main = main_override or _main_phase(by_aid.get(None), now, ended)
+    agent_phase = {'main': main}
     for r in roster:
         aid = r['agent_id']
         agent_phase[aid] = _phase_from_roster(
@@ -1577,6 +1589,20 @@ def _session_repo_name(trace_id: str, cwd) -> str | None:
     if isinstance(cwd, str) and cwd.strip():
         return os.path.basename(cwd.rstrip('/')) or None
     return None
+
+
+def _owned_run_phase(trace_id: str) -> str | None:
+    """The live runner's own phase for a run regin launched, else None.
+
+    Best-effort like every other SDK read on this path: the tier is optional
+    and gated off by default, and a session's status line must not depend on it
+    being importable.
+    """
+    from lib import agent_sdk
+    try:
+        return agent_sdk.run_phase(trace_id)
+    except Exception:
+        return None
 
 
 def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
@@ -1639,7 +1665,8 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
         (v for v in (live, peak_main, peak) if isinstance(v, int)), peak)
     if roster is None or activity is None:
         roster, activity, _ended = _roster_with_activity(trace_id)
-    phase, agent_phase = _session_phase(activity, roster, status == 'ended')
+    phase, agent_phase = _session_phase(activity, roster, status == 'ended',
+                                        _owned_run_phase(trace_id))
     return {
         'model': model,
         # Server phase verdict — the /live card selects on this, never
@@ -1962,16 +1989,30 @@ def _sdk_queue(trace_id: str) -> list | None:
       would invert the queue's real order.
 
     Identical prompts are deliberately not collapsed: two "continue"s are two
-    queue entries and must drop one at a time.
+    queue entries and must drop one at a time. `id` is what makes that possible
+    from the browser — it names one entry for the edit/remove routes, and its
+    presence is also how the card knows these rows are editable at all (the
+    transcript and bridge paths have no id to give, because neither queue is
+    regin's to write).
     """
     from lib import agent_sdk
+    from lib.agent_sdk import store as sdk_store
     try:
         if not agent_sdk.is_sdk_owned(trace_id):
-            return None
+            # Not live — but if regin launched it, its queue was this process's
+            # and is simply gone, which is not the same as "ask the other two
+            # sources". Both would answer, and both would lie: the run's steers
+            # are still inside the bridge window, so a stopped run's card
+            # sprouts chips for prompts that already ran, newest-first, and an
+            # edited one shows the body it was sent with rather than the body
+            # it ran as. Seen on a real run: three consumed prompts came back
+            # reversed, one of them pre-edit.
+            return [] if sdk_store.find_run(trace_id) else None
         pending = agent_sdk.queued_prompts(trace_id)
     except Exception:
         return None
-    return [{'content': text, 'source': 'sdk'} for text in pending]
+    return [{'id': q['id'], 'content': q['text'], 'source': 'sdk'}
+            for q in pending]
 
 
 def _steer_key(content) -> str:

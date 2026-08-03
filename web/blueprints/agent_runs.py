@@ -229,6 +229,43 @@ def api_prompt_agent_run(trace_id):
     return jsonify({"queued": queued, "detail": detail})
 
 
+@agent_runs_bp.route('/api/agent-runs/<trace_id>/queue/<prompt_id>',
+                     methods=['PATCH'])
+@require_editor
+def api_edit_queued_prompt(trace_id, prompt_id):
+    """Rewrite a prompt still waiting behind this run's current turn.
+
+    Only this tier has such a route because only this tier has such a queue: a
+    session regin merely traces queues inside Claude Code, whose queue regin
+    reads back from the transcript and cannot write to. Offering the control
+    there would be a button that silently changes nothing.
+
+    Structured refusal, never a 500 — a prompt whose turn started between the
+    poll that rendered it and this request is an ordinary outcome, not an error.
+    """
+    from lib import agent_sdk
+
+    payload = request.get_json(silent=True) or {}
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return jsonify({"error": "prompt required"}), 400
+    updated, detail = agent_sdk.edit_queued(trace_id, prompt_id,
+                                            prompt[:_PROMPT_MAX])
+    return jsonify({"updated": updated, "detail": detail})
+
+
+@agent_runs_bp.route('/api/agent-runs/<trace_id>/queue/<prompt_id>',
+                     methods=['DELETE'])
+@require_editor
+def api_cancel_queued_prompt(trace_id, prompt_id):
+    """Drop a prompt still waiting behind this run's current turn. The turn in
+    flight keeps running — cancelling that is `interrupt`."""
+    from lib import agent_sdk
+
+    removed, detail = agent_sdk.cancel_queued(trace_id, prompt_id)
+    return jsonify({"removed": removed, "detail": detail})
+
+
 @agent_runs_bp.route('/api/agent-runs/<trace_id>/interrupt', methods=['POST'])
 @require_editor
 def api_interrupt_agent_run(trace_id):

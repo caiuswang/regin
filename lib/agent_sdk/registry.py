@@ -259,8 +259,9 @@ def submit_prompt(trace_id: str, text: str) -> tuple[bool, str]:
     return True, "prompt queued"
 
 
-def queued_prompts(trace_id: str) -> list[str]:
-    """Prompts waiting behind this run's current turn, oldest first.
+def queued_prompts(trace_id: str) -> list[dict]:
+    """`{id, text}` for each prompt waiting behind this run's current turn,
+    oldest first. The id is what `edit_queued` / `cancel_queued` name.
 
     Read straight off the runner rather than through `_live_runner`: this is a
     read, and a session whose loop has stopped still holds prompts nothing will
@@ -273,6 +274,66 @@ def queued_prompts(trace_id: str) -> list[str]:
     if runner is None:
         return []
     return list(getattr(runner, "pending_prompts", list)())
+
+
+def edit_queued(trace_id: str, prompt_id: str, text: str) -> tuple[bool, str]:
+    """Rewrite a prompt still waiting behind this run's current turn.
+
+    Routed through `_live_runner` rather than the plain lookup `queued_prompts`
+    uses: a read of a dead session's leftover queue is honest, but *editing* it
+    would report success for a change nothing will ever run.
+    """
+    runner, refusal = _live_runner(trace_id)
+    if runner is None:
+        return False, refusal
+    ok, detail = runner.edit_pending(prompt_id, text)
+    if ok:
+        log.write("sdk_prompt_edited", trace_id=trace_id, prompt_id=prompt_id)
+    return ok, detail
+
+
+def cancel_queued(trace_id: str, prompt_id: str) -> tuple[bool, str]:
+    """Drop a prompt still waiting behind this run's current turn. The turn in
+    flight is untouched — cancelling that is `interrupt_run`."""
+    runner, refusal = _live_runner(trace_id)
+    if runner is None:
+        return False, refusal
+    ok, detail = runner.cancel_pending(prompt_id)
+    if ok:
+        log.write("sdk_prompt_cancelled", trace_id=trace_id,
+                  prompt_id=prompt_id)
+    return ok, detail
+
+
+def run_phase(trace_id: str) -> str | None:
+    """What this run is actually doing, or None when this process owns no run.
+
+    The serve-time phase is otherwise inferred from span timestamps, which for
+    a run regin launched is a worse source than the runner sitting in the same
+    process: a five-minute tool call emits no spans and reads `inactive-stale`
+    while the child is plainly working, and a park is guessed from whether a
+    PENDING span happens to be the newest rather than read from `_asks`, which
+    knows. None means "not ours" — the caller keeps its heuristic, which is the
+    only thing a session regin merely traces has.
+
+    Ordering is by what the operator most needs to see: a park outranks the
+    turn holding it open, and a stop already asked for outranks the turn it is
+    ending.
+    """
+    trace_id = owning_run(trace_id)
+    with _lock:
+        runner = _runs.get(trace_id)
+        reserved = trace_id in _reserved
+        kinds = {ask.kind for ask in _asks.values() if ask.trace_id == trace_id}
+    if runner is None:
+        return 'starting' if reserved else None
+    if kinds & _ANSWER_KINDS:
+        return 'waiting-input'
+    if kinds:
+        return 'waiting-permission'
+    if runner.stop_requested:
+        return 'stopping'
+    return 'working' if runner.turn_in_flight else 'idle'
 
 
 def stop_run(trace_id: str) -> tuple[bool, str]:

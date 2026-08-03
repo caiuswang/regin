@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from dataclasses import dataclass, replace
 
 from lib.activity_log import get_activity_logger
@@ -93,6 +94,10 @@ class _Turn:
     index: int
     done: asyncio.Future | None = None
     context: int | None = None
+    # A placeholder holding the floor for an abandoned turn's late result —
+    # see `_leave_a_sink`. Not work anyone is waiting on, so it must not read
+    # as the agent working.
+    sink: bool = False
 
 
 # `claude_agent_sdk._internal.query.DEFERRING_TASK_TYPES`. Copied rather than
@@ -209,6 +214,32 @@ def _enrich_permission(span: dict | None, event) -> None:
         policy.request_attrs(event.tool_name, event.tool_input, event.kind))
 
 
+# `eq=False` so identity is identity: two queued "continue"s are two distinct
+# entries, and field equality would let a list removal take the wrong one.
+@dataclass(eq=False)
+class _Queued:
+    """One prompt waiting behind the running turn.
+
+    A record rather than the bare string it used to be, because `/live` needs
+    to name *one* entry to edit or drop and two identical prompts are two
+    entries — position is not identity across the poll that renders them and
+    the request that acts on one.
+
+    Leaving `_pending` is the cutoff for both mutations, and the pump takes a
+    record off it under the same lock the mutations hold — so an edit either
+    lands before the CLI is given the text or finds nothing to edit, with no
+    third outcome where it rewrites a prompt already sent.
+
+    Cancelling is a flag rather than a removal because the record is by then
+    inside an `asyncio.Queue`, which cannot be reached into; the pump skips it
+    on the way past instead.
+    """
+
+    id: str
+    text: str
+    cancelled: bool = False
+
+
 class AgentRunner:
     """One live session. Not reusable across runs."""
 
@@ -230,12 +261,19 @@ class AgentRunner:
         # emitted — see `_enrich_answer`.
         self._answered_asks: dict[str, dict] = {}
         self._prompts: asyncio.Queue = asyncio.Queue()
-        # The same texts, readable from another thread. An SDK run writes no
+        # The same records, readable from another thread. An SDK run writes no
         # transcript `queue-operation` entries, so this list is the only thing
         # `/live` can derive "still waiting" from — without it a queued steer is
         # represented solely by the client's optimistic echo and vanishes when
         # that TTL lapses, while the prompt is in fact still queued.
-        self._pending: list[str] = []
+        self._pending: list[_Queued] = []
+        # Guards `_pending` and the records' flags — the only runner state a
+        # Flask thread mutates directly. Editing a queued prompt is a list walk
+        # and a field write, so it answers in-thread under this lock rather than
+        # hopping onto the loop and waiting on a future for an answer the
+        # operator is holding the UI open for. Never held across an `await`.
+        self._queue_lock = threading.Lock()
+        self._queue_seq = 0
         self._model = settings.agent_sdk.model or None
         self._row_model = self._model
         # The last turn index handed out, not the turn currently running: an
@@ -248,6 +286,10 @@ class AgentRunner:
         # that carries it — see `_note_session`.
         self._session_id: str | None = None
         self._stopping = asyncio.Event()
+        # Set by `interrupt()` and cleared once the turn it cancelled is gone.
+        # A stop ends the session; this one only ends the turn, so the pump has
+        # to be able to tell the two apart when it stops waiting.
+        self._interrupting = asyncio.Event()
         self._stopped = False
         self._queue_closed = False
         self._reader: asyncio.Task | None = None
@@ -513,7 +555,8 @@ class AgentRunner:
             return True, self._open[0]
         return False, None
 
-    def _open_turn(self, done: asyncio.Future | None = None) -> _Turn:
+    def _open_turn(self, done: asyncio.Future | None = None, *,
+                   sink: bool = False) -> _Turn:
         """Start a turn on its own index.
 
         Allocated before the frame's events are handled so `_stamp_turn` puts
@@ -521,7 +564,7 @@ class AgentRunner:
         previous turn's would file a subagent's work under a turn that ended
         hours earlier.
         """
-        turn = _Turn(index=self._turn_index + 1, done=done)
+        turn = _Turn(index=self._turn_index + 1, done=done, sink=sink)
         self._turn_index = turn.index
         self._open.append(turn)
         return turn
@@ -733,6 +776,19 @@ class AgentRunner:
         return self._stopping.is_set() or self._stopped or self._queue_closed
 
     @property
+    def turn_in_flight(self) -> bool:
+        """True while the agent has a turn open — the honest "working".
+
+        A turn the agent opened for itself counts: a finished background task
+        wakes it for a follow-up nobody prompted, and an operator watching the
+        card is owed "running" for that too. A sink does not — it is a
+        placeholder for a result an abandoned turn may never send, and counting
+        it would pin the card at "running" until the operator's next prompt
+        happened to clear it.
+        """
+        return any(not turn.sink for turn in self._open)
+
+    @property
     def stop_requested(self) -> bool:
         """True only when someone asked this session to stop — distinct from
         `is_stopping`, which also covers a one-shot run whose queue was closed
@@ -747,16 +803,50 @@ class AgentRunner:
         run's first turn, not a message queued behind one, and reporting it as
         waiting puts a steering chip on the card for the gap between the run
         becoming reachable and its pump starting — which is exactly when an
-        operator opens `/live` on a run they just launched.
+        operator opens `/live` on a run they just launched. Keeping it out of
+        the mirror also keeps it un-editable, which is right for the same
+        reason: it is already on its way to the CLI.
         """
-        self._prompts.put_nowait(text)
-        if waiting:
-            self._pending.append(text)
+        with self._queue_lock:
+            self._queue_seq += 1
+            item = _Queued(id=f"q{self._queue_seq}", text=text)
+            if waiting:
+                self._pending.append(item)
+        self._prompts.put_nowait(item)
 
-    def pending_prompts(self) -> list[str]:
+    def pending_prompts(self) -> list[dict]:
         """Prompts queued behind the running turn, oldest first. Safe to call
         from any thread — a snapshot, never the live list."""
-        return list(self._pending)
+        with self._queue_lock:
+            return [{'id': q.id, 'text': q.text} for q in self._pending]
+
+    def _find_pending(self, prompt_id: str) -> "_Queued | None":
+        """The still-queued record `prompt_id` names. Caller holds the lock."""
+        return next((q for q in self._pending if q.id == prompt_id), None)
+
+    def edit_pending(self, prompt_id: str, text: str) -> tuple[bool, str]:
+        """Rewrite a queued prompt in place. Safe to call from any thread.
+
+        In place, keeping its slot: an operator fixing a typo in the third
+        queued message meant to fix that message, not to move it behind the
+        two after it.
+        """
+        with self._queue_lock:
+            item = self._find_pending(prompt_id)
+            if item is None:
+                return False, "that prompt is no longer queued"
+            item.text = text
+        return True, "prompt updated"
+
+    def cancel_pending(self, prompt_id: str) -> tuple[bool, str]:
+        """Drop a queued prompt before its turn starts. Any thread."""
+        with self._queue_lock:
+            item = self._find_pending(prompt_id)
+            if item is None:
+                return False, "that prompt is no longer queued"
+            item.cancelled = True
+            self._pending.remove(item)
+        return True, "prompt removed"
 
     def close(self) -> None:
         """End the session once everything already queued has run."""
@@ -775,10 +865,16 @@ class AgentRunner:
         honour it `_drain_turn`'s grace period abandons the turn anyway.
 
         Anything still queued is dropped: someone who pressed Stop did not mean
-        "run three more prompts first".
+        "run three more prompts first". Clearing the mirror is not enough for
+        that — the records are already inside the queue — so each is cancelled
+        as well, the same flag `cancel_pending` sets, and the pump skips them if
+        it reaches them before the terminator.
         """
         self._stopping.set()
-        self._pending.clear()
+        with self._queue_lock:
+            for item in self._pending:
+                item.cancelled = True
+            self._pending.clear()
         self.close()
         if self._client is None:
             return
@@ -788,8 +884,9 @@ class AgentRunner:
             log.error("sdk_run_interrupt_failed", trace_id=self.trace_id,
                       detail=str(exc))
 
-    async def _await_prompt(self) -> str | None:
-        """Block for the next prompt, raising `TimeoutError` on stream silence.
+    async def _await_prompt(self) -> "_Queued | None":
+        """Block for the next queued record, raising `TimeoutError` on stream
+        silence.
 
         With `idle_timeout_sec` 0 — the default — this waits indefinitely: an
         interactive session belongs to the operator until they stop it. A
@@ -810,24 +907,44 @@ class AgentRunner:
                 if self._frames == seen:
                     raise
 
+    def _take(self, item: "_Queued") -> bool:
+        """Claim `item` for the turn about to run, or report it cancelled.
+
+        The mirror pops with the queue, so a prompt stops reading as "waiting"
+        the moment its turn starts — the same poll the real prompt span lands.
+        That pop happens under the lock the mutations hold, which is what makes
+        the cutoff exact: a rewrite either lands before the CLI is given the
+        text, or finds the record gone and refuses.
+        """
+        with self._queue_lock:
+            if item.cancelled:
+                return False
+            if item in self._pending:
+                self._pending.remove(item)
+        return True
+
     async def _next_prompt(self) -> str | None:
-        """The next queued prompt, or None when the session should end.
+        """The next queued prompt's text, or None when the session should end.
+
+        A cancelled record is skipped rather than run: it is already inside the
+        queue when it is dropped, so this is where a removed prompt actually
+        stops existing.
 
         An idle session still holds a `claude` child process, so an abandoned
         one is reclaimed rather than pinned against `max_concurrent_runs`
         forever.
         """
-        try:
-            text = await self._await_prompt()
-        except asyncio.TimeoutError:
-            self._stop_reason = "idle timeout"
-            return None
-        # The mirror pops with the queue, so a prompt stops reading as "waiting"
-        # the moment its turn starts — the same poll the real prompt span lands.
-        # `_CLOSE` was never mirrored, so it falls through as a no-op.
-        if self._pending and self._pending[0] is text:
-            del self._pending[0]
-        return text
+        while True:
+            try:
+                item = await self._await_prompt()
+            except asyncio.TimeoutError:
+                self._stop_reason = "idle timeout"
+                return None
+            # `_CLOSE` was never a record, so it falls through untouched.
+            if item is _CLOSE:
+                return None
+            if self._take(item):
+                return item.text
 
     async def pump(self) -> None:
         """Run queued prompts one at a time until the session ends."""
@@ -840,22 +957,59 @@ class AgentRunner:
                 return
 
     async def _drain_turn(self, text: str) -> None:
-        """Run one turn, abandoning it if the session is stopped mid-flight.
+        """Run one turn, abandoning it if the turn or the session is cancelled.
 
         A turn ends when the CLI sends its result, and a CLI that sends none
-        leaves a turn no interrupt can be proven to end. So a stop that has
-        already been asked for is honoured on a timer rather than on the CLI's
-        cooperation.
+        leaves a turn no interrupt can be proven to end. So a cancellation that
+        has already been asked for is honoured on a timer rather than on the
+        CLI's cooperation.
+
+        Both cancellations wait the same way and differ only in what they leave
+        behind: a stop ends the pump, while an interrupt returns to it, so the
+        session stays up and the prompts queued behind the cancelled turn still
+        run. Without the interrupt arm the pump would sit on `await done`
+        forever for a CLI that honours an interrupt silently — a session alive
+        on paper that will never run another turn.
         """
+        # An interrupt asked for while nothing was running has nothing to
+        # cancel, and a latch left raised would abandon this turn before it had
+        # said anything. Dropping it here also costs an interrupt racing the
+        # turn's start nothing: the CLI was sent one either way, and its result
+        # ends the turn through the ordinary path.
+        self._interrupting.clear()
         turn = asyncio.ensure_future(self._run_turn(text))
-        stopping = asyncio.ensure_future(self._stopping.wait())
-        done, _ = await asyncio.wait({turn, stopping},
+        waits = [asyncio.ensure_future(e.wait())
+                 for e in (self._stopping, self._interrupting)]
+        done, _ = await asyncio.wait({turn, *waits},
                                      return_when=asyncio.FIRST_COMPLETED)
-        stopping.cancel()
+        for wait in waits:
+            wait.cancel()
         if turn in done:
             turn.result()
             return
         await self._abandon_turn(turn)
+        if not self._stopping.is_set():
+            self._leave_a_sink()
+
+    def _leave_a_sink(self) -> None:
+        """Hold the floor for a result the abandoned turn is still owed.
+
+        Only after an *interrupt*, because only then does the pump go on to
+        another turn. An abandoned turn is one the CLI never ended, so its
+        result may still be coming; `_result_turn` gives a result to whatever
+        is open, and with the next turn open by then it would close that one
+        instead — the "one result out of phase for good" `_result_turn`'s own
+        docstring warns about, previously unreachable because every
+        abandonment was a stop and the pump returned.
+
+        A sink carries no `done`, so nothing waits on it and a result that
+        never arrives strands nothing; the next prompt's `_take_the_floor`
+        retires it regardless. Frames arriving meanwhile are the abandoned
+        turn's, and attributing them here is what the sink is for.
+        """
+        if self._open:
+            return
+        self._open_turn(sink=True)
 
     async def _abandon_turn(self, turn) -> None:
         """Give an interrupted turn a grace period to end itself, then drop it.
@@ -948,6 +1102,13 @@ class AgentRunner:
             self._close_turn(turn)
 
     async def interrupt(self) -> None:
+        """Cancel the turn in flight; the session and its queue survive.
+
+        The latch is raised before the interrupt goes out so `_drain_turn` is
+        already watching when the CLI honours it — and so a CLI that honours it
+        without a `ResultMessage` still releases the pump.
+        """
+        self._interrupting.set()
         await self._client.interrupt()
 
     async def _settle_stream(self, status: str) -> None:

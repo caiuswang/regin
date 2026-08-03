@@ -22,6 +22,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import Button from '../ui/Button.vue'
 import LiveComposer from './LiveComposer.vue'
 import LiveStopControl from './LiveStopControl.vue'
+import LiveCancelControl from './LiveCancelControl.vue'
 import {
   fmtClock, fmtElapsedSeconds, terminalSpanLabel, terminalSpanDetail,
   toolDisplayName,
@@ -120,6 +121,11 @@ const pendingState = computed(() => {
 const PHASE_STATE = {
   ended: () => 'finished',
   'inactive-stale': () => 'inactive',
+  // Only a run regin owns reports these — the span heuristic cannot see a
+  // child that has not spoken yet or a teardown in progress. Both are states
+  // nothing can be typed into, so neither takes a composer.
+  starting: () => 'starting',
+  stopping: () => 'stopping',
   // The server reports a parked ask as `waiting-permission` (it IS parked in
   // can_use_tool), so this phase must still resolve to the question state —
   // otherwise the one span the session is blocked on renders as a response.
@@ -168,10 +174,24 @@ const composerMode = computed(() => {
 const composerDraft = ref('')
 watch(() => props.sessionId, () => { composerDraft.value = '' })
 
-// A finished run has nothing left to stop, and the scoped view addresses a
-// subagent rather than the session the Stop route would end.
+// A finished run has nothing left to stop, a stopping one has already been
+// asked, and the scoped view addresses a subagent rather than the session the
+// Stop route would end. `starting` is refused for a different reason: the id
+// is claimed but no runner is registered yet, so `stop_run` can only answer
+// "no live agent session" — the very outcome `registry.is_starting` exists to
+// keep operators away from.
+const NOT_STOPPABLE = new Set(['finished', 'stopping', 'starting'])
 const canStop = computed(() =>
-  props.sdkOwned && !props.scopeAgent && state.value !== 'finished')
+  props.sdkOwned && !props.scopeAgent && !NOT_STOPPABLE.has(state.value))
+
+// Cancel is the turn-level control, so it rides the same steerable states the
+// compact composer does — there is nothing to cancel while idle, finished, or
+// parked on a question. Unlike Stop it is NOT gated on `sdkOwned`: the route
+// serves both tiers, sending a typed interrupt to a run regin owns and the
+// Escape a human would press to a pane it merely watches. `bridgeReachable` is
+// the honest gate — it is true for either kind of reachable session.
+const canCancel = computed(() =>
+  !props.scopeAgent && props.bridgeReachable && STEERABLE.has(state.value))
 
 const permLabel = computed(() => {
   const tool = pendingPerm.value?.attributes?.tool_name
@@ -362,6 +382,22 @@ const elapsed = computed(() => {
       </div>
     </template>
 
+    <template v-else-if="state === 'starting'">
+      <div class="live-now-1">
+        <span class="live-now-tag">NOW</span>
+        <span class="live-spinner" aria-hidden="true"></span>
+        <span class="live-now-label">starting agent session…</span>
+      </div>
+    </template>
+
+    <template v-else-if="state === 'stopping'">
+      <div class="live-now-1">
+        <span class="live-now-tag">NOW</span>
+        <span class="live-spinner" aria-hidden="true"></span>
+        <span class="live-now-label">stopping…</span>
+      </div>
+    </template>
+
     <template v-else-if="state === 'idle'">
       <div class="live-now-1">
         <span class="live-now-tag">NOW</span>
@@ -421,8 +457,13 @@ const elapsed = computed(() => {
 
     <!-- Outside the per-state branches: a run must be stoppable in EVERY
          state it can be stuck in, including the blocked ones (a question or
-         permission nobody will answer is exactly when Stop is needed). -->
-    <LiveStopControl v-if="canStop" :session-id="sessionId" />
+         permission nobody will answer is exactly when Stop is needed).
+         Cancel keeps its own gate — it acts on the turn, and only some of
+         those states have one. -->
+    <div v-if="canCancel || canStop" class="live-now-controls">
+      <LiveCancelControl v-if="canCancel" :session-id="sessionId" />
+      <LiveStopControl v-if="canStop" :session-id="sessionId" />
+    </div>
 
     <LiveComposer
       v-if="composerMode"

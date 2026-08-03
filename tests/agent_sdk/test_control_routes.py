@@ -31,9 +31,19 @@ def owned(monkeypatch):
         calls["interrupt"] = trace_id
         return True, "interrupt sent"
 
+    def _edit(trace_id, prompt_id, text):
+        calls["edit"] = (trace_id, prompt_id, text)
+        return True, "prompt updated"
+
+    def _cancel(trace_id, prompt_id):
+        calls["cancel"] = (trace_id, prompt_id)
+        return True, "prompt removed"
+
     monkeypatch.setattr(registry, "submit_prompt", _prompt)
     monkeypatch.setattr(agent_sdk, "stop_run", _stop)
     monkeypatch.setattr(agent_sdk, "interrupt_run", _interrupt)
+    monkeypatch.setattr(agent_sdk, "edit_queued", _edit)
+    monkeypatch.setattr(agent_sdk, "cancel_queued", _cancel)
     return calls
 
 
@@ -85,6 +95,46 @@ def test_control_of_an_unowned_run_refuses_rather_than_500s(flask_client):
 
         assert body["delivered"] is False
         assert body["detail"] == "no live agent session"
+
+
+def test_a_queued_prompt_can_be_rewritten_in_place(flask_client, owned):
+    res = flask_client.patch("/api/agent-runs/sdk-abc/queue/q2",
+                             json={"prompt": "and now the tests, properly"})
+
+    assert res.status_code == 200
+    assert res.get_json() == {"updated": True, "detail": "prompt updated"}
+    assert owned["edit"] == ("sdk-abc", "q2", "and now the tests, properly")
+
+
+def test_an_edit_is_bounded_and_needs_a_prompt(flask_client, owned):
+    assert flask_client.patch("/api/agent-runs/sdk-abc/queue/q1",
+                              json={"prompt": " "}).status_code == 400
+    assert flask_client.patch("/api/agent-runs/sdk-abc/queue/q1",
+                              json={}).status_code == 400
+
+    flask_client.patch("/api/agent-runs/sdk-abc/queue/q1",
+                       json={"prompt": "x" * 20000})
+    assert len(owned["edit"][2]) == 8000
+
+
+def test_a_queued_prompt_can_be_removed(flask_client, owned):
+    res = flask_client.delete("/api/agent-runs/sdk-abc/queue/q3")
+
+    assert res.status_code == 200
+    assert res.get_json() == {"removed": True, "detail": "prompt removed"}
+    assert owned["cancel"] == ("sdk-abc", "q3")
+
+
+def test_queue_mutations_on_an_unowned_run_refuse_rather_than_500(flask_client):
+    """The card is a phone, and the run it is showing may have ended between
+    the poll that rendered the row and the tap on it."""
+    edited = flask_client.patch("/api/agent-runs/sdk-gone/queue/q1",
+                                json={"prompt": "too late"}).get_json()
+    removed = flask_client.delete(
+        "/api/agent-runs/sdk-gone/queue/q1").get_json()
+
+    assert edited == {"updated": False, "detail": "no live agent session"}
+    assert removed == {"removed": False, "detail": "no live agent session"}
 
 
 def test_reaper_closes_runs_no_process_backs(flask_client):

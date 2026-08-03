@@ -215,6 +215,33 @@ def api_session_bridge_key(trace_id):
     return jsonify({"delivered": result.delivered, "detail": result.detail})
 
 
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-interrupt', methods=['POST'])
+@require_editor
+def api_session_bridge_interrupt(trace_id):
+    """Cancel the turn in flight. The session stays open for the next prompt.
+
+    Session-scoped rather than a second control on `/api/agent-runs`, because
+    both tiers can do this and the operator pressing it is not thinking about
+    which one they are on: a session regin owns is interrupted over its typed
+    channel, and one it merely traces gets the Escape a human would press in
+    that pane. The SDK branch is deliberately not gated on
+    `agent_bridge.enabled`, on the same reasoning as `bridge-send` — that flag
+    authorizes keystroke injection into a terminal, which a control message to
+    a process regin owns never performs.
+
+    Ending the session is a separate, explicit act (`/api/agent-runs/<id>/stop`).
+    Not recorded in the steering inbox — a cancellation is not a message — and
+    the tmux branch spends a `rate_limit_per_minute` token like any keystroke.
+    """
+    if agent_sdk.is_sdk_owned(trace_id):
+        delivered, detail = agent_sdk.interrupt_run(trace_id)
+        return jsonify({"delivered": delivered, "detail": detail})
+    if not settings.agent_bridge.enabled:
+        return jsonify({"delivered": False, "detail": "bridge disabled"})
+    result = delivery.deliver_key(trace_id, "Escape")
+    return jsonify({"delivered": result.delivered, "detail": result.detail})
+
+
 def _parse_answer(payload: dict):
     """(option_index, text, chat, body) from an answer payload, or (None, ...)
     when `option_index` is missing/invalid. `text` is the sanitized free-form

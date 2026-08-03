@@ -51,8 +51,14 @@ const {
 // first summary lands.
 const mainPhase = computed(() => meta.value.agent_phase?.main || meta.value.phase || '')
 
-// Queued / steer prompts (server-derived + optimistic just-sent steers).
-const queued = useQueuedPrompts(() => meta.value.queued_prompts, () => spans.value)
+// Queued / steer prompts (server-derived + optimistic just-sent steers), plus
+// the edit/remove round trips for the rows that carry a server id.
+const queued = useQueuedPrompts(
+  () => meta.value.queued_prompts, () => spans.value, () => sessionId.value)
+
+async function onQueueEdit({ id, text, done }) {
+  if (await queued.edit(id, text)) done?.()
+}
 
 // Agent roster: the server's whole-session agent_roster is the single
 // source of truth (window-independent — the loaded tail silently drops
@@ -131,6 +137,10 @@ const PHASE_STATUS = {
   'waiting-permission': { cls: 'live-status-waiting', label: 'waiting' },
   'waiting-input': { cls: 'live-status-waiting', label: 'waiting' },
   working: { cls: 'live-status-running', label: 'running' },
+  // Only a run regin owns reaches these: the server reads them off the live
+  // runner, which knows things no span-derived heuristic can see.
+  starting: { cls: 'live-status-running', label: 'starting' },
+  stopping: { cls: 'live-status-waiting', label: 'stopping' },
 }
 const headerStatus = computed(() => {
   const s = PHASE_STATUS[mainPhase.value]
@@ -668,7 +678,21 @@ onUnmounted(() => {
         @click="jumpToNew"
       >↓ {{ newCount }} new</Button>
 
-      <LiveQueuedChips v-if="!scope.scopeId" :items="queued.items" />
+      <template v-if="!scope.scopeId">
+        <!-- Above the list, not on the row: the row a refusal is about is
+             usually the one that just stopped existing. -->
+        <div
+          v-if="queued.notice"
+          class="live-queued-notice"
+          data-testid="live-queued-notice"
+        >✗ {{ queued.notice }}</div>
+        <LiveQueuedChips
+          :items="queued.items"
+          :busy-ids="queued.busyIds"
+          @edit="onQueueEdit"
+          @remove="e => queued.remove(e.id)"
+        />
+      </template>
 
       <LiveNowZone
         ref="nowZoneRef"

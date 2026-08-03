@@ -10,15 +10,19 @@ raw SDK import is confined to one module.
 """
 
 from .registry import (
+    cancel_queued,
+    edit_queued,
     interrupt_run,
     is_sdk_owned,
     is_starting,
     queued_prompts,
     resolve_ask,
     resolve_permission,
+    run_phase,
     stop_run,
     submit_prompt,
 )
 
-__all__ = ['interrupt_run', 'is_sdk_owned', 'is_starting', 'queued_prompts',
-           'resolve_ask', 'resolve_permission', 'stop_run', 'submit_prompt']
+__all__ = ['cancel_queued', 'edit_queued', 'interrupt_run', 'is_sdk_owned',
+           'is_starting', 'queued_prompts', 'resolve_ask',
+           'resolve_permission', 'run_phase', 'stop_run', 'submit_prompt']

@@ -48,12 +48,16 @@ def test_queued_prompts_are_visible_oldest_first(captured, fake_client):
         run = await _started(_TRACE)
         assert run.pending_prompts() == []
         run.enqueue("one")
-        assert run.pending_prompts() == ["one"]
+        assert _texts(run.pending_prompts()) == ["one"]
         run.enqueue("two")
         run.enqueue("three")
         return run.pending_prompts()
 
-    assert _run(scenario()) == ["one", "two", "three"]
+    queued = _run(scenario())
+    assert _texts(queued) == ["one", "two", "three"]
+    # Every entry carries the id the edit/remove routes name, and no two share
+    # one — position is not identity across a poll and the request acting on it.
+    assert len({q["id"] for q in queued}) == 3
 
 
 def test_a_prompt_leaves_the_queue_when_its_turn_starts(captured, fake_client):
@@ -66,7 +70,7 @@ def test_a_prompt_leaves_the_queue_when_its_turn_starts(captured, fake_client):
         original = fake_client.query
 
         async def query(text):
-            seen.append(run.pending_prompts())
+            seen.append(_texts(run.pending_prompts()))
             await original(text)
 
         fake_client.query = query
@@ -77,7 +81,7 @@ def test_a_prompt_leaves_the_queue_when_its_turn_starts(captured, fake_client):
         await run.stop()
         return run.pending_prompts()
 
-    leftover = _run(scenario())
+    leftover = _texts(_run(scenario()))
     # Inside turn 1 only "second" is still waiting; by turn 2 nothing is.
     assert seen == [["second"], []]
     assert leftover == []
@@ -111,16 +115,23 @@ def test_registry_reads_the_queue_through_the_child_session_alias(
                 registry.queued_prompts("never-ours"))
 
     own, aliased, stranger = _run(scenario())
-    assert own == ["waiting"]
-    assert aliased == ["waiting"]
+    assert _texts(own) == ["waiting"]
+    assert _texts(aliased) == ["waiting"]
     assert stranger == []
+
+
+def _texts(queued):
+    """Just the prompts, for assertions that are about order, not identity."""
+    return [q["text"] for q in queued]
 
 
 def _own(monkeypatch, pending):
     """Make `_queued_prompts` see an owned run holding `pending`."""
     from lib import agent_sdk
     monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: True)
-    monkeypatch.setattr(agent_sdk, "queued_prompts", lambda tid: list(pending))
+    monkeypatch.setattr(
+        agent_sdk, "queued_prompts",
+        lambda tid: [{"id": f"q{i}", "text": t} for i, t in enumerate(pending, 1)])
 
 
 def test_the_owned_run_queue_is_served_verbatim_in_fifo_order(monkeypatch):
@@ -132,6 +143,8 @@ def test_the_owned_run_queue_is_served_verbatim_in_fifo_order(monkeypatch):
 
     assert [q["content"] for q in served] == ["oldest", "middle", "newest"]
     assert {q["source"] for q in served} == {"sdk"}
+    # The id rides through to the client, which is what makes a row editable.
+    assert [q["id"] for q in served] == ["q1", "q2", "q3"]
 
 
 def test_identical_queued_prompts_are_not_collapsed(monkeypatch):
@@ -199,4 +212,54 @@ def test_the_launch_prompt_is_not_advertised_as_a_queued_steer(
 
     before, during = _run(scenario())
     assert before == []
-    assert during == ["a real steer"]
+    assert _texts(during) == ["a real steer"]
+
+
+def test_a_stopped_run_serves_an_empty_queue_not_its_bridge_audit_rows(
+        monkeypatch):
+    """The guard has to outlive the run.
+
+    `bridge.py` records every SDK steer as a delivered `bridge_messages` row
+    for the audit trail, and those stay inside the merge window for 90s. While
+    the run is owned they are correctly ignored — but once it stops, falling
+    through to the transcript+bridge path resurrects them: prompts that already
+    ran come back as chips, newest-first (so the queue reads backwards), and an
+    edited one carries the body it was SENT with rather than the body it ran
+    as. Observed end to end against a real child before this guard existed.
+    """
+    from lib import agent_sdk
+    from lib.agent_sdk import store as sdk_store
+    from web.blueprints.trace import sessions
+
+    monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: False)
+    monkeypatch.setattr(sdk_store, "find_run", lambda tid: {"trace_id": tid})
+    monkeypatch.setattr(settings.agent_bridge, "enabled", True)
+    monkeypatch.setattr(
+        sessions, "_recent_bridge_steers",
+        lambda tid: [{"content": "already ran", "delivered_at": "x"}])
+
+    assert sessions._queued_prompts("sdk-stopped") == []
+
+
+def test_a_session_regin_never_launched_still_takes_the_bridge_path(
+        monkeypatch):
+    """The guard keys on "regin launched this", so a terminal session — whose
+    steers really are the only server-side record of what is queued — must be
+    unaffected by it."""
+    from lib import agent_sdk
+    from lib.agent_sdk import store as sdk_store
+    from web.blueprints.trace import sessions
+
+    monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: False)
+    monkeypatch.setattr(sdk_store, "find_run", lambda tid: None)
+    monkeypatch.setattr(settings.agent_bridge, "enabled", True)
+    monkeypatch.setattr(sessions, "_recent_bridge_steers",
+                        lambda tid: [{"content": "steered", "delivered_at": "x"}])
+    monkeypatch.setattr("lib.trace.queued_prompts.current_queued_prompts",
+                        lambda tid: [])
+    monkeypatch.setattr("lib.trace.queued_prompts.consumed_prompt_texts",
+                        lambda tid: set())
+
+    served = sessions._queued_prompts("terminal-session")
+
+    assert [q["content"] for q in served] == ["steered"]

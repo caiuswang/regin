@@ -18,6 +18,8 @@ import pytest
 from lib.agent_sdk import policy, registry, runner as runner_mod
 from lib.settings import settings
 
+from tests.agent_sdk.conftest import await_parks
+
 
 @pytest.fixture
 def notices(monkeypatch):
@@ -128,10 +130,7 @@ def test_park_pushes_then_dismisses_around_the_wait(notices, monkeypatch):
         run.loop = asyncio.get_running_loop()
         task = asyncio.create_task(
             run._park("question", "AskUserQuestion", QUESTION_INPUT, _Ctx()))
-        for _ in range(200):
-            if registry.pending_asks("sdk-p1"):
-                break
-            await asyncio.sleep(0)
+        await await_parks("sdk-p1")
         assert notices["pushed"], "the operator was never told"
         assert notices["dismissed"] == [], "dismissed before it was answered"
         ok, _detail = registry.resolve_ask("sdk-p1", [{"option_index": 0}])

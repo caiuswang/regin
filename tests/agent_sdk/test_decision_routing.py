@@ -24,6 +24,8 @@ from lib.agent_bridge import delivery
 from lib.agent_sdk import registry, runner as runner_mod
 from lib.settings import settings
 
+from tests.agent_sdk.conftest import await_parks
+
 _TRACE = "sdk-decidable-session"
 
 
@@ -395,11 +397,7 @@ def test_two_gated_calls_in_one_message_both_resolve(spans, results,
                 "Bash", {"command": f"echo {i}"}, _Ctx(f"toolu_{i}")))
             for i in range(2)
         ]
-        for _ in range(200):
-            await asyncio.sleep(0.005)
-            if len(registry.pending_asks("sdk-parallel")) == 2:
-                break
-        parked = registry.pending_asks("sdk-parallel")
+        parked = await await_parks("sdk-parallel", 2)
         assert [a.tool_use_id for a in parked] == ["toolu_0", "toolu_1"]
         assert registry.resolve_permission(
             "sdk-parallel", {"behavior": "allow"},
@@ -429,10 +427,7 @@ def test_a_question_and_a_gated_tool_can_be_parked_at_once(spans, results,
             _Ctx("toolu_ask")))
         gated = asyncio.ensure_future(run._can_use_tool(
             "Bash", {"command": "ls"}, _Ctx("toolu_bash")))
-        for _ in range(200):
-            await asyncio.sleep(0.005)
-            if len(registry.pending_asks("sdk-mixed")) == 2:
-                break
+        await await_parks("sdk-mixed", 2)
         assert registry.resolve_ask("sdk-mixed", [{"option_index": 0}])[0] is True
         assert registry.resolve_permission("sdk-mixed",
                                            {"behavior": "allow"})[0] is True

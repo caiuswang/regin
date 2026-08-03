@@ -11,39 +11,33 @@
 // mirrors the tail's message rows) — a consumed prompt is already in the
 // conversation, so it just stops being served and drops off the next poll;
 // there is no "sent" history here.
-import { computed } from 'vue'
-import { stripMarkdown } from '../../utils/liveRows.js'
+//
+// A row is editable only when the server gave it an `id`, which only the SDK
+// tier's queue can: it is regin's own in-memory list. The transcript-derived
+// queue of a terminal session belongs to Claude Code and has no write path, so
+// those rows stay read-only rather than offering a control that does nothing.
+// The parent owns both round trips — a refusal has to keep the row.
+import LiveQueuedItem from './LiveQueuedItem.vue'
 
-const props = defineProps({
+defineProps({
   items: { type: Array, default: () => [] },
+  // Ids with a request in flight — the row goes inert rather than letting a
+  // double-tap fire a second edit or remove against the same entry.
+  busyIds: { type: Object, default: () => new Set() },
 })
-
-const rows = computed(() => props.items.map((q, i) => {
-  // 'sdk' reads the same as 'bridge' deliberately: both are a message the
-  // operator sent that is waiting to be picked up, so the label doesn't flip
-  // when the optimistic echo hands over to the server's copy.
-  const steer = q.source === 'bridge' || q.source === 'sdk' || q.optimistic
-  return {
-    key: `${i}-${q.content?.slice(0, 24) || ''}`,
-    steer,
-    label: steer ? '⧗ steering…' : '⧗ queued',
-    text: stripMarkdown(q.content || ''),
-  }
-}))
+const emit = defineEmits(['edit', 'remove'])
 </script>
 
 <template>
-  <div v-if="rows.length" class="live-queued" data-testid="live-queued">
-    <div
-      v-for="r in rows"
-      :key="r.key"
-      class="live-row-msg live-queued-item"
-      :class="{ 'live-queued-steer': r.steer }"
-      data-testid="live-queued-item"
-      :title="r.text"
-    >
-      <span class="live-msg-eyebrow">{{ r.label }}</span>
-      <div class="live-msg-body">{{ r.text }}</div>
-    </div>
+  <div v-if="items.length" class="live-queued" data-testid="live-queued">
+    <LiveQueuedItem
+      v-for="(q, i) in items"
+      :key="q.id || `${i}-${(q.content || '').slice(0, 24)}`"
+      :item="q"
+      :editable="!!q.id"
+      :busy="busyIds.has(q.id)"
+      @edit="e => emit('edit', e)"
+      @remove="e => emit('remove', e)"
+    />
   </div>
 </template>

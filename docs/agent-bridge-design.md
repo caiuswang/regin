@@ -259,6 +259,16 @@ web-JWT-authed (`require_editor`) rather than bridge-token-guarded — see
 - `POST /api/sessions/<id>/bridge-send` — the composer's send action.
 - `POST /api/sessions/<id>/bridge-key` — a single allowlisted control key
   (e.g. Escape) for recovering from a swallowed-input overlay.
+- `POST /api/sessions/<id>/bridge-interrupt` — cancel the turn in flight,
+  leaving the session open for the next prompt. Session-scoped rather than a
+  control on `/api/agent-runs` because both tiers can do this and the operator
+  is not thinking about which one they are on: the route picks the transport,
+  sending a typed interrupt to a session regin owns (`lib/agent_sdk`) and the
+  `Escape` a human would press to a pane it merely traces. The tmux branch goes
+  through `deliver_key`, so it spends a `rate_limit_per_minute` token like any
+  keystroke. *Ending* the session stays SDK-only
+  (`POST /api/agent-runs/<id>/stop`) — a session regin only observes has no
+  channel to end it through.
 - `POST /api/sessions/<id>/bridge-answer` — drives a pending
   `AskUserQuestion`'s select TUI from the Q&A sheet.
 - `GET /api/sessions/<id>/bridge-commands` — the composer's `/`-autocomplete

@@ -778,7 +778,7 @@ def test_a_prompt_sent_mid_flight_is_the_turn_that_gets_answered(
         run.enqueue("p3")
         # p3 is queued while p2 is still running, and `/live` reports it as
         # waiting — because it is.
-        queued = run.pending_prompts()
+        queued = [q["text"] for q in run.pending_prompts()]
 
         await scripted_client.emit(_result(11))
         assert await _settle(lambda: scripted_client.prompts == ["p2", "p3"])

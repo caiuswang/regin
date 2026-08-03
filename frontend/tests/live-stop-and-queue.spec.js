@@ -210,3 +210,342 @@ test('the stop control and a long queued prompt fit a 390px card',
       `/live card overflows (${m.scrollWidth} > ${m.clientWidth}); offenders: ${m.offenders.join(', ') || 'unknown'}`
     ).toBeLessThanOrEqual(m.clientWidth + 1)
   })
+
+// ── Cancel the turn, keep the session ────────────────────────────────
+//
+// The interrupt route existed server-side with no caller at all, so an
+// operator whose agent was off down the wrong path could only kill the whole
+// session. Cancel is deliberately NOT gated on `sdk_owned` the way Stop is:
+// the route serves both tiers, sending a typed interrupt to a run regin owns
+// and the Escape a human would press to a pane it merely watches.
+
+test('a working session offers cancel on both tiers', async ({ page }) => {
+  const traceId = await postSession(page)
+  // Terminal tier: no typed channel, so no Stop — but Escape still reaches it.
+  await patchMap(page, {
+    sdk_owned: false, bridge_reachable: true, phase: 'working',
+    agent_phase: { main: 'working' },
+  })
+
+  await openCard(page, traceId)
+
+  await expect(page.getByTestId('live-cancel-btn')).toBeVisible()
+  await expect(page.getByTestId('live-stop')).toHaveCount(0)
+})
+
+test('cancel posts once, on one tap, and reports what the route said',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await patchMap(page, {
+      sdk_owned: true, bridge_reachable: true, phase: 'working',
+      agent_phase: { main: 'working' },
+    })
+    let cancelled = 0
+    await page.route('**/api/sessions/*/bridge-interrupt', (route) => {
+      cancelled += 1
+      return route.fulfill({ json: { delivered: true, detail: 'interrupt sent' } })
+    })
+
+    await openCard(page, traceId)
+    // One tap, no arm/confirm: Escape is one keypress in a terminal, and the
+    // session survives either way.
+    await page.getByTestId('live-cancel-btn').click()
+    await settle(page)
+
+    expect(cancelled).toBe(1)
+    await expect(page.getByTestId('live-cancel-detail'))
+      .toContainText('interrupt sent')
+  })
+
+test('a refused cancel says why and is not a dead end', async ({ page }) => {
+  const traceId = await postSession(page)
+  await patchMap(page, {
+    sdk_owned: false, bridge_reachable: true, phase: 'working',
+    agent_phase: { main: 'working' },
+  })
+  await page.route('**/api/sessions/*/bridge-interrupt', (route) => route.fulfill({
+    json: { delivered: false, detail: 'no reachable session' },
+  }))
+
+  await openCard(page, traceId)
+  await page.getByTestId('live-cancel-btn').click()
+  await settle(page)
+
+  await expect(page.getByTestId('live-cancel-detail'))
+    .toContainText('no reachable session')
+  await page.getByTestId('live-cancel-retry').click()
+  await expect(page.getByTestId('live-cancel-btn')).toBeVisible()
+})
+
+test('there is nothing to cancel while idle or finished', async ({ page }) => {
+  const traceId = await postSession(page)
+  const serve = await patchMap(page, {
+    sdk_owned: true, bridge_reachable: true, phase: 'idle',
+    agent_phase: { main: 'idle' },
+  })
+
+  await openCard(page, traceId)
+  await expect(page.getByTestId('live-cancel-btn')).toHaveCount(0)
+  // Stop still applies — an idle run is exactly what you reclaim.
+  await expect(page.getByTestId('live-stop-arm')).toBeVisible()
+
+  serve({ phase: 'ended', agent_phase: { main: 'ended' } })
+  await expect(page.getByTestId('live-cancel-btn')).toHaveCount(0)
+  await expect(page.getByTestId('live-stop')).toHaveCount(0)
+})
+
+// ── Editing and dropping a queued prompt ─────────────────────────────
+//
+// Only the SDK tier's queue is regin's to write, and the server signals that
+// per ROW by giving it an id. A transcript-derived row has none and must stay
+// read-only rather than offering a control that changes nothing.
+
+test('only a row the server gave an id offers edit and remove',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    await patchMap(page, {
+      sdk_owned: true,
+      queued_prompts: [
+        { id: 'q1', content: 'mine to edit', source: 'sdk' },
+        { content: "claude code's, not mine", source: 'bridge' },
+      ],
+    })
+
+    await openCard(page, traceId)
+
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(2)
+    await expect(page.getByTestId('live-queued-edit')).toHaveCount(1)
+    await expect(page.getByTestId('live-queued-remove')).toHaveCount(1)
+  })
+
+test('a queued prompt can be rewritten in place', async ({ page }) => {
+  const traceId = await postSession(page)
+  const serve = await patchMap(page, {
+    sdk_owned: true,
+    queued_prompts: [
+      { id: 'q1', content: 'first', source: 'sdk' },
+      { id: 'q2', content: 'teh second', source: 'sdk' },
+    ],
+  })
+  let sent = null
+  await page.route('**/api/agent-runs/*/queue/q2', async (route) => {
+    sent = route.request().postDataJSON()
+    return route.fulfill({ json: { updated: true, detail: 'prompt updated' } })
+  })
+
+  await openCard(page, traceId)
+  await page.getByTestId('live-queued-edit').nth(1).click()
+  await page.getByTestId('live-queued-input').fill('the second')
+  await page.getByTestId('live-queued-save').click()
+  await settle(page)
+
+  expect(sent).toEqual({ prompt: 'the second' })
+  // Optimistic: the poll is seconds away, so the new text shows at once — and
+  // in its own slot, not moved behind the prompt after it.
+  const items = page.getByTestId('live-queued-item')
+  await expect(items.nth(0)).toContainText('first')
+  await expect(items.nth(1)).toContainText('the second')
+
+  // And it survives the server catching up.
+  serve({
+    queued_prompts: [
+      { id: 'q1', content: 'first', source: 'sdk' },
+      { id: 'q2', content: 'the second', source: 'sdk' },
+    ],
+  })
+  await settle(page)
+  await expect(items.nth(1)).toContainText('the second')
+})
+
+test('a removed prompt goes at once and stays gone across the poll',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    const serve = await patchMap(page, {
+      sdk_owned: true,
+      queued_prompts: [
+        { id: 'q1', content: 'keep me', source: 'sdk' },
+        { id: 'q2', content: 'drop me', source: 'sdk' },
+      ],
+    })
+    let method = null
+    await page.route('**/api/agent-runs/*/queue/q2', (route) => {
+      method = route.request().method()
+      return route.fulfill({ json: { removed: true, detail: 'prompt removed' } })
+    })
+
+    await openCard(page, traceId)
+    await page.getByTestId('live-queued-remove').nth(1).click()
+
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
+    expect(method).toBe('DELETE')
+
+    // The next poll still carries it (it was in flight when the tap landed) —
+    // the row must not flicker back.
+    await settle(page)
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
+
+    serve({ queued_prompts: [{ id: 'q1', content: 'keep me', source: 'sdk' }] })
+    await settle(page)
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
+    await expect(page.getByTestId('live-queued-item')).toContainText('keep me')
+  })
+
+test('a refused removal puts the row back and says why', async ({ page }) => {
+  const traceId = await postSession(page)
+  await patchMap(page, {
+    sdk_owned: true,
+    queued_prompts: [{ id: 'q1', content: 'already running', source: 'sdk' }],
+  })
+  await page.route('**/api/agent-runs/*/queue/q1', (route) => route.fulfill({
+    json: { removed: false, detail: 'that prompt is no longer queued' },
+  }))
+
+  await openCard(page, traceId)
+  await page.getByTestId('live-queued-remove').click()
+  await settle(page)
+
+  // The interesting failure: the poll that rendered the row is a turn out of
+  // date, and the operator has to read that rather than watch it reappear.
+  await expect(page.getByTestId('live-queued-notice'))
+    .toContainText('no longer queued')
+  await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
+})
+
+test('discarding an edit leaves the queued prompt untouched', async ({ page }) => {
+  const traceId = await postSession(page)
+  await patchMap(page, {
+    sdk_owned: true,
+    queued_prompts: [{ id: 'q1', content: 'as typed', source: 'sdk' }],
+  })
+  let patched = 0
+  await page.route('**/api/agent-runs/*/queue/q1', (route) => {
+    patched += 1
+    return route.fulfill({ json: { updated: true, detail: 'prompt updated' } })
+  })
+
+  await openCard(page, traceId)
+  await page.getByTestId('live-queued-edit').click()
+  await page.getByTestId('live-queued-input').fill('never mind')
+  await page.getByTestId('live-queued-cancel-edit').click()
+  await settle(page)
+
+  expect(patched).toBe(0)
+  await expect(page.getByTestId('live-queued-item')).toContainText('as typed')
+})
+
+test('removing a steer you just sent does not leave a ghost chip', async ({ page }) => {
+  // The composer's optimistic echo is suppressed only while the server still
+  // represents its text. A removed prompt will never produce a `prompt` span,
+  // so once the poll drops the row the echo was free to resurface — as an
+  // un-removable `⧗ steering…` chip carrying text the agent will never run.
+  const traceId = await postSession(page)
+  const serve = await patchMap(page, {
+    sdk_owned: true, bridge_reachable: true, phase: 'working',
+    agent_phase: { main: 'working' }, queued_prompts: [],
+  })
+  await page.route('**/api/sessions/*/bridge-send', (route) => route.fulfill({
+    json: { delivered: true, detail: 'prompt queued', id: 1 },
+  }))
+  await page.route('**/api/agent-runs/*/queue/q1', (route) => route.fulfill({
+    json: { removed: true, detail: 'prompt removed' },
+  }))
+
+  await openCard(page, traceId)
+  await page.getByTestId('live-composer-ta').fill('steer me')
+  await page.getByTestId('live-composer-send').click()
+  await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
+
+  // The server picks it up and gives it an id, so the row becomes removable.
+  serve({ queued_prompts: [{ id: 'q1', content: 'steer me', source: 'sdk' }] })
+  await expect(page.getByTestId('live-queued-remove')).toHaveCount(1)
+
+  await page.getByTestId('live-queued-remove').click()
+  await expect(page.getByTestId('live-queued-item')).toHaveCount(0)
+
+  // The poll drops it — and the echo must not take its place. A marker row is
+  // what makes this deterministic: waiting for it proves a poll actually
+  // landed with the removed prompt gone server-side, which is the exact moment
+  // the echo was free to resurface. Asserting on an empty queue instead would
+  // pass before the poll even fired.
+  serve({ queued_prompts: [{ id: 'q9', content: 'MARKER', source: 'sdk' }] })
+  const rows = page.getByTestId('live-queued-item')
+  await expect(rows.filter({ hasText: 'MARKER' })).toHaveCount(1,
+    { timeout: 15_000 })
+  await expect(rows).toHaveCount(1)
+})
+
+test('editing a steer you just sent shows one row, not the old text beside it',
+  async ({ page }) => {
+    const traceId = await postSession(page)
+    const serve = await patchMap(page, {
+      sdk_owned: true, bridge_reachable: true, phase: 'working',
+      agent_phase: { main: 'working' }, queued_prompts: [],
+    })
+    await page.route('**/api/sessions/*/bridge-send', (route) => route.fulfill({
+      json: { delivered: true, detail: 'prompt queued', id: 1 },
+    }))
+    await page.route('**/api/agent-runs/*/queue/q1', (route) => route.fulfill({
+      json: { updated: true, detail: 'prompt updated' },
+    }))
+
+    await openCard(page, traceId)
+    await page.getByTestId('live-composer-ta').fill('teh typo')
+    await page.getByTestId('live-composer-send').click()
+    serve({ queued_prompts: [{ id: 'q1', content: 'teh typo', source: 'sdk' }] })
+    await expect(page.getByTestId('live-queued-edit')).toHaveCount(1)
+
+    await page.getByTestId('live-queued-edit').click()
+    await page.getByTestId('live-queued-input').fill('the typo')
+    await page.getByTestId('live-queued-save').click()
+    await settle(page)
+
+    // Marker row again: it proves a poll landed carrying the EDITED text, so
+    // the original is no longer represented and a stale echo would show up
+    // beside it. Without one this asserts before the poll and passes for free.
+    serve({
+      queued_prompts: [
+        { id: 'q1', content: 'the typo', source: 'sdk' },
+        { id: 'q9', content: 'MARKER', source: 'sdk' },
+      ],
+    })
+    const items = page.getByTestId('live-queued-item')
+    await expect(items.filter({ hasText: 'MARKER' })).toHaveCount(1,
+      { timeout: 15_000 })
+
+    await expect(items).toHaveCount(2)
+    await expect(items.nth(0)).toContainText('the typo')
+  })
+
+test('an over-long edit sends and shows the same text the server will keep',
+  async ({ page }) => {
+    // The route stores prompt[:8000]. An optimistic override holding the
+    // untruncated text would never match what comes back, so it would mask the
+    // row with text the runner does not hold for the rest of the session.
+    const traceId = await postSession(page)
+    const serve = await patchMap(page, {
+      sdk_owned: true,
+      queued_prompts: [{ id: 'q1', content: 'short', source: 'sdk' }],
+    })
+    let sentLen = null
+    await page.route('**/api/agent-runs/*/queue/q1', async (route) => {
+      sentLen = route.request().postDataJSON().prompt.length
+      return route.fulfill({ json: { updated: true, detail: 'prompt updated' } })
+    })
+
+    await openCard(page, traceId)
+    await page.getByTestId('live-queued-edit').click()
+    await page.getByTestId('live-queued-input').fill('x'.repeat(9000))
+    await page.getByTestId('live-queued-save').click()
+    await settle(page)
+
+    expect(sentLen).toBe(8000)
+
+    // The server echoes back what it stored; the override settles rather than
+    // masking the row forever.
+    serve({
+      queued_prompts: [{ id: 'q1', content: 'x'.repeat(8000), source: 'sdk' }],
+    })
+    await settle(page)
+    const shown = await page.getByTestId('live-queued-item').innerText()
+    expect(shown.replace(/[^x]/g, '').length).toBe(8000)
+  })

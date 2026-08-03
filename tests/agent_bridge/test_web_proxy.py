@@ -699,3 +699,96 @@ def test_bridge_screen_lines_param_invalid_falls_back_to_default(flask_client, m
     calls = _mock_capture(monkeypatch)
     flask_client.get("/api/sessions/T-9/bridge-screen?lines=nonsense")
     assert calls == [("T-9", 200)]
+
+
+# ── cancel the turn: one route, two transports ───────────────
+
+
+def _mock_key(monkeypatch, *, delivered=True, detail="Escape sent to %7"):
+    calls: list[tuple[str, str]] = []
+
+    def _fake(trace_id, key):
+        calls.append((trace_id, key))
+        return delivery.DeliveryResult(delivered, detail)
+
+    monkeypatch.setattr(delivery, "deliver_key", _fake)
+    return calls
+
+
+def test_interrupt_anonymous_401(anon_client, monkeypatch):
+    _enable(monkeypatch)
+    _mock_key(monkeypatch)
+    assert anon_client.post(
+        "/api/sessions/T-1/bridge-interrupt").status_code == 401
+
+
+def test_interrupt_viewer_403(flask_client, monkeypatch):
+    """Cancelling someone's running turn outranks every editor-gated
+    mutation, so a viewer JWT is refused and nothing is delivered."""
+    from lib.auth import create_token
+    _enable(monkeypatch)
+    calls = _mock_key(monkeypatch)
+    viewer = {"Authorization":
+              f"Bearer {create_token(2, 'viewer-tester', 'viewer')}"}
+    resp = flask_client.post("/api/sessions/T-1/bridge-interrupt",
+                             headers=viewer)
+    assert resp.status_code == 403
+    assert calls == []
+
+
+def test_interrupt_of_a_terminal_session_sends_escape(flask_client,
+                                                      monkeypatch):
+    """A session regin only traces has no typed channel — the cancel is the
+    Escape a human would press in that pane."""
+    _enable(monkeypatch)
+    calls = _mock_key(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-1/bridge-interrupt")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"delivered": True,
+                               "detail": "Escape sent to %7"}
+    assert calls == [("T-1", "Escape")]
+
+
+def test_interrupt_of_an_owned_run_uses_the_typed_channel(flask_client,
+                                                          monkeypatch):
+    """No keystrokes and no pane: a run regin launched is interrupted over the
+    channel it already holds, and the tmux path is never touched."""
+    from lib import agent_sdk
+    seen = {}
+
+    def _interrupt(trace_id):
+        seen["trace_id"] = trace_id
+        return True, "interrupt sent"
+
+    _enable(monkeypatch, enabled=False)
+    calls = _mock_key(monkeypatch)
+    monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: True)
+    monkeypatch.setattr(agent_sdk, "interrupt_run", _interrupt)
+
+    resp = flask_client.post("/api/sessions/sdk-deadbeef/bridge-interrupt")
+
+    # Reached even with the bridge off: that flag authorizes typing into
+    # someone's terminal, which a control message to our own process is not.
+    assert resp.get_json() == {"delivered": True, "detail": "interrupt sent"}
+    assert seen["trace_id"] == "sdk-deadbeef"
+    assert calls == []
+
+
+def test_interrupt_disabled_bridge_structured_refusal(flask_client,
+                                                      monkeypatch):
+    _enable(monkeypatch, enabled=False)
+    calls = _mock_key(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-1/bridge-interrupt")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"delivered": False, "detail": "bridge disabled"}
+    assert calls == []
+
+
+def test_interrupt_without_a_reachable_pane_refuses_through_the_real_guards(
+        flask_client, monkeypatch):
+    """No mock: the delivery guards decide, and nothing touches tmux."""
+    _enable(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-unregistered/bridge-interrupt")
+    body = resp.get_json()
+    assert body["delivered"] is False
+    assert body["detail"] == "no reachable session"
