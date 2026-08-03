@@ -42,13 +42,18 @@ not skip the STOP.
 
 The named agents (load at session start; if a dispatch errors with "agent type
 not found", you are mid-session before they registered — fall back to inline,
-or dispatch `general-purpose` with the agent's role pasted as the prompt):
+or paste the agent's role into a generic stand-in. For the **read-only** roles
+pick a read-only generic agent (an `Explore`-style search agent, if your harness
+has one), since a `general-purpose` agent holds every tool including `Edit`,
+`Write` and `Agent`, which turns a read-only guarantee into prose and lets a
+stand-in verifier recursively spawn more agents; use `general-purpose` only for
+the builder):
 
 | Step | Agent | Role |
 |------|-------|------|
 | 1.5 Refine | `goal-refiner` | prune the raw roadmap against the real code (read-only) |
 | 3 Build | `goal-builder` | implement against the approved roadmap, run gates, STOP (no commit, no self-grade) |
-| 4 Verify | `goal-verifier` | adversarial, read-only; PASS/FAIL with proof. Run **1–3 in parallel** and treat a majority (or any) DO-NOT-SHIP as a wall |
+| 4 Verify | `goal-verifier` | adversarial, read-only; PASS/FAIL with proof. Dispatched **serially, #1 owns the gates** (step 4); any DO-NOT-SHIP is a wall |
 
 **Running from the `regin-agents` plugin instead of this repo:** plugin-shipped
 agents register namespaced (`regin-agents:goal-builder`, not bare
@@ -115,6 +120,24 @@ PASSes iff a worker was armed this run** (the `mcp__memory__gate(name=
 MCP is loaded) — treat a `GATE FAIL` before commit as a wall (the same span-gate
 discipline `goal-verified-treenav` uses for its recall arm).
 
+## Triage gate — size the goal before you pay for the loop
+
+Run this first, every time. The loop below is priced for a multi-file,
+behavior-changing goal; run it whole on a typo and the ceremony costs more
+than the bug. Measured over 229 sessions using this loop (or its `-treenav`
+sibling): the median ran **80 minutes of engaged time vs 48 for comparable
+sessions without it**, and the overhead was volume, not slowness — the same
+test suite re-run by the main agent, then the builder, then each verifier.
+
+| Goal | What to run |
+|---|---|
+| **Purely visual, one component** (CSS/layout/overlap/spacing/copy) | Skip this loop. Read the component and its reveal-path, edit, and verify with measured DOM geometry in a browser — the recall ceremony buys nothing for a defect that is plain in a screenshot. |
+| **Small**: one file, ≤20 lines, no new behavior | Preflight + one `recall-for-task`, **skip 1.5**, build, **one** verifier, gates scoped to the touched paths. |
+| **Normal**: multi-file, or changes behavior | The full loop below. |
+| **Large**: ≥2 subsystems, or a migration | The full loop, 2–3 verifiers, whole-suite gates. |
+
+The steps below are written for **Normal**. Every step says what Small drops.
+
 ## Procedure
 
 ### 1. Preflight — pin the bar (hard gates + structure-first lessons)
@@ -136,12 +159,24 @@ variable (`CLAUDE_CODE_SESSION_ID` under Claude Code). If it comes back empty,
 either omit the flag (you lose only the offered-recording, not the roadmap) or
 add `--from-trace` — see *Running on a harness other than Claude Code* above.
 
-For the **convention skills**, read whatever your repo maps to the files you'll
-touch *before* writing code — a file-keyed convention table (e.g. in `CLAUDE.md`
-/ `CLAUDE.local.md`) or the project's own lint/style config (where those guides
-are backed by rule engines, reading first avoids the round-trip). For **reference components**, open the 1–2 real target files in the
-refine step (1.5) and mirror the closest existing module — don't invent new
-patterns.
+For the **convention skills**, do **not** read them up front. Where your repo's
+file-keyed convention table (e.g. in `CLAUDE.md` / `CLAUDE.local.md`) is backed
+by edit-time rule engines, they fire on every edit and name the rule you broke —
+read the mapped guide only once a violation actually lands on a file you
+touched. Reading all of them for a mixed multi-language change is several skill
+loads to prevent a round-trip that usually never happens. For **reference
+components**, open the 1–2 real target files in the refine step (1.5) and mirror
+the closest existing module — don't invent new patterns.
+
+The **hard gate on tests names its flags**: use your test runner's **parallel**
+form and **scope it to the paths you touched** (e.g. a parallel-execution plugin
+plus an explicit path list, rather than a bare whole-suite invocation). A serial
+whole-suite run is routinely an order of magnitude slower than the parallel
+scoped one, and a harness typically kills a long shell call (regin's ceiling is
+600s): in the measured corpus 13 full-suite runs hit that ceiling and returned
+*nothing* after paying 10 minutes each. Run the **whole** suite only when the
+diff touches a cross-cutting foundation (the ORM/schema layer, the settings
+singleton, the hook plumbing); otherwise it belongs to CI, not to this loop.
 
 > **Lessons no longer come from preflight.** Its old flat-FTS lessons leg is
 > demoted (`--no-lessons` is the default — it measured ~22% engagement). Recall
@@ -160,7 +195,14 @@ patterns.
 > (To A/B the retired flat leg on this goal, also run `goal preflight … --with-lessons`
 > and diff the two id sets.)
 
-### 1.5. Refine — prune the roadmap against the real code (DO NOT SKIP)
+### 1.5. Refine — prune the roadmap against the real code
+**Do not skip this for a Normal or Large goal** (Small skips it per the triage
+gate — with one target file and ≤4 kept lessons there is no over-recall left
+to prune, and a `goal-refiner` dispatch is a full context prefill spent
+curating something you already curated). Dispatch the refiner only when recall
+surfaced **≥5 lessons** or the diff spans **≥2 areas**; below that, refine
+inline while you read the target file.
+
 The roadmap is **high-recall on purpose**: the scaffold routes off goal *text*,
 so it over-includes. A single word can fire a whole extra area (e.g. "session"
 pulling in trace/Python skills, `lib/**` refs, and a pytest gate for a
@@ -189,9 +231,12 @@ names (find them if preflight missed them) and refine the roadmap in place:
 Ground every keep/drop in something you read in the code, not in the goal
 string. The output of this step is the *pinned* roadmap that goes to approval.
 
-**Agent-arm:** dispatch `goal-refiner` with the goal + the raw roadmap; it
-returns the pruned roadmap + a Dropped list + Visible violations. Carry those
-violations into step 2.
+**Agent-arm:** dispatch `goal-refiner` with the goal + the raw roadmap + **the
+absolute paths of the target files you already identified**; it returns the
+pruned roadmap + a Dropped list + Visible violations. Carry those violations
+into step 2. Name the paths: the refiner is budgeted to ≤3 files, and a
+dispatch that makes it hunt for the target spends that budget on Glob/Grep
+instead of on pruning.
 
 ### 2. Roadmap — derive the acceptance checklist, get it approved
 Working from the **refined** roadmap (step 1.5), fill the **Acceptance
@@ -205,6 +250,13 @@ roadmap and the checklist and get a yes** before building. This is their
 15-second checkpoint; it replaces them hand-writing the bar. Record which
 lesson-ids you folded in (the *included* set) for step 6.
 
+**Autonomous mode — self-approve.** If the user is not sitting there (overnight
+run, batch job, a goal handed off with "just do it"), do **not** block on a
+handshake: post the roadmap and checklist as a summary message and proceed in
+the same turn. The checkpoint's purpose is a reviewable artifact, not a wait
+state — and a blocking wall is the single largest slice of a long session's
+wall-clock, since the human's reply arrives whenever it arrives.
+
 ### 3. Build — then STOP
 Implement against the roadmap. Reuse the reference components and the design
 tokens; do not introduce new colors, spacing, or one-off components.
@@ -214,9 +266,13 @@ When you believe it is done: **STOP. Do not commit. Do not self-congratulate.**
 task>" --subsystem <node> --session "$SID"` (see *Two tiers of recall*) and
 prepend its `<recalled_experience>` block to the dispatch. Then dispatch
 `goal-builder` with that block + the goal + the approved roadmap + the
-acceptance checklist; it returns the diff, the gate output it ran, and a
-per-item acceptance status. It will not commit or self-grade — that is by
-design.
+acceptance checklist + **the absolute paths of the files to edit and of the
+reference components to mirror**; it returns the diff, the verbatim gate output
+it ran, and a per-item acceptance status. It will not commit or self-grade —
+that is by design. Naming the paths is the point: a fresh context that has to
+rediscover them re-Globs, re-Greps and re-Reads what you already read, and
+across the measured runs 29% of the files a subagent opened had already been
+read by its parent in the same session.
 
 ### 4. Verify — independent, adversarial
 Hand the work to a checker that did **not** build it:
@@ -227,8 +283,10 @@ Hand the work to a checker that did **not** build it:
   broken. Check each acceptance item PASS/FAIL with proof. Find empty/edge
   states, filter counts that don't match, console errors, untested paths."*
 - **Machine gates** from the roadmap — run them for real, paste the output:
-  - frontend: `cd frontend && npx vite build` and
-    `cd frontend && ./node_modules/.bin/playwright test`; zero console errors.
+  - frontend: the production build, then the browser suite **scoped to the
+    specs covering the changed route** plus the repo's responsive/layout spec;
+    zero console errors. A full sweep of every spec is a CI job, not a gate you
+    re-run per fix iteration.
   - **UI goals — render it, don't assert it from the diff.** The goal is not
     "a browser was opened", it is "the invariant holds at the widths where it
     breaks". Prove it with a *failing-without-the-fix* test rather than a
@@ -239,22 +297,55 @@ Hand the work to a checker that did **not** build it:
     scroll container, not `documentElement` — a wrapper with
     `overflow-x:hidden` above it keeps the document from ever scrolling
     sideways, so a documentElement check passes on a visibly broken page.
-  - non-frontend: run the target repo's own test suite plus its lint/complexity
-    gates (e.g. `pytest`, a complexity-grade threshold, a linter); all green.
+  - non-frontend: run the target repo's own test suite — in its **parallel**
+    form, scoped to the touched paths — plus its lint/complexity gates (e.g.
+    `pytest`, a complexity-grade threshold, a linter); all green.
 - A gate that fails is a **wall**, not a note. Do not proceed past a red gate.
 
 **Agent-arm:** first arm the verifier with **how this subsystem has failed
 before** — the highest-value recall for a checker: `regin memory recall-for-task
 "verify <goal>" --subsystem <node> --session "$SID"` (see *Two tiers of
 recall*), and prepend its block to the dispatch. Then dispatch `goal-verifier`
-with that block + the goal + acceptance checklist + the diff. For non-trivial
-goals run **1–3 verifiers in parallel** (send them in one message) and treat
-*any* DO-NOT-SHIP as a wall — independent contexts catch different failures. The
-verifier is read-only; it reports, it does not fix.
+with that block + the goal + acceptance checklist + the diff.
 
-### 5. Fix and re-verify
-Feed every FAIL back into the build. Re-run step 4. Only when every
-acceptance item passes and every gate is green do you continue.
+**Split the roles, don't clone them.** `goal-builder` already ran the gates; a
+verifier told to "run the machine gates yourself, for real" runs them again,
+and three parallel verifiers run them three more times. In the measured corpus
+`goal-verifier` alone re-ran the test suite 833 times (7.2h) and the browser
+suite 595 times (3.6h) — most of it work the builder had just done. So:
+
+- **Small goal → one verifier**, dispatched with `GATE OWNER: yes`.
+- **Normal/Large → dispatch verifier #1 alone first**, with `GATE OWNER: yes`.
+  When it returns, dispatch #2 (and #3 only if the diff spans ≥2 subsystems)
+  **in one message, in parallel**, each with `GATE OWNER: no` and #1's verbatim
+  gate output pasted in. The serialization is deliberate: it costs one
+  round-trip and saves two full suite runs. Dispatching all three at once
+  cannot work — #2 and #3 would have nothing to reuse, and a verifier that is
+  handed no gate output and no owner flag falls back to running everything.
+
+**Every verifier dispatch carries:** the recall block, the goal, the acceptance
+checklist, the diff, an explicit `GATE OWNER: yes|no` line, the builder's
+verbatim gate output (for non-owners), and **the pre-change gate baseline** you
+recorded in step 5 — a verifier given no baseline cannot tell your red test
+from the repo's, and will either re-run it under `git stash` or call it a wall.
+
+Treat *any* DO-NOT-SHIP as a wall — independent contexts catch different
+failures. `UNPROVEN` is not a wall: it is a named gap, and you decide whether
+it is worth a second verifier. The verifier is read-only; it reports, it does
+not fix.
+
+### 5. Fix and re-verify — capped at 2 iterations
+**Before the first iteration, record the pre-change gate baseline**
+(`git stash && <the gate> && git stash pop`). A FAIL that reproduces on the
+baseline is a *pre-existing* failure, not your wall — a repo may carry known
+red tests, and a verifier instructed to bias toward FAIL when uncertain will
+report them as blockers forever.
+
+Feed every genuine FAIL back into the build and re-run step 4 with the
+role-split above. **Cap at two fix iterations.** On a third round of FAILs,
+stop and report to the human with the surviving list: an item that survives two
+adversarial rounds is a scope or spec problem, not a code problem, and further
+rounds burn a builder plus verifiers each time without converging.
 
 ### 6. Commit, then close the loop
 Now commit (and only now). Reference the goal; note which gates passed.
