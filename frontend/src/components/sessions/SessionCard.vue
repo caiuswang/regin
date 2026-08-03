@@ -25,8 +25,8 @@ const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
 
 // Mirrors SessionListRow: the phone list has to answer "which one needs me"
 // too, and it is the only surface once the blocker sheet is swiped away.
-const { awaitingTraceId, resumedTraceId, blockerWaitedFor } = useNotificationCenter()
-const awaiting = computed(() => awaitingTraceId.value === props.s.trace_id)
+const { awaitingTraceIds, resumedTraceId, waitedForTrace } = useNotificationCenter()
+const awaiting = computed(() => awaitingTraceIds.value.has(props.s.trace_id))
 const resumed = computed(() => resumedTraceId.value === props.s.trace_id)
 
 const active = computed(() => isActiveWithClock(props.s, props.clock))
@@ -37,7 +37,7 @@ const repo = computed(() => primaryRepo(props.s))
   <li class="scard" :class="{ 'scard--selected': selected, 'scard--awaiting': awaiting }">
     <span v-if="awaiting" class="scard__awaiting">
       <span class="scard__awaiting-dot" aria-hidden="true"></span>
-      Awaiting decision · {{ blockerWaitedFor }}
+      Awaiting decision · {{ waitedForTrace(s.trace_id) }}
     </span>
     <span v-else-if="resumed" class="scard__resumed">Resumed</span>
 

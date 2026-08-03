@@ -61,8 +61,36 @@ print(store.dismiss_keyed(${JSON.stringify(traceId)}, ${JSON.stringify(key)}))
   return Number(out.trim().split('\n').pop())
 }
 
+// Through the page, not `page.request`: the API is Bearer-authed from
+// localStorage, which an APIRequestContext does not carry — so the old form
+// 401'd silently, left every row it "cleaned" parked in the live DB, and only
+// became visible once the banner started showing all of them at once.
 function cleanup(page, ids) {
-  return Promise.all(ids.map(id => page.request.post(`/api/agent-messages/${id}/dismiss`)))
+  return page.evaluate(async (messageIds) => {
+    const token = localStorage.getItem('regin_auth_token')
+    for (const id of messageIds) {
+      const r = await fetch(`/api/agent-messages/${id}/dismiss`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error(`dismiss ${id} → ${r.status}`)
+    }
+  }, ids)
+}
+
+// The banner now pages through EVERY parked decision, and the feed is the live
+// DB — a blocker a previous run (or a real session on this machine) left
+// waiting would occupy page 1 and shift this test's own card behind it. Start
+// each blocker test owning the banner.
+function clearBlockers() {
+  const script = `
+import sys
+sys.path.insert(0, ".")
+from lib.agent_messages import blockers, store
+for b in blockers.live_blockers():
+    store.dismiss(b["id"])
+print("ok")
+`
+  execFileSync(PY, ['-c', script], { cwd: ROOT, encoding: 'utf8' })
 }
 
 // The stream is opened after the ticket round-trip, so a message recorded the
@@ -135,6 +163,14 @@ test.describe('blocker banner', () => {
 
   test('interrupts, parses its options, and snoozes to a strip', async ({ page }) => {
     const ids = []
+    // The banner raises an optimistic row off the SSE frame and then enriches
+    // it from /blockers. A throw anywhere in that path leaves the un-enriched
+    // row on screen — title instead of question, no options — which every
+    // other assertion here is too coarse to notice.
+    const failures = []
+    page.on('pageerror', e => failures.push(String(e)))
+    page.on('console', m => { if (m.type() === 'error') failures.push(m.text()) })
+    clearBlockers()
     await page.goto('/trace/sessions')
     await streamReady(page)
 
@@ -149,7 +185,7 @@ test.describe('blocker banner', () => {
     // Options come out of the body as separate rows, not one blob of text.
     await expect(banner.getByText('Escape only, then warn')).toBeVisible()
     await expect(banner.getByText('Detect + report only')).toBeVisible()
-    await expect(banner.getByRole('button', { name: /Answer in live session/ })).toBeVisible()
+    await expect(banner.getByRole('button', { name: /Open live session/ })).toBeVisible()
 
     // "Later" is a snooze, not a close: the agent is still parked, so the
     // collapsed strip has to keep saying so.
@@ -159,11 +195,13 @@ test.describe('blocker banner', () => {
 
     await page.getByRole('button', { name: 'Answer', exact: true }).click()
     await expect(page.getByText(QUESTION)).toBeVisible()
+    expect(failures).toEqual([])
     await cleanup(page, ids)
   })
 
   test('the badge turns red while an agent is parked', async ({ page }) => {
     const ids = []
+    clearBlockers()
     await page.goto('/trace/sessions')
     await streamReady(page)
 
@@ -182,6 +220,7 @@ test.describe('blocker banner', () => {
   // what the flag on the session row is for. Needs a session that actually
   // exists in the list, so one is posted first.
   test('flags the parked row, then marks it resumed', async ({ page }) => {
+    clearBlockers()
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)
     const now = new Date().toISOString()
@@ -229,6 +268,7 @@ test.describe('reading is not answering', () => {
   // and could not be re-hydrated. `useLiveDecisions.js` records the same trap
   // being fixed once before on the inbox's own decision surfaces.
   test('mark-all-read clears toasts but leaves a live blocker up', async ({ page }) => {
+    clearBlockers()
     const toastTitle = `Readable ${randomUUID().slice(0, 8)}`
     await page.goto('/trace/sessions')
     await streamReady(page)
@@ -269,6 +309,7 @@ test.describe('hiding a blocker card is not answering it', () => {
   // does. Same trap as mark-all-read, different button.
   test('dismiss closes the banner without claiming the session resumed',
     async ({ page }) => {
+      clearBlockers()
       const question = `Dismissible ${randomUUID().slice(0, 8)}`
       const traceId = randomUUID()
       const sfx = traceId.slice(0, 8)
@@ -310,6 +351,7 @@ test.describe('unknown retire reasons fail closed', () => {
   // from a producer this build does not understand must retire NOTHING —
   // guessing is how a stopped agent's banner goes missing.
   test('a reason-less resolve retires neither toast nor banner', async ({ page }) => {
+    clearBlockers()
     const question = `Unknown reason ${randomUUID().slice(0, 8)}`
     const toastTitle = `Survivor ${randomUUID().slice(0, 8)}`
     const traceId = `e2e-${randomUUID()}`
@@ -362,5 +404,303 @@ test.describe('suppression', () => {
     await page.waitForTimeout(2_500)
     await expect(page.locator('.toast')).toHaveCount(0)
     await cleanup(page, ids)
+  })
+})
+
+// ── The defects this feature shipped with ────────────────────────────
+
+test.describe('a blocker survives a reload', () => {
+  // The bug: `hydrate()` fetched `/api/agent-messages?unread_only=true`, a
+  // route that does not exist. The 404 was swallowed, so hydration never
+  // returned a row and the banner existed only for as long as the tab that
+  // received the SSE frame. Reload, and a stopped agent had no surface at all.
+  test('a reload re-raises the banner, and reading it does not', async ({ page }) => {
+    clearBlockers()
+    const question = `Survives reload ${randomUUID().slice(0, 8)}`
+    await page.goto('/trace/sessions')
+    await streamReady(page)
+
+    const id = record({ type: 'blocker', title: 'Question', body: question,
+      traceId: `e2e-${randomUUID()}`, key: 'permission-pending' })
+    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+
+    await page.reload()
+    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+
+    // Read is not answered: the feed behind the banner is gated on dismissal,
+    // never on `read_at`, so acknowledging it must not lose it across a reload.
+    await page.evaluate(async () => {
+      await fetch('/api/agent-messages/read-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('regin_auth_token')}`,
+        },
+        body: JSON.stringify({}),
+      })
+    })
+    await page.reload()
+    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+    await cleanup(page, [id])
+  })
+
+  // The bug: the row highlight was driven by the one blocker the banner held,
+  // which only ever arrived over the stream — so a list opened AFTER the agent
+  // parked showed nothing, and the operator had no way to find it.
+  test('a list opened after the agent parked still flags the row', async ({ page }) => {
+    clearBlockers()
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    await page.request.post('/api/session-spans', {
+      data: [{
+        trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null,
+        name: 'prompt', start_time: new Date().toISOString(),
+        attributes: { text: `NOTIF_LATE_${sfx}`, is_test: true },
+      }],
+    })
+    // Recorded with no page open at all — nothing can have received a frame.
+    const id = record({ type: 'blocker', title: 'Question', body: `Late ${sfx}`,
+      traceId, key: 'permission-pending' })
+
+    await page.addInitScript(() => localStorage.setItem('regin_sessions_kind', 'all'))
+    await page.goto('/trace/sessions')
+    await expect(page.locator('.srow--awaiting')).toHaveCount(1, { timeout: 10_000 })
+    await cleanup(page, [id])
+  })
+})
+
+test.describe('several agents parked at once', () => {
+  // The bug: one slot held one blocker, so agent 3's question silently
+  // replaced agents 1-2's with no sign the others were ever there.
+  test('pages through every waiting decision', async ({ page }) => {
+    clearBlockers()
+    const ids = []
+    const tag = randomUUID().slice(0, 8)
+    await page.goto('/trace/sessions')
+    await streamReady(page)
+
+    for (let i = 0; i < 3; i += 1) {
+      ids.push(record({
+        type: 'blocker', title: 'Question', body: `Decision ${i} of ${tag}`,
+        traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
+      }))
+    }
+
+    const banner = page.getByRole('alert')
+    await expect(banner.getByText('Decision 1 of 3')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText(`Decision 0 of ${tag}`)).toBeVisible()
+
+    await banner.getByRole('button', { name: 'Next decision' }).click()
+    await expect(banner.getByText('Decision 2 of 3')).toBeVisible()
+    await expect(page.getByText(`Decision 1 of ${tag}`)).toBeVisible()
+
+    // Wraps rather than dead-ending, so a three-item pager needs no bounds UI.
+    await banner.getByRole('button', { name: 'Next decision' }).click()
+    await banner.getByRole('button', { name: 'Next decision' }).click()
+    await expect(banner.getByText('Decision 1 of 3')).toBeVisible()
+
+    // Snoozed, the strip has to account for all of them, not just the one on
+    // screen — it is the only thing left saying anything is waiting.
+    await banner.getByRole('button', { name: /Later/ }).click()
+    await expect(page.getByText('3 decisions waiting')).toBeVisible()
+
+    await cleanup(page, ids)
+    await expect(page.getByRole('alert')).toHaveCount(0, { timeout: 10_000 })
+  })
+})
+
+test.describe('answering from anywhere', () => {
+  // The complaint: the banner could only ever say "go to /live and answer
+  // there". It now drives the SAME endpoint the /live sheet does, from
+  // whatever page the operator is on.
+  //
+  // The feed is stubbed rather than seeded: whether a session is answerable
+  // depends on a live tmux pane or an SDK-owned process, neither of which a
+  // test can conjure. What is unproven — and asserted here — is the CLIENT
+  // contract: that a click sends the span's own `option_index` to the right
+  // session, and that the banner retires only on a delivered answer.
+  const FEED = {
+    blockers: [{
+      id: 999001, version: 1, trace_id: 'stub-trace', msg_key: 'permission-pending',
+      msg_type: 'blocker', title: 'Question', body: '', session_title: 'stubbed',
+      created_at: new Date().toISOString(), kind: 'question', span_id: 'toolu_stub',
+      question: 'Pick a lane', header: '', multi_select: false,
+      options: [
+        { index: 0, label: 'Left lane', description: '' },
+        { index: 1, label: 'Right lane', description: '' },
+      ],
+      bridge_reachable: true, sdk_owned: false, answerable: 'question',
+    }],
+  }
+
+  async function stubFeed(page, { delivered }) {
+    const sent = []
+    await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(FEED),
+    }))
+    await page.route('**/api/sessions/*/bridge-answer', async (route) => {
+      sent.push({ url: route.request().url(), body: route.request().postDataJSON() })
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ delivered, detail: delivered ? '' : 'pane gone' }),
+      })
+    })
+    return sent
+  }
+
+  test('a click sends the span option index and retires the banner', async ({ page }) => {
+    const sent = await stubFeed(page, { delivered: true })
+    // Deliberately NOT /live or /trace — the whole point is reach.
+    await page.goto('/patterns')
+
+    const banner = page.getByRole('alert')
+    await expect(banner.getByText('Pick a lane')).toBeVisible({ timeout: 10_000 })
+    await banner.getByRole('button', { name: 'Right lane' }).click()
+
+    await expect.poll(() => sent.length).toBe(1)
+    expect(sent[0].url).toContain('/api/sessions/stub-trace/bridge-answer')
+    expect(sent[0].body).toMatchObject({ option_index: 1, label: 'Right lane' })
+    await expect(page.getByRole('alert')).toHaveCount(0)
+  })
+
+  test('a refused send leaves the agent parked and says so', async ({ page }) => {
+    const sent = await stubFeed(page, { delivered: false })
+    await page.goto('/patterns')
+
+    const banner = page.getByRole('alert')
+    await expect(banner.getByText('Pick a lane')).toBeVisible({ timeout: 10_000 })
+    await banner.getByRole('button', { name: 'Left lane' }).click()
+
+    await expect.poll(() => sent.length).toBe(1)
+    // The agent never got the answer, so the surface must not claim it did.
+    await expect(page.getByText(/Not delivered/)).toBeVisible()
+    await expect(banner.getByText('Pick a lane')).toBeVisible()
+  })
+})
+
+test.describe('a blocker the operator cannot answer', () => {
+  // The read-only shape: options recovered from the card's prose carry no
+  // index, so there is nothing for a click to select. They render as context.
+  const PROSE_FEED = {
+    blockers: [{
+      id: 999002, version: 1, trace_id: 'stub-ro', msg_key: 'permission-pending',
+      msg_type: 'blocker', title: 'Question', body: '', session_title: 'ro',
+      created_at: new Date().toISOString(), kind: 'tool', span_id: null,
+      question: 'Unreachable prompt', header: '', multi_select: false,
+      options: [
+        { index: null, label: 'Prose one', description: '' },
+        { index: null, label: 'Prose two', description: '' },
+      ],
+      bridge_reachable: false, sdk_owned: false, answerable: null,
+    }],
+  }
+
+  test('shows the options as context, with no duplicate-key warning', async ({ page }) => {
+    const warnings = []
+    page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()) })
+    await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(PROSE_FEED),
+    }))
+    await page.goto('/patterns')
+
+    const banner = page.getByRole('alert')
+    await expect(banner.getByText('Unreachable prompt')).toBeVisible({ timeout: 10_000 })
+    await expect(banner.getByText('Prose one')).toBeVisible()
+    // Shown, not clickable: every option here has `index: null`.
+    await expect(banner.getByRole('button', { name: 'Prose one' })).toHaveCount(0)
+    await expect(banner.getByRole('button', { name: /Open live session/ })).toBeVisible()
+    expect(warnings.filter(w => /Duplicate keys/i.test(w))).toEqual([])
+  })
+})
+
+test.describe('one session, two parked prompts', () => {
+  // A session can hold a live `permission-pending` AND a live `plan-pending`
+  // at once — separate emit paths, and neither resolves the other. Retiring
+  // by trace_id dropped BOTH, so answering the permission prompt silently
+  // took away the plan banner for an agent that was still stopped.
+  test('answering one leaves the other up, and claims no resume', async ({ page }) => {
+    clearBlockers()
+    const traceId = randomUUID()
+    const sfx = traceId.slice(0, 8)
+    await page.request.post('/api/session-spans', {
+      data: [{
+        trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null,
+        name: 'prompt', start_time: new Date().toISOString(),
+        attributes: { text: `NOTIF_TWO_${sfx}`, is_test: true },
+      }],
+    })
+    await page.addInitScript(() => localStorage.setItem('regin_sessions_kind', 'all'))
+    await page.goto('/trace/sessions')
+    await streamReady(page)
+
+    const permQ = `Permission ${sfx}`
+    const planQ = `Plan ${sfx}`
+    const permId = record({ type: 'blocker', title: 'Question', body: permQ,
+      traceId, key: 'permission-pending' })
+    record({ type: 'blocker', title: 'Plan', body: planQ,
+      traceId, key: 'plan-pending' })
+
+    const banner = page.getByRole('alert')
+    await expect(banner.getByText('Decision 1 of 2')).toBeVisible({ timeout: 10_000 })
+
+    // Answer only the permission prompt, the way the terminal would.
+    expect(resolveKeyed(traceId, 'permission-pending')).toBe(1)
+
+    await expect(page.getByText(permQ)).toHaveCount(0, { timeout: 10_000 })
+    // The plan is still waiting — the agent is still stopped.
+    await expect(page.getByText(planQ)).toBeVisible()
+    await expect(banner.getByText(/Decision 1 of 2/)).toHaveCount(0)
+    // …so the row must still say "awaiting", never "resumed".
+    await expect(page.locator('.srow--awaiting')).toHaveCount(1)
+    await expect(page.locator('.srow__resumed')).toHaveCount(0)
+
+    await cleanup(page, [permId])
+    await page.evaluate(async () => {
+      const token = localStorage.getItem('regin_auth_token')
+      const r = await fetch('/api/agent-messages/inbox?limit=200', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const { messages } = await r.json()
+      for (const m of messages.filter(x => x.msg_key === 'plan-pending')) {
+        await fetch(`/api/agent-messages/${m.id}/dismiss`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        })
+      }
+    })
+  })
+})
+
+test.describe('a failed enrichment does not strand the card', () => {
+  // A row raised off an SSE frame carries the inbox card but NOT the parked
+  // span, so it renders with no options and no answer channel until
+  // `/blockers` lands. While the stream is healthy nothing else re-reads, so
+  // one failed GET used to leave a live decision stuck in the read-only
+  // branch until the operator happened to navigate.
+  test('the options arrive after a transient /blockers failure', async ({ page }) => {
+    let calls = 0
+    await page.route('**/api/agent-messages/blockers', async (route) => {
+      calls += 1
+      if (calls === 1) return route.abort('failed')
+      return route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          blockers: [{
+            id: 999004, version: 1, trace_id: 'stub-retry',
+            msg_key: 'permission-pending', msg_type: 'blocker', title: 'Question',
+            body: '', session_title: 'retry', kind: 'question',
+            created_at: new Date().toISOString(), span_id: 'toolu_retry',
+            question: 'Enriched at last', header: '', multi_select: false,
+            options: [{ index: 0, label: 'Only after retry', description: '' }],
+            bridge_reachable: true, sdk_owned: false, answerable: 'question',
+          }],
+        }),
+      })
+    })
+    await page.goto('/patterns')
+
+    // The first GET failed; the retry is what produces this.
+    await expect(page.getByRole('alert').getByRole('button', { name: 'Only after retry' }))
+      .toBeVisible({ timeout: 15_000 })
+    expect(calls).toBeGreaterThan(1)
   })
 })

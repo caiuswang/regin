@@ -24,7 +24,7 @@ const { features } = useFeatures()
 const { pending: driftPending } = useDriftSummary()
 const { enabled: diagEnabled } = useDiagnosticsState()
 const { unread: inboxUnread, severity: inboxSeverity } = useInboxUnread()
-const { setSuppressed } = useNotificationCenter()
+const { setSuppressed, refreshBlockers } = useNotificationCenter()
 
 // The badge colour is the loudest thing still unread — red while an agent is
 // parked, amber for something you should look at, otherwise the plain count.
@@ -53,6 +53,10 @@ watch(() => route.path, () => {
 const SUPPRESSED_ROUTES = ['/inbox', '/live']
 watch(() => route.path, (path) => {
   setSuppressed(SUPPRESSED_ROUTES.some(prefix => path.startsWith(prefix)))
+  // Re-read the parked set on arrival. Not a poll — the stream still carries
+  // every change; this only covers the window a stream frame cannot: the page
+  // that was loaded, or navigated to, after the agent already stopped.
+  refreshBlockers()
 }, { immediate: true })
 
 // The tab title is the one notification surface that survives a hidden tab.

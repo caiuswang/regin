@@ -1,7 +1,6 @@
 import { computed, ref, shallowRef, watch } from 'vue'
 import api from '../api'
-import { isDecisionMessage, notificationTier } from '../constants/inboxTypes'
-import { useLiveDecisions } from './useLiveDecisions'
+import { notificationTier } from '../constants/inboxTypes'
 import { useNotificationPrefs } from './useNotificationPrefs'
 import { useOsNotifications } from './useOsNotifications'
 import { useRealtime } from './useRealtime'
@@ -28,6 +27,7 @@ import { useRealtime } from './useRealtime'
 // Dismissing a blocker cannot resolve it, so "Later" is a snooze, not a close.
 const SNOOZE_SECONDS = 45
 const RESUMED_LINGER_MS = 6_000
+const RETRY_AFTER_MS = 2_000
 
 // The `resolved` frame's vocabulary, mirrored from `_retire` in
 // web/blueprints/trace/agent_messages.py (and pinned there by
@@ -44,11 +44,33 @@ const toasts = ref([])
 // Ids, not a counter: "mark all read" and a single retire both have to subtract
 // exactly the right rows, which a bare number cannot do.
 const foldedIds = ref(new Set())
-const blocker = shallowRef(null)
+// EVERY decision waiting, not the newest one. Several agents park at once and
+// a single slot silently dropped all but the last — the banner pages through
+// this list instead. Oldest first: the longest-parked agent is next to answer.
+const blockers = shallowRef([])
+const blockerIndex = ref(0)
 const blockerSnoozed = ref(false)
 const resumedTraceId = ref(null)
 const suppressed = ref(false)
 const now = ref(Date.now())
+
+// trace_id → when that agent first parked. Held outside the rows because the
+// rows are replaced wholesale on every refresh, and the clock must measure how
+// long the AGENT has waited, not how long this copy of the row has existed.
+const parkedSince = new Map()
+
+// `refreshBlockers`'s response REPLACES the list, so a response that left the
+// server before a `resolved` frame arrived would re-install the card that
+// frame just retired — the banner re-asking an answered question. A monotonic
+// generation makes the newest request the only one allowed to land.
+//
+// Nothing else is needed to protect a row raised mid-flight: `raiseBlocker`
+// bumps this counter synchronously, so every refresh in flight when a frame
+// lands is already superseded, and the refresh the raise itself triggers is
+// the one that answers. If THAT response omits the row, the server has been
+// asked and said the card is not live — which is authoritative, and dropping
+// it is correct.
+let refreshGen = 0
 
 // Every message id this tab has already surfaced. A reconnect replays nothing,
 // but the leader/follower relay and a same-tab hydrate can both offer the same
@@ -66,34 +88,47 @@ let openHandler = null
 // ── Derived ────────────────────────────────────────────────────────
 
 export const folded = computed(() => foldedIds.value.size)
-export const awaitingTraceId = computed(() => blocker.value?.trace_id || null)
+export const blockerCount = computed(() => blockers.value.length)
+// The index is clamped rather than stored trusted: a refresh that drops the
+// row being viewed must land on a neighbour, never on `undefined`.
+export const blockerPos = computed(
+  () => Math.min(blockerIndex.value, Math.max(0, blockers.value.length - 1)))
+export const blocker = computed(() => blockers.value[blockerPos.value] || null)
+
+// A Set, not the one visible row's id: the list highlight has to flag EVERY
+// parked session at once, and it is read on a page the banner may not be
+// paging to.
+export const awaitingTraceIds = computed(
+  () => new Set(blockers.value.map(b => b.trace_id).filter(Boolean)))
+
 export const bannerVisible = computed(
   () => !!blocker.value && !blockerSnoozed.value && !suppressed.value)
 export const stripVisible = computed(
   () => !!blocker.value && blockerSnoozed.value && !suppressed.value)
 
-export const blockerWaitedFor = computed(() => {
-  const since = blocker.value?.since
+function waitedFor(row) {
+  const since = row && parkedSince.get(row.trace_id)
   if (!since) return ''
   const secs = Math.max(1, Math.round((now.value - since) / 1000))
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`
-})
-
-// The prototype's blocker carries its options as buttons. regin's blocker body
-// is the formatted permission prompt from `lib/agent_messages/event_notify.py`,
-// which renders each option as a `• ` line — so the options are recovered from
-// the body rather than invented, and the remaining lines stay the question.
-export function parseBlockerBody(body) {
-  const lines = (body || '').split('\n')
-  const options = []
-  const rest = []
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('• ')) options.push(trimmed.slice(2).trim())
-    else if (trimmed) rest.push(trimmed)
-  }
-  return { question: rest.join('\n'), options }
 }
+
+export const blockerWaitedFor = computed(() => waitedFor(blocker.value))
+
+// How long a *named* session has been parked — the sessions list flags rows
+// the banner is not currently paging to.
+export function waitedForTrace(traceId) {
+  return waitedFor({ trace_id: traceId })
+}
+
+export function showBlockerAt(index) {
+  const total = blockers.value.length
+  if (!total) return
+  blockerIndex.value = ((index % total) + total) % total
+}
+
+export function nextBlocker() { showBlockerAt(blockerPos.value + 1) }
+export function prevBlocker() { showBlockerAt(blockerPos.value - 1) }
 
 // ── Ingest ─────────────────────────────────────────────────────────
 
@@ -117,20 +152,33 @@ function ingest(message, { replay = false } = {}) {
   pushToast(message)
 }
 
+// A tier-1 frame off the stream. It carries the inbox row but not the parked
+// span, so the options and the answer channel are unknown until `refreshBlockers`
+// lands — the row goes up immediately (the agent is stopped NOW) and is
+// enriched a moment later rather than waiting for the round trip.
 function raiseBlocker(message, replay) {
   clearTimeout(snoozeTimer)
-  const previous = blocker.value
-  const sameSession = previous?.trace_id === message.trace_id
-  blocker.value = {
-    ...message,
-    ...parseBlockerBody(message.body),
-    // The clock measures how long the agent has been parked, so a re-prompt in
-    // a session that was already waiting keeps counting from the first one.
-    since: sameSession ? previous.since : messageStamp(message),
-  }
+  stampParked(message)
+  const next = blockers.value.filter(b => !sameCard(b, message))
+  next.push({ options: [], answerable: null, ...message })
+  blockers.value = next
   blockerSnoozed.value = false
   resumedTraceId.value = null
   if (!replay) osNotify(message, 1)
+  refreshBlockers()
+}
+
+// One card per (session, key) — a re-prompt supersedes rather than stacks,
+// which is the same identity `store.dismiss_keyed` retires by.
+function sameCard(a, b) {
+  return a.trace_id === b.trace_id && a.msg_key === b.msg_key
+}
+
+// The clock measures how long the AGENT has been parked, so a re-prompt in a
+// session that was already waiting keeps counting from the first one.
+function stampParked(message) {
+  if (!message.trace_id || parkedSince.has(message.trace_id)) return
+  parkedSince.set(message.trace_id, messageStamp(message))
 }
 
 // Server-stamped so a re-hydrated blocker shows how long it has *really* been
@@ -233,18 +281,38 @@ function retire(payload) {
   // bring it back.
   const retiresBlocker = BLOCKER_RETIRING_REASONS.has(payload.reason)
   if (!retiresBlocker) return
-  if (blocker.value && matches(blocker.value, payload)) {
-    clearBlocker({ resumed: payload.reason === 'dismissed' })
+  const gone = blockers.value.filter(b => matches(b, payload))
+  for (const row of gone) {
+    clearBlocker(row, { resumed: payload.reason === 'dismissed' })
   }
 }
 
 // `resumed` is a claim about the agent, so only a real resolve may make it.
-function clearBlocker({ resumed = true } = {}) {
-  const traceId = blocker.value?.trace_id
-  clearTimeout(snoozeTimer)
-  blocker.value = null
-  blockerSnoozed.value = false
+//
+// Scoped to ONE card, not to the session: a session can hold a live
+// `permission-pending` AND a live `plan-pending` at once (separate emit paths
+// in event_notify.py, and `list_decision_messages` does not dedup per trace).
+// Retiring by trace_id dropped both, so answering the permission prompt
+// silently took away the plan banner for an agent that was still stopped.
+function clearBlocker(card, { resumed = true } = {}) {
+  const traceId = card?.trace_id
+  const remaining = blockers.value.filter(b => !sameCard(b, card))
+  // Keep the reader on the card they were looking at: dropping row 1 of 4 must
+  // not silently advance them past row 2 unread.
+  const wasBefore = blockers.value
+    .slice(0, blockerPos.value)
+    .filter(b => sameCard(b, card)).length
+  blockers.value = remaining
+  blockerIndex.value = Math.max(0, blockerPos.value - wasBefore)
+  // The clock is per-session and the sibling card still needs it.
+  if (!remaining.some(b => b.trace_id === traceId)) parkedSince.delete(traceId)
+  if (!remaining.length) {
+    clearTimeout(snoozeTimer)
+    blockerSnoozed.value = false
+  }
+  // Nor may the row read "resumed" while the session's other prompt is parked.
   if (!traceId || !resumed) return
+  if (remaining.some(b => b.trace_id === traceId)) return
   resumedTraceId.value = traceId
   clearTimeout(resumedTimer)
   resumedTimer = setTimeout(() => {
@@ -284,17 +352,62 @@ async function markRead(id) {
   }
 }
 
+// ── Answering, from wherever the operator happens to be ────────────
+
+// The banner's option buttons and allow/deny run the SAME two endpoints the
+// /live sheet does — there is no second delivery path to keep in step. What
+// the banner adds is reach: the agent is stopped, and making the operator
+// first navigate to /live to say "yes" is the whole complaint.
+//
+// The card is retired ONLY on `delivered: true`. A refused or failed send
+// leaves the agent parked, so a banner that closed anyway would be a surface
+// claiming an answer that never arrived.
+async function deliver(row, path, payload) {
+  if (!row?.trace_id) return { delivered: false, detail: 'no session' }
+  let res = null
+  try {
+    res = await api.post(`/sessions/${row.trace_id}/${path}`, payload)
+  } catch {
+    res = null
+  }
+  if (res?.delivered) clearBlocker(row, { resumed: true })
+  return res || { delivered: false, detail: 'send failed' }
+}
+
+// `option_index` is the span's own ordering, carried through from
+// `blockers._options_of` — never a position in some re-sorted client list, or
+// the bridge picks a different entry than the one that was clicked.
+function answerBlocker(row, option) {
+  return deliver(row, 'bridge-answer', {
+    option_index: option.index, label: option.label,
+  })
+}
+
+function decideBlocker(row, behavior, reason) {
+  return deliver(row, 'bridge-decide', {
+    behavior, reason: reason || undefined,
+    tool_use_id: row?.span_id || undefined,
+  })
+}
+
 function reset() {
   toasts.value = []
   foldedIds.value = new Set()
   seen.clear()
+  parkedSince.clear()
   for (const timer of foldTimers.values()) clearTimeout(timer)
   foldTimers.clear()
   clearTimeout(snoozeTimer)
   clearTimeout(resumedTimer)
   clearInterval(clockTimer)
   clockTimer = null
-  blocker.value = null
+  // The LIST, not `blocker` — that is a computed, so assigning to it is a
+  // silent no-op in a production build and the previous user's question, its
+  // session title and its live option buttons survived a 401.
+  blockers.value = []
+  blockerIndex.value = 0
+  // Anything still in flight resolved against the user who just went away.
+  refreshGen += 1
   blockerSnoozed.value = false
   resumedTraceId.value = null
   started = false
@@ -307,28 +420,74 @@ function reset() {
 
 // ── Hydration ──────────────────────────────────────────────────────
 
-// The stream pushes what happens *next*; a tab opened (or reconnected) after a
-// blocker was raised would otherwise never learn the agent is parked. One read
-// of the unread feed closes that hole — replayed, so nothing pops.
-async function hydrate() {
-  const { refreshLive, isParked } = useLiveDecisions()
+// The parked set, read from the server. This is the ONLY leg that survives a
+// reload: the stream delivers a frame once, so a tab that opens after the
+// prompt fired — or simply navigates to a page that mounts the banner — has no
+// other way to learn an agent is stopped. It is not a poll; it runs on mount,
+// on route entry, on stream reconnect, and when a tier-1 frame needs enriching
+// with the span data a frame cannot carry.
+//
+// The rows are server truth (options, answer channel, liveness), so they
+// REPLACE local state rather than merging into it — a card the server no
+// longer lists has been answered or its session has gone, and either way the
+// banner must stop claiming it.
+async function refreshBlockers({ retries = 1 } = {}) {
+  const generation = ++refreshGen
+  let rows = null
   try {
-    const [data] = await Promise.all([
-      api.get('/agent-messages?unread_only=true&limit=50'),
-      refreshLive(),
-    ])
-    const rows = data.messages || []
-    for (const row of [...rows].reverse()) {
-      // Only a decision the agent is *still* parked on earns the banner: an
-      // unanswered card from a session that has since ended would nag forever.
-      if (notificationTier(row.msg_type) === 1
-          && !(isDecisionMessage(row) && isParked(row))) {
+    const data = await api.get('/agent-messages/blockers')
+    rows = data.blockers || []
+  } catch {
+    // The stream's own row stands — but a row raised off a frame is on screen
+    // WITHOUT its options or its answer channel until an enrichment lands, and
+    // while the stream is healthy nothing else re-reads. So retry once rather
+    // than strand a live decision in the read-only branch until the operator
+    // happens to navigate. Skipped when superseded: a newer refresh owns it.
+    if (retries > 0 && generation === refreshGen) {
+      setTimeout(() => refreshBlockers({ retries: retries - 1 }), RETRY_AFTER_MS)
+    }
+    return
+  }
+  // A newer refresh already answered this question; this response is history.
+  // Without the guard, a reply that left the server before a `resolved` frame
+  // arrived would re-install the card that frame had just retired — the
+  // banner re-asking a question the operator already answered.
+  if (generation !== refreshGen) return
+  const anchor = blocker.value
+  for (const row of rows) {
+    stampParked(row)
+    seen.add(`${row.id}:${row.version || 1}`)
+  }
+  blockers.value = rows
+  for (const id of [...parkedSince.keys()]) {
+    if (!rows.some(r => r.trace_id === id)) parkedSince.delete(id)
+  }
+  // Hold the reader on the card they were reading, wherever it moved to.
+  const at = anchor ? rows.findIndex(r => sameCard(r, anchor)) : -1
+  blockerIndex.value = at >= 0 ? at : 0
+  if (!rows.length) blockerSnoozed.value = false
+}
+
+// Tier-2 history for the badge's fold accounting. Replayed, so nothing pops:
+// reconnecting after lunch must not fire a dozen toasts at once.
+async function hydrateToasts() {
+  try {
+    const data = await api.get('/agent-messages/inbox?unread=true&limit=50')
+    for (const row of [...(data.messages || [])].reverse()) {
+      if (notificationTier(row.msg_type) === 1) {
+        // Blockers come from `/blockers`, which knows liveness and options;
+        // marking them seen here stops a later stream replay re-raising a
+        // stale one behind the server's back.
         seen.add(`${row.id}:${row.version || 1}`)
         continue
       }
       ingest(row, { replay: true })
     }
   } catch { /* a failed hydrate leaves the stream as the only source — fine */ }
+}
+
+async function hydrate() {
+  await Promise.all([refreshBlockers(), hydrateToasts()])
 }
 
 // ── Wiring ─────────────────────────────────────────────────────────
@@ -364,11 +523,14 @@ export function useNotificationCenter() {
     })
   }
   return {
-    toasts, folded, blocker, blockerSnoozed, resumedTraceId, suppressed,
-    awaitingTraceId, bannerVisible, stripVisible, blockerWaitedFor,
+    toasts, folded, blocker, blockers, blockerSnoozed, resumedTraceId,
+    suppressed, awaitingTraceIds, bannerVisible, stripVisible,
+    blockerWaitedFor, waitedForTrace, blockerCount, blockerPos,
     snoozeSeconds: SNOOZE_SECONDS,
-    ingest, retire, fold, drop, markRead, reset, hydrate,
+    ingest, retire, fold, drop, markRead, reset, hydrate, refreshBlockers,
     snoozeBlocker, reopenBlocker, clearBlocker,
+    nextBlocker, prevBlocker, showBlockerAt,
+    answerBlocker, decideBlocker,
     setSuppressed: (value) => { suppressed.value = !!value },
     onOpen: (handler) => { openHandler = handler },
   }

@@ -1,22 +1,31 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import Button from '../ui/Button.vue'
-import { useBreakpoint } from '../../composables/useBreakpoint'
-import { useNotificationCenter } from '../../composables/useNotificationCenter'
-
 // Tier 1. The agent is stopped until this is dealt with, so it does not
 // auto-dismiss and "Later" only snoozes. On a phone the same state renders as
 // a bottom sheet you can swipe away — same promise, thumb-reachable.
+//
+// The question and its options come off the parked SPAN (server-assembled in
+// lib/agent_messages/blockers.py), not off the card's prose, which is why the
+// options here are real controls: the index sent back is the one the bridge
+// selects. See BlockerActions for the three answerable shapes.
+import { computed, ref } from 'vue'
+import Button from '../ui/Button.vue'
+import BlockerActions from './BlockerActions.vue'
+import BlockerHead from './BlockerHead.vue'
+import { useBreakpoint } from '../../composables/useBreakpoint'
+import { useNotificationCenter } from '../../composables/useNotificationCenter'
+
 const {
-  blocker, bannerVisible, stripVisible, blockerWaitedFor, snoozeSeconds,
-  snoozeBlocker, reopenBlocker,
+  blocker, blockerCount, bannerVisible, stripVisible, blockerWaitedFor,
+  snoozeSeconds, snoozeBlocker, reopenBlocker,
 } = useNotificationCenter()
 
-const router = useRouter()
 // Matches the shell's own `max-width: 767px` mobile branch in AppLayout.
 const { isMdUp } = useBreakpoint()
 const isMobile = computed(() => !isMdUp.value)
+
+const stripLabel = computed(() => (blockerCount.value === 1
+  ? '1 decision waiting'
+  : `${blockerCount.value} decisions waiting`))
 
 const dragY = ref(0)
 const dragging = ref(false)
@@ -31,11 +40,6 @@ const sheetStyle = computed(() => ({
   transform: `translateY(${dragY.value}px)`,
   transition: dragging.value ? 'none' : 'transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1)',
 }))
-
-function answerInLive() {
-  const traceId = blocker.value?.trace_id
-  router.push(traceId ? `/live?session=${encodeURIComponent(traceId)}` : '/live')
-}
 
 function later() {
   dragY.value = 0
@@ -93,8 +97,8 @@ function handleClick() {
   <!-- Collapsed: snoozed but still waiting. One line, one action. -->
   <div v-if="stripVisible" class="blocker-strip" role="alert">
     <span class="blocker-dot blocker-dot-blink" aria-hidden="true" />
-    <span class="blocker-strip-label">1 decision waiting</span>
-    <span class="blocker-meta">agent paused · {{ blockerWaitedFor }}</span>
+    <span class="blocker-strip-label">{{ stripLabel }}</span>
+    <span class="blocker-strip-meta">agent paused · {{ blockerWaitedFor }}</span>
     <Button size="sm" variant="danger" class="ml-auto" @click="reopenBlocker">Answer</Button>
   </div>
 
@@ -122,20 +126,10 @@ function handleClick() {
       >
         <span class="blocker-grabber-bar" aria-hidden="true" />
       </Button>
-      <div class="blocker-head">
-        <span class="blocker-dot blocker-dot-pulse" aria-hidden="true" />
-        <span class="inbox-pill inbox-pill-red">Blocker</span>
-        <span class="blocker-title">Agent paused</span>
-        <span class="blocker-meta ml-auto">{{ blockerWaitedFor }}</span>
-      </div>
+      <BlockerHead title="Agent paused" />
       <div class="blocker-question">{{ blocker.question || blocker.title }}</div>
       <div v-if="blocker.session_title" class="blocker-session">↳ {{ blocker.session_title }}</div>
-      <ul v-if="blocker.options.length" class="blocker-options">
-        <li v-for="option in blocker.options" :key="option" class="blocker-option">{{ option }}</li>
-      </ul>
-      <Button size="lg" variant="primary" class="w-full" @click="answerInLive">
-        Answer in live session
-      </Button>
+      <BlockerActions :row="blocker" compact />
       <p class="blocker-foot">
         Swipe down to leave it — the session stays paused and flagged, and the
         sheet returns in {{ snoozeSeconds }}s
@@ -145,36 +139,24 @@ function handleClick() {
 
   <!-- Full, desktop: a sticky banner above the page content. -->
   <div v-else-if="bannerVisible" class="blocker-banner" role="alert">
-    <div class="blocker-head">
-      <span class="blocker-dot blocker-dot-pulse" aria-hidden="true" />
-      <span class="inbox-pill inbox-pill-red">Blocker</span>
-      <span class="blocker-title">Agent paused · awaiting your decision</span>
-      <span class="blocker-meta">waiting {{ blockerWaitedFor }}</span>
+    <BlockerHead>
       <Button size="sm" variant="ghost" class="ml-auto blocker-later" @click="later">
         Later — dismiss &times;
       </Button>
-    </div>
+    </BlockerHead>
 
     <div class="blocker-question">{{ blocker.question || blocker.title }}</div>
     <div v-if="blocker.session_title" class="blocker-session">↳ {{ blocker.session_title }}</div>
 
-    <!-- The options the agent offered, verbatim. They are shown, not wired:
-         the answer is given in the session, so a button here would only look
-         like it had done something. -->
-    <ul v-if="blocker.options.length" class="blocker-options">
-      <li v-for="option in blocker.options" :key="option" class="blocker-option">{{ option }}</li>
-    </ul>
+    <BlockerActions :row="blocker" />
 
     <!-- No "Mark read" here on purpose. Reading is not answering: the card
          would go read while the agent stayed parked, and the banner would
          (correctly) refuse to close — a button that visibly does nothing. -->
-    <div class="flex items-center gap-2 flex-wrap">
-      <Button size="md" variant="primary" @click="answerInLive">Answer in live session</Button>
-      <span class="blocker-foot ml-auto">
-        Dismissing leaves the session paused — it returns in {{ snoozeSeconds }}s
-        and stays flagged in the list.
-      </span>
-    </div>
+    <p class="blocker-foot blocker-foot-end">
+      Dismissing leaves the session paused — it returns in {{ snoozeSeconds }}s
+      and stays flagged in the list.
+    </p>
   </div>
 </template>
 
@@ -189,16 +171,20 @@ function handleClick() {
   to { opacity: 1; transform: none; }
 }
 
+/* amber-50, not amber-100. The card is a full-width wash behind body text, and
+   at 100 the yellow read as the loudest thing on the page — louder than the
+   question it was carrying. The alert lives in the border, the dot and the
+   pill; the fill only has to separate the card from the page. */
 .blocker-banner {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: 0.65rem;
   margin-bottom: 1rem;
   padding: 0.85rem 1rem;
-  border: 1.5px solid var(--color-red-300);
-  background: var(--color-warning-soft);
+  border: 1px solid var(--color-red-200);
+  background: var(--color-amber-50);
   border-radius: 0.75rem;
-  box-shadow: 0 2px 6px rgb(15 23 42 / 6%);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 5%);
 }
 
 .blocker-strip {
@@ -207,7 +193,7 @@ function handleClick() {
   gap: 0.6rem;
   margin-bottom: 1rem;
   padding: 0.55rem 0.85rem;
-  border: 1px solid var(--color-red-300);
+  border: 1px solid var(--color-red-200);
   background: var(--color-danger-soft);
   border-radius: 0.625rem;
 }
@@ -218,21 +204,7 @@ function handleClick() {
   color: var(--color-danger);
 }
 
-.blocker-head {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-
-.blocker-title {
-  font-size: 0.9rem;
-  font-weight: 700;
-  letter-spacing: -0.012em;
-  color: var(--color-fg);
-}
-
-.blocker-meta {
+.blocker-strip-meta {
   font-size: 0.75rem;
   color: var(--color-fg-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -256,29 +228,13 @@ function handleClick() {
   white-space: nowrap;
 }
 
-.blocker-options {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.blocker-option {
-  font-size: 0.82rem;
-  color: var(--color-fg);
-  background: var(--color-surface);
-  border: 1px solid var(--color-amber-300);
-  border-radius: 0.5rem;
-  padding: 0.45rem 0.7rem;
-}
-
 .blocker-foot {
   font-size: 0.7rem;
   color: var(--color-fg-muted);
   margin: 0;
 }
+
+.blocker-foot-end { align-self: flex-end; text-align: end; }
 
 .blocker-later { color: var(--color-warning-strong); }
 
@@ -290,14 +246,7 @@ function handleClick() {
   background: var(--color-danger);
 }
 
-.blocker-dot-pulse { animation: blocker-pulse 1.8s ease-out infinite; }
 .blocker-dot-blink { animation: blocker-blink 1.1s steps(1, end) infinite; }
-
-@keyframes blocker-pulse {
-  0% { box-shadow: 0 0 0 0 rgb(220 38 38 / 50%); }
-  70% { box-shadow: 0 0 0 8px rgb(220 38 38 / 0%); }
-  100% { box-shadow: 0 0 0 0 rgb(220 38 38 / 0%); }
-}
 
 @keyframes blocker-blink {
   0%, 100% { opacity: 1; }
@@ -337,14 +286,13 @@ function handleClick() {
   box-shadow: 0 -14px 40px rgb(15 23 42 / 28%);
   touch-action: none;
   animation: sheet-up 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  cursor: default;
 }
 
 @keyframes sheet-up {
   from { opacity: 0; transform: translateY(100%); }
   to { opacity: 1; transform: none; }
 }
-
-.blocker-sheet { cursor: default; }
 
 .blocker-grabber {
   flex: none;
@@ -368,7 +316,6 @@ function handleClick() {
   .blocker-strip,
   .blocker-sheet { animation: none; }
 
-  .blocker-dot-pulse,
   .blocker-dot-blink { animation: none; }
 }
 </style>

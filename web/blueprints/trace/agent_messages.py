@@ -104,6 +104,21 @@ def api_agent_messages_inbox():
     })
 
 
+@trace_bp.route('/api/agent-messages/blockers')
+def api_agent_messages_blockers():
+    """Every decision a human is parked on, with what it takes to answer one.
+
+    The blocker banner's rehydrate. The stream delivers a frame once, so a
+    reload or a first mount on any route has no other way to learn an agent
+    is stopped — see `lib.agent_messages.blockers` for why read state and
+    `status='active'` are both deliberately absent from the gate.
+    """
+    from lib.agent_messages import blockers
+    include_tests = _bool_arg('include_tests')
+    return jsonify({'blockers': blockers.live_blockers(
+        include_tests=include_tests)})
+
+
 @trace_bp.route('/api/agent-messages/unread-count')
 def api_agent_messages_unread_count():
     """Just the badge number and its urgency. The badge is pushed over the

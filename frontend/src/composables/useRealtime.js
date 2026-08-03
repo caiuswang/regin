@@ -107,8 +107,16 @@ function openStream(ticket) {
     `${STREAM_PATH}?ticket=${encodeURIComponent(ticket)}`)
   source = stream
   stream.onopen = () => {
+    // A RE-connect means frames were delivered to nobody while we were away,
+    // and a frame is delivered once — so every subscriber has to re-read or it
+    // silently misses whatever happened during the gap. Only on a reconnect:
+    // the first open follows each subscriber's own initial read. Previously
+    // this leg existed only behind the fallback poll, which arms after
+    // FALLBACK_AFTER_ATTEMPTS, so a short outage recovered with a stale view.
+    const missedFrames = attempts > 0
     attempts = 0
     stopFallback()
+    if (missedFrames) refreshAll()
   }
   stream.onmessage = (event) => {
     markAlive()

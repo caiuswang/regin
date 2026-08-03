@@ -34,9 +34,9 @@ const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
 const { copyText } = useCopy()
 // The list is where you go looking for "which one needs me". A blocker that
 // only lives in a banner you dismissed leaves that question unanswered here.
-const { awaitingTraceId, resumedTraceId, blockerWaitedFor } = useNotificationCenter()
+const { awaitingTraceIds, resumedTraceId, waitedForTrace } = useNotificationCenter()
 
-const awaiting = computed(() => awaitingTraceId.value === props.s.trace_id)
+const awaiting = computed(() => awaitingTraceIds.value.has(props.s.trace_id))
 const resumed = computed(() => resumedTraceId.value === props.s.trace_id)
 
 const active = computed(() => isActiveWithClock(props.s, props.clock))
@@ -89,10 +89,10 @@ const statusTitle = computed(() => {
         <span
           v-if="awaiting"
           class="srow__awaiting"
-          :title="`The agent is paused, waiting ${blockerWaitedFor} for your answer`"
+          :title="`The agent is paused, waiting ${waitedForTrace(s.trace_id)} for your answer`"
         >
           <span class="srow__awaiting-dot" aria-hidden="true"></span>
-          awaiting decision · {{ blockerWaitedFor }}
+          awaiting decision · {{ waitedForTrace(s.trace_id) }}
         </span>
         <span v-else-if="resumed" class="srow__resumed">resumed</span>
         <span class="srow__status" :class="`srow__status--${statusLabel}`" :title="statusTitle">

@@ -255,6 +255,35 @@ def list_inbox(*, unread_only: bool = False, include_tests: bool = False,
         return out
 
 
+def list_decision_messages(*, limit: int = 20,
+                           include_tests: bool = False) -> list[dict]:
+    """Live interaction-required cards (the agent is parked), newest first.
+
+    Deliberately NOT gated on `read_at`, unlike `list_inbox(unread_only=…)`:
+    acknowledging a parked agent's question is not answering it, so a read
+    gate here would drop the surface while the agent is still stopped. Only
+    an actual resolve (`dismissed_at`) takes a card out of this feed.
+    """
+    from lib.agent_messages.event_notify import DECISION_KEYS
+    with SessionLocal() as session:
+        stmt = select(AgentMessage).where(
+            AgentMessage.dismissed_at.is_(None),
+            AgentMessage.msg_key.in_(DECISION_KEYS))
+        if not include_tests:
+            stmt = stmt.where(AgentMessage.is_test == 0)
+        stmt = stmt.order_by(AgentMessage.created_at.desc(),
+                             AgentMessage.id.desc()).limit(limit)
+        rows = session.exec(stmt).all()
+        titles = _session_titles(session, [r.trace_id for r in rows])
+        log.read("decision_messages_listed", count=len(rows))
+        out = []
+        for r in rows:
+            d = _serialize(r)
+            d["session_title"] = titles.get(r.trace_id)
+            out.append(d)
+        return out
+
+
 def get_message(message_id: int) -> Optional[dict]:
     """One message by id, shaped like an inbox row (session title included).
 
@@ -477,7 +506,8 @@ def message_stats() -> dict:
 
 
 __all__ = [
-    "record_message", "list_session_messages", "list_inbox", "get_message",
+    "record_message", "list_session_messages", "list_inbox",
+    "list_decision_messages", "get_message",
     "unread_count", "unread_top_severity", "mark_read", "mark_all_read", "ack", "dismiss", "set_pinned",
     "live_keyed_message", "dismiss_keyed",
     "prune_messages", "message_stats",

@@ -27,8 +27,15 @@ from lib.activity_log import get_activity_logger
 
 log = get_activity_logger("agent_messages")
 
-_PERM_KEY = "permission-pending"
-_PLAN_KEY = "plan-pending"
+PERM_KEY = "permission-pending"
+PLAN_KEY = "plan-pending"
+
+# The `msg_key`s that mark a card as a decision the agent is *parked* on
+# rather than a report. Mirrored by `DECISION_KEYS` in
+# frontend/src/constants/inboxTypes.js and pinned by
+# `test_decision_keys_match_the_client`.
+DECISION_KEYS = (PERM_KEY, PLAN_KEY)
+
 _PLAN_MAX = 1200
 
 
@@ -53,11 +60,11 @@ def notify_permission_request(*, trace_id: str | None, attrs: dict) -> bool:
         return False
     try:
         title, body = _format_permission(attrs)
-        if _already_pushed(trace_id, _PERM_KEY, body):
+        if _already_pushed(trace_id, PERM_KEY, body):
             return False
         data = events.emit(
             "permission.pending", trace_id=trace_id, body=body, title=title,
-            key=_PERM_KEY, span_id=attrs.get("tool_use_id"))
+            key=PERM_KEY, span_id=attrs.get("tool_use_id"))
         return data is not None
     except Exception:  # noqa: BLE001 — must never break the permission hook
         log.error("permission_event_push_failed", exc_info=True)
@@ -70,7 +77,7 @@ def resolve_permission(trace_id: str | None) -> None:
     from lib.agent_messages import events
     if not trace_id or not events.is_enabled("permission.pending"):
         return
-    events.resolve(trace_id, _PERM_KEY)
+    events.resolve(trace_id, PERM_KEY)
 
 
 def notify_plan_ready(*, trace_id: str | None, plan_text: str | None = None) -> bool:
@@ -80,11 +87,11 @@ def notify_plan_ready(*, trace_id: str | None, plan_text: str | None = None) -> 
         return False
     try:
         body = _format_plan(plan_text)
-        if _already_pushed(trace_id, _PLAN_KEY, body):
+        if _already_pushed(trace_id, PLAN_KEY, body):
             return False
         data = events.emit(
             "plan.ready", trace_id=trace_id, body=body,
-            title="Plan ready for review", key=_PLAN_KEY)
+            title="Plan ready for review", key=PLAN_KEY)
         return data is not None
     except Exception:  # noqa: BLE001 — must never break the plan hook
         log.error("plan_event_push_failed", exc_info=True)
@@ -103,7 +110,10 @@ def _format_permission(attrs: dict) -> tuple[str, str]:
     lines = [detail] if detail else [f"The agent needs approval to run **{tool}**."]
     count = attrs.get("option_count")
     if count:
-        lines.append(f"_{count} option(s) — approve or deny in your session._")
+        # Plain text, not `_italics_`: this body is rendered verbatim by the
+        # blocker banner as well as by the markdown push channels, and the
+        # underscores were reaching the operator as literal characters.
+        lines.append(f"{count} option(s) — approve or deny in your session.")
     return f"Permission needed: {tool}", "\n".join(lines)
 
 
@@ -127,4 +137,5 @@ def _format_plan(plan_text: str | None) -> str:
             "or reject the plan.")
 
 
-__all__ = ["notify_permission_request", "resolve_permission", "notify_plan_ready"]
+__all__ = ["DECISION_KEYS", "PERM_KEY", "PLAN_KEY", "notify_permission_request",
+           "resolve_permission", "notify_plan_ready"]
