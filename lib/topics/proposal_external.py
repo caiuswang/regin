@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from lib.agent_bridge import child_env
 from lib.trace import trace_service
 from lib.settings import settings
 from lib.topics.graph_io import load_authoritative_graph
@@ -472,7 +473,7 @@ def run_external_agent_proposal(
         return _run_via_agent_sdk(ctx, instructions, env_overlay, cwd, status,
                                   _sdk_run_options(config) or {})
     return _run_via_subprocess(
-        ctx, instructions, {**os.environ, **env_overlay},
+        ctx, instructions, child_env({**os.environ, **env_overlay}),
         [config.command, *config.args], cwd, status)
 
 

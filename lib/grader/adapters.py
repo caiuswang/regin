@@ -14,9 +14,11 @@ its mechanical screen tier.
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 from lib.activity_log import get_activity_logger
+from lib.agent_bridge import child_env
 from lib.settings import settings
 
 log = get_activity_logger("grader")
@@ -74,6 +76,7 @@ class ExternalAgentJudge:
                 capture_output=True,
                 timeout=agent.timeout_seconds,
                 cwd=str(agent.cwd) if agent.cwd else None,
+                env=child_env(os.environ),
             )
         except (OSError, subprocess.SubprocessError):
             log.error("judge_call_failed", agent=key, exc_info=True)

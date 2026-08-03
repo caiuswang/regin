@@ -105,15 +105,29 @@ def stub_launch(monkeypatch):
 # ── the gate ──────────────────────────────────────────────────────────
 
 
-def test_a_default_install_never_takes_the_sdk_path(monkeypatch):
+def test_a_default_install_never_takes_the_sdk_path():
+    """`agent_sdk.enabled` is the one an operator has to turn on; the drafting
+    tier defaults to riding it."""
+    assert pe._sdk_runner_enabled(_cfg()) is False
+
+
+def test_the_sdk_being_enabled_is_enough_to_route_drafting_through_it(
+        monkeypatch):
     monkeypatch.setattr(settings.agent_sdk, "enabled", True)
 
-    assert pe._sdk_runner_enabled(_cfg()) is False
+    assert pe._sdk_runner_enabled(_cfg()) is True
 
 
 def test_the_tier_being_off_keeps_the_subprocess_path(monkeypatch):
     monkeypatch.setattr(settings.agent_sdk, "enabled", False)
     monkeypatch.setattr(settings.topic_evolution, "proposal_sdk_runner", True)
+
+    assert pe._sdk_runner_enabled(_cfg()) is False
+
+
+def test_opting_the_drafting_runner_out_keeps_the_subprocess_path(monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(settings.topic_evolution, "proposal_sdk_runner", False)
 
     assert pe._sdk_runner_enabled(_cfg()) is False
 

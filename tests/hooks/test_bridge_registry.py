@@ -1,9 +1,9 @@
 """SessionStart agent-bridge pane registry (bridge_registry handler).
 
-Pins the guard order (REGIN_BRIDGE → $TMUX_PANE → tmux query → UPSERT):
-with the flag off the handler must be a pure no-op — no subprocess, no
-row — and every tmux/DB failure path must fail soft while still
-returning the suppress-output response. The UPSERT must overwrite ALL
+Pins the guard order (REGIN_BRIDGE → $TMUX_PANE → tmux query → command
+allowlist → UPSERT): with the flag off the handler must be a pure no-op —
+no subprocess, no row — and every tmux/DB failure path must fail soft while
+still returning the suppress-output response. The UPSERT must overwrite ALL
 columns on resume so no stale coordinate survives a re-registration.
 """
 
@@ -30,7 +30,7 @@ def _forbid_subprocess(monkeypatch):
     monkeypatch.setattr(bridge_registry.subprocess, "run", _boom)
 
 
-def _mock_tmux(monkeypatch, *, server_pid=4242, pane_pid=777,
+def _mock_tmux(monkeypatch, *, server_pid=4242, pane_pid=777, command="claude",
                returncode=0, stdout=None, raise_exc=None):
     calls = []
 
@@ -38,7 +38,8 @@ def _mock_tmux(monkeypatch, *, server_pid=4242, pane_pid=777,
         calls.append({"cmd": cmd, "kwargs": kwargs})
         if raise_exc is not None:
             raise raise_exc
-        out = stdout if stdout is not None else f"{server_pid}\t{pane_pid}\n"
+        out = (stdout if stdout is not None
+               else f"{server_pid}\t{pane_pid}\t{command}\n")
         return SimpleNamespace(returncode=returncode, stdout=out, stderr="")
 
     monkeypatch.setattr(bridge_registry.subprocess, "run", _fake_run)
@@ -177,6 +178,153 @@ def test_tmux_binary_missing_records_nothing(monkeypatch):
 
     assert resp is not None and resp.suppress_output is True
     assert _rows() == []
+
+
+# ── the pane-command allowlist ────────────────────────────────────────
+
+
+def _capture_activity(monkeypatch):
+    """Record (level, event, fields) the handler logs, without standing up a
+    log sink."""
+    written = []
+
+    class _Recorder:
+        def write(self, event, **fields):
+            written.append(("write", event, fields))
+
+        def read(self, event, **fields):
+            written.append(("read", event, fields))
+
+        def error(self, event, **fields):
+            written.append(("error", event, fields))
+
+    from lib import activity_log
+    monkeypatch.setattr(activity_log, "get_activity_logger",
+                        lambda _name: _Recorder())
+    return written
+
+
+def test_a_pane_running_something_other_than_claude_is_refused(monkeypatch):
+    """`regin serve` spawns its agents with the server's own `TMUX_PANE`
+    inherited; registering that pane hands /live a steer composer that types
+    into the operator's terminal instead of at an agent."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%10")
+    _mock_tmux(monkeypatch, server_pid=1, pane_pid=12111, command="Python")
+    written = _capture_activity(monkeypatch)
+
+    resp = bridge_registry.handle_start(_payload(session_id="s-server-pane"))
+
+    assert resp is not None and resp.suppress_output is True
+    assert _rows() == []
+    # INFO, and it names the observed command: a pane refused for running a
+    # tty-holding wrapper is only diagnosable from this line.
+    assert written == [("write", "bridge_pane_register_refused",
+                        {"trace_id": "s-server-pane", "pane_id": "%10",
+                         "pane_command": "Python",
+                         "reason": "command_not_allowlisted"})]
+
+
+def test_the_turn_heal_logs_a_refusal_at_debug(monkeypatch):
+    """Turn events fire per prompt and per tool call; an INFO record each
+    time would be permanent log spam for one refused session."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%10")
+    _mock_tmux(monkeypatch, command="Python")
+    written = _capture_activity(monkeypatch)
+
+    bridge_registry.handle_turn(_turn_payload())
+
+    assert [w[0] for w in written] == ["read"]
+    assert written[0][2]["pane_command"] == "Python"
+
+
+def test_a_raising_logger_is_not_reported_as_a_crash(monkeypatch):
+    """`_log_register_failure` would otherwise misattribute the refusal as
+    `bridge_pane_register_failed`."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%10")
+    _mock_tmux(monkeypatch, command="Python")
+
+    class _Boom:
+        def write(self, *_a, **_kw):
+            raise RuntimeError("log sink down")
+
+        def error(self, *_a, **_kw):
+            pytest.fail("a refusal must not be logged as a failure")
+
+    from lib import activity_log
+    monkeypatch.setattr(activity_log, "get_activity_logger",
+                        lambda _name: _Boom())
+
+    resp = bridge_registry.handle_start(_payload())
+
+    assert resp is not None and resp.suppress_output is True
+    assert _rows() == []
+
+
+def test_a_refusal_is_not_cached_so_a_later_turn_retries(monkeypatch):
+    """A pane momentarily foregrounding something else (a pager, a shell-out)
+    must be picked up by the next turn, not written off for the process."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%10")
+    _mock_tmux(monkeypatch, command="less")
+    bridge_registry.handle_start(_payload())
+
+    assert ("s-bridge", "%10") not in bridge_registry._registered_panes
+
+    _mock_tmux(monkeypatch, server_pid=4242, pane_pid=777, command="claude")
+    resp = bridge_registry.handle_turn(_turn_payload())
+
+    assert resp.suppress_output is True
+    rows = _rows()
+    assert len(rows) == 1
+    assert rows[0]["pane_id"] == "%10"
+
+
+@pytest.mark.parametrize("command", ["claude", "claude.exe", "node"])
+def test_every_allowlisted_command_still_registers(monkeypatch, command):
+    """Native builds report `claude.exe`; NVM installs report `node`."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%11")
+    _mock_tmux(monkeypatch, server_pid=7, pane_pid=8, command=command)
+
+    bridge_registry.handle_start(_payload())
+
+    rows = _rows()
+    assert len(rows) == 1
+    assert rows[0]["pane_id"] == "%11"
+
+
+def test_the_query_asks_tmux_for_the_pane_command(monkeypatch):
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%12")
+    calls = _mock_tmux(monkeypatch)
+
+    bridge_registry.handle_start(_payload())
+
+    assert calls[0]["cmd"][-1] == "#{pid}\t#{pane_pid}\t#{pane_current_command}"
+
+
+def test_a_pane_reporting_no_command_is_refused(monkeypatch):
+    # tmux can answer with an empty command field; `.strip()` on the whole
+    # line would eat the tab and make it look like a malformed reply.
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%13")
+    _mock_tmux(monkeypatch, stdout="5\t6\t\n")
+    written = _capture_activity(monkeypatch)
+
+    resp = bridge_registry.handle_start(_payload())
+
+    assert resp is not None and resp.suppress_output is True
+    assert _rows() == []
+    assert written[0][1] == "bridge_pane_register_refused"
 
 
 def _turn_payload(session_id="s-bridge", cwd="/tmp/proj"):

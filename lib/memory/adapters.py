@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lib.activity_log import get_activity_logger
+from lib.agent_bridge import child_env
 from lib.settings import settings
 
 
@@ -127,8 +128,9 @@ class ExternalAgentLLM:
         # can mark the resulting trace as an LLM-stage run, not a real
         # interactive session (sessions.origin='llm-stage').
         resolved = surface_id or self._surface_id
-        env = ({**os.environ, "REGIN_LLM_SURFACE": resolved}
-               if resolved else None)
+        env = child_env(
+            {**os.environ, "REGIN_LLM_SURFACE": resolved} if resolved
+            else os.environ)
         try:
             proc = subprocess.run(
                 [agent.command, *agent.args, *self._extra_args],

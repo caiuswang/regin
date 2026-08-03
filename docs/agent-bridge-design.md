@@ -76,7 +76,13 @@ into a screen. All are implemented and exercised in the spike
   what stops message injection from escalating to code execution. Empirical
   finding: the native build reports `pane_current_command` as **`claude.exe`**
   (even on macOS); NVM installs report `claude` or `node`. Allowlist all
-  three, and treat the capture-pane ack as the second factor.
+  three, and treat the capture-pane ack as the second factor. The same
+  allowlist is applied a step earlier, at **registration** (slice 1 below):
+  a pane that fails it never gets a row, so it never gets a composer to
+  fail at. Known cost: a `claude` behind a tty-holding wrapper
+  (`caffeinate`, `script`) reports the wrapper here and is refused at both
+  layers — an operator whose launcher does that widens
+  `allowed_pane_commands`.
 - **Copy-mode cancel.** A pane scrolled into copy-mode eats keystrokes;
   check `#{pane_in_mode}` and send `-X cancel` first.
 - **Sanitization.** Printable single-line text only: strip ANSI/control
@@ -142,7 +148,8 @@ Controls, ranked:
    token-carrying HTTP hop), and the rate limit plus the pane-identity/ack
    guards below apply identically.
 3. **Target verification** (above) — the injection→shell-execution
-   escalation is closed by refusing non-claude panes.
+   escalation is closed by refusing non-claude panes, at registration and
+   again at delivery.
 4. **Sanitization** (above) — no control bytes, no ANSI, no tmux key names.
 5. **Per-session opt-in.** Only sessions whose registration marks them
    bridge-reachable accept delivery; default off.
@@ -204,7 +211,14 @@ via the
 `lib.orm.engine.get_connection` idiom already used by
 `session_lifecycle.py`. Reachability is **opt-in**: the row is only marked
 bridge-reachable when the session was launched with the opt-in env var
-(`REGIN_BRIDGE=1`); default off. The operator-facing setup checklist
+(`REGIN_BRIDGE=1`); default off. The same query also reads
+`#{pane_current_command}` and refuses to write a row at all unless it is in
+`allowed_pane_commands` — without that, a process regin spawns for itself
+(which inherits the server's `TMUX_PANE`) registers the pane `regin serve`
+runs in, and `/live` offers a composer that types at the operator instead
+of at an agent. The refusal is logged with the observed command and is not
+cached, so a pane that was momentarily foregrounding something else
+registers on the session's next turn event. The operator-facing setup checklist
 (settings flag, env var, tmux, editor role) lives in
 [setup.md](./setup.md#agent-bridge-steer-live-sessions-from-live).
 

@@ -1,4 +1,4 @@
-"""ExternalAgentLLM.complete's cwd resolution.
+"""ExternalAgentLLM.complete's cwd resolution and spawn environment.
 
 A proposal reviewer must inspect the *target* repo, not wherever the host
 process happens to be running from. `complete(..., cwd=repo_path)` is the
@@ -58,3 +58,50 @@ def test_complete_with_no_cwd_or_config_inherits_none(monkeypatch, allow_subproc
     })
     out = ExternalAgentLLM().complete("prompt")
     assert out.strip()  # ran with whatever the test process's cwd is
+
+
+# ── spawn environment ───────────────────────────────────────────
+
+
+def _spawn_env(monkeypatch, surface_id=None) -> dict:
+    """Capture the environment `complete` hands its child process."""
+    from lib.memory import adapters
+    seen = {}
+
+    class _Fake:
+        def run(self, argv, **kwargs):
+            del argv
+            seen.update(kwargs.get("env") or {})
+            return type("P", (), {"returncode": 0, "stdout": b""})()
+
+    monkeypatch.setattr(adapters, "subprocess", _Fake())
+    monkeypatch.setattr(settings, "topic_proposal_external_agents", {
+        "claude": TopicProposalExternalAgent(command="pwd"),
+    })
+    ExternalAgentLLM(surface_id=surface_id).complete("prompt")
+    return seen
+
+
+def test_the_spawned_agent_never_inherits_the_servers_bridge_optin(monkeypatch):
+    """`regin serve` runs in a tmux pane with REGIN_BRIDGE=1; a child that
+    inherited it would register the *server's* pane as its own bridge pane."""
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("REGIN_SPAWN_ENV_CANARY", "kept")
+
+    env = _spawn_env(monkeypatch, surface_id="memory-distill")
+
+    assert env["REGIN_BRIDGE"] == "0"
+    assert env["REGIN_LLM_SURFACE"] == "memory-distill"
+    assert env["REGIN_SPAWN_ENV_CANARY"] == "kept"
+
+
+def test_an_unsurfaced_agent_also_gets_the_bridge_off(monkeypatch):
+    """Without a surface id this path used to pass `env=None` (pure inherit),
+    which carried the server's REGIN_BRIDGE straight through."""
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.delenv("REGIN_LLM_SURFACE", raising=False)
+
+    env = _spawn_env(monkeypatch)
+
+    assert env["REGIN_BRIDGE"] == "0"
+    assert "REGIN_LLM_SURFACE" not in env

@@ -7,3 +7,7 @@ delivers a sanitized message into it under the design's delivery guards
 `settings.agent_bridge.enabled` is on and the target session opted in with
 `REGIN_BRIDGE=1` at launch.
 """
+
+from .env import child_env
+
+__all__ = ["child_env"]

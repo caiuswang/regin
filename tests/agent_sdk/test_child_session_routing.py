@@ -223,3 +223,15 @@ def test_a_runs_own_env_still_travels_with_it():
     built = client.build_options(options=options)
 
     assert built.env == {"REGIN_BRIDGE": "0", "REGIN_LLM_SURFACE": "drafting"}
+
+
+def test_a_run_cannot_switch_the_bridge_back_on_for_itself():
+    """Every other key a run supplies wins; this one is a property of who
+    launched the process, not of the run."""
+    pytest.importorskip("claude_agent_sdk")
+
+    options = client.RunOptions(env={"REGIN_BRIDGE": "1", "KEPT": "yes"})
+
+    built = client.build_options(options=options)
+
+    assert built.env == {"REGIN_BRIDGE": "0", "KEPT": "yes"}

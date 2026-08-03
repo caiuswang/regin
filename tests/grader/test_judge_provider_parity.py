@@ -96,3 +96,37 @@ def test_allowed_tools_granted_for_claude_suppressed_for_kimi(two_agents):
 def test_resolve_judge_none_when_unconfigured(monkeypatch):
     monkeypatch.setattr(settings, "topic_proposal_external_agents", {})
     assert resolve_judge(agent_id="kimi") is None
+
+
+# ── spawn environment ────────────────────────────────────────────
+
+def _judge_spawn_env(monkeypatch) -> dict:
+    """Capture the environment the judge hands its child process."""
+    from lib.grader import adapters
+    seen = {}
+
+    class _Fake:
+        def run(self, argv, **kwargs):
+            del argv
+            seen.update(kwargs.get("env") or {})
+            return type("P", (), {"returncode": 0, "stdout": b"{}"})()
+
+    monkeypatch.setattr(adapters, "subprocess", _Fake())
+    monkeypatch.setattr(settings, "topic_proposal_external_agents", {
+        "claude": TopicProposalExternalAgent(command="claude", args=["--print"]),
+    })
+    ExternalAgentJudge().complete("JUDGE THIS")
+    return seen
+
+
+def test_the_judge_child_never_inherits_the_servers_bridge_optin(monkeypatch):
+    """`POST /api/sessions/<id>/grade` runs this inside `regin serve`, whose
+    tmux pane and REGIN_BRIDGE=1 the child would otherwise inherit — claiming
+    the operator's own pane as the judge session's bridge pane."""
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("REGIN_SPAWN_ENV_CANARY", "kept")
+
+    env = _judge_spawn_env(monkeypatch)
+
+    assert env["REGIN_BRIDGE"] == "0"
+    assert env["REGIN_SPAWN_ENV_CANARY"] == "kept"

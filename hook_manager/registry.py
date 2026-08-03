@@ -258,7 +258,8 @@ REGISTRY: list[Handler] = [
         name='bridge_pane_registry',
         label='Bridge Pane Registry',
         summary='Registers the session\'s tmux pane identity triple for '
-                'agent-bridge delivery (REGIN_BRIDGE opt-in; no-op otherwise).',
+                'agent-bridge delivery, when the pane runs an allowlisted '
+                'command (REGIN_BRIDGE opt-in; no-op otherwise).',
         match_hint='SessionStart when REGIN_BRIDGE is truthy and $TMUX_PANE is set',
         events=['SessionStart'],
         kind='trace',
@@ -270,7 +271,7 @@ REGISTRY: list[Handler] = [
         label='Bridge Pane Registry (Self-Heal)',
         summary='Re-registers the tmux pane on turn events so a session '
                 'whose SessionStart registration missed recovers its /live '
-                'steer composer (REGIN_BRIDGE opt-in; deduped per pane).',
+                'steer composer (REGIN_BRIDGE opt-in).',
         match_hint='UserPromptSubmit / PreToolUse when REGIN_BRIDGE is truthy and $TMUX_PANE is set',
         events=['UserPromptSubmit', 'PreToolUse'],
         kind='trace',

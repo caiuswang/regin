@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from lib.activity_log import get_activity_logger
+from lib.agent_bridge import child_env
 from lib.settings import settings
 from lib.topics import TopicGraphError, topic_dir
 
@@ -433,12 +434,12 @@ def _review_agent_worker(repo: Path, proposal_id: str, spec: Any,
     take down the run that spawned it)."""
     out_dir = _review_dir(repo, proposal_id)
     out_dir.mkdir(parents=True, exist_ok=True)
-    env = {
+    env = child_env({
         **os.environ,
         "REGIN_TOPIC_REVIEW_ID": proposal_id,
         "REGIN_TOPIC_REVIEW_OUTPUT": str(_review_output_path(repo, proposal_id)),
         "REGIN_TOPIC_REVIEW_FINISH_CMD": _review_finish_command(repo, proposal_id),
-    }
+    })
     if spec.surface_id:
         env["REGIN_LLM_SURFACE"] = spec.surface_id
     try:

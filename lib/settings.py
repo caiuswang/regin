@@ -914,13 +914,13 @@ class TopicEvolutionConfig(BaseModel):
     proposal_stranded_grace_seconds: int = 1800
 
     # Run the drafting agent through the Agent SDK tier (`lib/agent_sdk`)
-    # instead of `subprocess.Popen` + `communicate()`. Off by default, and
-    # inert unless `agent_sdk.enabled` is also on: the SDK tier launches the
-    # user's own `claude`, so a run bound to a different CLI keeps the
-    # subprocess path regardless. What it buys is a run that outlives the
-    # request — a durable `agent_runs` row, live spans, and `/live`
-    # steering/stop — instead of a `Popen` handle on one thread's stack.
-    proposal_sdk_runner: bool = False
+    # instead of `subprocess.Popen` + `communicate()`. Inert unless
+    # `agent_sdk.enabled` is also on: the SDK tier launches the user's own
+    # `claude`, so a run bound to a different CLI keeps the subprocess path
+    # regardless. What it buys is a run that outlives the request — a durable
+    # `agent_runs` row, live spans, and `/live` steering/stop — instead of a
+    # `Popen` handle on one thread's stack.
+    proposal_sdk_runner: bool = True
 
 
 # Project-root-relative paths — fixed by where this file lives.
