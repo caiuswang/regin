@@ -512,6 +512,11 @@ def cmd_export_tree(
     repo_path = Path(repo).resolve() if repo else Path(settings.project_root)
     summary = memory.export_memory_tree(str(repo_path), out_dir=out_dir,
                                         scope=scope)
+    if summary.get("refused"):
+        print("refused: the store looks empty but the tree is populated — "
+              "nothing was deleted. Check which memory DB this process sees "
+              "(regin doctor) before re-running.")
+        raise typer.Exit(code=1)
     print(f"exported canonical={summary['canonical']} "
           f"stub={summary['stub']} unfiled={summary['unfiled']}")
 

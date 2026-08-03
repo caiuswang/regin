@@ -50,8 +50,14 @@ _CLAUDE_STOP = {
 
 def _sweep_handlers():
     """The registered sweep, looked up the way the runner sees it. Empty (and
-    therefore a failing test) if nothing wires `handle_sweep` up."""
-    return [h for h in REGISTRY if h.fn is subagent_lifecycle.handle_sweep]
+    therefore a failing test) if nothing wires `handle_sweep` up.
+
+    Compared against the registry's own binding, not against the raw module
+    function: the registry reaches handler modules through a lazy import proxy
+    so a hook process only pays for the handlers its event dispatches."""
+    from hook_manager import registry
+    return [h for h in REGISTRY
+            if h.fn is registry.subagent_lifecycle.handle_sweep]
 
 
 def _dispatch(event, raw, handlers, *, agent_type=None):

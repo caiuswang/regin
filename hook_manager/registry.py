@@ -3,11 +3,12 @@
 Ordering by `priority` (lower runs earlier). Gates typically get priority
 < 100 so they see unmutated input; trace handlers use > 100 so they run after.
 
-Resilience: each handler module is imported via ``_safe_import``. If one
-module's top-level imports break — most commonly during a mid-session
-``lib/`` refactor that moves a module the handler still imports by the
-old path — the failure is logged to ``hook-errors.jsonl`` and that
-single handler degrades to a silent no-op. The other handlers, and in
+Resilience: each handler module is bound via ``_safe_import``, which returns
+a *lazy* proxy — the module is imported on the first call into it, not at
+registry construction. If one module's top-level imports break — most
+commonly during a mid-session ``lib/`` refactor that moves a module the
+handler still imports by the old path — the failure is logged to
+``hook-errors.jsonl`` and that single handler degrades to a silent no-op. The other handlers, and in
 particular ``post_tool_trace``, keep emitting spans. Without this guard
 a single bad ``from lib import X`` in any handler module crashes the
 whole registry at process start and silently blackholes every span for
@@ -64,12 +65,54 @@ class _NoOpHandlerModule:
         return _noop
 
 
+class _LazyHandlerModule:
+    """Defers ``import hook_manager.handlers.<name>`` until one of the
+    module's functions is actually called.
+
+    A hook process runs for one event and dispatches a handful of handlers,
+    but importing all of them eagerly cost 0.382s of the 0.509s a PostToolUse
+    hook took end to end (measured; the actual handler work was ~0.1s). The
+    heaviest chain is ``rule_check`` → ``lib.patterns.pattern_scope`` →
+    sqlmodel/sqlalchemy, which an event that touches no file never needs.
+
+    Attribute access resolves through to the real module *on every call*
+    rather than being cached as a bound function, so monkeypatching
+    ``hook_manager.handlers.<name>.handle`` in a test still takes effect.
+    The stub itself is memoised per attribute, so ``registry.X.handle is
+    registry.X.handle`` holds and a ``Handler.fn`` stays identity-comparable
+    against the registry (but no longer against the raw module function —
+    check wiring through this proxy, not through a direct module import).
+    """
+
+    __slots__ = ('_name', '_mod', '_stubs')
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._mod = None
+        self._stubs: dict[str, object] = {}
+
+    def _resolve(self):
+        if self._mod is None:
+            try:
+                self._mod = importlib.import_module(
+                    f'.handlers.{self._name}', package='hook_manager')
+            except Exception as exc:
+                _log_handler_import_failure(self._name, exc)
+                self._mod = _NoOpHandlerModule(self._name)
+        return self._mod
+
+    def __getattr__(self, attr: str):
+        stub = self._stubs.get(attr)
+        if stub is None:
+            def _call(*args, **kwargs):
+                return getattr(self._resolve(), attr)(*args, **kwargs)
+            _call.__name__ = f'{self._name}.{attr}'
+            stub = self._stubs[attr] = _call
+        return stub
+
+
 def _safe_import(name: str):
-    try:
-        return importlib.import_module(f'.handlers.{name}', package='hook_manager')
-    except Exception as exc:
-        _log_handler_import_failure(name, exc)
-        return _NoOpHandlerModule(name)
+    return _LazyHandlerModule(name)
 
 
 bridge_registry     = _safe_import('bridge_registry')

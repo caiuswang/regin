@@ -139,6 +139,7 @@ def test_build_tool_attributes_for_skill():
 # single-shot fire-and-forget into a bounded retry loop. They use stubs
 # so no real HTTP, no real time.sleep happens.
 
+import errno
 import io
 import json as _json
 import urllib.error
@@ -648,13 +649,34 @@ def test_is_retryable_http_500_is_retryable():
 
 
 def test_is_retryable_url_error():
-    """Connection refused / DNS failure etc. is retryable."""
+    """DNS failure / reset / unreachable etc. is retryable."""
     assert hook_plugin._is_retryable(urllib.error.URLError('down')) is True
 
 
 def test_is_retryable_oserror_retryable():
     """Connection timeout / socket errors surface as OSError — retry."""
     assert hook_plugin._is_retryable(OSError('timeout')) is True
+
+
+def test_is_retryable_connection_refused_is_not_retryable():
+    """Nothing is listening — the whole retry budget is pure backoff sleep
+    paid on every tool call, for a span that was never going to land."""
+    refused = ConnectionRefusedError(errno.ECONNREFUSED, 'Connection refused')
+    assert hook_plugin._is_retryable(refused) is False
+
+
+def test_is_retryable_url_error_wrapping_refused_is_not_retryable():
+    """urllib wraps the socket error, so the check must look at `.reason`."""
+    wrapped = urllib.error.URLError(
+        ConnectionRefusedError(errno.ECONNREFUSED, 'Connection refused'))
+    assert hook_plugin._is_retryable(wrapped) is False
+
+
+def test_is_retryable_oserror_with_econnrefused_errno_is_not_retryable():
+    """Classified by errno, not by exception class, so a plain OSError
+    carrying ECONNREFUSED is caught too."""
+    err = OSError(errno.ECONNREFUSED, 'Connection refused')
+    assert hook_plugin._is_retryable(err) is False
 
 
 def test_is_retryable_value_error_is_not_retryable():

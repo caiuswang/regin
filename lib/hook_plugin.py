@@ -19,6 +19,7 @@ Typical usage in a hook script:
     emit_response(ctx.hook_event, f"traced {ctx.tool_name}")
 """
 
+import errno
 import json
 import os
 import random
@@ -283,14 +284,29 @@ def _is_retryable(exc: BaseException) -> bool:
     HTTP 4xx means the caller sent something the server can't accept — retrying
     with the same payload won't help, so don't waste the latency budget. HTTP
     5xx, network errors, and timeouts are all treated as transient.
+
+    Connection-refused is the exception among network errors: nothing is
+    listening on the port, and that answer comes back instantly, so the whole
+    retry budget degenerates into pure backoff sleep. Measured with `regin
+    serve` down, that turned a 0.51s PostToolUse hook into 1.81s — a tax paid
+    on every single tool call for a span that was never going to land anyway
+    (a server that starts mid-backoff is a sub-second window, not a real
+    recovery path).
     """
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code >= 500
     if isinstance(exc, urllib.error.URLError):
-        return True
-    if isinstance(exc, OSError):  # ConnectionRefused, timeout, etc.
-        return True
+        return not _is_connection_refused(exc.reason)
+    if isinstance(exc, OSError):  # timeout, DNS, reset, …
+        return not _is_connection_refused(exc)
     return False
+
+
+def _is_connection_refused(reason: object) -> bool:
+    """True for a refused connection, however urllib wrapped it."""
+    if isinstance(reason, ConnectionRefusedError):
+        return True
+    return isinstance(reason, OSError) and reason.errno == errno.ECONNREFUSED
 
 
 _JITTER_LOW = 0.5

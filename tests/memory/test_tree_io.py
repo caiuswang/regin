@@ -342,6 +342,75 @@ def test_reexport_after_deleting_memory_removes_its_files(tmp_path):
     assert list(leaf_dir.glob("*.md")) == []
 
 
+def test_export_refuses_to_wipe_a_populated_tree_from_an_empty_store(tmp_path):
+    """A process pointed at the wrong/uninitialised memory DB sees zero
+    eligible rows; without a guard the prune step deletes the entire
+    exported tree — which is how this repo's tree reached 0 files while
+    `index-root` still reported 500+ memories."""
+    _write_graph(tmp_path)
+    store = memory.get_store()
+    for i in range(tree_io._WIPE_GUARD_MIN_IDS + 1):
+        store.link_authoritative_topic(
+            _remember(f"lesson number {i}", is_test=False), "leaf-a")
+
+    tree_io.export_memory_tree(str(tmp_path))
+    leaf_dir = tmp_path / tree_io.DEFAULT_TREE_DIR / "alpha" / "leaf-a"
+    before = sorted(p.name for p in leaf_dir.glob("*.md"))
+    assert len(before) == tree_io._WIPE_GUARD_MIN_IDS + 1
+
+    monkeypatched = lambda *_a, **_kw: []  # noqa: E731 — one-line stub
+    original, tree_io._eligible_rows = tree_io._eligible_rows, monkeypatched
+    try:
+        summary = tree_io.export_memory_tree(str(tmp_path))
+    finally:
+        tree_io._eligible_rows = original
+
+    assert summary["refused"] == 1
+    assert sorted(p.name for p in leaf_dir.glob("*.md")) == before
+
+
+def test_export_still_prunes_a_small_tree_when_the_store_empties(tmp_path):
+    """The guard is a scale heuristic, not a freeze: genuinely retiring the
+    last few memories must still mirror through to the tree."""
+    _write_graph(tmp_path)
+    store = memory.get_store()
+    mid = _remember("the only lesson there is", is_test=False)
+    store.link_authoritative_topic(mid, "leaf-a")
+
+    tree_io.export_memory_tree(str(tmp_path))
+    leaf_dir = tmp_path / tree_io.DEFAULT_TREE_DIR / "alpha" / "leaf-a"
+    assert len(list(leaf_dir.glob("*.md"))) == 1
+
+    store.update(mid, status="retired")
+    summary = tree_io.export_memory_tree(str(tmp_path))
+
+    assert "refused" not in summary
+    assert list(leaf_dir.glob("*.md")) == []
+
+
+def test_stale_export_is_not_stamped_when_the_guard_refuses(tmp_path):
+    """Stamping a refusal would cache the guard's own verdict, so the tree
+    could never recover once a healthy process came along."""
+    _write_graph(tmp_path)
+    store = memory.get_store()
+    for i in range(tree_io._WIPE_GUARD_MIN_IDS + 1):
+        store.link_authoritative_topic(
+            _remember(f"stamped lesson {i}", is_test=False), "leaf-a")
+    tree_io.export_memory_tree(str(tmp_path))
+
+    stamp = tmp_path / tree_io.DEFAULT_TREE_DIR / tree_io.STAMP_FILE
+    stamp.unlink(missing_ok=True)
+
+    monkeypatched = lambda *_a, **_kw: []  # noqa: E731 — one-line stub
+    original, tree_io._eligible_rows = tree_io._eligible_rows, monkeypatched
+    try:
+        tree_io.export_tree_if_stale(str(tmp_path))
+    finally:
+        tree_io._eligible_rows = original
+
+    assert not stamp.exists()
+
+
 # ── regression: bug 2 — canonical fallback must not discard other links ──
 
 

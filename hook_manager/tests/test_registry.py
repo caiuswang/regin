@@ -172,6 +172,45 @@ def test_safe_import_returns_stub_and_logs_when_module_import_fails(monkeypatch,
     )
 
 
+def test_importing_the_registry_pulls_no_heavy_dependency():
+    """The registry binds handlers through a lazy proxy so a hook process
+    pays only for the handlers its event actually dispatches. Importing them
+    all at registry build time cost ~0.33s of a ~0.5s hook: `rule_check` →
+    `lib.patterns` → sqlalchemy, and `lib.activity_log` → structlog. Asserted
+    on the expensive third-party trees rather than on handler module names,
+    because a stdlib-only handler (commit_guard) is legitimately eager.
+
+    Run in a subprocess: the test session has these imported already.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        'import sys; import hook_manager.registry; '
+        'print(",".join(sorted(m for m in sys.modules '
+        'if m.split(".")[0] in ("sqlalchemy", "sqlmodel", "structlog"))))'
+    )
+    out = subprocess.run([sys.executable, '-c', probe],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == '', (
+        f'registry import eagerly pulled: {out.stdout.strip()}')
+
+
+def test_lazy_module_resolves_the_real_function_on_each_call(monkeypatch):
+    """Resolution happens per call, not once at binding, so a test that
+    monkeypatches the handler module still takes effect."""
+    from hook_manager import registry as reg
+
+    lazy = reg._safe_import('cwd_changed')
+    import hook_manager.handlers.cwd_changed as real
+
+    calls = []
+    monkeypatch.setattr(real, 'handle', lambda payload: calls.append(payload))
+    lazy.handle('payload-1')
+    assert calls == ['payload-1']
+
+
 def test_prompt_trace_runs_before_turn_trace_on_user_prompt_submit():
     """On UserPromptSubmit, `prompt_trace` MUST run before `turn_trace`
     so the new `prompt` span is emitted before the `turn` span.

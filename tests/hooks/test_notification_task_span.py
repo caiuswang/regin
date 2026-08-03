@@ -115,9 +115,14 @@ def test_claude_notifications_emit_nothing(_captured, raw):
 def test_handler_is_registered_for_the_notification_event():
     from hook_manager.registry import REGISTRY
 
+    from hook_manager import registry
+
     wired = [h for h in REGISTRY if 'Notification' in h.events]
-    assert [h.name for h in wired] == ['task_notification']
-    assert wired[0].fn is misc_events.notification
+    assert 'task_notification' in [h.name for h in wired]
+    by_name = {h.name: h for h in wired}
+    # Compared against the registry's own binding, not the raw module
+    # function: handler modules are reached through a lazy import proxy.
+    assert by_name['task_notification'].fn is registry.misc_events.notification
 
 
 @pytest.mark.parametrize('raw, emitted', [

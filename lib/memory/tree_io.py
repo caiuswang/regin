@@ -256,6 +256,13 @@ def _all_eligible_ids(store, scope: Optional[str], rows: list[dict]) -> set[str]
     return {mem["id"] for mem in _eligible_rows(store, scope=None)}
 
 
+#: How many distinct memory ids an existing tree may hold before a
+#: zero-row export is treated as a wrong-DB accident rather than a real
+#: emptying. Small enough that a hand-made or single-lesson tree still
+#: prunes normally; large enough that a real corpus is never wiped.
+_WIPE_GUARD_MIN_IDS = 10
+
+
 def export_memory_tree(repo_path: str, *, out_dir: Optional[str] = None,
                        scope: Optional[str] = None) -> dict:
     """Write every eligible active memory into a git-shareable markdown
@@ -271,6 +278,19 @@ def export_memory_tree(repo_path: str, *, out_dir: Optional[str] = None,
     rows = _eligible_rows(store, scope)
 
     existing = _existing_tree_files(base)
+    if not rows and len(existing) > _WIPE_GUARD_MIN_IDS:
+        # A store that reads as empty while the tree holds a whole corpus is
+        # not a real transition — retiring or deleting every memory at once
+        # is not something any code path does. It means this process is
+        # looking at an uninitialised or wrong memory DB, and pruning would
+        # silently delete the entire tree. That is how this repo's tree
+        # reached 0 files while `index-root` still reported 500+ memories,
+        # which dead-ends the `goal-verified-treenav` walk and then walls
+        # its step-2 recall gate, with no hint as to why.
+        log.error("memory_tree_export_refused_empty_store",
+                  existing_ids=len(existing), scope=scope or "*",
+                  base=str(base))
+        return {"canonical": 0, "stub": 0, "unfiled": 0, "refused": 1}
     _prune_ineligible(existing, _all_eligible_ids(store, scope, rows))
 
     counts = {"canonical": 0, "stub": 0, "unfiled": 0}
@@ -354,6 +374,11 @@ def export_tree_if_stale(repo_path: str, *, out_dir: Optional[str] = None,
         if stamp_path.is_file() and stamp_path.read_text().strip() == signature:
             return None
         counts = export_memory_tree(repo_path, out_dir=out_dir, scope=scope)
+        if counts.get("refused"):
+            # Don't stamp a refusal, or the guard's own verdict becomes the
+            # cached answer and the tree never recovers once a healthy
+            # process comes along.
+            return counts
         _atomic_write(stamp_path, signature)
         return counts
     except Exception:
