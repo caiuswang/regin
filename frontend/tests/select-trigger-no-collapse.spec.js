@@ -56,7 +56,7 @@ test('measure toolbar Select widths when a Select is clicked (desktop)', async (
   // Changing Range triggers a reload that recomputes tagOptions and re-renders
   // the toolbar — the path that used to collapse a sibling trigger.
   await page.getByLabel('Filter by last activity time range').click()
-  await page.getByRole('option', { name: 'All time' }).click()
+  await page.getByRole('button', { name: 'All time', exact: true }).click()
   await page.waitForTimeout(700)
 
   const frames = await page.evaluate(() => { window.__stop(); return window.__w })

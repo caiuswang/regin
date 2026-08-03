@@ -79,6 +79,7 @@ const tagChips = computed(() => props.tagOptions
         all-value="all"
         all-label="All"
         :options="repoChips"
+        search-placeholder="Search repos…"
       />
       <SessionFilterChips
         v-model="tag"
@@ -86,6 +87,7 @@ const tagChips = computed(() => props.tagOptions
         all-value=""
         all-label="All"
         :options="tagChips"
+        search-placeholder="Search tags…"
       />
 
       <div class="facet">

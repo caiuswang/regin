@@ -6,11 +6,16 @@ import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import SessionFiltersPopover from './SessionFiltersPopover.vue'
+import SessionRangePicker from './SessionRangePicker.vue'
 import { GROUP_OPTIONS } from '../../composables/useSessionGrouping.js'
 
 defineProps({
   scopeOptions: { type: Array, required: true },
   rangeOptions: { type: Array, required: true },
+  rangeLabel: { type: String, default: '' },
+  rangeNarrowed: { type: Boolean, default: false },
+  rangeStart: { type: Object, default: null },
+  rangeEnd: { type: Object, default: null },
   kindOptions: { type: Array, required: true },
   statusOptions: { type: Array, required: true },
   tagOptions: { type: Array, default: () => [] },
@@ -21,7 +26,10 @@ defineProps({
   batchDeleting: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['search', 'reset', 'batch-delete'])
+const emit = defineEmits([
+  'search', 'reset', 'batch-delete', 'clear-selection',
+  'range-preset', 'range-pick', 'range-clear',
+])
 
 const search = defineModel('search', { type: String, default: '' })
 const scope = defineModel('scope', { type: String, default: 'title' })
@@ -67,11 +75,16 @@ const traceId = defineModel('traceId', { type: String, default: '' })
       >{{ opt.label }}</Button>
     </div>
 
-    <Select
-      v-model="range"
-      :options="rangeOptions"
-      class="stoolbar__range"
-      aria-label="Filter by last activity time range"
+    <SessionRangePicker
+      :presets="rangeOptions"
+      :value="range"
+      :label="rangeLabel"
+      :narrowed="rangeNarrowed"
+      :start="rangeStart"
+      :end="rangeEnd"
+      @preset="(v) => emit('range-preset', v)"
+      @pick="(d) => emit('range-pick', d)"
+      @clear="emit('range-clear')"
     />
 
     <SessionFiltersPopover
@@ -90,14 +103,22 @@ const traceId = defineModel('traceId', { type: String, default: '' })
       @commit-trace-id="emit('search')"
     />
 
-    <Button
-      v-if="selectionCount"
-      variant="danger"
-      size="sm"
-      class="stoolbar__batch"
-      :disabled="batchDeleting"
-      @click="emit('batch-delete')"
-    >{{ batchDeleting ? 'Deleting…' : `Delete selected (${selectionCount})` }}</Button>
+    <div v-if="selectionCount" class="stoolbar__batch" role="group" aria-label="Selected sessions">
+      <span class="stoolbar__selcount">{{ selectionCount }} selected</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="stoolbar__clearsel focus-visible:outline-2 focus-visible:outline-blue-500"
+        :disabled="batchDeleting"
+        @click="emit('clear-selection')"
+      >Clear</Button>
+      <Button
+        variant="danger"
+        size="sm"
+        :disabled="batchDeleting"
+        @click="emit('batch-delete')"
+      >{{ batchDeleting ? 'Deleting…' : 'Delete selected' }}</Button>
+    </div>
   </div>
 </template>
 
@@ -140,11 +161,19 @@ const traceId = defineModel('traceId', { type: String, default: '' })
   height: 1.75rem;
   padding: 0 0.6875rem;
 }
-.stoolbar :deep(.stoolbar__range) {
-  height: 2.125rem;
-  font-size: 0.78125rem;
+.stoolbar__batch {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.375rem;
+  margin-left: auto;
 }
-.stoolbar__batch { margin-left: auto; }
+.stoolbar__selcount {
+  color: var(--color-fg-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.stoolbar__clearsel { color: var(--color-fg-faint); font-size: 0.6875rem; }
 
 @media (max-width: 639px) {
   .stoolbar__search { width: 100%; }

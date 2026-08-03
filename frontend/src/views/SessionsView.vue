@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import api from '../api'
 import CursorControls from '../components/CursorControls.vue'
+import SessionActiveFilters from '../components/sessions/SessionActiveFilters.vue'
 import SessionCard from '../components/sessions/SessionCard.vue'
 import SessionListRow from '../components/sessions/SessionListRow.vue'
 import SessionToolbar from '../components/sessions/SessionToolbar.vue'
@@ -29,6 +30,7 @@ const {
   serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
   filterCount, searchInput, activeSearch, traceIdInput, searchScope,
   kind, activeFilter, range, tagFilter, repoFilter,
+  customStart, customEnd, rangeLabel, activeFilters,
 } = query
 
 const { customTags, loadCustomTags, patchRowTags, addTag, removeTag } = useSessionTags()
@@ -70,6 +72,16 @@ const tagOptions = computed(() => {
   return opts
 })
 
+// The chip row needs display labels the composable doesn't have; the facet
+// options are assembled here, so publish the slug→label map back to it.
+watch(tagOptions, (opts) => {
+  query.tagLabels.value = Object.fromEntries(opts.map(o => [o.value, o.label]))
+}, { immediate: true })
+
+// Derived from the chip set rather than compared to a literal, so the trigger's
+// "narrowed" styling can't drift from what `filterCount` counts.
+const rangeNarrowed = computed(() => activeFilters.value.some(f => f.key === 'range'))
+
 const deleting = ref(null)   // trace_id currently being deleted
 const closing = ref(null)    // trace_id currently being manually closed
 const selectedIds = ref(new Set())
@@ -110,6 +122,19 @@ function toggleOne(traceId, checked) {
 
 function toggleSelectAll(checked) {
   selectedIds.value = checked ? new Set(sessions.value.map(s => s.trace_id)) : new Set()
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+// Escape is the universal "never mind". An open popover owns it first — Reka
+// closes on Escape and a portalled panel is in the DOM only while open, so
+// defer to it rather than dropping the selection out from under the user.
+function onEscape(e) {
+  if (e.key !== 'Escape' || !selectedIds.value.size) return
+  if (document.querySelector('.ds-popover')) return
+  clearSelection()
 }
 
 function rowLabel(s) {
@@ -214,10 +239,13 @@ watch([activeCount, totalCount, refreshing], () => {
 }, { immediate: true })
 
 onMounted(() => {
+  window.addEventListener('keydown', onEscape)
   loadRepoOptions()
   loadCustomTags()
   reload()
 })
+
+onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
 </script>
 
 <template>
@@ -243,6 +271,10 @@ onMounted(() => {
         v-model:trace-id="traceIdInput"
         :scope-options="SCOPE_OPTIONS"
         :range-options="RANGE_OPTIONS"
+        :range-label="rangeLabel"
+        :range-narrowed="rangeNarrowed"
+        :range-start="customStart"
+        :range-end="customEnd"
         :kind-options="KIND_OPTIONS"
         :status-options="ACTIVE_OPTIONS"
         :tag-options="tagOptions"
@@ -254,6 +286,16 @@ onMounted(() => {
         @search="runSearch"
         @reset="query.resetFilters(reload)"
         @batch-delete="batchDelete"
+        @clear-selection="clearSelection"
+        @range-preset="(v) => query.selectRangePreset(v)"
+        @range-pick="(d) => query.pickRangeDay(d)"
+        @range-clear="query.clearFilter('range')"
+      />
+
+      <SessionActiveFilters
+        :filters="activeFilters"
+        @clear="(key) => query.clearFilter(key)"
+        @clear-all="query.resetFilters(reload)"
       />
     </div>
 
