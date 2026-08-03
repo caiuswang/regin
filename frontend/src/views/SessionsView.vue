@@ -9,6 +9,7 @@ import SessionToolbar from '../components/sessions/SessionToolbar.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
+import { useLiveShutdown } from '../composables/useLiveShutdown'
 import { useSessionGrouping } from '../composables/useSessionGrouping'
 import { useSessionTags } from '../composables/useSessionTags'
 import {
@@ -23,6 +24,8 @@ import { shortTraceId } from '../utils/traceFormatters.js'
 
 const { confirm } = useConfirm()
 const { flash } = useFlash()
+const { probe, probeAll, singleWarning, batchWarning, shutdownAll, failureWarning }
+  = useLiveShutdown()
 
 const query = useSessionListQuery()
 const {
@@ -156,22 +159,49 @@ async function mutate(traceId, spinner, request, done) {
   }
 }
 
+// Only a row that still looks active is worth the round-trip — a settled
+// session has no process left to stop.
+async function liveState(s) {
+  return isActive(s) ? await probe(s.trace_id) : null
+}
+
+// A row that looks active but no tier can reach: the pre-existing warning,
+// which is now the *fallback* rather than the only thing we can say.
+const UNREACHABLE_ACTIVE = '⚠️  This session appears to still be ACTIVE, and regin has no '
+  + 'way to stop it (no owned agent run, no reachable tmux pane). Deleting now will remove its '
+  + 'trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n'
+
+// Stop the live processes, then let the caller settle the rows regardless: a
+// tier that refused leaves exactly the interrupted session a manual close
+// exists for, so blocking the trace write would strand the row instead.
+async function stopFirst(states) {
+  if (!states.length) return
+  const failed = await shutdownAll(states)
+  if (failed.length) flash(failureWarning(failed), 'error')
+}
+
 async function deleteSession(s) {
-  const header = isActive(s)
-    ? '⚠️  This session appears to still be ACTIVE. Deleting now will remove its '
-      + 'trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n'
-    : ''
+  const live = await liveState(s)
+  let header = ''
+  if (live) header = singleWarning(live)
+  else if (isActive(s)) header = UNREACHABLE_ACTIVE
   const ok = await confirm('Delete session', `${header}Delete "${rowLabel(s)}"? This removes all `
     + `spans, skill reads, plan sessions, and rule triggers for trace ${shortTraceId(s.trace_id, 12)}...`, true)
   if (!ok) return
+  await stopFirst(live ? [live] : [])
   await mutate(s.trace_id, deleting, () => api.del(`/sessions/${s.trace_id}`), 'Deleted')
 }
 
 async function closeSession(s) {
-  const ok = await confirm('Close session', `Mark "${rowLabel(s)}" as closed? This settles a `
+  const live = await liveState(s)
+  // Closing a settled row only relabels it, but closing a live one ends a
+  // running process — the confirm has to read as destructive in that case.
+  const ok = await confirm('Close session', `${live ? singleWarning(live) : ''}`
+    + `Mark "${rowLabel(s)}" as closed? This settles a `
     + 'corrupt or interrupted session that never emitted a SessionEnd. Its trace data is kept; '
-    + 'only the status changes to ended.')
+    + 'only the status changes to ended.', Boolean(live))
   if (!ok) return
+  await stopFirst(live ? [live] : [])
   await mutate(s.trace_id, closing, () => api.post(`/sessions/${s.trace_id}/close`), 'Closed')
 }
 
@@ -179,15 +209,19 @@ async function batchDelete() {
   const ids = [...selectedIds.value]
   if (!ids.length) return
   const idSet = new Set(ids)
-  const activeSel = sessions.value.filter(s => idSet.has(s.trace_id) && isActive(s)).length
-  const header = activeSel > 0
-    ? `⚠️  ${activeSel} of the selected session(s) still appear ACTIVE. Deleting now removes their `
-      + 'trace data mid-session; subsequent spans will reappear as new partial traces.\n\n'
-    : ''
+  const activeSel = sessions.value.filter(s => idSet.has(s.trace_id) && isActive(s))
+  const live = await probeAll(activeSel.map(s => s.trace_id))
+  const stranded = activeSel.length - live.length
+  const header = batchWarning(live) + (stranded > 0
+    ? `⚠️  ${stranded} of the selected session(s) still appear ACTIVE with no way for regin to `
+      + 'stop them. Deleting now removes their trace data mid-session; subsequent spans will '
+      + 'reappear as new partial traces.\n\n'
+    : '')
   const noun = `session${ids.length === 1 ? '' : 's'}`
   const ok = await confirm(`Delete ${ids.length} ${noun}`, `${header}Delete ${ids.length} ${noun}? `
     + 'This removes all spans, skill reads, plan sessions, and rule triggers for every selected trace.', true)
   if (!ok) return
+  await stopFirst(live)
   batchDeleting.value = true
   try {
     const res = await api.post('/sessions/batch-delete', { trace_ids: ids })

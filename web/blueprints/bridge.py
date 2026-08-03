@@ -36,7 +36,7 @@ from flask import Blueprint, request, jsonify
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
 from lib.agent_bridge import store, delivery, commands, files, ansi_html
-from lib import agent_sdk
+from lib import agent_sdk, live_session
 
 bridge_bp = Blueprint('bridge', __name__)
 
@@ -240,6 +240,38 @@ def api_session_bridge_interrupt(trace_id):
         return jsonify({"delivered": False, "detail": "bridge disabled"})
     result = delivery.deliver_key(trace_id, "Escape")
     return jsonify({"delivered": result.delivered, "detail": result.detail})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/live-state', methods=['GET'])
+@require_editor
+def api_session_live_state(trace_id):
+    """Which tier — if any — can still end this session.
+
+    Read-only, and the wording behind the trace list's Close/Delete
+    confirmations: settling a row says nothing to the process behind it, so
+    the operator is owed the fact that one is still running and that regin
+    can stop it first. Editor-gated with the rest of this blueprint even
+    though it injects nothing — the answer names a reachable terminal.
+    """
+    return jsonify(live_session.manageability(trace_id))
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/shutdown', methods=['POST'])
+@require_editor
+def api_session_shutdown(trace_id):
+    """End the live process behind this session, by whichever tier owns it.
+
+    Separate from `/api/sessions/<id>/close` and the delete routes on
+    purpose: those are trace-store writes any editor may make, whereas this
+    one terminates a running agent — for the tmux tier by typing into a real
+    terminal — which is the surface `require_editor` exists to gate. The
+    caller runs this first and settles the row afterwards regardless, so a
+    refusal here never strands a session in the list.
+
+    Ending is a distinct act from cancelling the turn in flight
+    (`bridge-interrupt`), which deliberately leaves the session open.
+    """
+    return jsonify(live_session.graceful_close(trace_id))
 
 
 def _parse_answer(payload: dict):
