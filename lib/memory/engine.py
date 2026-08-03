@@ -72,7 +72,10 @@ def memory_db_path() -> str:
     configured = settings.agent_memory.db_path
     if configured:
         return os.path.expanduser(str(configured))
-    return str(settings.project_root / "db" / "regin_memory.db")
+    # Main worktree, not this checkout: the lesson corpus is cross-session and
+    # cross-branch by definition, and a worktree resolving its own would recall
+    # from an empty store that looks exactly like "no lessons exist".
+    return str(settings.main_worktree / "db" / "regin_memory.db")
 
 
 def _resolve_memory_url() -> str:

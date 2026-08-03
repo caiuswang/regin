@@ -184,10 +184,11 @@ _GATE_BUSY_TIMEOUT_MS = 2000
 def unresolved_session_id(session: str | None) -> str | None:
     """The reason `session` cannot identify a trace, or None if it looks usable.
 
-    An MCP tool cannot expand a shell variable, so a caller that passes
-    `"$CLAUDE_CODE_SESSION_ID"` as a literal gets a guaranteed 0 — read as
-    "you skipped the step" rather than "you passed me a variable name". Seen
-    in the trace; cheap to catch here rather than in each caller.
+    An MCP tool cannot expand a shell variable, so a caller that passes any
+    `"$SOMETHING"` as a literal gets a guaranteed 0 — read as "you skipped the
+    step" rather than "you passed me a variable name". Harness-agnostic on
+    purpose: the check is the leading `$`, not any particular provider's
+    variable name (`lib/session_probe.py` owns which names resolve).
     """
     text = (session or "").strip()
     if not text:

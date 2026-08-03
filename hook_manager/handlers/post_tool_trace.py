@@ -969,6 +969,6 @@ def _remember_lesson(payload, tool_input: dict, attrs: dict,
         # it. Stamp-guarded, so this is one aggregate query when nothing moved.
         from lib.memory.tree_io import export_tree_if_stale
         from lib.settings import settings as _settings
-        export_tree_if_stale(str(_settings.project_root))
+        export_tree_if_stale(str(_settings.main_worktree))
     except Exception:
         pass

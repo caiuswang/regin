@@ -24,7 +24,7 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Session
 
-from lib.settings import settings, _PROJECT_ROOT
+from lib.settings import settings, _MAIN_WORKTREE, _PROJECT_ROOT
 
 
 # ── Canonical DB paths + raw-sqlite layer ─────────────────────────
@@ -34,7 +34,12 @@ from lib.settings import settings, _PROJECT_ROOT
 # derives its URL from the same DB_PATH. Tests monkeypatch
 # `lib.orm.engine.DB_PATH` for per-test isolation.
 
-DB_PATH: str = str(_PROJECT_ROOT / "db" / "regin.db")
+# DB_PATH follows the MAIN worktree: one trace store per project, so spans
+# written from a worktree land where the UI and the gates read them. SCHEMA_PATH
+# stays on this checkout — schema.sql and alembic/versions/ are branch source,
+# and applying a feature branch's migrations to the shared DB is a separate
+# decision from sharing the file.
+DB_PATH: str = str(_MAIN_WORKTREE / "db" / "regin.db")
 SCHEMA_PATH: str = str(_PROJECT_ROOT / "db" / "schema.sql")
 
 _TAG_SEED_BLOCK_RE = re.compile(

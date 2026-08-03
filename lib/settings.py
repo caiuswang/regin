@@ -923,11 +923,56 @@ class TopicEvolutionConfig(BaseModel):
     proposal_sdk_runner: bool = True
 
 
+def _main_worktree(start: Path) -> Path:
+    """The *main* checkout for `start`, or `start` itself.
+
+    A linked worktree's `.git` is a FILE holding
+    `gitdir: <main>/.git/worktrees/<name>`, so the main checkout is three
+    parents up from there. Deliberately a pure function of the filesystem
+    rather than `git rev-parse`: it runs while `Settings` is being
+    constructed (`settings_customise_sources` reads the config paths below),
+    and must not depend on git being installed at all.
+
+    Every failure degrades to `start`, which is the behaviour regin had before
+    this existed. Pointing at the *wrong* main would be far worse than not
+    finding one: a submodule's `.git` is also a file, but its gitdir sits under
+    `.git/modules/`, which is why the `worktrees` path segment is checked.
+    """
+    marker = start / ".git"
+    try:
+        if not marker.is_file():
+            return start
+        text = marker.read_text().strip()
+    except OSError:
+        return start
+    if not text.startswith("gitdir:"):
+        return start
+    gitdir = Path(text.split(":", 1)[1].strip())
+    if not gitdir.is_absolute():
+        gitdir = (start / gitdir).resolve()
+    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
+        return start
+    return gitdir.parent.parent.parent
+
+
 # Project-root-relative paths — fixed by where this file lives.
 _PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+
+# The main checkout, when `_PROJECT_ROOT` is a linked worktree. regin's DATA
+# stores (trace DB, agent-memory DB, the exported memory tree) belong to the
+# project, not to a branch — a worktree that resolved its own would read an
+# empty store and report it as a missing step. Everything that identifies
+# *this checkout* — source, schema.sql, hook-command ownership, the relpath
+# base the rule engines lint against — stays on `_PROJECT_ROOT`.
+_MAIN_WORKTREE: Path = _main_worktree(_PROJECT_ROOT)
+
+# `settings.json` is committed, so it travels with the branch and stays
+# project-root-relative. `settings.local.json` is machine config (tokens,
+# repo paths, engine overrides) and is gitignored, so a worktree would simply
+# not have one — it follows the main checkout.
 _CONFIG_DIR: Path = _PROJECT_ROOT / "config"
 _SHARED_SETTINGS_PATH: Path = _CONFIG_DIR / "settings.json"
-_LOCAL_SETTINGS_PATH: Path = _CONFIG_DIR / "settings.local.json"
+_LOCAL_SETTINGS_PATH: Path = _MAIN_WORKTREE / "config" / "settings.local.json"
 
 
 def _xdg_data_home() -> Path:
@@ -963,6 +1008,14 @@ class Settings(BaseSettings):
     # callers read it via `settings.project_root` and tests can redirect
     # it for isolation.
     project_root: Path = Field(default_factory=lambda: _PROJECT_ROOT)
+
+    # The MAIN checkout when `project_root` is a linked git worktree, else
+    # the same path. Anchors the per-PROJECT data stores (trace DB, memory DB,
+    # exported memory tree) so a worktree shares them instead of creating its
+    # own empty ones. Overridable via REGIN_MAIN_WORKTREE for a split install.
+    # Not to be confused with `data_dir` (machine-global XDG) or
+    # `project_root` (this checkout, which identifies the branch's source).
+    main_worktree: Path = Field(default_factory=lambda: _MAIN_WORKTREE)
 
     # The user-local data root. Overridable via REGIN_DATA_DIR.
     data_dir: Path = Field(default_factory=_default_data_dir)

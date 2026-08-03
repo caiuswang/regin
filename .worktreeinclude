@@ -1,0 +1,32 @@
+# Gitignored files Claude Code copies into every worktree it creates
+# (`--worktree`, subagent worktrees, desktop parallel sessions). .gitignore
+# syntax; only files that match AND are gitignored are copied, so nothing
+# tracked is duplicated.
+#
+# This is for state a worktree needs to have as its OWN files. State that
+# belongs to the PROJECT rather than the branch is not copied — it is
+# resolved to the main checkout at runtime via `settings.main_worktree`
+# (lib/settings.py), so there is exactly one of it and it never drifts:
+#
+#   db/regin.db                  trace store
+#   db/regin_memory.db           agent-memory store
+#   .regin/memory/tree/          exported memory tree
+#   config/settings.local.json   machine config (tokens, repo paths)
+#
+# Listing any of those here would create a second, diverging copy that the
+# code would then ignore. Don't.
+
+# The agent's own config: skills, subagents, slash commands, hook settings.
+# A worktree without these silently loses every project skill. Enumerated per
+# directory rather than as `.claude/` so `.claude/worktrees/` — the worktrees
+# themselves — can never be copied into a worktree.
+.claude/skills/**
+.claude/agents/**
+.claude/commands/**
+.claude/settings.json
+
+# Not copied on purpose:
+#   .venv/                a worktree with its own venv becomes a second regin
+#                         install; use the main checkout's interpreter
+#   .claude/worktrees/    recursive
+#   node_modules/         re-installable, large

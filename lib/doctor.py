@@ -432,6 +432,36 @@ def _stale_skeleton_items() -> list[dict]:
              "present": True, "version": f"{seeded} match built-in defaults"}]
 
 
+def _worktree_store_items() -> list[dict]:
+    """WARN per stray data store sitting in a linked worktree.
+
+    regin's stores follow `settings.main_worktree`, so a `db/*.db` inside a
+    worktree is a leftover from before that anchor existed (or from a tool
+    that wrote the path directly). Harmless but confusing: it looks like the
+    store while nothing reads it. Silent when this checkout is the main one.
+    """
+    try:
+        from lib.settings import settings
+        if settings.project_root == settings.main_worktree:
+            return []
+        strays = sorted(p for p in (settings.project_root / "db").glob("*.db")
+                        if not p.is_symlink())
+    except Exception:
+        # One check must never take doctor down — doctor is what you run when
+        # the environment is already broken.
+        return []
+    if not strays:
+        return [{"id": "worktree_stores_clean", "label": "worktree data stores",
+                 "present": True,
+                 "version": f"shared with {settings.main_worktree}"}]
+    return [{"id": f"worktree_stray_{p.name}", "label": str(p),
+             "present": False, "optional": True,
+             "install_hint": "stray store in a worktree — nothing reads it "
+                             f"(regin uses {settings.main_worktree}/db). "
+                             "Safe to delete once you confirm it is empty."}
+            for p in strays]
+
+
 _EVENT_PREVIEW = 3
 
 
@@ -603,6 +633,10 @@ def run_checks() -> dict:
     if topics_pending:
         groups.append({'name': 'Topics pending promote (per repo)',
                        'items': topics_pending})
+
+    worktree_stores = _worktree_store_items()
+    if worktree_stores:
+        groups.append({'name': 'Worktree data stores', 'items': worktree_stores})
 
     groups.append({'name': 'Prompt skeletons (seed vs built-in default)',
                    'items': _stale_skeleton_items()})

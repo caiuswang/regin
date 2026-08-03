@@ -1192,7 +1192,7 @@ def reflect(store, embedder=None, llm=None, *,
         # tree an agent navigates is stale the moment this returns.
         from lib.memory.tree_io import export_tree_if_stale
         from lib.settings import settings
-        export_tree_if_stale(str(settings.project_root))
+        export_tree_if_stale(str(settings.main_worktree))
     return result
 
 
