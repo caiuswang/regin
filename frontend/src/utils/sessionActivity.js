@@ -1,6 +1,6 @@
 // Shared "is this session active?" rule — ONE frontend source for the
 // green badge, delete-warning, and the /live poll cadence (SessionsView,
-// SessionRow, useLiveTail). Mirrors the server's rule: status='active' is
+// SessionListRow, useLiveTail). Mirrors the server's rule: status='active' is
 // active, status='ended' is not, anything else (unset, unknown future
 // values) falls back to the last-seen recency check.
 export const STALE_FALLBACK_WINDOW_MS = 10 * 60 * 1000

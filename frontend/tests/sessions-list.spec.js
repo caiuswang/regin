@@ -1,7 +1,7 @@
 /**
- * Sessions list (`frontend/src/views/SessionsView.vue` + `SessionRow.vue`):
- * the Live row action, the workflow tag facet option, surfaced tag-mutation
- * errors, and timezone-safe "Last seen" ages.
+ * Sessions list (`frontend/src/views/SessionsView.vue` + `SessionListRow.vue`
+ * / `SessionCard.vue`): the Live row action, the workflow tag facet chip,
+ * surfaced tag-mutation errors, and timezone-safe "Last seen" ages.
  *
  * The list request is mocked (`**\/api/sessions?*`) with a deterministic
  * envelope — including a FIXED `server_now` / `server_now_utc` pair — so the
@@ -84,7 +84,11 @@ test('Live row action navigates to /live/<id> and renders the live card', async 
   await mockList(page, [row(liveId)])
   await page.goto('/trace/sessions')
 
-  const link = page.locator(`.sessions-tbl a[href="/live/${liveId}"]`, { hasText: 'Live' })
+  // Row actions are revealed by hover (and :focus-within), so hover the row
+  // before clicking — at rest the bar is opacity:0 / pointer-events:none.
+  const listRow = page.locator('.srow', { hasText: `SESSIONS_LIST_FIXTURE_${liveId.slice(0, 8)}` })
+  await listRow.hover()
+  const link = listRow.locator(`a[href="/live/${liveId}"]`, { hasText: 'Live' })
   await expect(link).toBeVisible()
   await link.click()
   await expect(page).toHaveURL(new RegExp(`/live/${liveId}`))
@@ -97,22 +101,21 @@ test('mobile card also carries the Live link', async ({ page }) => {
   await mockList(page, [row(id)])
   await page.goto('/trace/sessions')
   await expect(
-    page.locator(`li a[href="/live/${id}"]`, { hasText: 'Live' })).toBeVisible()
+    page.locator(`.scard a[href="/live/${id}"]`, { hasText: 'Live' })).toBeVisible()
 })
 
-// The facet is `ui/Select.vue` (Reka), not a native <select>: the trigger is a
-// button and the items only exist in the DOM — portalled to <body> — while the
-// listbox is open. The label and its count are separate elements, so assert
-// them separately rather than on a joined string.
+// The tag facet is a chip row inside the Filters popover (portalled to <body>
+// by Reka). Counts come from the envelope's `tag_counts`, never from the
+// global per-tag totals in /api/session-tags — a tag absent from the current
+// filter set must read 0, not its all-time count.
 test('tag facet lists the workflow custom tag with its count', async ({ page }) => {
   await mockList(page, [row(randomUUID())])
   await page.goto('/trace/sessions')
-  const facet = page.locator('[aria-label="Filter by session tag"]')
-  await expect(facet).toBeVisible()
-  await facet.click()
-  const item = page.locator('.ds-select-item', { hasText: '#workflow' })
-  await expect(item).toHaveCount(1)
-  await expect(item.locator('.ds-select-count')).toHaveText('57')
+  await page.getByRole('button', { name: /Filters/ }).click()
+  const chip = page.locator('.filters-panel .facet', { hasText: 'Tag' })
+    .locator('.chip', { hasText: '#workflow' })
+  await expect(chip).toHaveCount(1)
+  await expect(chip).toContainText('57')
 })
 
 test('invalid tag add surfaces the server reason, not a silent no-op', async ({ page }) => {
@@ -134,9 +137,9 @@ test('last-seen ages are server-anchored: no "just now" across timezones', async
   await mockList(page, [naive, zoned])
   await page.goto('/trace/sessions')
 
-  const cells = page.locator('.sessions-tbl tbody td[title*="Last seen"]')
+  const cells = page.locator('.srow .srow__seen[title*="Last seen"]')
   await expect(cells).toHaveCount(2)
   await expect(cells.nth(0)).toHaveText(/^1h ago$/)
   await expect(cells.nth(1)).toHaveText(/^2h ago$/)
-  await expect(page.locator('.sessions-tbl')).not.toContainText('just now')
+  await expect(page.locator('.slist__grid')).not.toContainText('just now')
 })

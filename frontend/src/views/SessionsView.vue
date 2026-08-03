@@ -2,120 +2,191 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import CursorControls from '../components/CursorControls.vue'
-import SessionRow from '../components/SessionRow.vue'
-import SessionTags from '../components/SessionTags.vue'
-import Button from '../components/ui/Button.vue'
+import SessionCard from '../components/sessions/SessionCard.vue'
+import SessionListRow from '../components/sessions/SessionListRow.vue'
+import SessionToolbar from '../components/sessions/SessionToolbar.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
-import Input from '../components/ui/Input.vue'
-import Icon from '../components/ui/Icon.vue'
-import Select from '../components/ui/Select.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
-import { useCopy } from '../composables/useCopy'
-import { useCursor } from '../composables/useCursor'
-import { useServerClock } from '../composables/useServerClock'
-import { useSessionFilterCollapse } from '../composables/useSessionFilterCollapse'
+import { useSessionGrouping } from '../composables/useSessionGrouping'
 import { useSessionTags } from '../composables/useSessionTags'
+import {
+  useSessionListQuery,
+  ACTIVE_OPTIONS, KIND_OPTIONS, RANGE_OPTIONS, SCOPE_OPTIONS,
+} from '../composables/useSessionListQuery'
 import { useStickyHeader } from '../composables/useStickyHeader'
-import { fmtRelativeAge, isActiveWithClock, parseLocalIso, serverAgeMs } from '../utils/sessionActivity.js'
+import { useTraceHeaderPublisher } from '../composables/useTraceHeader'
+import { isActiveWithClock } from '../utils/sessionActivity.js'
+import { titlePreview } from '../utils/sessionRowFormat.js'
 import { shortTraceId } from '../utils/traceFormatters.js'
 
 const { confirm } = useConfirm()
 const { flash } = useFlash()
-const { copyText } = useCopy()
 
-const TEST_TOGGLE_KEY = 'regin_sessions_show_tests'  // legacy; migrates into KIND_KEY on first read
-const KIND_KEY = 'regin_sessions_kind'
-const ACTIVE_KEY = 'regin_sessions_active'
-const RANGE_KEY = 'regin_sessions_range'
-const SCOPE_KEY = 'regin_sessions_search_scope'
-const searchInput = ref('')
-const activeSearch = ref('')
-const SCOPE_OPTIONS = [
-  { value: 'title', label: 'Title' },
-  { value: 'prompt', label: 'Prompt' },
-  { value: 'both', label: 'Both' },
-]
-const searchScope = ref(
-  SCOPE_OPTIONS.some(o => o.value === localStorage.getItem(SCOPE_KEY))
-    ? localStorage.getItem(SCOPE_KEY)
-    : 'title'
-)
-
-// Kind: real-only is the historic default. We seed it from the legacy
-// `regin_sessions_show_tests` flag the first time so users who had tests
-// enabled don't lose that preference on upgrade.
-const KIND_OPTIONS = [
-  { value: 'real', label: 'Real only' },
-  { value: 'test', label: 'Test only' },
-  { value: 'all', label: 'Real + test' },
-]
-const kind = ref(
-  KIND_OPTIONS.some(o => o.value === localStorage.getItem(KIND_KEY))
-    ? localStorage.getItem(KIND_KEY)
-    : (localStorage.getItem(TEST_TOGGLE_KEY) === '1' ? 'all' : 'real')
-)
-
-// Tag facet: the single grouping axis. A session carries one intrinsic
-// builtin category tag (user / topic-proposal / system, derived server-side
-// from `origin`) plus any number of custom tags. Selecting a tag narrows to
-// sessions carrying it; '' means "all". This generalizes the old binary
-// workflow=hide/show/only toggle — the server still honors `workflow=` for
-// back-compat, but this view drives the richer `tag=` axis instead.
-const TAG_KEY = 'regin_sessions_tag'
-const tagFilter = ref(localStorage.getItem(TAG_KEY) || '')
+const query = useSessionListQuery()
 const {
-  customTags, loadCustomTags, patchRowTags, addTag, removeTag,
-} = useSessionTags()
+  items: sessions, loading, loadingMore, hasNext, load, loadMore,
+  serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
+  filterCount, searchInput, activeSearch, traceIdInput, searchScope,
+  kind, activeFilter, range, tagFilter, repoFilter,
+} = query
 
-const ACTIVE_OPTIONS = [
-  { value: 'all', label: 'Any status' },
-  { value: 'active', label: 'Active only' },
-  { value: 'inactive', label: 'Inactive only' },
-]
-const activeFilter = ref(
-  ACTIVE_OPTIONS.some(o => o.value === localStorage.getItem(ACTIVE_KEY))
-    ? localStorage.getItem(ACTIVE_KEY)
-    : 'all'
-)
-
-// Trace-id prefix filter. Two refs so the box doesn't fire a request on
-// every keystroke — mirrors the title/prompt search pattern.
-const traceIdInput = ref('')
-const activeTraceId = ref('')
-
-// Time-range presets keyed by `last_seen`. Boundaries are computed in the
-// browser (user's local clock) and serialized as naive local ISO so the
-// lexicographic compare on the server matches the stored text format.
-const RANGE_OPTIONS = [
-  { value: 'all', label: 'All time' },
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: '7d', label: 'Last 7 days' },
-  { value: '30d', label: 'Last 30 days' },
-]
-const range = ref(localStorage.getItem(RANGE_KEY) || 'today')
-
-// Repo filter. Options come from /api/repos (active repos only); the
-// selected value is the unique repo name, persisted across visits. A
-// multi-repo session matches every repo it touched.
-const REPO_KEY = 'regin_sessions_repo'
-const repoFilter = ref(localStorage.getItem(REPO_KEY) || 'all')
+const { customTags, loadCustomTags, patchRowTags, addTag, removeTag } = useSessionTags()
 const repoOptions = ref([])
 
-// Collapse the facet row to reclaim vertical space for the list (seeded
-// collapsed on phones). Extracted to a composable so this view stays under
-// the vue-complexity surface-area threshold.
-const { filtersOpen, activeFilterCount } = useSessionFilterCollapse({
-  range, kind, tagFilter, activeFilter, repoFilter, activeTraceId,
+const isActive = (s) => isActiveWithClock(s, serverClock.value)
+const { mode: groupMode, groups } = useSessionGrouping(sessions, isActive)
+
+// Grouping partitions the rows ALREADY LOADED, while the header pill and the
+// footer total come from the server over the whole filter set. Once the list
+// is truncated those disagree — "92 active now" above "ACTIVE NOW · 14" reads
+// as a bug unless the group says which of the two it is counting. The one
+// group whose server-side total we actually know is the active one, so name
+// it; the rest are disclosed by the footer note below.
+function groupCount(group) {
+  if (group.key === 'active' && activeCount.value > group.rows.length) {
+    return `${group.rows.length} of ${activeCount.value}`
+  }
+  return String(group.rows.length)
+}
+
+const footerNote = computed(() => (hasNext.value && groupMode.value !== 'flat'
+  ? 'keyset-paginated, 50 per page · groups cover the loaded rows'
+  : 'keyset-paginated, 50 per page'))
+
+// Facet options: each builtin category, then each custom tag — every entry
+// carrying its count for the current filter set.
+const tagOptions = computed(() => {
+  const opts = builtinTags.value.map(t => ({
+    value: t.slug, label: t.label, count: tagCounts.value[t.slug] || 0,
+  }))
+  // `t.count` from /session-tags is a GLOBAL total; mixing it in as a fallback
+  // would let a tag with no sessions in the current window advertise its
+  // all-time count and outrank facets that genuinely match. Absent from
+  // `tag_counts` means zero for this filter set.
+  for (const t of customTags.value) {
+    opts.push({ value: t.slug, label: `#${t.slug}`, count: tagCounts.value[t.slug] ?? 0 })
+  }
+  return opts
 })
 
-// Below sm the expanded facet grid rides in the sticky toolbar and buries
-// the results — fold it as soon as any filter/search is applied so the list
-// gets the viewport back. Desktop keeps the grid open across changes.
-watch([range, kind, tagFilter, activeFilter, repoFilter, activeSearch, activeTraceId], () => {
-  if (window.matchMedia('(max-width: 639px)').matches) filtersOpen.value = false
-})
+const deleting = ref(null)   // trace_id currently being deleted
+const closing = ref(null)    // trace_id currently being manually closed
+const selectedIds = ref(new Set())
+const batchDeleting = ref(false)
+const refreshing = ref(false)
+
+const selectionCount = computed(() => selectedIds.value.size)
+const allSelected = computed(() =>
+  sessions.value.length > 0 && sessions.value.every(s => selectedIds.value.has(s.trace_id)))
+
+const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
+
+async function reload() {
+  await load()
+  // Selection was computed against the previous page set; drop entries that
+  // are no longer visible so a later batch-delete can't target rows the user
+  // can't currently see.
+  const visible = new Set(sessions.value.map(s => s.trace_id))
+  selectedIds.value = new Set([...selectedIds.value].filter(id => visible.has(id)))
+}
+
+async function refresh() {
+  refreshing.value = true
+  try { await reload() } finally { refreshing.value = false }
+}
+
+function runSearch() {
+  query.commitSearch()
+  reload()
+}
+
+function toggleOne(traceId, checked) {
+  const next = new Set(selectedIds.value)
+  if (checked) next.add(traceId)
+  else next.delete(traceId)
+  selectedIds.value = next
+}
+
+function toggleSelectAll(checked) {
+  selectedIds.value = checked ? new Set(sessions.value.map(s => s.trace_id)) : new Set()
+}
+
+function rowLabel(s) {
+  return titlePreview(s.title) || `${shortTraceId(s.trace_id, 12)}...`
+}
+
+async function mutate(traceId, spinner, request, done) {
+  spinner.value = traceId
+  try {
+    const res = await request()
+    if (res.ok === false) {
+      flash(`${done} failed: ${res.msg || 'unknown error'}`, 'error')
+      return
+    }
+    flash(`${done} session ${shortTraceId(traceId, 12)}...`)
+    await reload()
+  } finally {
+    spinner.value = null
+  }
+}
+
+async function deleteSession(s) {
+  const header = isActive(s)
+    ? '⚠️  This session appears to still be ACTIVE. Deleting now will remove its '
+      + 'trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n'
+    : ''
+  const ok = await confirm('Delete session', `${header}Delete "${rowLabel(s)}"? This removes all `
+    + `spans, skill reads, plan sessions, and rule triggers for trace ${shortTraceId(s.trace_id, 12)}...`, true)
+  if (!ok) return
+  await mutate(s.trace_id, deleting, () => api.del(`/sessions/${s.trace_id}`), 'Deleted')
+}
+
+async function closeSession(s) {
+  const ok = await confirm('Close session', `Mark "${rowLabel(s)}" as closed? This settles a `
+    + 'corrupt or interrupted session that never emitted a SessionEnd. Its trace data is kept; '
+    + 'only the status changes to ended.')
+  if (!ok) return
+  await mutate(s.trace_id, closing, () => api.post(`/sessions/${s.trace_id}/close`), 'Closed')
+}
+
+async function batchDelete() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
+  const idSet = new Set(ids)
+  const activeSel = sessions.value.filter(s => idSet.has(s.trace_id) && isActive(s)).length
+  const header = activeSel > 0
+    ? `⚠️  ${activeSel} of the selected session(s) still appear ACTIVE. Deleting now removes their `
+      + 'trace data mid-session; subsequent spans will reappear as new partial traces.\n\n'
+    : ''
+  const noun = `session${ids.length === 1 ? '' : 's'}`
+  const ok = await confirm(`Delete ${ids.length} ${noun}`, `${header}Delete ${ids.length} ${noun}? `
+    + 'This removes all spans, skill reads, plan sessions, and rule triggers for every selected trace.', true)
+  if (!ok) return
+  batchDeleting.value = true
+  try {
+    const res = await api.post('/sessions/batch-delete', { trace_ids: ids })
+    if (res.ok === false) {
+      flash(`Batch delete failed: ${res.msg || 'unknown error'}`, 'error')
+      return
+    }
+    selectedIds.value = new Set()
+    flash(`Deleted ${res.processed || ids.length} ${noun}`)
+    await reload()
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+// Add/remove a custom tag on one row: call the API, patch that row's chips
+// from the returned slugs, and refresh the facet's custom-tag options so a
+// brand-new tag appears (or a now-unused one drops off).
+async function onTagChange(traceId, slug, op) {
+  const { tags, error } = await (op === 'add' ? addTag : removeTag)(traceId, slug)
+  if (error) { flash(error, 'error'); return }
+  patchRowTags(sessions, traceId, tags)
+  loadCustomTags()
+}
 
 async function loadRepoOptions() {
   try {
@@ -130,377 +201,23 @@ async function loadRepoOptions() {
   }
 }
 
-function pad(n) { return String(n).padStart(2, '0') }
-function toLocalIso(d) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-function rangeBounds(key) {
-  const now = new Date()
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const tomorrow = new Date(startOfDay); tomorrow.setDate(tomorrow.getDate() + 1)
-  switch (key) {
-    case 'today':
-      return { since: toLocalIso(startOfDay), until: toLocalIso(tomorrow) }
-    case 'yesterday': {
-      const y = new Date(startOfDay); y.setDate(y.getDate() - 1)
-      return { since: toLocalIso(y), until: toLocalIso(startOfDay) }
-    }
-    case '7d': {
-      const s = new Date(startOfDay); s.setDate(s.getDate() - 6)
-      return { since: toLocalIso(s), until: toLocalIso(tomorrow) }
-    }
-    case '30d': {
-      const s = new Date(startOfDay); s.setDate(s.getDate() - 29)
-      return { since: toLocalIso(s), until: toLocalIso(tomorrow) }
-    }
-    default:
-      return { since: undefined, until: undefined }
-  }
-}
+query.persistAndReload(reload)
 
-// Keyset-paginated session list. Load-more appends, filter change resets.
-// `items` is the reactive row array — aliased as `sessions` below for
-// compatibility with the rest of this view's mental model.
-const {
-  items: sessions, extras, loading, loadingMore, hasNext,
-  load, loadMore,
-} = useCursor({
-  path: '/sessions',
-  size: 50,
-  buildQuery: () => {
-    const { since, until } = rangeBounds(range.value)
-    return {
-      // 'real' is the server default; only send when narrowing/widening.
-      kind: kind.value !== 'real' ? kind.value : undefined,
-      // Tag facet: '' means "all sessions"; a slug narrows to carriers.
-      tag: tagFilter.value || undefined,
-      active: activeFilter.value !== 'all' ? activeFilter.value : undefined,
-      trace_id: activeTraceId.value || undefined,
-      q: activeSearch.value || undefined,
-      // Only send `scope` when a search term is active — keeps the URL
-      // tidy and lets the backend apply its 'title' default unchanged.
-      scope: activeSearch.value ? searchScope.value : undefined,
-      repo: repoFilter.value !== 'all' ? repoFilter.value : undefined,
-      since,
-      until,
-    }
-  },
-})
-
-// Per-tag counts over the SAME other filters (minus the tag selection), from
-// the list envelope — drives the counts shown against each facet option.
-// `extras` updates on load() (not loadMore), so it describes the whole
-// filtered set, not just the current page.
-const tagCounts = computed(() => extras.value?.tag_counts || {})
-
-const { serverClock } = useServerClock(extras)
-
-// Builtin category tags (ordered, with labels) come from the same envelope so
-// the facet never hard-codes them; the custom tags come from /session-tags.
-const builtinTags = computed(() => extras.value?.builtin_tags || [])
-
-// Facet options: All, then each builtin category, then each custom tag —
-// every entry carrying its count for the current filter set.
-const tagOptions = computed(() => {
-  const opts = [{ value: '', label: 'All sessions' }]
-  for (const t of builtinTags.value) {
-    opts.push({ value: t.slug, label: t.label, count: tagCounts.value[t.slug] || 0 })
-  }
-  if (customTags.value.length) opts.push({ separator: true })
-  for (const t of customTags.value) {
-    opts.push({ value: t.slug, label: `#${t.slug}`, count: tagCounts.value[t.slug] ?? t.count })
-  }
-  return opts
-})
-
-const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
-
-async function reload() {
-  await load()
-  // Selection was computed against the previous page set; drop entries
-  // that are no longer visible so a later batch-delete can't target rows
-  // the user can't currently see.
-  const visible = new Set(sessions.value.map(s => s.trace_id))
-  const pruned = new Set()
-  for (const id of selectedIds.value) if (visible.has(id)) pruned.add(id)
-  selectedIds.value = pruned
-}
-
-function runSearch() {
-  activeSearch.value = searchInput.value.trim()
-  activeTraceId.value = traceIdInput.value.trim()
-  reload()
-}
-
-function clearSearch() {
-  searchInput.value = ''
-  activeSearch.value = ''
-  traceIdInput.value = ''
-  activeTraceId.value = ''
-  reload()
-}
-
-function clearTraceId() {
-  traceIdInput.value = ''
-  activeTraceId.value = ''
-  reload()
-}
-
-function titlePreview(title) {
-  if (!title) return ''
-  const firstLine = title.split('\n')[0].trim()
-  return firstLine.length > 70 ? firstLine.slice(0, 70) + '…' : firstLine
-}
-
-const deleting = ref(null)  // trace_id currently being deleted
-const closing = ref(null)  // trace_id currently being manually closed
-const selectedIds = ref(new Set())  // trace_ids checked for batch delete
-const batchDeleting = ref(false)
-
-const selectionCount = computed(() => selectedIds.value.size)
-
-const allSelected = computed(() => {
-  if (!sessions.value.length) return false
-  return sessions.value.every(s => selectedIds.value.has(s.trace_id))
-})
-
-function isSelected(traceId) {
-  return selectedIds.value.has(traceId)
-}
-
-function toggleOne(traceId, checked) {
-  const next = new Set(selectedIds.value)
-  if (checked) next.add(traceId)
-  else next.delete(traceId)
-  selectedIds.value = next
-}
-
-function toggleSelectAll(e) {
-  selectedIds.value = e.target.checked
-    ? new Set(sessions.value.map(s => s.trace_id))
-    : new Set()
-}
-
-// Active rule + local-ISO parsing shared via utils/sessionActivity.js
-// (one source for SessionsView, SessionRow, and the /live poll cadence).
-const isActive = (s) => isActiveWithClock(s, serverClock.value)
-
-async function deleteSession(s) {
-  const label = titlePreview(s.title) || shortTraceId(s.trace_id, 12) + '...'
-  const active = isActive(s)
-  const header = active
-    ? `⚠️  This session appears to still be ACTIVE (last span ${fmtDuration(Math.max(0, serverAgeMs(s.last_seen, serverClock.value) ?? 0))} ago). Deleting now will remove its trace data mid-session; subsequent spans will reappear as a new, partial trace.\n\n`
-    : ''
-  const msg = `${header}Delete "${label}"? This removes all spans, skill reads, plan sessions, and rule triggers for trace ${shortTraceId(s.trace_id, 12)}...`
-  const ok = await confirm('Delete session', msg, true)
-  if (!ok) return
-  deleting.value = s.trace_id
-  try {
-    const res = await api.del(`/sessions/${s.trace_id}`)
-    if (res.ok === false) {
-      flash(`Delete failed: ${res.msg || 'unknown error'}`, 'error')
-      return
-    }
-    flash(`Deleted session ${shortTraceId(s.trace_id, 12)}...`)
-    await reload()
-  } finally {
-    deleting.value = null
-  }
-}
-
-async function closeSession(s) {
-  const label = titlePreview(s.title) || shortTraceId(s.trace_id, 12) + '...'
-  const msg = `Mark "${label}" as closed? This settles a corrupt or interrupted session that never emitted a SessionEnd. Its trace data is kept; only the status changes to ended.`
-  const ok = await confirm('Close session', msg)
-  if (!ok) return
-  closing.value = s.trace_id
-  try {
-    const res = await api.post(`/sessions/${s.trace_id}/close`)
-    if (res.ok === false) {
-      flash(`Close failed: ${res.msg || 'unknown error'}`, 'error')
-      return
-    }
-    flash(`Closed session ${shortTraceId(s.trace_id, 12)}...`)
-    await reload()
-  } finally {
-    closing.value = null
-  }
-}
-
-async function batchDelete() {
-  const ids = Array.from(selectedIds.value)
-  if (!ids.length) return
-  const idSet = new Set(ids)
-  const activeCount = sessions.value.filter(
-    s => idSet.has(s.trace_id) && isActive(s)
-  ).length
-  const header = activeCount > 0
-    ? `⚠️  ${activeCount} of the selected session(s) still appear ACTIVE. Deleting now removes their trace data mid-session; subsequent spans will reappear as new partial traces.\n\n`
-    : ''
-  const msg = `${header}Delete ${ids.length} session${ids.length === 1 ? '' : 's'}? This removes all spans, skill reads, plan sessions, and rule triggers for every selected trace.`
-  const ok = await confirm(`Delete ${ids.length} session${ids.length === 1 ? '' : 's'}`, msg, true)
-  if (!ok) return
-  batchDeleting.value = true
-  try {
-    const res = await api.post('/sessions/batch-delete', { trace_ids: ids })
-    if (res.ok === false) {
-      flash(`Batch delete failed: ${res.msg || 'unknown error'}`, 'error')
-      return
-    }
-    selectedIds.value = new Set()
-    flash(`Deleted ${res.processed || ids.length} session${(res.processed || ids.length) === 1 ? '' : 's'}`)
-    await reload()
-  } finally {
-    batchDeleting.value = false
-  }
-}
+const publishHeader = useTraceHeaderPublisher()
+watch([activeCount, totalCount, refreshing], () => {
+  publishHeader({
+    activeCount: activeCount.value,
+    tabCount: totalCount.value,
+    refreshing: refreshing.value,
+    onRefresh: refresh,
+  })
+}, { immediate: true })
 
 onMounted(() => {
   loadRepoOptions()
   loadCustomTags()
   reload()
 })
-
-watch(repoFilter, (v) => {
-  localStorage.setItem(REPO_KEY, v)
-  reload()
-})
-
-watch(kind, (v) => {
-  localStorage.setItem(KIND_KEY, v)
-  reload()
-})
-
-watch(tagFilter, (v) => {
-  localStorage.setItem(TAG_KEY, v || '')
-  reload()
-})
-
-// Add/remove a custom tag on one row: call the API, patch that row's chips
-// from the returned slugs (patchRowTags reassigns the shallowRef so the
-// chips re-render), and refresh the facet's custom-tag options so a brand-new
-// tag appears (or a now-unused one drops off).
-async function onAddTag(traceId, slug) {
-  const { tags, error } = await addTag(traceId, slug)
-  if (error) { flash(error, 'error'); return }
-  patchRowTags(sessions, traceId, tags)
-  loadCustomTags()
-}
-
-async function onRemoveTag(traceId, slug) {
-  const { tags, error } = await removeTag(traceId, slug)
-  if (error) { flash(error, 'error'); return }
-  patchRowTags(sessions, traceId, tags)
-  loadCustomTags()
-}
-
-watch(activeFilter, (v) => {
-  localStorage.setItem(ACTIVE_KEY, v)
-  reload()
-})
-
-watch(range, (v) => {
-  localStorage.setItem(RANGE_KEY, v)
-  reload()
-})
-
-watch(searchScope, (v) => {
-  localStorage.setItem(SCOPE_KEY, v)
-  // Only re-fetch when a search is active — toggling the scope while
-  // the box is empty doesn't change the result set.
-  if (activeSearch.value) reload()
-})
-
-function fmtDate(iso) {
-  const d = parseLocalIso(iso)
-  if (!d) return '-'
-  return d.toLocaleString()
-}
-
-function fmtDuration(ms) {
-  if (!ms) return '-'
-  if (ms < 1000) return `${ms}ms`
-
-  const seconds = Math.floor(ms / 1000) % 60
-  const minutes = Math.floor(ms / 60000) % 60
-  const hours = Math.floor(ms / 3600000) % 24
-  const days = Math.floor(ms / 86400000)
-
-  const units = [
-    { value: days, label: 'd' },
-    { value: hours, label: 'h' },
-    { value: minutes, label: 'm' },
-    { value: seconds, label: 's' },
-  ]
-
-  const start = units.findIndex(u => u.value > 0)
-  if (start === -1) return '-'
-
-  let end = units.length - 1
-  while (end > start && units[end].value === 0) {
-    end--
-  }
-
-  return units.slice(start, end + 1).map(u => `${u.value}${u.label}`).join('')
-}
-
-function contextBadgeClass(pct) {
-  if (pct == null) return 'bg-gray-100 text-gray-500 border-gray-200'
-  if (pct >= 80) return 'bg-red-50 text-red-700 border-red-200'
-  if (pct >= 50) return 'bg-amber-50 text-amber-700 border-amber-200'
-  return 'bg-green-50 text-green-700 border-green-200'
-}
-
-// One presentation entry per non-interactive run origin (the origins the
-// server's workflow=hide toggle filters; rows also carry `is_run`): icon
-// tint, tooltip label, and the row badge. Adding a run origin means one
-// entry here plus its icon branch in the template.
-const RUN_ORIGIN_META = {
-  workflow: {
-    label: 'Workflow run',
-    iconClass: 'agent-icon--workflow',
-    badge: 'workflow',
-    badgeClass: 'bg-teal-100 text-teal-800',
-    badgeTitle: 'captured dynamic-workflow run',
-  },
-  'llm-stage': {
-    label: 'LLM stage',
-    iconClass: 'agent-icon--llm-stage',
-    badge: 'llm stage',
-    badgeClass: 'bg-sky-100 text-sky-800',
-    badgeTitle: 'regin-spawned LLM stage run',
-  },
-}
-
-function agentTypeLabel(s) {
-  const run = RUN_ORIGIN_META[s.origin]
-  if (run) return run.label
-  if (s.agent_kind === 'claude') return 'Claude Code session'
-  if (s.agent_kind === 'codex') return 'OpenAI Codex session'
-  if (s.agent_kind === 'kimi') return 'Kimi Code session'
-  return s.agent_type ? `Agent session: ${s.agent_type}` : 'Agent session'
-}
-
-function agentTypeClass(s) {
-  const run = RUN_ORIGIN_META[s.origin]
-  if (run) return run.iconClass
-  if (s.agent_kind === 'claude') return 'agent-icon--claude'
-  if (s.agent_kind === 'codex') return 'agent-icon--codex'
-  if (s.agent_kind === 'kimi') return 'agent-icon--kimi'
-  return 'agent-icon--generic'
-}
-
-function totalMs(s) {
-  const a = parseLocalIso(s.started_at)
-  const b = parseLocalIso(s.last_seen)
-  if (!a || !b) return 0
-  return b.getTime() - a.getTime()
-}
-
-function timeTitle(s) {
-  return `Started ${fmtDate(s.started_at)}\nLast seen ${fmtDate(s.last_seen)}`
-}
-
 </script>
 
 <template>
@@ -508,336 +225,124 @@ function timeTitle(s) {
     class="sticky-page-root"
     :style="{ '--regin-trace-header-h': stickyHeaderHeight ? stickyHeaderHeight + 'px' : '0px' }"
   >
-    <!-- Sticky page header: subtitle + search/toolbar pin to the top of
-         `.content-scroll` so search/filter state stays visible while
-         scrolling the long session table below. The table's <thead>
-         can't be made page-sticky here because the wide table needs its
-         own horizontal-scroll container — that nested overflow traps the
-         vertical sticky. Keeping the toolbar sticky still solves the
-         primary nav problem. -->
+    <!-- The toolbar pins to the top of `.content-scroll` so search / grouping
+         state stays visible while scrolling a long session list. -->
     <div
       ref="stickyHeaderEl"
       class="sticky -top-4 lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 pb-3 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
     >
-    <p class="page-subtitle mb-4">Unified telemetry of skill reads, file edits, rule checks, and plan mode entries per Claude Code session.</p>
+      <SessionToolbar
+        v-model:search="searchInput"
+        v-model:scope="searchScope"
+        v-model:group="groupMode"
+        v-model:range="range"
+        v-model:kind="kind"
+        v-model:status="activeFilter"
+        v-model:tag="tagFilter"
+        v-model:repo="repoFilter"
+        v-model:trace-id="traceIdInput"
+        :scope-options="SCOPE_OPTIONS"
+        :range-options="RANGE_OPTIONS"
+        :kind-options="KIND_OPTIONS"
+        :status-options="ACTIVE_OPTIONS"
+        :tag-options="tagOptions"
+        :repo-options="repoOptions"
+        :repo-counts="repoCounts"
+        :filter-count="filterCount"
+        :selection-count="selectionCount"
+        :batch-deleting="batchDeleting"
+        @search="runSearch"
+        @reset="query.resetFilters(reload)"
+        @batch-delete="batchDelete"
+      />
+    </div>
 
-    <form class="session-filters" @submit.prevent="runSearch">
-      <!-- Row 1: query input + scope + action buttons. Pressing Enter
-           anywhere in this form submits both the search term and the
-           trace-id (whichever was last edited). -->
-      <div class="session-filters__row">
-        <div class="search-group">
-          <Input
-            v-model="searchInput"
-            type="search"
-            placeholder="Search sessions…"
-            class="search-input focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Search sessions"
-          />
-          <Select
-            v-model="searchScope"
-            :options="SCOPE_OPTIONS"
-            class="search-scope"
-            aria-label="What to search"
-            title="What `Search` matches against"
-          />
+    <div class="slist">
+      <div v-if="loading && !sessions.length" class="empty-state">Loading sessions…</div>
+
+      <div v-if="sessions.length" class="slist__grid">
+        <div class="slist__head">
+          <div class="slist__head-check">
+            <Checkbox
+              :model-value="allSelected"
+              :indeterminate="selectionCount > 0 && !allSelected"
+              title="Select all"
+              aria-label="Select all sessions"
+              @update:model-value="toggleSelectAll"
+            />
+          </div>
+          <div></div>
+          <div>Session</div>
+          <div>Repo</div>
+          <div title="Spans and file edits this session; hover the +N hint for reads, rules, plans, prompts, and tools">Activity</div>
+          <div>Context</div>
+          <div title="Total wall-clock time / active agent work time (user-idle gaps excluded)">Elapsed / Active</div>
+          <div>Last seen</div>
         </div>
-        <Button type="submit" variant="primary">Search</Button>
-        <Button
-          v-if="activeSearch || activeTraceId"
-          variant="secondary"
-          @click="clearSearch"
-        >Clear</Button>
-        <span v-if="activeSearch" class="text-xs text-slate-500">
-          {{ searchScope }}: <code class="cell-code">{{ activeSearch }}</code>
-        </span>
 
-        <Button
-          v-if="selectionCount"
-          variant="danger"
-          class="ml-auto"
-          :disabled="batchDeleting"
-          @click="batchDelete"
-        >{{ batchDeleting ? 'Deleting…' : `Delete selected (${selectionCount})` }}</Button>
-      </div>
-
-      <!-- Row 2: faceted filters as labeled pill dropdowns. The trace-id
-           pill is also here — it carries an input rather than a select
-           and shows a clear (×) when a value is committed. -->
-      <div class="session-filters__row session-filters__row--facets">
-        <button
-          type="button"
-          class="facets-toggle focus-visible:outline-2 focus-visible:outline-blue-500"
-          :aria-expanded="filtersOpen"
-          :title="filtersOpen ? 'Hide filters' : 'Show filters'"
-          @click="filtersOpen = !filtersOpen"
-        >
-          <Icon name="filter" :size="12" />
-          <span>Filters</span>
-          <span v-if="activeFilterCount" class="facets-toggle__count">{{ activeFilterCount }}</span>
-          <Icon
-            name="chevron-down"
-            :size="12"
-            class="facets-toggle__chevron"
-            :class="{ 'facets-toggle__chevron--open': filtersOpen }"
+        <template v-for="group in groups" :key="group.key">
+          <div v-if="group.label" class="slist__group" :class="`slist__group--${group.tone}`">
+            <span class="slist__group-label">
+              <span v-if="group.tone === 'live'" class="slist__group-dot" aria-hidden="true"></span>
+              {{ group.label }}
+            </span>
+            <span class="slist__group-count">{{ groupCount(group) }}</span>
+          </div>
+          <SessionListRow
+            v-for="s in group.rows"
+            :key="s.trace_id"
+            :s="s"
+            :clock="serverClock"
+            :selected="selectedIds.has(s.trace_id)"
+            :is-deleting="deleting === s.trace_id"
+            :is-closing="closing === s.trace_id"
+            @toggle="(checked) => toggleOne(s.trace_id, checked)"
+            @delete="deleteSession"
+            @close="closeSession"
+            @add-tag="(slug) => onTagChange(s.trace_id, slug, 'add')"
+            @remove-tag="(slug) => onTagChange(s.trace_id, slug, 'remove')"
           />
-        </button>
-
-        <template v-if="filtersOpen">
-        <label class="facet-pill" :class="{ 'facet-pill--active': range !== 'today' }">
-          <span class="facet-pill__label">Range</span>
-          <Select bare v-model="range" :options="RANGE_OPTIONS" aria-label="Filter by last activity time range" />
-        </label>
-
-        <label class="facet-pill" :class="{ 'facet-pill--active': kind !== 'real' }">
-          <span class="facet-pill__label">Kind</span>
-          <Select bare v-model="kind" :options="KIND_OPTIONS" aria-label="Filter by session kind (real vs test)" />
-        </label>
-
-        <label class="facet-pill" :class="{ 'facet-pill--active': tagFilter !== '' }">
-          <span class="facet-pill__label">Tag</span>
-          <Select bare v-model="tagFilter" :options="tagOptions" aria-label="Filter by session tag" />
-        </label>
-
-        <label class="facet-pill" :class="{ 'facet-pill--active': activeFilter !== 'all' }">
-          <span class="facet-pill__label">Status</span>
-          <Select bare v-model="activeFilter" :options="ACTIVE_OPTIONS" aria-label="Filter by active status" />
-        </label>
-
-        <label class="facet-pill" :class="{ 'facet-pill--active': repoFilter !== 'all' }">
-          <span class="facet-pill__label">Repo</span>
-          <Select
-            bare
-            v-model="repoFilter"
-            :options="[{ value: 'all', label: 'All repos' }, ...repoOptions.map((n) => ({ value: n, label: n }))]"
-            aria-label="Filter by repo"
-          />
-        </label>
-
-        <div class="facet-pill facet-pill--input" :class="{ 'facet-pill--active': activeTraceId }">
-          <span class="facet-pill__label">Trace ID</span>
-          <input
-            v-model="traceIdInput"
-            type="search"
-            placeholder="prefix…"
-            class="facet-pill__input focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Filter by trace id prefix"
-            title="Case-insensitive prefix match on trace_id (press Enter to apply)"
-          >
-          <button
-            v-if="activeTraceId"
-            type="button"
-            class="facet-pill__clear focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Clear trace id filter"
-            title="Clear trace id filter"
-            @click="clearTraceId"
-          >×</button>
-        </div>
         </template>
       </div>
-    </form>
-    </div>
-    <!-- /sticky page header -->
 
-    <div class="split-card">
-      <div v-if="loading && !sessions.length" class="empty-state">Loading sessions…</div>
-      <div v-if="sessions.length" class="hidden sm:block overflow-x-auto">
-        <table class="tbl sessions-tbl">
-          <thead>
-            <tr>
-              <th class="w-6">
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 align-middle focus-visible:outline-2 focus-visible:outline-blue-500"
-                  :checked="allSelected"
-                  :indeterminate.prop="selectionCount > 0 && !allSelected"
-                  @change="toggleSelectAll"
-                  title="Select all"
-                  aria-label="Select all sessions"
-                />
-              </th>
-              <th>Session</th>
-              <th class="col-title">Title</th>
-              <th>Repo</th>
-              <th title="Spans and file edits this session; hover the +N hint for reads, rules, plans, prompts, and tools">Activity</th>
-              <th>Context</th>
-              <th title="Total wall-clock time / active agent work time (user-idle gaps excluded)">Elapsed / Active</th>
-              <th>Last seen</th>
-              <!-- `relative` anchors the absolutely-positioned sr-only label
-                   to this th; unanchored it escapes the table wrapper's
-                   scroll containment and gives the whole PAGE an 85px
-                   horizontal pan at laptop widths. -->
-              <th class="text-right relative"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <SessionRow
-              v-for="s in sessions"
-              :key="s.trace_id"
-              :s="s"
-              :clock="serverClock"
-              :selected="isSelected(s.trace_id)"
-              :is-deleting="deleting === s.trace_id"
-              :is-closing="closing === s.trace_id"
-              @toggle="(checked) => toggleOne(s.trace_id, checked)"
-              @delete="deleteSession"
-              @close="closeSession"
-              @add-tag="(slug) => onAddTag(s.trace_id, slug)"
-              @remove-tag="(slug) => onRemoveTag(s.trace_id, slug)"
-            />
-          </tbody>
-        </table>
-      </div>
-      <ul v-if="sessions.length" class="sm:hidden flex flex-col divide-y divide-gray-200">
-        <li v-for="s in sessions" :key="s.trace_id" class="p-3 text-sm" :class="{ 'bg-blue-50': isSelected(s.trace_id) }">
-          <div class="flex items-start gap-2">
-            <Checkbox
-              class="mt-1 shrink-0"
-              :model-value="isSelected(s.trace_id)"
-              @update:model-value="toggleOne(s.trace_id, $event)"
-              :aria-label="`Select session ${shortTraceId(s.trace_id)}`"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="flex flex-wrap items-center gap-2">
-                <span
-                  class="agent-icon"
-                  :class="agentTypeClass(s)"
-                  :title="agentTypeLabel(s)"
-                  :aria-label="agentTypeLabel(s)"
-                  role="img"
-                >
-                  <svg v-if="s.origin === 'workflow'" viewBox="0 0 16 16" aria-hidden="true">
-                    <circle cx="3.2" cy="8" r="1.5" />
-                    <path d="M4.7 8h2.8M7.5 4v8M7.5 4h3M7.5 8h3M7.5 12h3" />
-                    <circle cx="12" cy="4" r="1.3" />
-                    <circle cx="12" cy="8" r="1.3" />
-                    <circle cx="12" cy="12" r="1.3" />
-                  </svg>
-                  <svg v-else-if="s.origin === 'llm-stage'" viewBox="0 0 16 16" aria-hidden="true">
-                    <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
-                    <path d="M5.5 8.5 7 10l3.5-3.5" />
-                  </svg>
-                  <svg v-else-if="s.agent_kind === 'claude'" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M8 2.2 9.5 6.5 13.8 8 9.5 9.5 8 13.8 6.5 9.5 2.2 8 6.5 6.5 8 2.2Z" />
-                  </svg>
-                  <svg v-else-if="s.agent_kind === 'codex'" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M3 3.5h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Zm2.2 3L7 8 5.2 9.5M8.2 10h3" />
-                  </svg>
-                  <svg v-else-if="s.agent_kind === 'kimi'" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M5 3v10M5 8l5-5M5 8.5l5 4.5" />
-                  </svg>
-                  <svg v-else viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
-                  </svg>
-                </span>
-                <router-link :to="`/trace/sessions/${s.trace_id}`" class="text-blue-600 hover:underline font-medium">
-                  <code class="text-xs">{{ shortTraceId(s.trace_id, 12) }}…</code>
-                </router-link>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="-m-1.5 text-gray-400 hover:text-gray-700"
-                  title="Copy session id"
-                  :aria-label="`Copy session id ${s.trace_id}`"
-                  @click.stop="copyText(s.trace_id)"
-                >
-                  <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="5.5" y="5.5" width="8" height="8" rx="1.2" />
-                    <path d="M3.5 10.5h-1a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v1" />
-                  </svg>
-                </Button>
-                <span
-                  v-if="isActive(s)"
-                  class="inline-flex items-center gap-1 rounded bg-green-100 text-green-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                >
-                  <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>active
-                </span>
-                <span
-                  v-else-if="s.status === 'ended'"
-                  class="inline-block rounded bg-gray-100 text-gray-600 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                  :title="s.ended_reason === 'manual' ? 'Manually closed' : undefined"
-                >{{ s.ended_reason === 'manual' ? 'closed' : 'ended' }}</span>
-                <span
-                  v-if="s.is_test"
-                  class="inline-block rounded bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 uppercase tracking-wide"
-                >test</span>
-                <span
-                  v-if="s.context_pct != null"
-                  class="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-medium"
-                  :class="contextBadgeClass(s.context_pct)"
-                  :title="`main-conversation peak ${s.peak_main_context_tokens || s.peak_context_tokens} / ${s.context_window_tokens} tokens`"
-                >ctx {{ s.context_pct }}%</span>
-                <!-- All-inclusive peak (with advisor/sub-call tokens
-                     rolled in). Only shown when it diverges from main
-                     by more than 1% so the normal case stays uncluttered. -->
-                <span
-                  v-if="s.context_pct != null && s.context_pct_all != null
-                        && (s.context_pct_all - s.context_pct) > 1"
-                  class="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
-                  :title="`includes advisor/sub-call tokens — peak ${s.peak_context_tokens} / ${s.context_window_tokens}`"
-                >+sub {{ s.context_pct_all }}%</span>
-              </div>
-              <div class="mt-1 text-gray-700 break-words">
-                <span v-if="s.title">{{ titlePreview(s.title) }}</span>
-                <span v-else class="text-gray-400 italic text-xs">no prompt</span>
-              </div>
-              <SessionTags
-                class="mt-1.5"
-                :tags="s.tags || []"
-                :trace-id="s.trace_id"
-                @add="(slug) => onAddTag(s.trace_id, slug)"
-                @remove="(slug) => onRemoveTag(s.trace_id, slug)"
-              />
-              <dl class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600">
-                <div class="flex justify-between"><dt class="text-gray-400">Spans</dt><dd>{{ s.span_count }}</dd></div>
-                <div class="flex justify-between"><dt class="text-gray-400">Edits</dt><dd>{{ s.file_edits }}</dd></div>
-                <div class="flex justify-between"><dt class="text-gray-400">Tools</dt><dd>{{ s.tool_calls }}</dd></div>
-                <div class="flex justify-between"><dt class="text-gray-400">Reads</dt><dd>{{ s.skill_reads }}</dd></div>
-                <div class="flex justify-between"><dt class="text-gray-400">Duration</dt><dd>{{ fmtDuration(totalMs(s)) }}</dd></div>
-                <div class="flex justify-between"><dt class="text-gray-400">Last seen</dt><dd :title="timeTitle(s)">{{ fmtRelativeAge(serverAgeMs(s.last_seen, serverClock)) }}</dd></div>
-                <div class="flex justify-between col-span-2">
-                  <dt class="text-gray-400">Repo</dt>
-                  <dd v-if="s.repos && s.repos.length" :title="s.repos.map(r => r.name).join(', ')">
-                    {{ s.primary_repo || s.repos[0].name }}<span v-if="s.is_multi_repo" class="text-gray-400"> +{{ s.repos.length - 1 }}</span>
-                  </dd>
-                  <dd v-else class="text-gray-300">-</dd>
-                </div>
-              </dl>
-              <div class="mt-2 flex justify-end gap-2">
-                <router-link
-                  :to="`/live/${s.trace_id}`"
-                  class="inline-flex min-h-9 items-center rounded-lg border border-emerald-200 px-3 text-xs font-medium text-emerald-700 hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-blue-500"
-                  :title="`Watch session ${shortTraceId(s.trace_id, 12)}… in the live view`"
-                >Live</router-link>
-                <Button
-                  v-if="s.status !== 'ended'"
-                  variant="secondary"
-                  class="px-3 text-xs disabled:cursor-wait"
-                  :disabled="closing === s.trace_id"
-                  @click="closeSession(s)"
-                >{{ closing === s.trace_id ? 'Closing…' : 'Close' }}</Button>
-                <Button
-                  variant="danger"
-                  class="px-3 text-xs disabled:cursor-wait"
-                  :disabled="deleting === s.trace_id"
-                  @click="deleteSession(s)"
-                >{{ deleting === s.trace_id ? 'Deleting…' : 'Delete' }}</Button>
-              </div>
-            </div>
-          </div>
-        </li>
+      <ul v-if="sessions.length" class="slist__cards">
+        <template v-for="group in groups" :key="group.key">
+          <li v-if="group.label" class="slist__group slist__group--card" :class="`slist__group--${group.tone}`">
+            <span class="slist__group-label">{{ group.label }}</span>
+            <span class="slist__group-count">{{ groupCount(group) }}</span>
+          </li>
+          <SessionCard
+            v-for="s in group.rows"
+            :key="s.trace_id"
+            :s="s"
+            :clock="serverClock"
+            :selected="selectedIds.has(s.trace_id)"
+            :is-deleting="deleting === s.trace_id"
+            :is-closing="closing === s.trace_id"
+            @toggle="(checked) => toggleOne(s.trace_id, checked)"
+            @delete="deleteSession"
+            @close="closeSession"
+            @add-tag="(slug) => onTagChange(s.trace_id, slug, 'add')"
+            @remove-tag="(slug) => onTagChange(s.trace_id, slug, 'remove')"
+          />
+        </template>
       </ul>
-      <p v-if="!sessions.length && !loading && activeSearch" class="p-4 text-sm text-gray-400">
-        No sessions match {{ searchScope }} <code>{{ activeSearch }}</code>.
+
+      <p v-if="!sessions.length && !loading && activeSearch" class="empty-state">
+        No sessions match {{ searchScope }} <code class="cell-code">{{ activeSearch }}</code>.
       </p>
-      <p v-else-if="!sessions.length && !loading" class="p-4 text-sm text-gray-400">No session traces yet. Install the File Edit Trace hook in Settings and start a Claude Code session.</p>
+      <p v-else-if="!sessions.length && !loading" class="empty-state">
+        No session traces yet. Install the File Edit Trace hook in Settings and start a Claude Code session.
+      </p>
 
       <CursorControls
         v-if="sessions.length"
         :count="sessions.length"
+        :total="totalCount"
         :has-next="hasNext"
         :loading-more="loadingMore"
         label="sessions"
+        :note="footerNote"
         @load-more="loadMore"
       />
     </div>
@@ -845,233 +350,77 @@ function timeTitle(s) {
 </template>
 
 <style scoped>
-.split-card {
-  background: var(--color-white);
-  border-radius: 0.5rem;
-  border: 1px solid var(--color-gray-200);
+.slist {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 0.875rem;
   margin-bottom: 1rem;
   overflow: hidden;
 }
 
-/* Single-table session list. Title is the lead column and truncates to a
- * fixed cap so the metric columns to its right stay aligned. Slightly tighter
- * horizontal padding than the global .tbl keeps all 9 columns on screen
- * without a horizontal scrollbar at common laptop widths. */
-.sessions-tbl th,
-.sessions-tbl td {
-  padding-left: 0.625rem;
-  padding-right: 0.625rem;
-}
-.sessions-tbl .col-title {
-  max-width: 16rem;
-  min-width: 11rem;
-}
+/* One grid template, declared once and consumed by the column header and
+ * every row — the row lives in its own SFC, so a shared custom property is
+ * what keeps the two in lockstep. */
+.slist__grid { --session-cols: 26px 36px minmax(220px, 1fr) 104px 138px 132px 152px 84px; }
+.slist__grid { display: none; padding: 0.25rem 0 0.375rem; }
 
-/* Delete stays out of the way until the row is hovered or keyboard focus
- * lands inside it, so it never competes with the row content. */
-.sessions-tbl .row-delete {
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-.sessions-tbl tbody tr:hover .row-delete,
-.sessions-tbl tbody tr:focus-within .row-delete {
-  opacity: 1;
-}
-@media (hover: none) {
-  /* Touch / non-hover pointers can't reveal on hover — keep it visible. */
-  .sessions-tbl .row-delete { opacity: 1; }
-}
-.agent-icon {
+.slist__head {
   align-items: center;
-  border: 1px solid currentColor;
-  border-radius: 9999px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-fg-faint);
+  column-gap: 0.75rem;
+  display: grid;
+  font-size: 0.625rem;
+  font-weight: 700;
+  grid-template-columns: var(--session-cols);
+  letter-spacing: 0.1em;
+  padding: 0.5rem 0.875rem;
+  text-transform: uppercase;
+}
+.slist__head-check { display: flex; }
+
+.slist__group {
+  align-items: center;
+  display: flex;
+  gap: 0.625rem;
+  padding: 0.875rem 0.875rem 0.375rem;
+}
+.slist__group::after {
+  background: var(--color-border-subtle);
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+}
+.slist__group-label {
+  align-items: center;
   display: inline-flex;
   flex: 0 0 auto;
-  height: 1.25rem;
-  justify-content: center;
-  width: 1.25rem;
-}
-.agent-icon svg {
-  fill: none;
-  height: 0.875rem;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-  width: 0.875rem;
-}
-.agent-icon--claude {
-  background: var(--color-orange-50);
-  color: var(--color-orange-700);
-}
-.agent-icon--codex {
-  background: var(--color-indigo-50);
-  color: var(--color-indigo-700);
-}
-.agent-icon--kimi {
-  background: var(--color-purple-50);
-  color: var(--color-purple-700);
-}
-.agent-icon--generic {
-  background: var(--color-gray-100);
-  color: var(--color-gray-600);
-}
-.agent-icon--workflow {
-  background: var(--color-emerald-50);
-  color: var(--color-teal-700);
-}
-.agent-icon--llm-stage {
-  background: var(--color-sky-50);
-  color: var(--color-sky-700);
-}
-
-/* Visually-joined input + scope selector. Pulling the select tight
- * against the input reads as one control, which lets us drop the second
- * search box without losing the ability to choose what's being matched. */
-.search-group {
-  display: inline-flex;
-  align-items: stretch;
-  max-width: 100%;
-}
-.search-group .search-input {
-  width: 22rem;
-  min-width: 0;
-  max-width: 100%;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  border-right: 0;
-}
-/* :deep() — the class lands on the Select's trigger (a child component root),
-   out of reach of a plain scoped selector. */
-.search-group :deep(.search-scope) {
-  min-width: 0;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  border-left: 1px solid var(--color-slate-300);
-  background: var(--color-slate-50);
-  color: var(--color-slate-600);
-  font-size: 0.8125rem;
-}
-/* Two-tier filter bar: a search row on top and a faceted filter row
- * below. Each row wraps independently so narrow viewports never push
- * facets out of view. */
-.session-filters {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
-}
-.session-filters__row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.session-filters__row--facets {
-  /* Tighter gap on facet row so labels sit close to their dropdowns. */
-  gap: 0.375rem;
-}
-
-.facets-toggle {
-  align-items: center;
-  background: var(--color-slate-50);
-  border: 1px solid var(--color-slate-200);
-  border-radius: 0.5rem;
-  color: var(--color-slate-600);
-  cursor: pointer;
-  display: inline-flex;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  gap: 0.3rem;
-  letter-spacing: 0.04em;
-  padding: 0.3rem 0.55rem;
+  font-size: 0.59375rem;
+  font-weight: 700;
+  gap: 0.4375rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  transition: border-color 0.15s ease, background 0.15s ease;
 }
-.facets-toggle:hover {
-  border-color: var(--color-slate-300);
-  color: var(--color-slate-800);
+.slist__group--live .slist__group-label { color: var(--color-emerald-700); }
+.slist__group--muted .slist__group-label { color: var(--color-fg-faint); }
+.slist__group-dot {
+  background: var(--color-emerald-500);
+  border-radius: 9999px;
+  height: 0.375rem;
+  width: 0.375rem;
 }
-.facets-toggle__count {
-  background: var(--color-blue-600);
-  border-radius: 999px;
-  color: #fff;
-  font-size: 0.625rem;
-  line-height: 1;
-  min-width: 1rem;
-  padding: 0.15rem 0.3rem;
-  text-align: center;
-}
-.facets-toggle__chevron {
-  transition: transform 0.15s ease;
-}
-.facets-toggle__chevron--open {
-  transform: rotate(180deg);
-}
-
-/* Pill control: a labeled prefix + a control (select or input). The
- * label/control share the same rounded rectangle so they read as one
- * unit rather than two adjacent widgets. */
-.facet-pill {
-  display: inline-flex;
-  align-items: stretch;
-  border: 1px solid var(--color-slate-200);
-  border-radius: 0.5rem;
-  background: var(--color-slate-50);
-  overflow: hidden;
-  transition: border-color 0.15s ease, background 0.15s ease;
-  cursor: pointer;
-}
-.facet-pill:hover { border-color: var(--color-slate-300); }
-.facet-pill:focus-within {
-  border-color: var(--color-blue-500);
-  background: var(--color-white);
-}
-.facet-pill--active {
-  border-color: var(--color-blue-600);
-  background: var(--color-blue-50);
-}
-.facet-pill--active .facet-pill__label {
-  color: var(--color-blue-700);
-  background: rgba(37, 99, 235, 0.08);
-  border-right-color: rgba(37, 99, 235, 0.2);
-}
-
-.facet-pill__label {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.625rem;
+.slist__group-count {
+  color: var(--color-fg-faint);
+  flex: 0 0 auto;
   font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--color-slate-500);
-  border-right: 1px solid var(--color-slate-200);
-  user-select: none;
+  font-variant-numeric: tabular-nums;
+  order: 3;
 }
 
-.facet-pill--input { padding-right: 0.125rem; }
-.facet-pill__input {
-  background: transparent;
-  border: 0;
-  outline: 0;
-  padding: 0.25rem 0.625rem;
-  font-size: 0.8125rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--color-slate-800);
-  width: 11rem;
+.slist__cards { display: flex; flex-direction: column; }
+
+@media (min-width: 640px) {
+  .slist__grid { display: block; }
+  .slist__cards { display: none; }
 }
-.facet-pill__input::placeholder { color: var(--color-slate-400); font-family: inherit; }
-.facet-pill__clear {
-  background: transparent;
-  border: 0;
-  color: var(--color-slate-500);
-  cursor: pointer;
-  font-size: 1.125rem;
-  line-height: 1;
-  padding: 0 0.5rem;
-  display: inline-flex;
-  align-items: center;
-  border-radius: 0.375rem;
-}
-.facet-pill__clear:hover { color: var(--color-slate-800); background: rgba(15, 23, 42, 0.06); }
 </style>

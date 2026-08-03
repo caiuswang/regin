@@ -5,8 +5,8 @@
  * transition; with a width:auto trigger that collapsed the pill to just the
  * chevron and reflowed the sibling facet row — the desktop "filter blink".
  * Select.vue now renders the label from modelValue+options, so the trigger
- * text never empties. This drives the sessions facet pills and asserts the
- * changed pill never renders an empty value frame.
+ * text never empties. This drives the sessions toolbar's Range select and
+ * asserts it never renders an empty value frame.
  */
 import { test, expect } from './auth-fixture.js'
 import { randomUUID } from 'node:crypto'
@@ -28,44 +28,44 @@ const env = (rows) => ({
   server_now: '2026-07-10T13:00:00.000000', server_now_utc: '2026-07-10T09:00:00.000Z',
 })
 
-test('measure facet pill widths when a Select is clicked (desktop)', async ({ page }) => {
+test('measure toolbar Select widths when a Select is clicked (desktop)', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.route('**/api/sessions?*', (r) => r.fulfill({ json: env([row(randomUUID())]) }))
   await page.goto('/trace/sessions')
-  await expect(page.locator('form.session-filters')).toBeVisible()
+  await expect(page.locator('.stoolbar')).toBeVisible()
   await page.waitForTimeout(300)
 
-  // Sample each facet pill's width every frame for ~600ms while we click one.
+  // Sample every Select trigger's width + rendered value each frame while we
+  // change one of them.
   await page.evaluate(() => {
     window.__w = []
     let run = true
     window.__stop = () => { run = false }
     const tick = () => {
-      const pills = [...document.querySelectorAll('.facet-pill')]
-      window.__w.push(pills.map((p) => {
-        const label = p.querySelector('.facet-pill__label')?.textContent?.trim() || '?'
-        const trig = p.querySelector('.ds-select-trigger')
-        const val = p.querySelector('.ds-select-value')?.textContent?.trim() || ''
-        return `${label}:${Math.round(p.getBoundingClientRect().width)}/${trig ? Math.round(trig.getBoundingClientRect().width) : -1}[${val}]`
+      const trigs = [...document.querySelectorAll('.stoolbar .ds-select-trigger')]
+      window.__w.push(trigs.map((t) => {
+        const val = t.querySelector('.ds-select-value')?.textContent?.trim() || ''
+        const label = t.getAttribute('aria-label') || '?'
+        return `${label}:${Math.round(t.getBoundingClientRect().width)}[${val}]`
       }).join(' | '))
       if (run) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
   })
 
-  // Change a DIFFERENT filter (Range) → triggers a reload that recomputes
-  // tagOptions, which may re-render the Tag Select and collapse its trigger.
+  // Changing Range triggers a reload that recomputes tagOptions and re-renders
+  // the toolbar — the path that used to collapse a sibling trigger.
   await page.getByLabel('Filter by last activity time range').click()
   await page.getByRole('option', { name: 'All time' }).click()
   await page.waitForTimeout(700)
 
   const frames = await page.evaluate(() => { window.__stop(); return window.__w })
-  // The changed pill (Range) must never render an empty value — an empty
-  // frame is the collapse that reflows the row (the "blink").
-  const rangeEmpty = frames.some((f) => /Range:\d+\/\d+\[\]/.test(f))
+  // No trigger may render an empty value — an empty frame is the collapse
+  // that reflows the toolbar (the "blink").
+  const anyEmpty = frames.some((f) => /:\d+\[\]/.test(f))
   const out = []
   for (const f of frames) if (out.at(-1) !== f) out.push(f)
-  console.log('WIDTH FRAMES (label:pillW/trigW[value]):')
+  console.log('WIDTH FRAMES (ariaLabel:trigW[value]):')
   out.forEach((f, i) => console.log(`  [${i}] ${f}`))
-  expect(rangeEmpty, 'Range pill value went empty for a frame (trigger collapsed → row reflow)').toBe(false)
+  expect(anyEmpty, 'a toolbar Select value went empty for a frame (trigger collapsed → toolbar reflow)').toBe(false)
 })

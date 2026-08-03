@@ -11,7 +11,7 @@
  *
  * Everything is `page.route`-mocked: no session is posted, so these tests
  * never write to the dev DB. The sessions-list envelope is templated off a
- * live response so each row keeps every field SessionRow reads.
+ * live response so each row keeps every field SessionListRow reads.
  *
  * The trace ids below are real ids sampled from the dev DB — two Kimi
  * sessions sharing the `session_` prefix, one of them titleless (the case
@@ -46,7 +46,7 @@ async function authToken(page) {
 }
 
 // Real list envelope with its rows swapped for our fixtures. Templating off a
-// live row keeps the ~40 fields SessionRow reads (tokens, repos, phase, …)
+// live row keeps the ~40 fields SessionListRow reads (tokens, repos, phase, …)
 // realistic without hand-maintaining them here.
 async function mockSessionList(page, rows) {
   const token = await authToken(page)

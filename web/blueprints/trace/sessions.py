@@ -174,6 +174,67 @@ def _filter_sessions_by_repo(stmt, repo_name):
     ))
 
 
+def _session_active_clause(want_active: bool):
+    """The server's mirror of the frontend `isActive(row)` rule as SQL.
+
+    status='active' is always active, 'ended' always inactive; anything else
+    (unset, unknown future values) falls back to a last-seen recency check.
+    One definition so the `active=` filter, the `active_count` facet, and the
+    green badge can never drift apart.
+    """
+    from sqlalchemy import or_ as _or, and_ as _and
+    cutoff_iso = (datetime.now() - timedelta(minutes=10)).strftime('%Y-%m-%dT%H:%M:%S')
+    status_col = SessionModel.status
+    unknown = _or(status_col.is_(None), status_col.notin_(['active', 'ended']))
+    if want_active:
+        return _or(status_col == 'active',
+                   _and(unknown, SessionModel.last_seen >= cutoff_iso))
+    return _or(status_col == 'ended',
+               _and(unknown, SessionModel.last_seen < cutoff_iso))
+
+
+def _repo_counts(session, narrow):
+    """Sessions-per-registered-repo over the caller's full filter set.
+
+    A multi-repo session counts once under every repo it touched, matching
+    what `repo=` would return for each — so the facet chip's number is the
+    result count you get by clicking it.
+    """
+    from sqlalchemy import func as _func
+    from sqlmodel import select as _select
+    from lib.orm.models import Repo
+    rows = session.exec(
+        narrow(_select(Repo.name, _func.count(_func.distinct(SessionRepo.trace_id)))
+               .select_from(SessionModel)
+               .join(SessionRepo, SessionRepo.trace_id == SessionModel.trace_id)
+               .join(Repo, Repo.id == SessionRepo.repo_id))
+        .group_by(Repo.name)
+    ).all()
+    return {name: n for name, n in rows}
+
+
+def _list_facet_counts(session, narrow):
+    """`total_count` / `active_count` for the list envelope.
+
+    `narrow` applies the request's COMPLETE filter set (shared WHERE + origin
+    + tag), so both numbers describe the same population the page paginates
+    over — the footer total and the header "N active now" pill stay consistent
+    with the rows on screen.
+    """
+    from sqlalchemy import func as _func
+    from sqlmodel import select as _select
+
+    def _count(*where):
+        return session.exec(
+            narrow(_select(_func.count()).select_from(SessionModel)).where(*where)
+        ).one()
+
+    return {
+        'total_count': _count(),
+        'active_count': _count(_session_active_clause(True)),
+    }
+
+
 def _attach_session_repos(session, items) -> None:
     """Attach `repos`, `is_multi_repo`, `primary_repo` to each row dict.
 
@@ -375,7 +436,7 @@ def api_sessions():
       cursor, size       — keyset pagination (see lib.utils.pagination)
     """
     from sqlmodel import select as _select
-    from sqlalchemy import func as _func, or_ as _or, and_ as _and
+    from sqlalchemy import func as _func, or_ as _or
     include_tests = request.args.get('include_tests', 'false').lower() in ('1', 'true', 'yes')
     kind = (request.args.get('kind') or '').strip().lower()
     if kind not in ('real', 'test', 'all'):
@@ -498,7 +559,22 @@ def api_sessions():
         .label('plans')
     )
 
-    def _apply_filters(s, skip_date=False):
+    def _apply_origin(s):
+        """The `workflow` (origin) axis, applied AFTER the shared filters.
+
+        NULL legacy rows count as 'session' (not a run), so `hide` keeps them
+        and `only` drops them. 'llm-stage' rows (regin-spawned LLM stages,
+        e.g. reflect's judges) ride the same toggle as workflow captures —
+        both are non-interactive runs.
+        """
+        if workflow == 'only':
+            return s.where(SessionModel.origin.in_(_RUN_ORIGINS))
+        if workflow == 'hide':
+            return s.where(_or(SessionModel.origin.is_(None),
+                               SessionModel.origin.not_in(_RUN_ORIGINS)))
+        return s
+
+    def _apply_filters(s, skip_date=False, skip_repo=False):
         """Apply the shared WHERE set (kind/is_test, trace_id, active,
         title/prompt search, since/until, repo) to a statement and return it.
 
@@ -507,7 +583,8 @@ def api_sessions():
         page would have shown but for the `workflow` origin filter. The
         workflow/origin clause is applied by the caller, NOT here.
         `skip_date=True` omits the since/until bounds so callers can count
-        rows outside the current date window.
+        rows outside the current date window; `skip_repo=True` omits the repo
+        narrowing so a facet can still show its sibling repos' counts.
         """
         if kind == 'real':
             s = s.where(SessionModel.is_test == 0)
@@ -525,24 +602,7 @@ def api_sessions():
             # `/live` links carry.
             s = s.where(SessionModel.trace_id.notin_(hidden_alias_ids))
         if active_filter != 'all':
-            # Mirror the frontend's `isActive(s)` rule so the server-side
-            # filter matches the green badge: status='active' is always
-            # active; 'ended' is always inactive; anything else falls back
-            # to the last-seen recency check.
-            cutoff_iso = (datetime.now() - timedelta(minutes=10)).strftime('%Y-%m-%dT%H:%M:%S')
-            status_col = SessionModel.status
-            recent_unknown = _and(
-                _or(status_col.is_(None), status_col.notin_(['active', 'ended'])),
-                SessionModel.last_seen >= cutoff_iso,
-            )
-            stale_unknown = _and(
-                _or(status_col.is_(None), status_col.notin_(['active', 'ended'])),
-                SessionModel.last_seen < cutoff_iso,
-            )
-            active_clause = (_or(status_col == 'active', recent_unknown)
-                             if active_filter == 'active'
-                             else _or(status_col == 'ended', stale_unknown))
-            s = s.where(active_clause)
+            s = s.where(_session_active_clause(active_filter == 'active'))
         if search:
             # COLLATE NOCASE via .ilike on SQLite; for MySQL the default
             # collation already matches case-insensitively on varchar columns.
@@ -568,7 +628,14 @@ def api_sessions():
                 s = s.where(SessionModel.last_seen >= since)
             if until:
                 s = s.where(SessionModel.last_seen < until)
+        if skip_repo:
+            return s
         return _filter_sessions_by_repo(s, request.args.get('repo'))
+
+    def _narrow(s, skip_repo=False):
+        """The request's COMPLETE filter set: shared WHERE + origin + tag."""
+        return _apply_tag_filter(_apply_origin(_apply_filters(s, skip_repo=skip_repo)),
+                                 tag_slugs)
 
     with SessionLocal() as session:
         hidden_alias_ids = aliased_run_ids(session)
@@ -591,24 +658,18 @@ def api_sessions():
             SessionModel.context_window_tokens,
             SessionModel.active_work_ms,
         ))
-        # Apply the `workflow` (origin) filter AFTER the shared filters.
-        # NULL legacy rows count as 'session' (not a run), so `hide` keeps
-        # them and `only` drops them. 'llm-stage' rows (regin-spawned LLM
-        # stages, e.g. reflect's judges) ride the same toggle as workflow
-        # captures — both are non-interactive runs.
-        if workflow == 'only':
-            stmt = stmt.where(SessionModel.origin.in_(_RUN_ORIGINS))
-        elif workflow == 'hide':
-            stmt = stmt.where(_or(SessionModel.origin.is_(None),
-                                  SessionModel.origin.not_in(_RUN_ORIGINS)))
-
-        # Tag facet: AND every selected tag (builtin category → origin,
-        # custom → session_tags membership). Orthogonal to `workflow`.
-        stmt = _apply_tag_filter(stmt, tag_slugs)
+        stmt = _narrow(stmt)
 
         # Per-tag counts for the facet, over the shared filters but NOT the
         # tag selection itself (so a selected facet still shows sibling counts).
         tag_counts = _tag_counts(session, _apply_filters)
+
+        # Envelope facets: total/active over the SAME population the page
+        # paginates, and repo counts over everything but the repo selection
+        # (same sibling-counts rule as tag_counts).
+        facets = _list_facet_counts(session, _narrow)
+        facets['repo_counts'] = _repo_counts(
+            session, lambda s: _narrow(s, skip_repo=True))
 
         # When hiding runs, count how many the SAME other filters would have
         # matched so the frontend can offer a pivot hint. Same _apply_filters,
@@ -652,6 +713,7 @@ def api_sessions():
     envelope['workflow_date_hidden_count'] = workflow_date_hidden_count
     envelope['tag_counts'] = tag_counts
     envelope['builtin_tags'] = builtin_meta()
+    envelope.update(facets)
     # One server-clock instant in BOTH stored-timestamp formats (naive
     # host-local and UTC-Z), so the frontend can age each row server−server
     # against the anchor matching that row's format. Client−server arithmetic

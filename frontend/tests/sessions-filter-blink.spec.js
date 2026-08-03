@@ -1,15 +1,18 @@
 /**
- * Regression: changing a facet filter must NOT unmount the filter form.
+ * Regression: changing a facet filter must NOT unmount the toolbar.
  *
  * Before the fix, SessionsView wrapped the ENTIRE page (sticky header +
- * filter pills + table) in `v-if="loading" / v-else`. Every facet change
- * calls useCursor.load() which flips `loading`, so the whole page —
- * including the pill you just touched and the ones under it — unmounted and
- * remounted: the "blink". The fix keeps the header + filters always mounted
- * and scopes the loading placeholder to the results region (initial load
- * only). This test gates the reload response so the in-flight `loading`
- * window is observable, then asserts the form stays attached and the prior
- * rows stay visible during that window.
+ * filters + table) in `v-if="loading" / v-else`. Every facet change calls
+ * useCursor.load() which flips `loading`, so the whole page — including the
+ * control you just touched — unmounted and remounted: the "blink". The fix
+ * keeps the header + toolbar always mounted and scopes the loading
+ * placeholder to the results region (initial load only). This test gates the
+ * reload response so the in-flight `loading` window is observable, then
+ * asserts the toolbar stays attached and the prior rows stay visible during
+ * that window.
+ *
+ * The facets now live in a popover (`SessionFiltersPopover`) rather than an
+ * inline pill row, so "touch a facet" means open Filters and click a chip.
  */
 import { test, expect } from './auth-fixture.js'
 import { randomUUID } from 'node:crypto'
@@ -70,28 +73,29 @@ test('changing a facet filter does not unmount the filter form (no blink)', asyn
 
   // Initial load rendered: both rows + the filter form are present.
   await expect(page.getByText(`BLINK_FIXTURE_${idA.slice(0, 8)}`).first()).toBeVisible()
-  const filterForm = page.locator('form.session-filters')
-  await expect(filterForm).toBeVisible()
+  const toolbar = page.locator('.stoolbar')
+  await expect(toolbar).toBeVisible()
 
-  // Open the Status facet and pick "Active only" → triggers a reload. Arm
-  // the request wait BEFORE the click so we don't miss the in-flight event.
+  // Open Filters and pick Status = Active → triggers a reload. Arm the
+  // request wait BEFORE the click so we don't miss the in-flight event.
   const reloadReq = page.waitForRequest((r) => r.url().includes('active=active'))
-  await page.getByLabel('Filter by active status').click()
-  await page.getByRole('option', { name: 'Active only', exact: true }).click()
+  await page.getByRole('button', { name: /Filters/ }).click()
+  await page.locator('.filters-panel .facet', { hasText: 'Status' })
+    .locator('.chip', { hasText: 'Active' }).click()
   await reloadReq                                        // held open by the gate
 
   // THE ASSERTION: during the in-flight reload the filter form is STILL
   // mounted (old bug: replaced by a full-page "Loading sessions…"), and the
   // previously loaded rows are still visible (useCursor keeps them until the
   // fetch resolves). The full-page loader must NOT have taken over.
-  await expect(filterForm).toBeVisible()
-  await expect(page.getByLabel('Filter by active status')).toBeVisible()
+  await expect(toolbar).toBeVisible()
+  await expect(page.getByRole('button', { name: /Filters/ })).toBeVisible()
   await expect(page.getByText(`BLINK_FIXTURE_${idA.slice(0, 8)}`).first()).toBeVisible()
 
   // Release the reload; the list settles to the single active row.
   releaseReload()
   await expect(page.getByText(`BLINK_FIXTURE_${idB.slice(0, 8)}`).first()).toBeHidden()
-  await expect(filterForm).toBeVisible()
+  await expect(toolbar).toBeVisible()
 })
 
 test('a facet filter yielding zero rows shows the empty message, not a stuck loader', async ({ page }) => {
@@ -104,15 +108,14 @@ test('a facet filter yielding zero rows shows the empty message, not a stuck loa
   await page.goto('/trace/sessions')
   await expect(page.getByText(`BLINK_FIXTURE_${idA.slice(0, 8)}`).first()).toBeVisible()
 
-  await page.getByLabel('Filter by active status').click()
-  await page.getByRole('option', { name: 'Inactive only' }).click()
+  await page.getByRole('button', { name: /Filters/ }).click()
+  await page.locator('.filters-panel .facet', { hasText: 'Status' })
+    .locator('.chip', { hasText: 'Ended' }).click()
 
   await expect(page.getByText('No session traces yet.')).toBeVisible()
   await expect(page.getByText('Loading sessions…')).toBeHidden()
-  await expect(page.locator('form.session-filters')).toBeVisible()
+  await expect(page.locator('.stoolbar')).toBeVisible()
 })
-
-const OUT = '/private/tmp/claude-501/-Users-taowang-regin/02537478-02be-46d7-b7cd-459f9c0a2b20/scratchpad'
 
 for (const [label, w, h] of [['desktop', 1280, 800], ['mobile', 390, 844]]) {
   test(`renders without horizontal overflow at ${label} (${w}px)`, async ({ page }) => {
@@ -122,17 +125,24 @@ for (const [label, w, h] of [['desktop', 1280, 800], ['mobile', 390, 844]]) {
 
     await page.goto('/trace/sessions')
     // Wait for the list to settle (rows present, not empty/loading) without
-    // asserting a specific row node — the desktop <table> and mobile <ul>
+    // asserting a specific row node — the desktop grid and mobile card list
     // both render the title but only one is visible per breakpoint.
-    await expect(page.locator('form.session-filters')).toBeVisible()
+    await expect(page.locator('.stoolbar')).toBeVisible()
     await expect(page.getByText('No session traces yet.')).toBeHidden()
     await expect(page.getByText('Loading sessions…')).toBeHidden()
 
-    const geom = await page.evaluate(() => ({
-      scroll: document.documentElement.scrollWidth,
-      client: document.documentElement.clientWidth,
-    }))
-    await page.screenshot({ path: `${OUT}/sessions_${label}.png`, fullPage: false })
-    expect(geom.scroll, `no horizontal overflow (${label})`).toBeLessThanOrEqual(geom.client)
+    // The list is a grid inside `.content-scroll`; measure that scroller too,
+    // since a too-wide column track overflows it before it reaches <html>.
+    const geom = await page.evaluate(() => {
+      const pane = document.querySelector('.content-scroll')
+      return {
+        scroll: document.documentElement.scrollWidth,
+        client: document.documentElement.clientWidth,
+        paneScroll: pane ? pane.scrollWidth : 0,
+        paneClient: pane ? pane.clientWidth : 0,
+      }
+    })
+    expect(geom.scroll, `no page overflow (${label})`).toBeLessThanOrEqual(geom.client)
+    expect(geom.paneScroll, `no content-pane overflow (${label})`).toBeLessThanOrEqual(geom.paneClient + 1)
   })
 }

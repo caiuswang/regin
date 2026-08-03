@@ -6,6 +6,9 @@ defineProps({
   modelValue: { type: Boolean, default: false },
   label: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
+  // Tri-state for select-all headers: neither checked nor unchecked. Must be
+  // set as a DOM property (`.prop`) — there is no `indeterminate` attribute.
+  indeterminate: { type: Boolean, default: false },
 })
 defineEmits(['update:modelValue'])
 </script>
@@ -16,6 +19,7 @@ defineEmits(['update:modelValue'])
       type="checkbox"
       class="ds-check-box"
       :checked="modelValue"
+      :indeterminate.prop="indeterminate"
       :disabled="disabled"
       @change="$emit('update:modelValue', $event.target.checked)"
     />
