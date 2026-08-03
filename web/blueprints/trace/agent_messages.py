@@ -106,10 +106,13 @@ def api_agent_messages_inbox():
 
 @trace_bp.route('/api/agent-messages/unread-count')
 def api_agent_messages_unread_count():
-    """Just the badge number. The badge is pushed over the event stream;
-    this serves the client's first paint and its stream-down fallback."""
-    return jsonify({'count': store.unread_count(
-        include_tests=_bool_arg('include_tests'))})
+    """Just the badge number and its urgency. The badge is pushed over the
+    event stream; this serves the first paint and the stream-down fallback."""
+    include_tests = _bool_arg('include_tests')
+    return jsonify({
+        'count': store.unread_count(include_tests=include_tests),
+        'severity': store.unread_top_severity(include_tests=include_tests),
+    })
 
 
 @trace_bp.route('/api/agent-messages/read', methods=['POST'])
@@ -118,6 +121,7 @@ def api_agent_messages_read():
     payload = request.get_json(silent=True) or {}
     ids = [i for i in (payload.get('ids') or []) if isinstance(i, int)]
     marked = store.mark_read(ids)
+    _retire({'message_ids': ids, 'reason': 'read'})
     hub.broadcast_counts()
     return jsonify({'marked': marked})
 
@@ -129,6 +133,7 @@ def api_agent_messages_read_all():
     payload = request.get_json(silent=True) or {}
     include_tests = bool(payload.get('include_tests', False))
     marked = store.mark_all_read(include_tests=include_tests)
+    _retire({'all': True, 'reason': 'read'})
     hub.broadcast_counts()
     return jsonify({'marked': marked})
 
@@ -136,6 +141,7 @@ def api_agent_messages_read_all():
 @trace_bp.route('/api/agent-messages/<int:message_id>/ack', methods=['POST'])
 def api_agent_messages_ack(message_id):
     acked = store.ack(message_id)
+    _retire({'message_ids': [message_id], 'reason': 'read'})
     hub.broadcast_counts()
     return jsonify({'acked': acked})
 
@@ -143,8 +149,38 @@ def api_agent_messages_ack(message_id):
 @trace_bp.route('/api/agent-messages/<int:message_id>/dismiss', methods=['POST'])
 def api_agent_messages_dismiss(message_id):
     dismissed = store.dismiss(message_id)
+    # `hidden`, not `dismissed`: this is a human hiding a card, which is the
+    # only escape from a banner whose session died mid-prompt. It closes the
+    # surface but claims nothing about the agent, so the row must not be
+    # painted "resumed".
+    _retire({'message_ids': [message_id], 'reason': 'hidden'})
     hub.broadcast_counts()
     return jsonify({'dismissed': dismissed})
+
+
+def _retire(payload: dict) -> None:
+    """Tell every open stream a notification was handled here, so the toast or
+    blocker banner clears in the tab that did *not* click it. In-process, so
+    the hub is called directly — the loopback trigger is for other processes.
+
+    `reason` says what actually happened, on two independent axes — whether
+    the surface closes, and whether the agent was un-parked:
+
+      read       the human acknowledged it. Toast closes; a blocker banner does
+                 NOT, because acknowledging a question is not answering it
+                 (`useLiveDecisions.js` records this trap being fixed once
+                 before on the inbox's own decision surfaces).
+      hidden     the human closed the card. Everything closes, but nothing is
+                 claimed about the agent — no "resumed".
+      dismissed  the condition itself is gone (the prompt was answered), which
+                 only `store.dismiss_keyed` can know. Closes and reports
+                 resumed.
+
+    Anything else — including a missing reason — must fail CLOSED at the
+    client: leave the blocker up. A banner wrongly shown is noise; a banner
+    wrongly cleared silently loses a stopped agent.
+    """
+    hub.broadcast_event('resolved', payload)
 
 
 @trace_bp.route('/api/agent-messages/<int:message_id>/pin', methods=['POST'])

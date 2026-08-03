@@ -117,8 +117,17 @@ function linkName(link) {
         >
           <NavIcon :name="link.icon" />
           <span v-if="!collapsed" class="sb-item-label">{{ link.label }}</span>
-          <span v-if="!collapsed && link.badge?.()" class="sb-badge">{{ link.badge() }}</span>
-          <span v-else-if="collapsed && link.badge?.()" class="sb-badge-dot" aria-hidden="true" />
+          <span
+            v-if="!collapsed && link.badge?.()"
+            class="sb-badge"
+            :class="`sb-badge-${link.tone?.() || 'info'}`"
+          >{{ link.badge() }}</span>
+          <span
+            v-else-if="collapsed && link.badge?.()"
+            class="sb-badge-dot"
+            :class="`sb-badge-dot-${link.tone?.() || 'info'}`"
+            aria-hidden="true"
+          />
         </Button>
       </div>
     </nav>
@@ -408,11 +417,13 @@ function linkName(link) {
   white-space: nowrap;
 }
 
+/* Tone, not decoration: red only while an agent is actually parked, so the
+   colour stays worth reacting to. */
 .sb-badge {
   flex-shrink: 0;
   margin-left: auto;
-  background: var(--color-red-100);
-  color: var(--color-red-800);
+  background: var(--color-blue-100);
+  color: var(--color-blue-800);
   font-size: 0.625rem;
   font-weight: 600;
   padding: 0.0625rem 0.375rem;
@@ -421,6 +432,9 @@ function linkName(link) {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+
+.sb-badge-warning { background: var(--color-amber-100); color: var(--color-amber-800); }
+.sb-badge-danger { background: var(--color-red-100); color: var(--color-red-800); }
 
 .sb-item.is-active .sb-badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
@@ -431,9 +445,12 @@ function linkName(link) {
   width: 8px;
   height: 8px;
   border-radius: 9999px;
-  background: var(--color-red-500);
+  background: var(--color-blue-500);
   border: 2px solid var(--color-surface);
 }
+
+.sb-badge-dot-warning { background: var(--color-amber-500); }
+.sb-badge-dot-danger { background: var(--color-red-500); }
 
 .sb-user-wrap {
   padding: 0.5rem 0.75rem 1rem;

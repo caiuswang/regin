@@ -37,17 +37,27 @@ def _seed(body="hi", **kw):
                                 dispatch_webhook=False, **kw)
 
 
-def _drain(q):
-    frames = []
+def _frames(q):
+    out = []
     while not q.empty():
-        frames.append(q.get_nowait())
-    return frames
+        out.append(q.get_nowait())
+    return out
+
+
+def _drain(q):
+    """The counts payloads a subscriber received, named events filtered out."""
+    return [payload for name, payload in _frames(q) if name == hub.COUNTS_EVENT]
+
+
+def _events(q, name):
+    return [payload for ev, payload in _frames(q) if ev == name]
 
 
 # ── Counters ────────────────────────────────────────────────────────
 
 def test_counts_start_at_zero(tmp_db):
-    assert hub.current_counts() == {"drift_pending": 0, "inbox_unread": 0}
+    assert hub.current_counts() == {"drift_pending": 0, "inbox_unread": 0,
+                                    "inbox_severity": None}
 
 
 def test_counts_track_the_inbox(tmp_db):
@@ -69,8 +79,10 @@ def test_broadcast_reaches_every_subscriber(tmp_db):
     b, _ = hub.subscribe()
     _seed()
     hub.broadcast_counts()
-    assert _drain(a) == [{"drift_pending": 0, "inbox_unread": 1}]
-    assert _drain(b) == [{"drift_pending": 0, "inbox_unread": 1}]
+    expected = [{"drift_pending": 0, "inbox_unread": 1,
+                 "inbox_severity": "progress"}]
+    assert _drain(a) == expected
+    assert _drain(b) == expected
 
 
 def test_broadcast_with_no_subscribers_is_a_noop(tmp_db):
@@ -205,7 +217,7 @@ def test_stream_opens_with_a_valid_ticket_and_sends_the_counts(
     assert resp.status_code == 200
     assert resp.mimetype == "text/event-stream"
     assert json.loads(frame.removeprefix("data: ")) == {
-        "drift_pending": 0, "inbox_unread": 1}
+        "drift_pending": 0, "inbox_unread": 1, "inbox_severity": "progress"}
 
 
 def test_the_stream_spends_its_ticket(tmp_db, flask_client):
@@ -278,7 +290,8 @@ def notified(monkeypatch):
     a per-test setattr is applied after the autouse one, so it wins."""
     calls: list[int] = []
     from lib.notifications import notify
-    monkeypatch.setattr(notify, "_post_notify", lambda port: calls.append(port))
+    monkeypatch.setattr(notify, "_post_notify",
+                        lambda port, body: calls.append((port, body)))
     return calls
 
 
@@ -341,7 +354,7 @@ def test_the_notify_lands_after_retention_pruning(tmp_db, monkeypatch):
     observed: list[int] = []
     monkeypatch.setattr(
         notify, "_post_notify",
-        lambda _port: observed.append(store.unread_count()))
+        lambda _port, _body: observed.append(store.unread_count()))
     _seed(body="fresh")
     assert observed[-1] == 1, "notify saw a pre-prune count"
 
@@ -389,7 +402,8 @@ def test_re_arming_the_notify_transport_leaves_the_other_guards_up(
 def test_subscribing_hands_back_the_current_counts(tmp_db):
     _seed()
     _, first = hub.subscribe()
-    assert first == {"drift_pending": 0, "inbox_unread": 1}
+    assert first == {"drift_pending": 0, "inbox_unread": 1,
+                     "inbox_severity": "progress"}
 
 
 def test_frames_arrive_in_the_order_their_counts_were_read(tmp_db):
@@ -417,7 +431,7 @@ def test_frames_arrive_in_the_order_their_counts_were_read(tmp_db):
     finally:
         hub.current_counts = real
     while not q.empty():
-        seen.append(q.get_nowait()["inbox_unread"])
+        seen.append(q.get_nowait()[1]["inbox_unread"])
     assert seen == sorted(seen), f"frames arrived out of order: {seen}"
 
 
@@ -454,3 +468,185 @@ def _seed_drift() -> int:
     with SessionLocal() as session:
         return session.execute(
             text("SELECT id FROM payload_schema_drift LIMIT 1")).scalar_one()
+
+
+# ── Notification events (toasts / blocker banner) ───────────────────
+
+def test_a_recorded_message_is_pushed_as_a_named_event(tmp_db, anon_client):
+    message = _seed(body="hello", msg_type="warning", title="Heads up")
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify",
+                     json={"message_id": message["id"]})
+    events = _events(q, "notification")
+    assert len(events) == 1
+    assert events[0]["id"] == message["id"]
+    assert events[0]["msg_type"] == "warning"
+    assert events[0]["title"] == "Heads up"
+
+
+def test_the_message_event_is_read_from_the_store_not_the_body(tmp_db,
+                                                               anon_client):
+    """The trigger carries an id only, so a forged payload cannot reach a
+    stream — the row on the wire is the row in the DB."""
+    message = _seed(body="real")
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify",
+                     json={"message_id": message["id"], "body": "forged",
+                           "msg_type": "blocker"})
+    event = _events(q, "notification")[0]
+    assert event["body"] == "real"
+    assert event["msg_type"] == "progress"
+
+
+def test_a_test_row_is_not_pushed_to_the_surfaces(tmp_db, anon_client):
+    """Test rows are outside the badge's scope, so they must not toast."""
+    message = _seed(body="synthetic", is_test=True)
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify",
+                     json={"message_id": message["id"]})
+    assert _events(q, "notification") == []
+
+
+def test_a_vanished_row_pushes_no_event_but_still_corrects_the_badge(
+        tmp_db, anon_client):
+    q, _ = hub.subscribe()
+    resp = anon_client.post("/api/internal/notify", json={"message_id": 9999})
+    assert resp.status_code == 200
+    assert [name for name, _ in _frames(q)] == [hub.COUNTS_EVENT]
+
+
+def test_a_bare_trigger_still_pushes_counts_only(tmp_db, anon_client):
+    _seed()
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify")
+    frames = _frames(q)
+    assert [name for name, _ in frames] == [hub.COUNTS_EVENT]
+    assert frames[-1][1]["inbox_unread"] == 1
+
+
+def test_marking_read_retires_as_read_not_dismissed(tmp_db, flask_client):
+    """Reading is not answering: the client retires the toast on `read` but
+    must keep a blocker banner up, so the reason has to travel with the frame."""
+    message = _seed()
+    q, _ = hub.subscribe()
+    flask_client.post("/api/agent-messages/read", json={"ids": [message["id"]]})
+    assert _events(q, "resolved") == [
+        {"message_ids": [message["id"]], "reason": "read"}]
+
+
+def test_read_all_retires_every_surface_as_read(tmp_db, flask_client):
+    _seed()
+    q, _ = hub.subscribe()
+    flask_client.post("/api/agent-messages/read-all", json={})
+    assert _events(q, "resolved") == [{"all": True, "reason": "read"}]
+
+
+def test_acking_retires_as_read(tmp_db, flask_client):
+    message = _seed()
+    q, _ = hub.subscribe()
+    flask_client.post(f"/api/agent-messages/{message['id']}/ack")
+    assert _events(q, "resolved") == [
+        {"message_ids": [message["id"]], "reason": "read"}]
+
+
+def test_dismissing_a_card_retires_as_hidden_not_dismissed(tmp_db, flask_client):
+    """Hiding a card is the human closing a surface, not the agent being
+    un-parked. Only `dismiss_keyed` — the prompt actually resolving — may claim
+    `dismissed`, because that is what paints the session "resumed"."""
+    message = _seed()
+    q, _ = hub.subscribe()
+    flask_client.post(f"/api/agent-messages/{message['id']}/dismiss")
+    assert _events(q, "resolved") == [
+        {"message_ids": [message["id"]], "reason": "hidden"}]
+
+
+def test_every_retire_reason_is_one_the_client_knows(tmp_db, flask_client):
+    """The client fails closed on an unknown reason — a blocker it cannot
+    classify stays up — so a producer inventing a reason would silently stop
+    retiring banners. Pin the vocabulary here rather than discover it there."""
+    known = {"read", "hidden", "dismissed"}
+    message = _seed(msg_key="k9")
+    q, _ = hub.subscribe()
+    flask_client.post("/api/agent-messages/read", json={"ids": [message["id"]]})
+    flask_client.post("/api/agent-messages/read-all", json={})
+    flask_client.post(f"/api/agent-messages/{message['id']}/ack")
+    flask_client.post(f"/api/agent-messages/{message['id']}/dismiss")
+    reasons = {p.get("reason") for p in _events(q, "resolved")}
+    assert reasons and reasons <= known, f"unknown retire reason: {reasons - known}"
+
+
+def test_resolving_a_keyed_card_notifies_with_its_key(tmp_db, notified):
+    _seed(msg_key="permission-pending")
+    notified.clear()
+    store.dismiss_keyed("sess-a", "permission-pending")
+    assert len(notified) == 1
+    _port, body = notified[0]
+    assert body["resolved"]["trace_id"] == "sess-a"
+    assert body["resolved"]["msg_key"] == "permission-pending"
+    # The prompt is genuinely gone, so this one MAY retire a blocker banner.
+    assert body["resolved"]["reason"] == "dismissed"
+
+
+def test_recording_notifies_with_the_message_id(tmp_db, notified):
+    message = _seed()
+    assert notified[-1][1] == {"message_id": message["id"]}
+
+
+def test_a_resolved_frame_reaches_open_streams(tmp_db, anon_client):
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify",
+                     json={"resolved": {"trace_id": "sess-a",
+                                        "msg_key": "permission-pending"}})
+    assert _events(q, "resolved") == [
+        {"trace_id": "sess-a", "msg_key": "permission-pending"}]
+
+
+def test_counts_stay_the_unnamed_event(tmp_db):
+    from web.blueprints import notifications
+    assert notifications._encode(hub.COUNTS_EVENT, {"a": 1}) == 'data: {"a": 1}\n\n'
+    assert notifications._encode("notification", {"a": 1}) == \
+        'event: notification\ndata: {"a": 1}\n\n'
+
+
+def test_broadcast_counts_refuses_to_masquerade_as_an_event(tmp_db):
+    with pytest.raises(ValueError):
+        hub.broadcast_event(hub.COUNTS_EVENT, {})
+
+
+def test_overflow_drops_the_head_and_never_reorders(tmp_db):
+    """Overflow must not reshuffle: the consumer drains this queue with no
+    lock, so a producer that drained-and-refilled to pick a victim could put a
+    `notification` on the wire after the `resolved` that answers it."""
+    q, _ = hub.subscribe()
+    for i in range(hub._QUEUE_DEPTH + 4):
+        hub.broadcast_event("notification", {"id": i})
+    ids = [payload["id"] for payload in _events(q, "notification")]
+    assert ids == sorted(ids), f"frames reordered: {ids}"
+    assert ids[-1] == hub._QUEUE_DEPTH + 3, "the newest frame was the one lost"
+
+
+def test_a_new_frame_always_wins_a_full_queue(tmp_db):
+    q, _ = hub.subscribe()
+    for _ in range(hub._QUEUE_DEPTH + 4):
+        hub.broadcast_counts()
+    hub.broadcast_event("notification", {"id": 7})
+    assert _events(q, "notification") == [{"id": 7}]
+
+
+def test_the_badge_severity_is_the_most_severe_unread(tmp_db):
+    _seed(msg_type="progress")
+    _seed(msg_type="blocker")
+    _seed(msg_type="warning")
+    assert hub.current_counts()["inbox_severity"] == "blocker"
+
+
+def test_the_badge_severity_clears_with_the_inbox(tmp_db, flask_client):
+    _seed(msg_type="blocker")
+    flask_client.post("/api/agent-messages/read-all", json={})
+    assert hub.current_counts()["inbox_severity"] is None
+
+
+def test_the_badge_severity_ignores_test_rows(tmp_db):
+    _seed(msg_type="note")
+    _seed(msg_type="blocker", is_test=True)
+    assert hub.current_counts()["inbox_severity"] == "note"

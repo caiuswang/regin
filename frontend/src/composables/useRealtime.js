@@ -10,6 +10,11 @@ const FALLBACK_AFTER_ATTEMPTS = 3
 const LOCK_NAME = 'regin-badge-stream'
 const RELAY_NAME = 'regin-badges'
 
+// Counts ride SSE's *unnamed* event, whose DOM name is 'message'; the relay
+// reuses that label so leader and follower speak one vocabulary.
+const COUNTS = 'message'
+const NAMED_EVENTS = ['notification', 'resolved']
+
 const subscribers = new Map()
 
 let channel = null
@@ -39,8 +44,11 @@ export function createSequencer() {
   }
 }
 
-export function useRealtime(key, { receive, refresh }) {
-  subscribers.set(key, { receive, refresh })
+// `receive` takes the badge counts; `onEvent(name, payload)` takes the named
+// frames (`notification`, `resolved`) and is optional — a subscriber that only
+// wants the badge stays unchanged.
+export function useRealtime(key, { receive, refresh, onEvent }) {
+  subscribers.set(key, { receive, refresh, onEvent })
   bindListeners()
   leadOrFollow()
 }
@@ -58,7 +66,10 @@ function leadOrFollow() {
   if (channel) return
   channel = new BroadcastChannel(RELAY_NAME)
   channel.onmessage = (event) => {
-    if (!leading) applyCounts(event.data)
+    if (leading) return
+    const { name, payload } = event.data || {}
+    if (name === COUNTS) applyCounts(payload)
+    else if (name) applyEvent(name, payload)
   }
   navigator.locks.request(LOCK_NAME, () => {
     leading = true
@@ -102,6 +113,12 @@ function openStream(ticket) {
   stream.onmessage = (event) => {
     markAlive()
     applyCounts(event.data)
+  }
+  for (const name of NAMED_EVENTS) {
+    stream.addEventListener(name, (event) => {
+      markAlive()
+      applyEvent(name, parse(event.data))
+    })
   }
   stream.addEventListener('ping', markAlive)
   // EventSource retries on its own, but the ticket is single-use, so its
@@ -148,17 +165,30 @@ function scheduleReconnect() {
   }, delay)
 }
 
-function applyCounts(payload) {
-  let counts = payload
-  if (typeof payload === 'string') {
-    try {
-      counts = JSON.parse(payload)
-    } catch {
-      return
-    }
+function parse(payload) {
+  if (typeof payload !== 'string') return payload
+  try {
+    return JSON.parse(payload)
+  } catch {
+    return null
   }
-  if (leading && channel) channel.postMessage(counts)
+}
+
+function applyCounts(payload) {
+  const counts = parse(payload)
+  if (!counts) return
+  relay(COUNTS, counts)
   for (const subscriber of subscribers.values()) subscriber.receive(counts)
+}
+
+function applyEvent(name, payload) {
+  if (!payload) return
+  relay(name, payload)
+  for (const subscriber of subscribers.values()) subscriber.onEvent?.(name, payload)
+}
+
+function relay(name, payload) {
+  if (leading && channel) channel.postMessage({ name, payload })
 }
 
 function refreshAll() {

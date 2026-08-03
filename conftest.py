@@ -183,7 +183,7 @@ def _block_notify_transport(monkeypatch):
     would leave their bindings pointing at the real function.
     """
     from lib.notifications import notify
-    monkeypatch.setattr(notify, '_post_notify', lambda _port: None)
+    monkeypatch.setattr(notify, '_post_notify', lambda _port, _body: None)
     # In-process patching cannot reach a child process, and several tests
     # spawn one that runs the real hook handlers. Point its port at a closed
     # one so the child's own probe fails instead of finding the dev server.

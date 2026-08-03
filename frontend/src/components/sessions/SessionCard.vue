@@ -11,6 +11,7 @@ import Checkbox from '../ui/Checkbox.vue'
 import SessionTags from '../SessionTags.vue'
 import SessionAgentIcon from './SessionAgentIcon.vue'
 import SessionContextMeter from './SessionContextMeter.vue'
+import { useNotificationCenter } from '../../composables/useNotificationCenter.js'
 
 const props = defineProps({
   s: { type: Object, required: true },
@@ -22,12 +23,24 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
 
+// Mirrors SessionListRow: the phone list has to answer "which one needs me"
+// too, and it is the only surface once the blocker sheet is swiped away.
+const { awaitingTraceId, resumedTraceId, blockerWaitedFor } = useNotificationCenter()
+const awaiting = computed(() => awaitingTraceId.value === props.s.trace_id)
+const resumed = computed(() => resumedTraceId.value === props.s.trace_id)
+
 const active = computed(() => isActiveWithClock(props.s, props.clock))
 const repo = computed(() => primaryRepo(props.s))
 </script>
 
 <template>
-  <li class="scard" :class="{ 'scard--selected': selected }">
+  <li class="scard" :class="{ 'scard--selected': selected, 'scard--awaiting': awaiting }">
+    <span v-if="awaiting" class="scard__awaiting">
+      <span class="scard__awaiting-dot" aria-hidden="true"></span>
+      Awaiting decision · {{ blockerWaitedFor }}
+    </span>
+    <span v-else-if="resumed" class="scard__resumed">Resumed</span>
+
     <div class="scard__head">
       <Checkbox
         class="scard__check"
@@ -100,6 +113,46 @@ const repo = computed(() => primaryRepo(props.s))
   padding: 0.875rem;
 }
 .scard--selected { background: var(--color-blue-50); }
+
+/* A parked agent outranks selection: it is the one card you have to act on. */
+.scard--awaiting {
+  background: var(--color-warning-soft);
+  border-color: var(--color-red-300);
+  box-shadow: inset 3px 0 0 var(--color-danger);
+}
+
+.scard__awaiting,
+.scard__resumed {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+}
+
+.scard__awaiting { background: var(--color-red-100); color: var(--color-red-700); }
+.scard__resumed { background: var(--color-emerald-100); color: var(--color-emerald-700); }
+
+.scard__awaiting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  animation: scard-pulse 1.8s ease-out infinite;
+}
+
+@keyframes scard-pulse {
+  0% { box-shadow: 0 0 0 0 rgb(220 38 38 / 50%); }
+  70% { box-shadow: 0 0 0 8px rgb(220 38 38 / 0%); }
+  100% { box-shadow: 0 0 0 0 rgb(220 38 38 / 0%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scard__awaiting-dot { animation: none; }
+}
 .scard__head {
   align-items: flex-start;
   display: flex;

@@ -11,6 +11,7 @@ import ListInput from '../components/ListInput.vue'
 import SettingsRuleTriggers from '../components/SettingsRuleTriggers.vue'
 import SettingsBlock from '../components/SettingsBlock.vue'
 import SettingsProviders from '../components/SettingsProviders.vue'
+import NotificationPrefsCard from '../components/notifications/NotificationPrefsCard.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
 import { useConfirm } from '../composables/useConfirm'
@@ -547,6 +548,7 @@ watch([activeSection, selectedProvider], ([section]) => {
           :warnings="blocks[activeSection]?.warnings || []"
           @save="saveBlock(activeSection)"
         />
+        <NotificationPrefsCard v-if="activeSection === 'agent-messages'" />
       </template>
 
       <!-- Hook Handlers -->

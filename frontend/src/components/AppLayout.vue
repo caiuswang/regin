@@ -7,11 +7,15 @@ import CommandPalette from './CommandPalette.vue'
 import FlashMessage from './FlashMessage.vue'
 import AppSidebar from './AppSidebar.vue'
 import NavIcon from './NavIcon.vue'
+import BlockerBanner from './notifications/BlockerBanner.vue'
+import NotificationHost from './notifications/NotificationHost.vue'
 import api from '../api.js'
 import { useFeatures } from '../composables/useFeatures'
 import { useDriftSummary } from '../composables/useDriftSummary'
 import { useDiagnosticsState } from '../composables/useDiagnosticsState'
 import { useInboxUnread } from '../composables/useInboxUnread'
+import { useNotificationCenter } from '../composables/useNotificationCenter'
+import { notificationTier } from '../constants/inboxTypes'
 import { useTheme } from '../composables/useTheme'
 import Button from './ui/Button.vue'
 
@@ -19,7 +23,16 @@ const { theme, toggleTheme } = useTheme()
 const { features } = useFeatures()
 const { pending: driftPending } = useDriftSummary()
 const { enabled: diagEnabled } = useDiagnosticsState()
-const { unread: inboxUnread } = useInboxUnread()
+const { unread: inboxUnread, severity: inboxSeverity } = useInboxUnread()
+const { setSuppressed } = useNotificationCenter()
+
+// The badge colour is the loudest thing still unread — red while an agent is
+// parked, amber for something you should look at, otherwise the plain count.
+const inboxTone = computed(() => {
+  const tier = notificationTier(inboxSeverity.value)
+  if (tier === 1) return 'danger'
+  return tier === 2 ? 'warning' : 'info'
+})
 
 const router = useRouter()
 const route = useRoute()
@@ -34,6 +47,19 @@ watch(() => route.path, () => {
   navOpen.value = false
   paletteOpen.value = false
 })
+
+// Pages that *are* the notification queue don't pop over themselves — you are
+// already looking at it. Counts still rise; nothing is auto-marked read.
+const SUPPRESSED_ROUTES = ['/inbox', '/live']
+watch(() => route.path, (path) => {
+  setSuppressed(SUPPRESSED_ROUTES.some(prefix => path.startsWith(prefix)))
+}, { immediate: true })
+
+// The tab title is the one notification surface that survives a hidden tab.
+watch(inboxUnread, (count) => {
+  const base = document.title.replace(/^\(\d+\)\s*/, '')
+  document.title = count ? `(${count}) ${base}` : base
+}, { immediate: true })
 
 onMounted(async () => {
   try {
@@ -79,7 +105,8 @@ const navGroups = computed(() => [
       // ADMIN_API_ENDPOINTS gate on /api/sessions*).
       ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
       { to: '/live', label: 'Live', icon: 'live' },
-      { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox', badge: () => inboxUnread.value },
+      { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox',
+        badge: () => inboxUnread.value, tone: () => inboxTone.value },
       { to: '/memory', label: 'Memory', exact: true, icon: 'patterns' },
       { to: '/grades', label: 'Grades', exact: true, icon: 'rules' },
       { to: '/audit', label: 'Audit', icon: 'audit' },
@@ -149,10 +176,16 @@ const navGroups = computed(() => [
           }"
         >
           <FlashMessage />
+          <!-- Tier 1 sits above the page, inside the scroller, so it scrolls
+               with the content rather than covering it. -->
+          <BlockerBanner />
           <router-view />
         </div>
       </main>
     </div>
+
+    <!-- Tier 2 floats over everything; tier 1's mobile sheet portals itself. -->
+    <NotificationHost />
 
     <!-- Mobile drawer -->
     <Drawer v-model:visible="navOpen" position="left" class="!w-72" header="regin">
@@ -179,7 +212,8 @@ const navGroups = computed(() => [
           >
             <NavIcon :name="link.icon" :size="17" />
             <span class="drawer-link-label">{{ link.label }}</span>
-            <span v-if="link.badge?.()" class="drawer-badge">{{ link.badge() }}</span>
+            <span v-if="link.badge?.()" class="drawer-badge"
+                  :class="`drawer-badge-${link.tone?.() || 'info'}`">{{ link.badge() }}</span>
           </router-link>
         </div>
       </nav>
@@ -347,14 +381,17 @@ const navGroups = computed(() => [
 .drawer-link-label { flex: 1; min-width: 0; }
 
 .drawer-badge {
-  background: var(--color-red-100);
-  color: var(--color-red-800);
+  background: var(--color-blue-100);
+  color: var(--color-blue-800);
   font-size: 0.625rem;
   font-weight: 600;
   padding: 0.0625rem 0.375rem;
   border-radius: 0.625rem;
   font-variant-numeric: tabular-nums;
 }
+
+.drawer-badge-warning { background: var(--color-amber-100); color: var(--color-amber-800); }
+.drawer-badge-danger { background: var(--color-red-100); color: var(--color-red-800); }
 
 .drawer-link:focus-visible {
   outline: 2px solid var(--color-blue-500);

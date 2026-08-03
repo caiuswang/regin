@@ -24,7 +24,9 @@ from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.agent_messages.push import registry as push
-from lib.notifications.notify import notify_counts_changed
+from lib.notifications.notify import (
+    notify_counts_changed, notify_message, notify_resolved,
+)
 from lib.orm import SessionLocal
 from lib.orm.models.agent_messages import (
     AgentMessage, DEFAULT_MESSAGE_TYPE, MESSAGE_TYPES,
@@ -167,7 +169,7 @@ def record_message(*, trace_id: str, body: str, msg_type: Optional[str] = None,
         # include_tests=False), so they can't move the number. Retention runs
         # first because it hard-deletes: notifying before the prune would push
         # a count the very next read contradicts.
-        notify_counts_changed()
+        notify_message(data["id"])
     return data
 
 
@@ -192,10 +194,14 @@ def dismiss_keyed(trace_id: str, msg_key: str) -> int:
         row = _find_live_keyed(session, trace_id, msg_key)
         if row is None:
             return 0
+        message_id = row.id
         row.dismissed_at = now
         session.add(row)
         session.commit()
-    notify_counts_changed()
+    # A permission prompt answered in the terminal resolves out-of-process, so
+    # the open banner only clears if the resolution is pushed too.
+    notify_resolved(trace_id=trace_id, msg_key=msg_key,
+                    message_ids=[message_id] if message_id else None)
     return 1
 
 
@@ -249,15 +255,50 @@ def list_inbox(*, unread_only: bool = False, include_tests: bool = False,
         return out
 
 
+def get_message(message_id: int) -> Optional[dict]:
+    """One message by id, shaped like an inbox row (session title included).
+
+    Backs the realtime push: the loopback trigger carries only the id, so the
+    row every open stream receives is read here, from the store.
+    """
+    with SessionLocal() as session:
+        row = session.get(AgentMessage, message_id)
+        if row is None:
+            return None
+        data = _serialize(row)
+        data["session_title"] = _session_titles(
+            session, [row.trace_id]).get(row.trace_id)
+        return data
+
+
+def _unread_conditions(include_tests: bool) -> list:
+    conds = [AgentMessage.read_at.is_(None),
+             AgentMessage.dismissed_at.is_(None)]
+    if not include_tests:
+        conds.append(AgentMessage.is_test == 0)
+    return conds
+
+
 def unread_count(include_tests: bool = False) -> int:
     """Count of un-read, non-dismissed messages — drives the nav badge."""
     with SessionLocal() as session:
-        stmt = select(AgentMessage).where(
-            AgentMessage.read_at.is_(None),
-            AgentMessage.dismissed_at.is_(None))
-        if not include_tests:
-            stmt = stmt.where(AgentMessage.is_test == 0)
-        return len(session.exec(stmt).all())
+        return len(session.exec(
+            select(AgentMessage.id)
+            .where(*_unread_conditions(include_tests))).all())
+
+
+def unread_top_severity(include_tests: bool = False) -> Optional[str]:
+    """The most severe type still unread, or None when the inbox is clear.
+
+    Colours the nav badge: a count alone cannot say whether those messages are
+    a parked agent or seven progress lines, and those want different urgency.
+    """
+    with SessionLocal() as session:
+        types = set(session.exec(
+            select(AgentMessage.msg_type)
+            .where(*_unread_conditions(include_tests))).all())
+    ranked = [t for t in MESSAGE_TYPES if t in types]
+    return ranked[-1] if ranked else None
 
 
 # ── State mutations ──────────────────────────────────────────
@@ -436,8 +477,8 @@ def message_stats() -> dict:
 
 
 __all__ = [
-    "record_message", "list_session_messages", "list_inbox",
-    "unread_count", "mark_read", "mark_all_read", "ack", "dismiss", "set_pinned",
+    "record_message", "list_session_messages", "list_inbox", "get_message",
+    "unread_count", "unread_top_severity", "mark_read", "mark_all_read", "ack", "dismiss", "set_pinned",
     "live_keyed_message", "dismiss_keyed",
     "prune_messages", "message_stats",
 ]

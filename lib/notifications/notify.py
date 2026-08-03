@@ -17,6 +17,7 @@ immediately after the write and would kill it before it delivered.
 
 from __future__ import annotations
 
+import json
 import socket
 import urllib.request
 
@@ -26,8 +27,42 @@ _PATH = "/api/internal/notify"
 
 
 def notify_counts_changed() -> None:
+    _trigger({})
+
+
+def notify_message(message_id: int | None) -> None:
+    """Push one newly written inbox row to the notification surfaces.
+
+    Carries only the id — the dashboard re-reads the row, so this stays a
+    trigger rather than a second, forgeable copy of the record.
+    """
+    if message_id is None:
+        notify_counts_changed()
+        return
+    _trigger({"message_id": int(message_id)})
+
+
+def notify_resolved(*, trace_id: str, msg_key: str | None = None,
+                    message_ids: list[int] | None = None,
+                    reason: str = "dismissed") -> None:
+    """Retire a live notification whose condition was handled, so an open
+    blocker banner clears without waiting for the next page load.
+
+    `reason="dismissed"` means the underlying condition is gone (the prompt was
+    answered); only that retires a blocker. See `_retire` in
+    `web/blueprints/trace/agent_messages.py` for why reading is not answering.
+    """
+    payload = {"trace_id": trace_id, "reason": reason}
+    if msg_key:
+        payload["msg_key"] = msg_key
+    if message_ids:
+        payload["message_ids"] = [int(i) for i in message_ids]
+    _trigger({"resolved": payload})
+
+
+def _trigger(body: dict) -> None:
     try:
-        _post_notify(_web_port())
+        _post_notify(_web_port(), body)
     except Exception:  # noqa: BLE001 — see module docstring
         return
 
@@ -37,12 +72,12 @@ def _web_port() -> int:
     return settings.web_port
 
 
-def _post_notify(port: int) -> None:
+def _post_notify(port: int, body: dict) -> None:
     if not _is_listening(port):
         return
     request = urllib.request.Request(
         f"http://127.0.0.1:{port}{_PATH}",
-        data=b"{}", method="POST",
+        data=json.dumps(body).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_SECONDS):
@@ -58,4 +93,4 @@ def _is_listening(port: int) -> bool:
         return False
 
 
-__all__ = ["notify_counts_changed"]
+__all__ = ["notify_counts_changed", "notify_message", "notify_resolved"]

@@ -17,6 +17,7 @@ import Checkbox from '../ui/Checkbox.vue'
 import SessionTags from '../SessionTags.vue'
 import SessionAgentIcon from './SessionAgentIcon.vue'
 import SessionContextMeter from './SessionContextMeter.vue'
+import { useNotificationCenter } from '../../composables/useNotificationCenter.js'
 
 const props = defineProps({
   s: { type: Object, required: true },
@@ -31,6 +32,12 @@ const props = defineProps({
 const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
 
 const { copyText } = useCopy()
+// The list is where you go looking for "which one needs me". A blocker that
+// only lives in a banner you dismissed leaves that question unanswered here.
+const { awaitingTraceId, resumedTraceId, blockerWaitedFor } = useNotificationCenter()
+
+const awaiting = computed(() => awaitingTraceId.value === props.s.trace_id)
+const resumed = computed(() => resumedTraceId.value === props.s.trace_id)
 
 const active = computed(() => isActiveWithClock(props.s, props.clock))
 const repo = computed(() => primaryRepo(props.s))
@@ -57,7 +64,10 @@ const statusTitle = computed(() => {
 </script>
 
 <template>
-  <div class="srow" :class="{ 'srow--selected': selected, 'srow--active': active }">
+  <div
+    class="srow"
+    :class="{ 'srow--selected': selected, 'srow--active': active, 'srow--awaiting': awaiting }"
+  >
     <div class="srow__cell srow__check">
       <Checkbox
         :model-value="selected"
@@ -76,6 +86,15 @@ const statusTitle = computed(() => {
         <span v-else class="srow__title-empty">no prompt</span>
       </router-link>
       <div class="srow__meta">
+        <span
+          v-if="awaiting"
+          class="srow__awaiting"
+          :title="`The agent is paused, waiting ${blockerWaitedFor} for your answer`"
+        >
+          <span class="srow__awaiting-dot" aria-hidden="true"></span>
+          awaiting decision · {{ blockerWaitedFor }}
+        </span>
+        <span v-else-if="resumed" class="srow__resumed">resumed</span>
         <span class="srow__status" :class="`srow__status--${statusLabel}`" :title="statusTitle">
           <span class="srow__status-dot" aria-hidden="true"></span>{{ statusLabel }}
         </span>
@@ -181,6 +200,46 @@ const statusTitle = computed(() => {
 .srow:hover { background: var(--color-surface-2); }
 .srow--selected { background: var(--color-blue-50); }
 .srow--selected:hover { background: var(--color-blue-50); }
+
+/* A parked agent outranks selection: it is the one row you have to act on. */
+.srow--awaiting,
+.srow--awaiting:hover {
+  background: var(--color-warning-soft);
+  box-shadow: inset 3px 0 0 var(--color-danger);
+}
+
+.srow__awaiting,
+.srow__resumed {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 0.625rem;
+}
+
+.srow__awaiting { background: var(--color-red-100); color: var(--color-red-700); }
+.srow__resumed { background: var(--color-emerald-100); color: var(--color-emerald-700); }
+
+.srow__awaiting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  animation: srow-blink 1.1s steps(1, end) infinite;
+}
+
+@keyframes srow-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .srow__awaiting-dot { animation: none; }
+}
 .srow:focus-within { background: var(--color-surface-2); }
 
 .srow__cell { min-width: 0; }
