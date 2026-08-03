@@ -117,7 +117,9 @@ step 1.5; omit it to let the task text route. Anti-skip: it leaves a
 `memory.recall.task` span, and **`regin gate task-recall-ran --session "$SID"`
 PASSes iff a worker was armed this run** (the `mcp__memory__gate(name=
 "task-recall-ran", session_id="$SID")` tool is the same check where the memory
-MCP is loaded) — treat a `GATE FAIL` before commit as a wall (the same span-gate
+MCP is loaded) — treat a `GATE FAIL` before commit as a **note with a name
+attached**, not a wall: it is a *process* check, and it does not make a diff
+with green machine gates unshippable (the same span-gate
 discipline `goal-verified-treenav` uses for its recall arm).
 
 ## Triage gate — size the goal before you pay for the loop
@@ -350,10 +352,15 @@ rounds burn a builder plus verifiers each time without converging.
 ### 6. Commit, then close the loop
 Now commit (and only now). Reference the goal; note which gates passed.
 
-**Agent-arm precondition:** `regin gate task-recall-ran --session "$SID"` must
-PASS — proof you armed the workers with stage-scoped recall (step 3/4). A
-`GATE FAIL` means you dispatched a builder/verifier blind; that is a wall, not a
-note.
+**Agent-arm check:** `regin gate task-recall-ran --session "$SID"` should PASS
+— proof you armed the workers with stage-scoped recall (step 3/4). A `GATE
+FAIL` means you dispatched a builder/verifier blind: report it in the commit
+message and arm them next time. **Do not loop on it.** A span-count query is
+evidence about *process*; the machine gates are the evidence about the *code*,
+and only those block a commit. Gates have produced false FAILs (a span-name
+prefix mismatch cost 59 real calls their credit), and an unpassable gate
+teaches an agent to argue around red gates — a habit that does not stay
+confined to one gate.
 
 Then feed the outcome back into memory so the *next* run starts smarter:
 

@@ -210,16 +210,19 @@ def gate(name: str, session_id: str) -> str:
         "<gate description> spans this session: N" plus a PASS/FAIL verdict
         line, mirroring the `regin gate` CLI.
     """
-    from lib.trace.span_gates import GATES, PASS, span_count, verdict
+    from lib.trace.span_gates import (GATES, PASS, span_count,
+                                      unresolved_session_id, verdict)
 
     spec = GATES.get(name)
     if spec is None:
         return f"unknown gate {name!r} — valid gates: {', '.join(sorted(GATES))}"
-    if not session_id:
+    unusable = unresolved_session_id(session_id)
+    if unusable:
         return (
-            "session_id is required — pass the id `regin session-id` prints. "
-            "This shared memory server cannot infer the caller's session (its "
-            "own environment holds the spawner session's id, not yours)."
+            f"session_id is unusable: {unusable}. Pass the id `regin "
+            "session-id` prints. This shared memory server cannot infer the "
+            "caller's session (its own environment holds the spawner session's "
+            "id, not yours). This is NOT a gate failure — nothing was counted."
         )
 
     n = span_count(session_id, spec)

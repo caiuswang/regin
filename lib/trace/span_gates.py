@@ -72,11 +72,20 @@ _TREE_SEG = ".regin/memory/tree"
 # pattern, never its result count, so globbing a tree that was never exported
 # would pass a gate on a walk that saw nothing. A Read proves a file existed
 # and was opened.
+# The MCP span name carries the SERVER's registered name, which is not fixed:
+# a directly-configured server lands as `mcp__memory__*`, the same server
+# shipped through the plugin lands as `mcp__plugin_regin-agents_memory__*`.
+# Matching the direct prefix only made 59 real nav calls across 8 sessions
+# invisible, and because `mcp__…__gate` is reached under the same prefix,
+# `served_by_memory_mcp` proved the capability — so an honest walk got the
+# hardest verdict the module has: "the step was skipped. Go back and run it."
+# Match on the server-name-agnostic middle instead.
 RECALL_ARM = SpanGate(
     key="recall-ran",
-    like=("tool.mcp__memory__index_%",),
-    exact=("tool.mcp__memory__recall", "tool.mcp__memory__memory_read",
-           "memory.index.nav"),
+    like=("tool.mcp__%memory__index_%",
+          "tool.mcp__%memory__recall",
+          "tool.mcp__%memory__memory_read"),
+    exact=("memory.index.nav",),
     attr_matchers=(("tool.Read", "file_path", _TREE_SEG),),
     describe="memory tree-walk / recall arm (goal-verified-treenav step 1b)",
     capability=("Read/Glob over .regin/memory/tree, the `regin memory "
@@ -166,14 +175,48 @@ def verdict(gate: SpanGate, count: int, capability_proven: bool) -> tuple[str, s
     )
 
 
+#: How long a gate read may wait on a busy database before giving up. Two
+#: seconds, not the ORM's five: a gate sits on the critical path of a shipping
+#: loop, and an answer it cannot get quickly is worth less than not blocking.
+_GATE_BUSY_TIMEOUT_MS = 2000
+
+
+def unresolved_session_id(session: str | None) -> str | None:
+    """The reason `session` cannot identify a trace, or None if it looks usable.
+
+    An MCP tool cannot expand a shell variable, so a caller that passes
+    `"$CLAUDE_CODE_SESSION_ID"` as a literal gets a guaranteed 0 — read as
+    "you skipped the step" rather than "you passed me a variable name". Seen
+    in the trace; cheap to catch here rather than in each caller.
+    """
+    text = (session or "").strip()
+    if not text:
+        return "no session id"
+    if text.startswith("$") or text.startswith("${"):
+        return (f"the literal string {text!r} — a shell variable that was "
+                "never expanded (an MCP tool cannot expand one; pass the "
+                "resolved id)")
+    return None
+
+
 def span_count(trace_id: str, gate: SpanGate) -> int:
     """Count `session_spans` for `trace_id` whose name matches `gate`.
 
-    Routes through the ORM (`SessionLocal`) rather than the raw-sqlite trace
-    readers in `queries.py`: this is a trivial aggregate, not a paginated read.
-    Returns 0 for a gate with no matchers (never matches everything by accident).
+    Reads through a short-lived **read-only** connection when it can. The
+    read-write path (`SessionLocal`) issues `PRAGMA journal_mode = WAL` on
+    every connect and checkpoints the WAL when the last connection closes;
+    against the live multi-GB DB with hook writers active, both can block far
+    past any `busy_timeout`, which covers statement contention only. Two gate
+    calls measured at 120s and 300s that way — the 300s one was killed by
+    `timeout` and never returned an answer at all, while the query itself is
+    ~20ms. A gate is a read on the critical path of a shipping loop; it must
+    not be able to hold that loop open.
+
+    Falls back to the ORM when read-only open fails (a WAL DB with no `-shm`
+    and no live writer — the common shape in tests). Returns 0 for a gate with
+    no matchers (never matches everything by accident).
     """
-    from sqlalchemy import and_, func, or_
+    from sqlalchemy import func, or_
     from sqlmodel import select
 
     from lib.orm import SessionLocal
@@ -183,6 +226,10 @@ def span_count(trace_id: str, gate: SpanGate) -> int:
     conds += [SessionSpan.name == n for n in gate.exact]
     if not conds and not gate.attr_matchers:
         return 0
+
+    readonly = _span_count_readonly(trace_id, gate)
+    if readonly is not None:
+        return readonly
 
     total = 0
     with SessionLocal() as session:
@@ -205,6 +252,58 @@ def span_count(trace_id: str, gate: SpanGate) -> int:
                 .where(SessionSpan.attributes.like(f"%{substring}%"))).all()
             total += sum(1 for attrs in rows
                          if substring in _attr_value(attrs, key))
+    return total
+
+
+def _span_count_readonly(trace_id: str, gate: SpanGate) -> int | None:
+    """`span_count`'s read-only leg, or None when it can't open the DB.
+
+    None means "use the ORM instead", not "no spans" — a gate must never turn
+    an infrastructure problem into an accusation that the agent skipped a step.
+    """
+    import sqlite3
+
+    from lib.orm.engine import DB_PATH
+
+    try:
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=2)
+    except sqlite3.Error:
+        return None
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {_GATE_BUSY_TIMEOUT_MS}")
+        return (_count_by_name(conn, trace_id, gate)
+                + _count_by_attr(conn, trace_id, gate))
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def _count_by_name(conn, trace_id: str, gate: SpanGate) -> int:
+    """Spans matching the gate's `like`/`exact` name patterns."""
+    clauses = ([("name LIKE ?", p) for p in gate.like]
+               + [("name = ?", n) for n in gate.exact])
+    if not clauses:
+        return 0
+    where = " OR ".join(clause for clause, _ in clauses)
+    params = [trace_id] + [value for _, value in clauses]
+    return conn.execute(
+        f"SELECT count(*) FROM session_spans "
+        f"WHERE trace_id = ? AND ({where})", params).fetchone()[0]
+
+
+def _count_by_attr(conn, trace_id: str, gate: SpanGate) -> int:
+    """Spans matching the gate's `attr_matchers`. The SQL LIKE is only a
+    prefilter — see the note in `span_count`'s ORM leg for why the decision
+    has to be made on the parsed attribute."""
+    total = 0
+    for name, key, substring in gate.attr_matchers:
+        rows = conn.execute(
+            "SELECT attributes FROM session_spans "
+            "WHERE trace_id = ? AND name = ? AND attributes LIKE ?",
+            (trace_id, name, f"%{substring}%")).fetchall()
+        total += sum(1 for (attrs,) in rows
+                     if substring in _attr_value(attrs, key))
     return total
 
 

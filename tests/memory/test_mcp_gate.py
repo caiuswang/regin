@@ -83,6 +83,29 @@ def test_missing_session_id_errors_without_inferring():
     # an empty session id is an instructive error, never a wrong-session check.
     _seed("sid-pass", ["tool.mcp__memory__index_root"])
     out = gate("recall-ran", "")
-    assert "session_id is required" in out
+    assert "session_id is unusable" in out
     assert "GATE PASS" not in out
     assert "GATE FAIL" not in out
+
+
+def test_unexpanded_shell_variable_is_not_a_gate_failure():
+    """An MCP tool cannot expand `$CLAUDE_CODE_SESSION_ID`, so a caller that
+    passes the literal used to get a guaranteed 0 — reported as "you skipped
+    the step". Seen in the trace (span #8634286)."""
+    _seed("sid-pass", ["tool.mcp__memory__index_root"])
+    out = gate("recall-ran", "$CLAUDE_CODE_SESSION_ID")
+    assert "never expanded" in out
+    assert "GATE FAIL" not in out
+    assert "GATE PASS" not in out
+
+
+def test_plugin_namespaced_mcp_spans_count_toward_the_recall_arm():
+    """The same memory server registers as `mcp__memory__*` directly and
+    `mcp__plugin_regin-agents_memory__*` through the plugin. Matching only the
+    direct prefix made 59 real nav calls invisible and failed honest walks."""
+    _seed("sid-plugin", [
+        "tool.mcp__plugin_regin-agents_memory__index_root",
+        "tool.mcp__plugin_regin-agents_memory__recall",
+        "tool.mcp__plugin_regin-agents_memory__memory_read",
+    ])
+    assert "GATE PASS" in gate("recall-ran", "sid-plugin")

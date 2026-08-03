@@ -289,12 +289,28 @@ same check the verifier re-runs in step 4. (Span fingerprints live in
 `lib/trace/span_gates.py`; add a `SpanGate` there to gate another unenforced
 step — it surfaces through both this tool and the `regin gate` CLI.)
 
-- **`0` is a wall, exactly like a red machine gate.** Do not present the
-  roadmap, do not build. Return to step 1b and walk the tree for real.
-- The count must be **consistent with your receipt** — if the receipt claims a
-  walk + two `recall`s but the trace shows `0`, the receipt is fabricated
-  (or the trace hasn't flushed: if you *did* just walk, wait a few seconds and
-  re-query; never proceed on an unproven receipt).
+- **A red gate buys you exactly one retry, not a loop.** If the count is `0`
+  and you know you skipped 1b — go do it. If you know you *did* walk, spend one
+  round diagnosing the instrument: is `$SID` empty or an unexpanded `$VAR`? did
+  the walk run in a git worktree, whose memory DB and exported tree are
+  separate from the main checkout's? has the span ingested yet (median lag is
+  sub-second, the tail reaches ~10s)? Then re-query **once**.
+- **If it is still red and your receipt is backed by real tool calls, record
+  `GATE INCONCLUSIVE — <what you tried>` in the approval message and proceed.**
+  This gate has produced false FAILs: it matched only the `mcp__memory__*` span
+  prefix, so the identical server registered under a plugin namespace read as a
+  skip — 59 real nav calls across 8 sessions, each told "the step was skipped".
+  Fixed, but the lesson stands: **the gate is evidence, not authority.** One
+  measured stuck stretch cost 10 minutes, and in another session the agent
+  bought a PASS by reading two unrelated memory files. A gate you can only pass
+  by faking it is worse than no gate — that is what retired the `ui-verified`
+  gate.
+- **Never manufacture a PASS.** Reading arbitrary tree files to make the count
+  move is fabrication, and it is the one outcome worse than shipping with an
+  inconclusive gate.
+- The count should be **consistent with your receipt**. If the receipt claims a
+  walk and the trace shows `0` *and* you cannot name an instrument reason, the
+  receipt is fabricated — that is the one case where the gate is a wall.
 - Paste the gate output **and** the recall receipt into the approval message
   alongside the roadmap. The user's 15-second checkpoint now includes "did the
   arm run" — which is the whole point of this skill, so it must be visible.
@@ -344,12 +360,15 @@ Hand the work to a checker that did **not** build it:
     the touched paths, plus its lint/complexity gates; all green.
 - **Recall-arm gate (re-checked here):** the verifier re-runs the gate against
   the builder's session — `regin gate recall-ran --session "<the build
-  session's id>"`. `GATE FAIL` / `0` spans = the
-  arm was never run = **protocol violation**, treated as a DO-NOT-SHIP wall
-  regardless of how good the diff looks. A roadmap that arrived without a
-  receipt, or whose receipt isn't backed by spans, fails verification on that
-  basis alone.
-- A failed gate is a **wall**, not a note.
+  session's id>"`. This is a **process** check, not a correctness one: a red
+  count means the roadmap may have been built without the lessons, and it is
+  reported as such. It is **not** a DO-NOT-SHIP on its own — a working diff
+  with a green machine gate does not become unshippable because a span-count
+  query disagreed with a receipt. Escalate it to a wall only when the receipt
+  claims specific memory ids and the trace shows none, which is fabrication
+  rather than a missed step.
+- **A failed *machine* gate is a wall, not a note** — tests, build, lint. Those
+  measure the code. A failed *process* gate is a note with a name attached.
 
 **Agent-arm — split the roles, don't clone them.** `goal-builder` already ran
 the gates; a verifier told to "run the machine gates yourself, for real" runs

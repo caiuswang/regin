@@ -59,14 +59,18 @@ def _run_gate(key: str, session: str, json: bool) -> None:
     from lib.activity_log import get_activity_logger
     from lib.trace.span_gates import INCONCLUSIVE
 
+    from lib.trace.span_gates import unresolved_session_id
+
     gate = GATES[key]
-    if not (session or "").strip():
-        # No session id means no spans can be attributed, so a 0 count says
-        # nothing about whether the step ran. Accusing the caller of skipping
-        # here is the unfollowable-gate failure that retired `ui-verified`:
-        # the only way past it would be to argue around a red gate.
+    unusable = unresolved_session_id(session)
+    if unusable:
+        # An id that cannot address a trace means no spans can be attributed,
+        # so a 0 count says nothing about whether the step ran. Accusing the
+        # caller of skipping here is the unfollowable-gate failure that retired
+        # `ui-verified`: the only way past it would be to argue around a red
+        # gate.
         message = (
-            "GATE INCONCLUSIVE — no session id, so this session's spans cannot "
+            f"GATE INCONCLUSIVE — {unusable}, so this session's spans cannot "
             "be counted. Resolve one with `regin session-id` (export "
             "$REGIN_SESSION_ID from your harness, or try "
             "`regin session-id --from-trace`) and re-run. Do NOT record this "
