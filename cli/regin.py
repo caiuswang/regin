@@ -14,7 +14,15 @@ _VENV_PYTHON = os.path.join(_PROJECT_ROOT, '.venv', 'bin', 'python')
 # Re-exec under the local venv if it exists and we're not already using it.
 # This lets the CLI work when invoked directly after setup, even though the
 # shebang is portable.
-if sys.executable != _VENV_PYTHON and os.path.exists(_VENV_PYTHON):
+#
+# The sentinel bounds it to one attempt: in a worktree whose `.venv/bin` is
+# hardlinked to the main checkout's, the interpreter reports the *main* path as
+# sys.executable, so the equality below never holds and an unguarded execv spins
+# forever — hanging any git operation that runs a regin hook.
+_REEXEC_SENTINEL = '_REGIN_REEXEC'
+if (sys.executable != _VENV_PYTHON and os.path.exists(_VENV_PYTHON)
+        and not os.environ.get(_REEXEC_SENTINEL)):
+    os.environ[_REEXEC_SENTINEL] = '1'
     os.execv(_VENV_PYTHON, [_VENV_PYTHON] + sys.argv)
 
 # When invoked as `python cli/regin.py`, sys.path[0] is `cli/`, not the project
