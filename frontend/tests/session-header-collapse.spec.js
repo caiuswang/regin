@@ -181,6 +181,13 @@ test('a viewport crossing under lg undoes an AUTO collapse but not a pinned one'
   await expect(digest).toHaveCount(0)
 
   // A deliberate fold is the user's call at any width, so it survives.
+  // Let the wheel's 1200ms input window lapse before crossing back up: the
+  // resize reflow fires a layout scroll from the still-deep offset, and if
+  // the wheel above is still "recent input" it re-engages the AUTO fold
+  // between the vitals assertion and the H below — turning that press into
+  // an expand and inverting every assertion after it (trace-proven under
+  // parallel load, where this whole test compresses to ~200ms).
+  await page.waitForTimeout(1300)
   await page.setViewportSize({ width: 1440, height: 900 })
   await expect(vitals).toBeVisible()
   await page.keyboard.press('h')
