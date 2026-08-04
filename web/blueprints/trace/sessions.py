@@ -2011,12 +2011,6 @@ def _shallow_map_response(trace_id: str):
     })
 
 
-# A bridge steer is typed into the same tmux composer a human types into, so
-# once Claude Code enqueues it, it becomes a `queue-operation` the transcript
-# path already captures. This window only covers the brief gap between the
-# bridge's send + Claude flushing the queue-op (or the steer being submitted
-# immediately as a real prompt) — after it, the transcript is authoritative.
-_BRIDGE_STEER_WINDOW_SEC = 90
 
 
 def _queued_prompts(trace_id: str) -> list:
@@ -2028,7 +2022,7 @@ def _queued_prompts(trace_id: str) -> list:
         queued = current_queued_prompts(trace_id)
     except Exception:
         queued = []
-    return _merge_bridge_steers(trace_id, queued)
+    return queued + _pending_bridge_steers(trace_id, queued)
 
 
 def _sdk_queue(trace_id: str) -> list | None:
@@ -2042,15 +2036,13 @@ def _sdk_queue(trace_id: str) -> list | None:
     rather than merging with them:
 
     - the transcript path sees nothing — a launched run writes no
-      `queue-operation` entries — so a queued steer had no server
-      representation at all and the card fell back to the client's optimistic
-      echo, which expires on a timer while the prompt is still waiting.
-    - the bridge path sees every SDK steer, because `bridge.py` records one as
-      a delivered `bridge_messages` row for the audit trail — but the window
-      that retires such a row is transcript-derived, so for a run with no
-      transcript it *never* retires: a consumed steer would keep its chip for
-      the full 90s window, and `list_bridge_messages` is newest-first, which
-      would invert the queue's real order.
+      `queue-operation` entries — so a queued steer would have no server
+      representation at all while the prompt is still waiting.
+    - the bridge path records every SDK steer as a `bridge_messages` row for
+      the audit trail, but those rows are born state `closed` (this queue is
+      what displays them), so the bridge chip feed rightly serves none of
+      them — and its consumed-transition is transcript-derived, which a run
+      with no transcript could never trigger.
 
     Identical prompts are deliberately not collapsed: two "continue"s are two
     queue entries and must drop one at a time. `id` is what makes that possible
@@ -2064,13 +2056,10 @@ def _sdk_queue(trace_id: str) -> list | None:
     try:
         if not agent_sdk.is_sdk_owned(trace_id):
             # Not live — but if regin launched it, its queue was this process's
-            # and is simply gone, which is not the same as "ask the other two
-            # sources". Both would answer, and both would lie: the run's steers
-            # are still inside the bridge window, so a stopped run's card
-            # sprouts chips for prompts that already ran, newest-first, and an
-            # edited one shows the body it was sent with rather than the body
-            # it ran as. Seen on a real run: three consumed prompts came back
-            # reversed, one of them pre-edit.
+            # and is simply gone, which is not the same as "ask the other
+            # sources". The child's transcript would answer, and an edited
+            # prompt would lie: it shows the body it was sent with rather than
+            # the body it ran as (seen on a real run, pre-edit).
             return [] if sdk_store.find_run(trace_id) else None
         pending = agent_sdk.queued_prompts(trace_id)
     except Exception:
@@ -2086,41 +2075,68 @@ def _steer_key(content) -> str:
     return ' '.join(str(content or '').split())
 
 
-def _recent_bridge_steers(trace_id: str) -> list:
-    """Bridge steers delivered into this session's pane within the window,
-    newest first. Empty when the bridge is off or the registry is absent."""
-    from lib.settings import settings
-    if not settings.agent_bridge.enabled:
-        return []
+def _pending_bridge_steers(trace_id: str, queued: list) -> list:
+    """Bridge steers still owed a chip, oldest first — and the transition
+    writer that retires the rest.
+
+    No time window: a delivered steer's row is born `pending` and stays
+    chip-eligible until an observed event settles it, persisted one-way here
+    so the state machine converges instead of being re-guessed every poll:
+
+    - the transcript now represents its body (still-queued entry, or a
+      processed user turn / reconstructed command line) → `consumed`; the
+      transcript is authoritative from then on and the chip must never
+      resurface, however the turn was logged.
+    - the session ended → `closed`: a chip is a promise the pane may still
+      act on the text, which an exited claude can never honour.
+    - the operator removed it → `dismissed` (the DELETE route, not here).
+
+    A steer none of those events ever touch stays visible for the session's
+    lifetime — honest for a message that was delivered but never ran (a TUI
+    overlay swallowed it, say), and exactly what the dismiss affordance is
+    for. Bodies are matched as normalized text (`_steer_key`), so identical
+    twin steers retire together once one of them runs — set-based, same
+    fidelity the window-era dedup had."""
     try:
         from lib.agent_bridge import store as bridge_store
-        rows = bridge_store.list_bridge_messages(trace_id, limit=20)
+        rows = bridge_store.list_pending_steers(trace_id)
     except Exception:
         return []
-    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-    cutoff = now_utc - timedelta(seconds=_BRIDGE_STEER_WINDOW_SEC)
-    out = []
-    for r in rows:
-        if not r.get('delivered'):
-            continue
-        delivered_at = _parse_bridge_ts(r.get('delivered_at'))
-        if delivered_at is None or delivered_at < cutoff:
-            continue
-        body = r.get('body')
-        if isinstance(body, str) and body.strip():
-            out.append({'content': body, 'delivered_at': r.get('delivered_at')})
+    if not rows:
+        return []
+    if _session_has_ended(trace_id):
+        bridge_store.settle_steers([r['id'] for r in rows], 'closed')
+        return []
+    out, settled = _partition_steers(rows, _represented_texts(trace_id, queued))
+    if settled:
+        bridge_store.settle_steers(settled, 'consumed')
     return out
 
 
-def _parse_bridge_ts(value) -> datetime | None:
-    """`bridge_messages.delivered_at` is SQLite `datetime('now')` (naive UTC,
-    'YYYY-MM-DD HH:MM:SS'). Compared against `datetime.utcnow()`."""
-    if not isinstance(value, str) or not value:
-        return None
+def _represented_texts(trace_id: str, queued: list) -> set:
+    """Normalized bodies the transcript already speaks for — processed turns
+    (including reconstructed command lines) plus the still-queued entries."""
+    from lib.trace.queued_prompts import consumed_prompt_texts
     try:
-        return datetime.fromisoformat(value.replace('T', ' ').split('.')[0])
-    except ValueError:
-        return None
+        seen = consumed_prompt_texts(trace_id)
+    except Exception:
+        seen = set()
+    return seen | {_steer_key(q.get('content')) for q in queued}
+
+
+def _partition_steers(rows: list, seen: set) -> tuple[list, list]:
+    """Split pending steer rows into (chips to serve, row ids to settle).
+    An empty body settles too: it can never dedup, so it could never leave."""
+    out, settled = [], []
+    for r in rows:
+        key = _steer_key(r.get('body'))
+        if not key or key in seen:
+            settled.append(r['id'])
+            continue
+        out.append({'id': f"b{r['id']}", 'content': r['body'],
+                    'enqueued_at': r.get('delivered_at') or r.get('created_at'),
+                    'source': 'bridge'})
+    return out, settled
 
 
 def _session_has_ended(trace_id: str) -> bool:
@@ -2154,35 +2170,6 @@ def _session_has_ended(trace_id: str) -> bool:
     except ValueError:
         return False
     return seen is None or (seen - ended).total_seconds() <= 1.0
-
-
-def _merge_bridge_steers(trace_id: str, queued: list) -> list:
-    """Append recently-delivered bridge steers not already represented in the
-    transcript-derived queue (deduped by normalized body). The transcript copy
-    wins when both exist — a steer surfaces optimistically only until Claude
-    Code records it as a queue-op or a real prompt."""
-    steers = _recent_bridge_steers(trace_id)
-    if not steers or _session_has_ended(trace_id):
-        return queued
-    # A consumed steer leaves the pending queue, so deduping against the
-    # still-queued items alone lets its chip re-surface for the rest of the
-    # window — also suppress steers the transcript has already processed.
-    # Dedup is by normalized body (same basis as the client's representedTexts):
-    # a repeated identical steer ("continue") sent during the pre-enqueue gap is
-    # briefly suppressed, reappearing once it enqueues — an accepted transient.
-    from lib.trace.queued_prompts import consumed_prompt_texts
-    seen = {_steer_key(q.get('content')) for q in queued}
-    seen |= consumed_prompt_texts(trace_id)
-    for s in steers:
-        key = _steer_key(s.get('content'))
-        if key and key not in seen:
-            seen.add(key)
-            queued.append({
-                'content': s['content'],
-                'enqueued_at': s.get('delivered_at'),
-                'source': 'bridge',
-            })
-    return queued
 
 
 @trace_bp.route('/api/sessions/<trace_id>/map')

@@ -270,8 +270,9 @@ def test_consumed_texts_no_transcript_returns_empty(monkeypatch):
 
 
 def test_consumed_texts_degrades_on_invalid_utf8(tmp_path, monkeypatch):
-    # A partial-write transcript with a non-UTF-8 byte must not escape (the
-    # call is unguarded in _merge_bridge_steers → would 500 the live poll).
+    # A partial-write transcript with a non-UTF-8 byte must degrade to empty:
+    # the live poll's steer-transition path treats an exception as "nothing
+    # represented", which would wrongly keep every pending chip un-settled.
     tx = tmp_path / 't.jsonl'
     tx.write_bytes(b'{"type":"user","message":{"content":"hi"}}\n\xff\xfe bad\n')
     monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',

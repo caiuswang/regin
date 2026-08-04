@@ -112,7 +112,7 @@ def api_bridge_post_message():
         return jsonify({"error": "session_id required"}), 400
     sender = _clip_sender(payload.get("sender"))
     trace_id, refusal = _resolve_trace_id(session_id)
-    row_id = store.record_bridge_message(trace_id, text, sender)
+    row_id = store.record_bridge_message(trace_id, text, sender, pending=True)
     if refusal is not None:
         store.mark_delivered(row_id, False, refusal["detail"])
         return jsonify({**refusal, "id": row_id})
@@ -193,7 +193,7 @@ def api_session_bridge_send(trace_id):
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
     if owned:
         return _sdk_send(trace_id, raw_text, text, sender)
-    row_id = store.record_bridge_message(trace_id, text, sender)
+    row_id = store.record_bridge_message(trace_id, text, sender, pending=True)
     # Same slash-command routing as the bridge POST — see the comment there.
     result = delivery.deliver(trace_id, text,
                               as_command=delivery.is_slash_command(text))
@@ -356,7 +356,8 @@ def _sdk_answer(trace_id: str, payload: dict, sender: str | None):
     answers = _payload_answers(payload)
     if answers is None:
         return jsonify({"error": "option_index required"}), 400
-    row_id = store.record_bridge_message(trace_id, _answers_body(answers), sender)
+    row_id = store.record_bridge_message(trace_id, _answers_body(answers),
+                                         sender, kind="answer")
     delivered, detail = agent_sdk.resolve_ask(trace_id, answers,
                                               **_target(payload))
     store.mark_delivered(row_id, delivered, detail)
@@ -392,7 +393,8 @@ def api_session_bridge_answer(trace_id):
         return jsonify({"delivered": False, "detail": "bridge disabled"})
     if isinstance(payload.get("answers"), list):
         answers = payload["answers"]
-        row_id = store.record_bridge_message(trace_id, _answers_body(answers), sender)
+        row_id = store.record_bridge_message(trace_id, _answers_body(answers),
+                                             sender, kind="answer")
         result = delivery.deliver_answers(trace_id, answers)
         store.mark_delivered(row_id, result.delivered, result.detail)
         return jsonify({"delivered": result.delivered,
@@ -400,7 +402,7 @@ def api_session_bridge_answer(trace_id):
     option_index, text, chat, body = _parse_answer(payload)
     if option_index is None:
         return jsonify({"error": "option_index required"}), 400
-    row_id = store.record_bridge_message(trace_id, body, sender)
+    row_id = store.record_bridge_message(trace_id, body, sender, kind="answer")
     result = delivery.deliver_answer(trace_id, option_index, text, expect_chat=chat)
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,
@@ -457,7 +459,8 @@ def _bridge_tier_decide(trace_id: str, payload: dict, sender: str | None):
     raw_label = payload.get("label")
     label = delivery.sanitize_text(raw_label) if isinstance(raw_label, str) else ""
     body = f"selected {label or f'option {option_index + 1}'}"
-    row_id = store.record_bridge_message(trace_id, body, sender)
+    row_id = store.record_bridge_message(trace_id, body, sender,
+                                         kind="decision")
     if payload.get("live") is True:
         result = delivery.deliver_live_menu_decision(
             trace_id, option_index, expect_label=label or None)
@@ -502,7 +505,7 @@ def api_session_bridge_decide(trace_id):
         return jsonify({"error": "behavior must be allow or deny"}), 400
     behavior, reason = parsed
     row_id = store.record_bridge_message(
-        trace_id, _decision_body(behavior, reason), sender)
+        trace_id, _decision_body(behavior, reason), sender, kind="decision")
     delivered, detail = agent_sdk.resolve_permission(
         trace_id, {"behavior": behavior, "reason": reason}, **_target(payload))
     store.mark_delivered(row_id, delivered, detail)

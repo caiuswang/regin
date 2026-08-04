@@ -1,19 +1,24 @@
-import { ref, computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import api from '../api'
 
-// Queued / steering prompts for the /live card. The server derives
-// `queued_prompts` from the transcript (and tags a not-yet-flushed bridge
-// steer `source:'bridge'`). A just-sent steer is held as an OPTIMISTIC entry
-// until a poll returns it — via server queued_prompts or the real prompt span
-// landing in the tail — or the TTL lapses. Never a client-stamped permanent
-// row: the optimistic entry is dropped the moment the server represents it.
+// Queued / steering prompts for the /live card — a pure render of the
+// server's `queued_prompts`. Every row is server-authoritative from the
+// moment a send is delivered: an SDK-tier steer is the runner's in-memory
+// queue entry, a bridge-tier steer is its pending `bridge_messages` row, and
+// each leaves the feed only on an observed event (turn started, transcript
+// consumed it, session ended, operator removed it). There is no client-side
+// optimistic echo and no TTL — the old echo expired on a timer and could
+// resurface as a ghost chip for a body the transcript never logs verbatim
+// (an executed slash command, say). The send's only client-visible trace is
+// the composer's "delivered" flash until the next poll serves the row.
 //
-// A run regin owns also gives each entry a stable `id`, which is what makes a
-// row editable and what the two mutations name. Both mutations are optimistic
-// in the same spirit as the echo: the poll is up to 4s away, so a removed row
-// hides at once and an edited one shows its new text at once, each held only
-// until the server's own copy agrees (or stops existing).
-const TTL_MS = 120000
+// A row's `id` is what makes it mutable and what the mutations name: the SDK
+// tier's queue ids (regin's own list, editable + removable) and the bridge
+// tier's `b<row>` chip ids (dismiss only — the keystrokes were already
+// typed). Both mutations are optimistic: the poll is up to 4s away, so a
+// removed row hides at once and an edited one shows its new text at once,
+// each held only until the server's own copy agrees (or stops existing).
+
 // `agent_runs._PROMPT_MAX`. Mirrored rather than left to the server: the route
 // stores `prompt[:8000]`, so an optimistic override holding the untruncated
 // text would never match what comes back and `pruned()` would keep it forever
@@ -22,38 +27,10 @@ const TTL_MS = 120000
 const PROMPT_MAX = 8000
 const norm = (s) => (s || '').trim().replace(/\s+/g, ' ')
 
-export function useQueuedPrompts(getQueued, getSpans, getSessionId = () => '') {
-  const pendingSends = ref([])
+export function useQueuedPrompts(getQueued, getSessionId = () => '') {
   // id → the local view of a mutation the server hasn't confirmed yet:
   // `null` for a removal, a string for a rewrite.
   const localOps = ref(new Map())
-
-  // The set of prompt texts the server already represents (queued or a landed
-  // prompt span) — an optimistic entry is retired the moment one appears.
-  function representedTexts() {
-    const seen = new Set(
-      (getQueued() || []).filter(q => q && q.content).map(q => norm(q.content)))
-    for (const s of getSpans() || []) {
-      if (s.name === 'prompt') seen.add(norm(s.attributes?.text))
-    }
-    return seen
-  }
-
-  function alivePending(seen = representedTexts(), now = Date.now()) {
-    return pendingSends.value.filter(
-      p => now - p.at < TTL_MS && !seen.has(norm(p.text)))
-  }
-
-  // noteSent is the only writer, so pruning to alive entries here bounds the
-  // backing ref: expired/consumed rows never accumulate across a long session
-  // (the computed alone filtered them from the view but left them in the ref).
-  function noteSent(text) {
-    const t = (text || '').trim()
-    if (!t) return
-    pendingSends.value = [
-      ...alivePending().filter(p => p.text !== t), { text: t, at: Date.now() },
-    ]
-  }
 
   // Apply the pending mutations to the server's copy: a removal drops its row,
   // a rewrite overrides its text. Pure — settling happens in `pruned()`, not
@@ -86,32 +63,13 @@ export function useQueuedPrompts(getQueued, getSpans, getSessionId = () => '') {
     return next
   }
 
-  // Retire the optimistic echo `noteSent` left for the row `id` names.
-  //
-  // The echo is normally suppressed only *while* the server still represents
-  // its text, and released back the moment it doesn't — which is right for a
-  // prompt whose turn started (a `prompt` span lands and represents it
-  // forever) and exactly wrong for one the operator just removed or rewrote:
-  // no span is ever coming for a prompt that will not run, so the echo
-  // resurfaces as a ghost chip carrying the old text, with no id and therefore
-  // no way to remove it, for the rest of its TTL. Acting on a row is proof the
-  // server represented it, so the echo has done its job either way.
-  function retireEcho(id) {
-    const row = (getQueued() || []).find(q => q && q.id === id)
-    const key = norm(row?.content)
-    if (!key) return
-    pendingSends.value = pendingSends.value.filter(p => norm(p.text) !== key)
-  }
-
   function noteRemoved(id) {
     if (!id) return
-    retireEcho(id)
     localOps.value = pruned().set(id, null)
   }
 
   function noteEdited(id, text) {
     if (!id) return
-    retireEcho(id)
     localOps.value = pruned().set(id, text)
   }
 
@@ -123,7 +81,7 @@ export function useQueuedPrompts(getQueued, getSpans, getSessionId = () => '') {
     localOps.value = next
   }
 
-  // ── Mutations (SDK-tier rows only — they are the ones carrying an id) ──
+  // ── Mutations (rows carrying an id) ──
   // Ids with a request in flight; the row goes inert so a double-tap can't
   // fire a second edit or remove against the same entry.
   const busyIds = ref(new Set())
@@ -181,27 +139,19 @@ export function useQueuedPrompts(getQueued, getSpans, getSessionId = () => '') {
     )
   }
 
-  const items = computed(() => {
-    const server = applyLocal((getQueued() || [])
-      .filter(q => q && q.content)
-      .map(q => ({ id: q.id, content: q.content, source: q.source })))
-    const optimistic = alivePending(representedTexts())
-      .map(p => ({ content: p.text, optimistic: true }))
-    return [...server, ...optimistic]
-  })
+  const items = computed(() => applyLocal((getQueued() || [])
+    .filter(q => q && q.content)
+    .map(q => ({ id: q.id, content: q.content, source: q.source }))))
 
   // Session switch: the persistent host view reuses this composable across
-  // trace ids, so a leftover optimistic entry from the PREVIOUS session would
-  // render under the new one (server queued_prompts is already scoped by
-  // trace_id and needs no reset) — clear the client-only echo on every switch.
-  // Queue ids are per-runner and would collide across sessions, so they go too.
+  // trace ids. Queue ids are per-runner (and bridge row ids per-session
+  // meaningless elsewhere), so a leftover op would collide across sessions.
   function reset() {
-    pendingSends.value = []
     localOps.value = new Map()
     busyIds.value = new Set()
     notice.value = ''
     if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null }
   }
 
-  return reactive({ items, busyIds, notice, noteSent, edit, remove, reset })
+  return reactive({ items, busyIds, notice, edit, remove, reset })
 }

@@ -268,9 +268,20 @@ def api_edit_queued_prompt(trace_id, prompt_id):
 @require_editor
 def api_cancel_queued_prompt(trace_id, prompt_id):
     """Drop a prompt still waiting behind this run's current turn. The turn in
-    flight keeps running — cancelling that is `interrupt`."""
+    flight keeps running — cancelling that is `interrupt`.
+
+    A `b<row>` id names a bridge-tier steer chip instead (a delivered tmux
+    steer the transcript never settled). Dismissing one only retires the chip
+    — the keystrokes were already typed into the pane and cannot be recalled,
+    which is why this arm offers no matching edit."""
     from lib import agent_sdk
 
+    if prompt_id.startswith('b') and prompt_id[1:].isdigit():
+        from lib.agent_bridge import store as bridge_store
+        removed = bridge_store.dismiss_steer(trace_id, int(prompt_id[1:]))
+        detail = ("chip dismissed" if removed
+                  else "that steer is no longer pending")
+        return jsonify({"removed": removed, "detail": detail})
     removed, detail = agent_sdk.cancel_queued(trace_id, prompt_id)
     return jsonify({"removed": removed, "detail": detail})
 

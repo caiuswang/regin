@@ -19,6 +19,9 @@ import { stripMarkdown } from '../../utils/liveRows.js'
 const props = defineProps({
   item: { type: Object, required: true },
   editable: { type: Boolean, default: false },
+  // Dismiss-only rows exist too (a bridge steer chip): the typed keystrokes
+  // can't be recalled, so it can be removed but never rewritten.
+  removable: { type: Boolean, default: false },
   busy: { type: Boolean, default: false },
 })
 const emit = defineEmits(['edit', 'remove'])
@@ -28,10 +31,9 @@ const draft = ref('')
 const inputEl = ref(null)
 
 // 'sdk' reads the same as 'bridge' deliberately: both are a message the
-// operator sent that is waiting to be picked up, so the label doesn't flip
-// when the optimistic echo hands over to the server's copy.
+// operator sent that is waiting to be picked up.
 const steer = computed(() => props.item.source === 'bridge'
-  || props.item.source === 'sdk' || props.item.optimistic)
+  || props.item.source === 'sdk')
 const label = computed(() => (steer.value ? '⧗ steering…' : '⧗ queued'))
 const text = computed(() => stripMarkdown(props.item.content || ''))
 const canSave = computed(() => !!draft.value.trim() && !props.busy)
@@ -64,9 +66,10 @@ function save() {
   >
     <div class="live-queued-head">
       <span class="live-msg-eyebrow">{{ label }}</span>
-      <template v-if="editable && !editing">
+      <template v-if="(editable || removable) && !editing">
         <span class="live-queued-spacer" aria-hidden="true"></span>
         <Button
+          v-if="editable"
           variant="link"
           size="sm"
           class="live-queued-act"
@@ -76,6 +79,7 @@ function save() {
           @click="open"
         >edit</Button>
         <Button
+          v-if="removable"
           variant="link"
           size="sm"
           class="live-queued-act live-queued-remove"

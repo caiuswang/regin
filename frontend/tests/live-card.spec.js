@@ -3277,9 +3277,25 @@ test.describe('Queued / steer prompts (Slice C)', () => {
     await expect(items.filter({ hasText: 'PLAIN_QUEUED_MARKER' })).toContainText('queued')
   })
 
-  test('an optimistic steer chip appears after a bridge send and clears when the real prompt span lands', async ({ page }) => {
-    const { traceId, sfx } = await postActiveSession(page)
-    await bridgeReachableMap(page, traceId, { phase: 'idle' })
+  test('a delivered steer renders no client chip — only the server queue does', async ({ page }) => {
+    // The chip feed is a pure render of the server's `queued_prompts`: a
+    // delivered send shows nothing until a poll serves its row (the old
+    // client echo expired on a TTL and could ghost for bodies the transcript
+    // never logs verbatim), and the chip's life is the row's life.
+    const { traceId } = await postActiveSession(page)
+    const state = { queued_prompts: [] }
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({ response: resp, json: {
+        ...json,
+        bridge_reachable: true,
+        bridge_pane: '%3',
+        last_seen: quietLastSeen(),
+        ...phaseFields('idle'),
+        queued_prompts: state.queued_prompts,
+      } })
+    })
     await stubBridgeSend(page, traceId, { delivered: true, detail: 'delivered to %3' })
 
     await page.goto(`/live/${traceId}`)
@@ -3287,21 +3303,23 @@ test.describe('Queued / steer prompts (Slice C)', () => {
     await expect(page.locator('[data-testid="live-now"]'))
       .toHaveAttribute('data-state', 'idle', { timeout: 20_000 })
 
-    const STEER = 'OPTIMISTIC_STEER_MARKER run the flaky spec'
+    const STEER = 'SERVER_STEER_MARKER run the flaky spec'
     await composerTa(page).fill(STEER)
     await composerSend(page).click()
 
-    // The just-sent steer surfaces as an optimistic queued chip.
-    const queued = page.locator('[data-testid="live-queued"]')
-    await expect(queued).toContainText('OPTIMISTIC_STEER_MARKER', { timeout: 5_000 })
+    // Delivered (composer confirms), but no poll has served it: no chip.
+    await expect(page.locator('[data-testid="live-bridge-meta"]'))
+      .toContainText('delivered', { timeout: 5_000 })
+    await expect(page.locator('[data-testid="live-queued-item"]')).toHaveCount(0)
 
-    // The real prompt span landing (same text) dedupes the optimistic chip away.
-    await post(page, [
-      { trace_id: traceId, span_id: `realprompt-${sfx}`, parent_id: null, name: 'prompt',
-        start_time: new Date(Date.now() + 1000).toISOString(),
-        attributes: { text: STEER, is_test: true } },
-    ])
-    await expect(page.locator('[data-testid="live-queued-item"]').filter({ hasText: 'OPTIMISTIC_STEER_MARKER' }))
+    // The server represents it (pending bridge row) → the chip appears…
+    state.queued_prompts = [{ id: 'b1', content: STEER, source: 'bridge' }]
+    await expect(page.locator('[data-testid="live-queued"]'))
+      .toContainText('SERVER_STEER_MARKER', { timeout: 15_000 })
+
+    // …and leaves when the row settles (consumed / closed / dismissed).
+    state.queued_prompts = []
+    await expect(page.locator('[data-testid="live-queued-item"]').filter({ hasText: 'SERVER_STEER_MARKER' }))
       .toHaveCount(0, { timeout: 15_000 })
   })
 })

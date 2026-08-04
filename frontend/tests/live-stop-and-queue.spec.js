@@ -300,22 +300,25 @@ test('there is nothing to cancel while idle or finished', async ({ page }) => {
 // per ROW by giving it an id. A transcript-derived row has none and must stay
 // read-only rather than offering a control that changes nothing.
 
-test('only a row the server gave an id offers edit and remove',
+test('controls follow the row: sdk edits, bridge only dismisses, id-less is inert',
   async ({ page }) => {
     const traceId = await postSession(page)
     await patchMap(page, {
       sdk_owned: true,
       queued_prompts: [
         { id: 'q1', content: 'mine to edit', source: 'sdk' },
-        { content: "claude code's, not mine", source: 'bridge' },
+        // A bridge steer's keystrokes are already in the pane: its chip can
+        // be dismissed but never rewritten.
+        { id: 'b7', content: 'typed into the pane', source: 'bridge' },
+        { content: "claude code's, not mine" },
       ],
     })
 
     await openCard(page, traceId)
 
-    await expect(page.getByTestId('live-queued-item')).toHaveCount(2)
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(3)
     await expect(page.getByTestId('live-queued-edit')).toHaveCount(1)
-    await expect(page.getByTestId('live-queued-remove')).toHaveCount(1)
+    await expect(page.getByTestId('live-queued-remove')).toHaveCount(2)
   })
 
 test('a queued prompt can be rewritten in place', async ({ page }) => {
@@ -433,46 +436,48 @@ test('discarding an edit leaves the queued prompt untouched', async ({ page }) =
   await expect(page.getByTestId('live-queued-item')).toContainText('as typed')
 })
 
-test('removing a steer you just sent does not leave a ghost chip', async ({ page }) => {
-  // The composer's optimistic echo is suppressed only while the server still
-  // represents its text. A removed prompt will never produce a `prompt` span,
-  // so once the poll drops the row the echo was free to resurface — as an
-  // un-removable `⧗ steering…` chip carrying text the agent will never run.
-  const traceId = await postSession(page)
-  const serve = await patchMap(page, {
-    sdk_owned: true, bridge_reachable: true, phase: 'working',
-    agent_phase: { main: 'working' }, queued_prompts: [],
+test('a sent steer renders only what the server serves — no client echo, no ghost',
+  async ({ page }) => {
+    // The old optimistic echo expired on a TTL and could resurface as an
+    // un-removable `⧗ steering…` chip for text the agent will never run (an
+    // executed /exit, a removed prompt). The chip feed is now a pure render
+    // of the server's queue: nothing shows before a poll represents the
+    // send, and a dropped row leaves nothing behind to come back.
+    const traceId = await postSession(page)
+    const serve = await patchMap(page, {
+      sdk_owned: true, bridge_reachable: true, phase: 'working',
+      agent_phase: { main: 'working' }, queued_prompts: [],
+    })
+    await page.route('**/api/sessions/*/bridge-send', (route) => route.fulfill({
+      json: { delivered: true, detail: 'prompt queued', id: 1 },
+    }))
+    await page.route('**/api/agent-runs/*/queue/q1', (route) => route.fulfill({
+      json: { removed: true, detail: 'prompt removed' },
+    }))
+
+    await openCard(page, traceId)
+    await page.getByTestId('live-composer-ta').fill('steer me')
+    await page.getByTestId('live-composer-send').click()
+    await settle(page)
+    // Delivered, but not yet served by a poll: no chip, only the composer's
+    // "delivered" flash. The next poll is what makes it visible.
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(0)
+
+    serve({ queued_prompts: [{ id: 'q1', content: 'steer me', source: 'sdk' }] })
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
+    await expect(page.getByTestId('live-queued-remove')).toHaveCount(1)
+
+    await page.getByTestId('live-queued-remove').click()
+    await expect(page.getByTestId('live-queued-item')).toHaveCount(0)
+
+    // A marker row proves a poll landed with the removed prompt gone
+    // server-side — the exact moment the old echo used to resurface.
+    serve({ queued_prompts: [{ id: 'q9', content: 'MARKER', source: 'sdk' }] })
+    const rows = page.getByTestId('live-queued-item')
+    await expect(rows.filter({ hasText: 'MARKER' })).toHaveCount(1,
+      { timeout: 15_000 })
+    await expect(rows).toHaveCount(1)
   })
-  await page.route('**/api/sessions/*/bridge-send', (route) => route.fulfill({
-    json: { delivered: true, detail: 'prompt queued', id: 1 },
-  }))
-  await page.route('**/api/agent-runs/*/queue/q1', (route) => route.fulfill({
-    json: { removed: true, detail: 'prompt removed' },
-  }))
-
-  await openCard(page, traceId)
-  await page.getByTestId('live-composer-ta').fill('steer me')
-  await page.getByTestId('live-composer-send').click()
-  await expect(page.getByTestId('live-queued-item')).toHaveCount(1)
-
-  // The server picks it up and gives it an id, so the row becomes removable.
-  serve({ queued_prompts: [{ id: 'q1', content: 'steer me', source: 'sdk' }] })
-  await expect(page.getByTestId('live-queued-remove')).toHaveCount(1)
-
-  await page.getByTestId('live-queued-remove').click()
-  await expect(page.getByTestId('live-queued-item')).toHaveCount(0)
-
-  // The poll drops it — and the echo must not take its place. A marker row is
-  // what makes this deterministic: waiting for it proves a poll actually
-  // landed with the removed prompt gone server-side, which is the exact moment
-  // the echo was free to resurface. Asserting on an empty queue instead would
-  // pass before the poll even fired.
-  serve({ queued_prompts: [{ id: 'q9', content: 'MARKER', source: 'sdk' }] })
-  const rows = page.getByTestId('live-queued-item')
-  await expect(rows.filter({ hasText: 'MARKER' })).toHaveCount(1,
-    { timeout: 15_000 })
-  await expect(rows).toHaveCount(1)
-})
 
 test('editing a steer you just sent shows one row, not the old text beside it',
   async ({ page }) => {

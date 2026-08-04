@@ -159,17 +159,19 @@ def test_identical_queued_prompts_are_not_collapsed(monkeypatch):
 
 def test_an_owned_run_ignores_the_bridge_audit_rows_of_its_own_steers(
         monkeypatch):
-    """`bridge.py` records every SDK steer as a delivered `bridge_messages`
-    row. That window is retired from the TRANSCRIPT, which an owned run does
-    not have — so consulting it would keep a consumed steer's chip up for the
-    whole 90s window and serve it newest-first, inverting the real queue.
+    """`bridge.py` records every SDK steer as a `bridge_messages` row. Even
+    if one were pending (they are born closed), the bridge chip feed's
+    consumed-transition is transcript-derived, which an owned run does not
+    have — so consulting it would keep a consumed steer's chip up and serve
+    the queue out of order.
     """
     from web.blueprints.trace import sessions
 
     monkeypatch.setattr(settings.agent_bridge, "enabled", True)
     monkeypatch.setattr(
-        sessions, "_recent_bridge_steers",
-        lambda tid: [{"content": "already consumed", "delivered_at": "x"}])
+        "lib.agent_bridge.store.list_pending_steers",
+        lambda tid: [{"id": 1, "body": "already consumed",
+                      "delivered_at": "x"}])
 
     # Its turn has started, so the runner no longer holds it.
     _own(monkeypatch, [])
@@ -188,7 +190,8 @@ def test_a_session_regin_does_not_own_still_takes_the_transcript_path(
 
     monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: False)
     monkeypatch.setattr(settings.agent_bridge, "enabled", False)
-    monkeypatch.setattr(sessions, "_recent_bridge_steers", lambda tid: [])
+    monkeypatch.setattr("lib.agent_bridge.store.list_pending_steers",
+                        lambda tid: [])
 
     assert sessions._queued_prompts("terminal-session") == []
 
@@ -220,12 +223,12 @@ def test_a_stopped_run_serves_an_empty_queue_not_its_bridge_audit_rows(
     """The guard has to outlive the run.
 
     `bridge.py` records every SDK steer as a delivered `bridge_messages` row
-    for the audit trail, and those stay inside the merge window for 90s. While
-    the run is owned they are correctly ignored — but once it stops, falling
-    through to the transcript+bridge path resurrects them: prompts that already
-    ran come back as chips, newest-first (so the queue reads backwards), and an
-    edited one carries the body it was SENT with rather than the body it ran
-    as. Observed end to end against a real child before this guard existed.
+    for the audit trail. While the run is owned they are correctly ignored —
+    but once it stops, falling through to the transcript+bridge path would
+    resurrect any still-pending one: a prompt that already ran comes back as
+    a chip, and an edited one carries the body it was SENT with rather than
+    the body it ran as. Observed end to end against a real child before this
+    guard existed.
     """
     from lib import agent_sdk
     from lib.agent_sdk import store as sdk_store
@@ -235,8 +238,8 @@ def test_a_stopped_run_serves_an_empty_queue_not_its_bridge_audit_rows(
     monkeypatch.setattr(sdk_store, "find_run", lambda tid: {"trace_id": tid})
     monkeypatch.setattr(settings.agent_bridge, "enabled", True)
     monkeypatch.setattr(
-        sessions, "_recent_bridge_steers",
-        lambda tid: [{"content": "already ran", "delivered_at": "x"}])
+        "lib.agent_bridge.store.list_pending_steers",
+        lambda tid: [{"id": 2, "body": "already ran", "delivered_at": "x"}])
 
     assert sessions._queued_prompts("sdk-stopped") == []
 
@@ -253,8 +256,9 @@ def test_a_session_regin_never_launched_still_takes_the_bridge_path(
     monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda tid: False)
     monkeypatch.setattr(sdk_store, "find_run", lambda tid: None)
     monkeypatch.setattr(settings.agent_bridge, "enabled", True)
-    monkeypatch.setattr(sessions, "_recent_bridge_steers",
-                        lambda tid: [{"content": "steered", "delivered_at": "x"}])
+    monkeypatch.setattr(
+        "lib.agent_bridge.store.list_pending_steers",
+        lambda tid: [{"id": 7, "body": "steered", "delivered_at": "x"}])
     monkeypatch.setattr("lib.trace.queued_prompts.current_queued_prompts",
                         lambda tid: [])
     monkeypatch.setattr("lib.trace.queued_prompts.consumed_prompt_texts",
@@ -263,3 +267,4 @@ def test_a_session_regin_never_launched_still_takes_the_bridge_path(
     served = sessions._queued_prompts("terminal-session")
 
     assert [q["content"] for q in served] == ["steered"]
+    assert served[0]["id"] == "b7"

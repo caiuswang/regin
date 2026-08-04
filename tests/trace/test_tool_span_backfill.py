@@ -295,58 +295,60 @@ def test_trigger_rescan_throttle_prevents_spawn(tmp_path, monkeypatch):
 
 
 # ── Bridge-steer queued coverage ────────────────────────────────────
+#
+# `_pending_bridge_steers` is both the chip feed and the transition writer:
+# a pending row either becomes a chip or is settled (`consumed`/`closed`)
+# in the same pass. These tests patch the store and capture the settles.
 
-def test_merge_bridge_steers_dedups_and_appends(monkeypatch):
-    from web.blueprints.trace import sessions as s
-    monkeypatch.setattr(
-        s, '_recent_bridge_steers',
-        lambda tid: [{'content': 'already queued', 'delivered_at': '2026-01-01 10:00:00'},
-                     {'content': 'brand new steer', 'delivered_at': '2026-01-01 10:00:05'}])
-    queued = [{'content': 'already queued', 'enqueued_at': 'x'}]
-    out = s._merge_bridge_steers('t', queued)
-    # transcript copy kept once; the un-queued steer appended tagged 'bridge'
-    assert sum(1 for q in out if s._steer_key(q['content']) == 'already queued') == 1
-    bridge = [q for q in out if q.get('source') == 'bridge']
-    assert len(bridge) == 1 and bridge[0]['content'] == 'brand new steer'
-
-
-def test_merge_bridge_steers_suppresses_consumed_steer(monkeypatch):
-    # A steer already answered leaves the pending queue but is still inside the
-    # delivery window; without the consumed-turn dedup its chip re-surfaces.
-    from web.blueprints.trace import sessions as s
-    monkeypatch.setattr(
-        s, '_recent_bridge_steers',
-        lambda tid: [{'content': 'was  answered', 'delivered_at': '2026-01-01 10:00:00'},
-                     {'content': 'still pending', 'delivered_at': '2026-01-01 10:00:05'}])
+def _patch_steers(monkeypatch, rows, consumed=None):
+    settled = []
+    monkeypatch.setattr('lib.agent_bridge.store.list_pending_steers',
+                        lambda tid: rows)
+    monkeypatch.setattr('lib.agent_bridge.store.settle_steers',
+                        lambda ids, state: settled.append((list(ids), state)))
     monkeypatch.setattr('lib.trace.queued_prompts.consumed_prompt_texts',
-                        lambda tid: {'was answered'})  # normalized transcript turn
-    out = s._merge_bridge_steers('t', [])
-    bridge = [q['content'] for q in out if q.get('source') == 'bridge']
-    assert bridge == ['still pending']  # consumed steer dropped, pending kept
+                        lambda tid: consumed or set())
+    return settled
 
 
-def test_recent_bridge_steers_window_and_delivered_gate(monkeypatch):
-    from datetime import datetime, timedelta, timezone
+def test_pending_bridge_steers_serves_unrepresented_rows(monkeypatch):
     from web.blueprints.trace import sessions as s
+    settled = _patch_steers(monkeypatch, [
+        {'id': 1, 'body': 'already queued', 'delivered_at': 'x'},
+        {'id': 2, 'body': 'brand new steer', 'delivered_at': 'y'},
+    ])
+    queued = [{'content': 'already queued', 'enqueued_at': 'x'}]
+    out = s._pending_bridge_steers('t', queued)
+    # The transcript-represented row is settled consumed, never re-served;
+    # the fresh one becomes a dismissable chip named by its row id.
+    assert [q['content'] for q in out] == ['brand new steer']
+    assert out[0]['id'] == 'b2' and out[0]['source'] == 'bridge'
+    assert settled == [([1], 'consumed')]
 
-    class _Settings:
-        class agent_bridge:
-            enabled = True
-    monkeypatch.setattr('lib.settings.settings', _Settings, raising=False)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    recent = now.strftime('%Y-%m-%d %H:%M:%S')
-    stale = (now - timedelta(seconds=s._BRIDGE_STEER_WINDOW_SEC + 30)
-             ).strftime('%Y-%m-%d %H:%M:%S')
-    rows = [
-        {'body': 'fresh', 'delivered': 1, 'delivered_at': recent},
-        {'body': 'old', 'delivered': 1, 'delivered_at': stale},
-        {'body': 'undelivered', 'delivered': 0, 'delivered_at': recent},
-    ]
-    monkeypatch.setattr('lib.agent_bridge.store.list_bridge_messages',
-                        lambda tid, limit=20: rows)
-    out = s._recent_bridge_steers('t')
-    bodies = {o['content'] for o in out}
-    assert bodies == {'fresh'}
+
+def test_pending_bridge_steers_settles_consumed_turns(monkeypatch):
+    # A steer whose turn already ran must retire permanently — the window-era
+    # bug was its chip re-surfacing after it left the pending queue.
+    from web.blueprints.trace import sessions as s
+    settled = _patch_steers(monkeypatch, [
+        {'id': 3, 'body': 'was  answered', 'delivered_at': 'x'},
+        {'id': 4, 'body': 'still pending', 'delivered_at': 'y'},
+    ], consumed={'was answered'})  # normalized transcript turn
+    out = s._pending_bridge_steers('t', [])
+    assert [q['content'] for q in out] == ['still pending']
+    assert settled == [([3], 'consumed')]
+
+
+def test_pending_bridge_steers_keeps_unconsumed_rows_indefinitely(monkeypatch):
+    # No clock: a delivered steer nothing has settled stays a chip however
+    # old it is. Its exits are events (consumed / session end / dismiss).
+    from web.blueprints.trace import sessions as s
+    settled = _patch_steers(monkeypatch, [
+        {'id': 5, 'body': 'never ran', 'delivered_at': '2020-01-01 00:00:00'},
+    ])
+    out = s._pending_bridge_steers('t', [])
+    assert [q['content'] for q in out] == ['never ran']
+    assert settled == []
 
 
 def _seed_session(trace_id, **cols):
@@ -360,16 +362,17 @@ def _seed_session(trace_id, **cols):
         db.commit()
 
 
-def test_merge_bridge_steers_skipped_on_ended_session(monkeypatch):
+def test_pending_bridge_steers_closed_on_ended_session(monkeypatch):
     # The /exit that kills a session is delivered seconds before the row goes
-    # 'ended' — without the gate it haunts its own trace as a queued chip for
-    # the rest of the delivery window.
+    # 'ended' — the ended transition closes every pending chip for good, so
+    # it can't haunt its own trace page.
     from web.blueprints.trace import sessions as s
     _seed_session('t-ended', status='ended')
-    monkeypatch.setattr(
-        s, '_recent_bridge_steers',
-        lambda tid: [{'content': '/exit', 'delivered_at': '2026-08-04 07:20:15'}])
-    assert s._merge_bridge_steers('t-ended', []) == []
+    settled = _patch_steers(monkeypatch, [
+        {'id': 6, 'body': '/exit', 'delivered_at': '2026-08-04 07:20:15'},
+    ])
+    assert s._pending_bridge_steers('t-ended', []) == []
+    assert settled == [([6], 'closed')]
 
 
 def test_session_has_ended_trusts_status_and_resume(monkeypatch):

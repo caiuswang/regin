@@ -186,6 +186,15 @@ CREATE INDEX IF NOT EXISTS idx_bridge_panes_reachable ON bridge_panes(reachable)
 -- inbox), and the delivery outcome (delivered flag, detail, path) stamped
 -- after the tmux send. Undeliverable attempts stay recorded (delivered=0)
 -- rather than vanishing, so the inbox shows what came from where.
+--
+-- Two extra axes keep the audit trail and the /live "queued" chip feed
+-- separate. `kind` says what the row IS (steer | answer | decision): only
+-- steers are ever chip-eligible; an AskUserQuestion answer or a permission
+-- decision is audit-only. `state` is the chip lifecycle, advanced one-way by
+-- observed events, never by a clock: pending → consumed (the transcript
+-- queued/processed the body) | closed (session ended, or born closed because
+-- another store is authoritative for display) | dismissed (operator removed
+-- the chip). `state_at` stamps the transition.
 CREATE TABLE IF NOT EXISTS bridge_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     trace_id        TEXT NOT NULL,
@@ -195,6 +204,9 @@ CREATE TABLE IF NOT EXISTS bridge_messages (
     delivery_detail TEXT,
     delivery_path   TEXT,
     is_test         INTEGER NOT NULL DEFAULT 0,
+    kind            TEXT NOT NULL DEFAULT 'steer',
+    state           TEXT NOT NULL DEFAULT 'pending',
+    state_at        TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     delivered_at    TEXT
 );

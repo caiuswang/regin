@@ -51,10 +51,10 @@ const {
 // first summary lands.
 const mainPhase = computed(() => meta.value.agent_phase?.main || meta.value.phase || '')
 
-// Queued / steer prompts (server-derived + optimistic just-sent steers), plus
-// the edit/remove round trips for the rows that carry a server id.
+// Queued / steer prompts (server-authoritative), plus the edit/remove round
+// trips for the rows that carry a server id.
 const queued = useQueuedPrompts(
-  () => meta.value.queued_prompts, () => spans.value, () => sessionId.value)
+  () => meta.value.queued_prompts, () => sessionId.value)
 
 async function onQueueEdit({ id, text, done }) {
   if (await queued.edit(id, text)) done?.()
@@ -747,7 +747,6 @@ onUnmounted(() => {
         :scope-agent="scope.scopedAgent"
         :agents-running="liveAgents.runningCount"
         :agents-waiting="liveAgents.waitingCount"
-        @sent="queued.noteSent"
         @open-response="s => openSheet('message', s)"
         @open-question="s => openSheet('qa', s)"
         @exit-scope="scope.exit"

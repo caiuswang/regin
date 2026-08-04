@@ -69,7 +69,7 @@ const props = defineProps({
   sdkOwned: { type: Boolean, default: false },
 })
 const emit = defineEmits([
-  'open-response', 'open-question', 'exit-scope', 'open-agents', 'sent',
+  'open-response', 'open-question', 'exit-scope', 'open-agents',
 ])
 
 // Scoped elapsed: same server−server anchor as the main pending-span elapsed,
@@ -478,7 +478,6 @@ const elapsed = computed(() => {
       :steer="composerMode === 'steer'"
       :pane="bridgePane"
       :ctx-pct="ctxPct"
-      @sent="t => emit('sent', t)"
     />
   </footer>
 </template>
