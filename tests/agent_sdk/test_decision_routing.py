@@ -108,16 +108,21 @@ def test_an_unknown_behavior_is_rejected(flask_client, sdk_session, no_tmux):
     assert res.status_code == 400
 
 
-def test_a_session_regin_does_not_own_cannot_be_decided(flask_client, no_tmux):
-    """There is no channel to carry an allow/deny into someone else's
-    terminal, and typing one blindly is what must not happen."""
+def test_a_session_regin_does_not_own_takes_the_bridge_tier_path(
+        flask_client, no_tmux, monkeypatch):
+    """An unowned session decides over the tmux tier now (option_index, not
+    behavior) — see tests/web/test_bridge_decide_tmux.py for that path in
+    full. With the bridge off (the default), it refuses cleanly rather than
+    reaching for the SDK's typed channel it does not have."""
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+
     res = flask_client.post("/api/sessions/some-terminal-session/bridge-decide",
                             json={"behavior": "allow"})
 
     assert res.status_code == 200
     body = res.get_json()
     assert body["delivered"] is False
-    assert body["detail"] == "no typed channel for this session"
+    assert body["detail"] == "bridge disabled"
 
 
 def test_deciding_does_not_require_the_tmux_bridge_flag(

@@ -122,6 +122,16 @@ def _apply_permission_info(attrs: dict, info) -> None:
         return
     attrs['requested_permission'] = info.requested_permission[:500]
     attrs['option_count'] = len(info.options)
+    # Real per-option labels, not just a count — the tmux bridge tier drives
+    # a pending decision by selecting one of these (`agent_bridge.delivery
+    # .deliver_decision_option`), so the operator needs to see what each
+    # index actually means. A provider that only ever synthesizes a single
+    # "Deny" fallback (no `permission_suggestions` in the hook payload —
+    # true for every observed ExitPlanMode request) still stamps that one
+    # option; the bridge tier falls back to a live pane-text read for those
+    # (`agent_bridge.menu_parse`) rather than trusting a 1-option list.
+    attrs['options'] = [{'id': o.id, 'label': o.label[:200]}
+                        for o in info.options]
     if info.default_option_id:
         attrs['default_option_id'] = info.default_option_id
 

@@ -19,11 +19,16 @@
 // per-option toggles the bridge can't drive blindly.
 //
 // A PENDING permission request delegates to LiveQaDecision instead — the plan
-// (`ExitPlanMode`) and gated-tool approval cards. That path is gated on the
-// span's `kind`, which only the SDK tier stamps: regin owns that process, so a
-// typed allow/deny reaches the call parked inside it, whereas a hook-observed
-// session's permission prompt is waiting on keystrokes in someone else's
-// terminal and stays read-only.
+// (`ExitPlanMode`) and gated-tool approval cards. A regin-owned session
+// (`sdkOwned`) resolves it over `can_use_tool`'s typed channel, gated on the
+// SDK-only `kind` attribute. A tmux-observed session has no typed channel —
+// deciding means driving whatever widget is on screen with keystrokes — but
+// is still decidable BY POSITION: from the request's own hook-captured
+// `options` (real suggestions — Bash, Edit, and friends carry these) or, for
+// a request with none (`ExitPlanMode` today), a fresh live-parsed read of the
+// actual pane text (see `lib/agent_bridge/menu_parse.py`). Only a request with
+// neither a decidable `kind` nor any real options at all — and one that isn't
+// pending / reachable — stays the plain read-only status line.
 import { computed } from 'vue'
 import LiveQaAnswer from './LiveQaAnswer.vue'
 import LiveQaAnswerMulti from './LiveQaAnswerMulti.vue'
@@ -39,6 +44,7 @@ const props = defineProps({
   span: { type: Object, required: true },
   sessionId: { type: String, default: '' },
   bridgeReachable: { type: Boolean, default: false },
+  sdkOwned: { type: Boolean, default: false },
 })
 defineEmits(['answered'])
 
@@ -73,9 +79,19 @@ const isMulti = computed(() => questions.value.length > 1)
 const permKind = computed(() => a.value.kind || '')
 const isPlan = computed(() => permKind.value === 'plan')
 const planText = computed(() => a.value.plan || '')
-const canDecide = computed(() => !isAsk.value && pending.value
-  && props.bridgeReachable && !!props.sessionId
+const decidableBase = computed(() => !isAsk.value && pending.value
+  && props.bridgeReachable && !!props.sessionId)
+const canDecideSdk = computed(() => decidableBase.value && props.sdkOwned
   && (isPlan.value || permKind.value === 'tool'))
+// Real per-option labels the request's own hook payload carried (Bash, Edit,
+// and friends — see permission_events._apply_permission_info). `< 2` means
+// none, which is what a bare `option_count<=1` synthetic-deny fallback looks
+// like from here too — either way the tmux tier falls back to a live pane
+// read instead of trusting it.
+const tmuxOptions = computed(() => (Array.isArray(a.value.options)
+  ? a.value.options : []))
+const canDecideTmux = computed(() => decidableBase.value && !props.sdkOwned)
+const canDecide = computed(() => canDecideSdk.value || canDecideTmux.value)
 const permEyebrow = computed(() => (isPlan.value
   ? 'plan · your approval'
   : `requested · ${toolDisplayName(a.value.tool_name || 'tool')}`))
@@ -181,6 +197,9 @@ function chosen(q, opt) {
       :session-id="sessionId"
       :kind="permKind"
       :tool-use-id="a.tool_use_id || ''"
+      :sdk-owned="sdkOwned"
+      :tmux-options="tmuxOptions"
+      :tmux-live="canDecideTmux"
       @decided="$emit('answered')"
     />
   </div>

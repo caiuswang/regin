@@ -1,17 +1,26 @@
 /**
- * Approve or deny a parked tool call from `/live` (Agent SDK tier).
+ * Approve, deny, or pick an option for a parked/pending permission request
+ * from `/live` — both tiers.
  *
- * The tmux tier can only drive an on-screen widget with keystrokes; a session
- * regin LAUNCHED is different — `can_use_tool` parks the call and a typed
- * allow/deny resolves it. The `/live` QA sheet therefore shows a decision card
- * for a PENDING `permission.request` whose attributes carry the SDK-only
- * `kind` (`plan` | `tool`), and only then: a hook-observed session's permission
- * prompt is waiting on someone else's terminal and stays read-only.
+ * A regin-owned session (`sdkOwned`) is decided over its typed channel:
+ * `can_use_tool` parks the call, and a typed allow/deny resolves it — gated
+ * on the SDK-only `kind` attribute (`plan` | `tool`) AND `meta.sdk_owned`.
+ *
+ * A tmux-observed session has no typed channel — deciding means driving
+ * whatever widget is on screen with keystrokes — but is still decidable BY
+ * POSITION: from the request's own hook-captured `options` (structured —
+ * Bash, Edit, and friends carry real suggestions), or, for a request with
+ * none (`ExitPlanMode` today — Claude Code's hook never sends
+ * `permission_suggestions` for plan approval), a fresh live-parsed read of
+ * the real pane text via `GET bridge-menu` (see `lib/agent_bridge
+ * /menu_parse.py`). Only an unreachable session, or one whose live read
+ * can't be trusted, stays read-only.
  *
  * These tests pin the BROWSER-side contract only — which card renders, what
  * stages vs. what sends, and the exact POST body reaching
- * `/api/sessions/<id>/bridge-decide`. The route itself is stubbed
- * (tests/agent_sdk/test_decision_routing.py owns the server side).
+ * `/api/sessions/<id>/bridge-decide` / GET to `bridge-menu`. The routes
+ * themselves are stubbed (tests/agent_sdk/test_decision_routing.py and
+ * tests/web/test_bridge_decide_tmux.py own the server side).
  *
  * Viewport: 375x667, the design doc's iPhone SE baseline, matching
  * live-card.spec.js (the repo's `mobile` project only matches responsive.spec).
@@ -31,9 +40,11 @@ function quietLastSeen() {
   return new Date(Date.now() - 30_000).toISOString()
 }
 
-// A regin-owned session has no pane: reachable with `bridge_pane: null` is
-// exactly what `_bridge_reachability` returns for one.
-async function sdkOwnedMap(page, traceId, { reachable = true, phase } = {}) {
+// `sdkOwned: true` mirrors what `_bridge_reachability` reports for a session
+// regin launched itself (no pane, `bridge_pane: null`); `false` (the
+// default) is a hook-observed tmux session, which DOES have a pane.
+async function stubMap(page, traceId,
+                       { reachable = true, phase, sdkOwned = false } = {}) {
   await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
     const resp = await route.fetch()
     const json = await resp.json()
@@ -42,7 +53,8 @@ async function sdkOwnedMap(page, traceId, { reachable = true, phase } = {}) {
       json: {
         ...json,
         bridge_reachable: reachable,
-        bridge_pane: null,
+        bridge_pane: sdkOwned ? null : '%7',
+        sdk_owned: sdkOwned,
         last_seen: quietLastSeen(),
         ...(phase
           ? { phase, agent_phase: { main: phase },
@@ -63,9 +75,21 @@ async function stubDecide(page, traceId, result = { delivered: true, detail: 'de
   return posts
 }
 
-// Seed one PENDING permission.request. `attrs` decides which tier it looks
-// like: `kind` present ⇒ regin-owned (decidable), absent ⇒ hook-observed.
-async function seedPending(page, attrs, { reachable = true, phase } = {}) {
+async function stubMenu(page, traceId, result) {
+  const gets = []
+  await page.route(`**/api/sessions/${traceId}/bridge-menu`, async (route) => {
+    gets.push(true)
+    await route.fulfill({ json: result })
+  })
+  return gets
+}
+
+// Seed one PENDING permission.request. `attrs` shapes which tier it can be
+// decided over: `kind` (+ `sdkOwned: true`) ⇒ regin-owned; real `options` (+
+// `sdkOwned: false`, the default) ⇒ tmux-observed with structured data;
+// neither ⇒ tmux-observed falling back to a live pane read.
+async function seedPending(page, attrs,
+                           { reachable = true, phase, sdkOwned = false } = {}) {
   const traceId = randomUUID()
   const sfx = traceId.slice(0, 8)
   const now = new Date().toISOString()
@@ -78,7 +102,7 @@ async function seedPending(page, attrs, { reachable = true, phase } = {}) {
       start_time: now, status_code: 'PENDING',
       attributes: { tool_use_id: toolUseId, live: true, is_test: true, ...attrs } },
   ])
-  await sdkOwnedMap(page, traceId, { reachable, phase })
+  await stubMap(page, traceId, { reachable, phase, sdkOwned })
   return { traceId, spanId, toolUseId }
 }
 
@@ -109,7 +133,7 @@ const PLAN_ATTRS = {
 
 test.describe('Decide a parked tool call from the /live sheet', () => {
   test('a gated tool call shows what it wants, then Allow stages before it sends', async ({ page }) => {
-    const { traceId, spanId, toolUseId } = await seedPending(page, TOOL_ATTRS)
+    const { traceId, spanId, toolUseId } = await seedPending(page, TOOL_ATTRS, { sdkOwned: true })
     const posts = await stubDecide(page, traceId)
 
     const sheet = await openSheet(page, traceId, spanId)
@@ -135,7 +159,7 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
   })
 
   test('Deny carries the typed reason to the agent', async ({ page }) => {
-    const { traceId, spanId, toolUseId } = await seedPending(page, TOOL_ATTRS)
+    const { traceId, spanId, toolUseId } = await seedPending(page, TOOL_ATTRS, { sdkOwned: true })
     const posts = await stubDecide(page, traceId)
 
     const sheet = await openSheet(page, traceId, spanId)
@@ -149,7 +173,7 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
   })
 
   test('Cancel discards the staged decision and sends nothing', async ({ page }) => {
-    const { traceId, spanId } = await seedPending(page, TOOL_ATTRS)
+    const { traceId, spanId } = await seedPending(page, TOOL_ATTRS, { sdkOwned: true })
     const posts = await stubDecide(page, traceId)
 
     const sheet = await openSheet(page, traceId, spanId)
@@ -163,7 +187,7 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
   })
 
   test('a failed delivery keeps the sheet open and shows the refusal', async ({ page }) => {
-    const { traceId, spanId } = await seedPending(page, TOOL_ATTRS)
+    const { traceId, spanId } = await seedPending(page, TOOL_ATTRS, { sdkOwned: true })
     await stubDecide(page, traceId,
       { delivered: false, detail: 'agent session is no longer running' })
 
@@ -176,7 +200,7 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
   })
 
   test('a plan renders its body and approves', async ({ page }) => {
-    const { traceId, spanId } = await seedPending(page, PLAN_ATTRS)
+    const { traceId, spanId } = await seedPending(page, PLAN_ATTRS, { sdkOwned: true })
     const posts = await stubDecide(page, traceId)
 
     const sheet = await openSheet(page, traceId, spanId)
@@ -199,43 +223,133 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
     expect(overflow, 'the sheet overflows horizontally on a long plan').toBeLessThanOrEqual(1)
   })
 
-  test('a hook-observed permission request stays read-only (no kind)', async ({ page }) => {
+  test('a hook-observed request with real suggestion options offers picks', async ({ page }) => {
+    // Bash/Edit-type requests carry real hook-captured `options` — no live
+    // pane read needed, the structured path drives the decide UI directly.
     const { traceId, spanId } = await seedPending(page, {
       tool_name: 'Bash',
       command_preview: 'npm publish',
       requested_permission: 'Run shell command: npm publish',
+      options: [
+        { id: 'allow_session_1', label: 'Yes' },
+        { id: 'allow_localSettings_1', label: "Yes, and don't ask again" },
+        { id: 'deny', label: 'No' },
+      ],
     })
+    const menuGets = await stubMenu(page, traceId, { parsed: false, detail: 'unused' })
     const posts = await stubDecide(page, traceId)
 
     const sheet = await openSheet(page, traceId, spanId)
     await expect(sheet).toContainText('npm publish')
-    await expect(sheet.locator('[data-testid="live-qa-decision"]')).toHaveCount(0)
-    await expect(sheet).toContainText('Waiting for your decision')
+    await expect(sheet.locator('[data-testid="live-qa-decision"]')).toBeVisible()
+    const picks = sheet.locator('[data-testid="live-qa-decide-pick"]')
+    await expect(picks).toHaveCount(3)
+    await expect(picks.nth(1)).toContainText("Yes, and don't ask again")
+    expect(menuGets.length).toBe(0)  // structured data present → never fetches the live menu
+
+    await picks.nth(1).click()
+    await sheet.locator('[data-testid="live-qa-decide-send"]').click()
+    await expect.poll(() => posts.length).toBe(1)
+    expect(posts[0]).toEqual({
+      option_index: 1, label: "Yes, and don't ask again"})
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('a hook-observed request with no structured options reads the live pane', async ({ page }) => {
+    // ExitPlanMode today: the hook payload carries no `permission_suggestions`
+    // at all, so the sheet fetches GET bridge-menu for the real, on-screen
+    // options — the exact 4-way menu captured from a live v2.1.221 pane.
+    const { traceId, spanId } = await seedPending(page, {
+      tool_name: 'ExitPlanMode',
+      requested_permission: 'Approve the plan and start building',
+      plan: 'PLAN_BODY_MARKER',
+      option_count: 1, default_option_id: 'deny',
+    })
+    // A short artificial delay makes the transient loading state observable
+    // — otherwise the mocked GET resolves before the first assertion runs.
+    await page.route(`**/api/sessions/${traceId}/bridge-menu`, async (route) => {
+      await new Promise(r => setTimeout(r, 150))
+      await route.fulfill({ json: {
+        parsed: true, cursor_index: 0, detail: 'ok',
+        options: [
+          'Yes, auto-accept edits', 'Yes, manually approve edits',
+          'No, refine with Ultraplan on Claude Code on the web',
+          'Tell Claude what to change',
+        ],
+      } })
+    })
+    const posts = await stubDecide(page, traceId)
+
+    const sheet = await openSheet(page, traceId, spanId)
+    await expect(sheet.locator('[data-testid="live-qa-decide-loading"]')).toBeVisible()
+    const picks = sheet.locator('[data-testid="live-qa-decide-pick"]')
+    await expect(picks).toHaveCount(4)
+    await expect(picks.first()).toContainText('Yes, auto-accept edits')
+
+    await picks.first().click()
+    await sheet.locator('[data-testid="live-qa-decide-send"]').click()
+    await expect.poll(() => posts.length).toBe(1)
+    expect(posts[0]).toEqual(
+      { option_index: 0, label: 'Yes, auto-accept edits', live: true })
+  })
+
+  test('an unparseable live menu refuses to guess and says so', async ({ page }) => {
+    const { traceId, spanId } = await seedPending(page, {
+      tool_name: 'ExitPlanMode',
+      requested_permission: 'Approve the plan and start building',
+      option_count: 1, default_option_id: 'deny',
+    })
+    await stubMenu(page, traceId,
+      { parsed: false, detail: 'could not reliably read a menu on screen' })
+    const posts = await stubDecide(page, traceId)
+
+    const sheet = await openSheet(page, traceId, spanId)
+    const unavailable = sheet.locator('[data-testid="live-qa-decide-unavailable"]')
+    await expect(unavailable).toBeVisible()
+    await expect(unavailable).toContainText("Can't be decided from here")
+    await expect(unavailable).toContainText('resolve it in the terminal')
+    await expect(sheet.locator('[data-testid="live-qa-decide-pick"]')).toHaveCount(0)
     expect(posts.length).toBe(0)
   })
 
-  test('an unreachable session cannot be decided', async ({ page }) => {
-    const { traceId, spanId } = await seedPending(page, TOOL_ATTRS, { reachable: false })
+  test('an unreachable session cannot be decided, owned or observed', async ({ page }) => {
+    const owned = await seedPending(page, TOOL_ATTRS,
+      { reachable: false, sdkOwned: true })
+    const sheetOwned = await openSheet(page, owned.traceId, owned.spanId)
+    await expect(sheetOwned.locator('[data-testid="live-qa-decision"]')).toHaveCount(0)
 
-    const sheet = await openSheet(page, traceId, spanId)
-    await expect(sheet.locator('[data-testid="live-qa-decision"]')).toHaveCount(0)
+    const observed = await seedPending(page,
+      { tool_name: 'Bash', requested_permission: 'Run shell command: npm publish' },
+      { reachable: false })
+    const sheetObserved = await openSheet(page, observed.traceId, observed.spanId)
+    await expect(sheetObserved.locator('[data-testid="live-qa-decision"]')).toHaveCount(0)
   })
 
-  test('the NOW zone offers "decide" for an owned session and only "details" otherwise', async ({ page }) => {
-    const owned = await seedPending(page, TOOL_ATTRS, { phase: 'waiting-permission' })
+  test('the NOW zone offers "decide" for both tiers when reachable, "details" only when not', async ({ page }) => {
+    const owned = await seedPending(page, TOOL_ATTRS,
+      { phase: 'waiting-permission', sdkOwned: true })
     await page.goto(`/live/${owned.traceId}`)
     await settle(page)
-    const decide = page.locator('[data-testid="live-now-decide"]')
-    await expect(decide).toBeVisible({ timeout: 10_000 })
-    await expect(decide).toContainText('decide')
+    const decideOwned = page.locator('[data-testid="live-now-decide"]')
+    await expect(decideOwned).toBeVisible({ timeout: 10_000 })
+    await expect(decideOwned).toContainText('decide')
     // It opens the same decision card the tail row does.
-    await decide.click()
+    await decideOwned.click()
     await expect(page.locator('[data-testid="live-qa-decision"]')).toBeVisible()
 
     const observed = await seedPending(page, {
       tool_name: 'Bash', requested_permission: 'Run shell command: npm publish',
     }, { phase: 'waiting-permission' })
     await page.goto(`/live/${observed.traceId}`)
+    await settle(page)
+    const decideObserved = page.locator('[data-testid="live-now-decide"]')
+    await expect(decideObserved).toBeVisible({ timeout: 10_000 })
+    await expect(decideObserved).toContainText('decide')
+
+    const unreachable = await seedPending(page, {
+      tool_name: 'Bash', requested_permission: 'Run shell command: npm publish',
+    }, { phase: 'waiting-permission', reachable: false })
+    await page.goto(`/live/${unreachable.traceId}`)
     await settle(page)
     const details = page.locator('[data-testid="live-now-decide"]')
     await expect(details).toBeVisible({ timeout: 10_000 })
@@ -247,7 +361,7 @@ test.describe('Decide a parked tool call from the /live sheet', () => {
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
     page.on('pageerror', (e) => errors.push(String(e)))
 
-    const { traceId, spanId } = await seedPending(page, PLAN_ATTRS)
+    const { traceId, spanId } = await seedPending(page, PLAN_ATTRS, { sdkOwned: true })
     await stubDecide(page, traceId)
     const sheet = await openSheet(page, traceId, spanId)
     await sheet.locator('[data-testid="live-qa-deny"]').click()

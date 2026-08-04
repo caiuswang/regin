@@ -421,42 +421,106 @@ def _decision_body(behavior: str, reason: str) -> str:
     return f"{verb} the pending request" + (f" — {reason}" if reason else "")
 
 
+def _bridge_tier_decide(trace_id: str, payload: dict, sender: str | None):
+    """Decide a tmux-observed permission/plan request by driving the pane's
+    select-TUI, keyed on `option_index` (0-based, the position the operator
+    was shown — whichever source supplied it: the span's hook-captured
+    `options` for a structured request, or a fresh `bridge-menu` read for
+    one that carries none). `live=true` selects the live-parse path
+    (`delivery.deliver_live_menu_decision`), which re-reads the pane and
+    refuses rather than acts on stale client state; omitted/false uses the
+    structured path (`delivery.deliver_decision_option`). Same clean
+    structured refusal as the SDK path for a disabled bridge.
+
+    For the live path, `label` (the option text the operator actually saw
+    and tapped at the earlier `bridge-menu` read) is also passed through as
+    `expect_label`: the dialog on screen may have resolved and been replaced
+    by a different one between that GET and this POST, and a fresh parse
+    with enough rows would otherwise pass a bare range check and drive Enter
+    into the wrong dialog. `deliver_live_menu_decision` refuses on a
+    mismatch instead. Not needed for the structured path — those options
+    come from the span's own persisted attrs, not a live re-read.
+    """
+    if not settings.agent_bridge.enabled:
+        return jsonify({"delivered": False, "detail": "bridge disabled"})
+    option_index = payload.get("option_index")
+    if not isinstance(option_index, int) or option_index < 0:
+        return jsonify({"error": "option_index required"}), 400
+    raw_label = payload.get("label")
+    label = delivery.sanitize_text(raw_label) if isinstance(raw_label, str) else ""
+    body = f"selected {label or f'option {option_index + 1}'}"
+    row_id = store.record_bridge_message(trace_id, body, sender)
+    if payload.get("live") is True:
+        result = delivery.deliver_live_menu_decision(
+            trace_id, option_index, expect_label=label or None)
+    else:
+        result = delivery.deliver_decision_option(trace_id, option_index)
+    store.mark_delivered(row_id, result.delivered, result.detail)
+    return jsonify({"delivered": result.delivered, "detail": result.detail,
+                    "id": row_id})
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-decide', methods=['POST'])
 @require_editor
 def api_session_bridge_decide(trace_id):
-    """Allow or deny a tool call a regin-owned session parked (editor+ only).
+    """Allow, deny, or pick an option for a pending permission/plan request
+    (editor+ only) — regin-owned and tmux-observed sessions both resolve
+    here, over two different channels.
 
-    The capability the tmux tier structurally lacks: answering over that tier
-    means driving whatever widget is on screen with keystrokes, whereas regin
-    owning the SDK process means `can_use_tool` holds the call and this route
-    resolves it with a typed decision. So an unowned session is a structured
-    refusal — there is no channel to carry an allow/deny into someone else's
-    terminal, and typing one blindly is exactly what must not happen.
+    A regin-owned session's `can_use_tool` holds the call open, so a typed
+    `{behavior, reason}` resolves it directly (`agent_sdk.resolve_permission`).
+    A tmux-observed session has no such channel — deciding means driving
+    whatever widget is on screen with keystrokes — so it takes `option_index`
+    instead and goes through `_bridge_tier_decide`, which drives the pane's
+    select-TUI using either the request's hook-captured options or (when it
+    carried none — `ExitPlanMode` today) a fresh, re-validated read of the
+    real screen; it never blindly assumes a layout.
 
-    Same JWT + `require_editor` gate as `bridge-answer`, and the decision is
-    recorded in the steering inbox like every sibling route, so the audit trail
-    reads the same whichever transport steered the session.
+    Same JWT + `require_editor` gate either way, and the decision is recorded
+    in the steering inbox like every sibling route, so the audit trail reads
+    the same whichever transport steered the session.
 
-    `tool_use_id` names which parked call this decides — a session gating tools
-    holds one park per call in a multi-call assistant message, and the card the
-    operator tapped is not necessarily the oldest.
+    `tool_use_id` (SDK path only) names which parked call this decides — a
+    session gating tools holds one park per call in a multi-call assistant
+    message, and the card the operator tapped is not necessarily the oldest.
     """
-    if not agent_sdk.is_sdk_owned(trace_id):
-        return jsonify({"delivered": False,
-                        "detail": "no typed channel for this session"})
     payload = request.get_json(silent=True) or {}
+    user = get_current_user()
+    sender = _clip_sender(f"web:{user['username']}" if user else "web")
+    if not agent_sdk.is_sdk_owned(trace_id):
+        return _bridge_tier_decide(trace_id, payload, sender)
     parsed = _parse_decision(payload)
     if parsed is None:
         return jsonify({"error": "behavior must be allow or deny"}), 400
     behavior, reason = parsed
-    user = get_current_user()
-    sender = _clip_sender(f"web:{user['username']}" if user else "web")
     row_id = store.record_bridge_message(
         trace_id, _decision_body(behavior, reason), sender)
     delivered, detail = agent_sdk.resolve_permission(
         trace_id, {"behavior": behavior, "reason": reason}, **_target(payload))
     store.mark_delivered(row_id, delivered, detail)
     return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-menu', methods=['GET'])
+@require_editor
+def api_session_bridge_menu(trace_id):
+    """Live-parsed numbered select menu on `trace_id`'s reachable pane right
+    now (editor+ only, read-only) — the tmux-tier decide UI's option list
+    for a permission/plan request whose span carries no usable structured
+    `options` (today: `ExitPlanMode` — Claude Code's `PermissionRequest`
+    hook never sends `permission_suggestions` for plan approval, verified
+    against a live pane; see `lib/agent_bridge/menu_parse.py`).
+
+    `parsed: false` means the capture could not be trusted right now (stale,
+    mid-reflow, no live cursor, or nothing reachable) — the UI must fall
+    back to "resolve it in the terminal", never a guess. Never types or
+    sends Enter, same as `bridge-screen`.
+    """
+    menu, detail = delivery.read_live_menu(trace_id)
+    if menu is None:
+        return jsonify({"parsed": False, "detail": detail})
+    return jsonify({"parsed": True, "options": menu.options,
+                    "cursor_index": menu.cursor_index, "detail": detail})
 
 
 def _catalog_allowed(trace_id: str) -> bool:

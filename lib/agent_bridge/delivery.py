@@ -29,6 +29,7 @@ from typing import NamedTuple
 
 from lib.activity_log import get_activity_logger
 from lib.agent_bridge import store
+from lib.agent_bridge.menu_parse import parse_select_menu
 from lib.settings import settings
 
 log = get_activity_logger("agent_bridge")
@@ -479,6 +480,141 @@ def deliver_answer(trace_id: str, option_index: int,
               option_index=option_index, free_text=clean is not None,
               chat=expect_chat, delivered=result.delivered, detail=result.detail)
     return result
+
+
+def deliver_decision_option(trace_id: str, option_index: int) -> DeliveryResult:
+    """Answer a pending permission/plan request whose real options are
+    already known from the hook-captured `permission_suggestions` (Bash,
+    Edit, and friends carry these; see `hook_manager.handlers
+    .permission_events._apply_permission_info`) by selecting `option_index`
+    in the reachable pane's select-TUI.
+
+    Same primitive `deliver_answer` uses for a plain AskUserQuestion pick
+    (`_navigate` from the top + Enter, no free text) — split out under its
+    own name so the audit trail reads as a decision, not a question answer.
+    For a request with NO structured options (today: `ExitPlanMode`), use
+    `deliver_live_menu_decision` instead, which reads the real screen rather
+    than trusting an assumed layout."""
+    if not settings.agent_bridge.enabled:
+        return _refuse(trace_id, "bridge disabled")
+    if not isinstance(option_index, int) or option_index < 0 \
+            or option_index > _ANSWER_MAX_NAV:
+        return _refuse(trace_id, f"option index out of range: {option_index}")
+    row, in_mode, refusal = _reachable_answer_pane(trace_id, expect_chat=False)
+    if row is None:
+        return _refuse(trace_id, refusal)
+    result = _send_answer(row, option_index, None, in_mode)
+    log.write("bridge_decision_outcome", trace_id=trace_id,
+              option_index=option_index, delivered=result.delivered,
+              detail=result.detail)
+    return result
+
+
+def _capture_recent(socket: str | None, pane: str, lines: int = 60) -> str:
+    """Plain-text tail of `pane`'s scrollback — the raw material
+    `menu_parse.parse_select_menu` reads. 60 lines comfortably covers a
+    permission/plan dialog and its immediately preceding turn without
+    reaching deep into an unrelated earlier screen."""
+    r = _tmux(socket, "capture-pane", "-pt", pane, "-S", f"-{lines}")
+    return r.stdout or ""
+
+
+def _navigate_delta(socket: str | None, pane: str, steps: int) -> None:
+    """Move the select-menu cursor `steps` rows from wherever it currently
+    is (positive = Down, negative = Up) — unlike `_navigate`, which assumes
+    the cursor starts at the top, this is given a MEASURED delta from a
+    just-read cursor position, so it is safe to call after a fresh
+    `parse_select_menu`."""
+    key = "Down" if steps >= 0 else "Up"
+    for _ in range(abs(steps)):
+        _tmux(socket, "send-keys", "-t", pane, key)
+        time.sleep(_NAV_STEP_SEC)
+
+
+def read_live_menu(trace_id: str):
+    """Read-only: the live numbered select menu on `trace_id`'s reachable
+    pane right now, as a `(menu, detail)` pair — `menu` is `None` when there
+    is none on screen or the capture can't be trusted (see
+    `menu_parse.parse_select_menu`), in which case `detail` explains why.
+    Never types or sends Enter — the peek behind the tmux-tier decide UI's
+    option list, mirroring `capture_screen`'s read-only contract, but
+    parsed rather than raw."""
+    if not settings.agent_bridge.enabled:
+        return None, "bridge disabled"
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return None, "no reachable session"
+    identity = _verify_identity(row)
+    if not identity["ok"]:
+        return None, identity["detail"]
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    menu = parse_select_menu(_capture_recent(socket, pane))
+    if menu is None:
+        return None, "could not reliably read a menu on screen"
+    return menu, "ok"
+
+
+def _menu_pick_refusal(menu, option_index: int,
+                       expect_label: str | None) -> str | None:
+    """Why `option_index` can't be trusted against a just-parsed `menu`, or
+    `None` when it's safe to act on. `expect_label`, when given, is the
+    label the operator saw and tapped at an earlier `bridge-menu` read —
+    comparing it against the fresh parse closes a real TOCTOU window: a
+    dialog that resolved and was replaced by a different one with at least
+    `option_index + 1` rows would otherwise pass a bare range check and get
+    Enter driven into it anyway."""
+    if menu is None:
+        return ("could not reliably read the menu on screen; "
+                "resolve it in the terminal")
+    if option_index >= len(menu.options):
+        return (f"option index out of range: {option_index} "
+                f"(menu has {len(menu.options)} options)")
+    live_label = menu.options[option_index]
+    if (isinstance(expect_label, str) and expect_label.strip()
+            and expect_label.strip() != live_label.strip()):
+        return (f"menu changed since it was read (expected "
+                f"{expect_label.strip()!r}, now {live_label!r}); "
+                f"resolve it in the terminal")
+    return None
+
+
+def deliver_live_menu_decision(trace_id: str, option_index: int,
+                               expect_label: str | None = None) -> DeliveryResult:
+    """Drive a numbered select menu that carries NO structured suggestion
+    data (`ExitPlanMode` today — empirically verified against a live pane,
+    see `menu_parse` module docstring) by reading what is actually on
+    screen right now and acting on that, never on an earlier read or an
+    assumed layout.
+
+    Re-parses fresh on every call — never trusts a caller-cached menu, since
+    the dialog may have resolved, reflowed, or been replaced by a different
+    one since it was last read — and refuses structurally, never guesses,
+    when the capture can't be trusted, `option_index` is out of range for
+    what was JUST parsed, or (see `_menu_pick_refusal`) `expect_label`
+    disagrees with the fresh read."""
+    if not settings.agent_bridge.enabled:
+        return _refuse(trace_id, "bridge disabled")
+    if not isinstance(option_index, int) or option_index < 0:
+        return _refuse(trace_id, f"invalid option index: {option_index}")
+    row, in_mode, refusal = _reachable_answer_pane(trace_id, expect_chat=False)
+    if row is None:
+        return _refuse(trace_id, refusal)
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    if in_mode:
+        _tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
+        time.sleep(0.1)
+    menu = parse_select_menu(_capture_recent(socket, pane))
+    pick_refusal = _menu_pick_refusal(menu, option_index, expect_label)
+    if pick_refusal is not None:
+        return _refuse(trace_id, pick_refusal)
+    _navigate_delta(socket, pane, option_index - menu.cursor_index)
+    r = _tmux(socket, "send-keys", "-t", pane, "Enter")
+    if r.returncode != 0:
+        return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+    detail = f"selected {menu.options[option_index]!r} in {pane}"
+    log.write("bridge_live_menu_decision_outcome", trace_id=trace_id,
+              option_index=option_index, delivered=True, detail=detail)
+    return DeliveryResult(True, detail)
 
 
 # A MULTI-question ask renders a TABBED select TUI: one tab per question plus a

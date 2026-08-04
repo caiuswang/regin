@@ -744,6 +744,7 @@ onUnmounted(() => {
             :span="sheetSpan"
             :session-id="sessionId || ''"
             :bridge-reachable="!!meta.bridge_reachable"
+            :sdk-owned="!!meta.sdk_owned"
             @answered="closeSheet"
           />
         </template>

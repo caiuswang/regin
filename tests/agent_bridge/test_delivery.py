@@ -666,6 +666,200 @@ def test_answers_invalid_shape_refuses_before_tmux(monkeypatch):
     assert calls == []  # rejected before any tmux subprocess
 
 
+# ── 12. deliver_decision_option: structured permission/plan decide ──
+
+def test_decision_option_navigates_and_submits(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_decision_option("t1", 1)
+
+    assert res.delivered is True
+    assert len(_downs(calls)) == 1
+    assert len(_enters(calls)) == 1
+    assert not _literal_sends(calls)
+
+
+def test_decision_option_out_of_range_refuses_before_tmux(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_decision_option("t1", -1)
+
+    assert res.delivered is False and "out of range" in res.detail
+    assert calls == []
+
+
+def test_decision_option_disabled_refuses_without_tmux(monkeypatch):
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    calls = _install_tmux(monkeypatch)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_decision_option("t1", 0)
+
+    assert res.delivered is False and "disabled" in res.detail
+    assert calls == []
+
+
+def test_decision_option_stale_identity_refuses(monkeypatch):
+    calls = _install_tmux(monkeypatch, server_pid=999)
+    _set_row(monkeypatch, _pane_row(tmux_server_pid=111))
+
+    res = delivery.deliver_decision_option("t1", 0)
+
+    assert res.delivered is False and "stale" in res.detail
+    assert _downs(calls) == [] and _enters(calls) == []
+
+
+# ── 13. read_live_menu / deliver_live_menu_decision: parsed-pane decide ──
+
+_PLAN_MENU = (
+    "Would you like to proceed?\n"
+    "\n"
+    " ❯ 1. Yes, auto-accept edits\n"
+    "   2. Yes, manually approve edits\n"
+    "   3. No, refine with Ultraplan on Claude Code on the web\n"
+    "   4. Tell Claude what to change\n"
+)
+
+
+def test_read_live_menu_parses_a_real_capture(monkeypatch):
+    _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    menu, detail = delivery.read_live_menu("t1")
+
+    assert detail == "ok"
+    assert menu is not None
+    assert menu.options[0] == "Yes, auto-accept edits"
+    assert menu.cursor_index == 0
+
+
+def test_read_live_menu_refuses_when_unparseable(monkeypatch):
+    _install_tmux(monkeypatch, command="claude", capture="nothing menu-like here")
+    _set_row(monkeypatch, _pane_row())
+
+    menu, detail = delivery.read_live_menu("t1")
+
+    assert menu is None
+    assert "could not reliably read" in detail
+
+
+def test_read_live_menu_never_types_or_sends_enter(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    delivery.read_live_menu("t1")
+
+    assert not _literal_sends(calls)
+    assert not _enter_sent(calls)
+
+
+def test_read_live_menu_stale_identity_refuses(monkeypatch):
+    _install_tmux(monkeypatch, server_pid=999, capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row(tmux_server_pid=111))
+
+    menu, detail = delivery.read_live_menu("t1")
+
+    assert menu is None and "stale" in detail
+
+
+def test_live_menu_decision_navigates_from_the_measured_cursor(monkeypatch):
+    # Cursor is on option 0 (index 0); picking index 3 must send Down×3.
+    calls = _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision("t1", 3)
+
+    assert res.delivered is True
+    assert "Tell Claude what to change" in res.detail
+    assert len(_downs(calls)) == 3
+    assert len(_enters(calls)) == 1
+
+
+def test_live_menu_decision_can_navigate_upward(monkeypatch):
+    # Cursor on option 1 (index 1), picking index 0 must send Up×1, not Down.
+    menu = _PLAN_MENU.replace("❯ 1.", "  1.").replace("2. Yes, manually",
+                                                            "❯ 2. Yes, manually")
+    calls = _install_tmux(monkeypatch, command="claude", capture=menu)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision("t1", 0)
+
+    assert res.delivered is True
+    ups = [c for c in calls if c[-1] == "Up"]
+    assert len(ups) == 1
+    assert _downs(calls) == []
+
+
+def test_live_menu_decision_refuses_rather_than_guess_when_unparseable(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude", capture="stale scrollback")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision("t1", 0)
+
+    assert res.delivered is False
+    assert "resolve it in the terminal" in res.detail
+    assert _downs(calls) == [] and _enters(calls) == []
+
+
+def test_live_menu_decision_out_of_range_for_the_fresh_parse_refuses(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision("t1", 99)
+
+    assert res.delivered is False and "out of range" in res.detail
+    assert _enters(calls) == []
+
+
+def test_live_menu_decision_disabled_refuses_without_tmux(monkeypatch):
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    calls = _install_tmux(monkeypatch, capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision("t1", 0)
+
+    assert res.delivered is False and "disabled" in res.detail
+    assert calls == []
+
+
+def test_live_menu_decision_matching_label_proceeds(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision(
+        "t1", 0, expect_label="Yes, auto-accept edits")
+
+    assert res.delivered is True
+    assert len(_enters(calls)) == 1
+
+
+def test_live_menu_decision_mismatched_label_refuses_without_acting(monkeypatch):
+    # TOCTOU guard: the operator staged a pick against an earlier read whose
+    # label no longer matches what's on screen now — a DIFFERENT dialog with
+    # enough rows would otherwise pass the bare range check.
+    calls = _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision(
+        "t1", 0, expect_label="Some other option entirely")
+
+    assert res.delivered is False
+    assert "menu changed" in res.detail
+    assert _downs(calls) == [] and _enters(calls) == []
+
+
+def test_live_menu_decision_no_expect_label_skips_the_check(monkeypatch):
+    calls = _install_tmux(monkeypatch, command="claude", capture=_PLAN_MENU)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver_live_menu_decision("t1", 1)  # no expect_label
+
+    assert res.delivered is True
+    assert len(_downs(calls)) == 1
+
+
 # ── capture_screen: read-only snapshot, screen-only by default ──
 
 

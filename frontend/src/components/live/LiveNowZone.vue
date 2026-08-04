@@ -201,12 +201,18 @@ const permDetail = computed(() => {
   const a = pendingPerm.value?.attributes || {}
   return a.requested_permission || a.command_preview || ''
 })
-// Only a regin-owned session stamps `kind`, and only it can carry a decision
-// back — everywhere else the sheet is a read-only look at what was asked, so
-// promising "decide" there would be a button that decides nothing.
+// A regin-owned session stamps `kind` and decides over its typed channel.
+// A tmux-observed session decides by position instead — from the request's
+// own hook-captured `options` or a live pane read (LiveQaSheet/LiveQaDecision)
+// — so it also gets "decide", not "details", as long as SOMETHING is on
+// screen right now that pointing at it makes sense of: pending, reachable,
+// and not itself an AskUserQuestion span (mirrors LiveQaSheet.canDecide).
 const permAction = computed(() => {
-  const kind = pendingPerm.value?.attributes?.kind
-  return kind === 'plan' || kind === 'tool' ? 'decide ▾' : 'details ▾'
+  const attrs = pendingPerm.value?.attributes || {}
+  const decidableSdk = props.sdkOwned
+    && (attrs.kind === 'plan' || attrs.kind === 'tool')
+  const decidableTmux = !props.sdkOwned && props.bridgeReachable
+  return decidableSdk || decidableTmux ? 'decide ▾' : 'details ▾'
 })
 const questionText = computed(() => {
   const qs = pendingQuestion.value?.attributes?.questions || []
