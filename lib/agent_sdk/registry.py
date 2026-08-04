@@ -71,6 +71,10 @@ class PendingAsk:
     future: asyncio.Future
     loop: asyncio.AbstractEventLoop
     kind: str = 'question'
+    tool_name: str = ''
+    # Stamped at park time so the blocker feed can say how long the operator
+    # has been waited on; ISO local, same domain as span start_time.
+    parked_at: str = ''
 
 
 _MISSING = object()
@@ -214,6 +218,13 @@ def pending_asks(trace_id: str) -> list[PendingAsk]:
     trace_id = owning_run(trace_id)
     with _lock:
         return [ask for ask in _asks.values() if ask.trace_id == trace_id]
+
+
+def all_pending_asks() -> list[PendingAsk]:
+    """Every parked call across every run this process owns, oldest first —
+    the blocker feed's authority for sessions regin launched itself."""
+    with _lock:
+        return list(_asks.values())
 
 
 def discard_ask(ask_id: int) -> None:

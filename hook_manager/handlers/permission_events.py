@@ -102,8 +102,6 @@ def _maybe_resolve_push(payload: HookPayload) -> None:
 def _emit_span(payload: HookPayload, name: str, status: str = 'OK') -> None:
     from lib.hook_plugin import post_span  # type: ignore
     attrs = _build_perm_attrs(payload)
-    if name == 'permission.request':
-        _maybe_notify_push(payload, attrs)
     tu_id = attrs.get('tool_use_id')
     # A pending `permission.request` gets a deterministic id keyed on the
     # gated call's tool_use_id so `ingest_session_spans` can retire it when
@@ -120,6 +118,12 @@ def _emit_span(payload: HookPayload, name: str, status: str = 'OK') -> None:
         status_code=status,
         span_id=span_id,
     )
+    # After the span, not before: the notification frame makes every open tab
+    # re-read the blocker feed, and the feed derives presence from the PENDING
+    # span — a frame racing ahead of its own park reads back as "nothing is
+    # waiting" and takes down the banner it just raised.
+    if name == 'permission.request':
+        _maybe_notify_push(payload, attrs)
 
 
 def _build_perm_attrs(payload: HookPayload) -> dict:

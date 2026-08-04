@@ -44,6 +44,7 @@ import asyncio
 import os
 import threading
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from lib.activity_log import get_activity_logger
 from lib.agent_events import (
@@ -615,20 +616,42 @@ class AgentRunner:
         return await self._park(kind, tool_name, tool_input, context)
 
     async def _park(self, kind: str, tool_name: str, tool_input: dict, context):
-        """Hold the call open until the operator resolves it from `/live`."""
+        """Hold the call open until the operator resolves it from `/live`.
+
+        The ask is registered BEFORE anything announces it. The notification
+        frame triggers every open tab to re-read the blocker feed, and the
+        feed derives an owned session's parked state from the registry — a
+        frame that races ahead of its own registration makes that read come
+        back empty and take down the very banner the frame just raised.
+        """
         tool_use_id = getattr(context, "tool_use_id", "") or ""
-        await self._emit(PermissionRequested(
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        ask_id = registry.register_ask(registry.PendingAsk(
             trace_id=self.trace_id,
-            tool_name=tool_name,
             tool_use_id=tool_use_id,
             tool_input=tool_input,
+            future=future,
+            loop=asyncio.get_running_loop(),
             kind=kind,
+            tool_name=tool_name,
+            parked_at=datetime.now().isoformat(),
         ))
-        await self._notify_park(kind, tool_name, tool_input, tool_use_id)
         try:
-            resolution = await self._await_operator(kind, tool_use_id,
-                                                    tool_input)
+            await self._emit(PermissionRequested(
+                trace_id=self.trace_id,
+                tool_name=tool_name,
+                tool_use_id=tool_use_id,
+                tool_input=tool_input,
+                kind=kind,
+            ))
+            await self._notify_park(kind, tool_name, tool_input, tool_use_id)
+            resolution = await self._await_operator(future)
         finally:
+            # Every exit drops this park and only this one: resolved (already
+            # popped, so a no-op) or cancelled by teardown. A park left behind
+            # is a call the operator can still be offered and nothing can
+            # deliver an answer to.
+            registry.discard_ask(ask_id)
             await self._dismiss_park_notice()
         if kind == "question":
             return self._answered(tool_use_id, tool_input, resolution)
@@ -682,9 +705,8 @@ class AgentRunner:
             log.error("sdk_park_dismiss_failed", trace_id=self.trace_id,
                       exc_info=True)
 
-    async def _await_operator(self, kind: str, tool_use_id: str,
-                              tool_input: dict):
-        """Park this call and wait for the human — with no clock on it.
+    async def _await_operator(self, future: "asyncio.Future"):
+        """Wait for the human — with no clock on it.
 
         One assistant message can carry several gated calls, so each waits on
         its own future and drops only its own park; the session's other parked
@@ -696,23 +718,7 @@ class AgentRunner:
         not make. An unattended park therefore holds its worker and a
         `max_concurrent_runs` slot until it is answered or the run is stopped.
         """
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-        ask_id = registry.register_ask(registry.PendingAsk(
-            trace_id=self.trace_id,
-            tool_use_id=tool_use_id,
-            tool_input=tool_input,
-            future=future,
-            loop=asyncio.get_running_loop(),
-            kind=kind,
-        ))
-        try:
-            return await future
-        finally:
-            # Every exit drops this park and only this one: resolved (already
-            # popped, so a no-op) or cancelled by teardown. A park left behind
-            # is a call the operator can still be offered and nothing can
-            # deliver an answer to.
-            registry.discard_ask(ask_id)
+        return await future
 
     def _answered(self, tool_use_id: str, tool_input: dict, answers):
         # Reachable only on teardown: nothing else ends a park unresolved.

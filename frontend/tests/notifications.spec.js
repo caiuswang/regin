@@ -31,11 +31,35 @@ const PY = resolve(ROOT, '.venv/bin/python')
 
 // Written from the repo root so `lib.` imports resolve and the live DB is the
 // one `regin serve` is holding open.
+//
+// A decision-keyed record also seeds the PENDING park span (and a live
+// sessions row) behind it: the blocker feed derives presence from the parked
+// state, so a card row alone is exactly the stray the feed exists to ignore.
 function record({ type, title, body, traceId, key = null, isTest = false }) {
   const script = `
-import json, sys
+import json, sys, uuid
 sys.path.insert(0, ".")
 from lib.agent_messages import store
+if ${key === null ? 'False' : 'True'}:
+    # Park FIRST, notify second — the same ordering invariant the real
+    # writers hold, or the frame's feed re-read races an absent park.
+    from datetime import datetime
+    from lib.orm.engine import get_connection
+    now = datetime.now().isoformat()
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO sessions (trace_id, started_at, last_seen, status) "
+        "VALUES (?, ?, ?, 'active') "
+        "ON CONFLICT(trace_id) DO UPDATE SET last_seen = excluded.last_seen",
+        (${JSON.stringify(traceId)}, now, now))
+    conn.execute(
+        "INSERT OR REPLACE INTO session_spans "
+        "(trace_id, span_id, name, kind, start_time, status_code, attributes) "
+        "VALUES (?, ?, 'permission.request', 'internal', ?, 'PENDING', ?)",
+        (${JSON.stringify(traceId)}, "permreq-e2e-%s" % uuid.uuid4().hex[:8],
+         now, json.dumps({"is_test": True})))
+    conn.commit()
+    conn.close()
 row = store.record_message(
     trace_id=${JSON.stringify(traceId)}, body=${JSON.stringify(body)},
     msg_type=${JSON.stringify(type)}, title=${JSON.stringify(title)},
@@ -87,10 +111,23 @@ import sys
 sys.path.insert(0, ".")
 from lib.agent_messages import blockers, store
 for b in blockers.live_blockers():
-    store.dismiss(b["id"])
+    # A derived card with no row (a genuine park on this machine) has no id
+    # and cannot be dismissed from here — leave it; the serial suite owns
+    # the banner only against rows earlier runs left behind.
+    if b["id"] is not None:
+        store.dismiss(b["id"])
 print("ok")
 `
   execFileSync(PY, ['-c', script], { cwd: ROOT, encoding: 'utf8' })
+}
+
+// Naive LOCAL time, the format every real span writer stamps. `toISOString()`
+// emits UTC-with-Z, which string-sorts hours away from the local-naive rows —
+// a session stamped with it sinks below a page of real sessions and the list
+// assertions go blind to it.
+function localStamp() {
+  const tzOffsetMs = new Date().getTimezoneOffset() * 60_000
+  return new Date(Date.now() - tzOffsetMs).toISOString().slice(0, -1)
 }
 
 // The stream is opened after the ticket round-trip, so a message recorded the
@@ -248,7 +285,7 @@ test.describe('blocker banner', () => {
     clearBlockers()
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)
-    const now = new Date().toISOString()
+    const now = localStamp()
     const res = await page.request.post('/api/session-spans', {
       data: [{
         trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null,
@@ -341,7 +378,7 @@ test.describe('hiding a blocker card is not answering it', () => {
       await page.request.post('/api/session-spans', {
         data: [{
           trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null,
-          name: 'prompt', start_time: new Date().toISOString(),
+          name: 'prompt', start_time: localStamp(),
           attributes: { text: `NOTIF_DISMISS_${sfx}`, is_test: true },
         }],
       })
@@ -479,7 +516,7 @@ test.describe('a blocker survives a reload', () => {
     await page.request.post('/api/session-spans', {
       data: [{
         trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null,
-        name: 'prompt', start_time: new Date().toISOString(),
+        name: 'prompt', start_time: localStamp(),
         attributes: { text: `NOTIF_LATE_${sfx}`, is_test: true },
       }],
     })
@@ -650,7 +687,7 @@ test.describe('one session, two parked prompts', () => {
     await page.request.post('/api/session-spans', {
       data: [{
         trace_id: traceId, span_id: `prompt-${sfx}`, parent_id: null,
-        name: 'prompt', start_time: new Date().toISOString(),
+        name: 'prompt', start_time: localStamp(),
         attributes: { text: `NOTIF_TWO_${sfx}`, is_test: true },
       }],
     })

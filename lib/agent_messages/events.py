@@ -126,14 +126,35 @@ def emit(kind: str, *, trace_id: Optional[str], body: str,
 
 def resolve(trace_id: Optional[str], key: str) -> None:
     """Dismiss the live keyed event card once its condition is handled
-    (a prompt answered, a proposal applied). Best-effort — never raises."""
+    (a prompt answered, a proposal applied). Best-effort — never raises.
+
+    Alias-aware: an SDK run and its CLI child are one agent under two ids,
+    so a resolve arriving on either must retire the card wherever it was
+    filed — twins from the dual-writer era, or from a race, included.
+    """
     if not trace_id or not key:
         return
     try:
         from lib.agent_messages import store
-        store.dismiss_keyed(trace_id, key)
+        for tid in _linked_trace_ids(trace_id):
+            store.dismiss_keyed(tid, key)
     except Exception:  # noqa: BLE001 — resolution is cosmetic
         log.error("event_resolve_failed", exc_info=True)
+
+
+def _linked_trace_ids(trace_id: str) -> set[str]:
+    """`trace_id` plus the other half of its sdk↔CLI pairing, if any."""
+    out = {trace_id}
+    try:
+        from lib.agent_sdk.store import (cli_session_for,
+                                         sdk_trace_for_cli_session)
+        other = (cli_session_for(trace_id) if trace_id.startswith("sdk-")
+                 else sdk_trace_for_cli_session(trace_id))
+        if other:
+            out.add(other)
+    except Exception:  # noqa: BLE001 — the primary id must still resolve
+        log.error("event_resolve_alias_failed", exc_info=True)
+    return out
 
 
 def catalog() -> list[dict]:

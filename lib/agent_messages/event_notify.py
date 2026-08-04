@@ -51,6 +51,21 @@ def _already_pushed(trace_id: str, key: str, body: str) -> bool:
     return live is not None and (live.get("body") or "") == body
 
 
+def _owned_by_sdk_run(trace_id: str) -> bool:
+    """True when this CLI session is an SDK run's child — the runner is that
+    agent's one decision-card writer (`_notify_park`), and a hook-tier emit
+    for the same park would file a twin under the second identity. Measured
+    live before this gate: every parked ask in an SDK-launched run produced
+    two cards, one per writer, and the pair count ratcheted with each ask.
+    """
+    try:
+        from lib.agent_sdk.store import sdk_trace_for_cli_session
+        return sdk_trace_for_cli_session(trace_id) is not None
+    except Exception:  # noqa: BLE001 — a broken lookup must not mute hooks
+        log.error("sdk_ownership_probe_failed", exc_info=True)
+        return False
+
+
 def notify_permission_request(*, trace_id: str | None, attrs: dict) -> bool:
     """Surface a pending permission prompt. `attrs` is the dict built by
     `permission_events._build_perm_attrs` (tool_name, requested_permission,
@@ -63,6 +78,8 @@ def notify_permission_request(*, trace_id: str | None, attrs: dict) -> bool:
     if not trace_id or not events.is_enabled("permission.pending"):
         return False
     try:
+        if _owned_by_sdk_run(trace_id):
+            return False
         title, body = _format_permission(attrs)
         if _already_pushed(trace_id, PERM_KEY, body):
             return False
@@ -162,6 +179,8 @@ def notify_plan_ready(*, trace_id: str | None, plan_text: str | None = None) -> 
     if not trace_id or not events.is_enabled("plan.ready"):
         return False
     try:
+        if _owned_by_sdk_run(trace_id):
+            return False
         body = _format_plan(plan_text)
         if _already_pushed(trace_id, PLAN_KEY, body):
             return False

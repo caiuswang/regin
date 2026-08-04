@@ -463,15 +463,11 @@ def api_sessions():
     from lib.tokens.model_windows import infer_window as _infer_window
 
     def _row_to_dict(row) -> dict:
-        from datetime import datetime as _dt
-
-        def _parse_iso(s):
-            if not s:
-                return None
-            try:
-                return _dt.fromisoformat(s.replace('Z', '+00:00'))
-            except (ValueError, AttributeError):
-                return None
+        # Normalized to naive local (`parse_naive_ts`), never raw awareness:
+        # a row can mix a tz-aware `started_at` with a naive `last_seen`
+        # (writers disagree — spec-posted spans stamp `…Z`, hooks stamp
+        # local), and one such row's subtraction 500s the whole listing.
+        from lib.trace.pending_spans import parse_naive_ts as _parse_iso
 
         d = dict(row._mapping)
         # Derive context_pct using the session's richer `model` id (which

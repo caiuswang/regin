@@ -137,7 +137,10 @@ function handleClick() {
       <div class="blocker-question">{{ blocker.question || blocker.title }}</div>
       <div v-if="blocker.session_title" class="blocker-session">↳ {{ blocker.session_title }}</div>
       <BlockerActions :row="blocker" compact />
-      <div class="blocker-outs">
+      <!-- A card derived straight from the parked state has no inbox row to
+           dismiss against — the park itself is the fact, so there is no
+           "don't show again" to promise. -->
+      <div v-if="blocker.id" class="blocker-outs">
         <Button size="sm" variant="ghost" class="blocker-dismiss" @click="dismissCurrent">
           Dismiss — don't show again
         </Button>
@@ -155,7 +158,13 @@ function handleClick() {
       <Button size="sm" variant="ghost" class="ml-auto blocker-later" @click="foldBlocker">
         Fold
       </Button>
-      <Button size="sm" variant="ghost" class="blocker-dismiss" @click="dismissCurrent">
+      <Button
+        v-if="blocker.id"
+        size="sm"
+        variant="ghost"
+        class="blocker-dismiss"
+        @click="dismissCurrent"
+      >
         Dismiss &times;
       </Button>
     </BlockerHead>

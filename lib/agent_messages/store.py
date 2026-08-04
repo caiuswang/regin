@@ -89,6 +89,18 @@ def _serialize(m: AgentMessage) -> dict:
     }
 
 
+def serialize_rows(session, rows) -> list[dict]:
+    """Inbox-shaped dicts (session title included) for ORM rows the caller
+    already fetched — the blocker feed's row-attachment read."""
+    titles = _session_titles(session, [r.trace_id for r in rows])
+    out = []
+    for r in rows:
+        d = _serialize(r)
+        d["session_title"] = titles.get(r.trace_id)
+        out.append(d)
+    return out
+
+
 def _find_live_keyed(session, trace_id: str, msg_key: str):
     """Most-recent non-dismissed message with this (session, key), or None."""
     stmt = (select(AgentMessage)
@@ -222,6 +234,8 @@ def dismiss_keyed(trace_id: str, msg_key: str) -> int:
             row.read_at = now
         session.add(row)
         session.commit()
+    log.write("keyed_message_dismissed", message_id=message_id,
+              trace_id=trace_id, msg_key=msg_key)
     # A permission prompt answered in the terminal resolves out-of-process, so
     # the open banner only clears if the resolution is pushed too.
     notify_resolved(trace_id=trace_id, msg_key=msg_key,

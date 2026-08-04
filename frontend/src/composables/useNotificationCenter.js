@@ -103,9 +103,13 @@ export const blocker = computed(() => blockers.value[blockerPos.value] || null)
 
 // A Set, not the one visible row's id: the list highlight has to flag EVERY
 // parked session at once, and it is read on a page the banner may not be
-// paging to.
-export const awaitingTraceIds = computed(
-  () => new Set(blockers.value.map(b => b.trace_id).filter(Boolean)))
+// paging to. Alias ids included: an SDK run's card carries the sdk- id, but
+// the sessions list shows its CLI child's row — the highlight must match
+// whichever id the visible row happens to carry.
+export const awaitingTraceIds = computed(() => new Set(
+  blockers.value
+    .flatMap(b => [b.trace_id, ...(b.alias_trace_ids || [])])
+    .filter(Boolean)))
 
 export const bannerVisible = computed(
   () => !!blocker.value && !blockerFolded.value && !suppressed.value)
@@ -182,10 +186,13 @@ function sameCard(a, b) {
 }
 
 // The clock measures how long the AGENT has been parked, so a re-prompt in a
-// session that was already waiting keeps counting from the first one.
+// session that was already waiting keeps counting from the first one. Alias
+// ids get the same stamp: `waitedForTrace` is asked about the id on the
+// visible sessions row, which for an SDK run is the CLI child's.
 function stampParked(message) {
-  if (!message.trace_id || parkedSince.has(message.trace_id)) return
-  parkedSince.set(message.trace_id, messageStamp(message))
+  for (const id of [message.trace_id, ...(message.alias_trace_ids || [])]) {
+    if (id && !parkedSince.has(id)) parkedSince.set(id, messageStamp(message))
+  }
 }
 
 // Server-stamped so a re-hydrated blocker shows how long it has *really* been
@@ -302,6 +309,11 @@ function retire(payload) {
 // Retiring by trace_id dropped both, so answering the permission prompt
 // silently took away the plan banner for an agent that was still stopped.
 function clearBlocker(card, { resumed = true } = {}) {
+  // Supersede any refresh already in flight: it read the feed BEFORE this
+  // resolution, and letting its response land would re-install the card the
+  // operator (or another tab) just retired. The raise path bumps the same
+  // generation for the mirror-image race.
+  refreshGen += 1
   const traceId = card?.trace_id
   const remaining = blockers.value.filter(b => !sameCard(b, card))
   // Keep the reader on the card they were looking at: dropping row 1 of 4 must
@@ -311,8 +323,13 @@ function clearBlocker(card, { resumed = true } = {}) {
     .filter(b => sameCard(b, card)).length
   blockers.value = remaining
   blockerIndex.value = Math.max(0, blockerPos.value - wasBefore)
-  // The clock is per-session and the sibling card still needs it.
-  if (!remaining.some(b => b.trace_id === traceId)) parkedSince.delete(traceId)
+  // The clock is per-session and the sibling card still needs it. Aliases
+  // clear with it, or a later re-park would inherit this park's clock.
+  const held = new Set(remaining.flatMap(
+    b => [b.trace_id, ...(b.alias_trace_ids || [])]))
+  for (const id of [traceId, ...(card?.alias_trace_ids || [])]) {
+    if (id && !held.has(id)) parkedSince.delete(id)
+  }
   if (!remaining.length) blockerFolded.value = false
   // Nor may the row read "resumed" while the session's other prompt is parked.
   if (!traceId || !resumed) return
@@ -476,8 +493,10 @@ async function refreshBlockers({ retries = 1 } = {}) {
     seen.add(`${row.id}:${row.version || 1}`)
   }
   blockers.value = rows
+  const kept = new Set(rows.flatMap(
+    r => [r.trace_id, ...(r.alias_trace_ids || [])]))
   for (const id of [...parkedSince.keys()]) {
-    if (!rows.some(r => r.trace_id === id)) parkedSince.delete(id)
+    if (!kept.has(id)) parkedSince.delete(id)
   }
   // Hold the reader on the card they were reading, wherever it moved to.
   const at = anchor ? rows.findIndex(r => sameCard(r, anchor)) : -1

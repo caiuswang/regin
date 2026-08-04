@@ -207,6 +207,53 @@ def set_cli_session(trace_id: str, cli_session_id: str) -> None:
               cli_session_id=cli_session_id)
 
 
+def sdk_child_session_ids() -> set[str]:
+    """Every CLI session id that is (or was) an SDK run's child.
+
+    Membership is not status-gated: a finished run's child id stays claimed —
+    no future hook-only session can legitimately reuse it, and treating it as
+    hook-owned again would revive the dual-writer split this exists to close.
+    """
+    try:
+        with SessionLocal() as session:
+            rows = session.exec(
+                select(AgentRun.cli_session_id)
+                .where(AgentRun.cli_session_id.is_not(None))).all()
+        return {r for r in rows if r}
+    except OperationalError:
+        # Pre-0012 DB: no column, so no children to speak of.
+        return set()
+
+
+def cli_session_for(trace_id: str) -> str | None:
+    """The CLI child session this run is also traced as, or None."""
+    if not trace_id:
+        return None
+    try:
+        with SessionLocal() as session:
+            row = session.exec(
+                select(AgentRun.cli_session_id)
+                .where(AgentRun.trace_id == trace_id)).first()
+        return row or None
+    except OperationalError:
+        return None
+
+
+def sdk_trace_for_cli_session(session_id: str) -> str | None:
+    """The SDK run a CLI session belongs to, or None when it is hook-only —
+    the DB-backed alias for processes (hooks) that cannot see the registry."""
+    if not session_id or session_id.startswith('sdk-'):
+        return None
+    try:
+        with SessionLocal() as session:
+            row = session.exec(
+                select(AgentRun.trace_id)
+                .where(AgentRun.cli_session_id == session_id)).first()
+        return row or None
+    except OperationalError:
+        return None
+
+
 # How far apart the two sessions' `started_at` may be and still be the same
 # run. The child is spawned from `connect()` and its SessionStart hook fires
 # before the runner emits its own `session.start`, so the real gap is
