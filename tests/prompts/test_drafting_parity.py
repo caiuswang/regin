@@ -98,10 +98,11 @@ Output JSON shape:
   "overview": "Optional short markdown intro tying the proposed topics together"
 }}
 
-Existing approved topics — a boundary map, not their full text. `topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). A key ending in `/` is a directory ref: its owner claims every file beneath it, so a file under such a key is owned too. Explore the repo with your Read/Glob/Grep tools for everything else:
-```json
-{json.dumps(pe._existing_topics_summary(repo), indent=2, sort_keys=True)}
-```
+Existing approved topics — a boundary map, not their full text. It is NOT embedded below; Read this JSON file with your Read tool as one of your FIRST actions, before drafting any topic:
+
+  {pe._existing_topics_pointer(repo, out_dir)}
+
+`topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). A key ending in `/` is a directory ref: its owner claims every file beneath it, so a file under such a key is owned too. Draft without reading that file and you will duplicate an existing topic or claim a file another topic already owns — both bounce before review. Explore the repo with your Read/Glob/Grep tools for everything else.
 
 Available buckets (pick one id for each topic's `parent_id`, or null if none fits):
 ```json

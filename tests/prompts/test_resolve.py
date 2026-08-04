@@ -22,7 +22,7 @@ _CTX = {
     "temp_output_path": "/tmp/out.tmp.json",
     "output_file": "/tmp/topics.json",
     "finish_cmd": "regin finish",
-    "existing_topics_json": "[]",
+    "existing_topics_pointer": "/tmp/topic-map.json",
     "buckets_json": "[]",
     "sibling_section": "",
 }

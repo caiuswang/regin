@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from lib.activity_log import get_activity_logger
 from lib.agent_bridge import child_env
 from lib.trace import trace_service
 from lib.settings import settings
@@ -23,8 +24,11 @@ from lib.topics.proposal_drafting import format_review_feedback_for_prompt
 from lib.topics import TopicGraphError, utc_now
 
 
+log = get_activity_logger("topics")
+
 STATUS_FILE = "status.json"
 OUTPUT_FILE = "agent-output.json"
+TOPIC_MAP_FILE = "topic-map.json"
 TEMP_OUTPUT_DIR = ".tmp"
 TEMP_OUTPUT_FILE = "agent-output.json"
 FAILURE_SUMMARY_LIMIT = 500
@@ -269,6 +273,32 @@ def _existing_topics_summary(repo: Path) -> dict[str, Any]:
         path: tids[0] for path, tids in sorted(owners.items()) if len(tids) == 1
     }
     return {"topics": entries, "primary_owners": primary_owners}
+
+
+def _existing_topics_pointer(repo: Path, out_dir: Path) -> str:
+    """Spill the boundary map to `<out_dir>/topic-map.json` and return the
+    absolute path the agent Reads, or a placeholder when nothing readable
+    could be written.
+
+    Embedded, this map was 84% of the drafting prompt (43k of 51k chars on
+    regin's own graph) and grows with every approved topic — an unbounded
+    share of the agent's context spent on data it can fetch. Same contract as
+    ``wiki_read_pointer``: probe the file after writing, so a failed spill
+    degrades to a placeholder instead of a dangling path. Absolute because the
+    agent may run under a working directory other than the repo root.
+    """
+    summary = _existing_topics_summary(repo)
+    path = out_dir / TOPIC_MAP_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(summary, indent=2, sort_keys=True),
+                        encoding="utf-8")
+        if not path.is_file():
+            return "(topic map unavailable)"
+    except OSError:
+        log.error("topic_map_spill_failed", exc_info=True)
+        return "(topic map unavailable)"
+    return str(path.resolve())
 
 
 def _bucket_summary(repo: Path) -> list[dict[str, Any]]:
@@ -1138,7 +1168,7 @@ def _instructions(
         "temp_output_path": str(temp_output_path),
         "output_file": str(out_dir / OUTPUT_FILE),
         "finish_cmd": _finish_command(repo, out_dir.name),
-        "existing_topics_json": json.dumps(_existing_topics_summary(repo), indent=2, sort_keys=True),
+        "existing_topics_pointer": _existing_topics_pointer(repo, out_dir),
         "buckets_json": json.dumps(_bucket_summary(repo), indent=2, sort_keys=True),
         "sibling_section": _sibling_refresh_section(repo, out_dir),
     }

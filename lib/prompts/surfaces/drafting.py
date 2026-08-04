@@ -65,10 +65,11 @@ Output JSON shape:
   "overview": "Optional short markdown intro tying the proposed topics together"
 }
 
-Existing approved topics — a boundary map, not their full text. `topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). A key ending in `/` is a directory ref: its owner claims every file beneath it, so a file under such a key is owned too. Explore the repo with your Read/Glob/Grep tools for everything else:
-```json
-{{existing_topics_json}}
-```
+Existing approved topics — a boundary map, not their full text. It is NOT embedded below; Read this JSON file with your Read tool as one of your FIRST actions, before drafting any topic:
+
+  {{existing_topics_pointer}}
+
+`topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). A key ending in `/` is a directory ref: its owner claims every file beneath it, so a file under such a key is owned too. Draft without reading that file and you will duplicate an existing topic or claim a file another topic already owns — both bounce before review. Explore the repo with your Read/Glob/Grep tools for everything else.
 
 Available buckets (pick one id for each topic's `parent_id`, or null if none fits):
 ```json
@@ -94,7 +95,7 @@ register_surface(
         PromptVariable("temp_output_path", "Absolute path the agent writes its final JSON to."),
         PromptVariable("output_file", "The canonical artifact path the agent must NOT write directly."),
         PromptVariable("finish_cmd", "The exact CLI command that finalizes the run."),
-        PromptVariable("existing_topics_json", "JSON summary of already-approved topics (do-not-duplicate list)."),
+        PromptVariable("existing_topics_pointer", "Absolute path to the spilled boundary-map JSON (already-approved topics + primary-ref owners) the agent Reads."),
         PromptVariable("buckets_json", "JSON summary of the available top-level navigation buckets."),
         PromptVariable("sibling_section", "The 'Sibling topics being refreshed' block, or empty.", required=False),
     ),
@@ -108,6 +109,8 @@ register_surface(
 for _sha in (
     # inlined `covers` + `wiki_sections`, before positions + `primary_owners`
     "179432745e333d49d3688845fdd0026eb0419920ecad72e27f6f2e36bbb7fbfc",
+    # embedded the whole boundary map, before it was spilled to a Read pointer
+    "1997f46bb34e85b71256a35f82949c7458f756a8b87d6c83e370bce9a6cd2841",
 ):
     register_retired_default(SURFACE_ID, sha256=_sha)
 
