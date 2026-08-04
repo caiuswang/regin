@@ -277,3 +277,58 @@ def test_consumed_texts_degrades_on_invalid_utf8(tmp_path, monkeypatch):
     monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
                         lambda tid: str(tx))
     assert qp.consumed_prompt_texts('t') == set()
+
+
+_EXIT_COMMAND_TURN = ('<command-name>/exit</command-name>\n'
+                      '            <command-message>exit</command-message>\n'
+                      '            <command-args></command-args>')
+
+
+def test_consumed_texts_include_the_typed_form_of_a_command_turn(
+        tmp_path, monkeypatch):
+    # An executed slash command logs as command XML, never as the "/exit" the
+    # sender typed — both forms must count as consumed or the bridge steer
+    # chip outlives the command for its whole window.
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_user(_EXIT_COMMAND_TURN)])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert '/exit' in qp.consumed_prompt_texts('t')
+
+
+def test_command_args_join_the_reconstructed_typed_form(tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_user('<command-name>/goal</command-name>\n'
+                      '<command-message>goal</command-message>\n'
+                      '<command-args>fix the bug</command-args>')])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert '/goal fix the bug' in qp.consumed_prompt_texts('t')
+
+
+def test_queued_slash_command_retires_once_its_command_turn_ran(
+        tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [
+        _enq('/exit', '2026-08-04T07:12:00.000Z'),
+        _user(_EXIT_COMMAND_TURN, ts='2026-08-04T07:20:15.038Z'),
+    ])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert qp.current_queued_prompts('t') == []
+
+
+def test_a_prompt_quoting_command_xml_is_not_a_command_turn(
+        tmp_path, monkeypatch):
+    # Only the reconstructed line joins the consumed set — a user ASKING about
+    # command XML mid-sentence registers verbatim, and "/exit" alone must not
+    # retire against it.
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [
+        _enq('/exit', '2026-08-04T07:00:00.000Z'),
+        _user('why does <command-name>compact</command-name> hang?',
+              ts='2026-08-04T07:00:01.000Z'),
+    ])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+    assert [q['content'] for q in qp.current_queued_prompts('t')] == ['/exit']

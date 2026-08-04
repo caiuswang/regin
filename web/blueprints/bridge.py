@@ -116,7 +116,13 @@ def api_bridge_post_message():
     if refusal is not None:
         store.mark_delivered(row_id, False, refusal["detail"])
         return jsonify({**refusal, "id": row_id})
-    result = delivery.deliver(trace_id, text)
+    # A slash-command body must be typed as a command: sent as a message, the
+    # autocomplete menu swallows the Enter and the send acks "delivered" while
+    # the command never runs. The sender asked for execution, so as_command's
+    # composer reset (which discards a human's terminal draft) is the same
+    # trade the graceful-close path already makes.
+    result = delivery.deliver(trace_id, text,
+                              as_command=delivery.is_slash_command(text))
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,
                     "detail": result.detail, "id": row_id})
@@ -188,7 +194,9 @@ def api_session_bridge_send(trace_id):
     if owned:
         return _sdk_send(trace_id, raw_text, text, sender)
     row_id = store.record_bridge_message(trace_id, text, sender)
-    result = delivery.deliver(trace_id, text)
+    # Same slash-command routing as the bridge POST — see the comment there.
+    result = delivery.deliver(trace_id, text,
+                              as_command=delivery.is_slash_command(text))
     store.mark_delivered(row_id, result.delivered, result.detail)
     return jsonify({"delivered": result.delivered,
                     "detail": result.detail, "id": row_id})

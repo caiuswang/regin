@@ -41,10 +41,10 @@ def _auth(token=_TOKEN) -> dict:
 
 def _mock_deliver(monkeypatch, *, delivered=True, detail="delivered to %7"):
     """Replace deliver() with a recorder; returns the call list."""
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, bool]] = []
 
-    def _fake(trace_id, text):
-        calls.append((trace_id, text))
+    def _fake(trace_id, text, as_command=False):
+        calls.append((trace_id, text, as_command))
         return delivery.DeliveryResult(delivered, detail)
 
     monkeypatch.setattr(delivery, "deliver", _fake)
@@ -153,7 +153,7 @@ def test_valid_post_returns_outcome_and_calls_deliver(anon_client, monkeypatch):
     assert body["detail"] == "delivered to %9"
     assert isinstance(body["id"], int)
     # deliver() called with (trace_id, text)
-    assert calls == [("T-9", "status please")]
+    assert calls == [("T-9", "status please", False)]
 
 
 def test_valid_post_persists_row_with_outcome(anon_client, monkeypatch):
@@ -198,7 +198,7 @@ def test_latest_resolves_to_reachable_trace_id(anon_client, monkeypatch):
                             json={"session_id": "latest", "text": "go"},
                             headers=_auth())
     assert resp.status_code == 200
-    assert calls == [("T-live", "go")]  # resolved to the reachable session
+    assert calls == [("T-live", "go", False)]  # resolved to the reachable session
     assert _rows("T-live")  # inbox row against the resolved trace_id
 
 

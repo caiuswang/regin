@@ -347,3 +347,45 @@ def test_recent_bridge_steers_window_and_delivered_gate(monkeypatch):
     out = s._recent_bridge_steers('t')
     bodies = {o['content'] for o in out}
     assert bodies == {'fresh'}
+
+
+def _seed_session(trace_id, **cols):
+    from lib.orm import SessionLocal
+    from lib.orm.models import Session as SessionModel
+    with SessionLocal() as db:
+        db.add(SessionModel(trace_id=trace_id,
+                            started_at='2026-08-04T10:00:00',
+                            last_seen=cols.pop('last_seen', '2026-08-04T11:00:00'),
+                            **cols))
+        db.commit()
+
+
+def test_merge_bridge_steers_skipped_on_ended_session(monkeypatch):
+    # The /exit that kills a session is delivered seconds before the row goes
+    # 'ended' — without the gate it haunts its own trace as a queued chip for
+    # the rest of the delivery window.
+    from web.blueprints.trace import sessions as s
+    _seed_session('t-ended', status='ended')
+    monkeypatch.setattr(
+        s, '_recent_bridge_steers',
+        lambda tid: [{'content': '/exit', 'delivered_at': '2026-08-04 07:20:15'}])
+    assert s._merge_bridge_steers('t-ended', []) == []
+
+
+def test_session_has_ended_trusts_status_and_resume(monkeypatch):
+    from web.blueprints.trace import sessions as s
+    _seed_session('t-live', status='active')
+    _seed_session('t-done', status='ended')
+    # ended_at honoured only when no activity followed it: last_seen >1s past
+    # ended_at reads as resumed, not ended.
+    _seed_session('t-settled', status='active',
+                  ended_at='2026-08-04T11:20:15',
+                  last_seen='2026-08-04T11:20:15.769118')
+    _seed_session('t-resumed', status='active',
+                  ended_at='2026-08-04T11:20:15',
+                  last_seen='2026-08-04T11:20:30')
+    assert s._session_has_ended('t-missing') is False  # fails open
+    assert s._session_has_ended('t-live') is False
+    assert s._session_has_ended('t-done') is True
+    assert s._session_has_ended('t-settled') is True
+    assert s._session_has_ended('t-resumed') is False

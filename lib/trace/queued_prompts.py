@@ -56,6 +56,25 @@ _SYSTEM_MARKER = '<task-notification>'
 
 _TASK_ID_RE = re.compile(r'<task-id>([^<]+)</task-id>')
 
+# An EXECUTED slash command is logged as `<command-name>` XML, never as the
+# literal line the sender typed — so a queued or bridge-delivered "/exit" can
+# only retire against its executed turn if that turn also registers the
+# reconstructed command line. Without it the chip outlives the command for
+# the rest of its window (observed with /exit: the delivery that killed the
+# session haunted its own trace as a queued prompt).
+_COMMAND_NAME_RE = re.compile(r'<command-name>\s*([^<]+?)\s*</command-name>')
+_COMMAND_ARGS_RE = re.compile(r'<command-args>\s*([^<]*?)\s*</command-args>')
+
+
+def _command_line(text: str) -> str:
+    """The typed form of a command-XML user turn ('/exit', '/goal fix x'),
+    or '' when the turn is not a command record."""
+    name = _COMMAND_NAME_RE.search(text)
+    if not name:
+        return ''
+    args = _COMMAND_ARGS_RE.search(text)
+    return _norm(f"{name.group(1)} {args.group(1) if args else ''}")
+
 
 class _Item(NamedTuple):
     """One enqueue event. `eid` is its arrival index, which survives the pop
@@ -220,6 +239,9 @@ def _consumed_turns(path: str) -> dict:
                 text = _norm(_turn_text((e.get('message') or {}).get('content')))
                 if text:
                     turns[text].append(e.get('timestamp'))
+                    command = _command_line(text)
+                    if command:
+                        turns[command].append(e.get('timestamp'))
     # A corrupt/partial-write transcript (invalid UTF-8 mid-iteration) raises
     # UnicodeDecodeError out of `for line in f`, not just json.loads; degrade to
     # empty like an unreadable file rather than 500-ing the unguarded live poll.

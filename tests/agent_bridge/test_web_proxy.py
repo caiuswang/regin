@@ -50,10 +50,10 @@ def _enable(monkeypatch, *, enabled=True, token=_TOKEN):
 
 
 def _mock_deliver(monkeypatch, *, delivered=True, detail="delivered to %7"):
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, bool]] = []
 
-    def _fake(trace_id, text):
-        calls.append((trace_id, text))
+    def _fake(trace_id, text, as_command=False):
+        calls.append((trace_id, text, as_command))
         return delivery.DeliveryResult(delivered, detail)
 
     monkeypatch.setattr(delivery, "deliver", _fake)
@@ -164,7 +164,26 @@ def test_delivered_path_returns_outcome(flask_client, monkeypatch):
     assert body["delivered"] is True
     assert body["detail"] == "delivered to %9"
     assert isinstance(body["id"], int)
-    assert calls == [("T-9", "steer left")]
+    assert calls == [("T-9", "steer left", False)]
+
+
+def test_slash_command_body_routes_as_command(flask_client, monkeypatch):
+    # "/exit" sent as a plain message acks "delivered" while the autocomplete
+    # menu swallows the Enter — the command shape must take the as_command path.
+    _enable(monkeypatch)
+    calls = _mock_deliver(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-9/bridge-send",
+                             json={"text": "/exit"})
+    assert resp.status_code == 200
+    assert calls == [("T-9", "/exit", True)]
+
+
+def test_path_like_body_stays_a_plain_message(flask_client, monkeypatch):
+    _enable(monkeypatch)
+    calls = _mock_deliver(monkeypatch)
+    flask_client.post("/api/sessions/T-9/bridge-send",
+                      json={"text": "/Users/x/app.py crashes on boot"})
+    assert calls == [("T-9", "/Users/x/app.py crashes on boot", False)]
 
 
 def test_delivered_path_persists_row(flask_client, monkeypatch):

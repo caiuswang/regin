@@ -1009,3 +1009,28 @@ def test_liveness_is_unknown_rather_than_asserted_with_the_bridge_off(
 
     assert delivery.session_is_live("t1") is False
     assert calls == []
+
+
+# ── is_slash_command: the routing gate for as_command sends ─────────────
+
+
+@pytest.mark.parametrize("text", [
+    "/exit",
+    "/compact",
+    "/goal-verified-treenav fix the pane",
+    "/multi-agent-capture:task-1",
+    "/goal fix the bug in tts.py",
+])
+def test_command_shaped_text_is_a_slash_command(text):
+    assert delivery.is_slash_command(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "steer left",
+    "/Users/x/app.py crashes on boot",   # path: second slash ends the token
+    "/ exit",                            # bare slash never opens a command
+    "run /exit for me",                  # slash not leading
+    "",
+])
+def test_non_command_text_is_not_a_slash_command(text):
+    assert delivery.is_slash_command(text) is False

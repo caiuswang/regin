@@ -2127,13 +2127,46 @@ def _parse_bridge_ts(value) -> datetime | None:
         return None
 
 
+def _session_has_ended(trace_id: str) -> bool:
+    """True when the session row reads closed. A steer chip is a promise the
+    pane may still act on the text, which an exited claude can never honour —
+    without this gate the /exit that killed a session haunts its own trace as
+    a queued prompt for the rest of the delivery window. Mirrors the client's
+    ended rule (useLiveTail): trust `status`; honour a stored `ended_at` only
+    when no activity followed it (the ingest clears it on a genuine resume,
+    but this poll can land in between). Fails open — an unreadable row must
+    not hide a live session's steers."""
+    from sqlmodel import select as _select
+    try:
+        with SessionLocal() as session:
+            row = session.exec(
+                _select(SessionModel.status, SessionModel.ended_at,
+                        SessionModel.last_seen)
+                .where(SessionModel.trace_id == trace_id)).first()
+    except Exception:
+        return False
+    if row is None:
+        return False
+    status, ended_at, last_seen = row
+    if status == 'ended':
+        return True
+    if not ended_at:
+        return False
+    try:
+        ended = datetime.fromisoformat(str(ended_at))
+        seen = datetime.fromisoformat(str(last_seen)) if last_seen else None
+    except ValueError:
+        return False
+    return seen is None or (seen - ended).total_seconds() <= 1.0
+
+
 def _merge_bridge_steers(trace_id: str, queued: list) -> list:
     """Append recently-delivered bridge steers not already represented in the
     transcript-derived queue (deduped by normalized body). The transcript copy
     wins when both exist — a steer surfaces optimistically only until Claude
     Code records it as a queue-op or a real prompt."""
     steers = _recent_bridge_steers(trace_id)
-    if not steers:
+    if not steers or _session_has_ended(trace_id):
         return queued
     # A consumed steer leaves the pending queue, so deduping against the
     # still-queued items alone lets its chip re-surface for the rest of the

@@ -218,6 +218,22 @@ def _reset_composer(socket: str | None, pane: str) -> bool:
 # dismisses the menu, leaving Enter nothing to do but submit the literal line.
 _COMMAND_TERMINATOR = " "
 
+# A leading slash TOKEN (slash + command chars, then whitespace or end) is the
+# shape claude's composer treats as a command. A path never matches — its
+# second "/" ends the token with neither whitespace nor end-of-text ("/exit"
+# and "/goal fix it" match; "/Users/x/y notes" does not).
+_SLASH_COMMAND_RE = re.compile(r"^/[A-Za-z0-9][A-Za-z0-9._:-]*(?:\s|$)")
+
+
+def is_slash_command(text: str) -> bool:
+    """True when `text` would be read by the composer as a slash command.
+
+    Public for the message routes: a free-form operator body of this shape
+    must be delivered `as_command` or the autocomplete menu swallows the
+    submitting Enter — the send acks "delivered" (the text IS visible in the
+    composer) while the command never runs."""
+    return bool(_SLASH_COMMAND_RE.match(text or ""))
+
 
 def _type_and_ack(row: dict, text: str, in_mode: bool,
                   as_command: bool = False) -> DeliveryResult:
