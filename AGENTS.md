@@ -8,6 +8,19 @@ in the conversation, re-litigate a decision the user has already made, or narrat
 options you will not pursue in user-facing messages. If you are weighing a choice, give
 a recommendation, not an exhaustive survey. This does not apply to thinking blocks.
 
+## Root-cause discipline
+Never fix bugs with time-based heuristics (skew windows, polling intervals, timeouts,
+`setTimeout` retries). Prefer identifier-based or event-driven designs: stable IDs for
+de-duplication/merge, persisted state for lifecycle, and pre-posted events instead of
+active polls. If a clock-based approach seems unavoidable, stop and ask before
+implementing.
+
+## Scope control
+Fix exactly the reported defect. Do not add backward-compatibility shims, retired-hash
+registries, migration guards, or "other installs" compatibility machinery unless
+explicitly asked. If you believe extra hardening is warranted, list it as a follow-up
+suggestion instead of implementing it.
+
 ## Progress reporting (send_to_user)
 
 Whenever a task involves 3 or more distinct steps (investigate / change / verify counts
@@ -65,6 +78,8 @@ CLI mirror is `regin memory supersede <old-id> --body … `. Internals: *Agent M
 .venv/bin/python cli/regin.py hooks status  # Installed vs. expected hook commands per provider
 .venv/bin/python cli/regin.py hooks repair  # Rewrite any hook command that has drifted
 .venv/bin/python cli/regin.py serve         # Web dashboard on :8321
+.venv/bin/python cli/regin.py stats time    # Where build time goes (attended vs agent vs human)
+.venv/bin/python cli/regin.py stats sessions --format csv --out /tmp/s.csv   # Per-session export
 
 # Tests — run the whole suite in parallel; ~35s vs ~4m serial.
 # Omit the flags (or pass `-n 0`) when you need --pdb or readable single-test output.
