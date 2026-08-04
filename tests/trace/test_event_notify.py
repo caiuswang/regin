@@ -22,11 +22,16 @@ def recorded(monkeypatch):
 
     def _record(**kw):
         calls.append(kw)
-        live[kw["msg_key"]] = {"body": kw["body"], "span_id": kw.get("span_id")}
+        live[kw["msg_key"]] = {"body": kw["body"], "span_id": kw.get("span_id"),
+                               "title": kw.get("title")}
         return {"id": len(calls), **kw}
 
     def _live(trace_id, key):
         return live.get(key)
+
+    def _live_decisions(trace_id):
+        return {k: v for k, v in live.items()
+                if k in event_notify.DECISION_KEYS}
 
     dismissed: list[tuple] = []
 
@@ -38,8 +43,9 @@ def recorded(monkeypatch):
     from lib.agent_messages import store
     monkeypatch.setattr(store, "record_message", _record)
     monkeypatch.setattr(store, "live_keyed_message", _live)
+    monkeypatch.setattr(store, "live_decision_messages", _live_decisions)
     monkeypatch.setattr(store, "dismiss_keyed", _dismiss)
-    return {"calls": calls, "dismissed": dismissed}
+    return {"calls": calls, "dismissed": dismissed, "live": live}
 
 
 def _on(monkeypatch, **kw):
@@ -154,3 +160,82 @@ def test_plan_text_truncated(recorded, monkeypatch):
     (call,) = recorded["calls"]
     assert call["body"].endswith("…")
     assert len(call["body"]) <= event_notify._PLAN_MAX + 1
+
+
+# ── Answered outside the web UI ─────────────────────────────
+# The granting path: a denial fires PermissionDenied, so PostToolUse for the
+# gated tool means the human approved it — usually in their own terminal.
+
+def _seed_perm(monkeypatch, recorded, **attrs):
+    _on(monkeypatch, push_permission_events=True)
+    event_notify.notify_permission_request(
+        trace_id="s1", attrs={"tool_name": "Bash",
+                              "requested_permission": "run x", **attrs})
+    assert event_notify.PERM_KEY in recorded["live"]
+
+
+def test_named_card_resolves_on_its_own_tool_use_id(recorded, monkeypatch):
+    _seed_perm(monkeypatch, recorded, tool_use_id="tu_1")
+    event_notify.resolve_answered(trace_id="s1", tool_name="Bash",
+                                  tool_use_id="tu_1")
+    assert ("s1", event_notify.PERM_KEY) in recorded["dismissed"]
+
+
+def test_named_card_ignores_a_different_call(recorded, monkeypatch):
+    _seed_perm(monkeypatch, recorded, tool_use_id="tu_1")
+    event_notify.resolve_answered(trace_id="s1", tool_name="Bash",
+                                  tool_use_id="tu_other")
+    assert recorded["dismissed"] == []
+
+
+def test_spanless_card_resolves_on_matching_tool_name(recorded, monkeypatch):
+    _seed_perm(monkeypatch, recorded)
+    event_notify.resolve_answered(trace_id="s1", tool_name="Bash")
+    assert ("s1", event_notify.PERM_KEY) in recorded["dismissed"]
+
+
+def test_spanless_card_survives_an_unrelated_tool(recorded, monkeypatch):
+    _seed_perm(monkeypatch, recorded)
+    event_notify.resolve_answered(trace_id="s1", tool_name="Read")
+    assert recorded["dismissed"] == []
+
+
+def test_ask_card_resolves_when_the_question_completes(recorded, monkeypatch):
+    _on(monkeypatch, push_permission_events=True)
+    event_notify.notify_permission_request(
+        trace_id="s1", attrs={"tool_name": "AskUserQuestion", "questions": [
+            {"question": "Which?", "options": [{"label": "A"}]}]})
+    event_notify.resolve_answered(trace_id="s1", tool_name="AskUserQuestion")
+    assert ("s1", event_notify.PERM_KEY) in recorded["dismissed"]
+
+
+def test_plan_card_survives_its_own_raise(recorded, monkeypatch):
+    _on(monkeypatch, push_plan_events=True)
+    event_notify.notify_plan_ready(trace_id="s1", plan_text="do the thing")
+    # ExitPlanMode completing is the very event that raised the card.
+    event_notify.resolve_answered(trace_id="s1", tool_name="ExitPlanMode")
+    assert recorded["dismissed"] == []
+
+
+def test_plan_card_resolves_on_the_next_tool(recorded, monkeypatch):
+    _on(monkeypatch, push_plan_events=True)
+    event_notify.notify_plan_ready(trace_id="s1", plan_text="do the thing")
+    # The agent executing again means the plan was decided.
+    event_notify.resolve_answered(trace_id="s1", tool_name="Bash")
+    assert ("s1", event_notify.PLAN_KEY) in recorded["dismissed"]
+
+
+def test_prompt_submission_resolves_every_decision(recorded, monkeypatch):
+    _seed_perm(monkeypatch, recorded)
+    _on(monkeypatch, push_plan_events=True)
+    event_notify.notify_plan_ready(trace_id="s1", plan_text="p")
+    event_notify.resolve_on_prompt("s1")
+    assert set(recorded["dismissed"]) == {
+        ("s1", event_notify.PERM_KEY), ("s1", event_notify.PLAN_KEY)}
+
+
+def test_resolve_plan_dismisses_the_live_card(recorded, monkeypatch):
+    _on(monkeypatch, push_plan_events=True)
+    event_notify.notify_plan_ready(trace_id="s1", plan_text="p")
+    event_notify.resolve_plan("s1")
+    assert ("s1", event_notify.PLAN_KEY) in recorded["dismissed"]

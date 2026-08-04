@@ -229,6 +229,31 @@ REGISTRY: list[Handler] = [
         fn=plan_trace.handle,
     ),
     Handler(
+        name='decision_resolve_post_tool',
+        label='Decision Card Resolve (Approval)',
+        summary='Retires a pending permission/plan inbox card once its gated '
+                'call completes — the approval was given in the terminal.',
+        match_hint='All successful PostToolUse events',
+        events=['PostToolUse'],
+        kind='enrich',
+        # After post_tool_trace (110): the resolving tool span should land
+        # before the card retires, so a /blockers read racing this hook never
+        # sees a dismissed card whose span still looks parked.
+        priority=115,
+        fn=permission_events.handle_post_tool,
+    ),
+    Handler(
+        name='decision_resolve_prompt',
+        label='Decision Card Resolve (Prompt)',
+        summary='Retires pending permission/plan inbox cards when the user '
+                'submits a prompt — nothing can stay parked across one.',
+        match_hint='All user prompt submissions',
+        events=['UserPromptSubmit'],
+        kind='enrich',
+        priority=105,
+        fn=permission_events.handle_prompt_submitted,
+    ),
+    Handler(
         name='rule_check',
         label='Rule Check',
         summary='Runs applicable rule-engine checks on edited files.',

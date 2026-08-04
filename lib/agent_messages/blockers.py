@@ -194,6 +194,74 @@ def _answered_tool_use_ids(trace_ids: list[str], tool_use_ids: set[str]) -> set[
     return {r['tu'] for r in rows if r['tu']}
 
 
+def _latest_prompt_times(trace_ids: list[str]) -> dict[str, str]:
+    """trace_id → newest MAIN-LOOP `prompt` span start_time.
+
+    A main-loop prompt strictly newer than a card's last raise proves the
+    card's question was decided: the terminal does not accept a prompt while
+    a permission menu or plan approval holds it. Subagent launch prompts
+    share `name='prompt'` (`subagent_lifecycle`, `prompt-sa-<agent_id>`) but
+    prove nothing — a parallel subagent can start while the main agent is
+    parked — so they are excluded by their id prefix.
+    """
+    if not trace_ids:
+        return {}
+    from lib.orm.engine import get_connection
+    traces = ','.join('?' * len(trace_ids))
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT trace_id, MAX(start_time) AS at FROM session_spans "
+            f" WHERE trace_id IN ({traces}) AND name = 'prompt' "
+            "   AND span_id NOT LIKE 'prompt-sa-%' "
+            " GROUP BY trace_id", tuple(trace_ids)).fetchall()
+    finally:
+        conn.close()
+    return {r['trace_id']: r['at'] for r in rows if r['at']}
+
+
+def _answered_elsewhere(message: dict, span, answered: set,
+                        prompted_at: str | None) -> bool:
+    """Was this card's prompt already decided outside this feed?
+
+    Three signals, strongest first: the gated call's resolved twin span
+    exists; the card's own named span left PENDING; or — for a card with no
+    span to consult — the user submitted a prompt after the card's last
+    raise. `updated_at`, not `created_at`, anchors that last check: a
+    superseded card keeps its original created_at, so a prompt between the
+    first raise and the re-raise must not read as an answer to the live
+    question. A still-PENDING named span always keeps the card (fail closed).
+    """
+    if message.get('span_id') in answered:
+        return True
+    if span is not None:
+        return span.get('status_code') != 'PENDING'
+    raised = max(message.get('created_at') or '',
+                 message.get('updated_at') or '')
+    return bool(raised) and (prompted_at or '') > raised
+
+
+def _heal_answered(message: dict) -> None:
+    """Retire — for good — a card whose prompt was answered outside this UI.
+
+    Filtering it from one response is not enough: the row stays unread in the
+    badge, and a tab already showing the banner never hears about it. Dismiss
+    by id (an older duplicate must not take down a newer live card sharing
+    its key) and push the same `resolved` frame an in-UI answer would.
+    """
+    from lib.agent_messages import store
+    from lib.notifications import hub
+    store.dismiss(message['id'])
+    hub.broadcast_event('resolved', {
+        'trace_id': message.get('trace_id'),
+        'message_ids': [message['id']],
+        'reason': 'dismissed',
+    })
+    hub.broadcast_counts()
+    log.write("blocker_self_healed", message_id=message['id'],
+              trace_id=message.get('trace_id'))
+
+
 def _question_of(attrs: dict) -> dict:
     """The first question on a parked ask, or {} for a plan/tool gate."""
     questions = attrs.get('questions')
@@ -363,15 +431,18 @@ def live_blockers(*, include_tests: bool = False,
     spans = _decision_spans(sorted(waiting))
     answered = _answered_tool_use_ids(
         sorted(waiting), {m['span_id'] for m in messages if m.get('span_id')})
+    prompted = _latest_prompt_times(sorted(waiting))
     out = []
     for message in messages:
         trace_id = message.get('trace_id')
-        if trace_id not in waiting or message.get('span_id') in answered:
+        # A dead session is NOT evidence its prompt was answered — the card
+        # just leaves the feed with the liveness window. Only the answered
+        # checks below may retire one.
+        if trace_id not in waiting:
             continue
         span = _pick_span(message, spans.get(trace_id) or {})
-        # A named span that has resolved means the prompt was answered —
-        # the card just never got its dismiss.
-        if span is not None and span.get('status_code') != 'PENDING':
+        if _answered_elsewhere(message, span, answered, prompted.get(trace_id)):
+            _heal_answered(message)
             continue
         out.append(_build(message, span, _bridge_reachability(trace_id)))
         if len(out) >= limit:

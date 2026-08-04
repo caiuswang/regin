@@ -437,3 +437,89 @@ def test_a_card_never_emits_a_placeholder_span_id(tmp_db, monkeypatch):
     row = blockers.live_blockers()[0]
     assert row['span_id'] is None
     assert row['answerable'] == 'decision'
+
+
+# ── Self-heal: a prompt answered outside this UI retires its card ─
+
+def _backdate(tmp_db, message_id, *, minutes_ago):
+    """Move a card's whole raise history into the past — `updated_at` too,
+    which `record_message` always stamps 'now'."""
+    conn = _conn(tmp_db)
+    try:
+        conn.execute(
+            "UPDATE agent_messages SET created_at = ?, updated_at = ? "
+            " WHERE id = ?", (_stamp(minutes_ago), _stamp(minutes_ago), message_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_an_answered_card_is_dismissed_not_just_filtered(tmp_db):
+    """Filtering leaves the row unread in the badge and the banner alive in
+    any already-open tab; the read must retire the row for good."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'permreq-tu_a', attrs={'tool_use_id': 'tu_a'})
+    row = _seed_card(span_id='tu_a')
+    assert len(blockers.live_blockers()) == 1
+    _resolve_span(tmp_db, 'permreq-tu_a')
+    assert blockers.live_blockers() == []
+    healed = store.get_message(row['id'])
+    assert healed['dismissed_at'] is not None
+    assert healed['read_at'] is not None
+    assert store.unread_count() == 0
+
+
+def test_a_prompt_after_a_spanless_card_retires_it(tmp_db):
+    """No span to consult, but the user prompted after the raise — nothing
+    stays parked across a prompt, so the card was answered in the terminal."""
+    _seed_session(tmp_db)
+    row = _seed_card()
+    _backdate(tmp_db, row['id'], minutes_ago=30)
+    _seed_span(tmp_db, 'prompt-1', name='prompt', status='OK', start=_stamp(5))
+    assert blockers.live_blockers() == []
+    assert store.get_message(row['id'])['dismissed_at'] is not None
+
+
+def test_a_prompt_before_the_card_leaves_it_waiting(tmp_db):
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'prompt-1', name='prompt', status='OK', start=_stamp(30))
+    _seed_card()
+    assert len(blockers.live_blockers()) == 1
+
+
+def test_a_reraised_card_survives_the_prompt_between_raises(tmp_db):
+    """A superseded card keeps its original created_at, so a prompt between
+    the first raise and the re-raise must not read as an answer to the live
+    question — `updated_at` anchors the check."""
+    _seed_session(tmp_db)
+    row = _seed_card(body='first ask')
+    _backdate(tmp_db, row['id'], minutes_ago=30)
+    _seed_span(tmp_db, 'prompt-1', name='prompt', status='OK', start=_stamp(10))
+    _seed_card(body='second ask')  # supersede: version bumps, created_at stays
+    rows = blockers.live_blockers()
+    assert len(rows) == 1
+    assert rows[0]['body'] == 'second ask'
+
+
+def test_a_parked_named_span_outweighs_a_newer_prompt(tmp_db):
+    """Fail closed: while the card's own span is PENDING the agent IS parked,
+    whatever else the session has been doing."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'permreq-tu_a', attrs={'tool_use_id': 'tu_a'})
+    row = _seed_card(span_id='tu_a')
+    _backdate(tmp_db, row['id'], minutes_ago=30)
+    _seed_span(tmp_db, 'prompt-1', name='prompt', status='OK', start=_stamp(5))
+    assert len(blockers.live_blockers()) == 1
+
+
+def test_a_subagent_prompt_does_not_retire_a_card(tmp_db):
+    """Subagent launch prompts share `name='prompt'` but a parallel subagent
+    can start while the main agent is parked — only a main-loop prompt is
+    proof of an answer."""
+    _seed_session(tmp_db)
+    row = _seed_card()
+    _backdate(tmp_db, row['id'], minutes_ago=30)
+    _seed_span(tmp_db, 'prompt-sa-agent1', name='prompt', status='OK',
+               start=_stamp(5))
+    assert len(blockers.live_blockers()) == 1
+    assert store.get_message(row['id'])['dismissed_at'] is None

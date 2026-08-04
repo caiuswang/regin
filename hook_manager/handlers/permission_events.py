@@ -45,6 +45,36 @@ def handle_denied(payload: HookPayload) -> HookResponse | None:
     return HookResponse(suppress_output=True)
 
 
+def handle_post_tool(payload: HookPayload) -> HookResponse | None:
+    """A completed tool call means its gate was approved — retire the card.
+
+    The denial half lives in `handle_denied`; without this half, a prompt
+    approved in the user's own terminal left its blocker card (and banner)
+    up until the session closed.
+    """
+    try:
+        from lib.agent_messages import event_notify  # type: ignore
+        tu_id = (payload.raw or {}).get('tool_use_id')
+        event_notify.resolve_answered(
+            trace_id=payload.session_id, tool_name=payload.tool_name,
+            tool_use_id=tu_id if isinstance(tu_id, str) else None)
+    except Exception:
+        pass
+    return None
+
+
+def handle_prompt_submitted(payload: HookPayload) -> HookResponse | None:
+    """A submitted prompt proves every parked decision was already made —
+    the terminal cannot accept one while a permission menu or plan approval
+    holds it."""
+    try:
+        from lib.agent_messages import event_notify  # type: ignore
+        event_notify.resolve_on_prompt(payload.session_id)
+    except Exception:
+        pass
+    return None
+
+
 def _maybe_notify_push(payload: HookPayload, attrs: dict) -> None:
     """Opt-in: surface a pending permission prompt to the inbox + push
     channels — but only when it actually awaits a human. A request the

@@ -184,6 +184,26 @@ def live_keyed_message(trace_id: str, msg_key: str) -> Optional[dict]:
         return _serialize(row) if row is not None else None
 
 
+def live_decision_messages(trace_id: str) -> dict:
+    """msg_key → live decision card for one session, in a single query.
+
+    Runs inside PostToolUse / UserPromptSubmit hooks on the user's tool-call
+    latency, which is why it is one SELECT instead of a `live_keyed_message`
+    per key. Newest row wins per key, matching `_find_live_keyed`.
+    """
+    if not trace_id:
+        return {}
+    from lib.agent_messages.event_notify import DECISION_KEYS
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(AgentMessage)
+            .where(AgentMessage.trace_id == trace_id,
+                   AgentMessage.msg_key.in_(DECISION_KEYS),
+                   AgentMessage.dismissed_at.is_(None))
+            .order_by(AgentMessage.id.asc())).all()
+        return {r.msg_key: _serialize(r) for r in rows}
+
+
 def dismiss_keyed(trace_id: str, msg_key: str) -> int:
     """Dismiss the live keyed message, resolving a notification once its
     underlying condition is handled. Returns rows dismissed (0 or 1)."""
@@ -196,6 +216,10 @@ def dismiss_keyed(trace_id: str, msg_key: str) -> int:
             return 0
         message_id = row.id
         row.dismissed_at = now
+        # A resolved condition means the human handled it, wherever they were
+        # standing — the row must not linger as unread.
+        if row.read_at is None:
+            row.read_at = now
         session.add(row)
         session.commit()
     # A permission prompt answered in the terminal resolves out-of-process, so
@@ -391,6 +415,9 @@ def ack(message_id: int) -> int:
 
 
 def dismiss(message_id: int) -> int:
+    # Dismissing implies the human dealt with it; stamp read_at too so the
+    # row leaves the unread accounting the moment it leaves every surface.
+    _stamp([message_id], "read_at", only_if_unset=True)
     n = _stamp([message_id], "dismissed_at", only_if_unset=True)
     log.write("message_dismissed", message_id=message_id)
     return n
@@ -509,6 +536,6 @@ __all__ = [
     "record_message", "list_session_messages", "list_inbox",
     "list_decision_messages", "get_message",
     "unread_count", "unread_top_severity", "mark_read", "mark_all_read", "ack", "dismiss", "set_pinned",
-    "live_keyed_message", "dismiss_keyed",
+    "live_keyed_message", "live_decision_messages", "dismiss_keyed",
     "prune_messages", "message_stats",
 ]

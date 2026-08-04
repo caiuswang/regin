@@ -161,7 +161,7 @@ test.describe('blocker banner', () => {
   const QUESTION = `How far should Close/Delete go? ${randomUUID().slice(0, 8)}`
   const BODY = `${QUESTION}\n• Escape only, then warn\n• Escape, then type /exit\n• Detect + report only`
 
-  test('interrupts, parses its options, and snoozes to a strip', async ({ page }) => {
+  test('interrupts, parses its options, and folds to a strip', async ({ page }) => {
     const ids = []
     // The banner raises an optimistic row off the SSE frame and then enriches
     // it from /blockers. A throw anywhere in that path leaves the un-enriched
@@ -187,15 +187,40 @@ test.describe('blocker banner', () => {
     await expect(banner.getByText('Detect + report only')).toBeVisible()
     await expect(banner.getByRole('button', { name: /Open live session/ })).toBeVisible()
 
-    // "Later" is a snooze, not a close: the agent is still parked, so the
+    // "Fold" collapses, it does not close: the agent is still parked, so the
     // collapsed strip has to keep saying so.
-    await banner.getByRole('button', { name: /Later/ }).click()
+    await banner.getByRole('button', { name: 'Fold', exact: true }).click()
     await expect(page.getByText('1 decision waiting')).toBeVisible()
     await expect(page.getByText(QUESTION)).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Answer', exact: true }).click()
     await expect(page.getByText(QUESTION)).toBeVisible()
     expect(failures).toEqual([])
+    await cleanup(page, ids)
+  })
+
+  // Dismiss is not fold: no strip may remain, and a reload must not
+  // resurrect the card — `dismissed_at` is server truth, not tab state.
+  test('dismiss retires the decision for good', async ({ page }) => {
+    const ids = []
+    clearBlockers()
+    await page.goto('/trace/sessions')
+    await streamReady(page)
+
+    ids.push(record({
+      type: 'blocker', title: 'The agent is asking you a question', body: BODY,
+      traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
+    }))
+    const banner = page.getByRole('alert').filter({ hasText: QUESTION })
+    await expect(banner).toBeVisible({ timeout: 10_000 })
+
+    await banner.getByRole('button', { name: /Dismiss/ }).click()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    await expect(page.getByText('1 decision waiting')).toHaveCount(0)
+
+    await page.reload()
+    await streamReady(page)
+    await expect(page.getByText(QUESTION)).toHaveCount(0)
     await cleanup(page, ids)
   })
 
@@ -499,9 +524,9 @@ test.describe('several agents parked at once', () => {
     await banner.getByRole('button', { name: 'Next decision' }).click()
     await expect(banner.getByText('Decision 1 of 3')).toBeVisible()
 
-    // Snoozed, the strip has to account for all of them, not just the one on
+    // Folded, the strip has to account for all of them, not just the one on
     // screen — it is the only thing left saying anything is waiting.
-    await banner.getByRole('button', { name: /Later/ }).click()
+    await banner.getByRole('button', { name: 'Fold', exact: true }).click()
     await expect(page.getByText('3 decisions waiting')).toBeVisible()
 
     await cleanup(page, ids)

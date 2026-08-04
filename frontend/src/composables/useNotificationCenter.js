@@ -24,10 +24,16 @@ import { useRealtime } from './useRealtime'
 //   optimistic action fails   → the surface is restored, not silently eaten
 //   logout / user switch      → `reset()` drops every timer and every row
 
-// Dismissing a blocker cannot resolve it, so "Later" is a snooze, not a close.
-const SNOOZE_SECONDS = 45
+// Folding a blocker cannot resolve it, so the fold collapses the detail into
+// the strip and stays folded until the user reopens it — it never auto-pops.
+// Dismissing is the separate, server-backed "never show this decision again".
 const RESUMED_LINGER_MS = 6_000
 const RETRY_AFTER_MS = 2_000
+// The stream is the fast path, but a frame can be missed (laptop asleep, SSE
+// down, a resolution that landed while no server was up). While a decision is
+// showing, reconcile against server truth on a slow cadence so a banner can
+// never outlive its answer by more than a minute.
+const RECONCILE_MS = 60_000
 
 // The `resolved` frame's vocabulary, mirrored from `_retire` in
 // web/blueprints/trace/agent_messages.py (and pinned there by
@@ -49,7 +55,7 @@ const foldedIds = ref(new Set())
 // this list instead. Oldest first: the longest-parked agent is next to answer.
 const blockers = shallowRef([])
 const blockerIndex = ref(0)
-const blockerSnoozed = ref(false)
+const blockerFolded = ref(false)
 const resumedTraceId = ref(null)
 const suppressed = ref(false)
 const now = ref(Date.now())
@@ -79,7 +85,7 @@ const seen = new Set()
 
 const foldTimers = new Map()
 
-let snoozeTimer = null
+let reconcileTimer = null
 let resumedTimer = null
 let clockTimer = null
 let started = false
@@ -102,9 +108,9 @@ export const awaitingTraceIds = computed(
   () => new Set(blockers.value.map(b => b.trace_id).filter(Boolean)))
 
 export const bannerVisible = computed(
-  () => !!blocker.value && !blockerSnoozed.value && !suppressed.value)
+  () => !!blocker.value && !blockerFolded.value && !suppressed.value)
 export const stripVisible = computed(
-  () => !!blocker.value && blockerSnoozed.value && !suppressed.value)
+  () => !!blocker.value && blockerFolded.value && !suppressed.value)
 
 function waitedFor(row) {
   const since = row && parkedSince.get(row.trace_id)
@@ -157,12 +163,13 @@ function ingest(message, { replay = false } = {}) {
 // lands — the row goes up immediately (the agent is stopped NOW) and is
 // enriched a moment later rather than waiting for the round trip.
 function raiseBlocker(message, replay) {
-  clearTimeout(snoozeTimer)
   stampParked(message)
   const next = blockers.value.filter(b => !sameCard(b, message))
   next.push({ options: [], answerable: null, ...message })
   blockers.value = next
-  blockerSnoozed.value = false
+  // A fresh decision reopens a folded banner: the fold was about the
+  // decisions the user had already seen, not this one.
+  blockerFolded.value = false
   resumedTraceId.value = null
   if (!replay) osNotify(message, 1)
   refreshBlockers()
@@ -306,10 +313,7 @@ function clearBlocker(card, { resumed = true } = {}) {
   blockerIndex.value = Math.max(0, blockerPos.value - wasBefore)
   // The clock is per-session and the sibling card still needs it.
   if (!remaining.some(b => b.trace_id === traceId)) parkedSince.delete(traceId)
-  if (!remaining.length) {
-    clearTimeout(snoozeTimer)
-    blockerSnoozed.value = false
-  }
+  if (!remaining.length) blockerFolded.value = false
   // Nor may the row read "resumed" while the session's other prompt is parked.
   if (!traceId || !resumed) return
   if (remaining.some(b => b.trace_id === traceId)) return
@@ -322,18 +326,30 @@ function clearBlocker(card, { resumed = true } = {}) {
 
 // ── Actions ────────────────────────────────────────────────────────
 
-function snoozeBlocker() {
-  if (!blocker.value) return
-  blockerSnoozed.value = true
-  clearTimeout(snoozeTimer)
-  snoozeTimer = setTimeout(() => {
-    if (blocker.value) blockerSnoozed.value = false
-  }, SNOOZE_SECONDS * 1000)
+// Fold hides the DETAIL, not the decision: the strip stays up, still counted,
+// until the user reopens it or the queue empties. No timer — an auto-reopen
+// took the choice back out of the user's hands 45 seconds after they made it.
+function foldBlocker() {
+  if (blocker.value) blockerFolded.value = true
 }
 
-function reopenBlocker() {
-  clearTimeout(snoozeTimer)
-  blockerSnoozed.value = false
+function unfoldBlocker() {
+  blockerFolded.value = false
+}
+
+// Dismiss is the "never show this decision again" promise — server-backed
+// (`dismissed_at`), so it survives reloads and clears every other tab with
+// reason `hidden`, which claims nothing about the agent. Optimistic but
+// reversible: a card the server never dismissed must not vanish silently.
+async function dismissBlocker(row) {
+  if (!row?.id) return
+  clearBlocker(row, { resumed: false })
+  try {
+    await api.post(`/agent-messages/${row.id}/dismiss`)
+  } catch {
+    stampParked(row)
+    blockers.value = [...blockers.value, row]
+  }
 }
 
 // Optimistic, but reversible: hiding a card the server never marked read would
@@ -397,7 +413,8 @@ function reset() {
   parkedSince.clear()
   for (const timer of foldTimers.values()) clearTimeout(timer)
   foldTimers.clear()
-  clearTimeout(snoozeTimer)
+  clearInterval(reconcileTimer)
+  reconcileTimer = null
   clearTimeout(resumedTimer)
   clearInterval(clockTimer)
   clockTimer = null
@@ -408,7 +425,7 @@ function reset() {
   blockerIndex.value = 0
   // Anything still in flight resolved against the user who just went away.
   refreshGen += 1
-  blockerSnoozed.value = false
+  blockerFolded.value = false
   resumedTraceId.value = null
   started = false
   // `suppressed` and `openHandler` are deliberately NOT cleared: they are
@@ -465,7 +482,7 @@ async function refreshBlockers({ retries = 1 } = {}) {
   // Hold the reader on the card they were reading, wherever it moved to.
   const at = anchor ? rows.findIndex(r => sameCard(r, anchor)) : -1
   blockerIndex.value = at >= 0 ? at : 0
-  if (!rows.length) blockerSnoozed.value = false
+  if (!rows.length) blockerFolded.value = false
 }
 
 // Tier-2 history for the badge's fold accounting. Replayed, so nothing pops:
@@ -501,6 +518,16 @@ watch(() => livePrefs.maxToasts, (max) => {
   toasts.value = toasts.value.slice(0, max)
 })
 
+// Runs only while a decision is actually showing — an idle tab polls nothing.
+watch(blockerCount, (count) => {
+  if (count > 0 && !reconcileTimer) {
+    reconcileTimer = setInterval(() => refreshBlockers(), RECONCILE_MS)
+  } else if (!count && reconcileTimer) {
+    clearInterval(reconcileTimer)
+    reconcileTimer = null
+  }
+})
+
 export function useNotificationCenter() {
   if (!started && api.getToken()) {
     started = true
@@ -523,12 +550,11 @@ export function useNotificationCenter() {
     })
   }
   return {
-    toasts, folded, blocker, blockers, blockerSnoozed, resumedTraceId,
+    toasts, folded, blocker, blockers, blockerFolded, resumedTraceId,
     suppressed, awaitingTraceIds, bannerVisible, stripVisible,
     blockerWaitedFor, waitedForTrace, blockerCount, blockerPos,
-    snoozeSeconds: SNOOZE_SECONDS,
     ingest, retire, fold, drop, markRead, reset, hydrate, refreshBlockers,
-    snoozeBlocker, reopenBlocker, clearBlocker,
+    foldBlocker, unfoldBlocker, dismissBlocker, clearBlocker,
     nextBlocker, prevBlocker, showBlockerAt,
     answerBlocker, decideBlocker,
     setSuppressed: (value) => { suppressed.value = !!value },

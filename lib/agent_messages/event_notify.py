@@ -38,6 +38,10 @@ DECISION_KEYS = (PERM_KEY, PLAN_KEY)
 
 _PLAN_MAX = 1200
 
+# `resolve_answered` matches a span-less card back to its tool by this title,
+# so the emit- and resolve-side strings must be the same constant.
+_ASK_TITLE = "The agent is asking you a question"
+
 
 def _already_pushed(trace_id: str, key: str, body: str) -> bool:
     """True if the live keyed card already carries this exact body — so a
@@ -78,6 +82,78 @@ def resolve_permission(trace_id: str | None) -> None:
     if not trace_id or not events.is_enabled("permission.pending"):
         return
     events.resolve(trace_id, PERM_KEY)
+
+
+def resolve_plan(trace_id: str | None) -> None:
+    """Dismiss the live plan card once the plan was decided.
+
+    Not gated on `is_enabled`: a live card is its own evidence the event was
+    enabled when it fired, and disabling the kind must not strand the card."""
+    from lib.agent_messages import events
+    if not trace_id:
+        return
+    events.resolve(trace_id, PLAN_KEY)
+
+
+def resolve_answered(*, trace_id: str | None, tool_name: str | None,
+                     tool_use_id: str | None = None) -> None:
+    """Retire decision cards this completed tool call has just answered.
+
+    The granting path: a denial fires PermissionDenied (handled elsewhere),
+    so PostToolUse for the gated tool means the human approved it — in their
+    own terminal as often as from the web. Matching is deliberately narrow:
+
+      * a card that names its call retires only on that exact `tool_use_id`;
+      * a span-less card (the PermissionRequest payload usually carries no
+        `tool_use_id`) retires on the completing tool's name, via the title
+        `_format_permission` stamped at emit time — the only durable record
+        of which tool the card was about;
+      * the plan card retires on any completion EXCEPT `ExitPlanMode`, which
+        is the very event that raises it.
+
+    A same-named tool completing in a parallel subagent while the prompt is
+    still parked can false-retire the span-less case; that window is narrow,
+    and the alternative — cards that outlive their answer by days — drowns
+    the real blockers.
+    """
+    if not trace_id or not tool_name:
+        return
+    try:
+        from lib.agent_messages import events, store
+        live = store.live_decision_messages(trace_id)
+        perm = live.get(PERM_KEY)
+        if perm is not None and _card_matches_call(perm, tool_name, tool_use_id):
+            events.resolve(trace_id, PERM_KEY)
+        if PLAN_KEY in live and tool_name != "ExitPlanMode":
+            events.resolve(trace_id, PLAN_KEY)
+    except Exception:  # noqa: BLE001 — must never break the PostToolUse hook
+        log.error("decision_resolve_failed", exc_info=True)
+
+
+def resolve_on_prompt(trace_id: str | None) -> None:
+    """Retire every decision card when the user submits a new prompt.
+
+    A prompt cannot be typed while a permission menu or plan approval holds
+    the terminal, so its submission proves every earlier prompt was decided.
+    """
+    if not trace_id:
+        return
+    try:
+        from lib.agent_messages import events, store
+        for key in store.live_decision_messages(trace_id):
+            events.resolve(trace_id, key)
+    except Exception:  # noqa: BLE001 — must never break the prompt hook
+        log.error("decision_resolve_failed", exc_info=True)
+
+
+def _card_matches_call(card: dict, tool_name: str,
+                       tool_use_id: str | None) -> bool:
+    if card.get("span_id"):
+        return bool(tool_use_id) and card["span_id"] == tool_use_id
+    title = card.get("title") or ""
+    if tool_name == "AskUserQuestion":
+        return title == _ASK_TITLE
+    return title == f"Permission needed: {tool_name}"
 
 
 def notify_plan_ready(*, trace_id: str | None, plan_text: str | None = None) -> bool:
@@ -124,7 +200,7 @@ def _format_question(q: dict) -> tuple[str, str]:
         label = opt.get("label") if isinstance(opt, dict) else str(opt)
         if label:
             lines.append(f"• {label}")
-    return "The agent is asking you a question", "\n".join(lines)
+    return _ASK_TITLE, "\n".join(lines)
 
 
 def _format_plan(plan_text: str | None) -> str:
@@ -138,4 +214,5 @@ def _format_plan(plan_text: str | None) -> str:
 
 
 __all__ = ["DECISION_KEYS", "PERM_KEY", "PLAN_KEY", "notify_permission_request",
-           "resolve_permission", "notify_plan_ready"]
+           "resolve_permission", "resolve_plan", "resolve_answered",
+           "resolve_on_prompt", "notify_plan_ready"]

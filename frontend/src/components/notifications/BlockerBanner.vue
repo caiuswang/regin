@@ -1,7 +1,10 @@
 <script setup>
-// Tier 1. The agent is stopped until this is dealt with, so it does not
-// auto-dismiss and "Later" only snoozes. On a phone the same state renders as
-// a bottom sheet you can swipe away — same promise, thumb-reachable.
+// Tier 1. The agent is stopped until this is dealt with, so nothing here
+// auto-closes. Two distinct outs, deliberately separate controls: FOLD
+// collapses the detail into the strip (still counted, reopen any time),
+// DISMISS retires this decision for good (server-backed — it never comes
+// back). On a phone the same state renders as a bottom sheet whose swipe-down
+// is the fold.
 //
 // The question and its options come off the parked SPAN (server-assembled in
 // lib/agent_messages/blockers.py), not off the card's prose, which is why the
@@ -16,7 +19,7 @@ import { useNotificationCenter } from '../../composables/useNotificationCenter'
 
 const {
   blocker, blockerCount, bannerVisible, stripVisible, blockerWaitedFor,
-  snoozeSeconds, snoozeBlocker, reopenBlocker,
+  foldBlocker, unfoldBlocker, dismissBlocker,
 } = useNotificationCenter()
 
 // Matches the shell's own `max-width: 767px` mobile branch in AppLayout.
@@ -41,14 +44,18 @@ const sheetStyle = computed(() => ({
   transition: dragging.value ? 'none' : 'transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1)',
 }))
 
-function later() {
+function foldAway() {
   dragY.value = 0
   dragging.value = false
-  // A swipe that snoozes unmounts the sheet before the click task runs, so
+  // A swipe that folds unmounts the sheet before the click task runs, so
   // `handleClick` never gets to clear the flag — and a stale `true` would eat
   // the next real activation (an Enter on the handle after it re-opens).
   swallowClick = false
-  snoozeBlocker()
+  foldBlocker()
+}
+
+function dismissCurrent() {
+  dismissBlocker(blocker.value)
 }
 
 function dragStart(event) {
@@ -68,9 +75,9 @@ function dragMove(event) {
 function dragEnd() {
   if (!dragging.value) return
   // A drag that snapped back said "keep it" — but the browser still fires a
-  // click on pointerup, which would snooze the sheet the user just kept.
+  // click on pointerup, which would fold the sheet the user just kept.
   swallowClick = moved > TAP_SLOP_PX
-  if (dragY.value > DISMISS_AFTER_PX) later()
+  if (dragY.value > DISMISS_AFTER_PX) foldAway()
   else {
     dragging.value = false
     dragY.value = 0
@@ -89,26 +96,26 @@ function handleClick() {
     swallowClick = false
     return
   }
-  later()
+  foldAway()
 }
 </script>
 
 <template>
-  <!-- Collapsed: snoozed but still waiting. One line, one action. -->
+  <!-- Collapsed: folded but still waiting. One line, one action. -->
   <div v-if="stripVisible" class="blocker-strip" role="alert">
     <span class="blocker-dot blocker-dot-blink" aria-hidden="true" />
     <span class="blocker-strip-label">{{ stripLabel }}</span>
     <span class="blocker-strip-meta">agent paused · {{ blockerWaitedFor }}</span>
-    <Button size="sm" variant="danger" class="ml-auto" @click="reopenBlocker">Answer</Button>
+    <Button size="sm" variant="danger" class="ml-auto" @click="unfoldBlocker">Answer</Button>
   </div>
 
-  <!-- Full, mobile: a bottom sheet over a scrim, draggable down to snooze. -->
+  <!-- Full, mobile: a bottom sheet over a scrim, draggable down to fold. -->
   <div
     v-else-if="bannerVisible && isMobile"
     class="blocker-scrim cursor-pointer hover:brightness-110 focus-visible:outline-2"
     role="alertdialog"
     aria-label="Agent paused, awaiting your decision"
-    @click.self="later"
+    @click.self="foldAway"
   >
     <div class="blocker-sheet" :style="sheetStyle">
       <!-- Only the handle drags. A whole-sheet drag target would swallow
@@ -117,7 +124,7 @@ function handleClick() {
         variant="ghost"
         size="sm"
         class="blocker-grabber"
-        aria-label="Dismiss for now — the session stays paused"
+        aria-label="Fold into the strip — the session stays paused"
         @click="handleClick"
         @pointerdown="dragStart"
         @pointermove="dragMove"
@@ -130,9 +137,14 @@ function handleClick() {
       <div class="blocker-question">{{ blocker.question || blocker.title }}</div>
       <div v-if="blocker.session_title" class="blocker-session">↳ {{ blocker.session_title }}</div>
       <BlockerActions :row="blocker" compact />
+      <div class="blocker-outs">
+        <Button size="sm" variant="ghost" class="blocker-dismiss" @click="dismissCurrent">
+          Dismiss — don't show again
+        </Button>
+      </div>
       <p class="blocker-foot">
-        Swipe down to leave it — the session stays paused and flagged, and the
-        sheet returns in {{ snoozeSeconds }}s
+        Swipe down to fold it into the strip — the session stays paused and
+        flagged either way
       </p>
     </div>
   </div>
@@ -140,8 +152,11 @@ function handleClick() {
   <!-- Full, desktop: a sticky banner above the page content. -->
   <div v-else-if="bannerVisible" class="blocker-banner" role="alert">
     <BlockerHead>
-      <Button size="sm" variant="ghost" class="ml-auto blocker-later" @click="later">
-        Later — dismiss &times;
+      <Button size="sm" variant="ghost" class="ml-auto blocker-later" @click="foldBlocker">
+        Fold
+      </Button>
+      <Button size="sm" variant="ghost" class="blocker-dismiss" @click="dismissCurrent">
+        Dismiss &times;
       </Button>
     </BlockerHead>
 
@@ -154,8 +169,8 @@ function handleClick() {
          would go read while the agent stayed parked, and the banner would
          (correctly) refuse to close — a button that visibly does nothing. -->
     <p class="blocker-foot blocker-foot-end">
-      Dismissing leaves the session paused — it returns in {{ snoozeSeconds }}s
-      and stays flagged in the list.
+      Fold keeps it in the strip; Dismiss removes this decision for good.
+      The session stays paused and flagged either way.
     </p>
   </div>
 </template>
@@ -237,6 +252,12 @@ function handleClick() {
 .blocker-foot-end { align-self: flex-end; text-align: end; }
 
 .blocker-later { color: var(--color-warning-strong); }
+
+/* Quieter than Fold: dismiss is the rarer, sharper action (it never comes
+   back), so it must not read as the default way out. */
+.blocker-dismiss { color: var(--color-fg-muted); }
+
+.blocker-outs { display: flex; justify-content: flex-end; }
 
 .blocker-dot {
   width: 8px;
