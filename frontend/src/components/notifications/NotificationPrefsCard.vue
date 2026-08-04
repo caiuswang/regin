@@ -76,6 +76,22 @@ const osStatus = computed(() => {
         </tr>
 
         <tr>
+          <th scope="row">Open blockers automatically</th>
+          <td>
+            <ToggleSwitch
+              :model-value="prefs.autoPopout"
+              @update:model-value="set('autoPopout', $event)"
+            />
+            <div class="np-blurb">
+              On, an arriving tier-1 decision opens its pop-out straight away
+              instead of waiting for a click. Off by default: the modal takes
+              focus. Never raised on Inbox or Live, where the queue is already
+              on screen.
+            </div>
+          </td>
+        </tr>
+
+        <tr>
           <th scope="row">Toasts on screen</th>
           <td>
             <Input

@@ -24,7 +24,7 @@ const { features } = useFeatures()
 const { pending: driftPending } = useDriftSummary()
 const { enabled: diagEnabled } = useDiagnosticsState()
 const { unread: inboxUnread, severity: inboxSeverity } = useInboxUnread()
-const { setSuppressed, refreshBlockers } = useNotificationCenter()
+const { setSuppressed, refreshBlockers, bannerVisible } = useNotificationCenter()
 
 // The badge colour is the loudest thing still unread — red while an agent is
 // parked, amber for something you should look at, otherwise the plain count.
@@ -177,6 +177,7 @@ const navGroups = computed(() => [
           :class="{
             'content-scroll-fixed': route.meta.fixedViewport === true,
             'content-scroll-fixed-lg': route.meta.fixedViewport === 'lg',
+            'content-scroll-blocker-inset': bannerVisible,
           }"
         >
           <FlashMessage />
@@ -437,6 +438,16 @@ const navGroups = computed(() => [
 @media (max-width: 767px) {
   .content-scroll { padding: 1rem; }
   .content-scroll.content-scroll-fixed { padding: 0; }
+
+  /* The phone blocker bar is `position: fixed` at the bottom, so it is out of
+     flow and would sit over the last rows of every page — and on a
+     fixed-viewport view, which cannot scroll at all, there would be no way to
+     reveal what it covers. Reserve its height for as long as it is up. */
+  .content-scroll.content-scroll-blocker-inset,
+  .content-scroll.content-scroll-fixed.content-scroll-blocker-inset {
+    /* 62px: 2px top border + 2×0.5rem padding + the 44px touch targets. */
+    padding-bottom: calc(3.875rem + env(safe-area-inset-bottom));
+  }
 }
 
 .content-scroll::-webkit-scrollbar { width: 8px; height: 8px; }

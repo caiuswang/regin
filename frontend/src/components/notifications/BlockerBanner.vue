@@ -1,25 +1,24 @@
 <script setup>
 // Tier 1. The agent is stopped until this is dealt with, so nothing here
-// auto-closes. Two distinct outs, deliberately separate controls: FOLD
-// collapses the detail into the strip (still counted, reopen any time),
-// DISMISS retires this decision for good (server-backed — it never comes
-// back). On a phone the same state renders as a bottom sheet whose swipe-down
-// is the fold.
+// auto-closes. The banner is now only the FLAG that a decision is waiting —
+// one line, key facts, three controls. The decision itself (question, context,
+// options) opens in BlockerPopout, because rendering it inline pushed the page
+// down by however much the agent happened to write.
 //
-// The question and its options come off the parked SPAN (server-assembled in
-// lib/agent_messages/blockers.py), not off the card's prose, which is why the
-// options here are real controls: the index sent back is the one the bridge
-// selects. See BlockerActions for the three answerable shapes.
-import { computed, ref } from 'vue'
+// Two distinct outs, deliberately separate controls: FOLD collapses to the
+// strip (still counted, reopen any time), DISMISS retires this decision for
+// good (server-backed — it never comes back). Neither claims the agent
+// resumed; only a delivered answer may do that.
+import { computed } from 'vue'
 import Button from '../ui/Button.vue'
-import BlockerActions from './BlockerActions.vue'
 import BlockerHead from './BlockerHead.vue'
+import BlockerPopout from './BlockerPopout.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useNotificationCenter } from '../../composables/useNotificationCenter'
 
 const {
-  blocker, blockerCount, bannerVisible, stripVisible, blockerWaitedFor,
-  foldBlocker, unfoldBlocker, dismissBlocker,
+  blocker, blockerCount, blockerPos, bannerVisible, stripVisible, popoutVisible,
+  blockerWaitedFor, foldBlocker, dismissBlocker, openDecision,
 } = useNotificationCenter()
 
 // Matches the shell's own `max-width: 767px` mobile branch in AppLayout.
@@ -30,73 +29,14 @@ const stripLabel = computed(() => (blockerCount.value === 1
   ? '1 decision waiting'
   : `${blockerCount.value} decisions waiting`))
 
-const dragY = ref(0)
-const dragging = ref(false)
-let dragFrom = 0
-let moved = 0
-let swallowClick = false
-
-const DISMISS_AFTER_PX = 90
-const TAP_SLOP_PX = 6
-
-const sheetStyle = computed(() => ({
-  transform: `translateY(${dragY.value}px)`,
-  transition: dragging.value ? 'none' : 'transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1)',
-}))
-
-function foldAway() {
-  dragY.value = 0
-  dragging.value = false
-  // A swipe that folds unmounts the sheet before the click task runs, so
-  // `handleClick` never gets to clear the flag — and a stale `true` would eat
-  // the next real activation (an Enter on the handle after it re-opens).
-  swallowClick = false
-  foldBlocker()
-}
+const mobileMeta = computed(() => {
+  const waiting = `waiting ${blockerWaitedFor.value}`
+  if (blockerCount.value < 2) return waiting
+  return `${waiting} · Decision ${blockerPos.value + 1} of ${blockerCount.value}`
+})
 
 function dismissCurrent() {
   dismissBlocker(blocker.value)
-}
-
-function dragStart(event) {
-  dragFrom = event.clientY
-  moved = 0
-  dragging.value = true
-  event.currentTarget.setPointerCapture?.(event.pointerId)
-}
-
-function dragMove(event) {
-  if (!dragging.value) return
-  const delta = event.clientY - dragFrom
-  moved = Math.max(moved, Math.abs(delta))
-  dragY.value = Math.max(0, delta)
-}
-
-function dragEnd() {
-  if (!dragging.value) return
-  // A drag that snapped back said "keep it" — but the browser still fires a
-  // click on pointerup, which would fold the sheet the user just kept.
-  swallowClick = moved > TAP_SLOP_PX
-  if (dragY.value > DISMISS_AFTER_PX) foldAway()
-  else {
-    dragging.value = false
-    dragY.value = 0
-  }
-}
-
-// A cancelled gesture fires no click, so the flag must not survive it and eat
-// the next real tap (or an Enter on the focused handle).
-function dragCancel() {
-  dragEnd()
-  swallowClick = false
-}
-
-function handleClick() {
-  if (swallowClick) {
-    swallowClick = false
-    return
-  }
-  foldAway()
 }
 </script>
 
@@ -106,58 +46,48 @@ function handleClick() {
     <span class="blocker-dot blocker-dot-blink" aria-hidden="true" />
     <span class="blocker-strip-label">{{ stripLabel }}</span>
     <span class="blocker-strip-meta">agent paused · {{ blockerWaitedFor }}</span>
-    <Button size="sm" variant="danger" class="ml-auto" @click="unfoldBlocker">Answer</Button>
+    <Button size="sm" variant="danger" class="ml-auto" @click="openDecision">Answer</Button>
   </div>
 
-  <!-- Full, mobile: a bottom sheet over a scrim, draggable down to fold. -->
+  <!-- Full, mobile: a slim bar pinned to the bottom of the viewport. The
+       decision opens as a sheet on top of it, not in place of it. -->
   <div
     v-else-if="bannerVisible && isMobile"
-    class="blocker-scrim cursor-pointer hover:brightness-110 focus-visible:outline-2"
-    role="alertdialog"
-    aria-label="Agent paused, awaiting your decision"
-    @click.self="foldAway"
+    class="blocker-bar"
+    role="alert"
+    :inert="popoutVisible || undefined"
   >
-    <div class="blocker-sheet" :style="sheetStyle">
-      <!-- Only the handle drags. A whole-sheet drag target would swallow
-           text selection and taps on the buttons below it. -->
-      <Button
-        variant="ghost"
-        size="sm"
-        class="blocker-grabber"
-        aria-label="Fold into the strip — the session stays paused"
-        @click="handleClick"
-        @pointerdown="dragStart"
-        @pointermove="dragMove"
-        @pointerup="dragEnd"
-        @pointercancel="dragCancel"
-      >
-        <span class="blocker-grabber-bar" aria-hidden="true" />
+    <span class="blocker-dot blocker-dot-blink" aria-hidden="true" />
+    <span class="blocker-bar-text">
+      <span class="blocker-bar-title">{{ blocker.title || 'Agent paused' }}</span>
+      <span class="blocker-bar-meta">{{ mobileMeta }}</span>
+    </span>
+    <Button size="sm" variant="danger" class="blocker-bar-btn" @click="openDecision">
+      Answer
+    </Button>
+    <Button size="sm" variant="ghost" class="blocker-bar-btn blocker-later" @click="foldBlocker">
+      Fold
+    </Button>
+  </div>
+
+  <!-- Full, desktop: a sticky one-line banner above the page content.
+       `inert` while the pop-out is open: the modal claims to be modal, but the
+       banner behind it stayed in the tab order — and tabbing out of the dialog
+       reached "Dismiss ×", which retires the decision for good. -->
+  <div
+    v-else-if="bannerVisible"
+    class="blocker-banner"
+    role="alert"
+    :inert="popoutVisible || undefined"
+  >
+    <BlockerHead>
+      <Button size="sm" variant="danger" @click="openDecision">Answer ⤢</Button>
+      <Button size="sm" variant="ghost" class="blocker-later" @click="foldBlocker">
+        Fold
       </Button>
-      <BlockerHead title="Agent paused" />
-      <div class="blocker-question">{{ blocker.question || blocker.title }}</div>
-      <div v-if="blocker.session_title" class="blocker-session">↳ {{ blocker.session_title }}</div>
-      <BlockerActions :row="blocker" compact />
       <!-- A card derived straight from the parked state has no inbox row to
            dismiss against — the park itself is the fact, so there is no
            "don't show again" to promise. -->
-      <div v-if="blocker.id" class="blocker-outs">
-        <Button size="sm" variant="ghost" class="blocker-dismiss" @click="dismissCurrent">
-          Dismiss — don't show again
-        </Button>
-      </div>
-      <p class="blocker-foot">
-        Swipe down to fold it into the strip — the session stays paused and
-        flagged either way
-      </p>
-    </div>
-  </div>
-
-  <!-- Full, desktop: a sticky banner above the page content. -->
-  <div v-else-if="bannerVisible" class="blocker-banner" role="alert">
-    <BlockerHead>
-      <Button size="sm" variant="ghost" class="ml-auto blocker-later" @click="foldBlocker">
-        Fold
-      </Button>
       <Button
         v-if="blocker.id"
         size="sm"
@@ -168,20 +98,14 @@ function handleClick() {
         Dismiss &times;
       </Button>
     </BlockerHead>
-
-    <div class="blocker-question">{{ blocker.question || blocker.title }}</div>
-    <div v-if="blocker.session_title" class="blocker-session">↳ {{ blocker.session_title }}</div>
-
-    <BlockerActions :row="blocker" />
-
-    <!-- No "Mark read" here on purpose. Reading is not answering: the card
-         would go read while the agent stayed parked, and the banner would
-         (correctly) refuse to close — a button that visibly does nothing. -->
-    <p class="blocker-foot blocker-foot-end">
-      Fold keeps it in the strip; Dismiss removes this decision for good.
-      The session stays paused and flagged either way.
-    </p>
   </div>
+
+  <!-- Teleported: the scrim carries a backdrop-filter, and any transformed or
+       filtered ancestor inside the scroller would make `position: fixed`
+       resolve against that ancestor instead of the viewport. -->
+  <Teleport to="body">
+    <BlockerPopout v-if="popoutVisible" />
+  </Teleport>
 </template>
 
 <style scoped>
@@ -200,11 +124,8 @@ function handleClick() {
    question it was carrying. The alert lives in the border, the dot and the
    pill; the fill only has to separate the card from the page. */
 .blocker-banner {
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
   margin-bottom: 1rem;
-  padding: 0.85rem 1rem;
+  padding: 0.7rem 1rem;
   border: 1px solid var(--color-red-200);
   background: var(--color-amber-50);
   border-radius: 0.75rem;
@@ -234,17 +155,49 @@ function handleClick() {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.blocker-question {
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: -0.012em;
-  color: var(--color-fg);
-  line-height: 1.45;
-  white-space: pre-line;
+/* Mobile bar ---------------------------------------------------------- */
+.blocker-bar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  /* Above the topics comments-drawer backdrop (60), which otherwise laid a
+     40%-opacity scrim over the Answer/Fold buttons of a STOPPED agent and made
+     them unclickable. Still below the pop-out's 90. */
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.85rem calc(0.5rem + env(safe-area-inset-bottom));
+  background: var(--color-surface);
+  border-top: 2px solid var(--color-danger);
+  box-shadow: 0 -6px 20px rgb(15 23 42 / 14%);
+  animation: bar-up 0.28s cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
 
-.blocker-session {
-  font-size: 0.72rem;
+@keyframes bar-up {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: none; }
+}
+
+.blocker-bar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.blocker-bar-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.blocker-bar-meta {
+  font-size: 0.7rem;
   color: var(--color-fg-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow: hidden;
@@ -252,21 +205,19 @@ function handleClick() {
   white-space: nowrap;
 }
 
-.blocker-foot {
-  font-size: 0.7rem;
-  color: var(--color-fg-muted);
-  margin: 0;
+/* Thumb targets, not chrome: 44pt is the floor for anything on a phone. */
+.blocker-bar-btn {
+  flex: none;
+  min-height: 44px;
+  min-width: 44px;
+  padding-inline: 0.75rem;
 }
-
-.blocker-foot-end { align-self: flex-end; text-align: end; }
 
 .blocker-later { color: var(--color-warning-strong); }
 
 /* Quieter than Fold: dismiss is the rarer, sharper action (it never comes
    back), so it must not read as the default way out. */
 .blocker-dismiss { color: var(--color-fg-muted); }
-
-.blocker-outs { display: flex; justify-content: flex-end; }
 
 .blocker-dot {
   width: 8px;
@@ -283,68 +234,10 @@ function handleClick() {
   50% { opacity: 0.15; }
 }
 
-/* Scrim + sheet (mobile) --------------------------------------------- */
-/* Tapping the scrim is the standard "leave it for now" gesture, so it is a
-   real target: pointer cursor, and it darkens on hover to say so. */
-.blocker-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  background: rgb(15 23 42 / 42%);
-  display: flex;
-  align-items: flex-end;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.blocker-scrim:hover { background: rgb(15 23 42 / 52%); }
-
-.blocker-scrim:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: -2px;
-}
-
-.blocker-sheet {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  padding: 0.6rem 1rem 1.6rem;
-  background: var(--color-surface);
-  border-top: 2px solid var(--color-danger);
-  border-radius: 1.375rem 1.375rem 0 0;
-  box-shadow: 0 -14px 40px rgb(15 23 42 / 28%);
-  touch-action: none;
-  animation: sheet-up 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both;
-  cursor: default;
-}
-
-@keyframes sheet-up {
-  from { opacity: 0; transform: translateY(100%); }
-  to { opacity: 1; transform: none; }
-}
-
-.blocker-grabber {
-  flex: none;
-  align-self: center;
-  width: 72px;
-  height: 1.75rem;
-  padding: 0;
-  touch-action: none;
-}
-
-.blocker-grabber-bar {
-  display: block;
-  width: 44px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--color-border-strong);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .blocker-banner,
   .blocker-strip,
-  .blocker-sheet { animation: none; }
+  .blocker-bar { animation: none; }
 
   .blocker-dot-blink { animation: none; }
 }

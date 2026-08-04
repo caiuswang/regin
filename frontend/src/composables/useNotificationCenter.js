@@ -56,6 +56,15 @@ const foldedIds = ref(new Set())
 const blockers = shallowRef([])
 const blockerIndex = ref(0)
 const blockerFolded = ref(false)
+// The decision itself now lives in a pop-out; the banner is only the flag that
+// one is waiting. Kept here rather than in the component so the strip, the
+// banner and the mobile bar all open the SAME surface, and so an arriving
+// blocker can raise it under the `autoPopout` pref.
+const popoutOpen = ref(false)
+// cardKey → the option index the operator has selected but not yet sent.
+// Selection is deliberately separate from delivery: the previous banner sent on
+// the first click, so a mis-tap answered the agent with no way back.
+const choices = ref({})
 const resumedTraceId = ref(null)
 const suppressed = ref(false)
 const now = ref(Date.now())
@@ -115,6 +124,28 @@ export const bannerVisible = computed(
   () => !!blocker.value && !blockerFolded.value && !suppressed.value)
 export const stripVisible = computed(
   () => !!blocker.value && blockerFolded.value && !suppressed.value)
+
+// NOT gated on `suppressed`: suppression means "you are already looking at the
+// queue", which is a reason not to raise the banner unasked — but the pop-out
+// is only ever open because someone opened it, and closing it out from under a
+// navigation would discard a selection they had already made.
+export const popoutVisible = computed(() => popoutOpen.value && !!blocker.value)
+
+// (trace_id, msg_key) is the identity `sameCard` and `store.dismiss_keyed`
+// retire by — but a SELECTION is only valid for the exact prompt it was made
+// against, so `version` is part of this key too. A re-prompt supersedes in
+// place under the same key; without the version a pending pick survived into
+// the new prompt and left Send armed with the OLD option index against a
+// different list of options. NOT the message id: a card assembled for a park
+// no emit produced a row for carries `id: null`, so every stub would collide.
+function cardKey(card) {
+  return card ? `${card.trace_id}::${card.msg_key}::${card.version || 1}` : ''
+}
+
+export const blockerChoice = computed(() => {
+  const at = choices.value[cardKey(blocker.value)]
+  return at === undefined ? null : at
+})
 
 function waitedFor(row) {
   const since = row && parkedSince.get(row.trace_id)
@@ -176,6 +207,12 @@ function raiseBlocker(message, replay) {
   blockerFolded.value = false
   resumedTraceId.value = null
   if (!replay) osNotify(message, 1)
+  // Opt-in: raising a modal unasked steals focus from whatever the operator was
+  // typing. Replayed history never raises it (reconnecting after lunch would
+  // stack a dozen), nor does a page that already suppresses the banner — the
+  // queue is on screen there, so the modal would cover its own list.
+  const { prefs } = useNotificationPrefs()
+  if (!replay && prefs.autoPopout && !suppressed.value) popoutOpen.value = true
   refreshBlockers()
 }
 
@@ -330,7 +367,13 @@ function clearBlocker(card, { resumed = true } = {}) {
   for (const id of [traceId, ...(card?.alias_trace_ids || [])]) {
     if (id && !held.has(id)) parkedSince.delete(id)
   }
-  if (!remaining.length) blockerFolded.value = false
+  const dropped = { ...choices.value }
+  delete dropped[cardKey(card)]
+  choices.value = dropped
+  if (!remaining.length) {
+    blockerFolded.value = false
+    popoutOpen.value = false
+  }
   // Nor may the row read "resumed" while the session's other prompt is parked.
   if (!traceId || !resumed) return
   if (remaining.some(b => b.trace_id === traceId)) return
@@ -347,11 +390,35 @@ function clearBlocker(card, { resumed = true } = {}) {
 // until the user reopens it or the queue empties. No timer — an auto-reopen
 // took the choice back out of the user's hands 45 seconds after they made it.
 function foldBlocker() {
-  if (blocker.value) blockerFolded.value = true
+  if (!blocker.value) return
+  blockerFolded.value = true
+  // Folding is "not now", so it takes the pop-out down with it — leaving the
+  // modal over a banner that is no longer there would strand the operator on a
+  // surface with nothing behind it. The half-made selection goes too: coming
+  // back later to a pre-armed Send is how a stale pick gets delivered.
+  closePopout()
 }
 
-function unfoldBlocker() {
+function openPopout() {
+  if (blocker.value) popoutOpen.value = true
+}
+
+function closePopout() {
+  popoutOpen.value = false
+  choices.value = {}
+}
+
+// What every "Answer" control does, wherever it sits: the banner cannot answer
+// anything on its own any more, so unfolding without opening the pop-out would
+// make the strip's button a no-op that just swaps one flag for another.
+function openDecision() {
   blockerFolded.value = false
+  openPopout()
+}
+
+function chooseOption(card, index) {
+  if (!card) return
+  choices.value = { ...choices.value, [cardKey(card)]: index }
 }
 
 // Dismiss is the "never show this decision again" promise — server-backed
@@ -443,6 +510,8 @@ function reset() {
   // Anything still in flight resolved against the user who just went away.
   refreshGen += 1
   blockerFolded.value = false
+  popoutOpen.value = false
+  choices.value = {}
   resumedTraceId.value = null
   started = false
   // `suppressed` and `openHandler` are deliberately NOT cleared: they are
@@ -498,10 +567,23 @@ async function refreshBlockers({ retries = 1 } = {}) {
   for (const id of [...parkedSince.keys()]) {
     if (!kept.has(id)) parkedSince.delete(id)
   }
+  // A card the server no longer lists takes its half-made selection with it.
+  // The key is (trace_id, msg_key), so a re-park under the same key in that
+  // session would otherwise inherit a pre-armed Send from the last prompt.
+  const live = new Set(rows.map(cardKey))
+  choices.value = Object.fromEntries(
+    Object.entries(choices.value).filter(([key]) => live.has(key)))
   // Hold the reader on the card they were reading, wherever it moved to.
   const at = anchor ? rows.findIndex(r => sameCard(r, anchor)) : -1
   blockerIndex.value = at >= 0 ? at : 0
-  if (!rows.length) blockerFolded.value = false
+  // Not just `blockerFolded`: this is the path an answer-in-the-terminal takes
+  // when its `resolved` frame is missed, so it empties the queue WITHOUT going
+  // through `clearBlocker`. Leaving `popoutOpen` set meant the next arriving
+  // blocker raised a modal that stole focus — against `autoPopout: false`.
+  if (!rows.length) {
+    blockerFolded.value = false
+    closePopout()
+  }
 }
 
 // Tier-2 history for the badge's fold accounting. Replayed, so nothing pops:
@@ -571,9 +653,11 @@ export function useNotificationCenter() {
   return {
     toasts, folded, blocker, blockers, blockerFolded, resumedTraceId,
     suppressed, awaitingTraceIds, bannerVisible, stripVisible,
+    popoutVisible, blockerChoice,
     blockerWaitedFor, waitedForTrace, blockerCount, blockerPos,
     ingest, retire, fold, drop, markRead, reset, hydrate, refreshBlockers,
-    foldBlocker, unfoldBlocker, dismissBlocker, clearBlocker,
+    foldBlocker, dismissBlocker, clearBlocker,
+    openPopout, closePopout, openDecision, chooseOption,
     nextBlocker, prevBlocker, showBlockerAt,
     answerBlocker, decideBlocker,
     setSuppressed: (value) => { suppressed.value = !!value },

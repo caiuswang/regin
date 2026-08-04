@@ -192,6 +192,19 @@ test.describe('notification tiers', () => {
   })
 })
 
+// The banner is a one-line FLAG now — dot, title, session, clock, pager, and
+// three controls. The question, its options and the send button live in the
+// pop-out that `Answer` opens (role=dialog, teleported to <body>, so it is
+// outside the banner's own `role="alert"` subtree). Tests that need the
+// decision itself open it; tests that only need "a decision is waiting" assert
+// on the banner.
+async function openDecision(page) {
+  await page.locator('.blocker-banner').getByRole('button', { name: /^Answer/ }).click()
+  const popout = page.getByRole('dialog')
+  await expect(popout).toBeVisible()
+  return popout
+}
+
 test.describe('blocker banner', () => {
   // Unique per run so a row left behind by an earlier failure can never be
   // mistaken for the one this test just raised.
@@ -216,25 +229,67 @@ test.describe('blocker banner', () => {
       traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
     }))
 
-    const banner = page.getByRole('alert').filter({ hasText: QUESTION })
+    const banner = page.locator('.blocker-banner')
     await expect(banner).toBeVisible({ timeout: 10_000 })
+    // The header carries the card's title, not its body — the question is one
+    // click away so the banner cannot grow with whatever the agent wrote.
+    await expect(banner).toContainText('The agent is asking you a question')
+    await expect(banner.getByText(QUESTION)).toHaveCount(0)
 
+    const popout = await openDecision(page)
+    await expect(popout.getByText(QUESTION)).toBeVisible()
     // Options come out of the body as separate rows, not one blob of text.
-    await expect(banner.getByText('Escape only, then warn')).toBeVisible()
-    await expect(banner.getByText('Detect + report only')).toBeVisible()
-    await expect(banner.getByRole('button', { name: /Open live session/ })).toBeVisible()
+    await expect(popout.getByText('Escape only, then warn')).toBeVisible()
+    await expect(popout.getByText('Detect + report only')).toBeVisible()
+    await expect(popout.getByRole('button', { name: /Open live session/ })).toBeVisible()
 
     // "Fold" collapses, it does not close: the agent is still parked, so the
-    // collapsed strip has to keep saying so.
-    await banner.getByRole('button', { name: 'Fold', exact: true }).click()
+    // collapsed strip has to keep saying so. It takes the pop-out with it —
+    // a modal left over a banner that is gone has nothing behind it.
+    await popout.getByRole('button', { name: 'Fold', exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.getByText('1 decision waiting')).toBeVisible()
     await expect(page.getByText(QUESTION)).toHaveCount(0)
 
+    // The strip's Answer reopens the decision, not merely the banner: the
+    // banner can no longer answer anything on its own.
     await page.getByRole('button', { name: 'Answer', exact: true }).click()
-    await expect(page.getByText(QUESTION)).toBeVisible()
+    await expect(page.getByRole('dialog').getByText(QUESTION)).toBeVisible()
     expect(failures).toEqual([])
     await cleanup(page, ids)
   })
+
+  // The header used to be a nowrap row, which clipped Dismiss out of reach
+  // somewhere around 900px — the width where the title, the session ref and
+  // the three controls first stop fitting on one line.
+  test('the action cluster wraps intact rather than clipping Dismiss',
+    async ({ page }) => {
+      const ids = []
+      clearBlockers()
+      await page.setViewportSize({ width: 900, height: 800 })
+      await page.goto('/trace/sessions')
+      await streamReady(page)
+
+      ids.push(record({
+        type: 'blocker', title: 'The agent is asking you a question', body: BODY,
+        traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
+      }))
+
+      const banner = page.locator('.blocker-banner')
+      await expect(banner).toBeVisible({ timeout: 10_000 })
+
+      const box = await banner.boundingBox()
+      // Every control, not just the last one: they share a flex:none group, so
+      // a regression that breaks the group apart shows up on whichever wraps.
+      for (const name of [/^Answer/, /^Fold$/, /^Dismiss/]) {
+        const btn = banner.getByRole('button', { name })
+        await expect(btn).toBeVisible()
+        const at = await btn.boundingBox()
+        expect(at.x).toBeGreaterThanOrEqual(box.x)
+        expect(at.x + at.width).toBeLessThanOrEqual(box.x + box.width + 1)
+      }
+      await cleanup(page, ids)
+    })
 
   // Dismiss is not fold: no strip may remain, and a reload must not
   // resurrect the card — `dismissed_at` is server truth, not tab state.
@@ -248,9 +303,11 @@ test.describe('blocker banner', () => {
       type: 'blocker', title: 'The agent is asking you a question', body: BODY,
       traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
     }))
-    const banner = page.getByRole('alert').filter({ hasText: QUESTION })
+    const banner = page.locator('.blocker-banner')
     await expect(banner).toBeVisible({ timeout: 10_000 })
 
+    // Dismiss stays on the banner itself: it is the one out that needs no
+    // reading of the question, so it must not require opening the pop-out.
     await banner.getByRole('button', { name: /Dismiss/ }).click()
     await expect(page.getByRole('alert')).toHaveCount(0)
     await expect(page.getByText('1 decision waiting')).toHaveCount(0)
@@ -271,7 +328,7 @@ test.describe('blocker banner', () => {
       type: 'blocker', title: 'Question', body: BODY,
       traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
     }))
-    await expect(page.getByText(QUESTION)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
     // Colour comes from the counts frame, not a per-tab guess, so it agrees
     // with what the server thinks is unread.
     await expect(page.locator('.sb-badge-danger')).toHaveCount(1)
@@ -311,11 +368,12 @@ test.describe('blocker banner', () => {
     const row = page.locator('.srow--awaiting')
     await expect(row).toHaveCount(1, { timeout: 10_000 })
     await expect(row.getByText(/awaiting decision/)).toBeVisible()
+    await expect(page.locator('.blocker-banner')).toBeVisible()
 
     // Answered in the terminal: the hook dismisses the keyed card out of
     // process, and both surfaces must settle with no interaction here.
     expect(resolveKeyed(traceId, 'permission-pending')).toBe(1)
-    await expect(page.getByText(QUESTION)).toHaveCount(0, { timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toHaveCount(0, { timeout: 10_000 })
     await expect(page.locator('.srow--awaiting')).toHaveCount(0)
     await expect(page.locator('.srow__resumed')).toHaveCount(1)
   })
@@ -340,7 +398,7 @@ test.describe('reading is not answering', () => {
     record({ type: 'warning', title: toastTitle, body: 'Folds away on read.',
       traceId: `e2e-${randomUUID()}` })
 
-    await expect(page.getByText(QUESTION)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText(toastTitle)).toBeVisible()
 
     const res = await page.evaluate(async () => {
@@ -358,7 +416,8 @@ test.describe('reading is not answering', () => {
 
     // The acknowledged toast goes; the parked agent's question stays.
     await expect(page.getByText(toastTitle)).toHaveCount(0, { timeout: 10_000 })
-    await expect(page.getByText(QUESTION)).toBeVisible()
+    await expect(page.locator('.blocker-banner')).toBeVisible()
+    await expect((await openDecision(page)).getByText(QUESTION)).toBeVisible()
     // …and nothing claims the session resumed, because nothing did.
     await expect(page.locator('.srow__resumed')).toHaveCount(0)
   })
@@ -388,7 +447,7 @@ test.describe('hiding a blocker card is not answering it', () => {
 
       const id = record({ type: 'blocker', title: 'Question', body: question,
         traceId, key: 'permission-pending' })
-      await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
       await expect(page.locator('.srow--awaiting')).toHaveCount(1)
 
       const status = await page.evaluate(async (messageId) => {
@@ -400,7 +459,7 @@ test.describe('hiding a blocker card is not answering it', () => {
       }, id)
       expect(status).toBe(200)
 
-      await expect(page.getByText(question)).toHaveCount(0, { timeout: 10_000 })
+      await expect(page.locator('.blocker-banner')).toHaveCount(0, { timeout: 10_000 })
       await expect(page.locator('.srow--awaiting')).toHaveCount(0)
       // The agent was never un-parked, so nothing may say it resumed.
       await expect(page.locator('.srow__resumed')).toHaveCount(0)
@@ -424,7 +483,7 @@ test.describe('unknown retire reasons fail closed', () => {
       key: 'permission-pending' })
     record({ type: 'warning', title: toastTitle, body: 'Should survive.',
       traceId: `e2e-${randomUUID()}` })
-    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText(toastTitle)).toBeVisible()
 
     // Straight at the loopback trigger — no reason, and a reason this build
@@ -445,7 +504,7 @@ urllib.request.urlopen(req, timeout=2).read()
 `], { cwd: ROOT })
     }
     await page.waitForTimeout(2_500)
-    await expect(page.getByText(question)).toBeVisible()
+    await expect(page.locator('.blocker-banner')).toBeVisible()
     await expect(page.getByText(toastTitle)).toBeVisible()
   })
 })
@@ -484,10 +543,10 @@ test.describe('a blocker survives a reload', () => {
 
     const id = record({ type: 'blocker', title: 'Question', body: question,
       traceId: `e2e-${randomUUID()}`, key: 'permission-pending' })
-    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
 
     await page.reload()
-    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
 
     // Read is not answered: the feed behind the banner is gated on dismissal,
     // never on `read_at`, so acknowledging it must not lose it across a reload.
@@ -502,7 +561,8 @@ test.describe('a blocker survives a reload', () => {
       })
     })
     await page.reload()
-    await expect(page.getByText(question)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+    await expect((await openDecision(page)).getByText(question)).toBeVisible()
     await cleanup(page, [id])
   })
 
@@ -548,14 +608,19 @@ test.describe('several agents parked at once', () => {
       }))
     }
 
-    const banner = page.getByRole('alert')
+    const banner = page.locator('.blocker-banner')
     await expect(banner.getByText('Decision 1 of 3')).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByText(`Decision 0 of ${tag}`)).toBeVisible()
 
-    await banner.getByRole('button', { name: 'Next decision' }).click()
+    // The pop-out carries the pager too, so the operator can read through the
+    // queue without closing and reopening it once per decision.
+    const popout = await openDecision(page)
+    await expect(popout.getByText(`Decision 0 of ${tag}`)).toBeVisible()
+    await popout.getByRole('button', { name: 'Next decision' }).click()
+    await expect(popout.getByText(`Decision 1 of ${tag}`)).toBeVisible()
+    await expect(popout).toBeVisible()
+    await popout.getByRole('button', { name: 'Close without answering' }).click()
+
     await expect(banner.getByText('Decision 2 of 3')).toBeVisible()
-    await expect(page.getByText(`Decision 1 of ${tag}`)).toBeVisible()
-
     // Wraps rather than dead-ending, so a three-item pager needs no bounds UI.
     await banner.getByRole('button', { name: 'Next decision' }).click()
     await banner.getByRole('button', { name: 'Next decision' }).click()
@@ -615,28 +680,131 @@ test.describe('answering from anywhere', () => {
     // Deliberately NOT /live or /trace — the whole point is reach.
     await page.goto('/patterns')
 
-    const banner = page.getByRole('alert')
-    await expect(banner.getByText('Pick a lane')).toBeVisible({ timeout: 10_000 })
-    await banner.getByRole('button', { name: 'Right lane' }).click()
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+    const popout = await openDecision(page)
+    await expect(popout.getByText('Pick a lane')).toBeVisible()
+
+    // Picking is not sending. The banner is reachable from every page in the
+    // app, so a one-tap answer meant a mis-click could answer a stopped agent
+    // with nothing to undo it — Send is the confirmation.
+    const send = popout.getByRole('button', { name: /Send decision/ })
+    await expect(send).toBeDisabled()
+    await popout.getByRole('radio', { name: /Right lane/ }).click()
+    await expect(send).toBeEnabled()
+    await send.click()
 
     await expect.poll(() => sent.length).toBe(1)
     expect(sent[0].url).toContain('/api/sessions/stub-trace/bridge-answer')
     expect(sent[0].body).toMatchObject({ option_index: 1, label: 'Right lane' })
     await expect(page.getByRole('alert')).toHaveCount(0)
+    // The pop-out goes with the card it was answering.
+    await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 
   test('a refused send leaves the agent parked and says so', async ({ page }) => {
     const sent = await stubFeed(page, { delivered: false })
     await page.goto('/patterns')
 
-    const banner = page.getByRole('alert')
-    await expect(banner.getByText('Pick a lane')).toBeVisible({ timeout: 10_000 })
-    await banner.getByRole('button', { name: 'Left lane' }).click()
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+    const popout = await openDecision(page)
+    await expect(popout.getByText('Pick a lane')).toBeVisible()
+    await popout.getByRole('radio', { name: /Left lane/ }).click()
+    await popout.getByRole('button', { name: /Send decision/ }).click()
 
     await expect.poll(() => sent.length).toBe(1)
     // The agent never got the answer, so the surface must not claim it did.
     await expect(page.getByText(/Not delivered/)).toBeVisible()
-    await expect(banner.getByText('Pick a lane')).toBeVisible()
+    await expect(popout.getByText('Pick a lane')).toBeVisible()
+    await expect(page.locator('.blocker-banner')).toBeVisible()
+  })
+})
+
+test.describe('paging does not carry one card state onto another', () => {
+  // The pop-out stays mounted while the pager swaps the card under it, so its
+  // local send state has to be scoped to the card. A refused send used to
+  // leave "Not delivered" rendered under the NEXT agent's question — an error
+  // attributed to a decision it was never about.
+  const TWO = {
+    blockers: [0, 1].map(i => ({
+      id: 999010 + i, version: 1, trace_id: `stub-pair-${i}`,
+      msg_key: 'permission-pending', msg_type: 'blocker', title: 'Question',
+      body: '', session_title: `pair-${i}`, kind: 'question',
+      created_at: new Date().toISOString(), span_id: `toolu_pair_${i}`,
+      question: `Question number ${i}`, header: '', multi_select: false,
+      options: [{ index: 0, label: `Option ${i}A`, description: '' }],
+      bridge_reachable: true, sdk_owned: false, answerable: 'question',
+    })),
+  }
+
+  test('a refused send does not leave its error on the next decision',
+    async ({ page }) => {
+      await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(TWO),
+      }))
+      await page.route('**/api/sessions/*/bridge-answer', route => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ delivered: false, detail: 'pane gone' }),
+      }))
+      await page.goto('/patterns')
+
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+      await expect(popout.getByText('Question number 0')).toBeVisible()
+      await popout.getByRole('radio', { name: /Option 0A/ }).click()
+      await popout.getByRole('button', { name: /Send decision/ }).click()
+      await expect(popout.getByText(/Not delivered/)).toBeVisible()
+
+      await popout.getByRole('button', { name: 'Next decision' }).click()
+      await expect(popout.getByText('Question number 1')).toBeVisible()
+      // The failure belonged to card 0, and card 0 is not on screen.
+      await expect(popout.getByText(/Not delivered/)).toHaveCount(0)
+      // …and the selection did not travel either, so Send is armed for nothing.
+      await expect(popout.getByRole('button', { name: /Send decision/ })).toBeDisabled()
+    })
+})
+
+test.describe('a superseded prompt does not inherit the last pick', () => {
+  // A re-prompt supersedes IN PLACE: same (trace_id, msg_key), new `version`,
+  // new question, new options. A selection is only valid for the exact prompt
+  // it was made against, so it must not survive — a carried-over index would
+  // leave Send armed against a different list, one click from mis-answering.
+  const card = version => ({
+    blockers: [{
+      id: 999020, version, trace_id: 'stub-sup', msg_key: 'permission-pending',
+      msg_type: 'blocker', title: 'Question', body: '', session_title: 'sup',
+      created_at: new Date().toISOString(), kind: 'question',
+      span_id: 'toolu_sup', header: '', multi_select: false,
+      question: version === 1 ? 'First question' : 'Second question',
+      options: [{ index: 0, label: `Option ${version}A`, description: '' }],
+      bridge_reachable: true, sdk_owned: false, answerable: 'question',
+    }],
+  })
+
+  test('the pick and any error reset when the version advances', async ({ page }) => {
+    clearBlockers()
+    let version = 1
+    await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(card(version)),
+    }))
+    await page.goto('/trace/sessions')
+    await streamReady(page)
+
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+    const popout = await openDecision(page)
+    await expect(popout.getByText('First question')).toBeVisible()
+    await popout.getByRole('radio', { name: /Option 1A/ }).click()
+    await expect(popout.getByRole('button', { name: /Send decision/ })).toBeEnabled()
+
+    // A real tier-1 frame is what makes the client re-read the feed; the stub
+    // answers that read with the superseded card.
+    version = 2
+    const id = record({ type: 'blocker', title: 'Question', body: 'reprompt',
+      traceId: `e2e-${randomUUID()}`, key: 'permission-pending' })
+
+    await expect(popout.getByText('Second question')).toBeVisible({ timeout: 10_000 })
+    // The pick belonged to version 1 and its options are gone with it.
+    await expect(popout.getByRole('button', { name: /Send decision/ })).toBeDisabled()
+    await cleanup(page, [id])
   })
 })
 
@@ -665,12 +833,17 @@ test.describe('a blocker the operator cannot answer', () => {
     }))
     await page.goto('/patterns')
 
-    const banner = page.getByRole('alert')
-    await expect(banner.getByText('Unreachable prompt')).toBeVisible({ timeout: 10_000 })
-    await expect(banner.getByText('Prose one')).toBeVisible()
-    // Shown, not clickable: every option here has `index: null`.
-    await expect(banner.getByRole('button', { name: 'Prose one' })).toHaveCount(0)
-    await expect(banner.getByRole('button', { name: /Open live session/ })).toBeVisible()
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+    const popout = await openDecision(page)
+    await expect(popout.getByText('Unreachable prompt')).toBeVisible()
+    await expect(popout.getByText('Prose one')).toBeVisible()
+    // Shown, not clickable: every option here has `index: null`. The radio
+    // list is the `question` shape only — this one keeps the chips, and with
+    // them there is nothing for Send to send, so it must not be offered.
+    await expect(popout.getByRole('button', { name: 'Prose one' })).toHaveCount(0)
+    await expect(popout.getByRole('radio')).toHaveCount(0)
+    await expect(popout.getByRole('button', { name: /Send decision/ })).toHaveCount(0)
+    await expect(popout.getByRole('button', { name: /Open live session/ })).toBeVisible()
     expect(warnings.filter(w => /Duplicate keys/i.test(w))).toEqual([])
   })
 })
@@ -702,16 +875,18 @@ test.describe('one session, two parked prompts', () => {
     record({ type: 'blocker', title: 'Plan', body: planQ,
       traceId, key: 'plan-pending' })
 
-    const banner = page.getByRole('alert')
+    const banner = page.locator('.blocker-banner')
     await expect(banner.getByText('Decision 1 of 2')).toBeVisible({ timeout: 10_000 })
 
     // Answer only the permission prompt, the way the terminal would.
     expect(resolveKeyed(traceId, 'permission-pending')).toBe(1)
 
-    await expect(page.getByText(permQ)).toHaveCount(0, { timeout: 10_000 })
+    await expect(banner.getByText(/Decision 1 of 2/)).toHaveCount(0, { timeout: 10_000 })
     // The plan is still waiting — the agent is still stopped.
-    await expect(page.getByText(planQ)).toBeVisible()
-    await expect(banner.getByText(/Decision 1 of 2/)).toHaveCount(0)
+    const popout = await openDecision(page)
+    await expect(popout.getByText(planQ)).toBeVisible()
+    await expect(popout.getByText(permQ)).toHaveCount(0)
+    await popout.getByRole('button', { name: 'Close without answering' }).click()
     // …so the row must still say "awaiting", never "resumed".
     await expect(page.locator('.srow--awaiting')).toHaveCount(1)
     await expect(page.locator('.srow__resumed')).toHaveCount(0)
@@ -761,8 +936,9 @@ test.describe('a failed enrichment does not strand the card', () => {
     await page.goto('/patterns')
 
     // The first GET failed; the retry is what produces this.
-    await expect(page.getByRole('alert').getByRole('button', { name: 'Only after retry' }))
-      .toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 15_000 })
+    const popout = await openDecision(page)
+    await expect(popout.getByRole('radio', { name: 'Only after retry' })).toBeVisible()
     expect(calls).toBeGreaterThan(1)
   })
 })

@@ -22,6 +22,9 @@ import { useNotificationCenter } from '../../composables/useNotificationCenter'
 const props = defineProps({
   row: { type: Object, required: true },
   compact: { type: Boolean, default: false },
+  // The pop-out's footer owns the escape hatch for every shape, so it turns
+  // this off rather than rendering a second identical button beside its own.
+  showLive: { type: Boolean, default: true },
 })
 
 const router = useRouter()
@@ -119,7 +122,13 @@ function confirmDecision() {
       </span>
     </template>
 
-    <Button size="sm" variant="ghost" class="blocker-open-live" @click="openLive">
+    <Button
+      v-if="showLive"
+      size="sm"
+      variant="ghost"
+      class="blocker-open-live"
+      @click="openLive"
+    >
       Open live session →
     </Button>
   </div>

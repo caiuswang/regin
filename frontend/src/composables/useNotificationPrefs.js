@@ -13,6 +13,9 @@ const DEFAULTS = {
   // Tier 2 is the only tier with anything to mute: tier 1 must interrupt and
   // tier 3 never pops in the first place.
   toastsEnabled: true,
+  // Off by default: the pop-out takes focus, and an operator typing when an
+  // agent parks should get the banner, not a modal over their cursor.
+  autoPopout: false,
 }
 
 const LIMITS = {
@@ -36,6 +39,7 @@ function load() {
         raw.toastDurationSec ?? DEFAULTS.toastDurationSec),
       osEnabled: !!raw.osEnabled,
       toastsEnabled: raw.toastsEnabled !== false,
+      autoPopout: !!raw.autoPopout,
     }
   } catch {
     return { ...DEFAULTS }
