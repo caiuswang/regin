@@ -284,7 +284,7 @@ onMounted(loadSchemas)
       </div>
       <div class="page-actions">
         <ToggleSwitch
-          :model-value="diagEnabled"
+          :model-value="diagEnabled === true"
           @change="toggleDiagnostics"
           on-label="Diagnostics on"
           off-label="Diagnostics off"
@@ -292,7 +292,9 @@ onMounted(loadSchemas)
       </div>
     </header>
 
-    <div v-if="!diagEnabled" class="banner banner-warn">
+    <!-- === false: null means the state fetch hasn't answered yet, and the
+         warning must not flash for installs where diagnostics is on. -->
+    <div v-if="diagEnabled === false" class="banner banner-warn">
       <Badge color="yellow" label="off" />
       Diagnostics is off — no new drift will be recorded. Rows below are historical.
     </div>
