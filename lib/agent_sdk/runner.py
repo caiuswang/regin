@@ -52,6 +52,7 @@ from lib.agent_events import (
     AssistantThinking,
     PermissionRequested,
     PermissionResolved,
+    PromptDelivered,
     SessionEnded,
     SessionStarted,
     ToolCall,
@@ -66,6 +67,7 @@ from lib.agent_events.usage import context_tokens, turn_uuid
 from lib.agent_events.ask import ask_questions
 from lib.agent_events.from_sdk import from_sdk_message, prompt_event
 from lib.settings import settings
+from lib.trace.pending_spans import prompt_placeholder_id
 from . import client, policy, registry, store
 from .answers import build_updated_input
 
@@ -254,6 +256,13 @@ class AgentRunner:
         # before the session is even reachable, so "the first turn" is exactly
         # the prompt that was announced.
         self._prompt_announced = prompt_announced
+        # Placeholder ids of prompts regin has sent whose delivery echo has not
+        # come back yet. The transcript also carries user-role entries nobody
+        # submitted — a Skill invocation delivers its body as one — and
+        # recording those as `prompt` rows plants a bogus turn anchor that the
+        # serve-time orphan graft then files real spans under. Only an echo
+        # whose text hashes back to one of these ids is a prompt.
+        self._submitted_prompt_ids: set[str] = set()
         self.trace_id = trace_id
         self.cwd = cwd
         self.options = options
@@ -356,12 +365,30 @@ class AgentRunner:
         if isinstance(event, TurnCompleted):
             await self._ingest_usage(event, turn)
             return
+        if isinstance(event, PromptDelivered) and not self._prompt_expected(event):
+            return
         self._track_model(event)
         await self._emit(self._stamp_turn(event, turn))
         if isinstance(event, TurnFailed):
             # An interrupted turn spent its tokens too, and it has a span AND a
             # usage row — the only event that produces both.
             await self._ingest_usage(event, turn)
+
+    def _prompt_expected(self, event: PromptDelivered) -> bool:
+        """Whether this delivery echo answers a prompt regin submitted.
+
+        Matching consumes the id: each submit is answered by exactly one echo,
+        and the same text re-submitted later re-registers it. An echo that
+        matches nothing is injected harness content riding a user-role message,
+        not a prompt — dropping it loses nothing, since a real prompt whose
+        echo never matches still renders from its placeholder (or the child
+        session's own hook-written anchor) via the serve-time merge.
+        """
+        placeholder = prompt_placeholder_id(self.trace_id, event.text)
+        if placeholder not in self._submitted_prompt_ids:
+            return False
+        self._submitted_prompt_ids.discard(placeholder)
+        return True
 
     def _track_model(self, event) -> None:
         """Remember the model the agent is answering on, so the turn-usage row
@@ -1088,6 +1115,8 @@ class AgentRunner:
         """
         if self._stream_dead:
             return
+        self._submitted_prompt_ids.add(
+            prompt_placeholder_id(self.trace_id, text))
         if self._prompt_announced:
             self._prompt_announced = False
         else:

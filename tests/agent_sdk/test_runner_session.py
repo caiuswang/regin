@@ -687,3 +687,62 @@ def test_an_unannounced_run_records_every_prompt(captured, fake_client):
     _run(_session("sdk-ann3", ["hello", "and again"]))
 
     assert _prompt_texts(captured["spans"]) == ["hello", "and again"]
+
+
+@dataclass
+class UserMessage:
+    content: str | list
+    uuid: str | None = None
+    parent_tool_use_id: str | None = None
+
+
+class EchoingClient(FakeClient):
+    """Echoes each prompt back as its transcript user entry — and slips in an
+    injected user-role message the way a Skill invocation delivers its body."""
+
+    async def query(self, text):
+        self.prompts.append(text)
+        self.push(
+            UserMessage(content=text, uuid=f"echo-{len(self.prompts)}-000000000"),
+            UserMessage(content="Base directory for this skill: /x/skills/y",
+                        uuid="not-a-prompt-0000000"),
+            *self.turn_frames(),
+        )
+
+
+@pytest.fixture
+def echoing_client(monkeypatch):
+    client = EchoingClient()
+    monkeypatch.setattr(runner_mod.client, "new_client", lambda **kw: client)
+    monkeypatch.setattr(runner_mod.store, "upsert_run", lambda *a, **kw: None)
+    monkeypatch.setattr(settings.agent_sdk, "enabled", True)
+    monkeypatch.setattr(settings.agent_sdk, "model", "claude-opus-5")
+    return client
+
+
+def test_an_injected_user_message_is_not_a_prompt(captured, echoing_client):
+    """The harness rides skill bodies (and other injected content) on
+    user-role messages. Recording one as a `prompt` row plants a second turn
+    anchor mid-turn, and the serve-time orphan graft then files the turn's
+    real spans under it — the conversation view renders a split, half-hidden
+    turn. Only the echo of a prompt regin submitted may resolve to a row."""
+    _run(_session("sdk-echo1", ["hello"]))
+
+    texts = _prompt_texts(captured["spans"])
+    assert "Base directory for this skill: /x/skills/y" not in texts
+    # The real echo still lands, keyed on its transcript entry uuid.
+    resolved = [s for s in captured["spans"]
+                if s["name"] == "prompt" and s["status_code"] == "OK"]
+    assert [s["attributes"]["text"] for s in resolved] == ["hello"]
+    assert resolved[0]["span_id"] == "prompt-echo-1-000000"
+
+
+def test_a_resubmitted_prompt_matches_its_own_echo_each_time(captured,
+                                                             echoing_client):
+    """Matching consumes the placeholder id, and an identical later submit
+    re-registers it — the same text twice resolves twice, not once."""
+    _run(_session("sdk-echo2", ["same words", "same words"]))
+
+    resolved = [s for s in captured["spans"]
+                if s["name"] == "prompt" and s["status_code"] == "OK"]
+    assert [s["attributes"]["text"] for s in resolved] == ["same words"] * 2
