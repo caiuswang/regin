@@ -17,9 +17,18 @@ export default defineConfig({
   // which shares one pattern slug and one directory on disk.
   fullyParallel: true,
   timeout: 30000,
+  // The suite has a pool of load-dependent flakes (pass in isolation, fail
+  // under full parallel load — see session-header-collapse:166, sidebar-
+  // collapse, trace-agent-pane). One retry keeps a run's verdict about the
+  // code under test, and the first failure records a full trace, so every
+  // flake occurrence becomes openable evidence (`npx playwright show-trace`)
+  // instead of a reproduce-under-load chore. Flaky tests still surface — the
+  // report marks them "flaky", never silently green.
+  retries: 1,
   use: {
     baseURL: `http://localhost:${VITE_PORT}`,
     headless: true,
+    trace: 'on-first-retry',
   },
   // `reuseExistingServer: false`, and both ports off the dev stack's: the
   // suite must own its server, because that server owns the database. Reusing
