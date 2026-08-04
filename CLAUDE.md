@@ -79,6 +79,7 @@ CLI mirror is `regin memory supersede <old-id> --body … `. Internals: *Agent M
 .venv/bin/python cli/regin.py hooks repair  # Rewrite any hook command that has drifted
 .venv/bin/python cli/regin.py serve         # Web dashboard on :8321
 .venv/bin/python cli/regin.py stats time    # Where build time goes (attended vs agent vs human)
+.venv/bin/python cli/regin.py stats session <trace-id>   # Why ONE session was slow (ranked, costed findings)
 .venv/bin/python cli/regin.py stats sessions --format csv --out /tmp/s.csv   # Per-session export
 
 # Tests — run the whole suite in parallel; ~35s vs ~4m serial.

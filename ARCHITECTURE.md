@@ -127,6 +127,18 @@ Populated live by the `hook_manager` handlers and surfaced under the **Trace** m
 
 Token counters on `sessions` are part of the baseline schema (`db/schema.sql`, anchored by `alembic/versions/0001_baseline.py`).
 
+#### Engineering-time analytics (`regin stats`)
+
+`lib/trace/session_stats.py` reads the span log to answer "where does build time go", at three nested scopes: **wall** (first→last event), **attended** (inter-event gaps ≤5 min — someone at the keyboard), and **agent-active** (gaps ≤60 s, the same rule that persists `sessions.active_work_ms`).
+
+Attended time splits into **human** and **agent+harness**, and that split is *event-derived, not duration-derived*. `attended − active` is not human time: 43 h of >60 s gaps across the corpus end at `assistant.thinking` and 17 h at a long `tool.Bash`, none of which is a person. A gap is human only when the event ending it is the user acting — a `prompt` span (excluding `prompt-sa-` subagent launches and any span carrying `attributes.agent_id`), or the gap following a `permission.request` / `tool.AskUserQuestion` the agent was blocked on. Corpus-wide that is 12% human, not the 36% a duration cutoff implies.
+
+Tool and turn spans are point-in-time (PostToolUse fires after the tool returns), so each gap is attributed to the span that **ends** it. Sessions overlap, so per-session attended time is summed *and* deduped against a merged timeline; their ratio is how many agents ran in parallel.
+
+Surfaced by `regin stats time | sessions | daily | by <dim>`, each with `--since/--until/--project` and `--format table|json|csv --out` for offline analysis.
+
+`regin stats session <id>` answers the narrower question — *why was this one slow?* — with named, costed findings rather than a composition breakdown: rework loops, redundant re-reads, failure streaks, approval blocks, ramp-up. An edit's cost is the engaged time since the **previous** edit (the reading and testing that produced it), so first-touch and corrective work partition the session's edit-production time and are directly comparable. A failure streak ends when a successful edit lands, not after an elapsed interval — identifier-driven, not clock-driven. The lenses overlap by design and must never be rendered as a partition.
+
 ### Agent memory database
 
 A third database, at `db/regin_memory.db` (override via `settings.agent_memory.db_path`). It is **self-initializing** — the memory engine creates its own schema on first use, so its tables are deliberately absent from `db/schema.sql` and Alembic, and accumulated experience survives `regin init` / `rebuild`. See *Agent Memory (cross-session experience)* below.

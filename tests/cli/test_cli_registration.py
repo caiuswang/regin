@@ -31,6 +31,7 @@ _AGENT_FACING = [
     ["gate", "--help"],         # anti-skip span gates
     ["goal", "--help"],         # preflight roadmap router
     ["memory", "--help"],       # recall-for-task
+    ["stats", "--help"],        # engineering-time analytics
 ]
 
 
