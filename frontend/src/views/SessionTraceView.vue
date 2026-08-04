@@ -104,9 +104,9 @@ const stickyChromeHeight = useStickyChromeHeight(isLgUp, stickyHeaderHeight, com
 // Header collapse: once the reader has scrolled PAST the full header's own
 // height, it folds into a single compact row — status dot, title, a mono
 // digest, the view switcher, Reload — so the spans get the space exactly
-// when they're being read. Scrolling back to the top (within 24px) always
-// re-expands and clears any manual pin; the Details button / H key toggle
-// pins the choice until that return.
+// when they're being read. The Details button / H key toggle pins the choice;
+// scrolling back to the top (within 24px) re-expands — always for the auto
+// fold, but a pin only unlocks when that return is the reader's own scroll.
 const headerCollapsed = ref(false)
 const headerPinned = ref(false)
 // The fold otherwise swaps ~200px of header in one frame — dazzling in
@@ -120,12 +120,6 @@ const headerFold = useFoldTransition(stickyHeaderEl, headerCollapsed, {
   glideWhen: (collapsed) => !collapsed,
 })
 
-// A pin created while already inside the 24px band would be cleared by its own
-// unlock condition on the very next scroll nudge (a live poll's layout shift is
-// enough), making a fold near the top a no-op. It holds until the reader
-// actually leaves the band.
-let pinnedInsideTopBand = false
-
 function toggleHeaderDetails() {
   // A click/keypress means the scroll is settled, so even the collapse
   // direction can glide safely here.
@@ -133,7 +127,13 @@ function toggleHeaderDetails() {
   headerCollapsed.value = !headerCollapsed.value
   headerPinned.value = true
   if (expandTimer) { clearTimeout(expandTimer); expandTimer = null }
-  pinnedInsideTopBand = (getScroller()?.scrollTop ?? 0) < 24
+  // Folding shrinks the header, and scroll anchoring answers with a scroll
+  // that can land in the top band — near the top the pullback reaches it from
+  // anywhere under the header's own height. Consuming the input gate keeps
+  // that anchor scroll (still riding the wheel flick that preceded the click)
+  // from reading as the reader arriving at the top and unlocking the pin the
+  // same click just created.
+  lastScrollInputAt = -1e9
 }
 
 // The collapse threshold is the EXPANDED header's measured height (floored
@@ -173,6 +173,13 @@ let expandTimer = null
 let lastScrollInputAt = -1e9
 const SCROLL_INPUT_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 function markScrollInput() { lastScrollInputAt = performance.now() }
+function hasRecentScrollInput() { return performance.now() - lastScrollInputAt <= 1200 }
+// A manual pin only unlocks when the reader ARRIVES at the top themselves. A
+// layout-driven scroll can land in the band with nobody asking — anchoring
+// answering the fold's own shrink, a live poll's shift, a programmatic write —
+// and popping the header open under the reader makes the fold they just chose
+// a no-op.
+function pinUnlockBlocked() { return headerPinned.value && !hasRecentScrollInput() }
 function isTextEntry(t) {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
 }
@@ -210,7 +217,6 @@ function scrollToTop() {
   // Clearing the manual pin here rather than waiting for the dwelled auto-expand
   // at the top: arriving via this button IS the request to see the header again.
   headerPinned.value = false
-  pinnedInsideTopBand = false
   if (typeof scroller.scrollTo === 'function') scroller.scrollTo({ top: 0, behavior: 'smooth' })
   else scroller.scrollTop = 0
 }
@@ -226,14 +232,14 @@ function onCollapseScroll(e) {
     // 0) and the re-check both matter: a live poll's layout shift can nudge
     // the scroll a few px off the top, and a dead timer would never re-arm —
     // the header would stay folded while the user is effectively at the top.
-    // No input gate here: expanding can't cycle, because the collapse side
-    // only fires on user input.
+    // The AUTO fold expands with no input gate (it can't cycle, because its
+    // collapse side only fires on user input); only the pin unlock demands one.
     if (!expandTimer) {
       expandTimer = setTimeout(() => {
         expandTimer = null
         const nowTop = getScroller()?.scrollTop ?? 0
         if (nowTop >= 24) return
-        if (pinnedInsideTopBand) return
+        if (pinUnlockBlocked()) return
         if (headerCollapsed.value || headerPinned.value) {
           headerCollapsed.value = false
           headerPinned.value = false
@@ -242,8 +248,7 @@ function onCollapseScroll(e) {
     }
     return
   }
-  pinnedInsideTopBand = false
-  if (performance.now() - lastScrollInputAt > 1200) return
+  if (!hasRecentScrollInput()) return
   if (headerPinned.value) return
   // Auto-collapse is a ≥lg feature: there the header pins and collapsing buys
   // back reading space. Below lg the full header scrolls away on its own (the
