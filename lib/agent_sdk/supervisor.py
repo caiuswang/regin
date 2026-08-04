@@ -158,6 +158,38 @@ class RunHandle:
                           row.get("detail") or "")
 
 
+def _announce_prompt(trace_id: str, prompt: str) -> bool:
+    """Post the launch prompt's span before the run is scheduled.
+
+    A launch prompt's row would otherwise be written by `_run_turn`, which the
+    pump reaches only after `connect()` has spawned the child — seconds during
+    which the card the operator was just navigated to has nothing to show and
+    no amount of polling would help, because the row does not exist yet. Posting
+    here puts it in the store before the launch route even answers, so the
+    card's FIRST read already carries it.
+
+    Returns whether the runner should skip its own emission for that prompt. A
+    failed post returns False, which leaves the row to `_run_turn` exactly as
+    before — a late prompt row is a far better outcome than none.
+    """
+    if not prompt.strip():
+        return False
+    from lib.agent_events.from_sdk import prompt_event
+    from lib.agent_events.spans import to_span
+    from lib.hook_plugin import post_span
+
+    span = to_span(prompt_event(trace_id, prompt))
+    if not span:
+        return False
+    try:
+        post_span(**span)
+    except Exception as exc:  # noqa: BLE001 — the run must launch regardless
+        log.error("sdk_prompt_announce_failed", trace_id=trace_id,
+                  detail=repr(exc))
+        return False
+    return True
+
+
 def _refuse_unless_launchable(prompt: str, one_shot: bool) -> None:
     """A run may start with nothing to say — bare `claude` in a terminal does,
     and the first turn then arrives through `send_prompt`. `one_shot` is the
@@ -174,7 +206,7 @@ def _refuse_unless_launchable(prompt: str, one_shot: bool) -> None:
 
 def launch_run(prompt: str, *, cwd: str | None = None,
                env: dict[str, str] | None = None,
-               permission_mode: str = "", model: str = "",
+               permission_mode: str = "", model: str = "", effort: str = "",
                one_shot: bool = False,
                resume: str | None = None,
                trace_id: str | None = None) -> RunHandle:
@@ -215,13 +247,22 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     # is the one a trace read resolves to.
     revived = store.revive_trace_session(trace_id, resume or "") if reused else []
     try:
+        # Ordered inside the try, and after the loop: the announcement is a
+        # durable write with no undo, so everything that can still refuse the
+        # launch happens first, while the reservation and the revive still get
+        # their rollback if anything here raises. Only
+        # `run_coroutine_threadsafe` is left after it, and a live loop does not
+        # refuse work — otherwise the card would show a session holding a
+        # prompt no run was ever scheduled for.
         loop = _ensure_loop()
+        announced = _announce_prompt(trace_id, prompt)
         options = client.RunOptions(env=dict(env or {}),
                                     permission_mode=permission_mode,
-                                    model=model)
+                                    model=model, effort=effort)
         future = asyncio.run_coroutine_threadsafe(
             run_session(trace_id, prompt, cwd=cwd, options=options,
-                        one_shot=one_shot, resume=resume),
+                        one_shot=one_shot, resume=resume,
+                        prompt_announced=announced),
             loop)
     except BaseException:
         registry.release_run(trace_id, token)
@@ -245,7 +286,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
 
 
 def launch(prompt: str, *, cwd: str | None = None,
-           model: str = "", permission_mode: str = "",
+           model: str = "", effort: str = "", permission_mode: str = "",
            one_shot: bool = False, resume: str | None = None,
            trace_id: str | None = None) -> str:
     """Start a session for `prompt` and return its trace id immediately.
@@ -259,7 +300,7 @@ def launch(prompt: str, *, cwd: str | None = None,
     The operator's launch path, so the per-run overrides an operator can pick
     on `/live` travel here rather than only through `launch_run`.
     """
-    return launch_run(prompt, cwd=cwd, model=model,
+    return launch_run(prompt, cwd=cwd, model=model, effort=effort,
                       permission_mode=permission_mode, one_shot=one_shot,
                       resume=resume, trace_id=trace_id).trace_id
 

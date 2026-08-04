@@ -23,6 +23,8 @@ import threading
 import time
 from pathlib import Path
 
+from lib.trace.alias import SDK_RUN_PREFIX, canonical_trace_id
+
 _running: set = set()
 _lock = threading.Lock()
 # path -> last-seen mtime, so an idle/ended session's poll skips the
@@ -305,6 +307,22 @@ def trigger_rescan(trace_id: str) -> None:
     roster/gate queries, on every poll."""
     if not trace_id:
         return
+    # A regin-launched run is viewable under its own `sdk-…` id, but its
+    # transcript is named for the CHILD session — so the lookup, the gate and
+    # the spans the rescan posts all have to be keyed on the canonical id.
+    # Resolving here rather than inside `_find_main_transcript` is deliberate:
+    # `_do_rescan` posts under whatever id it is handed, and posting the
+    # child's transcript under the run's id would misattribute every row.
+    #
+    # Gated on the prefix, not asked unconditionally. Only a run regin launched
+    # is ever aliased and only regin mints that prefix (`supervisor.launch_run`)
+    # — every other id, including the child's, already IS canonical. This runs
+    # on the request thread ahead of the `_should_skip_rescan` throttle, so an
+    # unconditional lookup would put a connect+query on every poll of every
+    # viewer of every ordinary session, which is exactly what that throttle
+    # exists to avoid.
+    if trace_id.startswith(SDK_RUN_PREFIX):
+        trace_id = canonical_trace_id(trace_id)
     main = _find_main_transcript(trace_id)
     if main and _should_skip_rescan(trace_id, main):
         return

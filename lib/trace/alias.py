@@ -26,6 +26,11 @@ from __future__ import annotations
 # default `'hook'` and are indistinguishable from the child's there.
 ORIGIN_KEY = '_alias_origin'
 
+# regin's own name for a run it launched (`agent_sdk.supervisor.launch_run`).
+# An id carrying it is the only kind that can have an alias at all, which lets
+# a hot reader skip the group lookup for every ordinary session.
+SDK_RUN_PREFIX = 'sdk-'
+
 
 def trace_group(conn, trace_id: str) -> list[str]:
     """Every trace id whose spans belong to `trace_id`'s session.
@@ -62,6 +67,33 @@ def trace_group(conn, trace_id: str) -> list[str]:
     if row is None:
         return [trace_id]
     return [row["cli_session_id"], row["trace_id"]]
+
+
+def canonical_trace_id(trace_id: str) -> str:
+    """`trace_id` resolved to the id its session is really keyed on.
+
+    The child's id for a regin-launched run, `trace_id` itself for anything
+    else (and for a run whose child has not named itself yet). Opens its own
+    connection so a caller outside the SQLModel readers — the live transcript
+    rescan, say — can ask without threading one through.
+
+    This is what a transcript lookup has to ask first: the file on disk is
+    named for the CLI session, so a `sdk-…` id finds nothing and the whole
+    rescan silently no-ops for a run an operator is watching.
+    """
+    from lib.orm.engine import get_connection
+
+    if not trace_id:
+        return trace_id
+    conn = None
+    try:
+        conn = get_connection()
+        return trace_group(conn, trace_id)[0]
+    except Exception:  # noqa: BLE001 — a rescan must degrade, never raise
+        return trace_id
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def strip_origin(spans: list[dict]) -> list[dict]:

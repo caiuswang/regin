@@ -252,10 +252,15 @@ export function useLiveTail(getRouteId) {
     // phase / agent_phase are the server's state verdict — the card renders
     // them, never re-derives state (no client idle debounce).
     // queued_prompts (transcript-derived + bridge steers) drive the queued chips.
+    // canonical_trace_id is the id this session is really keyed on — the
+    // child's for a regin-launched run. The view rewrites the URL onto it; a
+    // key missing from this allowlist is silently dropped, so it has to be
+    // listed here to reach the view at all.
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
       'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now',
       'task_list', 'agent_roster', 'model', 'repo', 'context_pct',
-      'phase', 'agent_phase', 'queued_prompts', 'sdk_owned']
+      'phase', 'agent_phase', 'queued_prompts', 'sdk_owned',
+      'canonical_trace_id']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }

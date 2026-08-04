@@ -34,6 +34,18 @@ class ClaudeCliNotFound(RuntimeError):
 PERMISSION_MODES = ('default', 'acceptEdits', 'plan', 'bypassPermissions',
                     'dontAsk', 'auto')
 
+# The SDK's `EffortLevel`, restated for the same reason as `PERMISSION_MODES`.
+EFFORT_LEVELS = ('low', 'medium', 'high', 'xhigh', 'max')
+
+# The CLI's model *aliases*, offered as the launch sheet's menu. Aliases rather
+# than pinned ids on purpose: an alias keeps meaning the current build of that
+# tier as the install updates, whereas a hardcoded `claude-opus-4-8` would name
+# a model this CLI may no longer serve. Not a closed set — the launch route
+# accepts any string, so an operator can still pin an exact id (that is what
+# the sheet's `custom…` entry is for); this list only decides what is one tap
+# away.
+MODEL_CHOICES = ('opus', 'sonnet', 'haiku', 'fable')
+
 
 @dataclass(frozen=True)
 class RunOptions:
@@ -48,6 +60,7 @@ class RunOptions:
     env: dict[str, str] = field(default_factory=dict)
     permission_mode: str = ""
     model: str = ""
+    effort: str = ""
 
 
 def _run_overrides(run: RunOptions | None) -> dict:
@@ -61,6 +74,8 @@ def _run_overrides(run: RunOptions | None) -> dict:
         overrides["permission_mode"] = run.permission_mode
     if run.model:
         overrides["model"] = run.model
+    if run.effort:
+        overrides["effort"] = run.effort
     return overrides
 
 
@@ -118,6 +133,12 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
         kwargs["resume"] = resume
     if settings.agent_sdk.model:
         kwargs["model"] = settings.agent_sdk.model
+    # Only set when actually chosen: `effort` is newer than the rest of this
+    # kwarg set, so an install on an older `claude-agent-sdk` keeps launching
+    # unless someone opts in — at which point a hard TypeError naming the
+    # option beats a silently ignored choice.
+    if settings.agent_sdk.effort:
+        kwargs["effort"] = settings.agent_sdk.effort
     kwargs.update(_run_overrides(options))
     # `env` is an overlay the SDK merges over the parent environment, and the
     # bridge flag is applied last: a run's own options may set anything else,

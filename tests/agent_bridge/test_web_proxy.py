@@ -523,25 +523,43 @@ def test_bridge_files_ignore_list_holds_for_a_typed_path(flask_client,
             {"path": ".claude/commands/deploy.md", "kind": "file"}]
 
 
-def test_bridge_files_confined_to_the_session_root(flask_client, monkeypatch, tmp_path):
-    """An *editor* token must not be able to enumerate the host filesystem —
-    every `~`/absolute/`..` query is confined to the session's own cwd."""
+def test_bridge_files_typed_path_reaches_outside_the_session_root(
+        flask_client, monkeypatch, tmp_path):
+    """A typed path leaves the session cwd, over the route as well as in the
+    library — that is the whole point of supporting `../` and absolute paths.
+
+    The boundary this crosses is real and deliberate (see the module docstring
+    in `lib/agent_bridge/files.py`): the editor role is now trusted with read
+    access to the host, and `require_editor` is what stands between an account
+    and that listing. A *viewer* still gets nothing — asserted below, because
+    that is the check that must never regress.
+    """
     from lib.auth import create_token
     editor = {"Authorization":
               f"Bearer {create_token(3, 'editor-tester', 'editor')}"}
     cwd = tmp_path / "proj"
     (cwd / "src").mkdir(parents=True)
     (cwd / "src" / "app.py").write_text("x", encoding="utf-8")
+    (tmp_path / "sibling").mkdir()
+    (tmp_path / "sibling" / "shared.py").write_text("y", encoding="utf-8")
     monkeypatch.setattr(roots.store, "get_pane_cwd", lambda tid: str(cwd))
-    for query in ("~/.ssh/", "/etc/passwd", "/Users/", "../", "~/", "~"):
-        rows = flask_client.get(
+
+    def _files(query, headers):
+        return flask_client.get(
             f"/api/sessions/T-9/bridge-files?q={quote(query)}",
-            headers=editor).get_json()["files"]
-        assert rows == [], f"{query} escaped the session root: {rows}"
-    # `/` is not the filesystem root here — it can only mean the session's own.
-    listing = flask_client.get("/api/sessions/T-9/bridge-files?q=%2F",
-                               headers=editor).get_json()["files"]
-    assert listing == [{"path": "src", "kind": "directory"}]
+            headers=headers).get_json()["files"]
+
+    assert _files("../sibling/", editor) == [
+        {"path": "../sibling/shared.py", "kind": "file"}]
+    assert [r["path"] for r in _files("/", editor)] != []
+    # A bare term is still a search of the PROJECT, never of the filesystem.
+    assert _files("shared", editor) == []
+
+    viewer = {"Authorization":
+              f"Bearer {create_token(4, 'viewer-tester', 'viewer')}"}
+    assert flask_client.get(
+        f"/api/sessions/T-9/bridge-files?q={quote('../sibling/')}",
+        headers=viewer).status_code == 403
 
 
 def test_bridge_files_fail_closed_to_empty(flask_client, monkeypatch):

@@ -1730,6 +1730,12 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
     phase, agent_phase = _session_phase(activity, roster, status == 'ended',
                                         _owned_run_phase(trace_id))
     return {
+        # The id this session is really keyed on — the child's for a
+        # regin-launched run. `/live` navigates to the run's own `sdk-…` id at
+        # launch (the only id that exists then) and rewrites onto this one as
+        # soon as the child names itself, so a URL that is shared, bookmarked
+        # or reloaded is the one every other reader already uses.
+        'canonical_trace_id': group[0],
         'model': model,
         # Server phase verdict — the /live card selects on this, never
         # re-derives it. `phase` = session rollup; `agent_phase` = "main"

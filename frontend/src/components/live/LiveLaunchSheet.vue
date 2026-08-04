@@ -46,9 +46,15 @@ const held = ref(null)
 // reopening should land on the form the draft describes, not back inside the
 // picker the operator was leaving.
 const {
-  prompt, cwd, model, mode, oneShot, resume, beforePick, resetDraft,
+  prompt, cwd, model, modelCustom, effort, mode, oneShot, resume, beforePick,
+  resetDraft,
 } = useLaunchDraft(props.resumeFrom)
 const picking = ref(false)
+
+// Sentinel for "not one of the offered aliases". The launch route accepts any
+// model string, so an operator pinning an exact id (`claude-opus-4-8`) must
+// stay expressible — the menu decides what is one tap away, not what is legal.
+const CUSTOM_MODEL = '__custom__'
 
 // A resumed session's cwd is not a preference — `claude --resume` resolves the
 // id relative to the working directory, so launching from anywhere else finds
@@ -76,6 +82,25 @@ const modeOptions = computed(() => {
   ]
 })
 
+// Both menus name the install's own default in their sentinel rather than
+// saying "default": an operator who cannot see which model a blank field means
+// has no way to tell whether picking one changed anything.
+function deferOption(configured, noun) {
+  return {
+    value: '',
+    label: configured ? `use server setting (${configured})` : `${noun} default`,
+  }
+}
+const modelOptions = computed(() => [
+  deferOption(opts.value?.default_model, 'CLI'),
+  ...(opts.value?.models || []).map(m => ({ value: m, label: m })),
+  { value: CUSTOM_MODEL, label: 'custom…' },
+])
+const effortOptions = computed(() => [
+  deferOption(opts.value?.default_effort, 'CLI'),
+  ...(opts.value?.efforts || []).map(e => ({ value: e, label: e })),
+])
+
 // A resumed run keeps the trace it continues; a reopened terminal session does
 // not. Saying which stops the chip implying the tail below will keep growing
 // when it will not — so the kind gets its own line rather than a suffix on the
@@ -87,8 +112,21 @@ const resumeTitle = computed(() => {
 const resumeKind = computed(() => (
   resume.value ? resumeKindLabel(resume.value.kind) : ''))
 
+// A recorded model is an exact id (`claude-opus-4-8`), which the menu of
+// aliases does not contain — so adopting one lands in the custom slot rather
+// than silently resetting the picker to "use server setting".
+function adoptModel(id) {
+  const known = (opts.value?.models || []).includes(id)
+  model.value = id ? (known ? id : CUSTOM_MODEL) : ''
+  if (id && !known) modelCustom.value = id
+}
+
 function pickResume(row) {
-  if (!resume.value) beforePick.value = { cwd: cwd.value, model: model.value }
+  if (!resume.value) {
+    beforePick.value = {
+      cwd: cwd.value, model: model.value, modelCustom: modelCustom.value,
+    }
+  }
   resume.value = row
   // Adopting the session's cwd is not a convenience: resume resolves the id
   // relative to it, so keeping the previous selection would launch a run that
@@ -98,7 +136,7 @@ function pickResume(row) {
   // conversation on a different model than it was held on is a change the
   // operator did not ask for and would not see. Only a run regin launched
   // recorded one, so a terminal session still falls back to the install's.
-  if (row.model) model.value = row.model
+  if (row.model) adoptModel(row.model)
   picking.value = false
 }
 
@@ -109,6 +147,7 @@ function clearResume() {
   if (beforePick.value) {
     cwd.value = beforePick.value.cwd
     model.value = beforePick.value.model
+    modelCustom.value = beforePick.value.modelCustom
     beforePick.value = null
   }
 }
@@ -132,7 +171,15 @@ const shadowWarning = computed(() => (
 // run that ends with its first turn, given no turn, would connect and
 // immediately disconnect.
 const oneShotNeedsPrompt = computed(() => oneShot.value && !prompt.value.trim())
-const canLaunch = computed(() => !oneShotNeedsPrompt.value && !launching.value)
+// Picking `custom…` and typing nothing is the one way to ask for a model and
+// get the install's default instead: the body would carry no `model` key at
+// all, so the run starts on something the operator did not choose and nothing
+// on the card ever says so. Refused here for the same reason `one_shot` is —
+// the mistake is legible before the click, not after the run.
+const customModelIsBlank = computed(() => (
+  model.value === CUSTOM_MODEL && !modelCustom.value.trim()))
+const canLaunch = computed(() => !oneShotNeedsPrompt.value
+  && !customModelIsBlank.value && !launching.value)
 
 onMounted(async () => {
   try {
@@ -144,11 +191,15 @@ onMounted(async () => {
   }
 })
 
+const chosenModel = computed(() => (
+  model.value === CUSTOM_MODEL ? modelCustom.value.trim() : model.value))
+
 function launchBody() {
   return {
     prompt: prompt.value.trim(),
     cwd: cwd.value || undefined,
-    model: model.value.trim() || undefined,
+    model: chosenModel.value || undefined,
+    effort: effort.value || undefined,
     permission_mode: mode.value || undefined,
     one_shot: oneShot.value || undefined,
     resume: resume.value?.session_id || undefined,
@@ -256,12 +307,39 @@ async function launch() {
       </p>
 
       <label class="live-launch-lbl" for="live-launch-model">model</label>
-      <Input
+      <Select
         id="live-launch-model"
         v-model="model"
+        block
+        :options="modelOptions"
         data-testid="live-launch-model"
-        :placeholder="opts.default_model || 'settings default'"
-        aria-label="Model override"
+        aria-label="Model"
+      />
+      <Input
+        v-if="model === CUSTOM_MODEL"
+        v-model="modelCustom"
+        class="live-launch-model-custom"
+        data-testid="live-launch-model-custom"
+        placeholder="e.g. claude-opus-4-8"
+        aria-label="Custom model id"
+      />
+      <p
+        v-if="customModelIsBlank"
+        class="live-launch-warn"
+        data-testid="live-launch-model-hint"
+      >
+        name the model, or pick one above — a blank custom id would launch on
+        the server default.
+      </p>
+
+      <label class="live-launch-lbl" for="live-launch-effort">effort</label>
+      <Select
+        id="live-launch-effort"
+        v-model="effort"
+        block
+        :options="effortOptions"
+        data-testid="live-launch-effort"
+        aria-label="Reasoning effort"
       />
 
       <label class="live-launch-check">

@@ -263,3 +263,67 @@ def test_do_rescan_selfheals_ghost_markers_only_when_flagged(tmp_path, monkeypat
     ghost['value'] = True
     lr._do_rescan('t-heal')
     assert calls['reconstruct'] == 1            # ghost detected: healed once
+
+
+def test_trigger_rescan_resolves_an_sdk_run_to_its_child_session(monkeypatch):
+    """A regin-launched run is viewable under its own `sdk-…` id, but the
+    transcript on disk is named for the CHILD session — so an unresolved
+    `sdk-…` finds no file, the rescan silently no-ops, and assistant text
+    (which has no hook) never lands for as long as the operator watches that
+    URL. The spans the rescan posts must be keyed on the child too, or the
+    child's transcript is ingested under the run's id.
+    """
+    lr._running.clear()
+    monkeypatch.setattr(lr, 'canonical_trace_id',
+                        lambda tid: 'child-abc' if tid == 'sdk-abc' else tid)
+    monkeypatch.setattr(lr, '_find_main_transcript', lambda tid: None)
+    started = []
+
+    class _FakeThread:
+        def __init__(self, target, args, daemon):
+            self._trace = args[0]
+
+        def start(self):
+            started.append(self._trace)
+
+    monkeypatch.setattr(lr.threading, 'Thread', _FakeThread)
+    lr.trigger_rescan('sdk-abc')
+    lr.trigger_rescan('plain-session')
+
+    assert started == ['child-abc', 'plain-session']
+    lr._running.clear()
+
+
+def test_canonical_trace_id_degrades_to_the_id_it_was_given(monkeypatch):
+    """A rescan must never raise: an unreachable or pre-migration DB leaves
+    the caller with the single-trace behaviour, not an exception on a poll."""
+    from lib.trace import alias
+
+    def _boom():
+        raise RuntimeError('db gone')
+
+    monkeypatch.setattr('lib.orm.engine.get_connection', _boom)
+    assert alias.canonical_trace_id('sdk-abc') == 'sdk-abc'
+    assert alias.canonical_trace_id('') == ''
+
+
+def test_an_ordinary_session_never_pays_for_the_alias_lookup(monkeypatch):
+    """The resolution runs on the request thread AHEAD of the rescan throttle,
+    so asking unconditionally would put a DB connect+query on every poll of
+    every viewer of every session — exactly what that throttle exists to
+    avoid. Only regin mints the `sdk-` prefix, and every other id (including
+    the child's) is already canonical."""
+    lr._running.clear()
+    asked = []
+    monkeypatch.setattr(lr, 'canonical_trace_id',
+                        lambda tid: asked.append(tid) or tid)
+    monkeypatch.setattr(lr, '_find_main_transcript', lambda tid: None)
+    monkeypatch.setattr(lr.threading, 'Thread',
+                        lambda **k: type('T', (), {'start': lambda self: None})())
+
+    lr.trigger_rescan('77777777-8888-9999-aaaa-bbbbbbbbbbbb')
+    lr._running.clear()
+    lr.trigger_rescan('sdk-abc')
+    lr._running.clear()
+
+    assert asked == ['sdk-abc']

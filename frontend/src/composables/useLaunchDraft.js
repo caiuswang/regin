@@ -15,7 +15,12 @@ import { reactive, toRefs } from 'vue'
 const blank = () => ({
   prompt: '',
   cwd: '',
+  // The menu pick. `CUSTOM_MODEL` means "the id typed into `modelCustom`" —
+  // held apart so switching to the menu and back does not lose what was typed,
+  // and so the menu itself never has to carry an arbitrary string.
   model: '',
+  modelCustom: '',
+  effort: '',
   mode: '',
   oneShot: false,
   // The picked session row, or null for a fresh run. Holding the whole row

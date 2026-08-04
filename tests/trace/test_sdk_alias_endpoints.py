@@ -257,3 +257,28 @@ def test_an_ordinary_session_is_unaffected(client, trace_db):
         '/api/sessions/plain-session/map?shallow=1&limit=50').get_json()
     # Unaliased totals still come from the raw row count.
     assert shallow['span_count_total'] == 2
+
+
+def test_the_map_names_the_id_the_session_is_really_keyed_on(client, aliased):
+    """`/live` can only navigate to the run's own `sdk-…` id at launch — it is
+    the only id that exists before the child names itself. The summary carries
+    the canonical one so the card can rewrite its URL onto the id every other
+    reader (and the transcript on disk) uses.
+    """
+    assert _map(client, RUN)['canonical_trace_id'] == CHILD
+    assert _map(client, CHILD)['canonical_trace_id'] == CHILD
+
+
+def test_an_unaliased_session_is_its_own_canonical_id(client, trace_db):
+    """The 99% case must report itself, not null — the card compares this to
+    the route id and a null would read as "rewrite to nothing"."""
+    conn = _conn(trace_db)
+    try:
+        _session_row(conn, 'plain-session', span_count=1)
+        _span(conn, 'plain-session', 'p1', 'prompt', '2026-08-01T10:00:00',
+              attrs={'text': 'hello'})
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert _map(client, 'plain-session')['canonical_trace_id'] == 'plain-session'

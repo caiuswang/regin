@@ -313,7 +313,7 @@ def _agent_sdk_fields() -> list[dict]:
     """Built rather than declared: `permission_mode`'s options are the CLI's own
     vocabulary, and restating them here would let the picker drift into offering
     a mode the launch surface rejects."""
-    from lib.agent_sdk.client import PERMISSION_MODES
+    from lib.agent_sdk.client import EFFORT_LEVELS, PERMISSION_MODES
     return [
         # ── General ──
         {"key": "enabled", "group": "General", "type": "bool",
@@ -333,6 +333,12 @@ def _agent_sdk_fields() -> list[dict]:
          "label": "Model override",
          "description": "Model id for launched runs. Empty = whatever the CLI "
                         "would pick for itself."},
+        {"key": "effort", "group": "General", "type": "choice",
+         "options": ["", *EFFORT_LEVELS],
+         "label": "Reasoning effort",
+         "description": "Default reasoning effort for launched runs (a run may "
+                        "override it from the /live launch sheet). Empty = "
+                        "whatever the CLI would pick for itself."},
         {"key": "max_concurrent_runs", "group": "General", "type": "int",
          "min": 1, "step": 1, "label": "Max concurrent runs",
          "description": "Ceiling on live runners. Each is a real child "

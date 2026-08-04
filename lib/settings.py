@@ -829,6 +829,10 @@ class AgentSdkConfig(BaseModel):
     enabled: bool = False
     cli_path: str = ""
     model: str = ""
+    # Empty defers to the CLI's own default, exactly as `model` does. Set only
+    # to pin a reasoning-effort floor for every run this install launches; the
+    # launch sheet's per-run pick overrides it.
+    effort: str = ""
     max_concurrent_runs: int = 4
     permission_mode: str = "default"
     idle_timeout_sec: int = 0

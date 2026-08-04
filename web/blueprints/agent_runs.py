@@ -99,17 +99,23 @@ def _resume_target(resume: str) -> tuple[str | None, str | None]:
 def _launch_params(payload: dict) -> dict:
     """Validated per-run overrides for `supervisor.launch`.
 
-    `permission_mode` is checked against the CLI's own vocabulary here rather
-    than left for the SDK: an unknown mode reaching the launch would surface as
-    a run that died on start, which reads to the operator like regin broke.
+    `permission_mode` and `effort` are checked against the CLI's own vocabulary
+    here rather than left for the SDK: an unknown value reaching the launch
+    would surface as a run that died on start, which reads to the operator like
+    regin broke. `model` is deliberately NOT checked — the sheet's menu is a
+    convenience, not the set of models the install can serve.
     """
     mode = _text(payload, "permission_mode", _ID_MAX)
     if mode and mode not in client.PERMISSION_MODES:
         raise _BadRequest(f"unknown permission_mode {mode!r}")
+    effort = _text(payload, "effort", _ID_MAX)
+    if effort and effort not in client.EFFORT_LEVELS:
+        raise _BadRequest(f"unknown effort {effort!r}")
     resume, trace_id = _resume_target(_text(payload, "resume", _ID_MAX))
     return {
         "cwd": _text(payload, "cwd", _PATH_MAX) or None,
         "model": _text(payload, "model", _ID_MAX),
+        "effort": effort,
         "permission_mode": mode,
         "one_shot": bool(payload.get("one_shot")),
         "resume": resume,
@@ -148,7 +154,10 @@ def api_launch_options():
         "cwds": [str(path) for path in (settings.repo_paths or [])],
         "permission_modes": list(client.PERMISSION_MODES),
         "default_permission_mode": cfg.permission_mode or "default",
+        "models": list(client.MODEL_CHOICES),
         "default_model": cfg.model or "",
+        "efforts": list(client.EFFORT_LEVELS),
+        "default_effort": cfg.effort or "",
         "gating_active": bool(cfg.gate_plan or cfg.gated_tools),
     })
 

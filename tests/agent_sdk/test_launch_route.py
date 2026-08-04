@@ -242,3 +242,56 @@ def test_launch_options_report_a_disabled_tier(flask_client, monkeypatch):
 
     assert flask_client.get(
         "/api/agent-runs/launch-options").get_json()["enabled"] is False
+
+
+# ── model + effort are picked per run ─────────────────────────────────
+
+
+def test_launch_options_offer_models_and_efforts(flask_client, enabled,
+                                                 monkeypatch):
+    """Served rather than hardcoded in the client, for the same reason the
+    permission modes are: the menu describes the install this browser drives."""
+    monkeypatch.setattr(settings.agent_sdk, "model", "sonnet")
+    monkeypatch.setattr(settings.agent_sdk, "effort", "high")
+
+    body = flask_client.get("/api/agent-runs/launch-options").get_json()
+
+    assert "opus" in body["models"]
+    assert body["efforts"] == ["low", "medium", "high", "xhigh", "max"]
+    assert body["default_model"] == "sonnet"
+    assert body["default_effort"] == "high"
+
+
+def test_a_picked_effort_reaches_the_launch(flask_client, enabled, stub_launch):
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "hi", "effort": "xhigh"})
+
+    assert res.status_code == 200
+    assert stub_launch["effort"] == "xhigh"
+
+
+def test_an_unknown_effort_is_a_bad_request(flask_client, enabled, stub_launch):
+    """Checked here rather than left to the SDK: an unknown level reaching the
+    launch surfaces as a run that died on start, which reads like regin broke."""
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "hi", "effort": "ludicrous"})
+
+    assert res.status_code == 400
+    assert "ludicrous" in res.get_json()["error"]
+    assert stub_launch == {}
+
+
+def test_no_effort_defers_to_the_install(flask_client, enabled, stub_launch):
+    flask_client.post("/api/agent-runs", json={"prompt": "hi"})
+
+    assert stub_launch["effort"] == ""
+
+
+def test_a_model_outside_the_menu_is_still_accepted(flask_client, enabled,
+                                                    stub_launch):
+    """The menu decides what is one tap away, NOT what is legal — an operator
+    pinning an exact id must stay able to."""
+    flask_client.post("/api/agent-runs",
+                      json={"prompt": "hi", "model": "claude-opus-4-8"})
+
+    assert stub_launch["model"] == "claude-opus-4-8"

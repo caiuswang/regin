@@ -304,8 +304,8 @@ def test_an_interactive_launch_still_returns_a_trace_id(monkeypatch):
 
     assert trace_id == "sdk-deadbeef"
     assert seen == {"prompt": "hello", "cwd": "/repo", "model": "",
-                    "permission_mode": "", "one_shot": False, "resume": None,
-                    "trace_id": None}
+                    "effort": "", "permission_mode": "", "one_shot": False,
+                    "resume": None, "trace_id": None}
 
 def test_a_disabled_tier_refuses_a_programmatic_launch(monkeypatch):
     monkeypatch.setattr(settings.agent_sdk, "enabled", False)
@@ -464,3 +464,132 @@ def test_a_cancelled_run_gives_the_id_back():
     assert future.cancel() is True
 
     assert registry.is_sdk_owned(_HELD) is False
+
+
+# ── effort ────────────────────────────────────────────────────────────
+
+
+def test_a_run_carries_its_own_effort(enabled):
+    built = client.build_options(options=client.RunOptions(effort="xhigh"))
+
+    assert built.effort == "xhigh"
+
+
+def test_the_configured_effort_applies_when_a_run_names_none(enabled,
+                                                             monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "effort", "high")
+
+    assert client.build_options().effort == "high"
+
+
+def test_an_unset_effort_is_never_passed_to_the_sdk(enabled, monkeypatch):
+    """`effort` is newer than the rest of this kwarg set, so an install that
+    never picks one must keep launching on an SDK build that has no such
+    option — the kwarg is only added when somebody actually chose."""
+    monkeypatch.setattr(settings.agent_sdk, "effort", "")
+    seen = {}
+
+    def _options(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("claude_agent_sdk.ClaudeAgentOptions", _options)
+    client.build_options()
+
+    assert "effort" not in seen
+
+
+def test_a_runs_effort_beats_the_configured_one(enabled, monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "effort", "low")
+
+    built = client.build_options(options=client.RunOptions(effort="max"))
+
+    assert built.effort == "max"
+
+
+# ── the launch prompt exists before the child does ────────────────────
+
+
+@pytest.fixture
+def posted_spans(monkeypatch):
+    import lib.hook_plugin as hook_plugin
+
+    spans: list[dict] = []
+
+    def _post(**kw):
+        spans.append(kw)
+        return True
+
+    monkeypatch.setattr(hook_plugin, "post_span", _post)
+    return spans
+
+
+def _prompt_spans(spans):
+    return [s for s in spans if s.get("name") == "prompt"]
+
+
+def test_the_launch_prompt_is_recorded_before_the_run_is_scheduled(
+        fake_client, posted_spans):
+    """The card is navigated to a trace the instant the launch route answers,
+    and the runner does not reach its first turn until `connect()` has spawned
+    a child — seconds during which no poll, at any cadence, could show the
+    prompt because the row does not exist. So the launcher posts it itself,
+    synchronously, before the run is even handed to the loop."""
+    handle = supervisor.launch_run("draft it", one_shot=True)
+    at_return = _prompt_spans(posted_spans)
+
+    handle.wait(timeout=10)
+
+    assert [s["attributes"]["text"] for s in at_return] == ["draft it"]
+    # And exactly once: the runner must not post a second for the same turn.
+    assert len(_prompt_spans(posted_spans)) == 1
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\n\t"])
+def test_a_promptless_launch_announces_nothing(posted_spans, blank):
+    """Opening a session IS the act — there is no first turn to record, and a
+    blank row would render as a prompt the operator never sent. Returning
+    False also leaves the runner's own emission armed, which is what a later
+    real prompt needs."""
+    assert supervisor._announce_prompt("sdk-blank", blank) is False
+    assert posted_spans == []
+
+
+def test_a_failed_announcement_leaves_the_row_to_the_runner(fake_client,
+                                                            monkeypatch):
+    """A late prompt row is a far better outcome than none, so a post that
+    raises must fall back to exactly the behaviour that predates this."""
+    import lib.hook_plugin as hook_plugin
+
+    spans: list[dict] = []
+    first = {"done": False}
+
+    def _post(**kw):
+        if kw.get("name") == "prompt" and not first["done"]:
+            first["done"] = True
+            raise RuntimeError("ingest down")
+        spans.append(kw)
+        return True
+
+    monkeypatch.setattr(hook_plugin, "post_span", _post)
+
+    supervisor.launch_run("draft it", one_shot=True).wait(timeout=10)
+
+    assert [s["attributes"]["text"] for s in _prompt_spans(spans)] == ["draft it"]
+
+
+def test_a_launch_that_cannot_be_scheduled_leaves_no_orphan_prompt(
+        posted_spans, monkeypatch, enabled):
+    """The announcement is a durable write with no undo, so everything that
+    can still refuse the launch must happen before it. A prompt row under a
+    run that was never scheduled is a session the card shows as having said
+    something it never said."""
+    def _no_loop():
+        raise RuntimeError("no loop today")
+
+    monkeypatch.setattr(supervisor, "_ensure_loop", _no_loop)
+
+    with pytest.raises(RuntimeError):
+        supervisor.launch_run("draft it", one_shot=True)
+
+    assert _prompt_spans(posted_spans) == []

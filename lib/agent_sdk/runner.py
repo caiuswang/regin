@@ -245,7 +245,14 @@ class AgentRunner:
 
     def __init__(self, trace_id: str, *, cwd: str | None = None,
                  options: client.RunOptions | None = None,
-                 resume: str | None = None):
+                 resume: str | None = None,
+                 prompt_announced: bool = False):
+        # One-shot latch: the launcher already posted the launch prompt's span
+        # (`supervisor._announce_prompt`), so the first turn must not post a
+        # second. The pump is serial and FIFO, and the launch prompt is queued
+        # before the session is even reachable, so "the first turn" is exactly
+        # the prompt that was announced.
+        self._prompt_announced = prompt_announced
         self.trace_id = trace_id
         self.cwd = cwd
         self.options = options
@@ -1075,7 +1082,10 @@ class AgentRunner:
         """
         if self._stream_dead:
             return
-        await self._emit(prompt_event(self.trace_id, text))
+        if self._prompt_announced:
+            self._prompt_announced = False
+        else:
+            await self._emit(prompt_event(self.trace_id, text))
         if self._stream_dead:
             return
         self._take_the_floor()
@@ -1204,7 +1214,8 @@ async def run_session(trace_id: str, prompt: str, *,
                       cwd: str | None = None,
                       options: client.RunOptions | None = None,
                       one_shot: bool = False,
-                      resume: str | None = None) -> None:
+                      resume: str | None = None,
+                      prompt_announced: bool = False) -> None:
     """Launch and run `prompt`.
 
     Stays open for follow-ups until stopped, unless `one_shot` — a run regin
@@ -1218,7 +1229,8 @@ async def run_session(trace_id: str, prompt: str, *,
     """
     if not settings.agent_sdk.enabled:
         raise RuntimeError("agent_sdk disabled")
-    runner = AgentRunner(trace_id, cwd=cwd, options=options, resume=resume)
+    runner = AgentRunner(trace_id, cwd=cwd, options=options, resume=resume,
+                         prompt_announced=prompt_announced)
     # Queued before the session is reachable, so a follow-up arriving during
     # `start()` cannot overtake the prompt the run was launched for.
     #

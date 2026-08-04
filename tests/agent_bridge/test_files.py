@@ -204,35 +204,70 @@ def test_symlink_escape_is_blocked(root):
     assert "link" not in _paths(files.search_files(str(root), ""))
 
 
-def test_absolute_query_cannot_browse_outside_the_root(root, tmp_path):
-    """An absolute path is a relative query that matches nothing — it is NOT
-    a browse root. The composer is editor-reachable; browsing the host
-    filesystem would hand an untrusted editor an enumeration oracle."""
-    outside = os.path.realpath(str(tmp_path / "outside"))
-    assert files.search_files(str(root), f"{outside}/") == []
-    assert files.search_files(str(root), f"{outside}/escaped") == []
-    assert files.search_files(str(root), "/etc/passwd") == []
-    assert files.search_files(str(root), "/Users/") == []
+def test_absolute_query_browses_where_it_points(root, tmp_path):
+    """An absolute path is a destination, not a relative query that happens to
+    match nothing: the terminal this composer stands in for resolves it, and a
+    reference meaning one thing on the phone and another in the pane is worse
+    than no reference. Rows come back absolute so the CLI resolves the same
+    file."""
+    outside = tmp_path / "outside"
+    _write(outside / "escaped.py")
+    real = os.path.realpath(str(outside))
+    assert f"{real}/escaped.py" in _paths(files.search_files(str(root), f"{real}/"))
+    assert _paths(files.search_files(str(root), f"{real}/escaped.p")) == [
+        f"{real}/escaped.py"]
 
 
-def test_root_query_stays_inside_the_root(root):
-    """`/` may only ever name the *session's* root, never the filesystem's."""
-    assert _paths(files.search_files(str(root), "/")) == _paths(
+def test_absolute_query_naming_the_root_is_the_root_query(root):
+    """Typing the session's own absolute path is the same request as typing a
+    root-relative one — it must not take the departing branch and answer with
+    absolute duplicates of rows the plain query already serves."""
+    real = os.path.realpath(str(root))
+    assert _paths(files.search_files(str(root), f"{real}/")) == _paths(
         files.search_files(str(root), ""))
 
 
-def test_home_query_cannot_browse_home(root, tmp_path, monkeypatch):
+def test_bare_slash_query_browses_the_filesystem_root(root):
+    """`/` names the filesystem root now that absolute paths resolve at all.
+    Reading it as the session's root instead would make `@/etc` and `@/`
+    disagree about what the leading slash means."""
+    rows = _paths(files.search_files(str(root), "/"))
+    assert rows and all(p.startswith("/") for p in rows)
+    assert "/etc" in rows or "/usr" in rows
+
+
+def test_home_query_browses_home(root, tmp_path, monkeypatch):
+    """`~` is expanded in the ROW as well as the lookup: handed to the CLI
+    still holding a tilde, `@~/notes.md` names a file relative to the cwd that
+    does not exist."""
     home = tmp_path / "home"
     _write(home / "notes.md")
     monkeypatch.setenv("HOME", str(home))
-    assert files.search_files(str(root), "~/") == []
-    assert files.search_files(str(root), "~/not") == []
-    assert files.search_files(str(root), "~") == []
+    real = os.path.realpath(str(home))
+    assert _paths(files.search_files(str(root), "~/")) == [f"{real}/notes.md"]
+    assert _paths(files.search_files(str(root), "~/not")) == [
+        f"{real}/notes.md"]
+    assert _paths(files.search_files(str(root), "~")) == [f"{real}/notes.md"]
 
 
-def test_parent_traversal_is_blocked(root):
-    assert files.search_files(str(root), "../") == []
-    assert files.search_files(str(root), "../outside/escaped") == []
+def test_parent_traversal_browses_the_sibling(root, tmp_path):
+    """`../` stays RELATIVE in the row. The CLI resolves it against the same
+    cwd this search is rooted at, so the text the operator accepts is the text
+    that already meant the right file."""
+    _write(tmp_path / "sibling" / "shared.py")
+    assert _paths(files.search_files(str(root), "../sibling/")) == [
+        "../sibling/shared.py"]
+    assert _paths(files.search_files(str(root), "../sibling/sh")) == [
+        "../sibling/shared.py"]
+    assert "../sibling" in _paths(files.search_files(str(root), "../"))
+
+
+def test_a_bare_term_never_departs_the_root(root, tmp_path):
+    """The unbounded fuzzy walk stays rooted at the session's cwd. Only a path
+    the operator typed on purpose leaves it — a term must never drift into
+    walking the filesystem."""
+    _write(tmp_path / "sibling" / "unrelated_marker.py")
+    assert files.search_files(str(root), "unrelated_marker") == []
 
 
 def test_missing_root_returns_empty(tmp_path):

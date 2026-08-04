@@ -324,9 +324,20 @@ function closeSheet() {
   })
 }
 
+// A rename of the session in view, pending until the router applies it. An
+// operator navigating in that window has decided where they are going, so
+// their push must not be undone by a replace that was already on its way —
+// every user-initiated navigation retracts it (`goTo`).
+let canonicalizedTo = null
+
+function goTo(traceId) {
+  canonicalizedTo = null
+  router.push('/live/' + traceId)
+}
+
 function onPickSession(row) {
   closeSheet()
-  if (row.trace_id && row.trace_id !== sessionId.value) router.push('/live/' + row.trace_id)
+  if (row.trace_id && row.trace_id !== sessionId.value) goTo(row.trace_id)
 }
 
 // A launched run exists before it has done anything, so navigate straight to
@@ -343,7 +354,7 @@ function onLaunched({ traceId, sameSession }) {
   closeSheet()
   if (!traceId) return
   if (sameSession || traceId === route.params.id) init()
-  else router.push('/live/' + traceId)
+  else goTo(traceId)
 }
 
 // Sheet title/copy are dispatch tables keyed on kind (not if-ladders): the
@@ -455,10 +466,36 @@ async function init() {
   scrollToBottom(false)
 }
 
+// A launch can only navigate to the run's own `sdk-…` id — it is the only id
+// that exists before the child names itself. The session is keyed on the
+// child's id everywhere else (the transcript on disk, the session list, every
+// other reader), so rewrite the URL onto it as soon as the server reports it:
+// a link that is reloaded, shared or bookmarked then names what everything
+// else calls this session. `replace`, not `push` — the sdk- URL is a staging
+// post, not somewhere Back should return to.
+watch(() => meta.value.canonical_trace_id, (canon) => {
+  const from = route.params.id
+  if (!canon || !from || canon === from || route.name !== 'live') return
+  // Only rename the session the poll actually loaded. A canonical id left over
+  // from the card we just navigated away from would otherwise redirect to it.
+  if (sessionId.value !== from) return
+  canonicalizedTo = canon
+  router.replace('/live/' + canon)
+})
+
 // Re-init only while we're still ON the live route — leaving it also
 // changes route.params and would otherwise restart the poll mid-unmount.
-watch(() => route.params.id, () => {
-  if (route.name === 'live') init()
+// The canonicalising replace above is exempt: it renames the session in view
+// rather than switching to another, and re-initialising on it would throw
+// away the tail, the scroll position and any open sheet for nothing.
+watch(() => route.params.id, (id) => {
+  const renamed = !!id && id === canonicalizedTo
+  // Cleared before the route-name guard, never after: a latch left standing
+  // by a leave would make the next arrival at that same id skip its init and
+  // render the previous session's tail.
+  canonicalizedTo = null
+  if (route.name !== 'live') return
+  if (!renamed) init()
 })
 onMounted(() => {
   // Programmatic listener (not @scroll) — the tail is a scroll region, not

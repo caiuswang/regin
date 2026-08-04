@@ -638,3 +638,52 @@ def test_a_runs_own_claim_does_not_deny_it_the_last_slot(
 
 async def _noop_post(_span):
     return None
+
+
+# ── the announced launch prompt ───────────────────────────────────────
+
+
+async def _announced_session(trace_id, prompts):
+    """Like `_session`, but standing in for a launcher that already posted the
+    first prompt's span itself (`supervisor._announce_prompt`)."""
+    run = runner_mod.AgentRunner(trace_id, prompt_announced=True)
+    await run.start()
+    for text in prompts:
+        run.enqueue(text)
+    run.close()
+    await run.pump()
+    await run.stop()
+    return run
+
+
+def _prompt_texts(spans):
+    return [s["attributes"]["text"] for s in spans if s["name"] == "prompt"]
+
+
+def test_an_announced_launch_prompt_is_not_recorded_twice(captured,
+                                                          fake_client):
+    """The launcher posts the launch prompt's span before the child exists, so
+    the card has something to show while `connect()` runs. The turn that
+    finally sends it must not post a second row for the same prompt."""
+    _run(_announced_session("sdk-ann1", ["hello"]))
+
+    assert _prompt_texts(captured["spans"]) == []
+    assert fake_client.prompts == ["hello"]
+
+
+def test_the_skip_is_one_shot_not_a_standing_suppression(captured,
+                                                         fake_client):
+    """Only the announced prompt is skipped. A second turn has no announcement
+    behind it, so suppressing it too would silently lose every follow-up."""
+    _run(_announced_session("sdk-ann2", ["hello", "and again"]))
+
+    assert _prompt_texts(captured["spans"]) == ["and again"]
+    assert fake_client.prompts == ["hello", "and again"]
+
+
+def test_an_unannounced_run_records_every_prompt(captured, fake_client):
+    """The default is unchanged: a runner nobody announced for posts its own
+    rows exactly as it always did."""
+    _run(_session("sdk-ann3", ["hello", "and again"]))
+
+    assert _prompt_texts(captured["spans"]) == ["hello", "and again"]

@@ -11,26 +11,39 @@ breadth-fair (round-robin across sibling directory generators) so one huge
 subtree cannot starve its siblings out of a budgeted scan, and every budget —
 depth, entries scanned, result count — is bounded.
 
-Every query is confined to that root. There is deliberately no escape hatch:
-the composer is reachable by any *editor*, and a browse-anywhere query would
-hand an untrusted editor a filesystem-enumeration oracle (`~/.ssh/`, `/etc/`).
-A `~`- or `/`-prefixed query is just an ordinary relative one that matches
-nothing, and realpath confinement keeps symlinks and `../` inside the root too.
+**A typed path may leave that root.** `../`, `/absolute` and `~/…` all resolve,
+because the terminal this composer stands in for resolves them and a reference
+that means one thing on the phone and another in the pane is worse than no
+reference at all. The two query shapes are therefore governed differently:
 
-Confinement is not the only invariant: a path-shaped query browses a directory
-directly instead of walking, so it is held to what the walk would have done for
-the same directory (`_browsable`) — same ignore/hidden rule on every segment,
-same refusal to enter another checkout. Anything the walk would never surface —
-`.git/`, `.venv/`, `node_modules/`, `__pycache__/`, a sibling worktree's tree —
-must not be reachable by typing its path either. `.claude/` and its siblings
-stay reachable on purpose: that allowlist exists precisely so
-`@.claude/commands/…` resolves, and the walk already surfaces those files for a
-plain query.
+  * a *bare term* (`config`, or the empty query) still walks the session root
+    and nothing else — a fuzzy search is a search of your project, and walking
+    from `/` is not a feature;
+  * a *path-shaped* query (anything containing `/`, or starting with `~`) is
+    an explicit destination. It browses exactly the directory named, wherever
+    that is, and the rows come back as the caller typed them: `../sibling/x.py`
+    stays relative (the CLI resolves it against the same cwd) while `~/…` is
+    expanded to an absolute path, which is unambiguous.
 
-Both rules are applied to *resolved* names, and case-folded. A name-only test
-has two side doors on a real machine: `NODE_MODULES/` opens `node_modules/` on
-a case-insensitive filesystem, and an in-root symlink (`gitlink -> .git`) has a
-perfectly ordinary name of its own.
+**This is a deliberate widening of a security boundary, and the boundary is now
+the server process's own filesystem access.** The confinement that used to be
+here existed so an editor-role user could not use the composer as a
+filesystem-enumeration oracle; with a typed path free to name any directory,
+`@/etc/` and `@~/.ssh/` enumerate. `require_editor` on the route is what remains
+between an account and that listing, so the editor role must be treated as
+trusted with read access to the host.
+
+What has *not* changed is the visibility rule for what a listing contains. An
+explicitly named directory is always enterable, but its children are still
+filtered the way the walk filters them: no dot-prefixed entries, no `.git/`,
+`.venv/`, `node_modules/`, `__pycache__/`. `.claude/` and its siblings stay
+reachable on purpose — that allowlist exists precisely so `@.claude/commands/…`
+resolves.
+
+That rule is applied to *resolved* names, and case-folded. A name-only test has
+two side doors on a real machine: `NODE_MODULES/` opens `node_modules/` on a
+case-insensitive filesystem, and a symlink (`gitlink -> .git`) has a perfectly
+ordinary name of its own.
 
 Read-only and fail-closed: an unreadable directory, a drifted registry or a
 session with no registered cwd degrades to a shorter (or empty) list, never an
@@ -429,13 +442,81 @@ def _project_results(root: str, normalized: str, limit: int) -> list[dict]:
     return _rows(_browse(branch, branch, root, term.lower(), root), limit)
 
 
+def _departing_rows(browse_dir: str, prefix: str, term: str,
+                    limit: int) -> list[dict]:
+    """Rows for a path-shaped query that names a directory outside `root`.
+
+    The directory is its own confine: the operator named it, so entering it is
+    the whole request, and the ignore/hidden rule then applies to what is
+    *inside* it exactly as it does anywhere else. Ranking runs in that
+    directory's own relative space and the typed prefix is restored afterwards,
+    so the accepted text is the path the caller was in the middle of writing —
+    `_relative` can never produce an absolute one.
+    """
+    resolved = _real_dir(browse_dir)
+    if not resolved:
+        return []
+    rows = _rows(_browse(resolved, resolved, resolved, term.lower(), resolved),
+                 limit)
+    for row in rows:
+        row["path"] = prefix + row["path"]
+    return rows
+
+
+def _tilde_departure(typed: str) -> tuple[str, str, str] | None:
+    """A `~`-rooted query, expanded.
+
+    The tilde is expanded into the returned *prefix* as well as the lookup: an
+    accepted `@~/x/y.py` handed to the CLI still holding a tilde names a file
+    relative to the cwd that does not exist, so the row has to carry the
+    absolute path it actually stands for. A platform with no home to expand
+    leaves the string untouched, which is a filename beginning with `~`, not a
+    departure.
+    """
+    parent, sep, term = typed.rpartition("/")
+    target = parent if sep else typed
+    expanded = os.path.expanduser(target)
+    if expanded == target:
+        return None
+    return expanded, expanded.rstrip("/") + "/", term if sep else ""
+
+
+def _departure(typed: str, root: str) -> tuple[str, str, str] | None:
+    """`(directory to browse, prefix to restore, search term)` for a query
+    that names somewhere outside `root` — None for an ordinary one.
+
+    Only three shapes depart, and each is something the operator typed on
+    purpose rather than somewhere a fuzzy term could drift into: an absolute
+    path, a `~` path, and one climbing out with `..`. A bare term never
+    departs, which is what keeps the unbounded walk rooted in the project.
+
+    `..` is deliberately NOT collapsed: `../sibling/x.py` is exactly what the
+    session's own shell resolves against the same cwd, so it is left to do so.
+    """
+    if "/" not in typed and not typed.startswith("~"):
+        return None
+    if typed.startswith("~"):
+        return _tilde_departure(typed)
+    parent, _, term = typed.rpartition("/")
+    if os.path.isabs(typed):
+        return parent or "/", parent.rstrip("/") + "/", term
+    if ".." in parent.split("/"):
+        return os.path.join(root, parent), parent + "/", term
+    return None
+
+
+def _rebased(root: str, landing: str, term: str) -> str:
+    """A departing query that landed back inside `root`, as a root-relative one."""
+    rel = _relative(root, landing)
+    return f"{term}" if rel == "." else f"{rel}/{term}"
+
+
 def _normalize(typed: str) -> str:
     """A typed query as a root-relative path.
 
-    A leading `/` is dropped rather than honoured — `os.path.join(root, "/etc")`
-    is `/etc`, and no query may name an absolute location. `~` needs no such
-    care: it is never expanded, so `~/…` simply resolves under the root and
-    finds nothing. Confinement backstops both.
+    Only reached for queries that stay in the root — `_departure` has already
+    claimed the absolute, `~` and `..` shapes — so this is purely tidying: a
+    leading `./`, a doubled separator, a lone `.`.
     """
     normalized = typed
     while normalized.startswith("./"):
@@ -446,12 +527,14 @@ def _normalize(typed: str) -> str:
     return "" if normalized == "." else normalized
 
 
-def _confinement_root(root) -> str | None:
+def _search_root(root) -> str | None:
     """`root` as a usable search root, or None if it cannot be one.
 
     A missing, empty or *relative* root is refused rather than normalized: it
     would resolve against the server process's cwd — regin's own tree — and
-    answer a session's `@` with files from a project it never named.
+    answer a session's `@` with files from a project it never named. That
+    refusal still governs a departing query too: `../x` and a bare term are
+    both meaningless without knowing where the session stands.
 
     A NUL byte is refused rather than stripped for the same reason it is in the
     query: every `os` call rejects it with a `ValueError` no `OSError` handler
@@ -463,20 +546,34 @@ def _confinement_root(root) -> str | None:
 
 
 def search_files(root: str, query: str = "", limit: int = DEFAULT_LIMIT) -> list[dict]:
-    """Ranked path suggestions under `root` for `query`. Never raises.
+    """Ranked path suggestions for `query`, rooted at `root`. Never raises.
 
-    A blank query lists the root's immediate children. Every other query is
-    root-relative and confined to `root` by realpath, so neither a symlink nor
-    a `../`, `~/…` or `/…` query can name anything outside it.
+    A blank query lists the root's immediate children and a bare term walks the
+    root. A path-shaped query naming somewhere else — `../`, `/…`, `~/…` —
+    browses there instead and its rows come back carrying the caller's own
+    prefix, so accepting one yields a reference the session's CLI resolves to
+    the same file (see `_departure`).
 
     `root` must be an absolute path; anything else yields no suggestions at all
-    (see `_confinement_root`).
+    (see `_search_root`).
     """
     limit = _clamp_limit(limit)
     typed = (query or "").strip().replace("\\", "/")
-    resolved = _confinement_root(root)
+    resolved = _search_root(root)
     if "\x00" in typed or not resolved:
         return []
+    departure = _departure(typed, resolved)
+    if departure is not None:
+        browse_dir, _prefix, term = departure
+        landing = os.path.realpath(browse_dir)
+        if not _inside(resolved, landing):
+            return _departing_rows(*departure, limit)
+        # It named somewhere inside the session root after all, so the root's
+        # own rules govern — otherwise `src/../.git/` launders a directory past
+        # the ignore list that plain `.git/` is refused. Re-expressed as the
+        # root-relative query it really is, which also makes typing the
+        # session's own absolute path work.
+        typed = _rebased(resolved, landing, term)
     return _project_results(resolved, _normalize(typed), limit)
 
 
