@@ -177,7 +177,13 @@ function revealRow(el) {
 }
 // Force-expand the prompt/agent that owns a freshly-pinned span so the
 // auto-fold watcher can't collapse the pinned row out of the DOM.
+//
+// A row the reader could click the pin on is by definition already mounted, so
+// unfolding anything there is pure collateral: it popped open the enclosing
+// subagent's whole subtree on every pin. Only a pin raised on a row that ISN'T
+// rendered (programmatic) needs the unfold.
 function ensurePinVisible(spanId) {
+  if (resolvePinEl(spanId)) return
   const owner = promptGroups.value.find(g =>
     g.prompt.span_id === spanId || g.descendants.some(d => d.span.span_id === spanId))
   if (owner && !isPromptExpanded(owner.prompt.span_id)) togglePromptExpanded(owner.prompt.span_id, true)
@@ -403,7 +409,15 @@ async function unfoldFor(spanId, owner) {
 // subagent on every poll, undoing the reader's manual collapse. Unfold only
 // for a NEW selection id, or while the selected span still isn't in the
 // loaded set (its subtree may arrive on a later poll).
+//
+// Revealing has the same constraint, and it is the sharper one: a live session
+// polls every ~4s, and re-revealing an OLD selection on each tick dragged the
+// scroller back to it however far the reader had scrolled away — the page
+// visibly jumped up and down while spans arrived. Following the newest activity
+// is the Follow-latest pill's job alone (useConversationPins), so reveal only
+// for a selection this instance hasn't landed on yet.
 let lastUnfoldedSpanId = null
+let lastRevealedSpanId = null
 watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]) => {
   if (!id) return
   const owner = promptOwnerOf(id)
@@ -412,11 +426,18 @@ watch([() => props.selectedSpan?.span_id, () => props.spans.length], async ([id]
     lastUnfoldedSpanId = id
     await unfoldFor(id, owner)
   }
+  if (id === lastRevealedSpanId) return
   await nextTick()
   const fallback = () => promptRefs.value.get(id)
     || standaloneRefs.value.get(id)
     || (owner && promptRefs.value.get(owner.prompt.span_id))
-  revealRow(spanRefs.value.get(id) || (follow ? fallback() : null))
+  const target = spanRefs.value.get(id) || (follow ? fallback() : null)
+  // Only latch once a row actually existed to scroll to: a selection whose
+  // subtree hasn't loaded yet must still get its reveal when a later poll
+  // lands it, which is what the spans.length dependency is for.
+  if (!target) return
+  lastRevealedSpanId = id
+  revealRow(target)
 }, { flush: 'post' })
 
 // ── On-demand content fetching ────────────────────────────────

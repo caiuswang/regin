@@ -191,11 +191,36 @@ function onScrollbarMouseDown(e) {
   if (r && e.clientX >= r.right - 20) markScrollInput()
 }
 
+// A session trace runs to thousands of spans, and the app shell's navigation
+// lives outside `.content-scroll` — so getting back to the page header (title,
+// switcher, scope bar, Reload) meant hand-scrolling the whole transcript. The
+// threshold is well past the fold so the control never crowds the top of a
+// short trace.
+const BACK_TO_TOP_AFTER_PX = 800
+const scrolledDeep = ref(false)
+// Switching to a shorter tab clamps the scroll without necessarily leaving the
+// control's state correct — re-read the scroller rather than waiting for a
+// scroll event that may never come.
+function syncScrolledDeep() {
+  scrolledDeep.value = (getScroller()?.scrollTop ?? 0) > BACK_TO_TOP_AFTER_PX
+}
+function scrollToTop() {
+  const scroller = getScroller()
+  if (!scroller) return
+  // Clearing the manual pin here rather than waiting for the dwelled auto-expand
+  // at the top: arriving via this button IS the request to see the header again.
+  headerPinned.value = false
+  pinnedInsideTopBand = false
+  if (typeof scroller.scrollTo === 'function') scroller.scrollTo({ top: 0, behavior: 'smooth' })
+  else scroller.scrollTop = 0
+}
+
 function onCollapseScroll(e) {
   const scroller = getScroller()
   const el = e?.target
   if (!el || (el !== scroller && el !== document && el !== document.scrollingElement)) return
   const top = scroller.scrollTop ?? 0
+  syncScrolledDeep()
   if (top < 24) {
     // The expand is DWELLED and re-checked at fire time. The 24px band (not
     // 0) and the re-check both matter: a live poll's layout shift can nudge
@@ -314,6 +339,7 @@ const traceScope = useTraceScope(route, router, {
 // View mode: 'conversation' | 'timeline' | 'terminal' | 'messages'.
 // Resolution order: `?view=` query param > localStorage > default (see useViewMode).
 const { viewMode, setViewMode } = useViewMode(route)
+watch(viewMode, () => nextTick(syncScrolledDeep))
 
 // The conversation tab defaults to the clean centered feed: the right rail
 // (span details + turns) stays hidden until explicitly opened, so selecting
@@ -1314,6 +1340,20 @@ const {
         {{ viewMode === 'conversation' ? '' : 'End of timeline' }}
       </span>
     </div>
+
+    <!-- Back to top. Right-anchored so it never collides with the conversation
+         feed's centred "Follow latest" pill, which shares this bottom band. -->
+    <Button
+      v-if="scrolledDeep"
+      variant="ghost"
+      class="fixed bottom-6 right-5 lg:right-8 z-20 h-auto gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 shadow-lg hover:border-slate-400 hover:bg-slate-50 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-blue-500"
+      data-testid="trace-back-to-top"
+      title="Back to the top of this session"
+      @click="scrollToTop"
+    >
+      <span aria-hidden="true">↑</span>
+      <span>Top</span>
+    </Button>
   </div>
 </template>
 

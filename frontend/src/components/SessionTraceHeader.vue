@@ -536,9 +536,11 @@ function titleSourceTooltip(src) {
     >
       <div class="flex flex-wrap justify-end items-center gap-1.5">
         <!-- Header-row actions the parent owns (e.g. the agents popover).
-             Collapsed keeps identity + navigation only, so they fold away
-             with the rest of the detail surface. -->
-        <slot v-if="!collapsed" name="actions"></slot>
+             These survive the fold: the roster's running-count badge is live
+             session status, not a detail, and folding it away hid it during
+             the exact stretch — scrolled into a long transcript — when the
+             reader most needs to see whether subagents are still working. -->
+        <slot name="actions"></slot>
         <!-- Segmented control on one recessed track: the four modes are a
              single exclusive choice, and loose bordered pills read as four
              independent toggles. Below lg the compact sticky strip owns the
