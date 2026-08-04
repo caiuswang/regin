@@ -1,5 +1,6 @@
 import { test, expect } from './auth-fixture.js'
 import { contentOverflow, settle, squishedColumns } from './helpers/overflow.js'
+import { BASELINE_TRACE } from './helpers/fixtures.js'
 
 test.describe('Responsive layout', () => {
   test('mobile shows hamburger button and hides inline nav links', async ({ page, viewport }) => {
@@ -105,14 +106,11 @@ test.describe('No horizontal overflow at narrow widths', () => {
 
 test.describe('Detail pages — no horizontal overflow', () => {
   test('session trace detail: timeline spine wraps, pane does not scroll sideways', async ({ page }) => {
-    await page.goto('/trace/sessions')
+    // Straight to the seeded session. Clicking "the first link in the list"
+    // raced every other spec seeding sessions concurrently, so which session
+    // these layout assertions ran against was luck.
+    await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
     await settle(page)
-    // On mobile the `.tbl` is `hidden sm:table` and a card list is shown
-    // instead, so the first session link in the DOM (inside the hidden table)
-    // is not clickable — target the VISIBLE link for whichever layout renders.
-    const firstLink = page.locator('a[href^="/trace/sessions/"]:visible').first()
-    if (!(await firstLink.count())) test.skip(true, 'no sessions in dev DB')
-    await firstLink.click()
 
     // Conversation view is the default. Its chat column must not be starved to
     // a sliver by the (desktop-only) turns rail — the regression that made the
@@ -154,11 +152,11 @@ test.describe('Detail pages — no horizontal overflow', () => {
   // the pane out — this case fails on that layout and passes on the reflowing
   // grid, so it is the guard for the strip specifically, not just the route.
   test('session trace detail: vitals strip and spend panels fit a phone', async ({ page }) => {
-    await page.goto('/trace/sessions')
+    // Straight to the seeded session. Clicking "the first link in the list"
+    // raced every other spec seeding sessions concurrently, so which session
+    // these layout assertions ran against was luck.
+    await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
     await settle(page)
-    const firstLink = page.locator('a[href^="/trace/sessions/"]:visible').first()
-    if (!(await firstLink.count())) test.skip(true, 'no sessions in dev DB')
-    await firstLink.click()
 
     const strip = page.getByTestId('trace-vitals-strip')
     await expect(strip).toBeVisible({ timeout: 10_000 })
@@ -200,11 +198,11 @@ test.describe('Detail pages — no horizontal overflow', () => {
   // spine's own left indent, and the body holds unwrapped command text. The
   // closed row can't prove that — this case opens one and re-measures.
   test('session trace conversation: an expanded tool card does not widen the pane', async ({ page }) => {
-    await page.goto('/trace/sessions')
+    // Straight to the seeded session. Clicking "the first link in the list"
+    // raced every other spec seeding sessions concurrently, so which session
+    // these layout assertions ran against was luck.
+    await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
     await settle(page)
-    const firstLink = page.locator('a[href^="/trace/sessions/"]:visible').first()
-    if (!(await firstLink.count())) test.skip(true, 'no sessions in dev DB')
-    await firstLink.click()
     await page.locator('.event-spine-row').first().waitFor({ timeout: 15_000 }).catch(() => {})
 
     const opener = page.locator('.event-spine-row span')

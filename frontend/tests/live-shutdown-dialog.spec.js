@@ -7,8 +7,8 @@
  * Both cases end on Cancel: confirming would really end a live session.
  */
 import { test, expect } from './auth-fixture.js'
+import { API_BASE as API } from './helpers/api-base.js'
 
-const API = 'http://localhost:8321'
 
 // `page.request` is a separate context from the app's fetch — it does not
 // pick up the token the fixture puts in localStorage, so it needs its own.

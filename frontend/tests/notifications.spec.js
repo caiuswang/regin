@@ -101,19 +101,20 @@ function cleanup(page, ids) {
   }, ids)
 }
 
-// The banner now pages through EVERY parked decision, and the feed is the live
-// DB — a blocker a previous run (or a real session on this machine) left
-// waiting would occupy page 1 and shift this test's own card behind it. Start
-// each blocker test owning the banner.
+// The banner pages through EVERY parked decision, so a blocker another spec
+// left waiting would occupy page 1 and shift this test's own card behind it.
+// Start each blocker test owning the banner.
+//
+// Dismissing the whole feed is only safe because the suite owns its database
+// (`e2e-env.js`). Against the dev stack this cleared the operator's real parked
+// decisions — it was the most destructive thing the suite did.
 function clearBlockers() {
   const script = `
 import sys
 sys.path.insert(0, ".")
 from lib.agent_messages import blockers, store
 for b in blockers.live_blockers():
-    # A derived card with no row (a genuine park on this machine) has no id
-    # and cannot be dismissed from here — leave it; the serial suite owns
-    # the banner only against rows earlier runs left behind.
+    # A derived card has no row and so no id — nothing to dismiss.
     if b["id"] is not None:
         store.dismiss(b["id"])
 print("ok")
@@ -161,7 +162,10 @@ test.describe('notification tiers', () => {
     await page.goto('/trace/sessions')
     await streamReady(page)
 
-    const before = await page.locator('.sb-badge').first().textContent().catch(() => null)
+    // Explicit timeout: with no unread messages the badge does not exist, and
+    // an untimed textContent() auto-waits for it until the test times out. On a
+    // developer's real DB there was always something unread to hide this.
+    const before = await page.locator('.sb-badge').first().textContent({ timeout: 1000 }).catch(() => null)
     ids.push(record({
       type: 'progress', title, body: 'Step 3 of 7 done.',
       traceId: `e2e-${randomUUID()}`,
@@ -169,7 +173,7 @@ test.describe('notification tiers', () => {
 
     // The badge is the only surface a count-only message is allowed to touch.
     await expect.poll(async () => {
-      const now = await page.locator('.sb-badge').first().textContent().catch(() => null)
+      const now = await page.locator('.sb-badge').first().textContent({ timeout: 1000 }).catch(() => null)
       return now !== before
     }, { timeout: 10_000 }).toBe(true)
     await expect(page.getByText(title)).toHaveCount(0)

@@ -6,16 +6,17 @@
  * from the side panel — without leaving the trace. This spec wires the
  * full flow:
  *   ingest spans + a backing rule_trigger row → open the session →
- *   click the rule.check row → click the 🔇 button → assert the row
- *   strikes out and the backing row's suppressed flag flips.
+ *   click the rule.check row → open the span-detail rail → click the
+ *   🔇 button → assert the row strikes out and the backing row's
+ *   suppressed flag flips.
  */
 import { test as base, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { API_BASE } from './helpers/api-base.js'
 
-const API_BASE = 'http://localhost:8321'
 
 // Resolve the repo root from this spec's location so the Python helper
 // runs on any machine/CI checkout, not just the author's.
@@ -100,6 +101,11 @@ test('suppress a rule from the session conversation view', async ({ page }) => {
   const ruleCheckRow = page.getByText('grit·java').first()
   await expect(ruleCheckRow).toBeVisible({ timeout: 10000 })
   await ruleCheckRow.click()
+
+  // Selecting a span in the Conversation tab no longer auto-opens the side
+  // panel — the detail rail is opt-in there (0b75b8c0), and the row click
+  // surfaces a "Show span details" affordance instead. Open it.
+  await page.getByRole('button', { name: 'Show span details' }).click()
 
   // The applicable_rules list renders inside the now-visible side panel.
   const ruleRow = page.locator('li', { hasText: ruleId })

@@ -15,8 +15,8 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { API_BASE } from './helpers/api-base.js'
 
-const API_BASE = 'http://localhost:8321'
 
 // Resolve the repo root from this spec's location so the Python helper
 // runs on any machine/CI checkout, not just the author's.

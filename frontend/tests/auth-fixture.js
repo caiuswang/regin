@@ -1,13 +1,13 @@
 /**
  * Shared auth fixture for E2E tests.
  *
- * Uses the pre-created claude-admin account (created via CLI before tests).
- * Tests run as admin so all mutations are permitted.
+ * The admin account is seeded into the suite's scratch DB by
+ * `scripts/e2e-server.mjs`. Credentials come from `e2e-env.js` rather than a
+ * local copy so the seed and the login cannot drift into a silent 401.
  */
 import { test as base } from '@playwright/test'
-
-const API_BASE = 'http://localhost:8321'
-const TEST_USER = { username: 'claude-admin', password: 'claude-admin-2026' }
+import { TEST_USER } from '../e2e-env.js'
+import { API_BASE } from './helpers/api-base.js'
 
 export const test = base.extend({
   page: async ({ page }, use) => {

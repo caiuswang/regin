@@ -282,14 +282,17 @@ test.describe('Revision compare page', () => {
     await expect(card).toContainText('spa')
   })
 
-  test('coerces the native-select value so switching sides stays type-correct', async ({ page }) => {
+  test('coerces the select value so switching sides stays type-correct', async ({ page }) => {
     await page.route('**/topics/workspace/proposals**', compareWorkspace(TWO_REVISIONS))
     await page.goto('/repos/regin/topics/compare?proposal=mock-run')
     const card = page.locator('[data-testid="topic-comparison-card"]')
     await expect(card).toBeVisible()
     // Set Base to r4 (id 2) too — identical sides → "No content changes"
     // (proves the string→int coercion; a string id would break the match).
-    await page.locator('[data-testid="revcompare-left"]').selectOption('2')
+    // Click-then-pick, not selectOption: the native <select> was replaced by a
+    // portalled listbox, and the coercion this asserts still runs on its emit.
+    await page.locator('[data-testid="revcompare-left"]').click()
+    await page.getByRole('option', { name: 'r4 · regenerated (latest)' }).click()
     await expect(card.locator('[data-testid="wiki-diff-identical"]')).toBeVisible()
   })
 

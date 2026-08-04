@@ -28,8 +28,10 @@ export default defineConfig({
     // wholesale and the terminal stops seeing console output at all.
     forwardConsole: { unhandledErrors: false, logLevels: ['error', 'warn'] },
     proxy: {
+      // Overridden to the E2E server by playwright's webServer env, so the
+      // suite's browser traffic cannot reach the dev stack's database.
       '/api': {
-        target: 'http://localhost:8321',
+        target: process.env.REGIN_API_TARGET || 'http://localhost:8321',
         changeOrigin: true,
       },
     },

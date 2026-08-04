@@ -34,12 +34,23 @@ from lib.settings import settings, _MAIN_WORKTREE, _PROJECT_ROOT
 # derives its URL from the same DB_PATH. Tests monkeypatch
 # `lib.orm.engine.DB_PATH` for per-test isolation.
 
-# DB_PATH follows the MAIN worktree: one trace store per project, so spans
+# DB_PATH defaults to the MAIN worktree: one trace store per project, so spans
 # written from a worktree land where the UI and the gates read them. SCHEMA_PATH
 # stays on this checkout — schema.sql and alembic/versions/ are branch source,
 # and applying a feature branch's migrations to the shared DB is a separate
 # decision from sharing the file.
-DB_PATH: str = str(_MAIN_WORKTREE / "db" / "regin.db")
+#
+# Resolved through `settings` rather than `_MAIN_WORKTREE` directly so
+# REGIN_TRACE_DB_PATH reaches a process nobody can monkeypatch — the memory DB
+# already had that seam (`lib/memory/engine.memory_db_path`), and the one-word
+# difference between the two bindings is why E2E could isolate one and not the
+# other. Still a module constant read by `get_connection` / `_resolve_primary_url`,
+# so the existing in-process monkeypatch seam is unchanged.
+DB_PATH: str = str(
+    settings.trace_db_path
+    if settings.trace_db_path
+    else _MAIN_WORKTREE / "db" / "regin.db"
+)
 SCHEMA_PATH: str = str(_PROJECT_ROOT / "db" / "schema.sql")
 
 _TAG_SEED_BLOCK_RE = re.compile(

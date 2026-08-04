@@ -5,8 +5,8 @@
  * write path), then asserts the panel surfaces it as a suppressing candidate.
  */
 import { test, expect } from './auth-fixture.js'
+import { API_BASE } from './helpers/api-base.js'
 
-const API_BASE = 'http://localhost:8321'
 const TOPIC = 'memory-recall-pipeline'
 const QUERY = 'debug the memory recall ranking pipeline'
 

@@ -21,8 +21,8 @@
  */
 import { test, expect } from './auth-fixture.js'
 import { randomUUID, createHash } from 'node:crypto'
+import { API_BASE } from './helpers/api-base.js'
 
-const API_BASE = 'http://localhost:8321'
 
 // Mirror lib/trace/pending_spans.prompt_placeholder_id: sha1 of
 // `<session>\x00<text-prefix>`, first 13 hex chars, `promptlive-` prefixed.

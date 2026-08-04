@@ -1,6 +1,6 @@
 /**
  * Verifies the client-side search + pagination added to the Memory page's
- * Topics and Recall sub-tabs (MemoryTopics, MemoryTopicFeedback, MemoryExemplars).
+ * Topics sub-tabs (MemoryTopics, MemoryTopicFeedback).
  * Each endpoint returns a bounded set with no offset/`q`, so the controls live
  * in useClientPage. We mock large datasets and assert the pager + filter behave.
  */
@@ -25,20 +25,11 @@ function recent(n) {
     relevance: '', injected_at: '2026-06-20T00:00:00',
   }))
 }
-function exemplars(n) {
-  return Array.from({ length: n }, (_, i) => ({
-    memory_id: `m${i}`, title: `Memory ${i} ${i === 4 ? 'needle' : ''}`,
-    kind: 'lesson', pos_count: 1, neg_count: 0, last_created: '2026-06-20T00:00:00',
-  }))
-}
-
-test('Topics & Recall tabs paginate and filter large tables', async ({ page }) => {
+test('Topics tab paginates and filters large tables', async ({ page }) => {
   await page.route('**/api/memory/topics', (r) =>
     r.fulfill({ json: { topics: topics(40) } }))
   await page.route('**/api/memory/topic-feedback*', (r) =>
     r.fulfill({ json: { summary: summary(40), recent: recent(40) } }))
-  await page.route('**/api/memory/exemplars*', (r) =>
-    r.fulfill({ json: { neg_weight: 1, pos_weight: 1, summary: exemplars(40) } }))
   // Memories-tab list endpoint — keep it empty so the page mounts cleanly.
   await page.route('**/api/memory?*', (r) =>
     r.fulfill({ json: { items: [], pagination: { total: 0, page: 0, size: 50 }, stats: {} } }))
@@ -59,7 +50,10 @@ test('Topics & Recall tabs paginate and filter large tables', async ({ page }) =
 
   // --- Topic feedback summary table: 15/page over 40 rows. ---
   await expect(page.locator('tr', { hasText: 'sumtopic-0' }).first()).toBeVisible()
-  const topicFilter = page.getByPlaceholder('Filter topics…')
+  // `getByRole('searchbox')`, not `getByPlaceholder`: the Taxonomy panel grew a
+  // second input with the same placeholder, so the plain placeholder locator is
+  // ambiguous under strict mode. This one is the table filter under test.
+  const topicFilter = page.getByRole('searchbox', { name: 'Filter topics…' })
   await topicFilter.fill('needle')
   await expect(page.locator('tr', { hasText: 'sumtopic-5-needle' })).toBeVisible()
   await expect(page.locator('tr', { hasText: 'sumtopic-0' })).toHaveCount(0)
@@ -70,12 +64,4 @@ test('Topics & Recall tabs paginate and filter large tables', async ({ page }) =
   await injFilter.fill('needle query')
   await expect(page.locator('tr', { hasText: 'rectopic-7' })).toBeVisible()
   await expect(page.locator('tr', { hasText: 'rectopic-0' })).toHaveCount(0)
-
-  // --- Recall tab exemplars table. ---
-  await page.goto('/memory?tab=recall')
-  await expect(page.locator('tr', { hasText: 'Memory 0' }).first()).toBeVisible()
-  const memFilter = page.getByPlaceholder('Filter memories…')
-  await memFilter.fill('needle')
-  await expect(page.locator('tr', { hasText: 'Memory 4 needle' })).toBeVisible()
-  await expect(page.locator('tr', { hasText: 'Memory 0' })).toHaveCount(0)
 })

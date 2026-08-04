@@ -12,11 +12,14 @@
  */
 import { test as authTest, expect } from './auth-fixture.js'
 import { devices } from '@playwright/test'
+import { BASELINE_TRACE } from './helpers/fixtures.js'
 
 const mobile = authTest.extend({})
 mobile.use({ ...devices['Pixel 7'] })
 
-const SID = '02537478-02be-46d7-b7cd-459f9c0a2b20'
+// The seeded baseline session (`scripts/e2e-seed.py`). This was a hardcoded
+// UUID from one developer's real database, so the spec only ever ran there.
+const SID = BASELINE_TRACE
 
 mobile('reload control keeps a constant width when reloading (no header reflow)', async ({ page }) => {
   await page.goto(`/trace/sessions/${SID}`)

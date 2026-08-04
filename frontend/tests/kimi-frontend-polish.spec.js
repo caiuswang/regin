@@ -18,6 +18,7 @@
  * LiveSessionPicker's fallback hits).
  */
 import { test, expect } from './auth-fixture.js'
+import { API_BASE } from './helpers/api-base.js'
 
 // playwright.config.js pins baseURL to :5173 with `reuseExistingServer`, so a
 // dev server started from a DIFFERENT checkout that already owns :5173 makes
@@ -26,8 +27,10 @@ import { test, expect } from './auth-fixture.js'
 //   REGIN_E2E_ORIGIN=http://localhost:5175 npx playwright test kimi-frontend-polish
 // Unset, it falls back to the config default — which fails loudly (never
 // false-passes) when that server is serving code without the fix.
-const ORIGIN = process.env.REGIN_E2E_ORIGIN || 'http://localhost:5173'
-const url = (path) => `${ORIGIN}${path}`
+// Relative, so Playwright resolves against the config's `baseURL`. A pinned
+// origin sent these three tests at the dev stack's vite rather than the one the
+// suite started, and every locator then missed.
+const url = (path) => path
 
 const KIMI_A = 'session_113dcdf9-f20c-488a-a53a-619671b96ad2'
 const KIMI_B = 'session_0526b6b6-2af5-4c09-908e-b288aad59588'
@@ -38,7 +41,7 @@ const CLAUDE_A = '33cc3a2d-ec89-4d0a-9f4d-1f2b3c4d5e6f'
 const PREFIX = 'session_'
 
 async function authToken(page) {
-  const res = await page.request.post('http://localhost:8321/api/auth/login', {
+  const res = await page.request.post(`${API_BASE}/api/auth/login`, {
     data: { username: 'claude-admin', password: 'claude-admin-2026' },
   })
   expect(res.ok()).toBeTruthy()
@@ -50,7 +53,7 @@ async function authToken(page) {
 // realistic without hand-maintaining them here.
 async function mockSessionList(page, rows) {
   const token = await authToken(page)
-  const res = await page.request.get('http://localhost:8321/api/sessions?size=1', {
+  const res = await page.request.get(`${API_BASE}/api/sessions?size=1`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(res.ok()).toBeTruthy()
@@ -74,14 +77,16 @@ const LIST_ROWS = [
 ]
 
 test.describe('session ids stay distinguishable across providers', () => {
-  test('desktop sessions table renders discriminating Kimi ids', async ({ page }) => {
+  test('desktop sessions list renders discriminating Kimi ids', async ({ page }) => {
     await mockSessionList(page, LIST_ROWS)
     await page.goto(url('/trace/sessions'))
 
-    const cells = page.locator('table .cell-code')
+    // `.srow__id`, not `table .cell-code`: b93ff013 rebuilt the list as a
+    // grouped grid and removed the table wrapper, but left this spec behind.
+    const cells = page.locator('.srow .srow__id')
     await expect(cells.first()).toBeVisible({ timeout: 15_000 })
-    // innerText, not textContent: the cell also carries a ≥1700px-only span
-    // holding the FULL id, which is correct and must stay untruncated.
+    // innerText, not textContent: the row also carries a wide-viewport-only
+    // span holding the FULL id, which is correct and must stay untruncated.
     const shown = await cells.evaluateAll(els => els.map(e => e.innerText.trim()))
 
     for (const text of shown) expect(text).not.toContain(PREFIX)
@@ -92,11 +97,13 @@ test.describe('session ids stay distinguishable across providers', () => {
     expect(shown.some(t => t.startsWith(CLAUDE_A.slice(0, 12)))).toBe(true)
   })
 
-  test('sessions-table checkbox labels discriminate Kimi rows', async ({ page }) => {
+  test('sessions-list checkbox labels discriminate Kimi rows', async ({ page }) => {
     await mockSessionList(page, LIST_ROWS)
     await page.goto(url('/trace/sessions'))
 
-    const boxes = page.locator('table [aria-label^="Select session "]')
+    // Scoped to the desktop row: the phone card layout renders in the same DOM
+    // (hidden by CSS) and its checkboxes carry identical labels.
+    const boxes = page.locator('.srow [aria-label^="Select session "]')
     await expect(boxes.first()).toBeVisible({ timeout: 15_000 })
     const labels = await boxes.evaluateAll(els => els.map(e => e.getAttribute('aria-label')))
 
@@ -105,11 +112,11 @@ test.describe('session ids stay distinguishable across providers', () => {
     expect(new Set(labels).size).toBe(labels.length)
   })
 
-  test('sessions-table row actions name the session without the prefix', async ({ page }) => {
+  test('sessions-list row actions name the session without the prefix', async ({ page }) => {
     await mockSessionList(page, LIST_ROWS)
     await page.goto(url('/trace/sessions'))
 
-    const live = page.locator('table [title^="Watch session "]')
+    const live = page.locator('.srow [title^="Watch session "]')
     await expect(live.first()).toBeVisible({ timeout: 15_000 })
     const titles = await live.evaluateAll(els => els.map(e => e.getAttribute('title')))
 

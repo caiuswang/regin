@@ -1,7 +1,7 @@
 /**
  * Session trace view smoke test.
  *
- * Opens the first available session from /trace/sessions, switches to the
+ * Opens the seeded baseline session, switches to the
  * Timeline view, and asserts the span tree + details panel render. Confirms
  * the read-only GET /api/sessions/:id projection still produces a usable tree
  * for the UI.
@@ -11,16 +11,16 @@
  * side-effect assertion, since Playwright can't see sqlite state.
  */
 import { test, expect } from './auth-fixture.js'
+import { BASELINE_TRACE } from './helpers/fixtures.js'
 
-// Open the first session in the list and switch to Timeline view (the default
+// Open the seeded session and switch to Timeline view (the default
 // is Conversation, which renders chat cards rather than the event spine). The
 // view-mode tabs only appear once the header has rendered, so waiting for the
 // Timeline button doubles as the "trace view loaded" signal.
-async function openFirstSessionTimeline(page) {
-  await page.goto('/trace/sessions')
-  const firstLink = page.locator('a[href^="/trace/sessions/"]').first()
-  await expect(firstLink).toBeVisible({ timeout: 10_000 })
-  await firstLink.click()
+async function openSeededSessionTimeline(page) {
+  // The seeded session, not "whichever link is first": with the suite running
+  // fully parallel, that was whatever another spec had just written.
+  await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
 
   const timelineTab = page.getByRole('button', { name: 'Timeline', exact: true })
   await expect(timelineTab).toBeVisible({ timeout: 10_000 })
@@ -29,7 +29,7 @@ async function openFirstSessionTimeline(page) {
 
 test.describe('Session Trace View', () => {
   test('renders span tree + details for a real session', async ({ page }) => {
-    await openFirstSessionTimeline(page)
+    await openSeededSessionTimeline(page)
 
     // At least one event row should render in the timeline spine.
     const spanRows = page.locator('[data-testid="spine-row"]')
@@ -42,7 +42,7 @@ test.describe('Session Trace View', () => {
   })
 
   test('turns sidebar links turns to spans', async ({ page }) => {
-    await openFirstSessionTimeline(page)
+    await openSeededSessionTimeline(page)
 
     // The panel defers its per-turn aggregation behind a "load" button — but
     // only while nothing else has needed turn_usage yet. The Conversation tab

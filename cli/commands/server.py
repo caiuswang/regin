@@ -18,6 +18,8 @@ def _start_workflow_watcher(debug: bool) -> None:
     import os
     import threading
 
+    if not settings.workflow_watch:
+        return
     if debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
     from lib.trace.workflow_ingest import watch

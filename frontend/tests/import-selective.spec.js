@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execSync } from 'child_process'
+import { API_BASE } from './helpers/api-base.js'
+import { PATTERNS_DIR } from './helpers/fixtures.js'
 
 /**
  * Build a scan root with one `<slug>/SKILL.md` skill folder per slug — the
@@ -21,7 +23,6 @@ function buildScanRoot(slugs) {
   return root
 }
 
-const PATTERNS_DIR = path.join(os.homedir(), '.local/share/regin/patterns')
 
 test.describe('Selective folder import', () => {
   const keepSlug = 'e2e-sel-keep'
@@ -39,11 +40,11 @@ test.describe('Selective folder import', () => {
     const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
     const list = await page.request
-      .get('http://localhost:8321/api/patterns', { headers })
+      .get(`${API_BASE}/api/patterns`, { headers })
       .then((r) => r.json())
     for (const slug of [keepSlug, skipSlug]) {
       if (list.docs?.find((d) => d.slug === slug)) {
-        await page.request.post(`http://localhost:8321/api/patterns/${slug}/delete`, { headers })
+        await page.request.post(`${API_BASE}/api/patterns/${slug}/delete`, { headers })
       }
       try { execSync(`rm -rf "${path.join(PATTERNS_DIR, slug)}"`) } catch (_) {}
     }

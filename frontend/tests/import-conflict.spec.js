@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execSync } from 'child_process'
+import { API_BASE } from './helpers/api-base.js'
+import { PATTERNS_DIR } from './helpers/fixtures.js'
 
 /**
  * Build a minimal skill folder for import testing. Returns { root, skillDir }
@@ -19,7 +21,7 @@ function buildSkillFolder(slug) {
 
 test.describe('Pattern import conflict', () => {
   // These three share one slug, one server-side pattern row, and one
-  // directory under ~/.local/share/regin/patterns — and beforeEach deletes
+  // directory under the server's patterns dir — and beforeEach deletes
   // all of it. Run them concurrently and they delete each other's fixture
   // mid-test, so the ordering the file already relies on is stated rather
   // than inherited from the runner's default.
@@ -46,17 +48,17 @@ test.describe('Pattern import conflict', () => {
     const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
 
-    const list = await page.request.get('http://localhost:8321/api/patterns', { headers }).then(r => r.json())
+    const list = await page.request.get(`${API_BASE}/api/patterns`, { headers }).then(r => r.json())
     for (const slug of [testSlug, `${testSlug}-renamed`]) {
       const existing = list.docs.find(d => d.slug === slug)
       if (existing) {
-        await page.request.post(`http://localhost:8321/api/patterns/${slug}/delete`, { headers })
+        await page.request.post(`${API_BASE}/api/patterns/${slug}/delete`, { headers })
       }
     }
     // Also clean up disk directories in case DB and disk are out of sync.
     for (const slug of [testSlug, `${testSlug}-renamed`]) {
       try {
-        execSync(`rm -rf ~/.local/share/regin/patterns/${slug}`)
+        execSync(`rm -rf "${PATTERNS_DIR}/${slug}"`)
       } catch (_) {}
     }
   })

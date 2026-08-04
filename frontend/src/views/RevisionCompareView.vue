@@ -171,8 +171,8 @@ onMounted(loadAll)
       <div class="card revcompare__pickers">
         <div class="revcompare__picker">
           <label class="revcompare__picker-label">Base</label>
-          <!-- native <select> emits a string; coerce so int revision-id
-               comparisons (labels, defaulting) stay type-correct -->
+          <!-- the select emits its value as a string; coerce so int
+               revision-id comparisons (labels, defaulting) stay type-correct -->
           <Select
             :model-value="leftId"
             :options="revisionOptions"

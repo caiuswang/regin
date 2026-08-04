@@ -12,8 +12,11 @@
  */
 import { test as authTest, expect } from './auth-fixture.js'
 import { devices } from '@playwright/test'
+import { BASELINE_TRACE } from './helpers/fixtures.js'
 
-const SID = '02537478-02be-46d7-b7cd-459f9c0a2b20'
+// The seeded baseline session (`scripts/e2e-seed.py`). This was a hardcoded
+// UUID from one developer's real database, so the spec only ever ran there.
+const SID = BASELINE_TRACE
 const mobile = authTest.extend({})
 mobile.use({ ...devices['Pixel 7'] })
 

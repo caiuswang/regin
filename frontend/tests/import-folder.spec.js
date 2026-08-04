@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execSync } from 'child_process'
+import { API_BASE } from './helpers/api-base.js'
+import { PATTERNS_DIR } from './helpers/fixtures.js'
 
 /**
  * Build a multi-file skill folder on disk for folder-import testing.
@@ -22,7 +24,6 @@ function buildSkillFolder(slug) {
   return { root, skillDir }
 }
 
-const PATTERNS_DIR = path.join(os.homedir(), '.local/share/regin/patterns')
 
 test.describe('Pattern folder import', () => {
   const testSlug = 'e2e-import-folder'
@@ -43,10 +44,10 @@ test.describe('Pattern folder import', () => {
     const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
     const headers = token ? { Authorization: `Bearer ${token}` } : {}
     const list = await page.request
-      .get('http://localhost:8321/api/patterns', { headers })
+      .get(`${API_BASE}/api/patterns`, { headers })
       .then((r) => r.json())
     if (list.docs?.find((d) => d.slug === testSlug)) {
-      await page.request.post(`http://localhost:8321/api/patterns/${testSlug}/delete`, { headers })
+      await page.request.post(`${API_BASE}/api/patterns/${testSlug}/delete`, { headers })
     }
     try { execSync(`rm -rf "${path.join(PATTERNS_DIR, testSlug)}"`) } catch (_) {}
   })

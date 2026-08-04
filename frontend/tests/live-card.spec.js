@@ -35,8 +35,11 @@
 import { test, expect } from './auth-fixture.js'
 import { randomUUID } from 'node:crypto'
 import { contentOverflow, settle, squishedColumns } from './helpers/overflow.js'
+import { HEAVY_TRACE } from './helpers/fixtures.js'
 
-const HEAVY_FIXTURE = '8e964958-dbd1-4af1-86be-c1c845cec291'
+// Seeded by `scripts/e2e-seed.py`. Was a UUID naming one real session on one
+// machine — everywhere else these tests passed vacuously against an empty page.
+const HEAVY_FIXTURE = HEAVY_TRACE
 
 test.use({ viewport: { width: 375, height: 667 } })
 
@@ -602,9 +605,10 @@ test.describe('NOW zone (acceptance #8)', () => {
   })
 
   test('worst-case fixture: finished state if the session has actually ended by test time', async ({ page }) => {
-    // 8e964958 is a real, currently in-progress session (status was 'active'
-    // with no ended_at as of writing this spec) — it may or may not have
-    // ended by the time this runs. Assert the strict data-state="finished"
+    // The seeded heavy fixture carries no ended_at, so this takes the
+    // else-branch below; the strict finished-state assertion is the synthetic
+    // test right underneath. Kept conditional so it still holds if the fixture
+    // ever gains an end. Assert the strict data-state="finished"
     // only when the API itself reports ended_at; otherwise just prove the
     // zone renders one of the five documented states. The strict version of
     // this assertion (guaranteed ended) is the synthetic test right below.
@@ -625,7 +629,7 @@ test.describe('NOW zone (acceptance #8)', () => {
     } else {
       test.info().annotations.push({
         type: 'note',
-        description: '8e964958 had no ended_at at request time — the strict finished-state assertion is covered by the synthetic-ended test instead.',
+        description: 'the heavy fixture had no ended_at at request time — the strict finished-state assertion is covered by the synthetic-ended test instead.',
       })
       await expect(nowZone).toHaveAttribute('data-state', /^(response|tool|permission|prompt|finished)$/)
     }

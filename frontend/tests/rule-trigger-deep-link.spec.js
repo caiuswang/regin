@@ -13,8 +13,8 @@
  */
 import { test, expect } from './auth-fixture.js'
 import { randomUUID } from 'node:crypto'
+import { API_BASE } from './helpers/api-base.js'
 
-const API_BASE = 'http://localhost:8321'
 
 async function seedFixture(page) {
   // Use timestamps that fall comfortably inside the default 7d range

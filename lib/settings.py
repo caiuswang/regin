@@ -974,9 +974,17 @@ _MAIN_WORKTREE: Path = _main_worktree(_PROJECT_ROOT)
 # project-root-relative. `settings.local.json` is machine config (tokens,
 # repo paths, engine overrides) and is gitignored, so a worktree would simply
 # not have one — it follows the main checkout.
-_CONFIG_DIR: Path = _PROJECT_ROOT / "config"
+# REGIN_CONFIG_DIR redirects BOTH settings files, for the same reason
+# REGIN_TRACE_DB_PATH exists: the settings API writes `settings.json`, so a
+# separate process driving the app (the E2E server) otherwise edits the
+# committed config of the checkout it was launched from.
+_CONFIG_DIR: Path = Path(os.environ.get("REGIN_CONFIG_DIR") or _PROJECT_ROOT / "config")
 _SHARED_SETTINGS_PATH: Path = _CONFIG_DIR / "settings.json"
-_LOCAL_SETTINGS_PATH: Path = _MAIN_WORKTREE / "config" / "settings.local.json"
+_LOCAL_SETTINGS_PATH: Path = (
+    _CONFIG_DIR / "settings.local.json"
+    if os.environ.get("REGIN_CONFIG_DIR")
+    else _MAIN_WORKTREE / "config" / "settings.local.json"
+)
 
 
 def _xdg_data_home() -> Path:
@@ -1003,6 +1011,12 @@ class Settings(BaseSettings):
         env_prefix="REGIN_",
         extra="ignore",
         case_sensitive=False,
+        # Nested blocks are reachable as REGIN_<BLOCK>__<FIELD> (e.g.
+        # REGIN_AGENT_MEMORY__DB_PATH). Out-of-process consumers — a
+        # `regin serve` spawned by the E2E harness, a hook subprocess — can
+        # only be redirected through the environment; without this they had
+        # no way to reach anything but a top-level field.
+        env_nested_delimiter="__",
         # JSON sources plug in via `settings_customise_sources` below.
     )
 
@@ -1020,6 +1034,21 @@ class Settings(BaseSettings):
     # Not to be confused with `data_dir` (machine-global XDG) or
     # `project_root` (this checkout, which identifies the branch's source).
     main_worktree: Path = Field(default_factory=lambda: _MAIN_WORKTREE)
+
+    # The trace/pattern/auth SQLite file. None resolves to
+    # `<main_worktree>/db/regin.db` — the historical constant. Exposed as a
+    # field, and honoured by `lib.orm.engine`, so a *separate process* can be
+    # pointed at a scratch DB via REGIN_TRACE_DB_PATH. The in-process
+    # monkeypatch of `lib.orm.engine.DB_PATH` cannot reach a `regin serve`
+    # the test harness spawns, which is how the E2E suite came to run against
+    # the developer's real database.
+    trace_db_path: Path | None = None
+
+    # Whether `regin serve` watches for Claude Code workflow runs and ingests
+    # them. Off for the E2E suite: the watcher imports whatever workflow
+    # transcripts happen to sit in the developer's home directory, which makes
+    # the suite's baseline data differ per machine.
+    workflow_watch: bool = True
 
     # The user-local data root. Overridable via REGIN_DATA_DIR.
     data_dir: Path = Field(default_factory=_default_data_dir)

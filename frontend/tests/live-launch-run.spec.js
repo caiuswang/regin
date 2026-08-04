@@ -25,6 +25,7 @@ const OPTIONS = {
   permission_modes: ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
   default_permission_mode: 'default',
   default_model: '',
+  models: ['claude-opus-5', 'claude-sonnet-4'],
   gating_active: true,
 }
 
@@ -128,7 +129,8 @@ test('the chosen overrides reach the launch route, then it opens the run', async
   await page.getByTestId('live-launch-prompt').fill('audit the trace merge')
   await page.getByTestId('live-launch-cwd').click()
   await page.getByRole('option', { name: '/Users/dev/repo-b' }).click()
-  await page.getByTestId('live-launch-model').fill('claude-opus-5')
+  await page.getByTestId('live-launch-model').click()
+  await page.getByRole('option', { name: 'claude-opus-5' }).click()
   await page.getByTestId('live-launch-oneshot').click()
   await page.getByTestId('live-launch-go').click()
   await settle(page)
@@ -406,7 +408,8 @@ test('dismissing the sheet mid-pick keeps what was already typed', async ({ page
 
   await openSheet(page, traceId)
   await page.getByTestId('live-launch-prompt').fill('half-written instruction')
-  await page.getByTestId('live-launch-model').fill('claude-sonnet-4')
+  await page.getByTestId('live-launch-model').click()
+  await page.getByRole('option', { name: 'claude-sonnet-4' }).click()
   await page.getByTestId('live-launch-resume-open').click()
   await settle(page)
   await page.keyboard.press('Escape')
@@ -417,7 +420,7 @@ test('dismissing the sheet mid-pick keeps what was already typed', async ({ page
   // Reopening lands on the form, not back inside the picker being left.
   await expect(page.getByTestId('live-launch-prompt'))
     .toHaveValue('half-written instruction')
-  await expect(page.getByTestId('live-launch-model')).toHaveValue('claude-sonnet-4')
+  await expect(page.getByTestId('live-launch-model')).toContainText('claude-sonnet-4')
 })
 
 test('a session picked before the sheet was dismissed is still picked', async ({ page }) => {
