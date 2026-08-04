@@ -126,6 +126,12 @@ def _rate_ok(trace_id: str) -> bool:
         return allowed
 
 
+# A pane whose identity would not parse was NOT read, however cleanly tmux
+# exited: the answer is "we could not tell", and `session_liveness` must not
+# turn it into the positive "gone" that settles a trace row.
+_UNREADABLE = "unparseable pane identity"
+
+
 def _match_identity(row: dict, pid_s: str, pane_pid_s: str,
                     command: str) -> str | None:
     """Refusal detail if the live pane does not match the registered triple
@@ -133,7 +139,7 @@ def _match_identity(row: dict, pid_s: str, pane_pid_s: str,
     try:
         pid, pane_pid = int(pid_s), int(pane_pid_s)
     except ValueError:
-        return "unparseable pane identity"
+        return _UNREADABLE
     if pid != row["tmux_server_pid"]:
         return (f"stale: tmux server pid {pid} != "
                 f"registered {row['tmux_server_pid']}")
@@ -147,37 +153,92 @@ def _match_identity(row: dict, pid_s: str, pane_pid_s: str,
 def _verify_identity(row: dict) -> dict:
     """Re-read the pane and confirm it is the registered claude session.
 
-    Returns {ok, in_mode, detail}. `ok` only when the query succeeds, both
-    pids match the registered triple, and the foreground command is
+    Returns {ok, in_mode, read, detail}. `ok` only when the query succeeds,
+    both pids match the registered triple, and the foreground command is
     allowlisted. `in_mode` (copy-mode) rides along for the cancel step.
+    `read` says whether the pane could be QUERIED at all, which separates "we
+    looked and it is not our claude" from "we could not look" — a distinction
+    `ok` collapses and `session_liveness` needs.
     """
     socket, pane = row.get("tmux_socket"), row["pane_id"]
     r = _tmux(socket, "display-message", "-p", "-t", pane,
               "#{pid}\t#{pane_pid}\t#{pane_current_command}\t#{pane_in_mode}")
     if r.returncode != 0:
-        return {"ok": False, "in_mode": False,
+        return {"ok": False, "in_mode": False, "read": False,
                 "detail": f"pane {pane!r} not found"}
     parts = (r.stdout or "").strip().split("\t")
     if len(parts) != 4:
-        return {"ok": False, "in_mode": False,
-                "detail": "unparseable pane identity"}
+        return {"ok": False, "in_mode": False, "read": False,
+                "detail": _UNREADABLE}
     in_mode = parts[3] == "1"
     refusal = _match_identity(row, parts[0], parts[1], parts[2])
     if refusal is not None:
-        return {"ok": False, "in_mode": in_mode, "detail": refusal}
-    return {"ok": True, "in_mode": in_mode,
+        return {"ok": False, "in_mode": in_mode, "detail": refusal,
+                "read": refusal != _UNREADABLE}
+    return {"ok": True, "in_mode": in_mode, "read": True,
             "detail": f"identity ok (command={parts[2]})"}
 
 
-def _type_and_ack(row: dict, text: str, in_mode: bool) -> DeliveryResult:
+# claude's composer can run in vim mode, and the Escape that cancels a turn
+# in flight also drops it out of INSERT. Literal text typed into a NORMAL-mode
+# composer is executed as motions instead: "/exit" became `/` (search), `e`,
+# `x`, `i` (re-enter INSERT) and only the trailing `t` was inserted — the pane
+# read `❯ t`, the ack failed, and the session never quit.
+#
+# The mode cannot be detected: claude renders `-- INSERT --` but shows NOTHING
+# for NORMAL, which is exactly what a non-vim composer shows too. So restore it
+# blind with a sequence that is correct either way — in NORMAL `i` re-enters
+# INSERT, and with vim off `i` types one stray char that the trailing C-u
+# removes. Both worlds end on an empty line that accepts literal text.
+_COMPOSER_RESET_KEYS = ("C-u", "i", "C-u")
+
+# The composer redraws between keys; sending them back-to-back let `i` outrun
+# the C-u that was meant to precede it.
+_RESET_STEP_SEC = 0.15
+
+
+def _reset_composer(socket: str | None, pane: str) -> bool:
+    """False when a keystroke failed to send: the reset is only empty at its
+    LAST key, so a half-sent one can leave the stray `i` in the composer, and
+    typing on top of that residue would submit a corrupted line."""
+    sent = True
+    for key in _COMPOSER_RESET_KEYS:
+        if _tmux(socket, "send-keys", "-t", pane, key).returncode != 0:
+            sent = False
+        time.sleep(_RESET_STEP_SEC)
+    return sent
+
+
+# Typing a slash command opens claude's autocomplete menu, and Enter then runs
+# the HIGHLIGHTED entry rather than the line you typed. Its ranking is fuzzy,
+# so the highlight need not be on your command: a live run of this close path
+# typed `/exit` and submitted `/python-complexity` — "compl-EXIT-y" contains
+# e-x-i-t in order. A trailing space completes the command token, which
+# dismisses the menu, leaving Enter nothing to do but submit the literal line.
+_COMMAND_TERMINATOR = " "
+
+
+def _type_and_ack(row: dict, text: str, in_mode: bool,
+                  as_command: bool = False) -> DeliveryResult:
     """Cancel copy-mode if needed, type the text literally, verify it landed
     in the composer (capture-pane ack), then submit. Ack failure => not
-    delivered, and Enter is NOT sent."""
+    delivered, and Enter is NOT sent.
+
+    `as_command` types `text` as a slash COMMAND rather than as a message:
+    the composer is reset first (a key sent just before may have left vim's
+    NORMAL mode, where literal text runs as motions) and the command token is
+    terminated so the autocomplete menu cannot swallow the Enter. Reserved for
+    callers that own the composer outright — the reset discards any draft a
+    human had in it.
+    """
     socket, pane = row.get("tmux_socket"), row["pane_id"]
     if in_mode:
         _tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
         time.sleep(0.1)
-    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", text)
+    if as_command and not _reset_composer(socket, pane):
+        return DeliveryResult(False, "composer reset failed; not typing")
+    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--",
+              f"{text}{_COMMAND_TERMINATOR}" if as_command else text)
     if r.returncode != 0:
         return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
     # Ack that the text landed in the composer before submitting. Claude's
@@ -190,8 +251,11 @@ def _type_and_ack(row: dict, text: str, in_mode: bool) -> DeliveryResult:
         # them in the composer makes the client's preserved-draft retry type
         # ON TOP, submitting duplicated or two concatenated prompts, so clear
         # the input line first. Enter is still never sent: nothing submits.
-        _tmux(socket, "send-keys", "-t", pane, "C-u")
-        return DeliveryResult(False, "typed text not visible in pane; not submitting")
+        # The full reset rather than a bare C-u: a NORMAL-mode composer ignores
+        # C-u, so the residue would survive the "clear" a retry depends on.
+        left = "" if _reset_composer(socket, pane) else "; composer may hold residue"
+        return DeliveryResult(
+            False, f"typed text not visible in pane; not submitting{left}")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
     return DeliveryResult(True, f"delivered to {pane}")
 
@@ -531,10 +595,17 @@ def deliver_answers(trace_id: str, answers) -> DeliveryResult:
     return DeliveryResult(True, f"submitted {len(parsed)} answers to {pane}")
 
 
-def deliver(trace_id: str, text: str) -> DeliveryResult:
+def deliver(trace_id: str, text: str,
+            as_command: bool = False) -> DeliveryResult:
     """Resolve the reachable pane for `trace_id` and deliver `text` under the
     delivery guards. Structured refusal (never an exception) on every
-    expected failure; every outcome is audited."""
+    expected failure; every outcome is audited.
+
+    `as_command` sends `text` as a slash command instead of as a message —
+    see `_COMPOSER_RESET_KEYS` and `_COMMAND_TERMINATOR` for the two ways a
+    naively typed command misses. Off for ordinary steering, whose composer
+    may hold a human's draft the reset would discard.
+    """
     if not settings.agent_bridge.enabled:
         return _refuse(trace_id, "bridge disabled")
     if not _rate_ok(trace_id):
@@ -548,10 +619,39 @@ def deliver(trace_id: str, text: str) -> DeliveryResult:
     identity = _verify_identity(row)
     if not identity["ok"]:
         return _refuse(trace_id, identity["detail"])
-    result = _type_and_ack(row, clean, identity["in_mode"])
+    result = _type_and_ack(row, clean, identity["in_mode"], as_command)
     log.write("bridge_delivery_outcome", trace_id=trace_id,
               delivered=result.delivered, detail=result.detail)
     return result
+
+
+# Liveness has three answers, not two. Collapsing the last two into False is
+# right for a gate that must fail closed (a resume refused on no evidence
+# costs little), and WRONG for confirming a shutdown: "the probe broke" would
+# read as "the process exited", settling the trace row while the agent keeps
+# running — the very bug the confirmation exists to catch.
+LIVE = "live"
+GONE = "gone"
+UNKNOWN = "unknown"
+
+
+def session_liveness(trace_id: str) -> str:
+    """LIVE / GONE / UNKNOWN for `trace_id`'s registered pane.
+
+    GONE is a POSITIVE reading: the pane was queried and something other than
+    the registered claude holds it. Everything that merely prevented the
+    question from being answered — bridge off, no row, a tmux call that
+    failed or timed out — is UNKNOWN.
+    """
+    if not settings.agent_bridge.enabled:
+        return UNKNOWN
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return UNKNOWN
+    identity = _verify_identity(row)
+    if identity["ok"]:
+        return LIVE
+    return GONE if identity.get("read") else UNKNOWN
 
 
 def session_is_live(trace_id: str) -> bool:
@@ -570,12 +670,7 @@ def session_is_live(trace_id: str) -> bool:
     False when the bridge is off: with no registry there is no evidence either
     way, and refusing every resume on a hunch costs more than it saves.
     """
-    if not settings.agent_bridge.enabled:
-        return False
-    row = store.get_reachable_pane(trace_id)
-    if row is None:
-        return False
-    return _verify_identity(row)["ok"]
+    return session_liveness(trace_id) == LIVE
 
 
 def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:

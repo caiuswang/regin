@@ -21,9 +21,11 @@ const TIER_ACTION = {
 }
 
 // Every one of these requests shells out to tmux on the server, and a
-// shutdown holds its request for the pane-settle pause plus the delivery
-// ack. Selecting a few dozen rows would otherwise fire them all at once and
-// leave the confirm dialog closed until the slowest returns.
+// shutdown holds its request for the pane-settle pause, the composer reset,
+// the delivery ack and then the watch for the process to actually exit —
+// seconds, not milliseconds. Selecting a few dozen rows would otherwise fire
+// them all at once and leave the confirm dialog closed until the slowest
+// returns.
 const MAX_IN_FLIGHT = 4
 
 async function pooled(items, fn) {
@@ -74,7 +76,12 @@ export function useLiveShutdown() {
     const results = await pooled(states, async (state) => {
       try {
         const res = await api.post(`/sessions/${state.traceId}/shutdown`)
-        return res && res.closed ? null : { ...state, failure: res }
+        // A null tier means that by the time the server looked, nothing was
+        // holding the session any more — it ended between the probe that
+        // worded the dialog and the click. Nothing failed, so warning about
+        // it would raise a false alarm on a session that closed cleanly.
+        const settled = res && (res.closed || res.tier === null)
+        return settled ? null : { ...state, failure: res }
       } catch {
         return { ...state, failure: null }
       }
@@ -84,9 +91,14 @@ export function useLiveShutdown() {
 
   // The sentence for a shutdown that did not take. A pane whose turn regin
   // cancelled has been changed even though it is still running, so saying
-  // only "could not stop it" would understate what happened.
+  // only "could not stop it" would understate what happened. For a single
+  // row the server's own detail is carried through verbatim: it separates
+  // "never touched your pane" from "/exit was submitted and the session
+  // ignored it", which no count can express.
   function failureWarning(failed) {
     const noun = `live session${failed.length === 1 ? '' : 's'}`
+    const detail = failed.length === 1 && failed[0].failure && failed[0].failure.detail
+    if (detail) return `Could not stop this ${noun}: ${detail}; settling the trace anyway`
     const touched = failed.filter(f => f.failure && f.failure.interrupted).length
     const tail = touched
       ? ` — ${touched} had the turn in flight cancelled but stayed open`

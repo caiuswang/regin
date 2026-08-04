@@ -13,7 +13,13 @@ partial trace. These pin the missing half:
               caller uses the answer to word a confirmation dialog,
   sdk close — `stop_run` once, tmux untouched,
   tmux close— Escape BEFORE /exit (a command submitted mid-turn is queued as a
-              steering message), and a refused Escape stops the sequence,
+              steering message), and a refused Escape stops the sequence;
+              /exit is typed AS A COMMAND, not as a message (that Escape can
+              leave a vim-mode composer in NORMAL, where only its trailing `t`
+              lands, and an open autocomplete menu steals the Enter for its
+              highlighted entry), and the exit is CONFIRMED — a pane still
+              running claude reports closed=False rather than settling the row
+              on a keystroke,
   no tier   — closed=False is the ordinary answer, not an error: the caller
               settles the row anyway,
   gate      — both routes are outside PUBLIC_API_ENDPOINTS and editor-gated;
@@ -33,8 +39,9 @@ from lib.agent_bridge import delivery
 
 @pytest.fixture(autouse=True)
 def _no_settle(monkeypatch):
-    """The real pause between Escape and /exit is pane-settling time."""
+    """The real pauses are pane-settling and exit-watching time."""
     monkeypatch.setattr(live_session, "_SETTLE_SEC", 0)
+    monkeypatch.setattr(live_session, "_EXIT_POLL_SEC", 0)
 
 
 def _sdk(monkeypatch, *, owned=False, starting=False):
@@ -42,8 +49,23 @@ def _sdk(monkeypatch, *, owned=False, starting=False):
     monkeypatch.setattr(agent_sdk, "is_sdk_owned", lambda t: owned)
 
 
-def _tmux_live(monkeypatch, live=True):
-    monkeypatch.setattr(delivery, "session_is_live", lambda t: live)
+def _tmux_live(monkeypatch, live=True, after=delivery.GONE):
+    """`session_liveness` for the tier probe, then for the post-`/exit` watch.
+
+    The first reading answers `manageability`; every later one is `_await_exit`
+    watching the process go, so `after` models what happened to the quit —
+    GONE (it took), LIVE (claude ignored it) or UNKNOWN (the probe could not
+    answer, which must NOT read as an exit).
+    """
+    reads: list[str] = []
+
+    def _liveness(trace_id):
+        reads.append(trace_id)
+        if len(reads) == 1:
+            return delivery.LIVE if live else delivery.GONE
+        return after
+
+    monkeypatch.setattr(delivery, "session_liveness", _liveness)
 
 
 def _record_tmux(monkeypatch, *, escape=True, exit_ok=True):
@@ -54,8 +76,8 @@ def _record_tmux(monkeypatch, *, escape=True, exit_ok=True):
         calls.append(("key", key))
         return delivery.DeliveryResult(escape, "escape detail")
 
-    def _deliver(trace_id, text):
-        calls.append(("text", text))
+    def _deliver(trace_id, text, as_command=False):
+        calls.append(("text", text, as_command))
         return delivery.DeliveryResult(exit_ok, "exit detail")
 
     monkeypatch.setattr(delivery, "deliver_key", _key)
@@ -85,7 +107,7 @@ def test_sdk_ownership_is_asked_before_tmux(monkeypatch):
     def _boom(trace_id):
         raise AssertionError("pane probe consulted for an SDK-owned run")
 
-    monkeypatch.setattr(delivery, "session_is_live", _boom)
+    monkeypatch.setattr(delivery, "session_liveness", _boom)
     assert live_session.manageability("T-1")["tier"] == "sdk"
 
 
@@ -112,7 +134,7 @@ def test_broken_pane_probe_reads_as_unreachable(monkeypatch):
         raise RuntimeError("tmux gone")
 
     _sdk(monkeypatch)
-    monkeypatch.setattr(delivery, "session_is_live", _boom)
+    monkeypatch.setattr(delivery, "session_liveness", _boom)
     assert live_session.manageability("T-1")["tier"] is None
 
 
@@ -143,9 +165,72 @@ def test_tmux_close_cancels_the_turn_before_typing_exit(monkeypatch):
 
     result = live_session.graceful_close("T-1")
 
-    assert calls == [("key", "Escape"), ("text", "/exit")]
+    assert calls == [("key", "Escape"), ("text", "/exit", True)]
     assert result["tier"] == "tmux"
     assert result["closed"] is True
+
+
+def test_exit_is_typed_as_a_command_not_as_a_message(monkeypatch):
+    """Two hazards ride on that Escape: it drops a vim-mode composer out of
+    INSERT (where `/exit` runs as motions, leaving only `t`), and a typed
+    slash command hands Enter to the autocomplete menu's highlighted entry.
+    `as_command` is what handles both — see `delivery._type_and_ack`."""
+    _sdk(monkeypatch)
+    _tmux_live(monkeypatch)
+    calls = _record_tmux(monkeypatch)
+
+    live_session.graceful_close("T-1")
+
+    assert [c for c in calls if c[0] == "text"] == [("text", "/exit", True)]
+
+
+def test_a_session_that_ignored_exit_is_not_reported_closed(monkeypatch):
+    """Delivery can only say the keys were submitted. The operator was
+    promised the session would END, so a pane still running claude after the
+    watch window is a failure — otherwise the row settles while the agent
+    keeps emitting spans as a new partial trace."""
+    _sdk(monkeypatch)
+    _tmux_live(monkeypatch, after=delivery.LIVE)
+    _record_tmux(monkeypatch)
+
+    result = live_session.graceful_close("T-1")
+
+    assert result["closed"] is False
+    assert result["interrupted"] is True
+    assert "still running claude" in result["detail"]
+
+
+def test_an_unanswerable_probe_is_not_read_as_an_exit(monkeypatch):
+    """A tmux call that timed out says nothing about the process. Treating
+    that silence as "it exited" settles the row while the agent keeps
+    running — exactly the bug the confirmation exists to catch — so only a
+    positive GONE closes it."""
+    _sdk(monkeypatch)
+    _tmux_live(monkeypatch, after=delivery.UNKNOWN)
+    _record_tmux(monkeypatch)
+
+    result = live_session.graceful_close("T-1")
+
+    assert result["closed"] is False
+    assert "could not confirm" in result["detail"]
+
+
+def test_a_probe_that_raises_mid_watch_is_not_read_as_an_exit(monkeypatch):
+    """`manageability` may never raise, so the watch degrades exceptions to
+    UNKNOWN rather than to 'gone'."""
+    _sdk(monkeypatch)
+    reads: list[str] = []
+
+    def _liveness(trace_id):
+        reads.append(trace_id)
+        if len(reads) == 1:
+            return delivery.LIVE
+        raise RuntimeError("tmux socket died")
+
+    monkeypatch.setattr(delivery, "session_liveness", _liveness)
+    _record_tmux(monkeypatch)
+
+    assert live_session.graceful_close("T-1")["closed"] is False
 
 
 def test_refused_escape_does_not_type_exit(monkeypatch):

@@ -38,21 +38,47 @@ _EXIT_COMMAND = "/exit"
 # is read back as a steering message for the turn instead of as a command.
 _SETTLE_SEC = 0.4
 
+# How long to watch for the process to actually go away after `/exit` is
+# submitted. The operator was promised the session would END, so `closed` has
+# to mean "it is gone", not "we pressed the keys" — a claude that ignored the
+# command (or a build whose quit needs a second confirmation) would otherwise
+# be reported as closed while it keeps running and re-emitting spans.
+#
+# The budget is set from measurement, not taste: claude runs its SessionEnd
+# hooks (regin's own trace capture among them) BEFORE leaving the tty, and a
+# timed live close took 2.5s to change `pane_current_command`. A window merely
+# "big enough" on an idle box turns every slow-but-successful close into a
+# false "it is still running", so leave the headroom — nothing waits the full
+# window except a session that genuinely did not quit.
+_EXIT_POLL_SEC = 0.5
+_EXIT_ATTEMPTS = 12
 
-def _tmux_is_live(trace_id: str) -> bool:
-    """`delivery.session_is_live`, downgraded to False on any failure.
+# ...and a wall-clock ceiling on top of the attempt count, because each probe
+# can itself burn `delivery._TMUX_TIMEOUT_SEC`. Counting attempts alone, a
+# wedged tmux socket would hold this request — and a Flask worker — for ~40s,
+# four at a time under the trace list's batch pool.
+_EXIT_WATCH_SEC = 8.0
+
+
+def _tmux_liveness(trace_id: str) -> str:
+    """`delivery.session_liveness`, degraded to UNKNOWN on any exception.
 
     The probe shells out to tmux and reads the pane registry, so it can fail
     for reasons that say nothing about the session. `manageability` promises
     callers it never raises (they use it to *word a confirmation*, and a
     probe that threw would block the very action it describes), so a broken
-    probe has to read as "nothing reachable here" rather than propagate.
+    probe has to resolve to an answer rather than propagate — and the honest
+    answer is "could not tell", which is not the same as "it is gone".
     """
     try:
-        return delivery.session_is_live(trace_id)
+        return delivery.session_liveness(trace_id)
     except Exception:
         log.error("tmux_liveness_probe_failed", exc_info=True)
-        return False
+        return delivery.UNKNOWN
+
+
+def _tmux_is_live(trace_id: str) -> bool:
+    return _tmux_liveness(trace_id) == delivery.LIVE
 
 
 def manageability(trace_id: str) -> dict:
@@ -81,27 +107,63 @@ def manageability(trace_id: str) -> dict:
             "detail": "no manageable tier holds this session"}
 
 
-def _close_tmux(trace_id: str) -> dict:
-    """Cancel the turn in flight, then type claude's quit command.
+def _await_exit(trace_id: str) -> str:
+    """Watch the pane until it demonstrably stops running claude; returns the
+    last reading (`delivery.GONE` / `LIVE` / `UNKNOWN`).
 
-    Two steps rather than one: `/exit` submitted mid-turn is queued as a
+    The registry's `pane_pid` cannot answer this — it is the pane's SHELL,
+    which outlives every claude that runs in it — so the evidence is the
+    pane's foreground command, the same reading that declared the session
+    live. It demands the POSITIVE `GONE`: a probe that merely failed (a tmux
+    call that timed out on a loaded box) would otherwise settle the row while
+    the agent is still running, which is the failure this watch exists for.
+    """
+    state = delivery.UNKNOWN
+    deadline = time.monotonic() + _EXIT_WATCH_SEC
+    for _ in range(_EXIT_ATTEMPTS):
+        time.sleep(_EXIT_POLL_SEC)
+        state = _tmux_liveness(trace_id)
+        if state == delivery.GONE or time.monotonic() >= deadline:
+            return state
+    return state
+
+
+def _close_tmux(trace_id: str) -> dict:
+    """Cancel the turn in flight, type claude's quit command, confirm it quit.
+
+    Three steps rather than one. `/exit` submitted mid-turn is queued as a
     steering message, so the session would stay up with the quit text sitting
-    in its transcript. Both legs run through the guarded delivery paths, so a
-    disabled bridge, an unreachable pane or a spent rate-limit token comes
-    back as a structured refusal.
+    in its transcript — hence the Escape first. That Escape, though, leaves
+    the composer somewhere a naively typed command does not survive, which is
+    what `as_command` handles (`delivery._COMPOSER_RESET_KEYS`,
+    `_COMMAND_TERMINATOR`). Finally the exit is *verified*: delivery can only
+    report that the keys were submitted, and both of those hazards failed
+    silently by submitting something else.
+
+    Every leg runs through the guarded delivery paths, so a disabled bridge,
+    an unreachable pane or a spent rate-limit token comes back as a structured
+    refusal.
     """
     escaped = delivery.deliver_key(trace_id, "Escape")
     if not escaped.delivered:
         return {"closed": False, "interrupted": False,
                 "detail": f"interrupt refused: {escaped.detail}"}
     time.sleep(_SETTLE_SEC)
-    quit_result = delivery.deliver(trace_id, _EXIT_COMMAND)
+    quit_result = delivery.deliver(trace_id, _EXIT_COMMAND, as_command=True)
     if not quit_result.delivered:
         return {"closed": False, "interrupted": True,
                 "detail": f"turn cancelled, but {_EXIT_COMMAND} refused: "
                           f"{quit_result.detail}"}
+    state = _await_exit(trace_id)
+    if state != delivery.GONE:
+        unclosed = ("the pane is still running claude"
+                    if state == delivery.LIVE
+                    else "regin could not confirm the pane exited")
+        return {"closed": False, "interrupted": True,
+                "detail": f"turn cancelled and {_EXIT_COMMAND} submitted, "
+                          f"but {unclosed}"}
     return {"closed": True, "interrupted": True,
-            "detail": f"turn cancelled, {_EXIT_COMMAND} sent"}
+            "detail": f"turn cancelled, {_EXIT_COMMAND} sent; the pane exited"}
 
 
 def graceful_close(trace_id: str) -> dict:

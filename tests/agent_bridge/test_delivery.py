@@ -250,6 +250,87 @@ def test_ack_failure_clears_the_typed_line(monkeypatch):
     assert type_idx < cu_idx
 
 
+def _keys_before_literal(calls):
+    """The bare send-keys argv issued before the literal type, last arg only."""
+    literal = next(i for i, c in enumerate(calls) if "-l" in c and "--" in c)
+    return [c[-1] for c in calls[:literal]
+            if "send-keys" in c and "-l" not in c and "-X" not in c]
+
+
+def test_command_resets_composer_into_insert_mode_before_typing(monkeypatch):
+    # The Escape that cancels a turn also drops a vim-mode composer out of
+    # INSERT, where literal text runs as motions — "/exit" left only its
+    # trailing `t` in the pane and the session never quit. The mode cannot be
+    # read back (claude renders no NORMAL marker, same as vim being off), so
+    # the reset must be correct blind: C-u clears, `i` re-enters INSERT (or
+    # types one stray char when vim is off), C-u clears that.
+    calls = _install_tmux(monkeypatch, command="claude", capture="> /exit")
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver("t1", "/exit", as_command=True)
+
+    assert res.delivered is True
+    assert _keys_before_literal(calls) == ["C-u", "i", "C-u"]
+    assert _enter_sent(calls)
+
+
+def test_command_is_terminated_so_the_menu_cannot_eat_the_enter(monkeypatch):
+    # Typing a slash command opens claude's autocomplete, and Enter then runs
+    # the HIGHLIGHTED entry — fuzzy ranking, so not necessarily the command
+    # typed: a live run submitted /python-complexity for "/exit" ("compl-EXIT-y").
+    # The trailing space completes the token and dismisses the menu.
+    calls = _install_tmux(monkeypatch, command="claude", capture="> /exit")
+    _set_row(monkeypatch, _pane_row())
+
+    delivery.deliver("t1", "/exit", as_command=True)
+
+    assert [c[-1] for c in _literal_sends(calls)] == ["/exit "]
+
+
+def test_a_half_sent_reset_refuses_to_type_on_the_residue(monkeypatch):
+    # The reset is only empty at its LAST key, so a failed send can leave the
+    # stray `i` in the composer. Typing on top would submit `i/exit`.
+    def _fake_run(cmd, **_kw):
+        if "display-message" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="111\t222\tclaude\t0",
+                                               stderr="")
+        rc = 1 if cmd[-1] in ("C-u", "i") else 0
+        return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="boom")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    _set_row(monkeypatch, _pane_row())
+
+    res = delivery.deliver("t1", "/exit", as_command=True)
+
+    assert res.delivered is False
+    assert "reset failed" in res.detail
+
+
+def test_ordinary_delivery_types_the_message_verbatim(monkeypatch):
+    # Steering is not a command: no reset (the composer may hold a human's
+    # draft) and no terminator (it would alter the message).
+    calls = _install_tmux(monkeypatch, command="claude", capture="> hi there")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.deliver("t1", "hi there").delivered is True
+    assert _keys_before_literal(calls) == []
+    assert [c[-1] for c in _literal_sends(calls)] == ["hi there"]
+
+
+def test_ack_failure_reset_ends_in_insert_mode(monkeypatch):
+    # A bare C-u is ignored by a NORMAL-mode composer, so the residue the
+    # clear exists to remove would survive it. The recovery uses the same
+    # blind reset, which clears in either mode.
+    calls = _install_tmux(monkeypatch, command="claude",
+                          capture="a totally different screen")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.deliver("t1", "hello world").delivered is False
+    literal = next(i for i, c in enumerate(calls) if "-l" in c and "--" in c)
+    assert [c[-1] for c in calls[literal + 1:] if "send-keys" in c] \
+        == ["C-u", "i", "C-u"]
+
+
 def test_ack_bar_only_needle_fails_closed_no_blind_submit(monkeypatch):
     # A needle made only of whitespace / vertical bars normalizes to empty.
     # It must NOT short-circuit the ack into a blind submit (an empty needle
@@ -671,6 +752,48 @@ def test_session_is_not_live_when_it_holds_no_pane(monkeypatch):
 
     assert delivery.session_is_live("t1") is False
     assert calls == []
+
+
+def test_liveness_reads_gone_only_when_the_pane_was_actually_queried(
+        monkeypatch):
+    """`session_is_live` collapses "not our claude" and "could not ask" into
+    False — right for a gate that fails closed, fatal for confirming a
+    shutdown, where "the probe broke" would read as "the process exited"."""
+    _install_tmux(monkeypatch, command="fish")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.session_liveness("t1") == delivery.GONE
+
+
+def test_liveness_is_unknown_when_the_pane_cannot_be_queried(monkeypatch):
+    # A tmux call that failed or timed out (loaded box, dead socket) answers
+    # nothing about the process behind the row.
+    _install_tmux(monkeypatch, identity_rc=1)
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.session_liveness("t1") == delivery.UNKNOWN
+
+
+def test_liveness_is_unknown_when_the_identity_will_not_parse(monkeypatch):
+    """tmux exited cleanly but the fields are unusable — a format the running
+    tmux does not support, or a pane read mid-teardown. Nothing was learned
+    about the process, so this must not read as the positive 'gone' that lets
+    a shutdown settle the trace row."""
+    _install_tmux(monkeypatch, server_pid="not-a-pid")
+    _set_row(monkeypatch, _pane_row())
+
+    assert delivery.session_liveness("t1") == delivery.UNKNOWN
+    assert delivery.session_is_live("t1") is False
+
+
+def test_liveness_is_unknown_without_a_row_or_a_bridge(monkeypatch):
+    _install_tmux(monkeypatch)
+    _set_row(monkeypatch, None)
+    assert delivery.session_liveness("t1") == delivery.UNKNOWN
+
+    _set_row(monkeypatch, _pane_row())
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    assert delivery.session_liveness("t1") == delivery.UNKNOWN
 
 
 def test_session_is_not_live_when_the_pane_id_was_recycled(monkeypatch):
