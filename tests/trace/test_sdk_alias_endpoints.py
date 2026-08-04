@@ -83,9 +83,11 @@ def aliased(trace_db):
               attrs={'command': 'ls'}, tool_use_id='toolu_1')
         _span(conn, CHILD, 'h-rule', 'rule.check', '2026-08-01T10:00:06')
         # The runner's SDK stream: the same two events, plus nothing new.
+        # Its prompt is the delivery echo — same span id as the child's
+        # anchor (both derive from the transcript entry uuid).
         _session_row(conn, RUN, span_count=2)
-        _span(conn, RUN, 's-p', 'prompt', '2026-08-01T10:00:00',
-              attrs={'text': 'the shared prompt'})
+        _span(conn, RUN, 'p-1', 'prompt', '2026-08-01T10:00:00',
+              attrs={'text': 'the shared prompt', 'entry_uuid': 'p-1-uuid'})
         _span(conn, RUN, 's-tool', 'tool.Bash', '2026-08-01T10:00:05',
               attrs={'tool_use_id': 'toolu_1'})
         conn.commit()

@@ -125,6 +125,12 @@ def pending_id_for_resolved(span: dict, attrs: dict) -> list[str]:
     if is_pending_span_id(span_id):
         return []
     out = _prompt_supersede_ids(span, attrs)
+    # An explicit name outranks recomputation: an SDK delivery echo hashes its
+    # placeholder id at emit time with the wrapper's own trace id, which a
+    # read-time recompute (keyed on the re-keyed canonical id) can never match.
+    explicit = (attrs or {}).get('pending_span_id')
+    if isinstance(explicit, str) and explicit and explicit not in out:
+        out.append(explicit)
     tu_id = (attrs or {}).get('tool_use_id')
     if isinstance(tu_id, str) and tu_id:
         out.append(tool_pending_id(tu_id))

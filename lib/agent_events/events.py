@@ -34,6 +34,20 @@ class TurnStarted(AgentEvent):
 
 
 @dataclass(frozen=True)
+class PromptDelivered(AgentEvent):
+    """The provider's echo of a prompt regin pushed, carrying the transcript
+    user-entry uuid.
+
+    The child session's own writer derives its anchor id from the same uuid
+    (`prompt-<uuid[:13]>`), so this is the identity that lets the two traces
+    of one launched session collapse their prompt rows — including a queued
+    steer, whose echo arrives at *delivery* rather than at submit."""
+
+    text: str = ''
+    entry_uuid: str = ''
+
+
+@dataclass(frozen=True)
 class TurnCompleted(AgentEvent):
     """`usage` is already in regin's neutral token vocabulary — a producer
     normalizes the provider's own key names before constructing this."""

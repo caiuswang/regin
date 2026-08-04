@@ -24,6 +24,7 @@ from .events import (
     AssistantThinking,
     PermissionRequested,
     PermissionResolved,
+    PromptDelivered,
     SessionEnded,
     SessionStarted,
     SubagentStarted,
@@ -119,10 +120,50 @@ def _permission_resolved_span(event: PermissionResolved) -> dict:
 
 
 def _turn_started_span(event: TurnStarted) -> dict:
+    """A submitted prompt, pending until its delivery echo resolves it.
+
+    Top-level prompts get the same deterministic placeholder id the hook
+    writer mints, PENDING until the provider echoes the delivered message
+    back (`PromptDelivered`), whose `pending_span_id` names this row for the
+    serve-time merge to retire. An agent-scoped prompt has no echo pairing
+    and stays a resolved row."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
     attrs: dict = {'text': event.text}
     if event.agent_id:
         attrs['agent_id'] = event.agent_id
-    return {'name': 'prompt', 'attributes': attrs, 'status_code': 'OK'}
+        return {'name': 'prompt', 'attributes': attrs, 'status_code': 'OK'}
+    attrs['chars'] = len(event.text)
+    attrs['live_placeholder'] = True
+    return {
+        'name': 'prompt',
+        'span_id': prompt_placeholder_id(event.trace_id, event.text),
+        'attributes': attrs,
+        'status_code': 'PENDING',
+    }
+
+
+def _prompt_delivered_span(event: PromptDelivered) -> dict:
+    """The resolved prompt row, keyed on the transcript user-entry uuid.
+
+    `prompt-<uuid[:13]>` is the exact id the child session's writer derives
+    for its own anchor, so after alias re-keying the two rows share
+    `(trace_id, span_id)` and collapse without comparing text or clocks.
+    `pending_span_id` names the submit-time placeholder this row retires."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    attrs = {
+        'text': event.text,
+        'chars': len(event.text),
+        'entry_uuid': event.entry_uuid,
+        'pending_span_id': prompt_placeholder_id(event.trace_id, event.text),
+    }
+    return {
+        'name': 'prompt',
+        'span_id': f'prompt-{event.entry_uuid[:13]}',
+        'attributes': attrs,
+        'status_code': 'OK',
+    }
 
 
 def _cap_text(text: str, max_bytes: int) -> tuple[str, bool]:
@@ -256,6 +297,7 @@ _BUILDERS = {
     PermissionRequested: _permission_requested_span,
     PermissionResolved: _permission_resolved_span,
     TurnStarted: _turn_started_span,
+    PromptDelivered: _prompt_delivered_span,
     TurnFailed: _turn_failed_span,
     AssistantText: _assistant_text_span,
     AssistantThinking: _assistant_thinking_span,

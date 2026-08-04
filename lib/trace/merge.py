@@ -108,34 +108,66 @@ def _classify_supersessions(spans: list[dict], placeholders: dict) -> tuple[set,
     placeholder is already matched by the survivor's own tool_use_id, whose
     only two candidates are `pending-<tu>` (tool) and `permreq-<tu>`
     (permission.request) — the `tool.` check keeps the former and drops the
-    latter without reparenting the resolved tool span."""
+    latter without reparenting the resolved tool span.
+
+    `protect` outranks `drop` across candidates: when one resolved span is a
+    placeholder's expansion anchor, the placeholder must live until
+    `_absorb_slash_command_expansions` lifts its full text onto that anchor —
+    another candidate hitting the same hash (the SDK delivery echo of the same
+    prompt) must not retire it first."""
     drop: set[tuple] = set()
+    protect: set[tuple] = set()
     inherit: dict = {}  # survivor span_id → placeholder it should inherit from
     for s in spans:
         is_tool = (s.get('name') or '').startswith('tool.')
         for pid in pending_id_for_resolved(s, _attrs(s)):
             key = (s.get('trace_id'), pid)
-            _record_supersession(s, is_tool, key, placeholders.get(key), drop, inherit)
-    return drop, inherit
+            _record_supersession(s, is_tool, key, placeholders.get(key),
+                                 drop, protect, inherit)
+    return drop - protect, inherit
 
 
 def _record_supersession(
     s: dict, is_tool: bool, key: tuple, ph: dict | None,
-    drop: set, inherit: dict,
+    drop: set, protect: set, inherit: dict,
 ) -> None:
     """Classify one (resolved span, superseded placeholder) pair.
 
     A resolved prompt anchor that is only a truncated/echo view of its
-    placeholder (the placeholder holds the untruncated prompt) is NOT dropped
-    here — left for `_absorb_slash_command_expansions` to lift the full text
-    onto the anchor first. Gating on `_is_expansion_anchor` makes "skip the
-    drop" exactly "absorb will transfer", so a non-matching placeholder still
-    drops normally."""
+    placeholder (the placeholder holds the untruncated prompt) is not dropped
+    but PROTECTED — left for `_absorb_slash_command_expansions` to lift the
+    full text onto the anchor first, even when another candidate votes to
+    drop the same key. A non-matching placeholder still drops normally."""
     if ph is not None and _is_expansion_anchor(s, ph, _attrs(ph).get('text') or ''):
+        protect.add(key)
+        return
+    if _foreign_prompt_placeholder(s, ph):
         return
     drop.add(key)
     if is_tool and ph is not None and (ph.get('name') or '').startswith('tool.'):
         inherit[s.get('span_id')] = ph
+
+
+def _foreign_prompt_placeholder(s: dict, ph: dict | None) -> bool:
+    """True when `s` is another writer's row hitting this prompt placeholder's
+    text hash without any real claim to it.
+
+    The `promptlive-` hash is a within-writer convention: a foreign resolved
+    prompt recomputes the same digest from the same text, and retiring the
+    placeholder on that alone loses the untruncated text the absorb rescue
+    would have transferred (the bug behind session 891cfee2's duplicate
+    prompt). A cross-writer candidate may retire it only when it is
+    anchor-identified — `entry_uuid` proves it will collapse with the
+    canonical anchor by span id — or names the row outright
+    (`pending_span_id`)."""
+    if ph is None or ph.get('name') != 'prompt':
+        return False
+    if s.get(_ORIGIN_KEY) == ph.get(_ORIGIN_KEY):
+        return False
+    a = _attrs(s)
+    if a.get('entry_uuid'):
+        return False
+    return a.get('pending_span_id') != ph.get('span_id')
 
 
 def _drop_superseded_placeholders(spans: list[dict]) -> list[dict]:
@@ -469,8 +501,9 @@ _MOVED_ON_GRACE_SEC = 90
 
 def _is_demotable_pending(span: dict) -> bool:
     """A PENDING tool / permission-request / ask placeholder that could be a
-    stuck blocker. Prompt placeholders are excluded — those are handled by
-    `_drop_stale_blockers` / `_absorb_slash_command_expansions`."""
+    stuck blocker. Prompt placeholders are excluded from the clock rules —
+    they retire via `_drop_stale_blockers` / `_absorb_slash_command_expansions`,
+    plus the event-based `session.end` ceiling in `_demote_stale_pending`."""
     if span.get('status_code') != 'PENDING':
         return False
     name = span.get('name') or ''
@@ -550,8 +583,16 @@ def _demote_stale_pending(
 
     INVARIANT: a legitimately-running long tool on an ACTIVE session with no
     same-agent completion activity after it is never demoted — (a) needs a
-    later same-agent move-on past the grace, (b) needs an inactive session."""
-    if not any(_is_demotable_pending(s) for s in spans):
+    later same-agent move-on past the grace, (b) needs an inactive session.
+
+    A `promptlive-` placeholder gets one extra, event-based rule: a
+    `session.end` row with a later monotonic id proves the session ended
+    after the submission, so the prompt can never resolve — it demotes
+    regardless of any clock. This is the only path that resolves a stuck
+    in-flight prompt whose delivery echo never arrived (the run died between
+    submit and echo); the last prompt of a live session is untouched."""
+    end_ceiling = _session_end_ceiling(spans)
+    if not end_ceiling and not any(_is_demotable_pending(s) for s in spans):
         return spans
     now = (session_activity or {}).get('now') or datetime.now()
     inactive = _session_is_inactive(session_activity, now)
@@ -566,72 +607,51 @@ def _demote_stale_pending(
         return p_ts is not None and \
             (now - p_ts).total_seconds() > _STALE_PENDING_OLDER_THAN_SEC
 
+    def undelivered(s: dict) -> bool:
+        if not _is_live_prompt_placeholder(s) or s.get('id') is None:
+            return False
+        return s['id'] < end_ceiling.get(s.get('trace_id'), -1)
+
     return [
-        _demote(s) if _is_demotable_pending(s) and demote(s) else s
+        _demote(s) if (_is_demotable_pending(s) and demote(s))
+        or undelivered(s) else s
         for s in spans
     ]
 
 
-_CROSS_SOURCE_TEXT_NAMES = frozenset({'assistant_response', 'prompt'})
-# `assistant.thinking` carries no text on EITHER writer (reasoning is stored as
-# a signature + block count, never verbatim), so it is matched on its shape
-# instead. Keying it on a `text` attribute silently matched nothing and left
-# every reasoning card double-rendered.
-_CROSS_SOURCE_SHAPE_NAMES = frozenset({'assistant.thinking'})
+def _session_end_ceiling(spans: list[dict]) -> dict:
+    """Per-trace max id of `session.end` rows — the event that outdates any
+    still-pending prompt submitted before it."""
+    out: dict = {}
+    for s in spans:
+        if s.get('name') != 'session.end' or s.get('id') is None:
+            continue
+        tid = s.get('trace_id')
+        out[tid] = max(out.get(tid, -1), s['id'])
+    return out
+
+
 _CROSS_SOURCE_SINGLETON_NAMES = frozenset({'session.start', 'session.end'})
 # Assistant spans both writers derive from one API message, so the message's own
-# id pairs them exactly — see `_cross_source_key`.
+# id (`msg_…`, the same string on both) buckets AND pairs them exactly — see
+# `_cross_source_key`. Wall-clock distance is never consulted: the two writers'
+# stamps for one message sit a whole generation apart by construction (measured
+# +0.03s at 73 chars rising past +16s at 3418 chars), and a queued steer's two
+# stamps sit *minutes* apart, so any finite window is a duplicate waiting on a
+# long enough gap. Rows predating `message_id` capture carry no key and pass
+# through unpaired.
 _CROSS_SOURCE_MESSAGE_NAMES = frozenset({'assistant_response',
                                          'assistant.thinking'})
-# How far apart the two writers may stamp the same event, for the keys that name
-# a CLASS rather than an identity. Bounded because such a key repeats within one
-# session — `continue` typed twice, a session resumed three times — and pairing
-# across two unrelated occurrences would render one where there were two.
-#
-# NOT a clock-skew allowance, and it does not bound `assistant_response`: one API
-# message is written to the transcript as SEVERAL entries (thinking block, then
-# text block), and the two writers latch onto different ones, so their stamps sit
-# a whole generation apart — measured +0.03s at 73 chars rising to +16.03s at
-# 3418 chars, with the transcript side always first. That distance has no useful
-# maximum, which is why those pair on identity instead (`_bucket_skew`).
-_CROSS_SOURCE_SKEW_SEC = 5.0
-# Below this, an `assistant_response`'s text is too generic to be an identity on
-# its own ("Done.", "Yes."), so a row predating `message_id` capture keeps the
-# time bound. Above it, byte-identical text IS the proof of one emission.
-_TEXT_IDENTITY_CHARS = 200
-# Session lifecycle markers get their own ceiling: the SDK ends the run, then
-# the child process exits and its hook fires. That IS a lag (unlike the
-# assistant gap), so a bound is the right instrument — it just has to clear
-# process teardown rather than one API call.
-#
-# Sized from both sides, which overlap: the widest real teardown is 5.49s
-# (0.37-5.49s across every SDK run), while the corpus holds genuinely distinct
-# same-kind markers as little as 5.02s apart. No value separates those
-# perfectly, so this sits just above the teardown it must cover and well below
-# a minute — 60s would have swallowed 17 real sub-minute pairs.
-_LIFECYCLE_SKEW_SEC = 15.0
+# How many head characters key an in-flight prompt placeholder pair. Matches
+# the head `prompt_placeholder_id` hashes, so two writers' placeholders for one
+# submission — which hold the identical untruncated text — share a key.
+_PENDING_PROMPT_KEY_CHARS = 512
 # Attribute values that carry no information, so a twin's concrete value wins.
 # `session.end` is the case that matters: the child's hook reports the generic
 # 'other' for a run the SDK ended deliberately, and only the runner knows it was
 # an idle timeout. Dropping the SDK row without this would delete the only
 # record of WHY a session stopped.
 _VAGUE_ATTR_VALUES = frozenset({None, '', 'other', 'unknown'})
-
-
-def _cross_source_text(name: str, attrs: dict) -> str:
-    """The text two writers can be expected to agree on for this span.
-
-    A `/command` prompt is the exception. `_absorb_slash_command_expansions`
-    runs first and REWRITES the hook anchor's text to the full expansion, while
-    the SDK row still holds the bare echo — so the raw texts no longer match and
-    the turn anchor rendered twice. Both sides collapse to the echo, which
-    neither pass alters.
-    """
-    text = (attrs.get('text') or '').strip()
-    if name != 'prompt' or not text:
-        return text
-    first = text.split('\n', 1)[0].strip()
-    return first if _SLASH_COMMAND_RE.match(first) else text
 
 
 def _tool_span_class(name: str, attrs: dict) -> str:
@@ -653,17 +673,15 @@ def _tool_span_class(name: str, attrs: dict) -> str:
 def _row_identity(span: dict, name: str, attrs: dict):
     """The identifier this row shares with its twin, or None.
 
-    Deliberately NOT part of the bucket key. An identity is available
-    per-writer, not per-event: a subagent turn is stamped with `message_id` by
-    the SDK writer and (before this) not by the hook one, and Claude Code's
-    PermissionRequest payload carries no `tool_use_id` at all. Keying the
-    bucket on it therefore filed a row apart from its own twin, and each
-    landed in a single-origin bucket that reconciles to itself — a duplicate,
-    which is the bug this whole module exists to prevent.
-
-    So it decides PAIRING instead (`_may_pair`): two rows that both name
-    themselves must agree, and when they do the agreement outranks any clock
-    reasoning.
+    Decides PAIRING (`_may_pair`): two rows that both name themselves must
+    agree; a missing id on either side is "no opinion", never disagreement.
+    For assistant rows the same `message_id` is also the bucket key — safe
+    because both writers stamp it on every row they emit today, and a row
+    without one carries no key at all (it passes through unpaired rather than
+    landing in a single-origin bucket that reconciles to itself). The one key
+    that must NOT bucket is `permission.request`'s `tool_use_id`: Claude
+    Code's PermissionRequest payload omits it on most hook rows, so it can
+    only ever refuse a pair, not file rows.
     """
     if name in _CROSS_SOURCE_MESSAGE_NAMES:
         return attrs.get('message_id') or None
@@ -688,9 +706,10 @@ def _cross_source_identity(span: dict, name: str, attrs: dict):
 def _cross_source_class(name: str, attrs: dict):
     """The key that names a CLASS of event, or None.
 
-    Many spans share one within a session (three `session.start`s after two
-    resumes, `continue` typed twice), so pairing inside a class is positional
-    and mostly time-bounded — see `_pair_cross_source` and `_bucket_skew`.
+    A class can repeat within a session (three `session.start`s after two
+    resumes), so pairing inside it is positional — see `_pair_cross_source`.
+    A row that names no class passes through unpaired: an event only one
+    writer described, or one that predates identity capture.
     """
     if name == 'permission.request':
         # Deliberately NOT keyed on `tool_use_id` even when one is present:
@@ -702,17 +721,12 @@ def _cross_source_class(name: str, attrs: dict):
         # Attributes are arbitrary JSON: an unhashable value here would raise
         # inside the bucket dict and 500 the whole trace read.
         return ('cls', name, tool if isinstance(tool, str) else '')
-    if name in _CROSS_SOURCE_TEXT_NAMES:
-        text = _cross_source_text(name, attrs)
-        return ('cls', name, text) if text else None
-    if name in _CROSS_SOURCE_SHAPE_NAMES:
-        # Fallback for rows written before `message_id` was captured. The
-        # signature length is a per-emission fingerprint and is byte-equal on
-        # both writers. `output_tokens` and `turn_index` are NOT usable: the
-        # SDK's usage is a streaming partial (it reports 0 where the hook reports
-        # 208) and the two number their turns independently.
-        return ('cls', name, attrs.get('thinking_signature_bytes'),
-                attrs.get('thinking_blocks'))
+    if name in _CROSS_SOURCE_MESSAGE_NAMES:
+        # The API message id is the same `msg_…` string on both writers, so it
+        # names the emission outright. `output_tokens`, `turn_index`, text and
+        # thinking shape are all writer-skewed views of it and key nothing.
+        mid = attrs.get('message_id')
+        return ('cls', name, mid) if isinstance(mid, str) and mid else None
     if name in _CROSS_SOURCE_SINGLETON_NAMES:
         return ('cls', name)
     return None
@@ -724,9 +738,22 @@ def _cross_source_key(span: dict):
     An identity wins where one exists; otherwise the span falls back to its
     class. A `permission.request` is class-keyed even when it carries an id,
     for the reason given in `_cross_source_class`.
+
+    Resolved `prompt` rows carry NO key here: the ones that are the same event
+    share `(trace_id, span_id)` outright (both writers derive it from the
+    transcript entry uuid) and were already collapsed by
+    `_collapse_shared_span_ids`. An in-flight placeholder pair — one per
+    writer, holding the identical untruncated submission — is keyed on its
+    text head instead, the same head `prompt_placeholder_id` hashes.
     """
     name = span.get('name') or ''
     attrs = _attrs(span)
+    if name == 'prompt':
+        if span.get('status_code') != 'PENDING':
+            return None
+        text = (attrs.get('text') or '').strip()
+        return (('cls', 'prompt.pending', text[:_PENDING_PROMPT_KEY_CHARS])
+                if text else None)
     return (_cross_source_identity(span, name, attrs)
             or _cross_source_class(name, attrs))
 
@@ -780,45 +807,36 @@ def _identity_agreement(a: dict, b: dict):
     return ia == ib
 
 
-def _may_pair(a: dict, b: dict, skew) -> bool:
+def _may_pair(a: dict, b: dict) -> bool:
     """Are these two rows the same event?
 
-    A shared identity settles it either way and outranks the clock: agreeing
-    ids pair however far apart the writers stamped them, and DIFFERING ids stay
-    two rows however close — two permission requests from one parallel tool
-    block are seconds apart and must both survive.
+    Only identity speaks: two rows that both name themselves must agree —
+    DIFFERING ids stay two rows however close in time. Rows inside one bucket
+    already share their class key (message_id, tool_name, text head …), so
+    with no row-level disagreement the n-th on one side IS the n-th on the
+    other. Wall-clock distance is never evidence: a queued steer's two stamps
+    sit minutes apart by construction, and the writers' stamps for one API
+    message drift with generation length, so any finite window is a duplicate
+    waiting on a long enough gap.
     """
     agreed = _identity_agreement(a, b)
-    if agreed is not None:
-        return agreed
-    if skew is None:
-        return True
-    gap = _delta_sec(a, b)
-    return gap is not None and gap <= skew
+    return True if agreed is None else agreed
 
 
-def _pair_cross_source(hooks: list[dict], sdks: list[dict],
-                       skew=_CROSS_SOURCE_SKEW_SEC) -> list[dict]:
-    """Reconcile one key's rows from the two writers, in time order.
+def _pair_cross_source(hooks: list[dict], sdks: list[dict]) -> list[dict]:
+    """Reconcile one key's rows from the two writers, positionally.
 
-    Both lists are the SAME class of event (see `_cross_source_key`), so the
-    n-th occurrence on one side is the n-th on the other — but only if they are
-    close enough in time to be one emission. Walking both in order and pairing
-    on proximity is what lets a session hold three `session.start`s, or the
-    same prompt typed twice, without the second collapsing into the first.
+    Both lists are the SAME class of event (see `_cross_source_key`), each in
+    its writer's own order, so the n-th occurrence on one side is the n-th on
+    the other. A row-level identity disagreement refuses the pair and retires
+    whichever row sorts earlier on its own, keeping the walk aligned.
 
-    `skew=None` drops the time bound, for a key that is already an identity
-    (`tool_use_id`): the rows under it belong to one call however far apart the
-    two writers stamped them.
-
-    An unpaired row on either side survives untouched: it is an event only that
-    writer saw, which is the whole reason both traces are kept.
+    An unpaired row on either side survives untouched: it is an event only
+    that writer saw, which is the whole reason both traces are kept.
     """
     out, i, j = [], 0, 0
     while i < len(hooks) and j < len(sdks):
-        if not _may_pair(hooks[i], sdks[j], skew):
-            # Not one emission — retire whichever is older on its own rather
-            # than pairing across an unrelated occurrence.
+        if not _may_pair(hooks[i], sdks[j]):
             older = hooks if _starts_before(hooks[i], sdks[j]) else sdks
             out.append(hooks[i] if older is hooks else sdks[j])
             i, j = (i + 1, j) if older is hooks else (i, j + 1)
@@ -827,11 +845,6 @@ def _pair_cross_source(hooks: list[dict], sdks: list[dict],
         out.append(_fill_vague_attrs(keep, drop))
         i, j = i + 1, j + 1
     return out + hooks[i:] + sdks[j:]
-
-
-def _delta_sec(a: dict, b: dict):
-    ta, tb = _merge_ts(a.get('start_time')), _merge_ts(b.get('start_time'))
-    return None if ta is None or tb is None else abs((ta - tb).total_seconds())
 
 
 def _starts_before(a: dict, b: dict) -> bool:
@@ -855,11 +868,54 @@ def _dedup_cross_source(spans: list[dict]) -> list[dict]:
     origins = {s.get(_ORIGIN_KEY) for s in spans}
     if 'sdk' not in origins or 'hook' not in origins:
         return spans
+    spans = _collapse_shared_span_ids(spans)
     merged, buckets = _bucket_by_cross_source_key(spans)
-    for key, rows in buckets.items():
-        merged.extend(_reconcile_bucket(key, rows))
+    for rows in buckets.values():
+        merged.extend(_reconcile_bucket(rows))
     return sorted(merged, key=lambda s: (s.get('start_time') or '',
                                          s.get('id') or 0))
+
+
+def _fill_capped_text(survivor: dict, dropped: dict) -> dict:
+    """Replace a byte-capped survivor text with its twin's full text.
+
+    Reached only for rows already proved to be one event, so the longer text
+    is the same prompt uncapped — the wrapper stores the full submission while
+    the transcript anchor is truncated at post time."""
+    kept, lost = _attrs(survivor), _attrs(dropped)
+    text, full = kept.get('text'), lost.get('text')
+    if not (kept.get('text_truncated') and isinstance(full, str)
+            and isinstance(text, str) and len(full) > len(text)):
+        return survivor
+    attrs = {**kept, 'text': full, 'chars': len(full)}
+    attrs.pop('text_truncated', None)
+    return {**survivor, 'attributes': attrs}
+
+
+def _collapse_shared_span_ids(spans: list[dict]) -> list[dict]:
+    """Collapse rows sharing `(trace_id, span_id)` across writers.
+
+    Within one stored trace the unique index forbids the collision, so two
+    rows under one id in an aliased window are by construction the two
+    writers describing one event — both prompt anchors derive their id from
+    the same transcript entry uuid. No text, shape, or clock comparison: the
+    id IS the identity. The hook row survives for its richer attributes; a
+    byte-capped survivor takes the twin's full text."""
+    keep: dict[tuple, dict] = {}
+    order: list[tuple] = []
+    for s in spans:
+        k = (s.get('trace_id'), s.get('span_id'))
+        prev = keep.get(k)
+        if prev is None:
+            keep[k] = s
+            order.append(k)
+            continue
+        survivor, dropped = _prefer_cross_source(prev, s)
+        survivor = _fill_vague_attrs(survivor, dropped)
+        keep[k] = _fill_capped_text(survivor, dropped)
+    if len(order) == len(spans):
+        return spans
+    return [keep[k] for k in order]
 
 
 def _bucket_by_cross_source_key(spans: list[dict]):
@@ -892,36 +948,7 @@ def _settled(rows: list[dict]) -> list[dict]:
     return resolved or rows
 
 
-def _bucket_skew(key):
-    """How far apart the two writers may stamp one event, under this key.
-
-    Only consulted for rows that named no identity between them — with one,
-    `_may_pair` has already decided.
-
-    `None` — no bound — for a key that already names the event (`tool_use_id`),
-    and for an `assistant_response` whose text is long enough that byte-identical
-    content is itself the proof. The latter is the fallback for rows written
-    before `message_id` was captured, and it cannot be a fixed number of
-    seconds: those two stamps sit a whole generation apart by construction, so
-    any finite bound is a duplicate waiting on a long enough answer.
-
-    A session lifecycle marker gets a wider bound instead of no bound. Its gap
-    IS a lag — the SDK ends the run, then the child process exits and its hook
-    fires, measured at 5.5s where the rest of the corpus is under 0.6s — so a
-    ceiling is the right instrument; it just has to clear process teardown
-    rather than one API call.
-    """
-    if key[0] == 'id':
-        return None
-    if (key[1] == 'assistant_response'
-            and len(key[2] or '') >= _TEXT_IDENTITY_CHARS):
-        return None
-    if key[1] in _CROSS_SOURCE_SINGLETON_NAMES:
-        return _LIFECYCLE_SKEW_SEC
-    return _CROSS_SOURCE_SKEW_SEC
-
-
-def _reconcile_bucket(key, rows: list[dict]) -> list[dict]:
+def _reconcile_bucket(rows: list[dict]) -> list[dict]:
     """The surviving rows for one cross-source key."""
     hooks = _settled([r for r in rows if r.get(_ORIGIN_KEY) == 'hook'])
     sdks = _settled([r for r in rows if r.get(_ORIGIN_KEY) != 'hook'])
@@ -931,7 +958,7 @@ def _reconcile_bucket(key, rows: list[dict]) -> list[dict]:
     # not the row: one call legitimately leaves several rows per writer (real
     # traces carry up to 31 under one id), and collapsing only the first pair
     # left the rest standing as duplicates.
-    return _pair_cross_source(hooks, sdks, skew=_bucket_skew(key))
+    return _pair_cross_source(hooks, sdks)
 
 
 def merge_spans(

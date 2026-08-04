@@ -91,12 +91,12 @@ def test_single_writer_window_is_untouched():
     assert merge_spans([dict(r) for r in hook_only]) == hook_only
 
 
-def test_thinking_dedups_without_any_text_attribute():
-    """Neither writer stores reasoning verbatim — `assistant.thinking` carries
-    a signature and block count, never `text`. Keying it on text matched
-    nothing and left every reasoning card rendered twice."""
+def test_thinking_dedups_on_the_shared_message_id():
+    """Neither writer stores reasoning verbatim, and thinking shape collides
+    across unrelated thoughts — the API's own `msg_…`, identical on both
+    writers, is the only thing that names the emission."""
     shape = {'thinking_signature_bytes': 512, 'thinking_blocks': 1,
-             'output_tokens': 353}
+             'output_tokens': 353, 'message_id': 'msg_th1'}
     rows = [
         _row('sdk-th', 'assistant.thinking', dict(shape), origin='sdk',
              start='2026-07-31T22:17:21.521000', id=1),
@@ -108,37 +108,42 @@ def test_thinking_dedups_without_any_text_attribute():
 
 
 def test_two_genuinely_separate_thinking_blocks_both_survive():
-    """Same shape, minutes apart — two real reasoning steps, not one."""
+    """Same shape, even the same instant — two message ids are two thoughts."""
     shape = {'thinking_signature_bytes': 512, 'thinking_blocks': 1,
              'output_tokens': 353}
     rows = [
-        _row('sdk-a', 'assistant.thinking', dict(shape), origin='sdk',
-             start='2026-07-31T22:00:00', id=1),
-        _row('hook-a', 'assistant.thinking', dict(shape), origin='hook',
-             start='2026-07-31T22:00:00', id=2),
-        _row('sdk-b', 'assistant.thinking', dict(shape), origin='sdk',
-             start='2026-07-31T22:30:00', id=3),
-        _row('hook-b', 'assistant.thinking', dict(shape), origin='hook',
-             start='2026-07-31T22:30:00', id=4),
+        _row('sdk-a', 'assistant.thinking', {**shape, 'message_id': 'msg_a'},
+             origin='sdk', start='2026-07-31T22:00:00', id=1),
+        _row('hook-a', 'assistant.thinking', {**shape, 'message_id': 'msg_a'},
+             origin='hook', start='2026-07-31T22:00:00', id=2),
+        _row('sdk-b', 'assistant.thinking', {**shape, 'message_id': 'msg_b'},
+             origin='sdk', start='2026-07-31T22:00:00', id=3),
+        _row('hook-b', 'assistant.thinking', {**shape, 'message_id': 'msg_b'},
+             origin='hook', start='2026-07-31T22:00:00', id=4),
     ]
     assert [s['span_id'] for s in merge_spans(rows)] == ['hook-a', 'hook-b']
 
 
 def test_the_same_prompt_typed_twice_stays_two_prompts():
-    """`continue` typed twice is two turns. A global text key collapsed them
-    into one and deleted an entire turn; 151 real traces have a repeated
-    prompt, one of them 8 times."""
+    """`continue` typed twice is two turns with two entry uuids, so the two
+    writers' rows share span ids pairwise and collapse pairwise — never across
+    turns. 151 real traces have a repeated prompt, one of them 8 times."""
     rows = [
-        _row('sdk-p1', 'prompt', {'text': 'continue'}, origin='sdk',
+        _row('prompt-uuid-one', 'prompt',
+             {'text': 'continue', 'entry_uuid': 'uuid-one-full'}, origin='sdk',
              start='2026-08-01T10:00:00', id=1),
-        _row('prompt-p1', 'prompt', {'text': 'continue'}, origin='hook',
+        _row('prompt-uuid-one', 'prompt', {'text': 'continue'}, origin='hook',
              start='2026-08-01T10:00:00', id=2),
-        _row('sdk-p2', 'prompt', {'text': 'continue'}, origin='sdk',
+        _row('prompt-uuid-two', 'prompt',
+             {'text': 'continue', 'entry_uuid': 'uuid-two-full'}, origin='sdk',
              start='2026-08-01T10:20:00', id=3),
-        _row('prompt-p2', 'prompt', {'text': 'continue'}, origin='hook',
+        _row('prompt-uuid-two', 'prompt', {'text': 'continue'}, origin='hook',
              start='2026-08-01T10:20:00', id=4),
     ]
-    assert [s['span_id'] for s in merge_spans(rows)] == ['prompt-p1', 'prompt-p2']
+    merged = [s for s in merge_spans(rows) if s['name'] == 'prompt']
+    assert [s['span_id'] for s in merged] == ['prompt-uuid-one',
+                                              'prompt-uuid-two']
+    assert all(s[ORIGIN_KEY] == 'hook' for s in merged)
 
 
 def test_repeated_lifecycle_markers_are_not_collapsed():
@@ -160,17 +165,17 @@ def test_repeated_lifecycle_markers_are_not_collapsed():
 
 
 def test_bare_slash_command_renders_one_prompt_not_two():
-    """`_absorb_slash_command_expansions` runs first and rewrites the hook
-    anchor's text to the full expansion, while the SDK row still holds the bare
-    echo. Keying on raw text put them in different buckets and rendered the
-    turn anchor twice — and `prompt` is a turn anchor, so that is a phantom
-    turn."""
+    """The hook anchor holds the bare `/command` echo (its expansion rides the
+    `promptlive-` placeholder until absorb transfers it), while the SDK's
+    delivery echo holds the delivered expansion under the SAME span id — the
+    two collapse on that id, and the expansion survives on the anchor."""
+    expansion = '/goal-verified\n\nYou are the builder…'
     rows = [
-        _row('promptlive-x', 'prompt',
-             {'text': '/goal-verified\n\nYou are the builder…'},
+        _row('promptlive-x', 'prompt', {'text': expansion},
              origin='hook', status='PENDING',
              start='2026-08-01T10:00:00', id=1),
-        _row('sdkprompt', 'prompt', {'text': '/goal-verified'}, origin='sdk',
+        _row('prompt-abc', 'prompt',
+             {'text': expansion, 'entry_uuid': 'abc-full-uuid'}, origin='sdk',
              start='2026-08-01T10:00:01', id=2),
         _row('prompt-abc', 'prompt', {'text': '/goal-verified'}, origin='hook',
              start='2026-08-01T10:00:02', id=3),
@@ -194,20 +199,25 @@ def test_many_rows_under_one_tool_use_id_all_collapse():
 
 
 def test_plain_prompt_does_not_double_render_via_a_leftover_placeholder():
-    """A non-slash prompt gets no `_absorb_slash_command_expansions` pass, so
-    the hook's `promptlive-` placeholder can still be in the window. Pairing it
-    positionally let it consume the SDK row — it wins for being resolved — and
-    left the hook's real anchor unpaired and rendered a second time."""
+    """A non-slash prompt leaves the hook's `promptlive-` placeholder in the
+    window until its resolved anchor's text hash retires it; the SDK's
+    delivery echo shares the anchor's span id and collapses into it — one
+    card, whichever order the three rows landed."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
     rows = [
-        _row('promptlive-y', 'prompt', {'text': 'hello world'}, origin='hook',
+        _row(prompt_placeholder_id(HOOK, 'hello world'), 'prompt',
+             {'text': 'hello world'}, origin='hook',
              status='PENDING', start='2026-08-01T10:00:00', id=1),
-        _row('sdkprompt', 'prompt', {'text': 'hello world'}, origin='sdk',
-             start='2026-08-01T10:00:01', id=2),
+        _row('prompt-ghi', 'prompt',
+             {'text': 'hello world', 'entry_uuid': 'ghi-full-uuid'},
+             origin='sdk', start='2026-08-01T10:00:01', id=2),
         _row('prompt-ghi', 'prompt', {'text': 'hello world'}, origin='hook',
              start='2026-08-01T10:00:02', id=3),
     ]
     prompts = [s for s in merge_spans(rows) if s['name'] == 'prompt']
     assert [s['span_id'] for s in prompts] == ['prompt-ghi']
+    assert prompts[0][ORIGIN_KEY] == 'hook'
 
 
 def test_liveness_survives_the_placeholder_filter():
@@ -349,26 +359,16 @@ def test_two_messages_are_never_paired_however_alike():
     assert len(merge_spans(rows)) == 2
 
 
-def test_a_long_response_predating_message_id_still_pairs():
-    """Rows written before the id was captured must still heal, so the text
-    itself carries the identity once it is long enough to be one."""
-    rows = [
-        _row('hook-r', 'assistant_response', {'text': 'y' * 2006},
-             origin='hook', start='2026-08-01T10:00:00', id=1),
-        _row('sdk-r', 'assistant_response', {'text': 'y' * 2006},
-             origin='sdk', start='2026-08-01T10:00:09', id=2),
-    ]
-    assert [s['span_id'] for s in merge_spans(rows)] == ['hook-r']
-
-
-def test_a_short_reply_repeated_without_an_id_stays_two():
-    """The limit of the text fallback: "Done." is not an identity, so two of
-    them 20 minutes apart keep the time bound and stay two cards."""
+def test_a_response_without_a_message_id_passes_through_unpaired():
+    """An id-less assistant row carries no identity and pairs with nothing —
+    neither its text nor its clock is evidence. History rows predating
+    `message_id` capture render per-writer; both writers stamp the id on
+    every row they emit today."""
     rows = [
         _row('hook-1', 'assistant_response', {'text': 'Done.'},
              origin='hook', start='2026-08-01T10:00:00', id=1),
         _row('sdk-2', 'assistant_response', {'text': 'Done.'},
-             origin='sdk', start='2026-08-01T10:20:00', id=2),
+             origin='sdk', start='2026-08-01T10:00:00', id=2),
     ]
     assert len(merge_spans(rows)) == 2
 
@@ -425,9 +425,8 @@ def test_repeated_requests_for_one_tool_are_not_collapsed():
 
 def test_lifecycle_markers_pair_across_a_slow_child_exit():
     """The SDK ends the run, then the child process exits and its hook fires —
-    5.5s later in a real session, which the 5s bound refused, rendering the end
-    twice. Lifecycle markers get a ceiling sized for process teardown instead;
-    `test_lifecycle_markers_hours_apart_are_never_fused` pins the other end."""
+    5.5s later in a real session. Positional pairing is indifferent to the
+    gap; the SDK row donates the only record of WHY the run stopped."""
     rows = [
         _row('sdk-end', 'session.end', {'reason': 'idle timeout'},
              origin='sdk', start='2026-08-01T10:23:20', id=1),
@@ -437,28 +436,6 @@ def test_lifecycle_markers_pair_across_a_slow_child_exit():
     merged = merge_spans(rows)
     assert [s['span_id'] for s in merged] == ['hook-end']
     assert merged[0]['attributes']['reason'] == 'idle timeout'
-
-
-def test_one_writer_stamping_the_id_first_does_not_double_render():
-    """The upgrade state, and why the identity is not part of the bucket key.
-
-    Rows stamped with `message_id` and rows predating it coexist for as long as
-    a session spans the deploy — and a subagent turn reaches the SDK writer
-    with an id while `subagent_lifecycle` had none. Bucketing on the id filed
-    each row apart from its own twin, into a single-origin bucket that
-    reconciles to itself: the exact duplicate this module exists to remove.
-    """
-    for attrs_hook, attrs_sdk in (
-        ({'text': 'hi', 'message_id': 'msg_01'}, {'text': 'hi'}),
-        ({'text': 'hi'}, {'text': 'hi', 'message_id': 'msg_01'}),
-    ):
-        rows = [
-            _row('hook-r', 'assistant_response', attrs_hook, origin='hook',
-                 start='2026-08-01T10:00:00', id=1),
-            _row('sdk-r', 'assistant_response', attrs_sdk, origin='sdk',
-                 start='2026-08-01T10:00:00', id=2),
-        ]
-        assert [s['span_id'] for s in merge_spans(rows)] == ['hook-r']
 
 
 def test_two_requests_from_one_tool_block_both_survive():
@@ -509,10 +486,11 @@ def test_an_unhashable_tool_name_does_not_crash_the_read():
     assert len(merge_spans(rows)) == 2
 
 
-def test_lifecycle_markers_hours_apart_are_never_fused():
-    """The teardown ceiling is a ceiling. Two runs of one session — or two
-    writers whose marker lists are misaligned — must not collapse just because
-    the counts happen to match."""
+def test_lifecycle_markers_pair_positionally_however_far_apart():
+    """No clock: the n-th marker on one writer is the n-th on the other,
+    however long teardown or a queued exit delayed either stamp. The hook
+    side's count — the richer writer's view of how many times the session
+    started — is what survives."""
     rows = [
         _row('hook-s1', 'session.start', {'source': 'startup'}, origin='hook',
              start='2026-08-01T10:00:00', id=1),
@@ -523,12 +501,15 @@ def test_lifecycle_markers_hours_apart_are_never_fused():
         _row('sdk-s2', 'session.start', {}, origin='sdk',
              start='2026-08-01T22:00:00', id=4),
     ]
-    assert len(merge_spans(rows)) == 4
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['hook-s1', 'hook-s2']
+    assert [s['attributes']['source'] for s in merged] == ['startup', 'resume']
 
 
-def test_an_end_only_one_writer_saw_keeps_the_bound():
-    """Unequal counts mean a writer missed an event, so the bound comes back —
-    without it the lone SDK row would pair with an unrelated later end."""
+def test_an_end_only_one_writer_saw_survives_as_the_leftover():
+    """Unequal counts pair head-to-head and keep the remainder: the lone SDK
+    end pairs with the first hook end (donating the only record of WHY the
+    run stopped), and the extra hook end stands on its own."""
     rows = [
         _row('sdk-end', 'session.end', {'reason': 'idle timeout'},
              origin='sdk', start='2026-08-01T10:00:00', id=1),
@@ -537,7 +518,150 @@ def test_an_end_only_one_writer_saw_keeps_the_bound():
         _row('hook-end-2', 'session.end', {'reason': 'other'}, origin='hook',
              start='2026-08-01T13:00:00', id=3),
     ]
-    assert len(merge_spans(rows)) == 3
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['hook-end-1', 'hook-end-2']
+    assert merged[0]['attributes']['reason'] == 'idle timeout'
+
+
+# ── identity-only prompt collapse ────────────────────────────────────
+
+def test_truncated_anchor_takes_the_echo_full_text_across_any_clock():
+    """The 891cfee2 shape: a >8KiB prompt leaves the hook anchor byte-capped
+    while the SDK's delivery echo holds the full submission under the same
+    span id. They collapse on that id alone — the timestamps here disagree by
+    three days to prove no clock is consulted — and the survivor carries the
+    full text."""
+    full = 'x' * 20000
+    capped = full[:8000] + '\n…[truncated]'
+    rows = [
+        _row('prompt-big-uuid', 'prompt',
+             {'text': full, 'chars': len(full), 'entry_uuid': 'big-uuid-full'},
+             origin='sdk', start='2026-08-01T10:00:00', id=1),
+        _row('prompt-big-uuid', 'prompt',
+             {'text': capped, 'chars': len(full), 'text_truncated': True},
+             origin='hook', start='2026-08-04T10:00:00', id=2),
+    ]
+    prompts = [s for s in merge_spans(rows) if s['name'] == 'prompt']
+    assert len(prompts) == 1
+    attrs = prompts[0]['attributes']
+    assert attrs['text'] == full
+    assert 'text_truncated' not in attrs
+    assert prompts[0][ORIGIN_KEY] == 'hook'
+
+
+def test_queued_steer_delivered_minutes_later_renders_once():
+    """A steer is stamped at enqueue by the SDK path and at delivery by the
+    hooks — 6.8 minutes apart in session 271597af, which no fixed window can
+    span without also fusing genuine repeats. The shared entry uuid makes the
+    gap irrelevant."""
+    rows = [
+        _row('prompt-steer-uuid', 'prompt',
+             {'text': 'whats going on now?', 'entry_uuid': 'steer-uuid-full'},
+             origin='sdk', start='2026-08-03T12:01:41', id=1),
+        _row('prompt-steer-uuid', 'prompt', {'text': 'whats going on now?'},
+             origin='hook', start='2026-08-03T12:08:32', id=2),
+    ]
+    prompts = [s for s in merge_spans(rows) if s['name'] == 'prompt']
+    assert [s['span_id'] for s in prompts] == ['prompt-steer-uuid']
+
+
+def test_foreign_hash_hit_does_not_rob_the_absorb_rescue():
+    """A resolved prompt from the OTHER writer that merely recomputes the
+    placeholder's text hash (no `entry_uuid`, no explicit name) may not
+    retire it: the placeholder holds the untruncated text the same-origin
+    anchor still needs. This is the defect that duplicated 891cfee2."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    full = 'y' * 20000
+    capped = full[:8000] + '\n…[truncated]'
+    rows = [
+        _row(prompt_placeholder_id(HOOK, full), 'prompt', {'text': full},
+             origin='hook', status='PENDING',
+             start='2026-08-01T10:00:00', id=1),
+        _row('legacy-sdk-prompt', 'prompt', {'text': full}, origin='sdk',
+             start='2026-08-01T10:00:00', id=2),
+        _row('prompt-anchor', 'prompt',
+             {'text': capped, 'text_truncated': True}, origin='hook',
+             start='2026-08-01T10:00:01', id=3),
+    ]
+    anchor = next(s for s in merge_spans(rows)
+                  if s['span_id'] == 'prompt-anchor')
+    assert anchor['attributes']['text'] == full
+
+
+def test_delivery_echo_retires_both_writers_placeholders():
+    """In flight, each writer holds its own PENDING placeholder. The echo
+    names the wrapper's outright (`pending_span_id`) and is entitled to the
+    hook's by `entry_uuid` — one resolved card remains, no clock consulted."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    wrapper_ph = prompt_placeholder_id('sdk-deadbeef', 'do the thing')
+    rows = [
+        _row(prompt_placeholder_id(HOOK, 'do the thing'), 'prompt',
+             {'text': 'do the thing'}, origin='hook', status='PENDING',
+             start='2026-08-01T10:00:00', id=1),
+        _row(wrapper_ph, 'prompt', {'text': 'do the thing'}, origin='sdk',
+             status='PENDING', start='2026-08-01T10:00:00', id=2),
+        _row('prompt-echo-uuid', 'prompt',
+             {'text': 'do the thing', 'entry_uuid': 'echo-uuid-full',
+              'pending_span_id': wrapper_ph},
+             origin='sdk', start='2026-08-01T10:00:01', id=3),
+    ]
+    prompts = [s for s in merge_spans(rows) if s['name'] == 'prompt']
+    assert [s['span_id'] for s in prompts] == ['prompt-echo-uuid']
+
+
+def test_lost_echo_prompt_demotes_once_the_session_ends():
+    """The run died between submit and echo: nothing will ever resolve the
+    placeholder. A `session.end` row with a later id proves the submission
+    can never land — the card demotes to interrupted, by event order alone."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    rows = [
+        _row(prompt_placeholder_id(HOOK, 'never delivered'), 'prompt',
+             {'text': 'never delivered'}, origin='hook', status='PENDING',
+             start='2026-08-01T10:00:00', id=5),
+        _row('the-end', 'session.end', {'reason': 'exited'}, origin='hook',
+             start='2026-08-01T10:00:01', id=6),
+    ]
+    prompt = next(s for s in merge_spans(rows) if s['name'] == 'prompt')
+    assert prompt['status_code'] == 'ERROR'
+    assert prompt['attributes']['interrupted'] is True
+
+
+def test_in_flight_prompt_of_a_live_session_stays_pending():
+    """No `session.end` after it — the submission is genuinely in flight and
+    must keep rendering as such."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    rows = [
+        _row('old-end', 'session.end', {'reason': 'exited'}, origin='hook',
+             start='2026-08-01T09:00:00', id=4),
+        _row(prompt_placeholder_id(HOOK, 'still in flight'), 'prompt',
+             {'text': 'still in flight'}, origin='hook', status='PENDING',
+             start='2026-08-01T10:00:00', id=5),
+    ]
+    prompt = next(s for s in merge_spans(rows) if s['name'] == 'prompt')
+    assert prompt['status_code'] == 'PENDING'
+
+
+def test_in_flight_placeholders_of_both_writers_render_once():
+    """Before any resolution lands, the two writers' placeholders hold the
+    identical untruncated submission — they pair on the text head, and the
+    hook side survives."""
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    rows = [
+        _row(prompt_placeholder_id(HOOK, 'in flight'), 'prompt',
+             {'text': 'in flight'}, origin='hook', status='PENDING',
+             start='2026-08-01T10:00:00', id=1),
+        _row(prompt_placeholder_id('sdk-deadbeef', 'in flight'), 'prompt',
+             {'text': 'in flight'}, origin='sdk', status='PENDING',
+             start='2026-08-01T10:00:00', id=2),
+    ]
+    prompts = [s for s in merge_spans(rows) if s['name'] == 'prompt']
+    assert len(prompts) == 1
+    assert prompts[0][ORIGIN_KEY] == 'hook'
 
 
 # ── heal ─────────────────────────────────────────────────────────────

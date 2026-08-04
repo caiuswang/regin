@@ -44,9 +44,15 @@ class AssistantMessage:
 
 
 @dataclass
+class TextBlock:
+    text: str
+
+
+@dataclass
 class UserMessage:
-    content: list
+    content: object
     parent_tool_use_id: str | None = None
+    uuid: str | None = None
 
 
 @dataclass
@@ -127,8 +133,72 @@ def test_user_tool_result_becomes_a_tool_result_carrying_the_error():
     assert events[0].error == "nope"
 
 
-def test_plain_text_user_message_is_dropped_as_the_prompt_echo():
+def test_echo_without_a_uuid_is_dropped():
+    """No uuid means no identity to join on; the submit-time placeholder
+    already shows the prompt."""
     assert from_sdk_message("t1", UserMessage(content="hello there")) == []
+
+
+def test_echo_with_a_uuid_becomes_the_resolved_prompt():
+    from lib.agent_events import PromptDelivered
+
+    events = from_sdk_message(
+        "t1", UserMessage(content="hello there", uuid="3771b684-27fe-425d"))
+
+    assert events == [PromptDelivered(trace_id="t1", text="hello there",
+                                      entry_uuid="3771b684-27fe-425d")]
+
+
+def test_text_block_echo_also_carries_the_uuid():
+    from lib.agent_events import PromptDelivered
+
+    events = from_sdk_message(
+        "t1", UserMessage(content=[TextBlock(text="steer msg")], uuid="u-1"))
+
+    assert events == [PromptDelivered(trace_id="t1", text="steer msg",
+                                      entry_uuid="u-1")]
+
+
+def test_subagent_echo_never_becomes_a_top_level_prompt():
+    assert from_sdk_message(
+        "t1", UserMessage(content="task prompt", uuid="u-2",
+                          parent_tool_use_id="toolu_9")) == []
+
+
+def test_prompt_delivered_projects_to_the_anchor_span_id():
+    from lib.agent_events import PromptDelivered
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    span = to_span(PromptDelivered(trace_id="t1", text="hello there",
+                                   entry_uuid="3771b684-27fe-425d-a0ee"))
+
+    assert span["span_id"] == "prompt-3771b684-27fe"
+    assert span["status_code"] == "OK"
+    assert span["attributes"]["entry_uuid"] == "3771b684-27fe-425d-a0ee"
+    assert span["attributes"]["pending_span_id"] == \
+        prompt_placeholder_id("t1", "hello there")
+
+
+def test_turn_started_projects_to_a_pending_placeholder():
+    from lib.agent_events import TurnStarted
+    from lib.trace.pending_spans import prompt_placeholder_id
+
+    span = to_span(TurnStarted(trace_id="t1", text="hello there"))
+
+    assert span["status_code"] == "PENDING"
+    assert span["span_id"] == prompt_placeholder_id("t1", "hello there")
+    assert span["attributes"]["live_placeholder"] is True
+
+
+def test_agent_scoped_turn_started_stays_a_resolved_row():
+    from lib.agent_events import TurnStarted
+
+    span = to_span(TurnStarted(trace_id="t1", text="sub prompt",
+                               agent_id="toolu_5"))
+
+    assert span["status_code"] == "OK"
+    assert "span_id" not in span or not str(
+        span.get("span_id", "")).startswith("promptlive-")
 
 
 def test_result_message_splits_on_is_error():

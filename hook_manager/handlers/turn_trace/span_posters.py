@@ -301,6 +301,7 @@ def _post_queued_command_span(trace_id: str, att, ts, resp_ts=None) -> bool:
     images, kept = _resolve_capped_anchor_images(
         trace_id, text or '', inline_parts)
     attrs = _anchor_attrs(text or '', images, kept)
+    attrs['entry_uuid'] = att.uuid
     attrs['queued'] = True
     # `resp_ts` is a raw transcript timestamp (offset-aware UTC); normalise it
     # to local-naive like the response spans (and `ts`) so it sorts correctly
@@ -566,6 +567,9 @@ def _emit_one_prompt_anchor(
     span_id = f'prompt-{prompt_uuid[:13]}'
     images, kept = _resolve_capped_anchor_images(trace_id, text, inline_parts)
     attrs = _anchor_attrs(text, images, kept, prompt_id)
+    # The identity an SDK-launched session's other writer stamps from the
+    # delivery echo; sharing it here is what lets the two anchors collapse.
+    attrs['entry_uuid'] = prompt_uuid
     ts = _normalise_attachment_ts(ts_raw)
     if not post_span(
         trace_id=trace_id, span_id=span_id, name='prompt',

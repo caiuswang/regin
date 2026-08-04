@@ -15,6 +15,7 @@ from .events import (
     AgentEvent,
     AssistantText,
     AssistantThinking,
+    PromptDelivered,
     ToolCall,
     ToolResult,
     TurnCompleted,
@@ -104,16 +105,41 @@ def _tool_result_error(block) -> str | None:
     return str(content) if content else 'tool failed'
 
 
-def _user_events(trace_id: str, message) -> list[AgentEvent]:
-    """Tool results echoed back to the model.
+def _prompt_echo_text(content) -> str:
+    """The prompt text a `UserMessage` echoes, or '' when it is not an echo.
 
-    A `UserMessage` whose content is plain text is the SDK echoing the prompt
-    regin itself pushed, so it is dropped here — the runner emits the canonical
-    `TurnStarted` at submit time rather than waiting for the echo.
+    An echo is a plain-text message: bare-string content, or a block list of
+    text blocks only. Any `ToolResultBlock` marks it as a tool-result carrier
+    instead."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ''
+    if any(_block_type(b) == 'ToolResultBlock' for b in content):
+        return ''
+    parts = [getattr(b, 'text', '') or '' for b in content
+             if _block_type(b) == 'TextBlock']
+    return '\n'.join(p for p in parts if p)
+
+
+def _user_events(trace_id: str, message) -> list[AgentEvent]:
+    """Tool results echoed back to the model, and the delivery echo of a
+    prompt regin pushed.
+
+    The echo carries the transcript user-entry `uuid` — the identity the
+    child's writer keys its own anchor on — so it becomes the resolved
+    `prompt` row (`PromptDelivered`), superseding the placeholder the runner
+    emitted at submit time. An echo without a uuid carries no identity and is
+    still dropped: the submit-time placeholder already shows the prompt.
     """
     agent_id = getattr(message, 'parent_tool_use_id', None)
     out: list[AgentEvent] = []
     content = getattr(message, 'content', None)
+    echo_text = _prompt_echo_text(content)
+    entry_uuid = getattr(message, 'uuid', None)
+    if echo_text and entry_uuid and not agent_id:
+        out.append(PromptDelivered(trace_id=trace_id, text=echo_text,
+                                   entry_uuid=str(entry_uuid)))
     if not isinstance(content, list):
         return out
     for block in content:
@@ -179,10 +205,10 @@ def from_sdk_message(trace_id: str, message) -> list[AgentEvent]:
 
 
 def prompt_event(trace_id: str, text: str) -> TurnStarted:
-    """The canonical user-message row for a prompt regin submitted.
+    """The in-flight user-message row for a prompt regin submitted.
 
-    Emitted at submit time rather than derived from the SDK's echo, so the row
-    exists the moment the operator sends it — the same rule paseo follows for
-    every provider adapter.
+    Emitted at submit time so the row exists the moment the operator sends
+    it; it projects to a PENDING placeholder that the delivery echo's
+    `PromptDelivered` row later retires.
     """
     return TurnStarted(trace_id=trace_id, text=text)
