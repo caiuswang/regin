@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.topics import TopicGraphError
+from lib.topics.content_drift import CONTENT_DRIFT_THREAD_KIND
 
 
 PROPOSAL_VERSION = 1
@@ -57,9 +58,74 @@ def _thread_header(thread: dict[str, Any]) -> str:
     return ", ".join(parts) or "general review"
 
 
+def _verdict_line(topic_id: str, entry: Any) -> str | None:
+    if not isinstance(entry, dict):
+        return None
+    outcome = str(entry.get("verdict") or "").strip().upper() or "?"
+    reason = str(entry.get("reason") or "").strip()
+    return f"   - `{topic_id}` = {outcome}" + (f" — {reason}" if reason else "")
+
+
+def _verdict_lines(metadata: dict[str, Any]) -> list[str]:
+    verdicts = (metadata.get("topic_verdicts") or {}).items()
+    lines = [line for topic_id, entry in sorted(verdicts)
+             if (line := _verdict_line(topic_id, entry))]
+    recommendation = str(metadata.get("recommendation") or "").strip()
+    if lines and recommendation:
+        lines.append(f"   - recommendation: {recommendation.upper()}")
+    return lines
+
+
+def _drift_lines(metadata: dict[str, Any]) -> list[str]:
+    paths = [p for p in (metadata.get("drifted_paths") or []) if isinstance(p, str)]
+    if not paths:
+        return []
+    listed = ", ".join(f"`{p}`" for p in paths)
+    return [f"   - content drift — re-verify this page against the changed "
+            f"files and correct only what drifted: {listed}"]
+
+
+def _structured_directive(thread: dict[str, Any]) -> list[str] | None:
+    """What regin already distilled out of a machine-authored thread, or None
+    when the thread has no such twin.
+
+    Both machine authors persist their conclusion as structured metadata beside
+    the prose they wrote it up in: the reviewer's per-topic `topic_verdicts`
+    (`proposal_review._parse_topic_verdicts`) and the drift detector's
+    `drifted_paths`. That metadata IS the instruction to a redraft; the prose is
+    the author showing its work, and carrying it forward verbatim is what ran a
+    regenerate prompt to 39k characters — a single review report was 12k of it,
+    and a drift note spent 1.5k enumerating one file's vanished anchors (kept in
+    `missing_anchors`, deliberately not rendered: it justifies the drift verdict,
+    it does not tell the drafter anything to do).
+
+    A human comment has no twin, so it returns None and stays verbatim — people
+    write short and every word is a directive.
+    """
+    metadata = thread.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    if metadata.get("verdicts_cover_body") is False:
+        return None
+    if isinstance(metadata.get("topic_verdicts"), dict):
+        return _verdict_lines(metadata) or None
+    if thread.get("kind") == CONTENT_DRIFT_THREAD_KIND:
+        return _drift_lines(metadata) or None
+    return None
+
+
 def _thread_comment_lines(thread: dict[str, Any]) -> list[str]:
+    structured = _structured_directive(thread)
+    emitted = False
     lines: list[str] = []
     for comment in thread.get("comments") or []:
+        # Only the write-up the metadata was extracted FROM is replaced. A later
+        # agent reply into the same thread has no structured twin of its own, so
+        # it falls through and stays verbatim — dropping it would be silent loss.
+        if structured is not None and not emitted and comment.get("author_kind") == "agent":
+            lines.extend(structured)
+            emitted = True
+            continue
         body = comment.get("body")
         if not isinstance(body, str) or not body.strip():
             continue

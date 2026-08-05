@@ -1520,7 +1520,7 @@ def test_external_agent_instructions_include_review_feedback():
     assert "Please narrow this intent." in text
     assert "Keep it grounded in current files." in text
     assert text.index("Prior draft reference:") < text.index("Review feedback to address in this revision:")
-    assert text.index("Review feedback to address in this revision:") < text.index("Previous proposal JSON")
+    assert text.index("Review feedback to address in this revision:") < text.index("The previous draft is not embedded here")
 
 
 def test_staged_scan_adds_new_matching_refs(stub_proposal_provider, fake_git_repo):

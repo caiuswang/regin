@@ -38,12 +38,9 @@ Write each topic's wiki and the notes as a standalone description of the reposit
 
 A regenerate REVISES the page in place; it does not accrete. Keep each wiki's scope and length close to the prior draft — correct what the current code no longer matches and cut detail that has gone stale, rather than appending new file-by-file descriptions because some files changed. A drift note asking you to refresh a topic is a request to re-verify and tighten its existing narrative, not to grow it.
 
-Previous proposal JSON (structural fields only — each topic's `wiki` body is omitted):
-```json
-{json.dumps(pe._prior_proposal_for_prompt(prior_draft.get('proposal')), indent=2, sort_keys=True)}
-```
-
-Previous wiki markdown (not embedded here — Read it yourself with your Read tool at this path): {wiki_read_pointer(repo, out_dir / 'wiki.md', absolute=True)}
+The previous draft is not embedded here — Read either of these with your Read tool if you need it:
+- proposal JSON (structural fields only — each topic's `wiki` body is omitted): {pe._prior_proposal_pointer(out_dir, prior_draft.get('proposal'))}
+- wiki markdown: {wiki_read_pointer(repo, out_dir / 'wiki.md', absolute=True)}
 """
     custom = pe._format_template_section(prompt_templates)
     sibling_section = pe._sibling_refresh_section(repo, out_dir)
@@ -104,11 +101,7 @@ Existing approved topics — a boundary map, not their full text. It is NOT embe
 
 `topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). A key ending in `/` is a directory ref: its owner claims every file beneath it, so a file under such a key is owned too. Draft without reading that file and you will duplicate an existing topic or claim a file another topic already owns — both bounce before review. Explore the repo with your Read/Glob/Grep tools for everything else.
 
-Available buckets (pick one id for each topic's `parent_id`, or null if none fits):
-```json
-{json.dumps(pe._bucket_summary(repo), indent=2, sort_keys=True)}
-```
-{sibling_section}"""
+{pe._buckets_section(repo, prior_draft)}{sibling_section}"""
 
 
 def _run(repo, out_dir, **kw):

@@ -7,14 +7,12 @@ renders byte-identical to a frozen reference of the prior-reference block.
 the context wiring. If the two diverge, an edit dropped or mangled text — edit
 the surface body and this reference together.
 
-The block hands the agent an absolute-path *pointer* to the prior on-disk
-``wiki.md`` and a wiki-stripped proposal JSON — no wiki narrative is embedded in
-the prompt.
+The block hands the agent absolute-path *pointers* to the prior on-disk
+``wiki.md`` and to the spilled wiki-stripped proposal JSON — neither rides in the
+prompt.
 """
 
 from __future__ import annotations
-
-import json
 
 import lib.topics.proposal_external as pe
 from lib.topics.wiki import wiki_read_pointer
@@ -40,12 +38,9 @@ Write each topic's wiki and the notes as a standalone description of the reposit
 
 A regenerate REVISES the page in place; it does not accrete. Keep each wiki's scope and length close to the prior draft — correct what the current code no longer matches and cut detail that has gone stale, rather than appending new file-by-file descriptions because some files changed. A drift note asking you to refresh a topic is a request to re-verify and tighten its existing narrative, not to grow it.
 
-Previous proposal JSON (structural fields only — each topic's `wiki` body is omitted):
-```json
-{json.dumps(pe._prior_proposal_for_prompt(prior_draft.get('proposal')), indent=2, sort_keys=True)}
-```
-
-Previous wiki markdown (not embedded here — Read it yourself with your Read tool at this path): {wiki_read_pointer(repo, out_dir / 'wiki.md', absolute=True)}
+The previous draft is not embedded here — Read either of these with your Read tool if you need it:
+- proposal JSON (structural fields only — each topic's `wiki` body is omitted): {pe._prior_proposal_pointer(out_dir, prior_draft.get('proposal'))}
+- wiki markdown: {wiki_read_pointer(repo, out_dir / 'wiki.md', absolute=True)}
 """
 
 

@@ -71,11 +71,7 @@ Existing approved topics — a boundary map, not their full text. It is NOT embe
 
 `topics[]` gives each one's bucket (`parent_id`), a one-line `covers`, and the on-disk position of its `wiki_path` / `json_path`: when your topic is adjacent to one, Read that wiki with your Read tool and scope yours to what it does not cover, cross-linking it with `[[id]]` instead of restating it. `primary_owners` maps a file to the ONE topic that already owns it as a primary ref — if you cite such a file, tag it `tier: "reference"` and `[[link]]` its owner rather than claiming a second primary (the same file primary in two topics is a boundary violation that gets a draft bounced before review). A key ending in `/` is a directory ref: its owner claims every file beneath it, so a file under such a key is owned too. Draft without reading that file and you will duplicate an existing topic or claim a file another topic already owns — both bounce before review. Explore the repo with your Read/Glob/Grep tools for everything else.
 
-Available buckets (pick one id for each topic's `parent_id`, or null if none fits):
-```json
-{{buckets_json}}
-```
-{{sibling_section}}"""
+{{buckets_section}}{{sibling_section}}"""
 
 
 register_surface(
@@ -96,7 +92,7 @@ register_surface(
         PromptVariable("output_file", "The canonical artifact path the agent must NOT write directly."),
         PromptVariable("finish_cmd", "The exact CLI command that finalizes the run."),
         PromptVariable("existing_topics_pointer", "Absolute path to the spilled boundary-map JSON (already-approved topics + primary-ref owners) the agent Reads."),
-        PromptVariable("buckets_json", "JSON summary of the available top-level navigation buckets."),
+        PromptVariable("buckets_section", "The `Available buckets` parent_id picker. Empty on a scoped regenerate, which rewrites approved pages whose parent is already fixed.", required=False),
         PromptVariable("sibling_section", "The 'Sibling topics being refreshed' block, or empty.", required=False),
     ),
     tags=("topic-proposal-agent", "drafting"),
@@ -111,6 +107,9 @@ for _sha in (
     "179432745e333d49d3688845fdd0026eb0419920ecad72e27f6f2e36bbb7fbfc",
     # embedded the whole boundary map, before it was spilled to a Read pointer
     "1997f46bb34e85b71256a35f82949c7458f756a8b87d6c83e370bce9a6cd2841",
+    # unconditional bucket picker, before it became a section a scoped
+    # regenerate omits
+    "4a29cc25c763166144b961ff288b8b1550fdd2bccea675db877e71ece0801537",
 ):
     register_retired_default(SURFACE_ID, sha256=_sha)
 

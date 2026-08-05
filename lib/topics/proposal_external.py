@@ -29,6 +29,7 @@ log = get_activity_logger("topics")
 STATUS_FILE = "status.json"
 OUTPUT_FILE = "agent-output.json"
 TOPIC_MAP_FILE = "topic-map.json"
+PRIOR_PROPOSAL_FILE = "prior-proposal.json"
 TEMP_OUTPUT_DIR = ".tmp"
 TEMP_OUTPUT_FILE = "agent-output.json"
 FAILURE_SUMMARY_LIMIT = 500
@@ -299,6 +300,49 @@ def _existing_topics_pointer(repo: Path, out_dir: Path) -> str:
         log.error("topic_map_spill_failed", exc_info=True)
         return "(topic map unavailable)"
     return str(path.resolve())
+
+
+def _prior_proposal_pointer(out_dir: Path, proposal: dict[str, Any] | None) -> str:
+    """Spill the prior draft's structural JSON to `<out_dir>/prior-proposal.json`
+    and return the absolute path the agent Reads.
+
+    Same contract as `_existing_topics_pointer` and `wiki_read_pointer`: probe
+    after writing so a failed spill degrades to a placeholder rather than a
+    dangling path. Embedded, this was 14k of a measured 39.5k regenerate prompt
+    — one topic's `refs` alone were 5.8k — for data the agent rarely needs in
+    full and can always fetch.
+    """
+    path = out_dir / PRIOR_PROPOSAL_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(_prior_proposal_for_prompt(proposal), indent=2, sort_keys=True),
+            encoding="utf-8")
+        if not path.is_file():
+            return "(prior proposal unavailable)"
+    except OSError:
+        log.error("prior_proposal_spill_failed", exc_info=True)
+        return "(prior proposal unavailable)"
+    return str(path.resolve())
+
+
+def _buckets_section(repo: Path, prior_draft: dict[str, Any] | None) -> str:
+    """The `parent_id` picker, or "" on a scoped regenerate.
+
+    The picker exists so a *new* topic can choose its bucket. A scoped
+    regenerate re-derives named, already-approved pages whose `parent_id` is
+    fixed, so the list is 2.8k of unusable context. Scope is read from the same
+    `scope_topic_ids` key `_scoped_refresh_directive` uses — `_scope_for_regenerate`
+    stays the only place that decides what a regenerate covers.
+    """
+    if (prior_draft or {}).get("scope_topic_ids"):
+        return ""
+    return (
+        "Available buckets (pick one id for each topic's `parent_id`, or null "
+        "if none fits):\n```json\n"
+        + json.dumps(_bucket_summary(repo), indent=2, sort_keys=True)
+        + "\n```\n"
+    )
 
 
 def _bucket_summary(repo: Path) -> list[dict[str, Any]]:
@@ -1111,12 +1155,12 @@ def _prior_reference_block(repo: Path, out_dir: Path,
     ``prior_reference`` variable of the drafting skeleton. A broken user edit
     degrades to the built-in default inside ``render_surface``.
 
-    The prior wiki is handed over as an absolute-path *pointer* to the on-disk
-    ``proposals/<id>/wiki.md`` (and wiki bodies are stripped from the prior
-    proposal JSON) — the agent Reads the narrative itself instead of having it
-    embedded in the prompt. The pointer is probed against the live file at
-    prompt-build time, so a stale or vanished wiki degrades to the placeholder
-    rather than dangling."""
+    Neither half of the prior draft is embedded: the wiki is an absolute-path
+    *pointer* to ``proposals/<id>/wiki.md`` and the structural proposal JSON is
+    spilled to ``proposals/<id>/prior-proposal.json``, so the agent Reads what it
+    needs instead of carrying both in the prompt. Each pointer is probed against
+    the live file at prompt-build time, so a stale or vanished file degrades to a
+    placeholder rather than dangling."""
     if not prior_draft:
         return ""
     from lib.prompts import render_surface
@@ -1130,9 +1174,8 @@ def _prior_reference_block(repo: Path, out_dir: Path,
     return render_surface(SURFACE_ID, {
         "review_feedback": feedback_reference,
         "scope_directive": _scoped_refresh_directive(prior_draft),
-        "prior_proposal_json": json.dumps(
-            _prior_proposal_for_prompt(prior_draft.get("proposal")),
-            indent=2, sort_keys=True),
+        "prior_proposal_pointer": _prior_proposal_pointer(
+            out_dir, prior_draft.get("proposal")),
         "prior_wiki_pointer": wiki_read_pointer(
             repo, out_dir / "wiki.md", absolute=True),
     })
@@ -1169,7 +1212,7 @@ def _instructions(
         "output_file": str(out_dir / OUTPUT_FILE),
         "finish_cmd": _finish_command(repo, out_dir.name),
         "existing_topics_pointer": _existing_topics_pointer(repo, out_dir),
-        "buckets_json": json.dumps(_bucket_summary(repo), indent=2, sort_keys=True),
+        "buckets_section": _buckets_section(repo, prior_draft),
         "sibling_section": _sibling_refresh_section(repo, out_dir),
     }
     return render_surface(SURFACE_ID, context)

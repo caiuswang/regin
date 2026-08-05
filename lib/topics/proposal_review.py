@@ -401,6 +401,7 @@ def _write_review_note(
     repo_path: str | Path, proposal_id: str, recommendation: str, answer: str,
     *, agent_trace_id: str | None = None,
     topic_verdicts: dict[str, dict[str, str]] | None = None,
+    verdicts_cover_body: bool = True,
 ) -> dict[str, Any]:
     """Persist one ``review_note`` feedback thread (``created_by='agent'``).
     The single writer shared by the synchronous and notify-on-finish paths, so
@@ -419,6 +420,12 @@ def _write_review_note(
     # pages that failed, and let the next round skip the ones that passed.
     if topic_verdicts:
         metadata["topic_verdicts"] = topic_verdicts
+    # A regenerate prompt renders the verdicts INSTEAD of this body
+    # (`proposal_drafting._structured_directive`). Say so explicitly when they
+    # don't account for all of it — a bounce can raise an issue that names no
+    # resolvable topic, and that issue exists only in the prose.
+    if not verdicts_cover_body:
+        metadata["verdicts_cover_body"] = False
     if agent_trace_id:
         metadata["agent_trace_id"] = agent_trace_id
         metadata["agent_trace_url"] = f"/trace/sessions/{agent_trace_id}"
@@ -715,6 +722,25 @@ def _precheck_note_body(
     return "\n".join(lines)
 
 
+def _issue_reason(issue: Any) -> str:
+    return f"{issue.code}: {issue.message}"
+
+
+def _all_issues_attributed(
+    issues: tuple[Any, ...], verdicts: dict[str, dict[str, str]],
+) -> bool:
+    """Whether every bounced issue reached a per-topic verdict — i.e. whether
+    the verdicts are a lossless stand-in for the note body. False when an issue
+    names no topic ids, names only ids absent from the draft, or lost the
+    `setdefault` race to an earlier issue on the same topic: presence of the
+    topic is not enough, this issue's own message has to be the one stored."""
+    return all(
+        any(verdicts.get(topic_id, {}).get("reason") == _issue_reason(issue)
+            for topic_id in (getattr(issue, "topic_ids", ()) or ()))
+        for issue in issues
+    )
+
+
 def _precheck_verdicts(
     issues: tuple[Any, ...], proposal: dict[str, Any],
 ) -> dict[str, dict[str, str]]:
@@ -733,7 +759,7 @@ def _precheck_verdicts(
                 continue
             verdicts.setdefault(topic_id, {
                 "verdict": "FAIL",
-                "reason": f"{issue.code}: {issue.message}",
+                "reason": _issue_reason(issue),
                 "wiki_sha": digests[topic_id],
             })
     return verdicts
@@ -766,9 +792,11 @@ def _mechanical_precheck(
     # Past this point we have DECIDED to bounce. Write the note and return it
     # unconditionally — a failure in the post-write logging must not fall
     # through to the caller and spawn the agent on top of the note it wrote.
+    verdicts = _precheck_verdicts(errors + boundary, proposal)
     note = _write_review_note(
         repo, proposal_id, "REGENERATE", _precheck_note_body(errors, boundary),
-        topic_verdicts=_precheck_verdicts(errors + boundary, proposal),
+        topic_verdicts=verdicts,
+        verdicts_cover_body=_all_issues_attributed(errors + boundary, verdicts),
     )
     try:
         log.write("proposal_review_precheck_bounced", proposal_id=proposal_id,

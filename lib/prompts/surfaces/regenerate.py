@@ -25,12 +25,9 @@ Write each topic's wiki and the notes as a standalone description of the reposit
 
 A regenerate REVISES the page in place; it does not accrete. Keep each wiki's scope and length close to the prior draft — correct what the current code no longer matches and cut detail that has gone stale, rather than appending new file-by-file descriptions because some files changed. A drift note asking you to refresh a topic is a request to re-verify and tighten its existing narrative, not to grow it.
 
-Previous proposal JSON (structural fields only — each topic's `wiki` body is omitted):
-```json
-{{prior_proposal_json}}
-```
-
-Previous wiki markdown (not embedded here — Read it yourself with your Read tool at this path): {{prior_wiki_pointer}}
+The previous draft is not embedded here — Read either of these with your Read tool if you need it:
+- proposal JSON (structural fields only — each topic's `wiki` body is omitted): {{prior_proposal_pointer}}
+- wiki markdown: {{prior_wiki_pointer}}
 """
 
 
@@ -49,7 +46,7 @@ register_surface(
     variables=(
         PromptVariable("review_feedback", "Rendered open review-feedback threads carried forward into this regenerate, or empty when there is none.", required=False),
         PromptVariable("scope_directive", "The scoped-refresh directive naming the drifted topics to re-derive, or empty on a full re-draft.", required=False),
-        PromptVariable("prior_proposal_json", "The previous draft's proposal JSON, structural fields only (agent self-notes and wiki bodies stripped)."),
+        PromptVariable("prior_proposal_pointer", "Absolute path of the spilled prior-draft proposal JSON (structural fields only), or `(prior proposal unavailable)` when it could not be written."),
         PromptVariable("prior_wiki_pointer", "Absolute path of the previous draft's on-disk wiki markdown, or `(no wiki on file)` when there is none to Read."),
     ),
 )
@@ -62,6 +59,9 @@ for _sha in (
     # embedded full prior-wiki fence + proposal JSON with wiki bodies, before
     # the evidence-pointer form (wiki path, structural JSON only)
     "9efb8a1ead718ef73d3a823b031b9019d7bd1f53e019675b049369aa8712f09c",
+    # embedded the structural proposal JSON inline, before it too became a
+    # spilled Read pointer (14k of one measured 39.5k regenerate prompt)
+    "3e42e4e74e573a02ca5870b436d12bbd630ea5d0d8b220519357f547f231d157",
 ):
     register_retired_default(SURFACE_ID, sha256=_sha)
 

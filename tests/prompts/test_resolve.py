@@ -23,7 +23,7 @@ _CTX = {
     "output_file": "/tmp/topics.json",
     "finish_cmd": "regin finish",
     "existing_topics_pointer": "/tmp/topic-map.json",
-    "buckets_json": "[]",
+    "buckets_section": "",
     "sibling_section": "",
 }
 
