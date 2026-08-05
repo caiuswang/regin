@@ -58,15 +58,23 @@ export function isQaSpan(span) {
 }
 
 // Which of those spans is a QUESTION — answered with a pick, not allowed or
-// denied. The name alone can't say: an SDK-owned session parks every gated
-// call through one `permission.request`, and for `AskUserQuestion` the
-// serve-time merge then retires the `tool.AskUserQuestion` placeholder as its
-// duplicate, so the parked ask reaches the card ONLY as a permission span
-// carrying `kind: 'question'`. Keying the answer surface on the name left
-// those with no selectable options at all.
+// denied. The name alone can't say: a parked gated call reaches the card as
+// one `permission.request` (the serve-time merge collapses its `tool.`
+// placeholder into it), so keying the answer surface on the name left those
+// with no selectable options at all. `kind` is stamped only by the SDK tier;
+// a hook-tier row carries none, and its questions are what identify it — the
+// same rule as `agent_messages.blockers._prompt_fields`.
 export function isAskSpan(span) {
-  if ((span?.name || '') === 'tool.AskUserQuestion') return true
-  return isQaSpan(span) && span?.attributes?.kind === 'question'
+  const name = span?.name || ''
+  if (name === 'tool.AskUserQuestion') return true
+  if (!isQaSpan(span)) return false
+  const a = span?.attributes || {}
+  if (a.kind === 'question') return true
+  // A denial's outcome rides its span NAME, not its attributes (permRowModel
+  // says so, and `_build_perm_attrs` never stamps `denied` on one). The hook
+  // tier does stamp `questions` on a denied ask, so reading those as an open
+  // question would render "answered" for an answer nobody gave.
+  return name !== 'permission.denied' && (a.questions || []).length > 0
 }
 
 // Pure projection for the qa mini row: glyph + eyebrow, the question (or

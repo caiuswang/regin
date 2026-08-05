@@ -25,7 +25,7 @@ import time
 
 from lib.activity_log import get_activity_logger
 from lib.orm.engine import get_connection
-from lib.trace.merge import merge_spans
+from lib.trace.merge import merge_spans, open_gate_placeholder_ids
 from lib.trace.pending_spans import is_pending_span_id
 from lib.trace.projection import _fetch_spans
 
@@ -67,11 +67,26 @@ def _view_signature(spans: list[dict]) -> dict:
 
 
 def _hidden_pending(raw: list[dict], merged: list[dict]) -> list[dict]:
-    """Pending placeholder rows present in `raw` but dropped by `merge_spans`."""
+    """Pending placeholder rows present in `raw` but dropped by `merge_spans`.
+
+    The placeholder of a still-OPEN gate is excluded: merge collapsed it into
+    the parked request (`_collapse_open_gates`), which is live state, not
+    supersession. The signature comparison can't catch that — it deliberately
+    ignores attributes, and the placeholder is the only copy of the identity
+    (`tool_use_id`, a Bash park's `command_preview`) the request absorbs at read
+    time. A parked prompt is idle by construction, so an idle-minutes sweep
+    would otherwise target exactly the card the operator is still looking at.
+
+    Asking merge which placeholder it actually PAIRED, rather than matching on
+    the key, is what keeps the exclusion from spilling: a settled placeholder
+    from an earlier call of the same command shares that key, and sparing it
+    would retain it for as long as someone else's park stayed open."""
     kept = {_key(s) for s in merged}
+    open_gates = open_gate_placeholder_ids(raw)
     return [
         s for s in raw
         if is_pending_span_id(s.get('span_id')) and _key(s) not in kept
+        and s.get('span_id') not in open_gates
     ]
 
 

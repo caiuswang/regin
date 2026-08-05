@@ -62,6 +62,7 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
     producer's own enrichment."""
     from lib.agent_events import ToolCall, to_span  # type: ignore
     from lib.hook_plugin import post_span  # type: ignore
+    from lib.trace.pending_spans import gate_key  # type: ignore
 
     span = to_span(ToolCall(
         trace_id=payload.session_id,
@@ -70,6 +71,12 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
         agent_id=(payload.raw or {}).get('agent_id'),
         agent_type=(payload.raw or {}).get('agent_type'),
     ))
+    # The half of the gate key this event owns. Its PermissionRequest twin
+    # derives the identical digest from the same call, which is the only thing
+    # that ties the two rows together (that payload carries no id at all).
+    key = gate_key(tool, payload.tool_input)
+    if key:
+        span['attributes']['gate_key'] = key
     _enrich_attrs(span['attributes'], payload, tool)
     post_span(**span)
 

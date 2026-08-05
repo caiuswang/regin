@@ -7,6 +7,7 @@ from lib.trace.pending_spans import (
     PERM_PENDING_PREFIX,
     PROMPT_PLACEHOLDER_PREFIX,
     TOOL_PENDING_PREFIX,
+    gate_key,
     is_pending_span_id,
     pending_id_for_resolved,
     perm_pending_id,
@@ -69,6 +70,32 @@ def test_pending_span_supersedes_nothing():
     # the self-delete guard: a pending insert must not retire another row
     span = {'span_id': tool_pending_id('toolu_x'), 'name': 'tool.X', 'trace_id': 's'}
     assert pending_id_for_resolved(span, {'tool_use_id': 'toolu_x'}) == []
+
+
+def test_gate_key_agrees_across_the_two_events_describing_one_call():
+    """PreToolUse and PermissionRequest hand it the same tool + input in
+    different key orders; the digest must not care."""
+    assert gate_key('Bash', {'command': 'git status', 'description': 'st'}) \
+        == gate_key('Bash', {'description': 'st', 'command': 'git status'})
+
+
+def test_gate_key_separates_different_calls():
+    assert gate_key('Bash', {'command': 'git status'}) \
+        != gate_key('Bash', {'command': 'git diff'})
+    assert gate_key('Bash', {'command': 'x'}) != gate_key('Read', {'command': 'x'})
+
+
+def test_gate_key_is_none_when_it_cannot_be_built():
+    assert gate_key('Bash', None) is None
+    assert gate_key(None, {'command': 'x'}) is None
+    assert gate_key('', {}) is None
+
+
+def test_gate_key_refuses_an_unserializable_input():
+    """Tool inputs are arbitrary provider JSON. A value json can't encode must
+    degrade to "no key" — never raise into the hook, and never a coerced digest
+    that two hook processes would compute differently."""
+    assert gate_key('Bash', {'blob': object()}) is None
 
 
 def test_resolved_with_no_text_or_tool_use_id_supersedes_nothing():

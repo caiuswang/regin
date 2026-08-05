@@ -144,10 +144,27 @@ def _build_perm_attrs(payload: HookPayload) -> dict:
         questions = _ask_questions_attr(payload.tool_input or {})
         if questions:
             attrs['questions'] = questions
+    _apply_gated_call_identity(attrs, payload, tool)
+    return attrs
+
+
+def _apply_gated_call_identity(attrs: dict, payload: HookPayload, tool) -> None:
+    """What names the call this request gates, in order of strength.
+
+    A `tool_use_id` names it outright. Without one the transcript can't supply
+    it either — the assistant message holding the `tool_use` block is only
+    flushed when the park ends — so fall back to the gated call's own digest,
+    which the PreToolUse placeholder for that same call also carries.
+    """
+    from lib.trace.pending_spans import gate_key  # type: ignore
+
     tu_id = (payload.raw or {}).get('tool_use_id')
     if isinstance(tu_id, str) and tu_id:
         attrs['tool_use_id'] = tu_id
-    return attrs
+        return
+    key = gate_key(tool, payload.tool_input)
+    if key:
+        attrs['gate_key'] = key
 
 
 def _apply_permission_info(attrs: dict, info) -> None:

@@ -207,27 +207,153 @@ def _gate_resolved_tool_name(span: dict) -> str | None:
     return None
 
 
+def _resolved_gate_ids(spans: list[dict]) -> dict:
+    """(trace_id, tool_name) → the newest row id that resolved that tool's gate."""
+    out: dict[tuple, int] = {}
+    for s in spans:
+        tool_name = _gate_resolved_tool_name(s)
+        if not tool_name:
+            continue
+        key = (s.get('trace_id'), tool_name)
+        row_id = s.get('id') or 0
+        if row_id > out.get(key, -1):
+            out[key] = row_id
+    return out
+
+
 def _drop_resolved_permission_requests(spans: list[dict]) -> list[dict]:
     """Drop PENDING `permission.request` rows whose tool's gate resolved in the
     window. Claude Code's PermissionRequest payload carries no tool_use_id, so
     these can't be matched by deterministic id — correlate by `tool_name`.
-    Permissions block the session one at a time, so dropping every pending
-    request for the resolved tool_name is safe. (Replaces ingest's
-    `_retire_pending_permissions`.)"""
-    resolved: dict[str, set] = {}
-    for s in spans:
-        tool_name = _gate_resolved_tool_name(s)
-        if tool_name:
-            resolved.setdefault(s.get('trace_id'), set()).add(tool_name)
+    (Replaces ingest's `_retire_pending_permissions`.)
+
+    `tool_name` repeats across calls, so the correlation is constrained by the
+    append-only row order: a resolution retires only a request the store
+    recorded BEFORE it. Without that, gating the same tool twice meant the
+    first call's resolution retired the SECOND call's still-open prompt,
+    erasing a park the operator was actually looking at."""
+    resolved = _resolved_gate_ids(spans)
     if not resolved:
         return spans
 
     def retired(s: dict) -> bool:
         if s.get('name') != 'permission.request' or s.get('status_code') != 'PENDING':
             return False
-        return _attrs(s).get('tool_name') in resolved.get(s.get('trace_id'), ())
+        newest = resolved.get((s.get('trace_id'), _attrs(s).get('tool_name')))
+        return newest is not None and newest > (s.get('id') or 0)
 
     return [s for s in spans if not retired(s)]
+
+
+def _open_gate_key(span: dict) -> tuple | None:
+    """The still-open gate this row describes, or None.
+
+    Deliberately NOT scoped per agent, though concurrent subagents can each be
+    parked: a `permission.request` never carries an `agent_id` (0 of the last
+    500 rows measured, against 77 of 500 placeholders that do), so an agent term
+    would make every subagent park miss its twin and keep rendering twice. The
+    one-candidate rule in `_pair_open_gates` covers what the agent term would
+    have: two agents parked on the identical call are two candidates for the
+    same key, so neither pairs. They can never be one candidate — whether a
+    placeholder exists at all is a pure function of the tool name
+    (`pre_tool_trace._should_emit_pending`), so it holds for both agents or
+    neither.
+    """
+    if span.get('status_code') != 'PENDING':
+        return None
+    key = _attrs(span).get('gate_key')
+    if not isinstance(key, str) or not key:
+        return None
+    return (span.get('trace_id'), key)
+
+
+def _pair_open_gates(spans: list[dict]) -> dict:
+    """(trace, span_id) of each surviving request → the placeholder it absorbs.
+
+    A gate that matches more than one row on either side is left ALONE. The key
+    is a digest of the gated call (`pending_spans.gate_key`), so a session that
+    runs `git status` twice reuses it — harmless while the rows are paired only
+    among unresolved candidates (the earlier call's are long retired), and this
+    is the guard that keeps it harmless if that ever fails to hold: an ambiguous
+    key means do nothing, never bind one of two.
+    """
+    requests: dict = {}
+    placeholders: dict = {}
+    for s in spans:
+        key = _open_gate_key(s)
+        if key is None:
+            continue
+        name = s.get('name') or ''
+        if name == 'permission.request':
+            requests.setdefault(key, []).append(s)
+        elif name.startswith('tool.'):
+            placeholders.setdefault(key, []).append(s)
+    return {
+        (r[0].get('trace_id'), r[0].get('span_id')): placeholders[k][0]
+        for k, r in requests.items()
+        if len(r) == 1 and len(placeholders.get(k, ())) == 1
+    }
+
+
+def _absorb_gate_placeholder(survivor: dict, placeholder: dict) -> dict:
+    """Lift what only the PreToolUse side recorded — the call's `tool_use_id`
+    and its input-derived display attrs — onto the surviving request. Never
+    overwrites: where both describe a field, the request's own value is the
+    permission-time truth. Copies, so merge stays pure."""
+    base = _attrs(survivor)
+    extra = {k: v for k, v in _attrs(placeholder).items() if k not in base}
+    if not extra:
+        return survivor
+    out = dict(survivor)
+    out['attributes'] = {**base, **extra}
+    return out
+
+
+def _collapse_open_gates(spans: list[dict]) -> list[dict]:
+    """Collapse the two rows describing ONE still-open permission gate into one.
+
+    A gated call is announced twice: PreToolUse writes `pending-<tool_use_id>`,
+    then the provider's permission event writes `permission.request`. While the
+    gate is open both are PENDING, so the live card drew two cards for one
+    block — for a Bash prompt that window is a second, for a parked
+    `AskUserQuestion` it is the whole human wait.
+
+    The request is the survivor: it owns the operator's decision affordances
+    (`options`, `default_option_id`, `requested_permission`) and it is the span
+    the inbox blocker cards reference. It absorbs the placeholder's identity
+    instead of losing it.
+
+    Only rows sharing a `gate_key` pair — a provider that does stamp a
+    `tool_use_id` on its permission event never reaches here, because the
+    deterministic `permreq-<tu>`/`pending-<tu>` handoff already covers it.
+    """
+    absorb = _pair_open_gates(spans)
+    if not absorb:
+        return spans
+    drop = {(p.get('trace_id'), p.get('span_id')) for p in absorb.values()}
+    out: list[dict] = []
+    for s in spans:
+        ident = (s.get('trace_id'), s.get('span_id'))
+        if ident in drop:
+            continue
+        placeholder = absorb.get(ident)
+        out.append(_absorb_gate_placeholder(s, placeholder)
+                   if placeholder is not None else s)
+    return out
+
+
+def open_gate_placeholder_ids(raw: list[dict]) -> set:
+    """span_ids `_collapse_open_gates` hides while their gate is still OPEN.
+
+    Those rows are hidden by live state, not by supersession, so the reaper
+    must not read them as settled. Computed over the same prefix `merge_spans`
+    applies before the collapse: a placeholder whose own call already resolved
+    is dropped there first, so sharing a `gate_key` with someone else's open
+    park never spares it.
+    """
+    spans = _drop_superseded_placeholders(raw)
+    spans = _drop_resolved_permission_requests(spans)
+    return {p.get('span_id') for p in _pair_open_gates(spans).values()}
 
 
 def _tool_use_id(span: dict) -> str | None:
@@ -985,6 +1111,9 @@ def merge_spans(
         return raw
     spans = _drop_superseded_placeholders(raw)
     spans = _drop_resolved_permission_requests(spans)
+    # After the resolved-gate drop, so only a gate that is still open — the
+    # one case that renders twice — can reach the collapse.
+    spans = _collapse_open_gates(spans)
     spans = _drop_denied_tool_failures(spans)
     spans = _absorb_slash_command_expansions(spans)
     # After each writer's own placeholder rules have settled: they key on

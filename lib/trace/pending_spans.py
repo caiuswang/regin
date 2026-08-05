@@ -13,11 +13,16 @@ The id is the handoff key:
 - prompt   → `promptlive-<sha1(session + text-prefix)>`  (matched by text)
 - tool     → `pending-<tool_use_id>`                     (matched by tool_use_id)
 - permission → `permreq-<tool_use_id>`                   (matched by tool_use_id)
+
+A permission request whose provider gives no `tool_use_id` has no id to key on
+at all; `gate_key` derives one from the call it gates instead, so the two rows
+describing one open gate can still be paired.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime
 
 # The silence window (seconds) after which an unstopped agent / stuck pending
@@ -96,6 +101,41 @@ def prompt_placeholder_id(session_id, text: str) -> str:
     key = f'{session_id or ""}\x00{(text or "").strip()[:_PROMPT_HASH_CHARS]}'
     digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:13]
     return f'{PROMPT_PLACEHOLDER_PREFIX}{digest}'
+
+
+def gate_key(tool_name, tool_input) -> str | None:
+    """Deterministic key for the *gated call* a PreToolUse row and a
+    PermissionRequest row are both describing, or None when it can't be built.
+
+    Claude Code's PermissionRequest payload carries no `tool_use_id` (nor any
+    other id — see `payload_schemas/claude/_hooks/PermissionRequest.schema.json`),
+    and the assistant message holding the `tool_use` block is not flushed to the
+    transcript while the prompt is parked, so the id cannot be looked up either.
+    What BOTH events do hold is the tool's name and its verbatim input, so the
+    key is derived from those — the same technique `prompt_placeholder_id` uses
+    to pair a live prompt with its anchor.
+
+    The digest is NOT unique per call, and does not need to be: two identical
+    `git status` runs collide by construction. Consumers pair on it only among
+    rows that are still UNRESOLVED, where a repeat cannot be a candidate (the
+    earlier call's rows are retired by `pending_id_for_resolved` the moment it
+    finishes), and must refuse to pair when more than one candidate matches —
+    an ambiguous key has to mean "do nothing", never "pick one".
+    """
+    if not isinstance(tool_name, str) or not tool_name:
+        return None
+    if not isinstance(tool_input, dict):
+        return None
+    try:
+        # No `default=` coercion: str() of an unencodable value embeds its
+        # memory address, so two hook processes would hash the same call to
+        # different keys. Refusing to build one leaves the rows unpaired, which
+        # is merely the old behavior; a per-process key would be a wrong bind.
+        canonical = json.dumps(tool_input, sort_keys=True)
+    except (TypeError, ValueError):
+        return None
+    digest = hashlib.sha1(f'{tool_name}\x00{canonical}'.encode('utf-8'))
+    return digest.hexdigest()[:13]
 
 
 def tool_pending_id(tool_use_id: str) -> str:

@@ -84,6 +84,58 @@ def test_in_flight_pending_is_kept():
     assert _survivors(rows) == {tool_pending_id(tu)}  # still rendered
 
 
+def test_placeholder_of_an_open_gate_is_kept():
+    """A placeholder merge hides because its gate is still OPEN is live state,
+    not supersession. It is the only copy of the identity the parked request
+    absorbs at read time, and a parked prompt is idle by construction — exactly
+    what an idle-minutes sweep would target."""
+    tu = 'toolu_opengate0001'
+    rows = [
+        _row(tool_pending_id(tu), 'tool.Bash',
+             {'tool_use_id': tu, 'command_preview': 'rm -rf build',
+              'gate_key': 'aa11bb22cc33d'}, status='PENDING', id=1),
+        _row('rand-perm-open', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'aa11bb22cc33d'},
+             status='PENDING', id=2),
+    ]
+    assert _survivors(rows) == {'rand-perm-open'}  # collapsed, but not settled
+    assert reapable_span_ids(rows) == []
+
+
+def test_settled_placeholder_sharing_a_key_with_an_open_park_is_reapable():
+    """The same command gated twice: the first call is settled and must still
+    reap, even though the second is parked under the identical `gate_key`.
+    Excluding by key rather than by the pair merge actually made would retain
+    it for as long as the other park stayed open — and forever in the window
+    where the request outlives the resolution."""
+    done, live = 'toolu_firstcall001', 'toolu_secondcall1'
+    key = 'aa11bb22cc33d'
+    rows = [
+        _row(tool_pending_id(done), 'tool.Bash',
+             {'tool_use_id': done, 'gate_key': key}, status='PENDING', id=1),
+        _row('rand-bash-done', 'tool.Bash', {'tool_use_id': done}, id=2),
+        _row(tool_pending_id(live), 'tool.Bash',
+             {'tool_use_id': live, 'gate_key': key}, status='PENDING', id=3),
+        _row('rand-perm-live', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': key}, status='PENDING', id=4),
+    ]
+    assert reapable_span_ids(rows) == [tool_pending_id(done)]
+
+
+def test_placeholder_is_reapable_once_its_gate_resolves():
+    tu = 'toolu_gatedone0001'
+    rows = [
+        _row(tool_pending_id(tu), 'tool.Bash',
+             {'tool_use_id': tu, 'gate_key': 'aa11bb22cc33d'},
+             status='PENDING', id=1),
+        _row('rand-perm-done', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'aa11bb22cc33d'},
+             status='PENDING', id=2),
+        _row('rand-bash-done', 'tool.Bash', {'tool_use_id': tu}, id=3),
+    ]
+    assert reapable_span_ids(rows) == [tool_pending_id(tu)]
+
+
 def test_slash_command_expansion_source_is_kept():
     """Acceptance 4: a slash-command `promptlive-` placeholder whose full
     expansion merge transfers onto its resolved echo anchor must NOT be reaped

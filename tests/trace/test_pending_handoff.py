@@ -147,6 +147,134 @@ def test_merge_lone_pending_permission_not_self_dropped():
     assert 'rand-perm-5' in _survivors(rows)
 
 
+# ── one still-open gate → one row (gate_key pairing) ─────────────
+
+def _gate_rows(key, *, tu='toolu_gate0000001', tool='AskUserQuestion',
+               perm_attrs=None, tool_attrs=None, agent=None, tid='t1'):
+    perm = {'tool_name': tool, 'gate_key': key,
+            'options': [{'id': 'deny', 'label': 'Deny'}], **(perm_attrs or {})}
+    pend = {'tool_name': tool, 'tool_use_id': tu, 'gate_key': key,
+            **(tool_attrs or {})}
+    if agent:
+        perm['agent_id'] = pend['agent_id'] = agent
+    return (
+        _row(tool_pending_id(tu), f'tool.{tool}', pend, status='PENDING',
+             tid=tid, id=1),
+        _row('rand-perm-gate', 'permission.request', perm, status='PENDING',
+             tid=tid, id=2),
+    )
+
+
+def test_merge_collapses_one_open_gate_into_the_request_row():
+    """PreToolUse and PermissionRequest both announce one gated call. While the
+    gate is open both are PENDING — the two cards the /live tail drew for a
+    single parked question."""
+    pend, perm = _gate_rows('deadbeef00000',
+                            perm_attrs={'questions': [{'question': 'Scope?'}]},
+                            tool_attrs={'questions': [{'question': 'Scope?'}]})
+    merged = merge_spans([pend, perm])
+    assert [s['span_id'] for s in merged] == ['rand-perm-gate']
+    # The request survives, but keeps what only PreToolUse knew.
+    assert merged[0]['attributes']['tool_use_id'] == 'toolu_gate0000001'
+
+
+def test_merge_collapse_absorbs_without_overwriting_the_request():
+    pend, perm = _gate_rows('deadbeef00001',
+                            perm_attrs={'requested_permission': 'Run: git status'},
+                            tool_attrs={'command_preview': 'git status',
+                                        'requested_permission': 'stale'})
+    merged = merge_spans([pend, perm])
+    attrs = merged[0]['attributes']
+    assert attrs['command_preview'] == 'git status'
+    assert attrs['requested_permission'] == 'Run: git status'
+
+
+def test_merge_leaves_ambiguous_gate_key_alone():
+    """`gate_key` digests the call, so a session that runs `git status` twice
+    reuses it. Two open candidates must pair NEITHER — binding one of two is
+    the failure this guard exists to make impossible."""
+    pend, perm = _gate_rows('deadbeef00002', tool='Bash')
+    twin = _row(tool_pending_id('toolu_second00001'), 'tool.Bash',
+                {'tool_name': 'Bash', 'tool_use_id': 'toolu_second00001',
+                 'gate_key': 'deadbeef00002'}, status='PENDING', id=3)
+    assert _survivors([pend, perm, twin]) == {
+        pend['span_id'], 'rand-perm-gate', twin['span_id']}
+
+
+def test_merge_repeat_of_the_same_call_pairs_only_the_open_one():
+    """The same command a second time: the first call's rows are already
+    retired by its resolved span, so the digest it shares with the second is
+    never asked to tell them apart."""
+    key = 'deadbeef00003'
+    done_tu, open_tu = 'toolu_first000001', 'toolu_second00001'
+    rows = [
+        _row(tool_pending_id(done_tu), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': done_tu, 'gate_key': key},
+             status='PENDING', id=1),
+        _row('rand-bash-done', 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': done_tu}, id=2),
+        _row(tool_pending_id(open_tu), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': open_tu, 'gate_key': key},
+             status='PENDING', id=3),
+        _row('rand-perm-open', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': key}, status='PENDING', id=4),
+    ]
+    merged = merge_spans(rows)
+    assert {s['span_id'] for s in merged} == {'rand-bash-done', 'rand-perm-open'}
+    absorbed = next(s for s in merged if s['span_id'] == 'rand-perm-open')
+    assert absorbed['attributes']['tool_use_id'] == open_tu
+
+
+def test_merge_collapses_a_subagent_park():
+    """A `permission.request` never carries an agent_id while its placeholder
+    does, so the pair must not be keyed on one — a subagent's park has to
+    collapse like anyone else's."""
+    pend, perm = _gate_rows('deadbeef00004')
+    pend['attributes']['agent_id'] = 'agent-a'
+    assert _survivors([pend, perm]) == {'rand-perm-gate'}
+
+
+def test_merge_refuses_two_agents_parked_on_the_identical_call():
+    """Two agents blocked on the same call are two candidates for one key, so
+    neither pairs — the one-candidate rule is what the agent term would have
+    bought, without breaking the subagent case above."""
+    pend_a, perm = _gate_rows('deadbeef00007')
+    pend_b = _row(tool_pending_id('toolu_agentb00001'), 'tool.AskUserQuestion',
+                  {'tool_name': 'AskUserQuestion', 'agent_id': 'agent-b',
+                   'tool_use_id': 'toolu_agentb00001',
+                   'gate_key': 'deadbeef00007'}, status='PENDING', id=3)
+    assert _survivors([pend_a, pend_b, perm]) == {
+        pend_a['span_id'], pend_b['span_id'], 'rand-perm-gate'}
+
+
+def test_merge_does_not_collapse_across_traces():
+    pend, _ = _gate_rows('deadbeef00005', tid='t1')
+    _, perm = _gate_rows('deadbeef00005', tid='t2')
+    assert _survivors([pend, perm]) == {pend['span_id'], 'rand-perm-gate'}
+
+
+def test_merge_leaves_rows_without_a_gate_key_untouched():
+    """Rows recorded before the key existed keep the old two-row behavior —
+    nothing is paired on a guess."""
+    rows = [
+        _row('pending-toolu_old1', 'tool.AskUserQuestion',
+             {'tool_name': 'AskUserQuestion', 'tool_use_id': 'toolu_old1'},
+             status='PENDING', id=1),
+        _row('rand-perm-old', 'permission.request',
+             {'tool_name': 'AskUserQuestion'}, status='PENDING', id=2),
+    ]
+    assert _survivors(rows) == {'pending-toolu_old1', 'rand-perm-old'}
+
+
+def test_merge_collapse_is_idempotent_and_pure():
+    pend, perm = _gate_rows('deadbeef00006')
+    raw = [pend, perm]
+    once = merge_spans(raw)
+    assert pend['attributes'].get('gate_key') == 'deadbeef00006'
+    assert 'tool_use_id' not in perm['attributes']  # input never mutated
+    assert [s['span_id'] for s in merge_spans(once)] == [s['span_id'] for s in once]
+
+
 def test_merge_stale_pending_tool_dropped_by_later_prompt():
     """An interrupted AskUserQuestion/ExitPlanMode pending (never resolved) is
     dropped once a higher-id prompt lands — it blocked the session, so a new
