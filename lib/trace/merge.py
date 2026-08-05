@@ -207,40 +207,88 @@ def _gate_resolved_tool_name(span: dict) -> str | None:
     return None
 
 
-def _resolved_gate_ids(spans: list[dict]) -> dict:
-    """(trace_id, tool_name) → the newest row id that resolved that tool's gate."""
-    out: dict[tuple, int] = {}
+def _placeholder_calls_by_gate(spans: list[dict]) -> dict:
+    """(trace_id, gate_key) → the tool_use_id of the call a single open
+    placeholder speaks for. A key two placeholders answer to names nothing and
+    is dropped — the same refusal `_pair_open_gates` makes."""
+    seen: dict = {}
+    for s in spans:
+        key = _open_gate_key(s)
+        if key is None or not (s.get('name') or '').startswith('tool.'):
+            continue
+        seen[key] = _tool_use_id(s) if key not in seen else None
+    return {k: v for k, v in seen.items() if v}
+
+
+def _gate_resolutions(spans: list[dict]) -> tuple[set, dict, dict]:
+    """What the window says about gates that resolved: the calls named outright,
+    and the newest resolving row id per tool, split by whether the resolving row
+    could name its call at all.
+
+    A `permission.denied` carries no tool_use_id (0 of 95 rows in the live
+    store), so it borrows one from the placeholder its `gate_key` points at —
+    otherwise one agent's denial retires every other agent's park on that tool.
+    When no placeholder answers for the key the row stays unnamed and retires by
+    tool, which is what keeps a denial of a placeholder-less tool working."""
+    gate_calls = _placeholder_calls_by_gate(spans)
+    calls: set = set()
+    named: dict[tuple, int] = {}
+    unnamed: dict[tuple, int] = {}
     for s in spans:
         tool_name = _gate_resolved_tool_name(s)
         if not tool_name:
             continue
-        key = (s.get('trace_id'), tool_name)
-        row_id = s.get('id') or 0
-        if row_id > out.get(key, -1):
-            out[key] = row_id
-    return out
+        trace, row_id = s.get('trace_id'), s.get('id') or 0
+        call_id = (_tool_use_id(s)
+                   or gate_calls.get((trace, _attrs(s).get('gate_key'))))
+        if call_id:
+            calls.add((trace, call_id))
+        bucket = named if call_id else unnamed
+        key = (trace, tool_name)
+        if row_id > bucket.get(key, -1):
+            bucket[key] = row_id
+    return calls, named, unnamed
+
+
+def _request_call_ids(spans: list[dict]) -> dict:
+    """(trace_id, span_id) of each open request → the tool_use_id of the call it
+    gates, learned from the placeholder it pairs with. The request's own payload
+    never carries one."""
+    return {
+        ident: _tool_use_id(placeholder)
+        for ident, placeholder in _pair_open_gates(spans).items()
+        if _tool_use_id(placeholder)
+    }
 
 
 def _drop_resolved_permission_requests(spans: list[dict]) -> list[dict]:
-    """Drop PENDING `permission.request` rows whose tool's gate resolved in the
-    window. Claude Code's PermissionRequest payload carries no tool_use_id, so
-    these can't be matched by deterministic id — correlate by `tool_name`.
+    """Drop PENDING `permission.request` rows whose gate resolved in the window.
     (Replaces ingest's `_retire_pending_permissions`.)
 
-    `tool_name` repeats across calls, so the correlation is constrained by the
-    append-only row order: a resolution retires only a request the store
-    recorded BEFORE it. Without that, gating the same tool twice meant the
-    first call's resolution retired the SECOND call's still-open prompt,
-    erasing a park the operator was actually looking at."""
-    resolved = _resolved_gate_ids(spans)
-    if not resolved:
+    A request that can name its call — via the placeholder it pairs with — is
+    retired only by THAT call's resolution. Two subagents parked on different
+    calls of the same tool used to take each other down: whichever was granted
+    first retired every earlier request for that tool_name, erasing a park the
+    other agent was still waiting on.
+
+    Everything else falls back to correlating by `tool_name`, constrained by
+    append-only row order so a resolution retires only a request the store
+    recorded before it: a request for a tool that emits no placeholder has
+    nothing to pair with, and a denial cannot name the call it denied."""
+    calls, named, unnamed = _gate_resolutions(spans)
+    if not (named or unnamed):
         return spans
+    call_of = _request_call_ids(spans)
 
     def retired(s: dict) -> bool:
         if s.get('name') != 'permission.request' or s.get('status_code') != 'PENDING':
             return False
-        newest = resolved.get((s.get('trace_id'), _attrs(s).get('tool_name')))
-        return newest is not None and newest > (s.get('id') or 0)
+        trace, row_id = s.get('trace_id'), s.get('id') or 0
+        key = (trace, _attrs(s).get('tool_name'))
+        call_id = _tool_use_id(s) or call_of.get((trace, s.get('span_id')))
+        if call_id:
+            return (trace, call_id) in calls or unnamed.get(key, -1) > row_id
+        return max(named.get(key, -1), unnamed.get(key, -1)) > row_id
 
     return [s for s in spans if not retired(s)]
 

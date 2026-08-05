@@ -234,6 +234,86 @@ def test_merge_collapses_a_subagent_park():
     assert _survivors([pend, perm]) == {'rand-perm-gate'}
 
 
+def test_merge_collapsed_request_inherits_the_agents_identity():
+    """A `permission.request` never carries an agent_id, so a subagent's park
+    used to render in the MAIN scope. The placeholder it collapses knows which
+    agent it belongs to."""
+    pend, perm = _gate_rows('deadbeef00008')
+    pend['attributes']['agent_id'] = 'agent-a'
+    merged = merge_spans([pend, perm])
+    assert [s['span_id'] for s in merged] == ['rand-perm-gate']
+    assert merged[0]['attributes']['agent_id'] == 'agent-a'
+
+
+def test_merge_one_agents_grant_does_not_retire_another_agents_park():
+    """Two subagents parked on different calls of the same tool. The grant for
+    A's call named it; B's park is a different call and must survive."""
+    tu_a, tu_b = 'toolu_agentacall1', 'toolu_agentbcall1'
+    rows = [
+        _row(tool_pending_id(tu_a), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': tu_a, 'agent_id': 'agent-a',
+              'gate_key': 'aaaa000000001'}, status='PENDING', id=1),
+        _row('rand-perm-a', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'aaaa000000001'},
+             status='PENDING', id=2),
+        _row(tool_pending_id(tu_b), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': tu_b, 'agent_id': 'agent-b',
+              'gate_key': 'bbbb000000002'}, status='PENDING', id=3),
+        _row('rand-perm-b', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'bbbb000000002'},
+             status='PENDING', id=4),
+        _row('rand-bash-a-done', 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': tu_a}, id=5),
+    ]
+    survivors = _survivors(rows)
+    assert 'rand-perm-a' not in survivors      # its own call resolved
+    assert 'rand-perm-b' in survivors          # a different call, still parked
+
+
+def test_merge_one_agents_denial_does_not_retire_another_agents_park():
+    """The deny half of the same class: a `permission.denied` carries no
+    tool_use_id, so it borrows one from the placeholder its gate_key points at
+    rather than retiring every park on that tool."""
+    tu_a, tu_b = 'toolu_denyacall01', 'toolu_denybcall01'
+    rows = [
+        _row(tool_pending_id(tu_a), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': tu_a, 'agent_id': 'agent-a',
+              'gate_key': 'dddd000000001'}, status='PENDING', id=1),
+        _row('rand-perm-a', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'dddd000000001'},
+             status='PENDING', id=2),
+        _row(tool_pending_id(tu_b), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': tu_b, 'agent_id': 'agent-b',
+              'gate_key': 'eeee000000002'}, status='PENDING', id=3),
+        _row('rand-perm-b', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'eeee000000002'},
+             status='PENDING', id=4),
+        _row('deny-a', 'permission.denied',
+             {'tool_name': 'Bash', 'gate_key': 'dddd000000001'},
+             status='ERROR', id=5),
+    ]
+    survivors = _survivors(rows)
+    assert 'rand-perm-a' not in survivors      # the denied call
+    assert 'rand-perm-b' in survivors          # a different agent, still parked
+
+
+def test_merge_denial_still_retires_a_request_it_cannot_name():
+    """`permission.denied` carries no tool_use_id, so a call-scoped rule alone
+    would leave the denied park standing until the next prompt."""
+    tu = 'toolu_deniedcall1'
+    rows = [
+        _row(tool_pending_id(tu), 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': tu, 'gate_key': 'cccc00000003'},
+             status='PENDING', id=1),
+        _row('rand-perm-denied', 'permission.request',
+             {'tool_name': 'Bash', 'gate_key': 'cccc00000003'},
+             status='PENDING', id=2),
+        _row('deny-row', 'permission.denied', {'tool_name': 'Bash'},
+             status='ERROR', id=3),
+    ]
+    assert 'rand-perm-denied' not in _survivors(rows)
+
+
 def test_merge_refuses_two_agents_parked_on_the_identical_call():
     """Two agents blocked on the same call are two candidates for one key, so
     neither pairs — the one-candidate rule is what the agent term would have
