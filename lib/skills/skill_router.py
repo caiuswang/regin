@@ -85,6 +85,21 @@ def _dtype_for(device) -> Any:
     return torch.float32
 
 
+def _release_cache(device) -> None:
+    """Hand freed accelerator blocks back to the driver.
+
+    Torch's MPS/CUDA caching allocators retain every freed block for the life
+    of the process. In `regin serve` the models are long-lived, so one rerank's
+    activations would otherwise stay resident until exit — measured at ~2.4 GB
+    above the 2.44 GB of weights.
+    """
+    import torch
+    if device.type == "mps":
+        torch.mps.empty_cache()
+    elif device.type == "cuda":
+        torch.cuda.empty_cache()
+
+
 _emb_state: dict[str, Any] = {}
 _rr_state: dict[str, Any] = {}
 _emb_lock = threading.Lock()
@@ -183,10 +198,11 @@ def embed(texts: list[str], *, model_id: str = EMBEDDING_MODEL_ID,
                   max_length=max_length, return_tensors="pt")
         enc = {k: v.to(device) for k, v in enc.items()}
         with torch.no_grad():
-            out = model(**enc)
+            out = model(**enc, use_cache=False)
             vecs = _last_token_pool(out.last_hidden_state, enc["attention_mask"])
             vecs = F.normalize(vecs, p=2, dim=1)
         chunks.append(vecs.float().cpu().numpy())
+    _release_cache(device)
     return np.concatenate(chunks, axis=0)
 
 
@@ -252,7 +268,11 @@ def rerank(query_text: str, candidates: list[dict], *,
         input_ids = torch.tensor(padded, dtype=torch.long, device=device)
         attention_mask = torch.tensor(masks, dtype=torch.long, device=device)
         with torch.no_grad():
-            logits = model(input_ids=input_ids, attention_mask=attention_mask).logits[:, -1, :]
+            # Only the final position's logits are read, and the vocab is 151k wide —
+            # letting the lm_head run over every position costs ~1.5 GB per batch.
+            logits = model(input_ids=input_ids, attention_mask=attention_mask,
+                           logits_to_keep=1, use_cache=False).logits[:, -1, :]
             batch_scores = (logits[:, yes_id] - logits[:, no_id]).float().cpu().tolist()
         scores.extend(batch_scores)
+    _release_cache(device)
     return scores
