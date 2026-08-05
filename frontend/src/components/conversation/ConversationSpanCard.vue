@@ -19,6 +19,7 @@ import AgentResultCard from './cards/AgentResultCard.vue'
 import WorkflowLaunchRow from './cards/WorkflowLaunchRow.vue'
 import InlineToolRow from './cards/InlineToolRow.vue'
 import TaskListCard from './cards/TaskListCard.vue'
+import { isAskSpan } from '../../utils/liveRows.js'
 
 // Dispatcher for one descendant span inside an expanded prompt group. The
 // v-if/v-else-if chain order + guards are load-bearing: a `tool.Bash` with no
@@ -64,7 +65,7 @@ const snapshotFor = (span) => taskSnapshots.value.get(span.span_id)
     @activate="$emit('activate', $event)"
   />
   <AskUserQuestionCard
-    v-else-if="span.name === 'tool.AskUserQuestion' && span.attributes?.questions"
+    v-else-if="isAskSpan(span) && span.attributes?.questions"
     :span="span" :selected-span="selectedSpan"
     @activate="$emit('activate', $event)"
   />

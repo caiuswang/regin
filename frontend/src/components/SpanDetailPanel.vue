@@ -9,6 +9,7 @@
 // parent still owns trigger fetching (we emit `suppress-changed` to re-fetch).
 import { ref, computed } from 'vue'
 import { mcpParts, fmtTokens, denyBadgeLabel } from '../utils/traceFormatters.js'
+import { isAskSpan } from '../utils/liveRows.js'
 import Card from './Card.vue'
 import McpCallDetail from './McpCallDetail.vue'
 import MarkdownContent from './MarkdownContent.vue'
@@ -74,7 +75,7 @@ const visibleAttributeKeys = computed(() => {
   if (span.name === 'assistant.thinking') {
     return keys.filter(k => k !== 'estimated_start_time')
   }
-  if (span.name === 'tool.AskUserQuestion') {
+  if (isAskSpan(span)) {
     return keys.filter(k => !['questions', 'answers', 'annotations',
                               'denied', 'denial_reason', 'denial_reason_truncated_bytes',
                               'deny_kind'].includes(k))
@@ -329,7 +330,7 @@ function annotationNote(q) {
 
     <!-- AskUserQuestion: render the Q&A round-trip as cards. -->
     <div
-      v-if="selectedSpan.name === 'tool.AskUserQuestion' && selectedSpan.attributes.questions"
+      v-if="isAskSpan(selectedSpan) && selectedSpan.attributes.questions"
       class="mb-4 space-y-3"
     >
       <div class="text-xs text-gray-400 mb-1">
@@ -412,7 +413,7 @@ function annotationNote(q) {
     <!-- Generic-tool deny panel (any non-AskUserQuestion denied tool). -->
     <div
       v-if="selectedSpan.attributes?.denied
-            && selectedSpan.name !== 'tool.AskUserQuestion'
+            && !isAskSpan(selectedSpan)
             && selectedSpan.attributes.denial_reason"
       class="mb-4 border border-amber-200 bg-amber-50 rounded-md px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap"
     >

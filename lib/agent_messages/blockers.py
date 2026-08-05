@@ -203,6 +203,75 @@ def _latest_tool_completions(trace_ids: list[str]) -> dict:
             for r in rows if r['at']}
 
 
+def _request_call_ids(trace_ids: list[str]) -> dict:
+    """(trace_id, request span_id) → the tool_use_id of the call it gates.
+
+    A `permission.request` never carries the id of the call it gates, and its
+    grant cannot be recovered from `start_time` either: the granting `tool.<X>`
+    row is stamped with the CALL's start, which is *earlier* than the request
+    span (measured ~10ms), so the name-based `completed > parked_since` test
+    can only ever match the NEXT call of that tool — leaving the card up for
+    the whole of the run the operator already approved. The PreToolUse
+    placeholder written moments before the request does carry the id, and
+    `gate_key` — a digest of the gated call — is what links the two.
+    """
+    if not trace_ids:
+        return {}
+    from lib.orm.engine import get_connection
+    traces = ','.join('?' * len(trace_ids))
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, trace_id, span_id, name, "
+            "       json_extract(attributes,'$.gate_key') AS gk, "
+            "       json_extract(attributes,'$.tool_use_id') AS tu "
+            "  FROM session_spans "
+            f" WHERE trace_id IN ({traces}) AND status_code = 'PENDING' "
+            "   AND json_extract(attributes,'$.gate_key') IS NOT NULL "
+            "   AND (name LIKE 'tool.%' OR name = 'permission.request') "
+            " ORDER BY id ASC", tuple(trace_ids)).fetchall()
+    finally:
+        conn.close()
+    return _pair_gates(rows)
+
+
+def _pair_gates(rows) -> dict:
+    """Bind each request to its placeholder, greedily and in store order.
+
+    A placeholder is claimed by the FIRST request that follows it, because
+    `gate_key` is a digest of tool+input: a session that runs `git status`
+    twice reuses the key, and binding on the key alone left both pairs
+    ambiguous — 2011 placeholders sit PENDING in the live store (append-only:
+    the resolved twin is a separate row) and four keys were already doubled,
+    so the repeat case is the common one, not the exotic one.
+
+    Claiming still preserves the refusal that matters. Two agents parked on
+    the identical call leave two unclaimed candidates for one request, and an
+    ambiguous key must name nothing rather than bind one of two — the same
+    call `merge._pair_open_gates` makes, and what stops one agent's granted
+    Bash from retiring another's live park.
+
+    Known limit, deliberately not narrowed: `pre_tool_trace` stamps a
+    `gate_key` on EVERY placeholder, gated or not, so an un-gated earlier run
+    of the same command leaves an unclaimed candidate that makes a later
+    request ambiguous. Taking the newest candidate instead would resolve that
+    — and would hand one subagent's call to the other's request, which is the
+    error this must never make. An unpaired request simply falls through to
+    the tool-name leg, exactly as before.
+    """
+    unclaimed: dict = {}
+    paired: dict = {}
+    for row in rows:
+        key = (row['trace_id'], row['gk'])
+        if row['name'] == 'permission.request':
+            candidates = unclaimed.pop(key, ())
+            if len(candidates) == 1:
+                paired[(row['trace_id'], row['span_id'])] = candidates[0]
+        elif row['tu']:
+            unclaimed.setdefault(key, []).append(row['tu'])
+    return paired
+
+
 def _latest_denials(trace_ids: list[str]) -> dict:
     """(trace_id, tool name) → newest `permission.denied` start_time. A
     denial resolves the park without ever running the tool, so the completed
@@ -228,17 +297,31 @@ def _latest_denials(trace_ids: list[str]) -> dict:
 class _RetireSignals:
     """The read-time evidence that a pending span's question was decided."""
 
-    def __init__(self, trace_ids: list[str], tool_use_ids: set[str]):
+    def __init__(self, trace_ids: list[str], tool_use_ids: set[str],
+                 request_calls: dict | None = None):
         self.answered = _answered_tool_use_ids(trace_ids, tool_use_ids)
         self.prompted = _latest_prompt_times(trace_ids)
         self.completed = _latest_tool_completions(trace_ids)
         self.denied = _latest_denials(trace_ids)
+        self.request_calls = request_calls or {}
 
     def retires(self, trace_id: str, span: dict) -> bool:
         attrs = _attributes(span)
         started = span.get('start_time') or ''
+        if self._call_answered(trace_id, span, attrs):
+            return True
+        return (self.prompted.get(trace_id) or '') > started
+
+    def _call_answered(self, trace_id: str, span: dict, attrs: dict) -> bool:
+        """Did the call this park gates already resolve?"""
         tu = attrs.get('tool_use_id')
-        if tu and tu in self.answered:
+        if tu:
+            return tu in self.answered
+        # The gated call's id, borrowed off the placeholder this request
+        # pairs with — see `_request_call_ids`. Strictly additive: the name
+        # leg below still runs for a park it cannot name (a denial carries
+        # neither a tool_use_id nor a placeholder to borrow from).
+        if self._gated_call_answered(trace_id, span):
             return True
         # Name-based matching is strictly the fallback for a park that names
         # no call. A park that DOES carry a tool_use_id has an exact signal
@@ -246,9 +329,12 @@ class _RetireSignals:
         # retire it hands a parallel subagent's `tool.Bash` the power to
         # permanently dismiss a live main-loop park.
         tool = attrs.get('tool_name') or _span_tool_name(span)
-        if not tu and tool and self._tool_decided(trace_id, tool, started):
-            return True
-        return (self.prompted.get(trace_id) or '') > started
+        started = span.get('start_time') or ''
+        return bool(tool) and self._tool_decided(trace_id, tool, started)
+
+    def _gated_call_answered(self, trace_id: str, span: dict) -> bool:
+        borrowed = self.request_calls.get((trace_id, span.get('span_id')))
+        return bool(borrowed) and borrowed in self.answered
 
     def _tool_decided(self, trace_id: str, tool: str, started: str) -> bool:
         return ((self.completed.get((trace_id, tool)) or '') > started
@@ -270,10 +356,13 @@ def _question_of(attrs: dict) -> dict:
 
 
 def _options_of(question: dict) -> list[dict]:
-    """Option labels + descriptions, positionally indexed.
+    """Option labels, descriptions + previews, positionally indexed.
 
     The index is the payload `bridge-answer` takes, so it must stay the
-    span's own ordering — never a re-sort or a de-duplication.
+    span's own ordering — never a re-sort or a de-duplication. `preview` is
+    the option's own comparison blob (the AskUserQuestion field the terminal
+    renders under the choice); without it the operator is asked to pick
+    between mockups they cannot see, which is why /live shows it too.
     """
     out = []
     for index, opt in enumerate(question.get('options') or []):
@@ -285,26 +374,60 @@ def _options_of(question: dict) -> list[dict]:
             'label': str(label),
             'description': (opt.get('description') or ''
                             if isinstance(opt, dict) else ''),
+            'preview': (opt.get('preview') or ''
+                        if isinstance(opt, dict) else ''),
         })
     return out
 
 
+def _questions_of(attrs: dict) -> list[dict]:
+    """EVERY question on a parked ask, normalized — not just the first.
+
+    A multi-question AskUserQuestion is one park behind one Submit (the
+    select TUI is tabbed), so a card carrying only `questions[0]` can never
+    be answered from here: the operator picks for tab 1 and the agent stays
+    blocked on the rest.
+    """
+    raw = attrs.get('questions')
+    if not isinstance(raw, list):
+        return []
+    return [{'question': q.get('question') or '',
+             'header': q.get('header') or '',
+             'multiSelect': bool(q.get('multiSelect')),
+             'options': _options_of(q)}
+            for q in raw if isinstance(q, dict)]
+
+
+def _selectable(options: list[dict], questions: list[dict]) -> bool:
+    """Does every question the operator must answer offer indexable options?
+
+    `index is None` marks an option recovered from the card's prose: there is
+    nothing to index into, so clicking it would be a guess. A multi-question
+    ask is only answerable if EVERY tab is — the walk submits them together.
+    """
+    per_question = [q['options'] for q in questions] or [options]
+    return all(opts and all(o['index'] is not None for o in opts)
+               for opts in per_question)
+
+
 def _answerable(*, kind: str, declared_kind: str, options: list[dict],
-                multi_select: bool, bridge_reachable: bool, sdk_owned: bool):
+                multi_select: bool, questions: list[dict],
+                bridge_reachable: bool, sdk_owned: bool):
     """Which operator surface may act on this card from anywhere, or None.
 
     `question` drives the option buttons over `bridge-answer`; `decision`
     drives allow/deny over `bridge-decide`, which only a session regin owns
     can take — there is no way to carry a typed decision into someone
     else's terminal, and guessing keystrokes for one is what must not happen.
-    A multi-select ask needs per-option toggles the bridge cannot drive
-    blindly, so it stays read-only here exactly as it does in LiveQaSheet.
+
+    A multi-QUESTION ask is answerable: `agent_bridge.delivery.deliver_answers`
+    walks the tabbed select TUI server-side and presses the final Submit. A
+    multi-SELECT question is not — it needs per-option toggles the bridge
+    cannot drive blindly — so it stays read-only exactly as in LiveQaSheet.
     """
     if kind == 'question':
-        # `index is None` marks an option recovered from the card's prose:
-        # there is nothing to index into, so clicking it would be a guess.
-        selectable = options and all(o['index'] is not None for o in options)
-        if bridge_reachable and selectable and not multi_select:
+        if (bridge_reachable and not multi_select
+                and _selectable(options, questions)):
             return 'question'
         return None
     # `declared_kind`, never the display default. `_prompt_fields` falls back
@@ -366,15 +489,22 @@ def _question_text(body: str) -> str:
                      if line.strip() and not line.strip().startswith('• '))
 
 
-def _asked(question: dict, message: dict) -> dict:
-    """What the operator is being asked, and the choices offered."""
+def _asked(question: dict, message: dict, questions: list[dict]) -> dict:
+    """What the operator is being asked, and the choices offered.
+
+    The flat `question`/`options`/`multi_select` fields describe the FIRST
+    question and are what every legacy surface reads; `questions` carries the
+    whole ask. `multi_select` spans all of them — one multi-select tab makes
+    the whole walk undrivable, not just its own.
+    """
     body = message.get('body') or ''
     fallback = _question_text(body) or message.get('title') or ''
     return {
         'question': question.get('question') or fallback,
         'header': question.get('header') or '',
         'options': _options_of(question) or _body_options(body),
-        'multi_select': bool(question.get('multiSelect')),
+        'multi_select': any(q['multiSelect'] for q in questions),
+        'questions': questions,
     }
 
 
@@ -384,7 +514,7 @@ def _prompt_fields(attrs: dict, question: dict, message: dict) -> dict:
     # `tool.AskUserQuestion` placeholder carries none, and its questions are
     # what identify it — same rule as `liveRows.isAskSpan`.
     return {
-        **_asked(question, message),
+        **_asked(question, message, _questions_of(attrs)),
         'kind': attrs.get('kind') or ('question' if question else 'tool'),
         'requested_permission': attrs.get('requested_permission') or '',
         'tool_name': attrs.get('tool_name') or '',
@@ -507,11 +637,15 @@ def _hook_parked(live_traces: list[str], rows: dict) -> list[dict]:
 
 def _retire_signals(live_traces: list[str],
                     spans_by_trace: dict) -> "_RetireSignals":
-    tool_use_ids = {
+    request_calls = _request_call_ids(list(live_traces))
+    tool_use_ids = set(request_calls.values())
+    # Both the park's own id and the one borrowed from its placeholder, or
+    # the borrowed id would never be looked up in `answered`.
+    tool_use_ids.update(
         _attributes(s).get('tool_use_id')
         for spans in spans_by_trace.values() for s in spans.values()
-        if s.get('status_code') == 'PENDING' and _attributes(s).get('tool_use_id')}
-    return _RetireSignals(list(live_traces), tool_use_ids)
+        if s.get('status_code') == 'PENDING' and _attributes(s).get('tool_use_id'))
+    return _RetireSignals(list(live_traces), tool_use_ids, request_calls)
 
 
 def _plan_row_parks(rows: dict, live_traces: list[str],
@@ -602,6 +736,7 @@ def _build(park: dict, row: dict | None, bridge: dict, titles: dict) -> dict:
         'answerable': _answerable(
             kind=prompt['kind'], declared_kind=declared,
             options=prompt['options'], multi_select=prompt['multi_select'],
+            questions=prompt['questions'],
             bridge_reachable=bridge['bridge_reachable'],
             sdk_owned=bridge['sdk_owned']),
     }

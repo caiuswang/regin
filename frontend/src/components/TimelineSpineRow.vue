@@ -7,6 +7,7 @@
 import { computed } from 'vue'
 import { spanLabel, fmtDuration, fmtTokens, fmtCost, mcpParts } from '../utils/traceFormatters.js'
 import { barColor } from '../utils/spanColors.js'
+import { isAskSpan } from '../utils/liveRows.js'
 import Button from './ui/Button.vue'
 
 const props = defineProps({
@@ -64,7 +65,9 @@ const pill = computed(() => {
   if (n === 'rule.check' && (a.violating_rule_count || 0) > 0) return { text: 'violations', cls: PILL.red }
   if (n === 'rewind') return { text: 'rewind', cls: PILL.red }
   if (mcpParts(n)) return { text: 'MCP', cls: PILL.cyan }
-  if (n === 'tool.AskUserQuestion') return { text: 'question', cls: PILL.blue }
+  // Not the name: a parked ask is merged into its `permission.request`, which
+  // would otherwise read as a plain permission gate on the spine.
+  if (isAskSpan(props.span)) return { text: 'question', cls: PILL.blue }
   if (n === 'subagent.start' || n === 'tool.Agent') return { text: 'subagent', cls: PILL.slate }
   return null
 })

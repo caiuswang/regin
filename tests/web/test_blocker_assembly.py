@@ -377,6 +377,99 @@ def test_a_completed_same_named_tool_retires_an_idless_park(tmp_db):
     assert blockers.live_blockers() == []
 
 
+def test_the_gated_call_resolving_retires_its_own_park(tmp_db):
+    """A `permission.request` carries no tool_use_id, and its own grant cannot
+    be read off `start_time`: the granting `tool.Bash` row is stamped with the
+    CALL's start, which is EARLIER than the request span. The name-based
+    `completed > parked_since` test therefore never matches the call the
+    operator just approved, so the card stayed up for the whole run — until
+    the NEXT Bash happened to finish. The placeholder sharing the request's
+    `gate_key` names the call, which makes the retirement exact."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'pending-' + _TU_A, name='tool.Bash', start=_stamp(6),
+               attrs={'tool_name': 'Bash', 'tool_use_id': _TU_A,
+                      'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'randomid-1', start=_stamp(5),
+               attrs={'tool_name': 'Bash', 'gate_key': 'gk-1'})
+    assert len(blockers.live_blockers()) == 1
+    # The call's own completion is stamped BEFORE the request it was gated by.
+    _seed_span(tmp_db, 'bash-done', name='tool.Bash', status='OK',
+               start=_stamp(6), attrs={'tool_use_id': _TU_A})
+    assert blockers.live_blockers() == []
+
+
+def test_an_unresolved_gated_call_leaves_its_park_waiting(tmp_db):
+    """The pairing only ever retires. A placeholder whose call has not
+    resolved is an agent still parked, and must keep its card."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'pending-' + _TU_A, name='tool.Bash', start=_stamp(6),
+               attrs={'tool_name': 'Bash', 'tool_use_id': _TU_A,
+                      'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'randomid-1', start=_stamp(5),
+               attrs={'tool_name': 'Bash', 'gate_key': 'gk-1'})
+    assert len(blockers.live_blockers()) == 1
+
+
+def test_two_agents_on_the_identical_call_name_no_call(tmp_db):
+    """Two placeholders still unclaimed when a request lands are two
+    candidates for it, so neither may stand in — the same refusal
+    `merge._pair_open_gates` makes. Without it, one subagent's resolved Bash
+    would retire another's live park on an identical command."""
+    _seed_session(tmp_db)
+    for tu in (_TU_A, _TU_B):
+        _seed_span(tmp_db, 'pending-' + tu, name='tool.Bash', start=_stamp(6),
+                   attrs={'tool_name': 'Bash', 'tool_use_id': tu,
+                          'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'randomid-1', start=_stamp(5),
+               attrs={'tool_name': 'Bash', 'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'bash-done', name='tool.Bash', status='OK',
+               start=_stamp(6), attrs={'tool_use_id': _TU_A})
+    assert len(blockers.live_blockers()) == 1
+
+
+def test_the_same_command_gated_twice_pairs_each_park_with_its_own_call(tmp_db):
+    """`gate_key` is a digest of tool+input, so a session that runs one
+    command twice reuses it — and `session_spans` is append-only, so the
+    first call's placeholder sits PENDING forever (2011 such rows live).
+    Matching on the key alone therefore left the COMMON case ambiguous and
+    the card lingering. Each placeholder is claimed by the first request
+    that follows it, which keeps the repeat exact."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'pending-' + _TU_A, name='tool.Bash', start=_stamp(9),
+               attrs={'tool_name': 'Bash', 'tool_use_id': _TU_A,
+                      'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'req-1', start=_stamp(8),
+               attrs={'tool_name': 'Bash', 'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'bash-done-1', name='tool.Bash', status='OK',
+               start=_stamp(9), attrs={'tool_use_id': _TU_A})
+    # The same command again: a second placeholder under the SAME key, and a
+    # second park that is genuinely waiting.
+    _seed_span(tmp_db, 'pending-' + _TU_B, name='tool.Bash', start=_stamp(4),
+               attrs={'tool_name': 'Bash', 'tool_use_id': _TU_B,
+                      'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'req-2', start=_stamp(3),
+               attrs={'tool_name': 'Bash', 'gate_key': 'gk-1'})
+    assert len(blockers.live_blockers()) == 1  # only the unresolved one
+    _seed_span(tmp_db, 'bash-done-2', name='tool.Bash', status='OK',
+               start=_stamp(4), attrs={'tool_use_id': _TU_B})
+    assert blockers.live_blockers() == []
+
+
+def test_a_denial_still_retires_a_park_that_borrowed_a_call_id(tmp_db):
+    """Borrowing is additive, never a replacement: a `permission.denied`
+    carries no tool_use_id at all, so a park whose borrowed call never
+    resolves must still retire by tool name."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'pending-' + _TU_A, name='tool.Bash', start=_stamp(6),
+               attrs={'tool_name': 'Bash', 'tool_use_id': _TU_A,
+                      'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'randomid-1', start=_stamp(5),
+               attrs={'tool_name': 'Bash', 'gate_key': 'gk-1'})
+    _seed_span(tmp_db, 'denied-1', name='permission.denied', status='ERROR',
+               start=_stamp(1), attrs={'tool_name': 'Bash'})
+    assert blockers.live_blockers() == []
+
+
 def test_a_denial_retires_an_idless_park(tmp_db):
     """A denial never runs the tool, so the completed-twin signal cannot
     fire — the `permission.denied` span is the record that it was decided."""
@@ -546,6 +639,70 @@ def test_an_unreachable_ask_is_read_only(tmp_db):
     row = blockers.live_blockers()[0]
     assert row['answerable'] is None
     assert len(row['options']) == 3  # shown as context, just not clickable
+
+
+def test_a_multi_question_ask_carries_every_question(tmp_db, monkeypatch):
+    """A multi-question AskUserQuestion is ONE park behind one Submit. A card
+    carrying only `questions[0]` could never be answered from here: the
+    operator picked for tab 1 and the agent stayed blocked on the rest."""
+    _reach(monkeypatch)
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'toolu_1', attrs={'kind': 'question', 'questions': [
+        {'question': 'first?', 'header': 'One',
+         'options': [{'label': 'A'}, {'label': 'B'}]},
+        {'question': 'second?', 'header': 'Two',
+         'options': [{'label': 'C'}, {'label': 'D'}]},
+    ]})
+    row = blockers.live_blockers()[0]
+    assert row['answerable'] == 'question'
+    assert [q['question'] for q in row['questions']] == ['first?', 'second?']
+    assert [o['index'] for o in row['questions'][1]['options']] == [0, 1]
+    # The flat fields still describe question 1, for the surfaces that read them.
+    assert row['question'] == 'first?'
+
+
+def test_one_multi_select_tab_makes_the_whole_ask_read_only(tmp_db, monkeypatch):
+    """The walk submits every tab together, so a single undrivable question
+    makes the whole ask undrivable — not just its own tab."""
+    _reach(monkeypatch)
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'toolu_1', attrs={'kind': 'question', 'questions': [
+        {'question': 'first?', 'options': [{'label': 'A'}]},
+        {'question': 'second?', 'multiSelect': True,
+         'options': [{'label': 'C'}]},
+    ]})
+    row = blockers.live_blockers()[0]
+    assert row['answerable'] is None
+    assert row['multi_select'] is True
+
+
+def test_a_tab_with_no_indexable_options_is_not_answerable(tmp_db, monkeypatch):
+    """Every question the walk must answer needs options to index into."""
+    _reach(monkeypatch)
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'toolu_1', attrs={'kind': 'question', 'questions': [
+        {'question': 'first?', 'options': [{'label': 'A'}]},
+        {'question': 'second?', 'options': []},
+    ]})
+    assert blockers.live_blockers()[0]['answerable'] is None
+
+
+def test_an_option_preview_reaches_the_card(tmp_db, monkeypatch):
+    """`preview` is the option's own comparison blob. Dropping it asked the
+    operator to choose between mockups they could not see — which is what
+    sent them to /live, where LiveQaAnswer has always rendered it."""
+    _reach(monkeypatch)
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'toolu_1', attrs={'kind': 'question', 'questions': [
+        {'question': 'which layout?', 'options': [
+            {'label': 'A', 'preview': '| one | two |'},
+            {'label': 'B'},
+        ]},
+    ]})
+    row = blockers.live_blockers()[0]
+    assert row['options'][0]['preview'] == '| one | two |'
+    assert row['options'][1]['preview'] == ''
+    assert row['questions'][0]['options'][0]['preview'] == '| one | two |'
 
 
 def test_a_multi_select_ask_is_read_only(tmp_db, monkeypatch):

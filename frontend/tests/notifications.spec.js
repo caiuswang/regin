@@ -946,3 +946,180 @@ test.describe('a failed enrichment does not strand the card', () => {
     expect(calls).toBeGreaterThan(1)
   })
 })
+
+test.describe('an ask with several questions', () => {
+  // The defect: an AskUserQuestion can carry more than one question behind a
+  // single Submit, but the card only ever rendered `questions[0]`. The
+  // operator picked for tab 1, Send fired one answer, and the agent stayed
+  // parked on the rest with nothing on this surface to reach them.
+  const MULTI = {
+    blockers: [{
+      id: 999005, version: 1, trace_id: 'stub-multi',
+      msg_key: 'permission-pending', msg_type: 'blocker', title: 'Question',
+      body: '', session_title: 'multi', kind: 'question',
+      created_at: new Date().toISOString(), span_id: 'toolu_multi',
+      question: 'Where should the corpus come from?', header: '',
+      multi_select: false,
+      options: [
+        { index: 0, label: 'From the repo', description: '', preview: '' },
+        { index: 1, label: 'From a folder', description: '', preview: '' },
+      ],
+      questions: [
+        {
+          question: 'Where should the corpus come from?', header: 'Corpus',
+          multiSelect: false,
+          options: [
+            { index: 0, label: 'From the repo', description: '', preview: '' },
+            { index: 1, label: 'From a folder', description: '', preview: 'a | b' },
+          ],
+        },
+        {
+          question: 'What is the ground truth?', header: 'Truth',
+          multiSelect: false,
+          options: [
+            { index: 0, label: 'Hand-labelled', description: '', preview: '' },
+            { index: 1, label: 'Harper output', description: '', preview: '' },
+          ],
+        },
+      ],
+      bridge_reachable: true, sdk_owned: false, answerable: 'question',
+    }],
+  }
+
+  async function stubMulti(page, { delivered = true } = {}) {
+    const sent = []
+    await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(MULTI),
+    }))
+    await page.route('**/api/sessions/*/bridge-answer', async (route) => {
+      sent.push(route.request().postDataJSON())
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ delivered, detail: delivered ? '' : 'pane gone' }),
+      })
+    })
+    return sent
+  }
+
+  test('every question must be answered before one Submit carries them all',
+    async ({ page }) => {
+      const sent = await stubMulti(page)
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      await expect(popout.getByTestId('blocker-step')).toContainText('Question 1 of 2')
+      const send = popout.getByRole('button', { name: /Send 2 answers/ })
+      await expect(send).toBeDisabled()
+
+      // Answering tab 1 is not answering the ask: the TUI is tabbed behind a
+      // single Submit, so a send here would submit a half-filled form.
+      await popout.getByRole('radio', { name: /From a folder/ }).click()
+      await expect(send).toBeDisabled()
+
+      await popout.getByTestId('blocker-next').click()
+      await expect(popout.getByTestId('blocker-step')).toContainText('Question 2 of 2')
+      await expect(popout.getByText('What is the ground truth?')).toBeVisible()
+      await popout.getByRole('radio', { name: /Harper output/ }).click()
+      await expect(send).toBeEnabled()
+      await send.click()
+
+      // ONE post carrying both, in question order, each guarded by the text of
+      // the tab it belongs to — never one POST per question.
+      await expect.poll(() => sent.length).toBe(1)
+      expect(sent[0].answers).toEqual([
+        {
+          option_index: 1, label: 'From a folder',
+          confirm_text: 'Where should the corpus come from?',
+        },
+        {
+          option_index: 1, label: 'Harper output',
+          confirm_text: 'What is the ground truth?',
+        },
+      ])
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+    })
+
+  test('a pick survives stepping back to revise it', async ({ page }) => {
+    await stubMulti(page)
+    await page.goto('/patterns')
+    await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+    const popout = await openDecision(page)
+
+    await popout.getByRole('radio', { name: /From the repo/ }).click()
+    await popout.getByTestId('blocker-next').click()
+    await popout.getByTestId('blocker-prev').click()
+    await expect(popout.getByRole('radio', { name: /From the repo/ }))
+      .toHaveAttribute('aria-checked', 'true')
+    // The summary reads off the same payload the POST will carry.
+    await expect(popout.getByTestId('blocker-summary')).toContainText('From the repo')
+  })
+
+  test('an option preview is readable without leaving for /live',
+    async ({ page }) => {
+      await stubMulti(page)
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      const preview = popout.getByTestId('blocker-preview')
+      await expect(preview).toHaveCount(1) // only the option that carries one
+      await expect(popout.getByText('a | b')).toBeHidden()
+      await preview.getByText('Preview').click()
+      await expect(popout.getByText('a | b')).toBeVisible()
+    })
+
+  test('a typed answer is delivered as the TUI free-text entry',
+    async ({ page }) => {
+      const sent = await stubMulti(page)
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      await popout.getByTestId('blocker-stage-free').click()
+      await popout.getByTestId('blocker-free-input').fill('neither — use the wiki')
+      await popout.getByTestId('blocker-next').click()
+      await popout.getByRole('radio', { name: /Hand-labelled/ }).click()
+      await popout.getByRole('button', { name: /Send 2 answers/ }).click()
+
+      await expect.poll(() => sent.length).toBe(1)
+      // "Type something." sits directly after the listed options, so index 2
+      // of a 2-option question IS that entry.
+      expect(sent[0].answers[0]).toMatchObject({
+        option_index: 2, text: 'neither — use the wiki',
+      })
+    })
+})
+
+test.describe('an ask the bridge cannot drive', () => {
+  test('a multi-select question says why instead of rendering a dead card',
+    async ({ page }) => {
+      await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          blockers: [{
+            id: 999006, version: 1, trace_id: 'stub-multisel',
+            msg_key: 'permission-pending', msg_type: 'blocker', title: 'Question',
+            body: '', session_title: 'multisel', kind: 'question',
+            created_at: new Date().toISOString(), span_id: 'toolu_multisel',
+            question: 'Which of these apply?', header: '', multi_select: true,
+            options: [{ index: 0, label: 'One', description: '' }],
+            questions: [{
+              question: 'Which of these apply?', header: '', multiSelect: true,
+              options: [{ index: 0, label: 'One', description: '' }],
+            }],
+            bridge_reachable: true, sdk_owned: false, answerable: null,
+          }],
+        }),
+      }))
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      await expect(popout.getByText(/multi-select question, which cannot be driven/))
+        .toBeVisible()
+      await expect(popout.getByRole('button', { name: /Send/ })).toHaveCount(0)
+      await expect(popout.getByRole('button', { name: /Open live session/ }))
+        .toBeVisible()
+    })
+})

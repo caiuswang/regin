@@ -61,9 +61,12 @@ const blockerFolded = ref(false)
 // banner and the mobile bar all open the SAME surface, and so an arriving
 // blocker can raise it under the `autoPopout` pref.
 const popoutOpen = ref(false)
-// cardKey → the option index the operator has selected but not yet sent.
+// cardKey → the per-question answers the operator has staged but not yet sent,
+// `[{kind: 'option'|'free', index, label, text}, …]` positional by question.
 // Selection is deliberately separate from delivery: the previous banner sent on
-// the first click, so a mis-tap answered the agent with no way back.
+// the first click, so a mis-tap answered the agent with no way back. An ARRAY
+// rather than one index because a multi-question ask is one park behind one
+// Submit — every tab has to be staged before anything reaches the agent.
 const choices = ref({})
 const resumedTraceId = ref(null)
 const suppressed = ref(false)
@@ -142,10 +145,8 @@ function cardKey(card) {
   return card ? `${card.trace_id}::${card.msg_key}::${card.version || 1}` : ''
 }
 
-export const blockerChoice = computed(() => {
-  const at = choices.value[cardKey(blocker.value)]
-  return at === undefined ? null : at
-})
+export const blockerAnswers = computed(
+  () => choices.value[cardKey(blocker.value)] || [])
 
 function waitedFor(row) {
   const since = row && parkedSince.get(row.trace_id)
@@ -416,9 +417,12 @@ function openDecision() {
   openPopout()
 }
 
-function chooseOption(card, index) {
+function setBlockerAnswer(card, at, answer) {
   if (!card) return
-  choices.value = { ...choices.value, [cardKey(card)]: index }
+  const key = cardKey(card)
+  const next = [...(choices.value[key] || [])]
+  next[at] = answer
+  choices.value = { ...choices.value, [key]: next }
 }
 
 // Dismiss is the "never show this decision again" promise — server-backed
@@ -481,6 +485,14 @@ function answerBlocker(row, option) {
   return deliver(row, 'bridge-answer', {
     option_index: option.index, label: option.label,
   })
+}
+
+// One POST for the whole ask, never one per tab. The select TUI is tabbed
+// behind a single Submit, so `deliver_answers` walks it server-side and
+// presses that Submit; a client-side per-question loop that dropped a
+// round-trip would leave the form half filled and the agent still parked.
+function answerBlockerAll(row, answers) {
+  return deliver(row, 'bridge-answer', { answers })
 }
 
 function decideBlocker(row, behavior, reason) {
@@ -653,13 +665,13 @@ export function useNotificationCenter() {
   return {
     toasts, folded, blocker, blockers, blockerFolded, resumedTraceId,
     suppressed, awaitingTraceIds, bannerVisible, stripVisible,
-    popoutVisible, blockerChoice,
+    popoutVisible, blockerAnswers,
     blockerWaitedFor, waitedForTrace, blockerCount, blockerPos,
     ingest, retire, fold, drop, markRead, reset, hydrate, refreshBlockers,
     foldBlocker, dismissBlocker, clearBlocker,
-    openPopout, closePopout, openDecision, chooseOption,
+    openPopout, closePopout, openDecision, setBlockerAnswer,
     nextBlocker, prevBlocker, showBlockerAt,
-    answerBlocker, decideBlocker,
+    answerBlocker, answerBlockerAll, decideBlocker,
     setSuppressed: (value) => { suppressed.value = !!value },
     onOpen: (handler) => { openHandler = handler },
   }

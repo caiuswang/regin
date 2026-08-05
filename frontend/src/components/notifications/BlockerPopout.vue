@@ -13,15 +13,17 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import Button from '../ui/Button.vue'
 import BlockerActions from './BlockerActions.vue'
+import BlockerAnswer from './BlockerAnswer.vue'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useNotificationCenter } from '../../composables/useNotificationCenter'
 import { useSheetDrag } from '../../composables/useSheetDrag'
+import { askQuestions, isAnswered, answerPayload } from '../../utils/blockerAsk'
 
 const router = useRouter()
 const {
-  blocker, blockerCount, blockerPos, blockerWaitedFor, blockerChoice,
-  nextBlocker, prevBlocker, chooseOption, closePopout, foldBlocker,
-  dismissBlocker, answerBlocker,
+  blocker, blockerCount, blockerPos, blockerWaitedFor, blockerAnswers,
+  nextBlocker, prevBlocker, closePopout, foldBlocker,
+  dismissBlocker, answerBlocker, answerBlockerAll,
 } = useNotificationCenter()
 
 const phase = ref('ready')
@@ -50,31 +52,50 @@ const meta = computed(() => [
   blocker.value?.session_title, agent.value, `waiting ${blockerWaitedFor.value}`,
 ].filter(Boolean).join(' · '))
 
-const options = computed(() => (blocker.value?.options || []).map((option, at) => ({
-  ...option,
-  at,
-  // regin's own AskUserQuestion convention marks the suggested answer in the
-  // label text, so the pill is derived rather than a field the server has to
-  // start sending.
-  rec: /\(recommended\)/i.test(option.label || ''),
-})))
+const questions = computed(() => askQuestions(blocker.value))
+const stepped = computed(() => questions.value.length > 1)
+// Every tab, not just the one on screen: the select TUI is tabbed behind ONE
+// Submit, so a send with any question unstaged would submit a half-filled form.
+const allAnswered = computed(
+  () => questions.value.every((_, at) => isAnswered(blockerAnswers.value[at])))
+const sendLabel = computed(() => (stepped.value
+  ? `Send ${questions.value.length} answers → resume agent`
+  : 'Send decision → resume agent'))
+// A multi-select question needs per-option toggles the bridge cannot drive
+// blindly, so the server marks such an ask unanswerable. Saying why beats
+// rendering a dead card the operator has to guess about.
+const multiSelectOnly = computed(
+  () => !canAnswer.value && blocker.value?.kind === 'question'
+    && questions.value.some(q => q.multiSelect))
 
 function openLive() {
   const traceId = blocker.value?.trace_id
   router.push(traceId ? `/live/${encodeURIComponent(traceId)}` : '/live')
 }
 
+// One POST for the whole ask; the single-question shape stays the flat payload
+// every existing surface and the bridge's `deliver_answer` already speak.
+function deliverStaged(row) {
+  const staged = blockerAnswers.value
+  if (!stepped.value) {
+    const answer = staged[0]
+    if (answer.kind === 'free') {
+      return answerBlockerAll(row, [answerPayload(questions.value[0], answer)])
+    }
+    return answerBlocker(row, { index: answer.index, label: answer.label })
+  }
+  return answerBlockerAll(row, questions.value.map(
+    (question, at) => answerPayload(question, staged[at], { confirm: true })))
+}
+
 async function send() {
-  const at = blockerChoice.value
   const row = blocker.value
   // The disabled button is the visible half of this; the guard is the half
   // that survives an Enter on a focused-but-disabled control and a stale click.
-  if (at === null || !row || sending.value) return
-  const option = (row.options || [])[at]
-  if (!option) return
+  if (!row || sending.value || !allAnswered.value) return
   phase.value = 'sending'
   detail.value = ''
-  const res = await answerBlocker(row, option)
+  const res = await deliverStaged(row)
   // Delivered means the card is already retired and this component is
   // unmounting; anything else leaves the agent parked, so the surface must
   // stay up and say why rather than close on a promise it cannot keep.
@@ -102,20 +123,6 @@ watch(cardId, () => {
   detail.value = ''
 })
 
-// Roving tabindex: a radiogroup is ONE tab stop, and arrows move within it.
-// Without this every option was its own stop and the arrow keys — the first
-// thing a screen-reader user tries in a radiogroup — did nothing.
-const groupEl = ref(null)
-
-function moveChoice(delta) {
-  const total = options.value.length
-  if (!total) return
-  const from = blockerChoice.value === null ? 0 : blockerChoice.value + delta
-  const next = ((from % total) + total) % total
-  chooseOption(blocker.value, next)
-  nextTick(() => groupEl.value?.querySelectorAll('[role="radio"]')[next]?.focus())
-}
-
 function onKeydown(event) {
   if (event.key === 'Escape') closePopout()
 }
@@ -130,7 +137,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   returnFocusTo = document.activeElement
   nextTick(() => {
-    const first = groupEl.value?.querySelector('[role="radio"]')
+    const first = cardEl.value?.querySelector('[role="radio"]')
     ;(first || cardEl.value)?.focus?.()
   })
 })
@@ -214,50 +221,26 @@ onUnmounted(() => {
       </div>
 
       <div class="blocker-popout-body">
-        <div class="blocker-popout-question">{{ question }}</div>
-        <p v-if="context" class="blocker-popout-context">{{ context }}</p>
-
-        <!-- Answerable question: the span's options, verbatim and in its order.
-             Radios, not buttons — picking is not yet sending. -->
-        <div
+        <!-- Answerable question: the span's questions and options, verbatim
+             and in their order. Radios, not buttons — picking is not sending.
+             Keyed by card so the pager cannot carry one agent's step position
+             or typed draft onto another's ask. -->
+        <BlockerAnswer
           v-if="canAnswer"
-          ref="groupEl"
-          class="blocker-popout-options"
-          role="radiogroup"
-          aria-label="Answer options"
-        >
-          <Button
-            v-for="option in options"
-            :key="option.index"
-            variant="ghost"
-            size="sm"
-            role="radio"
-            :aria-checked="blockerChoice === option.at"
-            :tabindex="option.at === (blockerChoice ?? 0) ? 0 : -1"
-            :disabled="sending"
-            @keydown.down.prevent="moveChoice(1)"
-            @keydown.right.prevent="moveChoice(1)"
-            @keydown.up.prevent="moveChoice(-1)"
-            @keydown.left.prevent="moveChoice(-1)"
-            :class="[
-              'blocker-popout-option h-auto w-full items-start justify-start',
-              'whitespace-normal px-3 py-2.5 text-start hover:bg-transparent',
-              { 'blocker-popout-option-on': blockerChoice === option.at },
-            ]"
-            @click="chooseOption(blocker, option.at)"
-          >
-            <span class="blocker-popout-radio" aria-hidden="true" />
-            <span class="blocker-popout-option-text">
-              <span class="blocker-popout-option-label">
-                {{ option.label }}
-                <span v-if="option.rec" class="blocker-popout-rec">Recommended</span>
-              </span>
-              <span v-if="option.description" class="blocker-popout-option-desc">
-                {{ option.description }}
-              </span>
-            </span>
-          </Button>
-        </div>
+          :key="cardId"
+          :row="blocker"
+          :disabled="sending"
+        />
+
+        <template v-else>
+          <div class="blocker-popout-question">{{ question }}</div>
+          <p v-if="context" class="blocker-popout-context">{{ context }}</p>
+        </template>
+
+        <p v-if="multiSelectOnly" class="blocker-popout-context" role="status">
+          This ask has a multi-select question, which cannot be driven from
+          here — answer it in the agent terminal, or open the live session.
+        </p>
 
         <!-- allow/deny, or a card no channel reaches. Unchanged surfaces. -->
         <!-- Keyed by card: it holds its own `staged`/`phase`, and paging the
@@ -277,10 +260,10 @@ onUnmounted(() => {
           v-if="canAnswer"
           size="sm"
           variant="danger"
-          :disabled="blockerChoice === null || sending"
+          :disabled="!allAnswered || sending"
           @click="send"
         >
-          {{ sending ? 'Sending…' : 'Send decision → resume agent' }}
+          {{ sending ? 'Sending…' : sendLabel }}
         </Button>
         <Button size="sm" variant="ghost" class="blocker-later" @click="foldBlocker">
           Fold
@@ -424,83 +407,6 @@ onUnmounted(() => {
   font-size: 0.8125rem;
   color: var(--color-fg-muted);
   line-height: 1.6;
-}
-
-.blocker-popout-options {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-/* Scoped under the group so these beat the ghost variant's own hover/border
-   utilities, which land at the same specificity as a bare class here. */
-.blocker-popout-options .blocker-popout-option {
-  gap: 0.6rem;
-  border: 1px solid var(--color-border);
-  border-radius: 0.625rem;
-  background: var(--color-surface);
-  color: var(--color-fg);
-}
-
-.blocker-popout-options .blocker-popout-option:hover:not(:disabled) {
-  border-color: var(--color-amber-500);
-}
-
-.blocker-popout-options .blocker-popout-option-on,
-.blocker-popout-options .blocker-popout-option-on:hover {
-  border-color: var(--color-amber-500);
-  background: var(--color-amber-50);
-}
-
-.blocker-popout-radio {
-  flex: none;
-  margin-top: 0.2rem;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--color-border-strong);
-}
-
-.blocker-popout-option-on .blocker-popout-radio {
-  border-color: var(--color-amber-500);
-  background:
-    radial-gradient(circle, var(--color-amber-500) 0 3.5px, transparent 3.5px);
-}
-
-.blocker-popout-option-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.blocker-popout-option-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-fg);
-}
-
-.blocker-popout-rec {
-  font-size: 0.625rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-warning-strong);
-  background: var(--color-amber-50);
-  border: 1px solid var(--color-amber-300);
-  border-radius: 999px;
-  padding: 0.05rem 0.4rem;
-}
-
-.blocker-popout-option-desc {
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--color-fg-muted);
 }
 
 .blocker-popout-failed {

@@ -13,6 +13,8 @@
  * DOM actually shows, so a new branch added here or there fails a test rather
  * than drifting quietly.
  */
+import { isAskSpan } from '../../utils/liveRows.js'
+
 const EXACT_NAMES = new Set([
   'task.notification',
   'assistant.thinking',
@@ -44,5 +46,10 @@ export function rendersInConversation(span) {
   // render" the tool prefixes settle it on their own.
   if (name.startsWith('tool.') || name.startsWith('subagent.')) return true
   if (attrs.server_side && attrs.response_text) return true
+  // A parked ask reaches the feed as ONE `permission.request` — the serve-time
+  // merge collapses its `tool.AskUserQuestion` placeholder into it — and that
+  // name matches no branch above, so the question the agent is blocked on
+  // rendered as nothing at all. Same predicate the /live card routes on.
+  if (isAskSpan(span) && attrs.questions) return true
   return EXACT_NAMES.has(name)
 }
