@@ -335,7 +335,26 @@
     "filter-chip",
     "filter-row",
     "filter-row-label",
+    "floating-card",
     "form-label",
+    "inbox-offpage",
+    "inbox-offpage-dot",
+    "inbox-page",
+    "inbox-pane",
+    "inbox-panes",
+    "inbox-pill",
+    "inbox-pill-amber",
+    "inbox-pill-emerald",
+    "inbox-pill-indigo",
+    "inbox-pill-red",
+    "inbox-pill-slate",
+    "inbox-pill-violet",
+    "inbox-scroll",
+    "inbox-section",
+    "inbox-section-count",
+    "inbox-section-label",
+    "inbox-section-rule",
+    "inbox-section-urgent",
     "input",
     "live-agent-badge",
     "live-agent-card",
@@ -358,6 +377,11 @@
     "live-bridge-failed",
     "live-bridge-meta",
     "live-bridge-row",
+    "live-cancel",
+    "live-cancel-again",
+    "live-cancel-btn",
+    "live-cancel-failed",
+    "live-cancel-meta",
     "live-card",
     "live-caret",
     "live-chip",
@@ -400,6 +424,17 @@
     "live-hd-status",
     "live-hd-tasks",
     "live-hd-tasks-active",
+    "live-launch",
+    "live-launch-check",
+    "live-launch-go",
+    "live-launch-lbl",
+    "live-launch-pick",
+    "live-launch-prompt",
+    "live-launch-resumed",
+    "live-launch-resumed-kind",
+    "live-launch-resumed-title",
+    "live-launch-resumed-txt",
+    "live-launch-warn",
     "live-mono",
     "live-msg-body",
     "live-msg-eyebrow",
@@ -414,6 +449,7 @@
     "live-now-agents-warn",
     "live-now-attention",
     "live-now-composer",
+    "live-now-controls",
     "live-now-done",
     "live-now-elapsed",
     "live-now-idle",
@@ -474,6 +510,22 @@
     "live-qa-verbs",
     "live-qa-wrap",
     "live-queued",
+    "live-queued-act",
+    "live-queued-discard",
+    "live-queued-edit-act",
+    "live-queued-editing",
+    "live-queued-head",
+    "live-queued-notice",
+    "live-queued-spacer",
+    "live-resume",
+    "live-resume-cancel",
+    "live-resume-cwd",
+    "live-resume-kind",
+    "live-resume-list",
+    "live-resume-main",
+    "live-resume-meta",
+    "live-resume-row",
+    "live-resume-search",
     "live-row",
     "live-row-1",
     "live-row-act",
@@ -512,10 +564,18 @@
     "live-status-running",
     "live-status-stale",
     "live-status-waiting",
+    "live-stop",
+    "live-stop-ask",
+    "live-stop-btn",
+    "live-stop-cancel",
+    "live-stop-confirm",
+    "live-stop-failed",
+    "live-stop-meta",
     "live-sub-mark",
     "live-tabnum",
     "live-tail",
     "live-task-active",
+    "live-task-agent",
     "live-task-body",
     "live-task-counts",
     "live-task-doing",
@@ -665,6 +725,7 @@
     "topics-template-chips-manage",
     "topics-title",
     "topics-workspace",
+    "trace-fold-enter",
     "trace-subagent-scoped",
     "z-popover",
     "z-sticky"
@@ -708,7 +769,8 @@
       "props": [
         "modelValue",
         "label",
-        "disabled"
+        "disabled",
+        "indeterminate"
       ]
     },
     {
@@ -827,6 +889,16 @@
   ],
   "shared": [
     {
+      "name": "AppSidebar",
+      "file": "src/components/AppSidebar.vue",
+      "props": [
+        "navGroups",
+        "user",
+        "mode",
+        "isActiveLink"
+      ]
+    },
+    {
       "name": "Badge",
       "file": "src/components/Badge.vue",
       "props": [
@@ -872,7 +944,9 @@
         "count",
         "hasNext",
         "loadingMore",
-        "label"
+        "label",
+        "total",
+        "note"
       ]
     },
     {
@@ -905,7 +979,15 @@
         "subtitle",
         "description",
         "installed",
-        "loading"
+        "loading",
+        "stale",
+        "routedEvents",
+        "commands",
+        "expectedCommands",
+        "staleEvents",
+        "missingEvents",
+        "foreignEvents",
+        "foreignRoots"
       ]
     },
     {
@@ -917,13 +999,6 @@
         "handlerLoading",
         "selectedProvider",
         "supportedEvents"
-      ]
-    },
-    {
-      "name": "InboxMessageCard",
-      "file": "src/components/InboxMessageCard.vue",
-      "props": [
-        "message"
       ]
     },
     {
@@ -956,6 +1031,14 @@
       "file": "src/components/McpCallDetail.vue",
       "props": [
         "call"
+      ]
+    },
+    {
+      "name": "NavIcon",
+      "file": "src/components/NavIcon.vue",
+      "props": [
+        "name",
+        "size"
       ]
     },
     {
@@ -1100,6 +1183,8 @@
         "scopeLoading",
         "scopedAgentId",
         "showFollowTail",
+        "followActive",
+        "followSelection",
         "scrollerGetter",
         "hideToc",
         "taskEvents"
@@ -1112,17 +1197,6 @@
         "messages",
         "sessionGoal",
         "highlightedSpan"
-      ]
-    },
-    {
-      "name": "SessionRow",
-      "file": "src/components/SessionRow.vue",
-      "props": [
-        "s",
-        "selected",
-        "isDeleting",
-        "isClosing",
-        "clock"
       ]
     },
     {
@@ -1166,9 +1240,13 @@
         "reloading",
         "loading",
         "lastReloadedAt",
+        "reloadFailed",
+        "reloadErrorDetail",
         "hasTurns",
         "snapshotStaleAt",
-        "workflowParentTo"
+        "workflowParentTo",
+        "collapsed",
+        "digest"
       ]
     },
     {
@@ -1193,7 +1271,16 @@
         "description",
         "fields",
         "form",
-        "saving"
+        "saving",
+        "warnings"
+      ]
+    },
+    {
+      "name": "SettingsHookInstallers",
+      "file": "src/components/SettingsHookInstallers.vue",
+      "props": [
+        "providers",
+        "reload"
       ]
     },
     {
@@ -1301,7 +1388,9 @@
         "taskEvents",
         "serverNow",
         "serverNowAt",
-        "stickyTop"
+        "stickyTop",
+        "followSelection",
+        "followActive"
       ]
     },
     {
@@ -1350,6 +1439,7 @@
         "selectedTurnUuid",
         "spanIdsInSelectedTurn",
         "turns",
+        "isWorkflow",
         "traceStart",
         "traceEnd",
         "traceDuration"
@@ -1444,6 +1534,7 @@
     ],
     "components": [
       "src/components/AppLayout.vue",
+      "src/components/AppSidebar.vue",
       "src/components/Badge.vue",
       "src/components/Breadcrumb.vue",
       "src/components/Card.vue",
@@ -1458,11 +1549,11 @@
       "src/components/GradeReportCard.vue",
       "src/components/HookCard.vue",
       "src/components/HookLifecycleDiagram.vue",
-      "src/components/InboxMessageCard.vue",
       "src/components/KebabMenu.vue",
       "src/components/ListInput.vue",
       "src/components/MarkdownContent.vue",
       "src/components/McpCallDetail.vue",
+      "src/components/NavIcon.vue",
       "src/components/PageControls.vue",
       "src/components/PatternContentEditor.vue",
       "src/components/PatternCreateForm.vue",
@@ -1480,13 +1571,13 @@
       "src/components/SchemaExpansionPanel.vue",
       "src/components/SessionConversationView.vue",
       "src/components/SessionMessagesView.vue",
-      "src/components/SessionRow.vue",
       "src/components/SessionTags.vue",
       "src/components/SessionTerminalLog.vue",
       "src/components/SessionTimelineSpine.vue",
       "src/components/SessionTraceHeader.vue",
       "src/components/SessionTurnsSidebar.vue",
       "src/components/SettingsBlock.vue",
+      "src/components/SettingsHookInstallers.vue",
       "src/components/SettingsProviders.vue",
       "src/components/SettingsRuleTriggers.vue",
       "src/components/SkillRoiTable.vue",
@@ -1534,20 +1625,29 @@
       "src/components/grades/GradeRow.vue",
       "src/components/grades/GradeRunPanel.vue",
       "src/components/grades/GradeStatBand.vue",
+      "src/components/inbox/InboxDecisionPanel.vue",
+      "src/components/inbox/InboxMessageDetail.vue",
+      "src/components/inbox/InboxMessageRow.vue",
       "src/components/live/LiveAgentDetail.vue",
       "src/components/live/LiveAgentSheet.vue",
+      "src/components/live/LiveCancelControl.vue",
       "src/components/live/LiveCommandMenu.vue",
       "src/components/live/LiveComposer.vue",
       "src/components/live/LiveCtxMeter.vue",
+      "src/components/live/LiveLaunchSheet.vue",
       "src/components/live/LiveNowZone.vue",
       "src/components/live/LiveQaAnswer.vue",
       "src/components/live/LiveQaAnswerMulti.vue",
+      "src/components/live/LiveQaDecision.vue",
       "src/components/live/LiveQaGrowInput.vue",
       "src/components/live/LiveQaSheet.vue",
       "src/components/live/LiveQueuedChips.vue",
+      "src/components/live/LiveQueuedItem.vue",
+      "src/components/live/LiveResumePicker.vue",
       "src/components/live/LiveScopeBar.vue",
       "src/components/live/LiveSessionPicker.vue",
       "src/components/live/LiveSheet.vue",
+      "src/components/live/LiveStopControl.vue",
       "src/components/live/LiveTailRow.vue",
       "src/components/live/LiveTaskSheet.vue",
       "src/components/live/LiveTerminalSheet.vue",
@@ -1566,6 +1666,22 @@
       "src/components/memory/TaxonomyGraph.vue",
       "src/components/memory/TaxonomyTree.vue",
       "src/components/memory/TopicRoutePlayground.vue",
+      "src/components/notifications/BlockerActions.vue",
+      "src/components/notifications/BlockerBanner.vue",
+      "src/components/notifications/BlockerHead.vue",
+      "src/components/notifications/BlockerPopout.vue",
+      "src/components/notifications/NotificationHost.vue",
+      "src/components/notifications/NotificationPrefsCard.vue",
+      "src/components/notifications/NotificationToast.vue",
+      "src/components/sessions/SessionActiveFilters.vue",
+      "src/components/sessions/SessionAgentIcon.vue",
+      "src/components/sessions/SessionCard.vue",
+      "src/components/sessions/SessionContextMeter.vue",
+      "src/components/sessions/SessionFilterChips.vue",
+      "src/components/sessions/SessionFiltersPopover.vue",
+      "src/components/sessions/SessionListRow.vue",
+      "src/components/sessions/SessionRangePicker.vue",
+      "src/components/sessions/SessionToolbar.vue",
       "src/components/topics/AddRemoveList.vue",
       "src/components/topics/ApprovedTopicDetail.vue",
       "src/components/topics/ApprovedTopicsList.vue",
@@ -1628,12 +1744,20 @@
       "src/composables/useExpandState.js",
       "src/composables/useFeatures.js",
       "src/composables/useFetch.js",
+      "src/composables/useFileMentions.js",
       "src/composables/useFilterState.js",
       "src/composables/useFlash.js",
+      "src/composables/useFoldTransition.js",
       "src/composables/useInboxUnread.js",
+      "src/composables/useLaunchDraft.js",
       "src/composables/useLiveAgents.js",
+      "src/composables/useLiveDecisions.js",
       "src/composables/useLiveScope.js",
+      "src/composables/useLiveShutdown.js",
       "src/composables/useLiveTail.js",
+      "src/composables/useNotificationCenter.js",
+      "src/composables/useNotificationPrefs.js",
+      "src/composables/useOsNotifications.js",
       "src/composables/usePage.js",
       "src/composables/usePromptPreview.js",
       "src/composables/useProposalApplyAll.js",
@@ -1644,7 +1768,11 @@
       "src/composables/useRuleTriggers.js",
       "src/composables/useServerClock.js",
       "src/composables/useSessionFilterCollapse.js",
+      "src/composables/useSessionGrouping.js",
+      "src/composables/useSessionListQuery.js",
       "src/composables/useSessionTags.js",
+      "src/composables/useSheetDrag.js",
+      "src/composables/useSidebarCollapsed.js",
       "src/composables/useSkillImport.js",
       "src/composables/useSlashCommands.js",
       "src/composables/useSpanContentCache.js",
@@ -1656,6 +1784,7 @@
       "src/composables/useTheme.js",
       "src/composables/useToolRollup.js",
       "src/composables/useTraceData.js",
+      "src/composables/useTraceHeader.js",
       "src/composables/useTraceScope.js",
       "src/composables/useTraceScroll.js",
       "src/composables/useTraceTimeline.js",
@@ -1669,9 +1798,9 @@
     "themeTokens": 34,
     "rootTokens": 13,
     "darkTokens": 245,
-    "classes": 367,
+    "classes": 428,
     "primitives": 14,
     "views": 36,
-    "components": 165
+    "components": 191
   }
 }
