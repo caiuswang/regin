@@ -12,7 +12,7 @@ const props = defineProps({
   thread: { type: Object, required: true },
 })
 
-const { copyText } = useCopy()
+const { copyText, isCopied } = useCopy()
 
 // The reviewer writes the note as free-form markdown; the copy affordance hands
 // back that same source text (all comments joined), not the rendered HTML.
@@ -38,12 +38,13 @@ function feedbackThreadColor(status) {
         variant="ghost"
         size="sm"
         class="ml-auto gap-1 px-1 py-0.5 text-[11px] text-slate-500 hover:text-slate-800"
+        :class="isCopied(copyBody) && 'text-success hover:text-success'"
         title="Copy review note"
         data-testid="review-overview-copy"
         @click.stop="copyText(copyBody)"
       >
-        <Icon name="copy" :size="12" class="shrink-0" />
-        Copy
+        <Icon :name="isCopied(copyBody) ? 'check' : 'copy'" :size="12" class="shrink-0" />
+        {{ isCopied(copyBody) ? 'Copied' : 'Copy' }}
       </Button>
     </div>
     <article

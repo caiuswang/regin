@@ -43,6 +43,23 @@ LIVE_WINDOW_MINUTES = 10
 _DECISION_SPAN_NAMES = ('permission.request', 'tool.AskUserQuestion',
                         'tool.ExitPlanMode')
 
+
+
+def _decision_predicate(prefix: str = '') -> str:
+    """The "is this a decision span" SQL, with the names spelled as literals.
+
+    Not bound parameters: SQLite matches a partial index only when the query's
+    terms are syntactically implied by the index's WHERE clause, and
+    `name IN (?,?,?)` defeats that — the parked probe fell back to scanning all
+    75k PENDING spans (58ms) rather than the 2.4k decision ones (1ms).
+    Interpolation is safe here and nowhere else: these are module constants,
+    never user input. Kept in lockstep with `idx_session_spans_pending`
+    (alembic 0015, db/schema.sql), which indexes exactly this predicate.
+    """
+    names = ','.join("'%s'" % n for n in _DECISION_SPAN_NAMES)
+    return ("({p}name IN ({names}) OR {p}span_id LIKE 'permreq-%')"
+            .format(p=prefix, names=names))
+
 _MAX_BLOCKERS = 20
 
 # A live row younger than this is left alone by the hygiene pass: the row is
@@ -57,18 +74,11 @@ def _cutoff() -> str:
             ).strftime('%Y-%m-%dT%H:%M:%S')
 
 
-def _live_hook_trace_ids() -> list[str]:
-    """Recently-seen sessions the hook tier alone speaks for.
-
-    Recency only: `status` is unreliable for exactly the sessions this
-    matters for (an agent killed mid-prompt never writes its end event).
-    SDK runs and their CLI children are the registry's to report.
-    """
-    from lib.agent_sdk.store import sdk_child_session_ids
+def _recent_trace_ids() -> set[str]:
+    """Sessions that emitted something inside the live window."""
     from lib.orm import SessionLocal
     from lib.orm.models import Session as SessionModel
     from sqlmodel import or_, select
-    children = sdk_child_session_ids()
     with SessionLocal() as session:
         # NULL-safe: a row minted by raw span ingest carries no status at
         # all, and `status != 'ended'` silently drops NULL — exactly the
@@ -78,8 +88,95 @@ def _live_hook_trace_ids() -> list[str]:
             .where(or_(SessionModel.status.is_(None),
                        SessionModel.status != 'ended'),
                    SessionModel.last_seen >= _cutoff())).all()
-    return [t for t in rows
-            if t and not t.startswith('sdk-') and t not in children]
+    return {t for t in rows if t}
+
+
+def _parked_trace_ids() -> set[str]:
+    """Sessions holding an unresolved decision span, at any age.
+
+    Age-free by design; the read-time retirement signals downstream and
+    `session.end` are what take these back out.
+    """
+    from lib.orm.engine import get_connection
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT sp.trace_id "
+            "  FROM session_spans sp "
+            "  JOIN sessions s ON s.trace_id = sp.trace_id "
+            " WHERE sp.status_code = 'PENDING' "
+            f"   AND {_decision_predicate('sp.')} "
+            "   AND (s.status IS NULL OR s.status != 'ended')").fetchall()
+    finally:
+        conn.close()
+    return {r['trace_id'] for r in rows if r['trace_id']}
+
+
+def _reachable(trace_id: str) -> bool:
+    """Is there still a process behind this session to receive an answer?
+
+    A PENDING span is not on its own proof that anyone is waiting: an agent
+    killed mid-park never resolves it and never writes `session.end`, so the
+    span outlives the process forever. The bridge's pane resolution is the
+    state authority that separates the two — a live pane means the question
+    can still be answered, its absence means nobody is there to answer it.
+    SDK runs answer over their own typed channel and have no pane at all.
+
+    `resolve_reachable_pane`, not `get_reachable_pane`: the fail-closed view
+    collapses "the store says no pane" into "the store could not be asked"
+    (a locked DB, or a pre-migration shape missing a column the SELECT names),
+    and its docstring names this exact caller as the one that must not. On an
+    install that has not run `regin migrate`, collapsing them would deny every
+    aged park on every poll — silently reproducing the vanishing card this leg
+    exists to fix. So an unanswerable store fails OPEN: no evidence a session
+    died is not evidence that it did, and for a "someone is waiting on you"
+    surface a stale card the operator can dismiss beats a missing one they
+    never see.
+    """
+    from lib import agent_sdk
+    from lib.settings import settings
+    if agent_sdk.is_sdk_owned(trace_id):
+        return True
+    if not settings.agent_bridge.enabled:
+        return False
+    from lib.agent_bridge import store as bridge_store
+    pane, answered = bridge_store.resolve_reachable_pane(trace_id)
+    if not answered:
+        log.error("blocker_reachability_unanswerable", trace_id=trace_id)
+        return True
+    return pane is not None
+
+
+def _live_hook_trace_ids() -> list[str]:
+    """Sessions the hook tier alone speaks for: recently seen, plus every
+    older session still parked on a decision it can still be answered on.
+
+    Recency alone is exactly backwards for a park. An agent stopped on a
+    question emits nothing until a human answers, so its `last_seen` freezes
+    at the moment it parked and the window measures the wait rather than the
+    session's health — every genuine blocker left this feed after
+    LIVE_WINDOW_MINUTES while the session's own `_main_phase` verdict still
+    read `waiting-input`.
+
+    Dropping the window outright is the opposite error. `status` is unreliable
+    in that direction (an agent killed mid-prompt stays 'active' forever), so
+    an age-free span test alone readmits every abandoned park ever recorded —
+    and since the feed is oldest-first and capped, those zombies would sit at
+    the head of the sort and starve the live blocker out of the banner. The
+    same bug, reached from the other side.
+
+    So an aged park has to prove its session is still there: `_reachable`.
+    Where no such proof is obtainable — the bridge is off, and the run is not
+    SDK-owned — there is no authority to appeal to and the window stands.
+
+    SDK runs and their CLI children are the registry's to report.
+    """
+    from lib.agent_sdk.store import sdk_child_session_ids
+    recent = _recent_trace_ids()
+    aged = {t for t in _parked_trace_ids() - recent if _reachable(t)}
+    children = sdk_child_session_ids()
+    return sorted(t for t in recent | aged
+                  if not t.startswith('sdk-') and t not in children)
 
 
 def _decision_spans(trace_ids: list[str]) -> dict:
@@ -93,7 +190,6 @@ def _decision_spans(trace_ids: list[str]) -> dict:
     if not trace_ids:
         return {}
     from lib.orm.engine import get_connection
-    names = ','.join('?' * len(_DECISION_SPAN_NAMES))
     traces = ','.join('?' * len(trace_ids))
     conn = get_connection()
     try:
@@ -101,9 +197,9 @@ def _decision_spans(trace_ids: list[str]) -> dict:
             "SELECT trace_id, span_id, name, status_code, start_time, attributes "
             "  FROM session_spans "
             f" WHERE trace_id IN ({traces}) "
-            f"   AND (name IN ({names}) OR span_id LIKE 'permreq-%') "
+            f"   AND {_decision_predicate()} "
             " ORDER BY id ASC",
-            (*trace_ids, *_DECISION_SPAN_NAMES)).fetchall()
+            tuple(trace_ids)).fetchall()
     finally:
         conn.close()
     by_trace: dict[str, dict] = {}
@@ -411,7 +507,7 @@ def _selectable(options: list[dict], questions: list[dict]) -> bool:
 
 
 def _answerable(*, kind: str, declared_kind: str, options: list[dict],
-                multi_select: bool, questions: list[dict],
+                questions: list[dict],
                 bridge_reachable: bool, sdk_owned: bool):
     """Which operator surface may act on this card from anywhere, or None.
 
@@ -421,13 +517,13 @@ def _answerable(*, kind: str, declared_kind: str, options: list[dict],
     else's terminal, and guessing keystrokes for one is what must not happen.
 
     A multi-QUESTION ask is answerable: `agent_bridge.delivery.deliver_answers`
-    walks the tabbed select TUI server-side and presses the final Submit. A
-    multi-SELECT question is not — it needs per-option toggles the bridge
-    cannot drive blindly — so it stays read-only exactly as in LiveQaSheet.
+    walks the tabbed select TUI server-side and presses the final Submit. So is
+    a multi-SELECT question: its rows are checkboxes the walk toggles before
+    Enter'ing the question's own advance row (`delivery._toggle_multi`), and the
+    SDK tier answers it as one comma-joined string without keystrokes at all.
     """
     if kind == 'question':
-        if (bridge_reachable and not multi_select
-                and _selectable(options, questions)):
+        if bridge_reachable and _selectable(options, questions):
             return 'question'
         return None
     # `declared_kind`, never the display default. `_prompt_fields` falls back
@@ -494,8 +590,8 @@ def _asked(question: dict, message: dict, questions: list[dict]) -> dict:
 
     The flat `question`/`options`/`multi_select` fields describe the FIRST
     question and are what every legacy surface reads; `questions` carries the
-    whole ask. `multi_select` spans all of them — one multi-select tab makes
-    the whole walk undrivable, not just its own.
+    whole ask. `multi_select` is true when ANY tab is one — it drives display
+    (the `· multi-select` chip), not answerability.
     """
     body = message.get('body') or ''
     fallback = _question_text(body) or message.get('title') or ''
@@ -735,7 +831,7 @@ def _build(park: dict, row: dict | None, bridge: dict, titles: dict) -> dict:
         or titles.get(park['trace_id']),
         'answerable': _answerable(
             kind=prompt['kind'], declared_kind=declared,
-            options=prompt['options'], multi_select=prompt['multi_select'],
+            options=prompt['options'],
             questions=prompt['questions'],
             bridge_reachable=bridge['bridge_reachable'],
             sdk_owned=bridge['sdk_owned']),

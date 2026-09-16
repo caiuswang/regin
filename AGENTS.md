@@ -8,6 +8,22 @@ in the conversation, re-litigate a decision the user has already made, or narrat
 options you will not pursue in user-facing messages. If you are weighing a choice, give
 a recommendation, not an exhaustive survey. This does not apply to thinking blocks.
 
+## Dense answers use the spec notation
+
+When an answer has a lot to state — a design, a data model, a set of rules, a list
+of findings — do not write it as prose. Use the notation in
+[`docs/spec-notation.md`](docs/spec-notation.md): **types** for shape, **state
+machines** for lifecycle, **decision tables** for branching rules, **invariants**
+for what always holds, and **Gherkin** for anything falsifiable. Prose is for
+intent and non-goals only — the parts no machine can check.
+
+This governs chat answers, not just spec files. A defect is a table row that is
+missing or a Given/When/Then that fails today; a design question is a type plus a
+state machine. Three or more parallel facts, or any rule carrying a condition,
+belongs in a table rather than a paragraph. When an entity has two orthogonal
+axes, draw two diagrams — one diagram covering both is how two facts end up in
+one column.
+
 ## Root-cause discipline
 Never fix bugs with time-based heuristics (skew windows, polling intervals, timeouts,
 `setTimeout` retries). Prefer identifier-based or event-driven designs: stable IDs for
@@ -105,6 +121,12 @@ a UI defect in prose (`frontend/src/dev/grab.js`).
 Use the `.venv` interpreter; do **not** invoke bare `python` — the system interpreter lacks the project's deps.
 
 ## Conventions
+
+### Git commits
+
+Never put a `Claude-Session:` trailer — or any bare `https://claude.ai/code/session_…`
+link — in a commit message or PR body. The harness proposes one by default; drop that
+line. `Co-Authored-By:` is fine.
 
 ### Code comments
 

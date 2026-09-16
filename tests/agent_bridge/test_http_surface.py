@@ -308,10 +308,11 @@ def test_stored_body_is_sanitized_and_capped(anon_client, monkeypatch):
     rows = _rows("T-san")
     assert len(rows) == 1
     body = rows[0]["body"]
-    # no ANSI, no control bytes, newlines/tabs flattened, capped.
+    # no ANSI, no control bytes, capped — but the LINE STRUCTURE survives: the
+    # inbox row is the prompt as sent, and a flattened one is a mangled one.
     assert "\x1b" not in body and "[31m" not in body
     assert "\x03" not in body and "\x00" not in body
-    assert "\n" not in body and "\t" not in body
+    assert "line\none\ttwo" in body
     assert len(body) <= cap
 
 

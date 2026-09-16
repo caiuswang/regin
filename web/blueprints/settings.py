@@ -397,14 +397,128 @@ def _agent_sdk_warnings(current) -> list[str]:
     return [f"Gating is configured but inert: {reason}."] if reason else []
 
 
+_AGENT_BRIDGE_FIELDS = [
+    # `token` is deliberately absent: `_block_get` only returns declared
+    # fields, so leaving it out is what keeps the bridge bearer token off the
+    # browser — the invariant the design doc states — and `_block_put` merges
+    # against the on-disk block, so omitting it here cannot drop it either.
+    {"key": "enabled", "group": "Steering", "type": "bool",
+     "label": "Message steering enabled",
+     "description": "The guarded HTTP → tmux channel behind the /live "
+                    "composer: sanitized message text and one allowlisted key, "
+                    "rate-limited per session. Independent of the pane "
+                    "terminal below."},
+    {"key": "rate_limit_per_minute", "group": "Steering", "type": "int",
+     "min": 1, "max": 600,
+     "label": "Steering messages per minute",
+     "description": "Per-session ceiling on delivered messages. Bounds cost "
+                    "and chaos if a client loops. Does not apply to the pane "
+                    "terminal, which carries a keystroke stream, not messages."},
+    {"key": "max_text_len", "group": "Steering", "type": "int",
+     "min": 1, "max": 100000,
+     "label": "Max message length",
+     "description": "Longest message body accepted for delivery, after "
+                    "sanitization."},
+    {"key": "allowed_pane_commands", "group": "Steering", "type": "list",
+     "label": "Allowed pane commands",
+     "description": "A pane only accepts delivery when its foreground process "
+                    "is one of these. The guard that stops a message typed at "
+                    "a fallen-back shell from executing as a shell command "
+                    "(native builds report claude.exe; NVM installs report "
+                    "claude or node)."},
+    {"key": "terminal_enabled", "group": "Pane terminal", "type": "bool",
+     "label": "Pane terminal enabled (full shell access)",
+     "description": "Serves a real terminal on the trace page over a "
+                    "WebSocket. This is UNFILTERED shell access as the user "
+                    "running regin serve — no key allowlist, no rate budget, "
+                    "no sanitizer, because none of those mean anything against "
+                    "a keystroke stream. Admin role is required on top of this "
+                    "switch. Note: while a browser terminal is open the pane's "
+                    "window follows the BROWSER's size, not yours — tmux gives "
+                    "a window one size and resolves it to the latest client; "
+                    "it reverts when the tab closes."},
+    {"key": "attach_socket", "group": "Pane terminal", "type": "string",
+     "label": "Attach socket name",
+     "description": "tmux socket for panes regin creates itself, to take over "
+                    "a conversation the CLI holds off-pane. Its own server, so "
+                    "it works when you are not running tmux and your "
+                    "kill-server does not take regin's panes with it."},
+]
+
+
+def _agent_bridge_warnings(current) -> list[str]:
+    warnings = []
+    if current.terminal_enabled:
+        warnings.append(
+            "The pane terminal is on: any admin can open a full shell as the "
+            "user running `regin serve`.")
+    if current.enabled and not current.token:
+        warnings.append(
+            "Message steering is enabled with no token set, so the headless "
+            "/api/bridge/* routes refuse every call. Set agent_bridge.token in "
+            "config/settings.local.json.")
+    return warnings
+
+
+_TASKS_FIELDS = [
+    {"key": "capture_enabled", "group": "Capture", "type": "bool",
+     "label": "Task capture enabled",
+     "description": "Arms POST /api/tasks/capture, the one route "
+                    "authenticated by an API key instead of the web-UI login. "
+                    "While it is off the route 404s for every key. A captured "
+                    "task always lands as an idea and can carry no execution "
+                    "parameter, so a leaked capture key adds backlog rows and "
+                    "nothing else."},
+    {"key": "capture_rate_limit_per_minute", "group": "Capture", "type": "int",
+     "min": 1, "max": 600,
+     "label": "Captures per minute",
+     "description": "Per-key ceiling on accepted captures. Bounds the damage "
+                    "a looping integration can do to the backlog."},
+]
+
+
+def _tasks_warnings(current) -> list[str]:
+    if not current.capture_enabled:
+        return []
+    from lib import api_keys
+    if any(not k["revoked"] for k in api_keys.list_keys()):
+        return []
+    return ["Task capture is on but no live API key exists, so every capture "
+            "is refused. Mint one under API keys."]
+
+
+_TASK_INTEGRATIONS_FIELDS: list[dict] = [
+    {"key": "linear_enabled", "group": "Linear", "type": "bool",
+     "label": "Enabled",
+     "description": "Mute switch for this tracker — off means Linear claims no "
+                    "pasted reference, without deleting the key below."},
+    {"key": "linear_api_key", "group": "Linear", "type": "string",
+     "label": "API key",
+     "description": "A Linear personal API key (Settings \u2192 Security & "
+                    "access \u2192 Personal API keys). Read-only use: regin "
+                    "fetches an issue's title, state, assignee and labels and "
+                    "writes nothing back. Empty = Linear off. Stored "
+                    "machine-local."},
+    {"key": "linear_timeout_seconds", "group": "Linear", "type": "float",
+     "min": 0, "step": 0.5, "label": "Request timeout (s)",
+     "description": "How long one Linear GraphQL call may take before the "
+                    "link records the failure and keeps its last snapshot."},
+]
+
+
 def _settings_blocks() -> dict:
     """Registry of round-trippable nested settings blocks. `scope` routes the
     write: agent_messages goes local because webhook_url can hold a secret
     token that must not land in git-tracked settings.json; agent_sdk because
     cli_path is a machine path and a git-tracked `enabled` would arm
-    process-spawning for everyone who pulls."""
-    from lib.settings import (AgentMemoryConfig, AgentMessagesConfig,
-                              AgentSdkConfig, TopicEvolutionConfig)
+    process-spawning for everyone who pulls; agent_bridge because it holds the
+    bridge token and a git-tracked terminal switch would hand everyone who
+    pulls a shell; tasks because a git-tracked `capture_enabled` would arm the
+    key-authenticated capture route for everyone who pulls."""
+    from lib.settings import (AgentBridgeConfig, AgentMemoryConfig,
+                              AgentMessagesConfig, AgentSdkConfig,
+                              TaskIntegrationsConfig, TasksConfig,
+                              TopicEvolutionConfig)
     return {
         "agent-memory": {"attr": "agent_memory", "model": AgentMemoryConfig,
                          "fields": _AGENT_MEMORY_FIELDS, "scope": "shared",
@@ -583,6 +697,17 @@ def api_agent_messages_settings():
 @require_editor
 def api_update_agent_messages_settings():
     return _block_put('agent-messages')
+
+
+@settings_bp.route('/api/settings/agent-bridge')
+def api_agent_bridge_settings():
+    return _block_get('agent-bridge')
+
+
+@settings_bp.route('/api/settings/agent-bridge', methods=['PUT'])
+@require_editor
+def api_update_agent_bridge_settings():
+    return _block_put('agent-bridge')
 
 
 @settings_bp.route('/api/settings/topic-evolution')

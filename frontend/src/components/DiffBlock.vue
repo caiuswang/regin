@@ -9,6 +9,11 @@ import 'highlight.js/styles/github-dark.css'
 const props = defineProps({
   diff: { type: String, required: true },
   filePath: { type: String, default: '' },
+  // Presentation reader: number the lines and drop the height cap, because the
+  // reader's own body is the scroll region — a second capped scroller inside
+  // it traps the wheel halfway down a long hunk.
+  numbered: { type: Boolean, default: false },
+  flush: { type: Boolean, default: false },
 })
 
 // Map common file extensions to hljs language ids. Anything not in the
@@ -94,21 +99,25 @@ function highlightCode(code) {
 // — `hunk` headers and metadata stay unstyled so they don't compete
 // for attention with the actual change.
 const lines = computed(() => {
-  return (props.diff || '').split('\n').map(raw => {
-    if (!raw.length) return { kind: 'ctx', prefix: ' ', html: '' }
+  return (props.diff || '').split('\n').map((raw, i) => {
+    const num = String(i + 1).padStart(3, ' ')
+    if (!raw.length) return { num, kind: 'ctx', prefix: ' ', html: '' }
     const c = raw[0]
     // `\` lines like "\ No newline at end of file" are diff metadata.
-    if (c === '@') return { kind: 'hunk', prefix: '', html: escapeHtml(raw) }
-    if (c === '\\') return { kind: 'meta', prefix: '', html: escapeHtml(raw) }
-    if (c === '+') return { kind: 'add', prefix: '+', html: highlightCode(raw.slice(1)) }
-    if (c === '-') return { kind: 'del', prefix: '-', html: highlightCode(raw.slice(1)) }
-    return { kind: 'ctx', prefix: ' ', html: highlightCode(raw.slice(1)) }
+    if (c === '@') return { num, kind: 'hunk', prefix: '', html: escapeHtml(raw) }
+    if (c === '\\') return { num, kind: 'meta', prefix: '', html: escapeHtml(raw) }
+    if (c === '+') return { num, kind: 'add', prefix: '+', html: highlightCode(raw.slice(1)) }
+    if (c === '-') return { num, kind: 'del', prefix: '-', html: highlightCode(raw.slice(1)) }
+    return { num, kind: 'ctx', prefix: ' ', html: highlightCode(raw.slice(1)) }
   })
 })
 </script>
 
 <template>
-  <pre class="diff-block text-[12px] font-mono leading-snug max-h-[32rem] overflow-auto py-2"><span
+  <pre
+    class="diff-block text-[12px] font-mono leading-snug overflow-auto py-2"
+    :class="flush ? '' : 'max-h-[32rem]'"
+  ><span
     v-for="(line, lineNo) in lines"
     :key="lineNo"
     class="block px-3"
@@ -119,7 +128,10 @@ const lines = computed(() => {
       'text-slate-400': line.kind === 'meta',
       'text-slate-300': line.kind === 'ctx',
     }"
-  ><span class="select-none mr-2 w-3 inline-block text-center" :class="{
+  ><span
+      v-if="numbered"
+      class="select-none mr-2 inline-block text-right text-slate-500 tabular-nums"
+    >{{ line.num }}</span><span class="select-none mr-2 w-3 inline-block text-center" :class="{
       'text-emerald-300/70': line.kind === 'add',
       'text-red-300/70': line.kind === 'del',
       'text-slate-500': line.kind === 'ctx',

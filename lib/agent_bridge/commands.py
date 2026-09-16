@@ -31,9 +31,13 @@ from pathlib import Path
 
 import anyio
 import yaml
+from sqlalchemy import func
+from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.agent_bridge import roots
+from lib.orm.engine import SessionLocal
+from lib.orm.models.trace import SessionSpan
 
 log = get_activity_logger("agent_bridge")
 
@@ -47,10 +51,42 @@ SDK_TIMEOUT_SECONDS = 20.0
 # Built-ins that end or discard the session's state; the composer badges them.
 DESTRUCTIVE_COMMANDS = frozenset({"clear", "exit", "logout"})
 
+# The built-ins that re-register what a session accepts. Running one is the
+# only way the catalog changes mid-session, so it — not the TTL — is what has
+# to expire the handshake result: a skill or plugin MCP server installed and
+# reloaded at 17:53 is otherwise invisible to the composer until 17:58.
+# Claude Code records each as a `harness.local_command` span whose
+# `command_name` keeps the leading slash; older/other providers may not, hence
+# both spellings.
+_RELOAD_SPAN_NAME = "harness.local_command"
+RELOAD_COMMANDS = frozenset({"reload-skills", "reload-plugins"})
+_RELOAD_COMMAND_NAMES = tuple(
+    sorted(RELOAD_COMMANDS | {f"/{name}" for name in RELOAD_COMMANDS}))
+
+# The quit verbs. A tmux session runs them for real; a session regin drives
+# over the SDK has no TUI to run them in, and the CLI answers one with a
+# synthetic "/exit isn't available in this environment" — which regin used to
+# ack as "prompt queued" while the run went on living. They are the one case
+# with a genuine equivalent on this tier, so they are routed to it instead of
+# refused.
+SESSION_ENDING_COMMANDS = frozenset({"exit", "quit"})
+
+FORWARD, STOP, UNSUPPORTED = "forward", "stop", "unsupported"
+
+# The same token shape `delivery._SLASH_COMMAND_RE` matches, with the name
+# captured. The terminator is the whole point and must not be dropped: without
+# it a path or a URL opening a prose prompt reads as a command, and
+# "/Users/x/y.py is broken" gets refused as an unknown `/Users`.
+_LEADING_COMMAND_RE = re.compile(r"^/([A-Za-z0-9][A-Za-z0-9._:-]*)(?=\s|$)")
+
 _META_DESCRIPTION_RE = re.compile(
     r"""description\s*:\s*(['"])(.*?)\1""", re.DOTALL)
 
-_sdk_cache: dict[str, tuple[float, list[dict]]] = {}
+# root -> (expiry, reload_marker, rows). The marker is the newest reload
+# timestamp any session in this root has reported so far, and only moves
+# forward: two sessions share a root, and letting one whose session never
+# reloaded push it back would re-handshake on every alternating request.
+_sdk_cache: dict[str, tuple[float, str, list[dict]]] = {}
 _sdk_locks: dict[str, threading.Lock] = {}
 _sdk_locks_guard = threading.Lock()
 
@@ -200,9 +236,39 @@ def _fetch_sdk_commands(root: str) -> list[dict]:
         return []
 
 
-def _cached_sdk_commands(root: str) -> list[dict] | None:
+def _reload_marker(trace_id: str) -> str:
+    """When this session last reloaded its skills/plugins ('' if never).
+
+    A plain string compare orders these (ISO-8601 span timestamps), and ''
+    sorts below every real one, so "no reload" can never invalidate anything.
+    Fail-closed like the rest of the module: a missing table, an unreachable
+    DB or a malformed row degrades to "no reload", i.e. the TTL behaviour this
+    replaced — never an exception on a read-only convenience list.
+    """
+    if not trace_id:
+        return ""
+    try:
+        with SessionLocal() as session:
+            command = func.json_extract(SessionSpan.attributes, "$.command_name")
+            row = session.exec(
+                select(SessionSpan.start_time)
+                .where(SessionSpan.trace_id == trace_id,
+                       SessionSpan.name == _RELOAD_SPAN_NAME,
+                       command.in_(_RELOAD_COMMAND_NAMES))
+                .order_by(SessionSpan.start_time.desc())
+                .limit(1)
+            ).first()
+    except Exception:  # noqa: BLE001 — degrade to the plain TTL
+        log.error("bridge_reload_marker_failed", exc_info=True)
+        return ""
+    return str(row) if row else ""
+
+
+def _cached_sdk_commands(root: str, marker: str) -> list[dict] | None:
     cached = _sdk_cache.get(root)
-    return cached[1] if cached and cached[0] > time.monotonic() else None
+    if cached is None or cached[0] <= time.monotonic():
+        return None
+    return cached[2] if marker <= cached[1] else None
 
 
 def _root_lock(root: str) -> threading.Lock:
@@ -210,23 +276,29 @@ def _root_lock(root: str) -> threading.Lock:
         return _sdk_locks.setdefault(root, threading.Lock())
 
 
-def _sdk_commands(root: str) -> list[dict]:
+def _sdk_commands(root: str, marker: str = "") -> list[dict]:
     """`_fetch_sdk_commands` behind a per-root TTL cache (the handshake is ~3s).
 
     The lock is per root and held across the handshake so a burst of cold
     requests for one session spawns one `claude` child, not N; a *different*
     root meanwhile is never blocked behind it.
+
+    `marker` is the asking session's newest `/reload-skills` / `/reload-plugins`
+    (`_reload_marker`); a value past the one the entry was filled at discards
+    it, so the reload the operator just ran is what re-runs the handshake.
     """
-    hit = _cached_sdk_commands(root)
+    hit = _cached_sdk_commands(root, marker)
     if hit is not None:
         return hit
     with _root_lock(root):
-        hit = _cached_sdk_commands(root)
+        hit = _cached_sdk_commands(root, marker)
         if hit is not None:
             return hit
         rows = _fetch_sdk_commands(root)
         ttl = SDK_CACHE_TTL_SECONDS if rows else SDK_FAILURE_TTL_SECONDS
-        _sdk_cache[root] = (time.monotonic() + ttl, rows)
+        previous = _sdk_cache.get(root)
+        high_water = max(marker, previous[1]) if previous else marker
+        _sdk_cache[root] = (time.monotonic() + ttl, high_water, rows)
         return rows
 
 
@@ -351,17 +423,63 @@ def list_session_commands(trace_id: str) -> list[dict]:
     regin's own root in its place would answer an arbitrary trace id with this
     host's local command and skill names.
     """
+    return _session_rows(trace_id)[0]
+
+
+def _session_rows(trace_id: str) -> tuple[list[dict], str]:
+    """`list_session_commands` plus which leg produced it.
+
+    The source is the difference between "the catalog says this command does
+    not exist here" and "there is no catalog" — only the first may be used to
+    refuse anything, so the routing below needs it and the route does not.
+    """
     cwd = roots.session_dir(trace_id)
     if cwd is None:
         log.read("bridge_commands_listed", trace_id=trace_id, count=0,
                  source="none")
-        return []
+        return [], "none"
     scanned = _scan_rows(roots.project_root(cwd), Path.home())
-    sdk = _sdk_commands(str(cwd))
+    sdk = _sdk_commands(str(cwd), _reload_marker(trace_id))
     index = _provenance(scanned)
     rows = ([_sdk_row(entry, index) for entry in _pick_variants(sdk, index)]
             if sdk else [_scanned_row(entry) for entry in scanned])
     ordered = _ordered(rows)
+    source = "sdk" if sdk else "scan"
     log.read("bridge_commands_listed", trace_id=trace_id, count=len(ordered),
-             source="sdk" if sdk else "scan")
-    return ordered
+             source=source)
+    return ordered, source
+
+
+def leading_command(text: str) -> str:
+    """The command name a body opens with (`/goal:run x` → `goal:run`), or ''."""
+    match = _LEADING_COMMAND_RE.match((text or "").lstrip())
+    return match.group(1) if match else ""
+
+
+def route_for_sdk(trace_id: str, text: str) -> tuple[str, str]:
+    """How a session regin drives over the SDK should handle `text`.
+
+    `(FORWARD | STOP | UNSUPPORTED, command_name)`. Only the catalog the SDK
+    itself reports may refuse a command, and only when regin actually got one:
+    the filesystem scan cannot see built-ins, so refusing against it would
+    reject `/clear`, `/compact` and every plugin command. A degraded catalog
+    therefore forwards, which is exactly what happened before this existed.
+
+    The quit verbs skip the catalog in both directions — no catalog lists them,
+    and the operator asking for one means the run, not a prompt about it.
+    """
+    name = leading_command(text)
+    if not name:
+        return FORWARD, ""
+    # Folded for the quit verbs only. `/EXIT` means the same thing to whoever
+    # typed it, and refusing it would be worse than the bug this replaced;
+    # the catalog, by contrast, is matched exactly, because a command's name
+    # there is its name.
+    if name.casefold() in SESSION_ENDING_COMMANDS:
+        return STOP, name
+    rows, source = _session_rows(trace_id)
+    if source != "sdk":
+        return FORWARD, name
+    offered = {row["name"] for row in rows}
+    offered.update(alias for row in rows for alias in row.get("aliases") or [])
+    return (FORWARD if name in offered else UNSUPPORTED), name

@@ -60,6 +60,23 @@ def notify_resolved(*, trace_id: str, msg_key: str | None = None,
     _trigger({"resolved": payload})
 
 
+def notify_successor(predecessor_trace_id: str | None) -> None:
+    """Push the `/clear` succession of `predecessor_trace_id` to open pages.
+
+    Carries only the predecessor's id — the dashboard resolves the successor
+    itself through the guarded walk, so this stays a trigger rather than a
+    second, forgeable copy of who the heir is.
+
+    Raised by the SessionStart pane registration, which is the LATER of the two
+    writes whenever the heir claims its pane after the predecessor's
+    `session.end` has been ingested. The other order is covered by the ingest
+    announcing directly; whichever runs second is the one that resolves.
+    """
+    if not predecessor_trace_id:
+        return
+    _trigger({"successor": {"trace_id": str(predecessor_trace_id)}})
+
+
 def _trigger(body: dict) -> None:
     try:
         _post_notify(_web_port(), body)
@@ -93,4 +110,5 @@ def _is_listening(port: int) -> bool:
         return False
 
 
-__all__ = ["notify_counts_changed", "notify_message", "notify_resolved"]
+__all__ = ["notify_counts_changed", "notify_message", "notify_resolved",
+           "notify_successor"]

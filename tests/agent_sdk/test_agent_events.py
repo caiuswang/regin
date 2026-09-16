@@ -73,6 +73,24 @@ def test_tool_call_projects_to_the_shared_pending_span_id():
     assert span["attributes"]["live"] is True
 
 
+def test_tool_call_carries_the_flat_input_attrs_the_card_labels_from():
+    """A raw `tool_input` dump alone renders a bare `Bash` next to the hook
+    writer's `Bash: ls -la` — two cards for one call once both survive."""
+    span = to_span(ToolCall(trace_id="t1", tool_name="Bash",
+                            tool_use_id="toolu_abc123",
+                            tool_input={"command": "ls -la"}))
+
+    assert span["attributes"]["command_preview"] == "ls -la"
+
+
+def test_tool_call_without_a_flat_builder_keeps_the_raw_input():
+    span = to_span(ToolCall(trace_id="t1", tool_name="BashOutput",
+                            tool_use_id="toolu_x",
+                            tool_input={"bash_id": "sh_1"}))
+
+    assert span["attributes"]["tool_input"] == {"bash_id": "sh_1"}
+
+
 def test_permission_request_uses_the_permission_pending_prefix():
     span = to_span(PermissionRequested(trace_id="t1", tool_name="AskUserQuestion",
                                        tool_use_id="toolu_x", kind="question"))

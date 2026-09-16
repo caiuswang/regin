@@ -3,19 +3,24 @@
 
 Claude Code invokes the command registered at `statusLine.command`
 with a JSON blob on stdin — the schema is documented at
-https://code.claude.com/docs/en/statuslines. It is the *only* runtime
-surface that reliably carries the model variant suffix (e.g.
-`claude-opus-4-7[1m]`) and the authoritative context-window total:
-the `SessionStart` hook payload omits `model` entirely, and the
-transcript JSONL strips the variant from every assistant entry. So
-without this feed, regin infers the window from the bare base model
-and a peak-tokens heuristic — which misreads a 1M session as 200k
-whenever the peak stays under 200k.
+https://code.claude.com/docs/en/statuslines. It is the only runtime
+surface that carries the model variant suffix (e.g.
+`claude-opus-4-7[1m]`): the `SessionStart` hook payload omits `model`
+entirely, and the transcript JSONL strips the variant from every
+assistant entry. That suffix is this feed's reason to exist.
+
+The token figures it also carries are *not* a unique source. They
+duplicate what `lib/trace/transcript_usage.py` derives from the
+transcript by the identical formula (input + cache_read +
+cache_creation), and the two agree exactly on the same turn. They are
+still worth POSTing because the statusline ticks mid-turn, while a
+`turn_usage` row only lands once the assistant record flushes.
 
 This script is the *regin* side of the statusline contract. It reads
 the same stdin JSON Claude Code would pass to any statusline, pulls
-out `session_id`, `model.id`, `context_window.{used_tokens,total_tokens}`,
-POSTs them to `POST /api/session-status`, and — unless invoked with
+out `session_id`, `model.id`,
+`context_window.{total_input_tokens,context_window_size}`, POSTs them
+to `POST /api/session-status`, and — unless invoked with
 `--ingest-only` — also prints a minimal default statusline so the
 script can act as `statusLine.command` on its own.
 
@@ -75,8 +80,14 @@ def _ingest(data: dict) -> None:
     model = model_block.get('id') or model_block.get('display_name')
 
     ctx = data.get('context_window') if isinstance(data.get('context_window'), dict) else {}
-    used = ctx.get('used_tokens')
-    total = ctx.get('total_tokens')
+    # Claude Code renamed both keys (`used_tokens` -> `total_input_tokens`,
+    # `total_tokens` -> `context_window_size`) somewhere before v2.1.258.
+    # Nothing surfaced the break: every read returned None, the isinstance
+    # guards below dropped the values, and the POST still went out carrying
+    # only trace_id + model. Read the current names first, keep the old ones
+    # so an older Claude Code build still feeds us.
+    used = ctx.get('total_input_tokens', ctx.get('used_tokens'))
+    total = ctx.get('context_window_size', ctx.get('total_tokens'))
 
     payload: dict = {'trace_id': trace_id}
     if isinstance(model, str) and model.strip():

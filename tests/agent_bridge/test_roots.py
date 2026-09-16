@@ -14,6 +14,9 @@ regression this pins is one bug in one function showing up as two dead menus:
     menu ("no command matches") rather than an error,
   * such a run is traced under two ids (`sdk-…` and its child `claude`
     session's) and the composer can address it by either, so both resolve,
+  * a session in neither registry — the routine shape of one succeeding a
+    `/clear` — falls back to the cwd its own trace recorded at
+    `session.start`, because "registered nowhere" is not "cwd unknown",
   * and the fail-closed contract is unchanged: an unknown id, a run with no
     recorded cwd, and a cwd that no longer exists all stay rootless — regin's
     own tree is never stood in for a session that is not regin's.
@@ -44,6 +47,19 @@ def _seed_run(trace_id: str, cwd: str | None, *, child: str | None = None):
     sdk_store.upsert_run(trace_id, status="running", cwd=cwd)
     if child:
         sdk_store.set_cli_session(trace_id, child)
+
+
+def _seed_session(trace_id: str, cwd: str | None) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+            "cwd) VALUES (?, 'active', '2026-08-01 09:00:00', "
+            "'2026-08-01 12:00:00', ?)",
+            (trace_id, cwd))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ── the tmux tier is unchanged ───────────────────────────────
@@ -81,6 +97,53 @@ def test_spawned_run_resolves_by_child_session_id(tmp_db, tmp_path):
     assert roots.session_cwd("child-session-id") == tmp_path
 
 
+# ── the trace's own cwd, for a session in neither registry ───
+
+
+def test_session_registered_nowhere_falls_back_to_its_traced_cwd(tmp_db,
+                                                                 tmp_path):
+    """The `/clear` shape: no pane row, no run row, but the trace recorded a
+    cwd at `session.start` — so the composer gets a catalog, not an empty menu.
+    """
+    _seed_session("t-cleared", str(tmp_path))
+    assert roots.session_cwd("t-cleared") == tmp_path
+    assert roots.session_dir("t-cleared") == tmp_path
+
+
+def test_pane_row_wins_over_the_traced_cwd(tmp_db, tmp_path):
+    """A pane is re-registered on resume; `sessions.cwd` is written once at
+    the first `session.start`, so it must never override a live registry."""
+    pane, traced = tmp_path / "pane", tmp_path / "traced"
+    pane.mkdir()
+    traced.mkdir()
+    _seed_pane("t-both-cwd", str(pane))
+    _seed_session("t-both-cwd", str(traced))
+    assert roots.session_cwd("t-both-cwd") == pane
+
+
+def test_run_row_wins_over_the_traced_cwd(tmp_db, tmp_path):
+    run, traced = tmp_path / "run", tmp_path / "traced"
+    run.mkdir()
+    traced.mkdir()
+    _seed_run("sdk-both-cwd", str(run))
+    _seed_session("sdk-both-cwd", str(traced))
+    assert roots.session_cwd("sdk-both-cwd") == run
+
+
+def test_vanished_traced_cwd_is_not_a_directory(tmp_db, tmp_path):
+    """`sessions.cwd` outlives the directory it names exactly as a registry
+    row does, and `session_dir` drops it the same way."""
+    gone = tmp_path / "gone"
+    _seed_session("t-gone-cwd", str(gone))
+    assert roots.session_cwd("t-gone-cwd") == gone
+    assert roots.session_dir("t-gone-cwd") is None
+
+
+def test_session_row_without_a_cwd_stays_rootless(tmp_db):
+    _seed_session("t-nocwd", None)
+    assert roots.session_cwd("t-nocwd") is None
+
+
 # ── still fail-closed ────────────────────────────────────────
 
 
@@ -102,12 +165,13 @@ def test_vanished_run_cwd_is_not_a_directory(tmp_db, tmp_path):
     assert roots.session_dir("sdk-gone") is None
 
 
-def test_blank_trace_id_queries_neither_tier(monkeypatch):
+def test_blank_trace_id_queries_no_tier(monkeypatch):
     def _explode(*_args, **_kwargs):
         raise AssertionError("no lookup should happen for a blank id")
 
     monkeypatch.setattr(roots.store, "get_pane_cwd", _explode)
     monkeypatch.setattr(sdk_store, "find_run", _explode)
+    monkeypatch.setattr(roots, "_traced_session_cwd", _explode)
     assert roots.session_cwd("") is None
 
 

@@ -18,6 +18,10 @@ from typing import Optional
 
 from lib.settings import settings
 
+# The escape hatch a caller passes to opt out of the scope policy entirely.
+# Not a stored scope: no memory is ever written with it.
+ALL_SCOPES = "all"
+
 
 def _repo_name_for(cwd: str) -> Optional[str]:
     """Name of the registered repo containing `cwd`, or None."""
@@ -48,4 +52,28 @@ def resolve_recall_scope(cwd: Optional[str]) -> Optional[str]:
     return f"repo:{name}" if name else None
 
 
-__all__ = ["resolve_write_scope", "resolve_recall_scope"]
+def resolve_tool_scope(requested: Optional[str],
+                       cwd: Optional[str]) -> Optional[str]:
+    """Scope filter for a *deliberate* retrieval — the `recall` / `index_*`
+    front-ends the skills call, as opposed to the hook's auto-injection.
+
+    Both front-ends take a caller-supplied scope string, so the policy has to
+    yield to an explicit request while still applying to the common case where
+    the caller passes nothing:
+
+      * `"all"`   — every scope, the pre-policy behaviour, kept as the
+                    explicit way to ask across repos.
+      * anything else truthy — used verbatim (`"repo:regin"`, `"global"`).
+      * empty/None — `resolve_recall_scope(cwd)`, so `per-repo` reaches the
+                     retrieval a skill performs and not just the injected
+                     `<recalled_experience>` block.
+    """
+    if requested == ALL_SCOPES:
+        return None
+    if requested:
+        return requested
+    return resolve_recall_scope(cwd)
+
+
+__all__ = ["ALL_SCOPES", "resolve_write_scope", "resolve_recall_scope",
+           "resolve_tool_scope"]

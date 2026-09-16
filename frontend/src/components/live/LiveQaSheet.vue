@@ -10,13 +10,13 @@
 // session parks its AskUserQuestion as a `permission.request` and the merge
 // retires the `tool.AskUserQuestion` twin, so both shapes land here.
 //
-// When the span is a PENDING ask over a reachable bridge whose questions are
-// all single-select, the sheet delegates to the interactive operator surface:
-// LiveQaAnswer for one question (pick · note · type-your-own · chat), or
-// LiveQaAnswerMulti for several (a Prev/Next stepper that collects every answer
-// and delivers them in order on Send-all). An ask with a multi-select question,
-// or an unreachable/completed span, stays read-only — a multi-select TUI needs
-// per-option toggles the bridge can't drive blindly.
+// When the span is a PENDING ask over a reachable bridge, the sheet delegates
+// to the interactive operator surface: LiveQaAnswer for one question (pick ·
+// note · type-your-own · chat), or LiveQaAnswerMulti for several (a Prev/Next
+// stepper that collects every answer and delivers them in order on Send-all).
+// A multi-select question stages as checkboxes and delivers a LIST of indices,
+// which the bridge toggles row by row (`delivery._toggle_multi`) and the SDK
+// tier comma-joins. Only an unreachable or completed span stays read-only.
 //
 // A PENDING permission request delegates to LiveQaDecision instead — the plan
 // (`ExitPlanMode`) and gated-tool approval cards. A regin-owned session
@@ -29,13 +29,15 @@
 // actual pane text (see `lib/agent_bridge/menu_parse.py`). Only a request with
 // neither a decidable `kind` nor any real options at all — and one that isn't
 // pending / reachable — stays the plain read-only status line.
-import { computed } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import LiveQaAnswer from './LiveQaAnswer.vue'
 import LiveQaAnswerMulti from './LiveQaAnswerMulti.vue'
 import LiveQaDecision from './LiveQaDecision.vue'
+import LiveQaDismiss from './LiveQaDismiss.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import {
   askOptLabel, askOptDescription, askIsChosen, askFreeText, askNote,
+  askModeLabel, askModeMark, askOptMark,
   toolDisplayName,
 } from '../../utils/traceFormatters.js'
 import { isAskSpan } from '../../utils/liveRows.js'
@@ -63,17 +65,26 @@ const permRequested = computed(() => (a.value.command_preview
   : (a.value.requested_permission || `tool.${toolDisplayName(a.value.tool_name || 'tool')}`)))
 
 const questions = computed(() => a.value.questions || [])
-// Every question single-select: the operator surface drives one option per
-// question. A multi-select question needs per-option toggles the bridge can't
-// drive blindly, so such an ask stays read-only.
-const singleSelectOnly = computed(() => questions.value.length >= 1
-  && questions.value.every(q => !q.multiSelect))
-const hasMultiSelect = computed(() => questions.value.some(q => q.multiSelect))
-// Answerable for a live single-select ask (one OR many questions) over a
-// reachable bridge; the multi-question walk collects all answers then delivers
-// them in order, each guarded by a focused-question check on the backend.
+// Answerable for any live ask (one OR many questions, single- or multi-select)
+// over a reachable bridge; the walk collects all answers then delivers them in
+// order, each guarded by a focused-question check on the backend.
+const answerableNow = computed(() => isAsk.value && pending.value
+  && props.bridgeReachable && !!props.sessionId && questions.value.length >= 1)
+// Reachability LATCHES per span. `bridge_reachable` rides the 4s map poll and
+// the server reports it false whenever the pane registry could not be *read*
+// — `store.resolve_reachable_pane` swallows a locked-DB OperationalError —
+// which is a fact about the query, not about the session. Flowing that blip
+// into the v-if below unmounts the answerer mid-answer and silently discards
+// every staged answer (worst on a multi-question ask, where a whole walk is
+// lost). A bridge that is genuinely gone still refuses loudly: the send's own
+// `detail` says so. Keyed on span_id so the next ask re-evaluates from scratch.
+const latchedFor = ref('')
+watchEffect(() => {
+  if (answerableNow.value) latchedFor.value = props.span?.span_id || ''
+})
 const canAnswer = computed(() => isAsk.value && pending.value
-  && props.bridgeReachable && !!props.sessionId && singleSelectOnly.value)
+  && !!props.sessionId && questions.value.length >= 1
+  && !!latchedFor.value && latchedFor.value === (props.span?.span_id || ''))
 const isMulti = computed(() => questions.value.length > 1)
 
 const permKind = computed(() => a.value.kind || '')
@@ -116,10 +127,7 @@ function chosen(q, opt) {
       @answered="$emit('answered')"
     />
     <template v-else>
-      <p v-if="pending && hasMultiSelect" class="live-qa-pending-note">
-        This ask has a multi-select question — answer it directly in the agent terminal.
-      </p>
-      <p v-else-if="pending" class="live-qa-pending-note">
+      <p v-if="pending" class="live-qa-pending-note">
         Waiting for your answer in the agent session — this card is read-only.
       </p>
       <p v-if="!questions.length" class="live-qa-pending-note">
@@ -127,10 +135,12 @@ function chosen(q, opt) {
       </p>
       <div v-for="(q, qi) in questions" :key="qi" class="live-qa-card">
         <div class="live-qa-card-hd">
-          <div v-if="q.header" class="live-qa-h">
-            {{ q.header }}{{ q.multiSelect ? ' · multi-select' : '' }}
-          </div>
+          <div v-if="q.header" class="live-qa-h">{{ q.header }}</div>
           <div class="live-qa-title">{{ q.question }}</div>
+          <div class="live-qa-mode" :class="{ 'live-qa-mode-multi': q.multiSelect }">
+            <span aria-hidden="true">{{ askModeMark(q.multiSelect) }}</span>
+            {{ askModeLabel(q.multiSelect) }}
+          </div>
         </div>
         <div
           v-for="(opt, oi) in (q.options || [])"
@@ -138,7 +148,7 @@ function chosen(q, opt) {
           class="live-qa-opt"
           :class="{ 'live-qa-chosen': chosen(q, opt) }"
         >
-          <span class="live-qa-optmark">{{ chosen(q, opt) ? '✓' : '○' }}</span>
+          <span class="live-qa-optmark">{{ askOptMark(q.multiSelect, chosen(q, opt)) }}</span>
           <span class="live-qa-optbody">
             <span class="live-qa-optlbl">{{ askOptLabel(opt) }}</span>
             <span v-if="askOptDescription(opt)" class="live-qa-optdesc">
@@ -160,6 +170,12 @@ function chosen(q, opt) {
         <div v-if="askNote(span, q)" class="live-qa-note">Note: {{ askNote(span, q) }}</div>
       </div>
     </template>
+
+    <LiveQaDismiss
+      v-if="canAnswer"
+      :session-id="sessionId"
+      @dismissed="$emit('answered')"
+    />
 
     <div v-if="a.denied && a.denial_reason" class="live-qa-deny">
       <div class="live-qa-h">Denied (agent-injected prompt)</div>

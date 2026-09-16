@@ -2,12 +2,13 @@
 import { computed } from 'vue'
 import { fmtDuration, isEmptyThinkingSpan } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
+import ProseClamp from '../../present/ProseClamp.vue'
 
 const props = defineProps({
   span: { type: Object, required: true },
   selectedSpan: { type: Object, default: null },
 })
-defineEmits(['activate'])
+defineEmits(['activate', 'present'])
 
 const empty = computed(() => isEmptyThinkingSpan(props.span))
 const selected = computed(() =>
@@ -54,8 +55,14 @@ const selected = computed(() =>
         class="ml-auto font-mono text-[10.5px] text-slate-400"
       >{{ fmtDuration(span.duration_ms) }}</span>
     </div>
-    <div
-      class="text-[13px] text-stone-500 italic whitespace-pre-wrap break-words leading-[1.55] max-h-72 overflow-y-auto"
-    >{{ span.attributes.thinking_text }}</div>
+    <ProseClamp
+      :text="span.attributes.thinking_text"
+      label="Read full reasoning"
+      @present="$emit('present', span)"
+    >
+      <div
+        class="text-[13px] text-stone-500 italic whitespace-pre-wrap break-words leading-[1.55]"
+      >{{ span.attributes.thinking_text }}</div>
+    </ProseClamp>
   </div>
 </template>

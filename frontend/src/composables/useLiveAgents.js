@@ -24,7 +24,11 @@ function fromServerEntry(e, spans) {
     status: e.status,
     running: e.status === 'running' || e.status === 'waiting',
     lastSeenClock: e.last_seen ? fmtTime(e.last_seen) : '',
+    lastSeen: e.last_seen || '',
     spanCount: e.span_count || 0,
+    // The agent's newest span, as the server saw it: what the card names as
+    // the step in progress. Null when the agent has emitted nothing yet.
+    lastSpan: e.last_span || null,
   }
 }
 

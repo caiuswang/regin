@@ -1,11 +1,12 @@
 import { ref, computed, reactive, watch, nextTick } from 'vue'
+import { getTraceScroller } from '../utils/traceScroller.js'
 
 // Per-agent scope for the desktop trace view's Conversation tab — the
 // desktop sibling of useLiveScope. scopeId ⇄ `?agent=` (router.replace, the
 // same idiom as the `?span=` deep link), so a scoped view is shareable and
 // survives tab switches (the param persists; only the Conversation tab
-// applies it). No auto-paging loop here: the roster's start_span_id allows a
-// direct deep subtree fetch regardless of the loaded turn-anchor window.
+// applies it). No span loading here: the agent's spans are its own trace's
+// (useAgentTrace), which the scope id alone addresses.
 //
 // The page header keeps showing MAIN-session truth throughout — this only
 // re-projects the conversation spine. Scroll save/restore is owned here
@@ -14,11 +15,9 @@ import { ref, computed, reactive, watch, nextTick } from 'vue'
 // takeover or the ≥xl 'full' mode). In split mode the main feed never moves,
 // so touching page scroll on enter/exit would itself be the disruption.
 export function useTraceScope(route, router, {
-  getAgents, getRoster, ensureSpanSubtreeLoaded, ensureTerminalSpansLoaded,
-  isTakeover = () => true,
+  getAgents, getRoster, isTakeover = () => true,
 }) {
   const scopeId = ref(route.query.agent || null)
-  const loadingSubtree = ref(false)
   // The companion pane (≥xl) hosts two modes off one `?agent=` state machine:
   // 'scope' (a scoped agent) and 'roster' (the running/finished picker, opened
   // from the Agents button with no agent selected yet). `rosterOpen` is the
@@ -71,40 +70,10 @@ export function useTraceScope(route, router, {
     if (!scopeId.value) savedScrollTop = null
   })
 
-  async function loadScopedSubtree(id) {
-    loadingSubtree.value = true
-    try { await ensureSpanSubtreeLoaded(id) }
-    finally { loadingSubtree.value = false }
-  }
-  // Fires when the roster resolves the anchor — including the deep-link path
-  // where scopeId is set long before the first /map response lands.
-  watch(startSpanId, (id) => { if (scopeId.value && id) loadScopedSubtree(id) },
-    { immediate: true })
-
-  // Orphan roster entries (span_count > 0, start_span_id null: markers lost,
-  // agent_id-tagged spans survive) have no anchor for a targeted deep fetch —
-  // pull the full span map instead so the scoped attribute-partition fallback
-  // can reach their spans. ensureTerminalSpansLoaded is idempotent.
-  const orphanScope = computed(() => !!scopeId.value
-    && !startSpanId.value
-    && (scopedAgent.value?.spanCount || 0) > 0)
-  async function loadOrphanSpans() {
-    loadingSubtree.value = true
-    try { await ensureTerminalSpansLoaded() }
-    finally { loadingSubtree.value = false }
-  }
-  watch(orphanScope, (v) => { if (v) loadOrphanSpans() }, { immediate: true })
-
-  function getScroller() {
-    return document.querySelector('.content-scroll')
-      || document.scrollingElement
-      || document.documentElement
-  }
-
   function enter(agentId) {
     rosterOpen.value = false
     if (!agentId || scopeId.value === agentId) return
-    if (!scopeId.value && isTakeover()) savedScrollTop = getScroller().scrollTop
+    if (!scopeId.value && isTakeover()) savedScrollTop = getTraceScroller().scrollTop
     scopeId.value = agentId
     syncQuery()
   }
@@ -122,7 +91,7 @@ export function useTraceScope(route, router, {
     syncQuery()
     if (restore == null) return
     await nextTick()
-    getScroller().scrollTop = restore
+    getTraceScroller().scrollTop = restore
   }
 
   // The pane (≥xl) wants to be open whenever a scope is set OR the roster was
@@ -130,7 +99,7 @@ export function useTraceScope(route, router, {
   const active = computed(() => !!scopeId.value || rosterOpen.value)
 
   return reactive({
-    scopeId, scopedAgent, startSpanId, notFound, pending, loadingSubtree,
+    scopeId, scopedAgent, startSpanId, notFound, pending,
     rosterOpen, active, enter, openRoster, exit,
   })
 }

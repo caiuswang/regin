@@ -1,8 +1,15 @@
-// Shared "is this session active?" rule — ONE frontend source for the
-// green badge, delete-warning, and the /live poll cadence (SessionsView,
-// SessionListRow, useLiveTail). Mirrors the server's rule: status='active' is
-// active, status='ended' is not, anything else (unset, unknown future
-// values) falls back to the last-seen recency check.
+// Shared "what is this session doing NOW?" rule — ONE frontend source for
+// every status chip, the delete-warning, and the /live poll cadence
+// (SessionsView, SessionListRow, SessionCard, SessionTraceHeader,
+// LiveSessionPicker, useLiveTail). Mirrors `_session_active_clause` in
+// web/blueprints/trace/sessions.py, which the `active=` filter and the
+// `active_count` facet share — the two must move together or a badge
+// disagrees with the count above it.
+//
+// Deliberately NOT unified with the poll-retirement checks in
+// SessionTraceView or `_session_has_ended` server-side: those ask "is it safe
+// to stop / to drop a queued steer", which must stay conservative, and they
+// are a different question from what to render.
 export const STALE_FALLBACK_WINDOW_MS = 10 * 60 * 1000
 
 // Backend timestamps are naive local ISO ("2026-07-04T09:56:24.990768").
@@ -31,7 +38,8 @@ export function parseLocalIso(iso) {
 export function serverAgeMs(iso, clock, nowMs = Date.now()) {
   const d = parseLocalIso(iso)
   if (!d) return null
-  if (!clock || !clock.local) return nowMs - d.getTime()
+  // A zero/absent atMs would make the (nowMs - atMs) term the epoch itself.
+  if (!clock || !clock.local || !clock.atMs) return nowMs - d.getTime()
   const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)
   const anchor = parseLocalIso(zoned ? clock.utc : clock.local)
   if (!anchor) return nowMs - d.getTime()
@@ -57,19 +65,36 @@ export function fmtRelativeAge(ms) {
   return `${Math.floor(mo / 12)}y ago`
 }
 
-export function isActiveSession(row, nowMs = Date.now(), ageMs = null) {
-  if (!row) return false
-  if (row.status === 'active') return true
-  if (row.status === 'ended') return false
-  const d = parseLocalIso(row.last_seen)
-  if (!d) return false
-  const age = ageMs != null ? ageMs : nowMs - d.getTime()
-  return age >= 0 && age < STALE_FALLBACK_WINDOW_MS
+// A session that never fired SessionEnd (crash, SIGKILL, a worktree deleted
+// under it) keeps status='active' forever with no server heartbeat to correct
+// it, so the marker alone cannot answer "what is this doing NOW" — the recency
+// check applies to a claimed-active row too, not just to an unmarked one.
+// 'closed' distinguishes an operator's manual close from a lifecycle end.
+export function sessionLiveness(row, nowMs = Date.now(), ageMs = null) {
+  if (!row) return 'idle'
+  if (row.status === 'ended') {
+    return row.ended_reason === 'manual' ? 'closed' : 'ended'
+  }
+  // parseLocalIso hands back an Invalid Date (truthy!) for a non-matching
+  // string, so the guard has to be on the timestamp, not on the object.
+  const seen = parseLocalIso(row.last_seen)
+  const seenMs = seen ? seen.getTime() : NaN
+  // No readable last_seen is not evidence of death: fall back to the marker.
+  if (!Number.isFinite(seenMs)) return row.status === 'active' ? 'active' : 'idle'
+  const age = ageMs != null ? ageMs : nowMs - seenMs
+  // A NEGATIVE age is clock skew, never death — fmtRelativeAge below already
+  // reads one as "just now", and the server's `last_seen >= cutoff` counts it
+  // active. Flooring it at 0 here would render "idle · just now" and put the
+  // badge at odds with the active_count above it.
+  return Number.isFinite(age) && age < STALE_FALLBACK_WINDOW_MS ? 'active' : 'idle'
 }
 
-// The active rule with its recency fallback aged against a server clock —
-// the one composition every list surface should use when it has an envelope
-// clock in hand.
-export function isActiveWithClock(row, clock) {
-  return isActiveSession(row, Date.now(), serverAgeMs(row?.last_seen, clock))
+export function isActiveSession(row, nowMs = Date.now(), ageMs = null) {
+  return sessionLiveness(row, nowMs, ageMs) === 'active'
+}
+
+// The liveness rule aged against a server clock — the composition every
+// surface that renders a status chip should use.
+export function sessionLivenessWithClock(row, clock) {
+  return sessionLiveness(row, Date.now(), serverAgeMs(row?.last_seen, clock))
 }

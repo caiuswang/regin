@@ -333,3 +333,95 @@ def test_a_prompt_quoting_command_xml_is_not_a_command_turn(
     monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
                         lambda tid: str(tx))
     assert [q['content'] for q in qp.current_queued_prompts('t')] == ['/exit']
+
+
+def test_consumed_texts_include_a_queued_prompt_that_ran(tmp_path, monkeypatch):
+    # A prompt that arrives mid-turn is QUEUED, and claude logs it RUNNING as
+    # a `queued_command` attachment — never as a `type:user` turn. Reading
+    # user turns alone left every mid-turn steer looking unprocessed, so its
+    # bridge chip stayed up for the rest of the session.
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [
+        {'type': 'attachment', 'timestamp': '2026-01-01T00:00:01Z',
+         'attachment': {'type': 'queued_command',
+                        'prompt': 'steered  mid turn'}},
+        {'type': 'attachment',
+         'attachment': {'type': 'total_tokens_reminder', 'text': 'noise'}},
+    ])
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda tid: str(tx))
+
+    assert qp.consumed_prompt_texts('t') == {'steered mid turn'}
+
+
+# ── Incremental fold ──────────────────────────────────────────────────────
+#
+# The replay resumes from a byte offset instead of re-reading the transcript,
+# which on a live session runs to tens of megabytes per poll. These pin the
+# property that makes it legal: folding the appends must equal reading whole.
+
+def _append(path, ops):
+    with path.open('a') as f:
+        for o in ops:
+            f.write(json.dumps(o) + '\n')
+
+
+def _queued(monkeypatch, tx):
+    monkeypatch.setattr('lib.trace.live_rescan._find_main_transcript',
+                        lambda _t: str(tx))
+    return [q['content'] for q in qp.current_queued_prompts('t')]
+
+
+def test_incremental_fold_matches_a_full_read(tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_enq('one', 't1')])
+    assert _queued(monkeypatch, tx) == ['one']
+
+    _append(tx, [_enq('two', 't2'), _enq('three', 't3'), _deq('t4')])
+    incremental = _queued(monkeypatch, tx)
+
+    qp._replay_states.clear()          # force the cold path over the same file
+    assert incremental == _queued(monkeypatch, tx)
+    assert incremental == ['two', 'three']
+
+
+def test_popall_lands_the_same_way_across_a_resume(tmp_path, monkeypatch):
+    """`popAll` clears state built in an EARLIER chunk — the case a naive
+    per-chunk replay would get wrong."""
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_enq('a', 't1'), _enq('b', 't2')])
+    assert _queued(monkeypatch, tx) == ['a', 'b']
+
+    _append(tx, [_popall('a', 't3'), _enq('c', 't4')])
+    incremental = _queued(monkeypatch, tx)
+
+    qp._replay_states.clear()
+    assert incremental == _queued(monkeypatch, tx) == ['c']
+
+
+def test_a_half_written_line_is_not_folded_twice(tmp_path, monkeypatch):
+    """A poll can land mid-write; the partial tail must be folded once, whole."""
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_enq('one', 't1')])
+    assert _queued(monkeypatch, tx) == ['one']
+
+    partial = json.dumps(_enq('two', 't2'))
+    with tx.open('a') as f:
+        f.write(partial[:len(partial) // 2])          # no trailing newline yet
+    assert _queued(monkeypatch, tx) == ['one']
+
+    with tx.open('a') as f:
+        f.write(partial[len(partial) // 2:] + '\n')
+    incremental = _queued(monkeypatch, tx)
+
+    qp._replay_states.clear()
+    assert incremental == _queued(monkeypatch, tx) == ['one', 'two']
+
+
+def test_a_rewritten_shorter_transcript_restarts_the_fold(tmp_path, monkeypatch):
+    tx = tmp_path / 't.jsonl'
+    _write(tx, [_enq('a', 't1'), _enq('b', 't2'), _enq('c', 't3')])
+    assert _queued(monkeypatch, tx) == ['a', 'b', 'c']
+
+    _write(tx, [_enq('z', 't9')])                     # shorter: rewritten
+    assert _queued(monkeypatch, tx) == ['z']

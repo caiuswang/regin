@@ -89,6 +89,13 @@ class TurnUsage:
     # in-flight calls (no tool_result observed in this transcript),
     # False on success, True on error.
     tool_calls: tuple[dict, ...] = ()
+    # True for a turn Claude Code recorded as a failed API call
+    # (`isApiErrorMessage`). Such a turn is kept despite carrying a
+    # zero usage block — dropping it would orphan the user prompt that
+    # `_resolve_prompt_anchors` reaches only by walking back from an
+    # assistant entry. `model` is left None (the transcript stamps
+    # `<synthetic>`) so a failure never becomes the session's model.
+    is_api_error: bool = False
 
     @property
     def context_used(self) -> int:

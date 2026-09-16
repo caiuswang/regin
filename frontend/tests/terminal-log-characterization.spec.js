@@ -14,6 +14,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { test, expect } from './auth-fixture.js'
+import { selectViewMode } from './helpers/viewMode.js'
 
 test('Terminal view renders the expected span label + detail per span family', async ({ page }) => {
   const traceId = randomUUID()
@@ -59,7 +60,7 @@ test('Terminal view renders the expected span label + detail per span family', a
   // Land directly on the Terminal tab so the flat log mounts.
   await page.evaluate(() => localStorage.setItem('regin_session_view_mode', 'terminal'))
   await page.goto(`/trace/sessions/${traceId}`)
-  await page.getByRole('button', { name: 'Terminal', exact: true }).click()
+  await selectViewMode(page, 'Log')
 
   // Each row is a tr[data-span-id]; the Span label is the medium-weight span
   // in the 2nd cell, the Detail string(s) in the 3rd cell.

@@ -141,7 +141,8 @@ export function useQueuedPrompts(getQueued, getSessionId = () => '') {
 
   const items = computed(() => applyLocal((getQueued() || [])
     .filter(q => q && q.content)
-    .map(q => ({ id: q.id, content: q.content, source: q.source }))))
+    .map(q => ({ id: q.id, content: q.content, source: q.source,
+                 detail: q.detail }))))
 
   // Session switch: the persistent host view reuses this composable across
   // trace ids. Queue ids are per-runner (and bridge row ids per-session

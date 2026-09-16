@@ -1,13 +1,15 @@
 <script setup>
 import MarkdownContent from '../../MarkdownContent.vue'
 import { fmtDuration, fmtTokens, fullLabel } from '../../../utils/traceFormatters.js'
+import { plainText } from '../../../utils/plainText.js'
 import CopyButton from './CopyButton.vue'
+import ProseClamp from '../../present/ProseClamp.vue'
 
 defineProps({
   span: { type: Object, required: true },
   selectedSpan: { type: Object, default: null },
 })
-defineEmits(['activate'])
+defineEmits(['activate', 'present'])
 </script>
 
 <template>
@@ -33,8 +35,14 @@ defineEmits(['activate'])
       ><template v-if="span.output_tokens">{{ fmtTokens(span.output_tokens) }} tok</template><template v-if="span.output_tokens && span.duration_ms"> · </template><template v-if="span.duration_ms">{{ fmtDuration(span.duration_ms) }}</template></span>
     </div>
     <div class="text-[13px] leading-[1.55] text-slate-700">
-      <MarkdownContent v-if="span.attributes?.text" :markdown="span.attributes.text" />
-      <span v-else class="text-slate-500">{{ fullLabel(span) }}</span>
+      <ProseClamp
+        v-if="span.attributes?.text"
+        :text="span.attributes.text"
+        @present="$emit('present', span)"
+      >
+        <MarkdownContent :markdown="span.attributes.text" />
+      </ProseClamp>
+      <span v-else class="text-slate-500">{{ plainText(fullLabel(span)) }}</span>
     </div>
   </div>
 </template>

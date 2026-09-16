@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Iterable
 
 from lib.activity_log import get_activity_logger as _get_activity_logger
+from lib.trace.transcript_parsers import INTERRUPT_MARKER_PREFIX
 
 
 def _trace_log():
@@ -438,7 +439,6 @@ def reconstruct_subagent_markers(trace_id: str) -> dict:
 # so the pass is safe to run on an active session.
 
 INTERRUPT_SOURCE_USER = 'user'
-_INTERRUPT_PREFIX = '[Request interrupted by user'
 _TASK_CREATE_ID_RE = re.compile(r'Task #(\d+)')
 _BACKFILL_SPAN_PREFIX = 'bftool-'
 
@@ -494,11 +494,11 @@ def _tool_results(entries: list[dict]) -> dict:
 
 def _result_is_interrupt(content) -> bool:
     if isinstance(content, str):
-        return content.strip().startswith(_INTERRUPT_PREFIX)
+        return content.strip().startswith(INTERRUPT_MARKER_PREFIX)
     if isinstance(content, list):
         return any(
             isinstance(b, dict) and isinstance(b.get('text'), str)
-            and b['text'].strip().startswith(_INTERRUPT_PREFIX)
+            and b['text'].strip().startswith(INTERRUPT_MARKER_PREFIX)
             for b in content
         )
     return False
@@ -511,7 +511,7 @@ def _entry_has_interrupt_text(entry: dict) -> bool:
     return any(
         isinstance(b, dict) and b.get('type') == 'text'
         and isinstance(b.get('text'), str)
-        and b['text'].strip().startswith(_INTERRUPT_PREFIX)
+        and b['text'].strip().startswith(INTERRUPT_MARKER_PREFIX)
         for b in content
     )
 

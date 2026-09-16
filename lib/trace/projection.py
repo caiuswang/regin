@@ -27,6 +27,7 @@ call to commit the shape back to disk.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 
 from lib.trace.pending_spans import is_agent_scoped_prompt
@@ -71,6 +72,810 @@ _SPAN_COLUMNS = """
 """
 
 
+def _launch_to_agent_map(rows: list[dict]) -> dict[str, str]:
+    """`launch_tool_use_id -> agent_id` for every `subagent.start` marker in
+    `rows` that carries the link.
+
+    The two writers of an SDK run stamp `agent_id` in different namespaces: the
+    hook writes the roster id, the runner writes the launching call's
+    `parent_tool_use_id` (`lib/agent_events/from_sdk.py`). The marker is the
+    only span carrying both (`lib/trace/claude_subagents.py`), so it is the
+    only join between them.
+    """
+    out = {}
+    for row in rows:
+        if row['name'] != 'subagent.start':
+            continue
+        attrs = row['attributes']
+        launch = attrs.get('launch_tool_use_id')
+        agent_id = row.get('agent_id') or attrs.get('agent_id')
+        if launch and agent_id:
+            out[launch] = agent_id
+    return out
+
+
+def _stored_launch_map(conn, trace_ids, unmapped: set) -> dict[str, str]:
+    """`launch_tool_use_id -> agent_id` off the STORED markers for the ids in
+    `unmapped`, for a window that does not hold the marker itself.
+
+    A paginated page or a `/subtrees` refresh is bounded to its roots' time
+    window, and an agent launched in an earlier turn keeps emitting into the
+    current one — the runner's rows for it carry the launching call's id, and
+    with the marker outside the window nothing in the rows could translate
+    it. Left as stored they read as the main agent's own work: a subagent's
+    running Bash rendered as the parent's running command.
+    """
+    from lib.trace.alias import sql_in
+
+    if conn is None or not trace_ids or not unmapped:
+        return {}
+    ids = [trace_ids] if isinstance(trace_ids, str) else list(trace_ids)
+    tph, tparams = sql_in(ids)
+    lph, lparams = sql_in(sorted(unmapped))
+    try:
+        found = conn.execute(f"""
+            SELECT json_extract(attributes, '$.launch_tool_use_id') AS launch,
+                   COALESCE(agent_id, json_extract(attributes, '$.agent_id')) AS aid
+            FROM session_spans
+            WHERE trace_id IN {tph} AND name = 'subagent.start'
+              AND json_extract(attributes, '$.launch_tool_use_id') IN {lph}
+        """, [*tparams, *lparams]).fetchall()
+    except Exception:  # noqa: BLE001 — a schema predating the column reads
+        # as "no marker", the same answer an unlinked agent gets.
+        return {}
+    return {r['launch']: r['aid'] for r in found if r['launch'] and r['aid']}
+
+
+def _untranslated_agent_ids(rows: list[dict], launches: dict) -> set:
+    """Agent ids in `rows` that neither a window marker names nor a window
+    launch translates — the ones worth asking the store about."""
+    roster_ids = set(launches.values()) | {
+        _agent_id_of(r) for r in rows if r['name'] in _SUBAGENT_MARKER_NAMES}
+    return {aid for aid in (_agent_id_of(r) for r in rows)
+            if aid and aid not in launches and aid not in roster_ids}
+
+
+def _normalize_agent_ids(rows: list[dict], conn=None, trace_ids=None) -> list[dict]:
+    """Rewrite a runner-namespaced `agent_id` to the roster id its marker names,
+    in the promoted column and the attributes alike so the two never disagree.
+
+    A row already carrying a roster id, and one whose launching call no marker
+    names, are left exactly as stored: the link only exists where the subagent's
+    on-disk meta file did, and reading a span as the main agent's is the same
+    answer as before. Markers outside the window are consulted through `conn`
+    (`_stored_launch_map`) before giving up on an id.
+    """
+    launches = _launch_to_agent_map(rows)
+    unmapped = _untranslated_agent_ids(rows, launches)
+    launches = {**_stored_launch_map(conn, trace_ids, unmapped), **launches}
+    if not launches:
+        return rows
+    for row in rows:
+        attrs = row['attributes']
+        agent_id = launches.get(row.get('agent_id') or attrs.get('agent_id'))
+        if agent_id is None:
+            continue
+        attrs['agent_id'] = agent_id
+        if 'agent_id' in row:
+            row['agent_id'] = agent_id
+    return rows
+
+
+_SUBAGENT_MARKER_NAMES = frozenset({'subagent.start', 'subagent.stop'})
+
+
+def _agent_id_of(span: dict) -> str | None:
+    """Owning agent from the promoted column, falling back to the attribute —
+    the same column-then-attribute shape as `_turn_uuid_of`."""
+    return span.get('agent_id') or (span.get('attributes') or {}).get('agent_id')
+
+
+def _sum_present(spans: list[dict], key: str):
+    """Sum of one numeric column over the rows that carry it, or None when no
+    row does. A summed 0 is an answer (a workflow agent really costs nothing);
+    having no contributing row at all is not."""
+    values = [s[key] for s in spans if s.get(key) is not None]
+    return sum(values) if values else None
+
+
+def _parsed_times(spans: list[dict], key: str) -> list[datetime]:
+    out: list[datetime] = []
+    for s in spans:
+        try:
+            out.append(datetime.fromisoformat(s.get(key)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _agent_extent_ms(spans: list[dict]) -> int | None:
+    """First start to last end across an agent's own spans, in ms, or None when
+    either bound is absent. An agent whose spans never recorded an end reports
+    no extent rather than a zero one — the card can then say nothing instead of
+    claiming the run was instant."""
+    starts = _parsed_times(spans, 'start_time')
+    ends = _parsed_times(spans, 'end_time')
+    if not starts or not ends:
+        return None
+    ms = int((max(ends) - min(starts)).total_seconds() * 1000)
+    return ms if ms >= 0 else None
+
+
+def _marker_span_ms(opened: list[dict], closed: list[dict]) -> int | None:
+    """First open marker to last close marker, in ms — how long the run was
+    ALIVE, which is what the roster reports and what the agent's own view
+    shows. The extent of its spans is a different figure (it stops at the last
+    row recorded) and the two disagreed on screen: 2m20s on the parent's card
+    against 2m32s in the agent's pane, for one run. Markers are point events
+    whose stored `duration_ms` is 0, so the width has to come from the gap
+    between them; with no close marker there is no width and the span extent
+    answers instead."""
+    opens = _parsed_times(opened, 'start_time')
+    closes = _parsed_times(closed, 'start_time')
+    if not opens or not closes:
+        return None
+    ms = int((max(closes) - min(opens)).total_seconds() * 1000)
+    return ms if ms >= 0 else None
+
+
+def _billed_total(stops: list[dict], spans: list[dict], key: str):
+    """One usage figure for an agent, from its `subagent.stop` marker if that
+    marker carries it, else summed off its spans.
+
+    The marker is where the agent's REAL usage lands: `claude_subagents.
+    _stamp_stop_marker` totals the subagent's own transcript onto it, and the
+    billing rollup sums that same row. An agent's spans hold only the fragments
+    the hooks happened to promote — for one measured agent, 2 output tokens
+    against the marker's 12,926 and $3.51. The span sum is still the answer for
+    the workflow agents, which never get a stop marker at all and whose spans
+    do carry their output tokens.
+    """
+    billed = _sum_present(stops, key)
+    return billed if billed is not None else _sum_present(spans, key)
+
+
+def _agent_rollup(spans: list[dict], stops: list[dict],
+                  starts: list[dict] | None = None) -> dict:
+    """Totals for one agent as seen IN THIS WINDOW. A key no source supplied is
+    None here and dropped by `_stamp_agent_rollup`.
+
+    Duration is the agent's LIFETIME — its first start marker to its last stop
+    marker (`_marker_span_ms`), the same width the roster and the agent's own
+    pane report. The extent of its spans is the fallback for an agent with no
+    stop marker at all, which is every workflow agent.
+
+    The two COUNTS exclude PENDING rows because this runs before `merge_spans`
+    and the append-only store keeps a placeholder alongside its resolved twin:
+    they are one call, the resolved row is the one that survives, and counting
+    both put 4,165 spans on one measured session's cards against the 2,708 it
+    really has. The usage figures are unaffected — they come off the stop
+    marker's transcript totals, not off this population."""
+    resolved = [s for s in spans if s.get('status_code') != 'PENDING']
+    fields = {
+        'agent_input_tokens': _billed_total(stops, spans, 'input_tokens'),
+        'agent_output_tokens': _billed_total(stops, spans, 'output_tokens'),
+        'agent_cost_usd': _billed_total(stops, spans, 'cost_usd'),
+    }
+    if spans:
+        fields.update({
+            'agent_span_count': len(resolved),
+            'agent_tool_count': sum(
+                1 for s in resolved if (s.get('name') or '').startswith('tool.')),
+            'agent_duration_ms': (_marker_span_ms(starts or [], stops)
+                                  or _agent_extent_ms(spans)),
+        })
+    return fields
+
+
+def _stamp_child_trace_id(marker: dict, agent_id: str) -> None:
+    """The one key every marker carries: an address, not a quantity, so it is
+    safe to repeat."""
+    from lib.trace.subagent_trace import subagent_trace_id
+
+    attrs = marker['attributes']
+    attrs['agent_child_trace_id'] = (
+        attrs.get('child_trace_id') or subagent_trace_id(agent_id))
+
+
+def _stamp_agent_rollup(marker: dict, agent_id: str, spans: list[dict],
+                        stops: list[dict], starts: list[dict] | None = None) -> None:
+    fields = _agent_rollup(spans, stops, starts)
+    marker['attributes'].update(
+        {k: v for k, v in fields.items() if v is not None})
+    _stamp_child_trace_id(marker, agent_id)
+
+
+def _segment_spans(starts: list[dict], spans: list[dict]) -> dict[str, list[dict]]:
+    """start span_id → the spans in ITS segment, by the same ingest-order rule
+    `_reparent_subagents` nests on."""
+    out: dict[str, list[dict]] = {st['span_id']: [] for st in starts}
+    for s in spans:
+        owner = _owning_start_id(starts, s)
+        if owner in out:
+            out[owner].append(s)
+    return out
+
+
+def _segment_asked(segment: list[dict]) -> dict:
+    """What THIS run was asked. Each user turn of a resumed agent's transcript
+    becomes its own agent-scoped `prompt` span (`subagent_lifecycle.
+    _emit_subagent_prompt`), and the one in this segment is the run's prompt —
+    the launch's prompt only ever describes the first."""
+    asks = [s for s in segment if s.get('name') == 'prompt']
+    if not asks:
+        return {}
+    text = (asks[0].get('attributes') or {}).get('text')
+    return {'agent_segment_prompt': text} if text else {}
+
+
+# The marker's copy of an agent's answer is a READING copy: the message is also
+# served whole under the agent's own trace, and every marker's copy rides the
+# same window payload as the `assistant_response` row it duplicates.
+_AGENT_RESULT_MAX_BYTES = 8 * 1024
+
+
+def _ingest_id(span: dict) -> int:
+    return span.get('id') or 0
+
+
+_TRUNC_MARKER = '\n\n…'
+_FENCE_RE = re.compile(r'^ {0,3}(?:```|~~~)')
+
+
+def _markdown_safe(head: str) -> str:
+    """`head` retreated to the last boundary markdown survives being cut at.
+
+    The budget is counted in bytes, so its edge falls wherever it falls — in
+    the middle of an inline-code span, or between the two fences of a code
+    block. Either leaves a construct open, and an open construct swallows
+    whatever the card renders after it. Drop the line the cut landed in, then
+    the block an unpaired fence opened; a lone over-long line has no boundary
+    left but the space between two words.
+    """
+    lines = head.split('\n')
+    partial = lines.pop()
+    fences = [i for i, line in enumerate(lines) if _FENCE_RE.match(line)]
+    if len(fences) % 2:
+        del lines[fences[-1]:]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines:
+        return '\n'.join(lines)
+    return partial[:partial.rfind(' ')] if ' ' in partial else partial
+
+
+def _capped(text: str) -> str:
+    raw = text.encode('utf-8')
+    if len(raw) <= _AGENT_RESULT_MAX_BYTES:
+        return text
+    budget = _AGENT_RESULT_MAX_BYTES - len(_TRUNC_MARKER.encode('utf-8'))
+    return _markdown_safe(raw[:budget].decode('utf-8', 'ignore')) + _TRUNC_MARKER
+
+
+def _stop_result(stops: list[dict]) -> str:
+    for stop in stops:
+        result = (stop.get('attributes') or {}).get('result_preview')
+        if result:
+            return result
+    return ''
+
+
+def _final_message(spans: list[dict]) -> str:
+    """The agent's last assistant turn — the message the stop marker's
+    `result_preview` is a cut of.
+
+    That preview is built by flattening every run of whitespace and capping at
+    200 characters (`subagent_lifecycle._result_preview`), so an agent whose
+    answer is a markdown report reaches the card as one unreadable line of
+    source ("## Verdict … **1. "). The turn itself is in the store beside it,
+    newlines intact, and is the only copy that can be rendered.
+    """
+    ordered = sorted(spans, key=lambda s: (s.get('start_time') or '',
+                                           _ingest_id(s)))
+    for span in reversed(ordered):
+        # PENDING is a placeholder beside its resolved twin (`_one_row_per_span`
+        # keeps the first of each), and a placeholder with no twin holds a
+        # partial turn — the same population `_segment_shape` refuses.
+        if (span.get('name') != 'assistant_response'
+                or span.get('status_code') == 'PENDING'):
+            continue
+        text = (span.get('attributes') or {}).get('text')
+        if isinstance(text, str) and text.strip():
+            return _capped(text.strip())
+    return ''
+
+
+def _answer(stops: list[dict], spans: list[dict], key: str) -> dict:
+    """The answer a CLOSED working period reported, under `key`.
+
+    Gated on a stop marker either way: mid-run the newest assistant turn is a
+    step ("Now the composable —"), not an answer, and a card that showed it
+    would keep relabelling a running agent's result.
+    """
+    if not _stop_result(stops):
+        return {}
+    return {key: _final_message(spans) or _stop_result(stops)}
+
+
+def _carry_answer(start: dict, stops: list[dict], spans: list[dict],
+                  key: str) -> None:
+    """Move a closed run's answer onto the card that renders it, under `key`,
+    and name that card on every stop that reported it.
+
+    The result is reported on `subagent.stop` and the card is rendered off
+    `subagent.start`, so until it is carried across the two the answer of every
+    ordinary Task subagent is invisible in the feed: over the live store 1,482
+    agents held a result their card could not reach. But the stop is a feed row
+    of its own, so carrying the answer alone left it printed twice — rendered
+    on the card, then the same text a line below as the flattened 200-char cut
+    the stop reports ("Subagent done · Explore — Here's the complete map…").
+    `agent_result_carried_by` is what lets the feed drop the second copy
+    (`dispatch.rendersInConversation`) while the marker stays in the tree.
+
+    Written only where the carry really happened: a window holding a stop
+    without its start shows that answer nowhere else, and a row dropped there
+    would take the answer with it.
+    """
+    answered = _answer(stops, spans, key)
+    if not answered:
+        return
+    start['attributes'].update(answered)
+    for stop in stops:
+        if (stop.get('attributes') or {}).get('result_preview'):
+            stop['attributes']['agent_result_carried_by'] = start['span_id']
+
+
+def _stamp_agent_result(starts: list[dict], stops: list[dict],
+                        spans: list[dict]) -> None:
+    """A resumed agent is left alone: its runs each answered separately and
+    `_stamp_agent_segments` gives every card its own, where one whole-agent
+    result repeated across them would attribute the last run's answer to all.
+
+    `len(starts)` counts the LOADED window, not the agent, so a page holding a
+    resumed agent's second start beside its FIRST run's stop reads as
+    single-run — and would hand run 2's card the answer run 1 gave. Only a stop
+    ingested at/after the start can have closed it, which is the same
+    append-only id order `_owning_start_id` segments on."""
+    if len(starts) != 1:
+        return
+    start = starts[0]
+    closed_by = [s for s in stops if _ingest_id(s) >= _ingest_id(start)]
+    if not closed_by:
+        return
+    # The turns of THIS run only, by the same append-only id order
+    # `_owning_start_id` segments on: an id-contiguous page can hold an earlier
+    # run's turns without its start marker, and that is the run whose answer
+    # this marker must not borrow. No ceiling pairs with it — the SubagentStop
+    # hook posts the stop marker BEFORE catching the agent's transcript up, so
+    # the answering turn is ingested AFTER the stop that reports it (measured:
+    # stop id 10014150, its turn 10014162).
+    lo = _ingest_id(start)
+    run = [s for s in spans if _ingest_id(s) >= lo]
+    _carry_answer(start, closed_by, run, 'agent_result_preview')
+
+
+def _segment_duration_ms(segment: list[dict], start, stops) -> int | None:
+    """One run's lifetime: its start marker to the stop that closed it,
+    falling back to the extent of its spans while it is still open."""
+    return (_marker_span_ms([start] if start else [], stops or [])
+            or _agent_extent_ms(segment))
+
+
+def _segment_shape(segment: list[dict], start: dict | None = None,
+                   stops: list[dict] | None = None) -> dict:
+    """Count and extent for ONE segment. Excludes PENDING for the reason
+    `_agent_rollup` does: the append-only store keeps a placeholder beside its
+    resolved twin and they are one call.
+
+    A segment holding nothing but in-flight rows reports no shape at all — the
+    same refusal `_agent_rollup` makes by omitting a figure no source supplied.
+    That is the state a resumed agent is in for its first seconds, and `0
+    spans` on the card would say the run did nothing rather than that it has
+    not finished anything yet."""
+    resolved = [s for s in segment if s.get('status_code') != 'PENDING']
+    if not resolved:
+        return {}
+    fields = {
+        'agent_segment_span_count': len(resolved),
+        'agent_segment_tool_count': sum(
+            1 for s in resolved if (s.get('name') or '').startswith('tool.')),
+        'agent_segment_duration_ms': _segment_duration_ms(segment, start, stops),
+    }
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+def _chronological_rank(starts: list[dict]) -> dict[str, int]:
+    """start span_id → its position in READING order.
+
+    Which segment a span belongs to keys on the append-only id, because that is
+    what `_reparent_subagents` nests on and the counts have to agree with the
+    tree. The NUMBER on the card cannot: the feed is ordered by time, and a
+    marker a repair pass synthesized carries a late id with an early timestamp
+    (`repair._synthesize_start`). Numbering by id there labels the first card on
+    screen `run 2 of 2` and hands the live roster line to the older run — the
+    mis-attribution this whole split exists to remove."""
+    order = sorted(starts,
+                   key=lambda s: (s.get('start_time') or '', s.get('id') or 0))
+    return {s['span_id']: i for i, s in enumerate(order)}
+
+
+def _stamp_agent_segments(group: list[dict], spans: list[dict]) -> None:
+    """Tell a RESUMED agent's markers apart.
+
+    A `SendMessage` continuation emits a second `subagent.start` under the same
+    `agent_id`, so one agent can own several cards. Every other per-agent
+    source — the roster entry the card reads its liveness from, the child trace
+    id, the launch it folds in — is keyed on the agent, which left the cards
+    indistinguishable: the same "running", the same elapsed, the same step.
+    The position (`agent_segment_index`/`_count`) is what lets a card say which
+    run it is; the shape, the prompt and the result are what it says ABOUT that
+    run. All three come off the run's own rows, so the second card stops
+    borrowing the first one's launch prompt and the first one's totals.
+
+    Unlike the whole-agent totals these are per-segment and DO sum to the
+    agent, so repeating them across markers is safe. A single-segment agent is
+    left untouched — no key here, nothing for a reader to reconcile."""
+    starts = [m for m in group if m['name'] == 'subagent.start']
+    if len(starts) < 2:
+        return
+    by_start = _segment_spans(starts, spans)
+    stops_by_start = _segment_spans(
+        starts, [m for m in group if m['name'] == 'subagent.stop'])
+    rank = _chronological_rank(starts)
+    for start in starts:
+        own = by_start.get(start['span_id'], [])
+        own_stops = stops_by_start.get(start['span_id'], [])
+        start['attributes'].update({
+            'agent_segment_index': rank[start['span_id']],
+            'agent_segment_count': len(starts),
+            **_segment_shape(own, start, own_stops),
+            **_segment_asked(own),
+        })
+        _carry_answer(start, own_stops, own, 'agent_segment_result')
+
+
+def _one_row_per_span(rows: list[dict]) -> list[dict]:
+    """Collapse rows that are the same span, keeping the first of each.
+
+    The rollup is computed on the way OUT of the fetch, before `merge_spans`
+    runs — so on a session both writers recorded (`alias.trace_group` returns
+    the hook trace and its `sdk-` twin) every span is here twice and every
+    count is doubled. One measured agent reported 45 spans and 32 tools for
+    the 29 and 16 it really had, against a roster and a child-trace view that
+    both said 29.
+
+    `(trace_id, span_id)` is unique by construction — the store's own index —
+    so this needs no origin tag to be correct, and a resolved row is preferred
+    over a placeholder for the same id in case one writer lagged."""
+    seen: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r.get('trace_id'), r.get('span_id'))
+        kept = seen.get(key)
+        if kept is None or (kept.get('status_code') == 'PENDING'
+                            and r.get('status_code') != 'PENDING'):
+            seen[key] = r
+    return list(seen.values())
+
+
+def _spans_by_agent(rows: list[dict], agent_id: str | None) -> dict[str, list[dict]]:
+    """agent_id → the spans it owns, markers excluded and each span once."""
+    owned: dict[str, list[dict]] = {}
+    for r in rows:
+        if r['name'] in _SUBAGENT_MARKER_NAMES:
+            continue
+        aid = agent_id or _agent_id_of(r)
+        if aid:
+            owned.setdefault(aid, []).append(r)
+    return {aid: _one_row_per_span(rs) for aid, rs in owned.items()}
+
+
+def _markers_by_agent(rows: list[dict], agent_id: str | None) -> dict[str, list[dict]]:
+    """agent_id → its markers in ingest (DB id) order. Half the agents in the
+    store have several — a resumed agent starts and stops once per segment —
+    and the order decides which one holds the agent's totals, so it is taken
+    from the append-only id rather than a timestamp."""
+    markers: dict[str, list[dict]] = {}
+    for r in rows:
+        if r['name'] not in _SUBAGENT_MARKER_NAMES:
+            continue
+        aid = agent_id or _agent_id_of(r)
+        if aid:
+            markers.setdefault(aid, []).append(r)
+    out = {aid: _one_row_per_span(ms) for aid, ms in markers.items()}
+    for group in out.values():
+        group.sort(key=lambda m: m.get('id') or 0)
+    return out
+
+
+def _attach_agent_rollups(rows: list[dict], *, agent_id: str | None = None) -> list[dict]:
+    """Stamp each subagent marker in `rows` with totals computed from that
+    agent's own spans.
+
+    A marker cannot answer "what did this subagent do" on its own: 1,555 of the
+    workflow agents in the store have no `subagent.stop` at all, so shape and
+    extent have to come off the spans, and usage falls back to them wherever the
+    stop marker's stamped totals are missing (`_billed_total`). Computed on the
+    way out, over the rows already fetched — nothing is written back, and a
+    window holding part of an agent's spans reports that part rather than
+    pretending to a total.
+
+    Markers are excluded from the population they summarize: a `subagent.start`
+    is the announcement of the work, not the work.
+
+    Every figure here is a WHOLE-AGENT total — the spend of the whole run, the
+    count of every span it owns, the extent from its first to its last — so all
+    of them land on the agent's earliest marker alone. Half the agents in the
+    store carry more than one (a resumed agent starts again per segment), and
+    repeating a total on each is an invitation to sum markers and over-report
+    the bill by 2.5x. The later markers keep only `agent_child_trace_id`, which
+    is an address rather than a quantity: a per-segment card still links to the
+    child trace, and there is nothing on it to add up twice. What a later
+    marker does get is its own SEGMENT's position and shape
+    (`_stamp_agent_segments`) — per-segment figures that sum to the agent
+    rather than repeating it. A single-run agent also gets its answer
+    (`_stamp_agent_result`), which lives on the stop marker and so reaches no
+    card on its own.
+
+    `agent_id` names the one agent every row belongs to, for the child read
+    (`_fetch_subagent_spans`), which has already cleared the tag the two writers
+    disagreed on. On the parent read the tag is left on each row and must
+    already be normalized (`_normalize_agent_ids`), or an SDK-written row is
+    still keyed by its launching call and rolls up under nobody.
+    """
+    by_agent = _markers_by_agent(rows, agent_id)
+    if not by_agent:
+        return rows
+    owned = _spans_by_agent(rows, agent_id)
+    for aid, group in by_agent.items():
+        stops = [m for m in group if m['name'] == 'subagent.stop']
+        starts = [m for m in group if m['name'] == 'subagent.start']
+        _stamp_agent_rollup(group[0], aid, owned.get(aid, []), stops, starts)
+        for later in group[1:]:
+            _stamp_child_trace_id(later, aid)
+        _stamp_agent_segments(group, owned.get(aid, []))
+        _stamp_agent_result(starts, stops, owned.get(aid, []))
+    return rows
+
+
+def drop_delegated_spans(spans: list[dict]) -> list[dict]:
+    """A run's own spans plus the markers of the subagents it launched — never
+    those subagents' work.
+
+    Every span an agent emits is stored in the trace that launched it, so a
+    parent that serves them renders each agent's whole conversation inline —
+    84% of one measured delegating session's rows, 96% of a workflow run's.
+    That conversation is served whole under `sa-<agent_id>`, and the markers
+    left here carry the rollup (`_attach_agent_rollups`) a single card needs
+    to stand for it.
+
+    Only an agent whose marker is HERE collapses. 128 of the 3,533 agents in
+    the local store emitted 11,956 spans and no marker at all, and there is
+    nothing in that case to stand for the work or to link to the child — the
+    same rule `alias.aliased_run_ids` applies to an SDK run's second id, where
+    only a child that really has a session row lets its counterpart be hidden.
+
+    A no-op on a subagent trace, without a case for it: `_fetch_subagent_spans`
+    clears the tag on the rows it re-keys, so the agent's own read keeps
+    everything it owns.
+    """
+    collapsed = _markers_by_agent(spans, None)
+    if not collapsed:
+        return spans
+    served, withheld = [], []
+    for s in spans:
+        keep = (s['name'] in _SUBAGENT_MARKER_NAMES
+                or _agent_id_of(s) not in collapsed)
+        (served if keep else withheld).append(s)
+    _carry_withheld_launches(served, withheld)
+    return served
+
+
+def _carry_withheld_launches(served: list[dict], withheld: list[dict]) -> None:
+    """Move a withheld `tool.Agent`'s brief onto the marker that stands for the
+    agent it launched.
+
+    An agent launched BY another agent has its `tool.Agent` among the launcher's
+    delegated work, so the rule above withholds it while keeping the
+    `subagent.start` it produced — and the card rendered off that marker had no
+    description and no task prompt, while the first (top-level) agent's card,
+    whose launch is the parent's own span, kept both. `launch_tool_use_id` is
+    the marker's own record of the call that made it, so the join is by
+    identity rather than by which launch happened nearest in time.
+
+    Every marker naming the launch is stamped, including a resumed agent's
+    later runs: the brief is what the agent was asked, not a quantity to sum,
+    and a run with its own recorded ask (`agent_segment_prompt`) outranks it at
+    render time anyway."""
+    launches = _launch_attrs_by_tool_use_id(withheld)
+    if not launches:
+        return
+    for s in served:
+        if s['name'] != 'subagent.start':
+            continue
+        attrs = s['attributes']
+        launch = launches.get(attrs.get('launch_tool_use_id'))
+        if launch:
+            _stamp_launch_brief(attrs, launch)
+
+
+_CARRIED_LAUNCH_KEYS = (('prompt', 'agent_launch_prompt'),
+                        ('description', 'agent_launch_description'))
+
+
+def _launch_attrs_by_tool_use_id(spans: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for s in spans:
+        if s['name'] != 'tool.Agent':
+            continue
+        attrs = s.get('attributes') or {}
+        tool_use_id = s.get('tool_use_id') or attrs.get('tool_use_id')
+        if tool_use_id:
+            out.setdefault(tool_use_id, attrs)
+    return out
+
+
+def _stamp_launch_brief(attrs: dict, launch: dict) -> None:
+    for key, carried in _CARRIED_LAUNCH_KEYS:
+        if launch.get(key) and not attrs.get(carried):
+            attrs[carried] = launch[key]
+
+
+def _launch_tool_use_id(conn, trace_ids, agent_id: str) -> str | None:
+    """The id an SDK run tagged this agent's spans with, off its
+    `subagent.start` marker.
+
+    Scoped by `(trace_id, agent_id)` alone so the query runs on that index; a
+    `name` predicate makes the planner prefer the name index and reads the JSON
+    of every marker in the store instead (15x slower here). Nothing but a marker
+    carries the attribute, so the narrower scope loses nothing.
+    """
+    from lib.trace.alias import sql_in
+
+    placeholders, params = sql_in(trace_ids)
+    row = conn.execute(f"""
+        SELECT json_extract(attributes, '$.launch_tool_use_id') AS launch
+        FROM session_spans
+        WHERE trace_id IN {placeholders} AND agent_id = ?
+          AND json_extract(attributes, '$.launch_tool_use_id') IS NOT NULL
+        ORDER BY id
+        LIMIT 1
+    """, [*params, agent_id]).fetchone()
+    return row['launch'] if row else None
+
+
+def _fetch_subagent_spans(conn, trace_ids, window_start, window_end):
+    """The rows of one subagent, re-keyed to its own `sa-…` trace id, or None
+    when the request is for an ordinary trace.
+
+    Stripping `agent_id` from both the column and the attributes is what makes
+    the child readable: every downstream pass keys subagent handling off that
+    field, so leaving it set would re-nest the whole trace under a
+    `subagent.start` that is not in the window and suppress its launch prompt
+    as agent-scoped. Cleared, the ordinary prompt/turn machinery runs over the
+    child unchanged.
+
+    Both halves of an SDK run are read: the runner writes the same subagent's
+    spans into the aliased sibling trace under the launching call's id, so a
+    child selected on the roster id alone would show the hook's half of its own
+    work and silently drop the rest.
+
+    The agent's OWN markers never reach the result. They are the parent's
+    account of this agent — served here they render the agent as a subagent of
+    itself. The earliest start marker survives as the child's opening turn
+    (`_agent_root_span`) rather than as a card, which is what keeps a trace
+    without a `prompt-sa-…` launch prompt single-rooted.
+
+    The agents THIS one launched are read too (`delegated_agent_ids`), tag
+    intact, so a nested subagent is a card here exactly as it is in a top-level
+    session: its rollup off its own spans, and its work withheld by
+    `drop_delegated_spans` for the trace that addresses it.
+    """
+    from lib.trace.subagent_trace import agent_span_scope, delegated_agent_ids
+
+    ids = [trace_ids] if isinstance(trace_ids, str) else list(trace_ids)
+    scope = agent_span_scope(conn, ids) if ids else None
+    if scope is None:
+        return None
+    rows = _scoped_agent_rows(conn, scope, delegated_agent_ids(conn, scope),
+                             window_start, window_end)
+    out, own_markers = _split_own_rows(rows, scope, ids[0])
+    root = _agent_root_span(own_markers, out)
+    if root is not None:
+        out.append(root)
+        out.sort(key=lambda s: (s['start_time'] or '', s['id'] or 0))
+    return _attach_agent_rollups(_normalize_agent_ids(out, conn, scope.trace_ids))
+
+
+def _scoped_agent_rows(conn, scope, delegated: list[str],
+                       window_start, window_end):
+    """The stored rows of one agent and of the agents it launched, in the
+    paginated reader's window."""
+    from lib.trace.alias import sql_in
+
+    trace_ph, trace_params = sql_in(scope.trace_ids)
+    agent_ph, agent_params = sql_in([*scope.agent_ids, *delegated])
+    clauses = [f"trace_id IN {trace_ph}", f"agent_id IN {agent_ph}"]
+    params = [*trace_params, *agent_params]
+    if window_start is not None:
+        clauses.append("start_time >= ?")
+        params.append(window_start)
+    if window_end is not None:
+        clauses.append("start_time < ?")
+        params.append(window_end)
+    return conn.execute(f"""
+        SELECT {_SPAN_COLUMNS}, agent_id
+        FROM session_spans
+        WHERE {' AND '.join(clauses)}
+        ORDER BY start_time ASC, id ASC
+    """, params).fetchall()
+
+
+def _split_own_rows(rows, scope, served_id: str) -> tuple[list[dict], list[dict]]:
+    """`(spans to serve, the agent's own markers)`, each row re-keyed to the
+    served id.
+
+    A delegated agent's rows keep their tag, carried from the column the scope
+    selected on so a row the writer tagged in one place only still reads as
+    delegated work — the same way the parent reads this agent's."""
+    from lib.trace.alias import ORIGIN_KEY
+
+    canonical = scope.trace_ids[0]
+    own_ids = set(scope.agent_ids)
+    out: list[dict] = []
+    own_markers: list[dict] = []
+    for r in rows:
+        row = dict(r)
+        owner = row.pop('agent_id', None)
+        attrs = json.loads(row['attributes'])
+        span = {**row, 'attributes': attrs, 'trace_id': served_id,
+                ORIGIN_KEY: 'hook' if r['trace_id'] == canonical else 'sdk'}
+        if owner in own_ids:
+            attrs.pop('agent_id', None)
+            if r['name'] in _SUBAGENT_MARKER_NAMES:
+                own_markers.append(span)
+                continue
+        elif owner:
+            attrs['agent_id'] = owner
+        out.append(span)
+    return out, own_markers
+
+
+# Marks the turn a subagent trace derives from its own start marker, so the
+# orphan graft can anchor on it (`_fallback_orphan_anchor`) without mistaking a
+# NESTED agent's launch prompt for the trace's own.
+AGENT_ROOT_KEY = 'agent_root'
+
+
+def _agent_root_span(own_markers: list[dict], out: list[dict]) -> dict | None:
+    """The turn a child trace opens with, derived from its own earliest
+    `subagent.start`, or None when it has an anchor already or no marker to
+    derive one from.
+
+    Same row, same id, same times — only re-read as what it means HERE: from
+    the parent's side the marker announces an agent, from the child's it is the
+    task the run was started on. Keeping the stored id (rather than
+    synthesizing one) is what lets its subtree and its body still be fetched.
+
+    Its text follows `subagent_trace._agent_facts`' precedence for the child's
+    title, one rung longer: whatever of the launch prompt the marker kept,
+    falling back to the description. An agent whose marker carries none of them
+    still gets the anchor — a turn with no text beats a flat pile of rows.
+    """
+    if not own_markers or any(s['name'] == 'prompt' for s in out):
+        return None
+    starts = [m for m in own_markers if m['name'] == 'subagent.start']
+    if not starts:
+        return None
+    marker = starts[0]
+    attrs = marker['attributes']
+    text = (attrs.get('prompt') or attrs.get('prompt_preview')
+            or attrs.get('description'))
+    root_attrs = {**attrs, AGENT_ROOT_KEY: True}
+    if text:
+        root_attrs['text'] = text
+    return {**marker, 'name': 'prompt', 'attributes': root_attrs}
+
+
 def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
                            window_end=None) -> list[dict]:
     """Span rows for a whole alias group, re-keyed to the canonical id.
@@ -94,6 +899,9 @@ def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
 
     if not trace_ids:
         return []
+    scoped = _fetch_subagent_spans(conn, trace_ids, window_start, window_end)
+    if scoped is not None:
+        return scoped
     placeholders, params = sql_in(trace_ids)
     clauses = [f"trace_id IN {placeholders}"]
     if window_start is not None:
@@ -109,12 +917,12 @@ def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
         ORDER BY start_time ASC, id ASC
     """, params).fetchall()
     canonical = params[0]
-    return [
+    return _attach_agent_rollups(_normalize_agent_ids([
         {**dict(r), 'attributes': json.loads(r['attributes']),
          'trace_id': canonical,
          ORIGIN_KEY: 'hook' if r['trace_id'] == canonical else 'sdk'}
         for r in rows
-    ]
+    ], conn, trace_ids))
 
 
 _SESSION_LIFECYCLE_NAMES = frozenset({'session.start', 'session.end'})
@@ -300,9 +1108,39 @@ def _ladder_orphans_by_turn(out: list[dict], by_id: dict) -> None:
             s['parent_id'] = cand
 
 
-def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict) -> None:
-    """Graft each orphan span under the most recent `prompt`. Mutates the
-    dicts in `by_id` in place.
+def _fallback_orphan_anchor(out: list[dict]) -> dict | None:
+    """The span orphans graft under when a trace has no `prompt` of its own,
+    or None when the trace has to stay flat.
+
+    Only a subagent trace (`sa-<agent_id>`, see lib/trace/subagent_trace) has
+    one. Three quarters of stored agents never got a `prompt-sa-…` launch
+    prompt, and without an anchor every one of their spans projects as a root
+    — a flat pile instead of a conversation. The turn derived from the agent's
+    own start marker (`_agent_root_span`) is emitted for exactly that case and
+    holds the tree. A launch prompt still wins where one exists, and an agent
+    with neither stays flat rather than getting a synthesized anchor.
+
+    Only that derived turn qualifies, never any `prompt` in the window: a
+    NESTED agent's `prompt-sa-…` is another run's opening, and anchoring on it
+    would hang this agent's work inside the one it delegated to.
+
+    A parent trace is deliberately excluded: there a `subagent.start` is one
+    marker among many agents', and grafting main-loop orphans under it would
+    nest unrelated work inside a subagent.
+    """
+    from lib.trace.subagent_trace import is_subagent_trace_id
+
+    if not out or not is_subagent_trace_id(out[0].get('trace_id')):
+        return None
+    roots = [s for s in out
+             if (s.get('attributes') or {}).get(AGENT_ROOT_KEY)]
+    return roots[0] if roots else None
+
+
+def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict,
+                                anchor: dict | None = None) -> None:
+    """Graft each orphan span under the most recent `prompt`, or under
+    `anchor` until one appears. Mutates the dicts in `by_id` in place.
 
     A live PENDING placeholder (promptlive-…) acts as a real prompt here: it
     starts at submit time, so it only becomes `current_prompt` for spans that
@@ -314,14 +1152,15 @@ def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict) -> None:
     applies: assistant/tool spans now carry deterministic write-time parents, so
     a completed turn's spans are never orphans the placeholder could capture.
     First-class boundary spans never anchor orphans."""
-    current_prompt = None
+    current_prompt = anchor
     for span in sorted_spans:
         resolved = by_id[span['span_id']]
         if resolved['name'] == 'prompt' and not is_agent_scoped_prompt(resolved):
             current_prompt = resolved
         elif resolved['name'] in _FIRST_CLASS_BOUNDARY_NAMES:
             continue
-        elif current_prompt is not None and not resolved.get('parent_id'):
+        elif (current_prompt is not None and resolved is not current_prompt
+                and not resolved.get('parent_id')):
             resolved['parent_id'] = current_prompt['span_id']
 
 
@@ -577,7 +1416,8 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
       4. `_graft_orphans_under_prompt` — chronological FALLBACK for the
          spans the ladder couldn't place (attachments, rule.check,
          permission.request, local commands, …): nest under the current
-         real prompt. Harmless to the bug-prone spans because step 3 and
+         real prompt, or under `_fallback_orphan_anchor` where a trace has
+         no prompt at all. Harmless to the bug-prone spans because step 3 and
          the write-time posters already parented them — this only touches
          genuinely turn-less session events.
       5. `turn`-span lookahead re-attribution
@@ -595,7 +1435,7 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
     by_id = {s['span_id']: s for s in out}
     _heal_dangling_parents(out, by_id)
     _ladder_orphans_by_turn(out, by_id)
-    _graft_orphans_under_prompt(sorted_spans, by_id)
+    _graft_orphans_under_prompt(sorted_spans, by_id, _fallback_orphan_anchor(out))
     _relabel_turns_by_lookahead(out)
     _reparent_subagents(out)
     # Last: override the parentage above for discarded branches so abandoned
@@ -676,6 +1516,11 @@ def _persist_projection(conn, trace_id: str, raw: list[dict], projected: list[di
                  s['span_id'], trace_id),
             )
             envelope_updates += 1
+    if parent_updates or envelope_updates:
+        # Re-parenting and envelope widening change the served tree without
+        # inserting a row, so the read-side memo cannot notice on its own.
+        from lib.trace.trace_service import projection_cache
+        projection_cache.invalidate(trace_id)
     return {'parent_updates': parent_updates, 'envelope_updates': envelope_updates}
 
 

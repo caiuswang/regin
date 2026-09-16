@@ -745,11 +745,35 @@ class AgentBridgeConfig(BaseModel):
     """
 
     enabled: bool = False
+    # Full, unfiltered shell access as the user running `regin serve`, over a
+    # WebSocket-attached PTY (`lib/agent_bridge/terminal.py`). This is not the
+    # guarded, allowlisted steering the rest of this config describes: a real
+    # terminal has no key allowlist, no rate budget and no sanitizer, because
+    # any of those would only be false comfort against `tmux send-keys`, which
+    # can run anything. The two controls are therefore binary and deliberate —
+    # this flag, off by default, and the admin role the route demands. Its own
+    # switch rather than a mode of `enabled`, so mobile steering can stay on
+    # while raw terminal access stays off.
+    #
+    # Visible side effect worth knowing before you turn it on: while a browser
+    # terminal is open, the pane's window follows ITS size, not the operator's.
+    # tmux gives a window one size and resolves it to the latest client
+    # (`window-size`), and the grouped session the browser attaches to shares
+    # that window — measured on tmux 3.6, 80x24 became 200x49 for as long as a
+    # 200x50 browser client was attached, and reverted the moment it closed.
+    terminal_enabled: bool = False
     token: str = ""
     rate_limit_per_minute: int = 30
     max_text_len: int = 4000
     allowed_pane_commands: list[str] = Field(
         default_factory=lambda: ["claude", "claude.exe", "node"])
+    # tmux socket for panes regin creates itself, to take over a conversation
+    # the CLI holds off-pane (`lib/agent_bridge/attach.py`). Its own server, not
+    # the operator's: it must work when they are not running tmux at all, it
+    # must not appear in their window list, and their `kill-server` must not
+    # take regin's panes with it. Every read/write already threads a socket
+    # (`bridge_panes.tmux_socket`), so a second one costs nothing.
+    attach_socket: str = "regin-bridge"
 
 
 class AgentSdkConfig(BaseModel):

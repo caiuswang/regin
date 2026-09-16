@@ -4,7 +4,8 @@
 // identity line leads and the metrics become a two-column definition list.
 import { computed } from 'vue'
 import { shortTraceId } from '../../utils/traceFormatters.js'
-import { fmtRelativeAge, isActiveWithClock, serverAgeMs } from '../../utils/sessionActivity.js'
+import { fmtRelativeAge, sessionLivenessWithClock, serverAgeMs } from '../../utils/sessionActivity.js'
+import { statusOfRow, statusLabel as labelOf } from '../../utils/sessionStatus.js'
 import { fmtDuration, primaryRepo, timeTitle, titlePreview, totalMs } from '../../utils/sessionRowFormat.js'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
@@ -29,7 +30,9 @@ const { awaitingTraceIds, resumedTraceId, waitedForTrace } = useNotificationCent
 const awaiting = computed(() => awaitingTraceIds.value.has(props.s.trace_id))
 const resumed = computed(() => resumedTraceId.value === props.s.trace_id)
 
-const active = computed(() => isActiveWithClock(props.s, props.clock))
+const liveness = computed(() => sessionLivenessWithClock(props.s, props.clock))
+const status = computed(() => statusOfRow(props.s, liveness.value))
+const statusLabel = computed(() => labelOf(status.value))
 const repo = computed(() => primaryRepo(props.s))
 </script>
 
@@ -56,9 +59,9 @@ const repo = computed(() => primaryRepo(props.s))
     </div>
 
     <div class="scard__meta">
-      <span class="scard__status" :class="active ? 'scard__status--active' : 'scard__status--idle'">
+      <span class="scard__status" :class="`scard__status--${status}`">
         <span class="scard__dot" aria-hidden="true"></span>
-        {{ active ? 'active' : (s.status === 'ended' ? (s.ended_reason === 'manual' ? 'closed' : 'ended') : 'idle') }}
+        {{ statusLabel }}
       </span>
       <code class="scard__id">{{ shortTraceId(s.trace_id, 12) }}…</code>
       <span v-if="s.is_test" class="scard__test">test</span>
@@ -187,8 +190,11 @@ const repo = computed(() => primaryRepo(props.s))
   text-transform: uppercase;
 }
 .scard__dot { background: currentColor; border-radius: 9999px; height: 0.3125rem; width: 0.3125rem; }
-.scard__status--active { color: var(--color-emerald-700); }
-.scard__status--idle { color: var(--color-fg-faint); }
+.scard__status--working,
+.scard__status--idle { color: var(--color-emerald-700); }
+.scard__status--inactive,
+.scard__status--ended,
+.scard__status--closed { color: var(--color-fg-faint); }
 .scard__id {
   color: var(--color-fg-faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

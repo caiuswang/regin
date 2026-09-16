@@ -27,6 +27,8 @@ The VIEW orchestrates record → deliver → mark; the store never calls deliver
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import re
 from functools import wraps
@@ -35,7 +37,8 @@ from flask import Blueprint, request, jsonify
 
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
-from lib.agent_bridge import store, delivery, commands, files, ansi_html
+from lib.agent_bridge import (store, delivery, commands, files, ansi_html,
+                              attachments, attach)
 from lib import agent_sdk, live_session
 
 bridge_bp = Blueprint('bridge', __name__)
@@ -99,12 +102,12 @@ def api_bridge_post_message():
     """Enqueue a steering message and attempt delivery; return the outcome."""
     payload = request.get_json(silent=True) or {}
     # Sanitize + cap the STORED body with the same rule delivery types with
-    # (no ANSI/control bytes, flattened newlines, capped at max_text_len) so
-    # the inbox row is bounded and safe to render — not just the typed copy.
+    # (no ANSI/control bytes, line breaks kept, capped at max_text_len) so the
+    # inbox row is bounded and safe to render — not just the typed copy.
     # Coerce non-string text to empty (a JSON number/list would raise inside
-    # sanitize_text's re.sub → 500); it then fails the "text required" check.
+    # sanitize_body's re.sub → 500); it then fails the "text required" check.
     raw_text = payload.get("text")
-    text = delivery.sanitize_text(raw_text if isinstance(raw_text, str) else "")
+    text = delivery.sanitize_body(raw_text if isinstance(raw_text, str) else "")
     session_id = payload.get("session_id")
     if not text:
         return jsonify({"error": "text required"}), 400
@@ -136,15 +139,37 @@ _SDK_PROMPT_MAX = 8000
 def _sdk_prompt_text(raw) -> str:
     """The prompt as the agent should receive it.
 
-    `sanitize_text` exists to make a string safe to *type into a terminal*: it
-    flattens newlines and strips control bytes because tmux `send-keys` would
-    otherwise submit a half-written message. None of that applies to a queue,
-    and applying it anyway silently mangles the multi-line prompts (a stack
-    trace, a diff) this path exists to carry. Control bytes still go.
+    The tmux sanitizers cap at `max_text_len`, sized for what a composer can
+    take; a queue has no such ceiling and gets its own, larger one. Control
+    bytes still go, and line structure is kept — the multi-line prompts (a
+    stack trace, a diff) this path exists to carry are the whole point.
     """
     text = raw if isinstance(raw, str) else ""
     cleaned = "".join(c for c in text if c in "\n\t" or c >= " ")
     return cleaned.strip()[:_SDK_PROMPT_MAX]
+
+
+def _sdk_deliver(trace_id: str, text: str, images: list | None = None,
+                 row_id: int | None = None) -> tuple[bool, str]:
+    """Carry out what `text` asks of a session regin drives over the SDK.
+
+    A slash command is not automatically a prompt here. This tier has no TUI,
+    so the CLI runs only the commands its own catalog offers and answers the
+    rest with a synthetic refusal the operator never sees — the composer flashed
+    "delivered" while `/exit` did nothing at all. So a quit verb is routed to
+    the control that really ends the run, a command the catalog does not list is
+    refused in the composer where the operator is looking, and everything else
+    is queued exactly as before.
+    """
+    route, name = commands.route_for_sdk(trace_id, text)
+    if route == commands.STOP:
+        stopped, detail = agent_sdk.stop_run(trace_id)
+        return stopped, detail if stopped else f"/{name} refused: {detail}"
+    if route == commands.UNSUPPORTED:
+        return False, (f"/{name} is not available in this session — it is a "
+                       "terminal-only command and regin drives this agent "
+                       "over the SDK")
+    return agent_sdk.submit_prompt(trace_id, text, images, row_id)
 
 
 def _sdk_send(trace_id: str, raw_text, body: str, sender: str | None):
@@ -156,10 +181,30 @@ def _sdk_send(trace_id: str, raw_text, body: str, sender: str | None):
     message, while the agent gets the prompt intact.
     """
     row_id = store.record_bridge_message(trace_id, body, sender)
-    delivered, detail = agent_sdk.submit_prompt(
-        trace_id, _sdk_prompt_text(raw_text))
+    text = _sdk_prompt_text(raw_text)
+    delivered, detail = _sdk_deliver(trace_id, text,
+                                     attachments.for_sdk(trace_id, text),
+                                     row_id)
     store.mark_delivered(row_id, delivered, detail)
     return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
+
+
+def _with_image_paths(trace_id: str, text: str) -> str:
+    """`text` with an `@path` prepended for each image it marks, or unchanged.
+
+    Failing to attach must not cost the operator the sentence they typed, so
+    any failure — an unwritable directory, a database error — degrades to
+    delivering the text alone: the prompt still lands, without the picture,
+    which is recoverable. A 500 on send is not, and the draft would be gone.
+    """
+    from lib.activity_log import get_activity_logger
+    try:
+        return attachments.for_tmux(trace_id, text)
+    except Exception:  # noqa: BLE001 — the sentence must outlive the picture
+        get_activity_logger("agent_bridge").error(
+            "bridge_attachment_materialize_failed", trace_id=trace_id,
+            exc_info=True)
+        return text
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-send', methods=['POST'])
@@ -180,26 +225,57 @@ def api_session_bridge_send(trace_id):
     `agent_bridge.enabled`, on the same reasoning as `bridge-answer`: that flag
     authorizes keystroke injection into a terminal, which queuing a prompt for
     a process regin owns never performs.
+
+    A `/clear`ed tmux session is steered through to the conversation that
+    replaced it in its pane (`store.clear_successor`), and the response names
+    that id as `trace_id` so the composer's page can follow the send. The
+    redirect lives HERE and not in `deliver()` on purpose: it is only ever
+    right for a prompt. `bridge-interrupt`, `bridge-key` and `shutdown` keep
+    refusing a displaced id, because a control keystroke aimed at a session
+    that is already over is aimed at nothing — and delivering it anyway is how
+    a stale card's `/exit` once ended someone else's running session.
+
+    A slash-command BODY is held to that same rule even though it arrives
+    through this route: `/exit` and `/clear` typed on a dead page would
+    otherwise be carried forward and executed against the live successor, which
+    is that same hazard wearing a prompt's clothes. Commands go to the id the
+    operator was looking at and meet the ordinary guards there.
+
+    `is_slash_command` anchors at the first character, which is only sound
+    here because it reads the SANITIZED body: `sanitize_body` has already
+    stripped the leading whitespace that would otherwise let `" /exit"` past
+    the test as a prompt. Keep that ordering.
     """
     owned = agent_sdk.is_sdk_owned(trace_id)
     if not owned and not settings.agent_bridge.enabled:
         return jsonify({"delivered": False, "detail": "bridge disabled"})
     payload = request.get_json(silent=True) or {}
     raw_text = payload.get("text")
-    text = delivery.sanitize_text(raw_text if isinstance(raw_text, str) else "")
+    text = delivery.sanitize_body(raw_text if isinstance(raw_text, str) else "")
     if not text:
         return jsonify({"error": "text required"}), 400
     user = get_current_user()
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
     if owned:
         return _sdk_send(trace_id, raw_text, text, sender)
-    row_id = store.record_bridge_message(trace_id, text, sender, pending=True)
+    as_command = delivery.is_slash_command(text)
+    target = trace_id if as_command else (store.clear_successor(trace_id)
+                                          or trace_id)
+    # The inbox row and its /live chip belong to the session that will answer
+    # the prompt, which is the page the operator is about to be on.
+    row_id = store.record_bridge_message(target, text, sender, pending=True)
+    # Keystrokes cannot carry an image, so each staged one is written to the
+    # host and named by path. The `[Image #N]` markers stay in the text
+    # alongside those paths: the path is what the agent opens, the marker is
+    # what binds the stored bytes to this prompt's span for the trace UI.
+    # Staged under the id the composer uploaded them against — the page's, not
+    # the successor's.
+    text = _with_image_paths(trace_id, text)
     # Same slash-command routing as the bridge POST — see the comment there.
-    result = delivery.deliver(trace_id, text,
-                              as_command=delivery.is_slash_command(text))
+    result = delivery.deliver(target, text, as_command=as_command)
     store.mark_delivered(row_id, result.delivered, result.detail)
-    return jsonify({"delivered": result.delivered,
-                    "detail": result.detail, "id": row_id})
+    return jsonify({"delivered": result.delivered, "detail": result.detail,
+                    "id": row_id, "trace_id": target})
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-key', methods=['POST'])
@@ -248,6 +324,33 @@ def api_session_bridge_interrupt(trace_id):
         return jsonify({"delivered": False, "detail": "bridge disabled"})
     result = delivery.deliver_key(trace_id, "Escape")
     return jsonify({"delivered": result.delivered, "detail": result.detail})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/attach', methods=['POST'])
+@require_editor
+def api_session_attach(trace_id):
+    """Take a conversation the CLI holds off-pane onto a pane regin owns.
+
+    On demand, never on sight: the alternative is holding a `claude attach`
+    client and a tmux pane open for every background session the machine has,
+    forever, on the chance someone opens its page. This is the operator saying
+    they want to type into this one.
+
+    Gated like every other steering surface, because that is what it buys —
+    the pane it creates is one `bridge-send` will type into. The session keeps
+    running either way; `attach` is a PTY client, so nothing here starts,
+    stops, or moves the conversation.
+    """
+    result = attach.take_over(trace_id)
+    return jsonify({"attached": result.attached, "detail": result.detail,
+                    "pane_id": result.pane_id})
+
+
+@bridge_bp.route('/api/sessions/<trace_id>/attach', methods=['DELETE'])
+@require_editor
+def api_session_detach(trace_id):
+    """Give the pane back. The conversation keeps running without it."""
+    return jsonify({"released": attach.release(trace_id)})
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/live-state', methods=['GET'])
@@ -590,6 +693,35 @@ def api_session_bridge_files(trace_id):
     return jsonify({"files": rows})
 
 
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-attachments', methods=['POST'])
+@require_editor
+def api_session_bridge_attachment(trace_id):
+    """Stage an image a composer pasted, ahead of the prompt it belongs to.
+
+    Editor+ for the same reason `bridge-send` is: these bytes are on their way
+    into a live agent's context, and on the tmux tier they also become a file
+    on the host. Base64 in JSON rather than multipart because that is what the
+    `/api/prompt-images` ingest already takes and what the SPA's api client can
+    send without a second transport.
+
+    A refusal here is a 400 with the reason, not a silent drop: the operator is
+    watching a thumbnail that needs to either appear or explain itself.
+    """
+    payload = request.get_json(silent=True) or {}
+    raw = payload.get("data_b64")
+    if not isinstance(raw, str) or not raw:
+        return jsonify({"error": "data_b64 required"}), 400
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (ValueError, binascii.Error):
+        return jsonify({"error": "data_b64 is not valid base64"}), 400
+    try:
+        staged = attachments.stage(trace_id, data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(staged)
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-screen', methods=['GET'])
 @require_editor
 def api_session_bridge_screen(trace_id):
@@ -617,6 +749,75 @@ def api_session_bridge_screen(trace_id):
     return jsonify({"ok": result.ok,
                     "html": ansi_html.convert(result.text) if result.ok else "",
                     "detail": result.detail})
+
+
+@bridge_bp.route('/api/bridge/screen-states', methods=['GET'])
+@require_editor
+def api_bridge_screen_states():
+    """Live busy/idle for every session a claude pane is showing right now,
+    plus every run regin launched and owns.
+
+    The session-switcher's status dots. Answering per row would cost two tmux
+    subprocesses each; this is one `list-panes` for the whole server plus one
+    `capture-pane` per claude pane, and it is keyed by the session id the TUI
+    prints in its own footer — so a terminal reused across sessions reports
+    under the conversation actually in it, which `bridge_panes` (append-only,
+    one row per session that ever held the pane) cannot express.
+
+    Deliberately LEANER than the per-session `live_screen` block: busy, the
+    verb and the elapsed clock, and nothing that quotes the screen. A batch
+    read sweeps every pane on the machine, including sessions the caller
+    never asked about, so it also drops any id regin has no session row for
+    rather than reporting on a stranger's terminal. Editor+ like every other
+    bridge route.
+    """
+    try:
+        states = delivery.screen_states()
+    except Exception:  # noqa: BLE001 - a status sweep must never 500 the list
+        from lib.activity_log import get_activity_logger
+        get_activity_logger("bridge").error(
+            "bridge_screen_states_failed", exc_info=True)
+        states = {}
+    states.update(_sdk_screen_states())
+    known = _known_trace_ids(list(states))
+    return jsonify({"states": {
+        tid: {"busy": st.busy, "verb": st.verb, "elapsed_sec": st.elapsed_sec}
+        for tid, st in states.items() if tid in known
+    }})
+
+
+def _sdk_screen_states() -> dict:
+    """The same sweep for the runs regin launched and still owns.
+
+    Outside the tmux read and outside `agent_bridge.enabled`: a run's status
+    comes from its runner in this process, not from a pane, so an operator who
+    never turned the bridge on would otherwise get a dead dot for the one tier
+    regin drives itself. Best-effort like the tmux half — the picker loses a
+    dot rather than the list.
+    """
+    try:
+        from lib import agent_sdk
+        return agent_sdk.run_live_states()
+    except Exception:  # noqa: BLE001 - a status sweep must never 500 the list
+        from lib.activity_log import get_activity_logger
+        get_activity_logger("agent_sdk").error(
+            "sdk_screen_states_failed", exc_info=True)
+        return {}
+
+
+def _known_trace_ids(candidates: list[str]) -> set:
+    """Subset of `candidates` that regin has a session row for."""
+    if not candidates:
+        return set()
+    from sqlmodel import select
+    from lib.orm import SessionLocal
+    from lib.orm.models import Session as SessionModel
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(SessionModel.trace_id)
+            .where(SessionModel.trace_id.in_(candidates))
+        ).all()
+    return set(rows)
 
 
 @bridge_bp.route('/api/bridge/sessions', methods=['GET'])

@@ -114,6 +114,93 @@ def test_subagent_handlers_return_suppress_output():
         assert r.additional_context is None
 
 
+# ── subagent launch link (child_trace_id / launch_tool_use_id) ────────
+
+def _subagent_files(tmp_path, agent_id: str, meta) -> str:
+    """A `…/subagents/agent-<id>.jsonl` transcript, plus its sibling
+    `agent-<id>.meta.json` when `meta` is a dict (verbatim text when a str),
+    laid out exactly as Claude Code writes them. Returns the transcript path."""
+    sub = tmp_path / 'subagents'
+    sub.mkdir(parents=True, exist_ok=True)
+    jsonl = sub / f'agent-{agent_id}.jsonl'
+    jsonl.write_text('')
+    if meta is not None:
+        text = meta if isinstance(meta, str) else json.dumps(meta)
+        (sub / f'agent-{agent_id}.meta.json').write_text(text)
+    return str(jsonl)
+
+
+def test_subagent_marker_carries_child_trace_id_and_launch_tool_use_id(
+        captured_spans, tmp_path):
+    """The marker is the launch→agent identity link: `child_trace_id` names the
+    trace the subagent is addressable as, `launch_tool_use_id` the `tool.Agent`
+    call that spawned it (read from the sibling meta file)."""
+    path = _subagent_files(tmp_path, 'ag123', {
+        'agentType': 'goal-verifier', 'toolUseId': 'toolu_01CBd2',
+        'spawnDepth': 1})
+    subagent_lifecycle.handle_start(_p('SubagentStart', session_id='s1',
+        agent_type='goal-verifier', agent_id='ag123',
+        agent_transcript_path=path))
+    attrs = captured_spans[0]['attributes']
+    assert attrs['child_trace_id'] == 'sa-ag123'
+    assert attrs['launch_tool_use_id'] == 'toolu_01CBd2'
+
+
+def test_subagent_marker_launch_id_uses_its_own_attribute_name(
+        captured_spans, tmp_path):
+    """It must NOT be written as `tool_use_id`: that attribute makes a span
+    supersede the launching call's `pending-…` placeholder, which would retire
+    the running `tool.Agent` card the instant its subagent starts."""
+    path = _subagent_files(tmp_path, 'ag123', {'toolUseId': 'toolu_01CBd2'})
+    subagent_lifecycle.handle_start(_p('SubagentStart', session_id='s1',
+        agent_id='ag123', agent_transcript_path=path))
+    assert 'tool_use_id' not in captured_spans[0]['attributes']
+
+
+@pytest.mark.parametrize('meta', [
+    None,                       # no meta file beside the transcript
+    '{"toolUseId": "toolu_',    # truncated / malformed JSON
+    {'agentType': 'explore'},   # well-formed, but names no toolUseId
+    {'toolUseId': ''},          # present and empty
+    {'toolUseId': 42},          # present and not a string
+])
+def test_subagent_marker_omits_launch_id_when_meta_yields_none(
+        captured_spans, tmp_path, meta):
+    """A meta file that is missing, malformed or silent about `toolUseId`
+    yields NO key at all (never a null/blank one) and never raises — this runs
+    inside a hook."""
+    path = _subagent_files(tmp_path, 'ag123', meta)
+    subagent_lifecycle.handle_start(_p('SubagentStart', session_id='s1',
+        agent_id='ag123', agent_transcript_path=path))
+    attrs = captured_spans[0]['attributes']
+    assert 'launch_tool_use_id' not in attrs
+    assert attrs['child_trace_id'] == 'sa-ag123'
+
+
+def test_subagent_marker_omits_launch_id_when_meta_is_unreadable(
+        captured_spans, tmp_path):
+    """An unreadable meta file (no read permission) is the same non-event as a
+    missing one."""
+    path = _subagent_files(tmp_path, 'ag123', {'toolUseId': 'toolu_01CBd2'})
+    meta_path = tmp_path / 'subagents' / 'agent-ag123.meta.json'
+    meta_path.chmod(0o000)
+    try:
+        subagent_lifecycle.handle_start(_p('SubagentStart', session_id='s1',
+            agent_id='ag123', agent_transcript_path=path))
+    finally:
+        meta_path.chmod(0o600)
+    assert 'launch_tool_use_id' not in captured_spans[0]['attributes']
+
+
+def test_subagent_marker_without_agent_id_carries_no_child_trace_id(
+        captured_spans):
+    """No agent id → no addressable child trace; the key is omitted rather
+    than emitted as a bare `sa-`."""
+    subagent_lifecycle.handle_start(_p('SubagentStart', session_id='s1',
+        agent_type='Explore'))
+    assert 'child_trace_id' not in captured_spans[0]['attributes']
+
+
 # ── subagent assistant_response spans ─────────────────────────────────
 
 def _write_jsonl(path, entries):

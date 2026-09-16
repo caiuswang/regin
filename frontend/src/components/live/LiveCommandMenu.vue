@@ -72,7 +72,7 @@ watch(() => props.activeIndex, async () => {
       v-for="(item, i) in items"
       :id="`live-cmd-opt-${i}`"
       :key="`${item.kind}:${rowName(item)}`"
-      class="live-cmd-item cursor-pointer hover:bg-[var(--color-surface-2)]"
+      class="live-cmd-item cursor-pointer hover:bg-[var(--color-surface-selected)]"
       role="option"
       :aria-selected="i === activeIndex"
       :data-highlighted="i === activeIndex"
@@ -137,7 +137,7 @@ watch(() => props.activeIndex, async () => {
   text-align: left;
   cursor: pointer;
 }
-.live-cmd-item[data-highlighted="true"] { background: var(--color-surface-2); }
+.live-cmd-item[data-highlighted="true"] { background: var(--color-surface-selected); }
 .live-cmd-menu-stale .live-cmd-item {
   opacity: 0.45;
   cursor: progress;

@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
-from lib.orm.models import AgentRun, Session as TraceSession
+from lib.orm.models import AgentRun, AgentRunSession, Session as TraceSession
 
 log = get_activity_logger("agent_sdk")
 
@@ -107,6 +107,169 @@ def restore_trace_session(markers: list[dict]) -> None:
         log.write("sdk_trace_session_end_restored", trace_id=trace_id)
 
 
+def end_trace_session(*trace_ids: str, reason: str) -> list[str]:
+    """Settle the `sessions` rows behind a run that died without saying so.
+
+    The inverse of `revive_trace_session`, and the half `reap_orphaned_runs`
+    was missing: killing the server takes the SDK child with it, so no
+    `session.end` is ever emitted and the row keeps its launch-time
+    `status='active'` / `ended_at IS NULL` forever. Every reader answers from
+    those two fields — the header's Live pill, the session list, and
+    `resumable._offerable` — so the session stays green, unsteerable (the
+    registry that made it steerable died with the process) and unofferable.
+
+    `ended_at` is the row's own `last_seen`, not `now`: that is the last moment
+    regin has evidence the session existed, and stamping the reap's clock would
+    date the session to whenever the server next happened to boot.
+
+    Only rows still claiming to be live are touched. A session that recorded
+    its own end wrote a verdict from the process that was actually there, and
+    it outranks this inference.
+    """
+    wanted = {t for t in trace_ids if t}
+    if not wanted:
+        return []
+    ended = []
+    with SessionLocal() as session:
+        # Already-settled rows are excluded in SQL, not filtered afterwards:
+        # the boot sweep asks about every run regin ever launched, and that set
+        # only grows, while the rows it may actually change do not.
+        rows = session.exec(
+            select(TraceSession)
+            .where(TraceSession.trace_id.in_(wanted))
+            .where(TraceSession.ended_at.is_(None))).all()
+        for row in rows:
+            # A row can carry `status='ended'` with no `ended_at` — the SQL
+            # above cannot see that half of the verdict.
+            if row.status == "ended":
+                continue
+            row.status = "ended"
+            row.ended_at = row.last_seen
+            row.ended_reason = reason
+            ended.append(row.trace_id)
+        if ended:
+            session.commit()
+    for trace_id in ended:
+        log.write("sdk_trace_session_ended", trace_id=trace_id, reason=reason)
+    return ended
+
+
+# The two `agent_runs` statuses that mean a process is still behind the row.
+# Everything else — `exited`, `failed` — is a run that is over, whether it ended
+# by itself or was reaped.
+_LIVE_RUN_STATUSES = frozenset({"running", "starting"})
+
+
+def _still_claimed(trace_id: str) -> bool:
+    """Whether a terminal is driving this session right now.
+
+    A session regin once launched can be reopened by the operator themselves
+    (`claude --resume <id>` in a terminal), which registers a pane under the id
+    the dead run also names. Nothing in `agent_runs` records that — the run
+    stays `exited` forever — so without this read the next boot would end a
+    session that is genuinely live, with the reason "server restarted".
+
+    Reads through `resolve_reachable_pane`, not `get_reachable_pane`: the
+    latter collapses "asked, found nothing" into "could not ask" and answers
+    None for both, which here would read a locked DB or a pre-migration
+    `bridge_panes` as proof that no terminal holds the session. That is the
+    distinction its `answered` flag exists to carry, and this is the caller its
+    docstring names — one deciding whether it may report a session stopped.
+
+    An unread registry therefore counts as claimed, as does a raised probe: not
+    knowing is not evidence the session is over, and guessing wrong in that
+    direction is the very bug this module is fixing, inverted.
+
+    Answers False wherever regin holds no pane rows at all — an install running
+    without `REGIN_BRIDGE` set never registers one (`hook_manager/handlers/
+    bridge_registry.py`). That is an information gap this cannot close: there
+    the live-run subtraction in `_dead_run_candidates` is the only guard.
+    """
+    from lib.agent_bridge import store as bridge_store
+
+    try:
+        pane, answered = bridge_store.resolve_reachable_pane(trace_id)
+    except Exception:
+        log.error("sdk_settle_pane_probe_failed", trace_id=trace_id,
+                  exc_info=True)
+        return True
+    return pane is not None or not answered
+
+
+def _children_by_run(session) -> dict[str, list[str]]:
+    """`{run trace_id: its child session ids}` — the whole alias group.
+
+    Every child, not just the one `agent_runs.cli_session_id` pins: a run's
+    later children are the ones a `/clear` opened, and a sweep that cannot see
+    them leaves each heir's `sessions` row green forever after the run dies.
+    """
+    groups: dict[str, list[str]] = {}
+    for run, child in session.exec(
+            select(AgentRunSession.trace_id,
+                   AgentRunSession.cli_session_id)).all():
+        if run and child:
+            groups.setdefault(run, []).append(child)
+    return groups
+
+
+def _run_ids(rows, children: dict[str, list[str]]) -> set[str]:
+    """Every id these run rows name, blanks dropped."""
+    return {t for r in rows
+            for t in (r.trace_id, *children.get(r.trace_id, ())) if t}
+
+
+def _dead_run_candidates(reason: str) -> list[tuple[str, str]]:
+    """`(why, id)` for the dead runs, minus every id a LIVE run also names.
+
+    A child id can be named by both an older `exited` row and a currently
+    `running` one — the shape a relaunch leaves behind. Settling on the
+    strength of the stale row would end a conversation this process is running,
+    which is this module's own bug inverted.
+    """
+    with SessionLocal() as session:
+        children = _children_by_run(session)
+        live = _run_ids(session.exec(select(AgentRun).where(
+            AgentRun.status.in_(_LIVE_RUN_STATUSES))).all(), children)
+        dead = session.exec(select(AgentRun).where(
+            AgentRun.status.notin_(_LIVE_RUN_STATUSES))).all()
+        return [(r.detail or reason, t) for r in dead
+                for t in (r.trace_id, *children.get(r.trace_id, ()))
+                if t and t not in live]
+
+
+def _settleable(reason: str) -> dict[str, list[str]]:
+    """`{why: ids}` — the candidates no terminal is still driving either."""
+    by_reason: dict[str, list[str]] = {}
+    for why, trace_id in _dead_run_candidates(reason):
+        if not _still_claimed(trace_id):
+            by_reason.setdefault(why, []).append(trace_id)
+    return by_reason
+
+
+def settle_ended_run_sessions(reason: str = "server restarted") -> int:
+    """Close the trace rows of every run that is over but whose session never
+    said so. Returns how many rows were settled.
+
+    Keyed on the run's *state*, not on the transition into it, and therefore
+    re-runnable: the reap only touches rows it finds `running`, so a session
+    orphaned by an earlier boot — its run row already `exited` — would never be
+    reached by a settle wired to the reap alone, and would sit in the UI as a
+    permanently live session no later boot could correct.
+
+    A run still `running` or `starting` is skipped whatever pid holds it: the
+    reap runs first and has already demoted the ones no process backs, so a row
+    still claiming a live state at this point is one this process owns. Its
+    *ids* are spared too, not just its row — see `_dead_run_candidates` — and
+    so is any session a terminal is still driving (`_still_claimed`).
+
+    Each session is stamped with its own run's `detail` — why *that* run
+    stopped. A sweep that wrote one blanket reason would tell an operator their
+    session died in a restart when the run had failed on its own.
+    """
+    return sum(len(end_trace_session(*ids, reason=why))
+               for why, ids in _settleable(reason).items())
+
+
 def upsert_run(trace_id: str, *, status: str, pid: int | None = None,
                cwd: str | None = None, model: str | None = None,
                detail: str | None = None) -> None:
@@ -134,24 +297,69 @@ def upsert_run(trace_id: str, *, status: str, pid: int | None = None,
     log.write("sdk_run_status", trace_id=trace_id, status=status)
 
 
+def _process_alive(pid: int | None) -> bool:
+    """Whether `pid` still names a running process.
+
+    `EPERM` counts as alive: the process exists, this user merely may not
+    signal it. Only `ESRCH` is proof of absence, and a pid of None — a row
+    written before the process was known — cannot be probed at all.
+    """
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def run_is_live(trace_id: str) -> bool:
+    """Whether the durable row for `trace_id` is backed by a process that still
+    exists.
+
+    The row alone cannot answer it: `status` outlives the runner, so a server
+    killed mid-run leaves `running` behind forever. The pid is what confirms
+    it, and it is probed rather than compared — a row belonging to another pid
+    is a *peer's* live run, not a dead one, which is the distinction
+    `reap_orphaned_runs` exists to keep. This process's own pid is spared
+    without a probe for the same reason it is there.
+    """
+    row = get_run(trace_id)
+    if row is None or row["status"] not in ("starting", "running"):
+        return False
+    return row["pid"] == os.getpid() or _process_alive(row["pid"])
+
+
 def reap_orphaned_runs(detail: str = "server restarted") -> int:
     """Close out `running` rows no live process backs any more.
 
     A runner only exists inside the process that started it, so a row still
-    claiming `running` under a *different* pid is a leftover — the run died
-    with that process. Left alone they accumulate as sessions the UI offers to
-    steer and nothing can answer.
+    claiming `running` under a dead pid is a leftover — the run died with that
+    process. Left alone they accumulate as sessions the UI offers to steer and
+    nothing can answer.
 
-    Rows owned by **this** pid are spared: an app built twice in one process
-    (tests, an embedded server) would otherwise mark its own live runs dead.
-    Returns how many rows were closed.
+    A different pid is NOT enough to condemn a row, and reading it that way is
+    what let a foreign process — a CLI, a test that builds the app against the
+    real DB — reap the runs of a `regin serve` that was driving them, taking
+    their `sessions` rows down with it in the sweep below. Every reader then
+    met the state this function exists to prevent, on a session that was alive.
+    So liveness is asked of the pid itself; rows owned by **this** pid stay
+    spared without a probe (an app built twice in one process — tests, an
+    embedded server — would otherwise mark its own live runs dead).
+
+    The trace rows behind every dead run are settled with it, in the sweep
+    below. Closing only the `agent_runs` row left the session itself claiming
+    to be live, which is the state an operator meets — a green session with no
+    composer, no pane, and no resume.
     """
     mine = os.getpid()
     with SessionLocal() as session:
         rows = [
             r for r in session.exec(
                 select(AgentRun).where(AgentRun.status == "running")).all()
-            if r.pid != mine
+            if r.pid != mine and not _process_alive(r.pid)
         ]
         for row in rows:
             row.status = "exited"
@@ -160,51 +368,102 @@ def reap_orphaned_runs(detail: str = "server restarted") -> int:
         count = len(rows)
     if count:
         log.write("sdk_runs_reaped", count=count)
+    settle_ended_run_sessions(detail)
     return count
 
 
-def set_cli_session(trace_id: str, cli_session_id: str) -> None:
-    """Record the child `claude` session this run is also traced as.
+def set_cli_session(trace_id: str, cli_session_id: str) -> str | None:
+    """Record a child `claude` session this run is traced as.
 
-    Written the first time the child names itself, which is what lets the
-    serve-time reader union the run's SDK-stream spans with the trace the
-    child's own hooks write. Idempotent: the runner calls it for every message
-    it sees, so a value that hasn't changed must not churn `updated_at`.
+    Called for every message the runner sees, and a run names more than one
+    child over its life: `/clear` ends the child conversation and the CLI opens
+    another under a fresh id while this same runner keeps driving it. Every one
+    of them joins the run's alias group (`agent_run_sessions`), which is what
+    `find_run`, the dual-writer guard, the resume picker and the heal sweep
+    read — so an heir is recognised as regin's rather than looking like a
+    session nothing launched.
 
-    A *different* id on an already-linked row is refused rather than written.
-    Resuming keeps the child's session id (`fork_session=False`), so a second
-    id means either the CLI forked anyway or two runs claimed one row —
-    overwriting would silently re-point the trace group at a session the run's
-    earlier half was never part of, and the spans it leaves behind become
-    unreachable from either id.
+    `agent_runs.cli_session_id` takes only the FIRST child and then stays put.
+    A `/clear` opens a new conversation rather than continuing the old one, so
+    moving the column would fuse two sessions a person deliberately separated
+    and orphan the spans of the half it moved off. Each heir reads its own half
+    of the SDK stream through a segment trace instead
+    (`lib.trace.alias.sdk_span_trace_id`).
+
+    Nothing here is a conflict. A child named by another run is the relaunch
+    shape — resuming keeps the child's session id and the previous `exited` row
+    goes on naming it — and `reap_orphaned_runs` already resolves that by
+    subtracting the live run's ids before settling the dead one's.
+
+    Returns the run's first child — what the column holds once this call is
+    done — or None when nothing could be recorded. The caller needs it to tell
+    an heir from the original, and taking it from the row that was already
+    loaded here saves the runner a read per message.
     """
     if not trace_id or not cli_session_id or trace_id == cli_session_id:
-        return
+        return None
     try:
         with SessionLocal() as session:
             row = session.exec(
                 select(AgentRun).where(AgentRun.trace_id == trace_id)).first()
-            if row is None or row.cli_session_id == cli_session_id:
-                return
-            if row.cli_session_id:
-                log.error("sdk_cli_session_conflict", trace_id=trace_id,
-                          detail=f"holds {row.cli_session_id}, "
-                                 f"refused {cli_session_id}")
-                return
-            row.cli_session_id = cli_session_id
+            if row is None:
+                return None
+            first_child = row.cli_session_id or cli_session_id
+            linked = session.exec(
+                select(AgentRunSession.id)
+                .where(AgentRunSession.trace_id == trace_id)
+                .where(AgentRunSession.cli_session_id == cli_session_id)).first()
+            if linked:
+                return first_child
+            session.add(AgentRunSession(trace_id=trace_id,
+                                        cli_session_id=cli_session_id))
+            if not row.cli_session_id:
+                row.cli_session_id = cli_session_id
             session.commit()
     except OperationalError:
-        # A DB that predates migration 0012 has no such column. This runs on
-        # the first message of the first turn, so raising would propagate out
-        # of the turn and kill the run — an unmigrated install could not hold a
-        # session at all. The alias is an optimisation for the trace view; the
-        # run itself does not need it. Booting the server does not migrate, so
-        # this state is reachable, and every reader already defends it.
+        # A DB predating migration 0012 has no column, one predating 0016
+        # no table. This runs on the first message of the first turn, so
+        # raising would propagate out of the turn and kill the run — an
+        # unmigrated install could not hold a session at all. The alias is an
+        # optimisation for the trace view; the run itself does not need it.
+        # Booting the server does not migrate, so this state is reachable, and
+        # every reader already defends it.
         log.error("sdk_cli_session_link_unavailable", trace_id=trace_id,
-                  detail="agent_runs.cli_session_id missing — run `regin migrate`")
-        return
+                  detail="agent_runs.cli_session_id / agent_run_sessions "
+                         "missing — run `regin migrate`")
+        return None
     log.write("sdk_cli_session_linked", trace_id=trace_id,
               cli_session_id=cli_session_id)
+    return first_child
+
+
+def latest_cli_session(trace_id: str) -> str | None:
+    """The newest child conversation this run named, or None.
+
+    `agent_runs.cli_session_id` pins the FIRST child and never moves
+    (`set_cli_session` explains why), so it is the wrong answer to "which
+    conversation is this run on now": a run that has since opened another —
+    a `/clear`, or a resume the CLI renamed — would be continued into the half
+    the operator left behind while the one they were reading is stranded with
+    neither a composer nor a Resume button.
+
+    Newest by insert order, which is the order `set_cli_session` records
+    children in. Falls back to the pinned column so a run predating the alias
+    table still answers.
+    """
+    if not trace_id:
+        return None
+    try:
+        with SessionLocal() as session:
+            row = session.exec(
+                select(AgentRunSession.cli_session_id)
+                .where(AgentRunSession.trace_id == trace_id)
+                .order_by(AgentRunSession.id.desc())).first()
+        if row:
+            return row
+    except OperationalError:
+        pass
+    return cli_session_for(trace_id)
 
 
 def sdk_child_session_ids() -> set[str]:
@@ -213,15 +472,17 @@ def sdk_child_session_ids() -> set[str]:
     Membership is not status-gated: a finished run's child id stays claimed —
     no future hook-only session can legitimately reuse it, and treating it as
     hook-owned again would revive the dual-writer split this exists to close.
+
+    Read from the alias group, so every child counts. Taking only
+    `agent_runs.cli_session_id` saw the first one and left each `/clear` heir
+    looking hook-owned — the split, on exactly the sessions a run drives last.
     """
     try:
         with SessionLocal() as session:
-            rows = session.exec(
-                select(AgentRun.cli_session_id)
-                .where(AgentRun.cli_session_id.is_not(None))).all()
+            rows = session.exec(select(AgentRunSession.cli_session_id)).all()
         return {r for r in rows if r}
     except OperationalError:
-        # Pre-0012 DB: no column, so no children to speak of.
+        # Pre-0016 DB: no table, so no children to speak of.
         return set()
 
 
@@ -247,8 +508,8 @@ def sdk_trace_for_cli_session(session_id: str) -> str | None:
     try:
         with SessionLocal() as session:
             row = session.exec(
-                select(AgentRun.trace_id)
-                .where(AgentRun.cli_session_id == session_id)).first()
+                select(AgentRunSession.trace_id)
+                .where(AgentRunSession.cli_session_id == session_id)).first()
         return row or None
     except OperationalError:
         return None
@@ -316,8 +577,7 @@ def _nearby_sessions(conn, run) -> list[str]:
           AND ABS(julianday(child.started_at)
                   - julianday(run.started_at)) * 86400.0 < ?
           AND child.trace_id NOT IN (
-              SELECT cli_session_id FROM agent_runs
-              WHERE cli_session_id IS NOT NULL)
+              SELECT cli_session_id FROM agent_run_sessions)
     """, (run, _HEAL_PROOF_WINDOW_SEC)).fetchall()]
 
 
@@ -349,8 +609,7 @@ def _heal_candidates(conn, run) -> list[str]:
           AND ABS(julianday(child.started_at)
                   - julianday(run.started_at)) * 86400.0 < ?
           AND child.trace_id NOT IN (
-              SELECT cli_session_id FROM agent_runs
-              WHERE cli_session_id IS NOT NULL)
+              SELECT cli_session_id FROM agent_run_sessions)
         ORDER BY ABS(julianday(child.started_at)
                      - julianday(run.started_at)) ASC
     """, (run, _HEAL_WINDOW_SEC)).fetchall()]
@@ -403,6 +662,11 @@ def heal_cli_session_ids(conn=None) -> int:
             conn.execute(
                 "UPDATE agent_runs SET cli_session_id = ? WHERE trace_id = ?",
                 (child, run))
+            # The group is what every membership reader asks; a link that only
+            # lands in the column is invisible to all of them.
+            conn.execute(
+                "INSERT OR IGNORE INTO agent_run_sessions "
+                "(trace_id, cli_session_id) VALUES (?, ?)", (run, child))
         conn.commit()
     finally:
         if owned:
@@ -456,9 +720,9 @@ def find_run(session_id: str) -> dict | None:
             return exact
         with SessionLocal() as session:
             aliased = session.exec(
-                select(AgentRun.trace_id)
-                .where(AgentRun.cli_session_id == session_id)
-                .order_by(AgentRun.trace_id)).first()
+                select(AgentRunSession.trace_id)
+                .where(AgentRunSession.cli_session_id == session_id)
+                .order_by(AgentRunSession.trace_id)).first()
         return get_run(aliased) if aliased else None
     except OperationalError as exc:
         # Answering "no run" sends the caller down the pass-through path, which

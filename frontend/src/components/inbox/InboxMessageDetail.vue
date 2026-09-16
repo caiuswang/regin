@@ -14,7 +14,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['read', 'dismiss', 'open', 'back'])
 
-const { copyText } = useCopy()
+const { copyText, isCopied } = useCopy()
 
 const typeMeta = computed(() => inboxTypeMeta(props.message?.msg_type))
 const isUnread = computed(() => props.message && !props.message.read_at)
@@ -160,14 +160,15 @@ const timeLabel = computed(() => {
             v-else
             variant="ghost"
             size="sm"
-            :title="`Copy path: ${lnk.href}`"
+            :title="isCopied(lnk.href) ? 'Copied path' : `Copy path: ${lnk.href}`"
             class="inbox-detail-link inbox-detail-link-file"
+            :class="isCopied(lnk.href) && 'text-success'"
             @click="copyText(lnk.href)"
           >
             <svg
               class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-            ><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+            ><template v-if="isCopied(lnk.href)"><path d="M20 6 9 17l-5-5" /></template><template v-else><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></template></svg>
             <span class="truncate min-w-0">{{ lnk.label }}</span>
           </Button>
         </li>

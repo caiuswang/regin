@@ -34,6 +34,9 @@ async function pokeBottomEdge(page) {
     const scrollers = [
       document.scrollingElement || document.documentElement,
       ...document.querySelectorAll('.content-scroll'),
+      // The transcript's own region, which is what scrolls once the shell is
+      // frozen — poking only the shell would test an element that can't move.
+      ...document.querySelectorAll('[data-trace-scroller]'),
     ].filter(Boolean)
     for (const s of scrollers) {
       s.scrollTop = s.scrollHeight

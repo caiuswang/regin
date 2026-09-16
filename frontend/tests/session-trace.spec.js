@@ -12,6 +12,7 @@
  */
 import { test, expect } from './auth-fixture.js'
 import { BASELINE_TRACE } from './helpers/fixtures.js'
+import { selectViewMode } from './helpers/viewMode.js'
 
 // Open the seeded session and switch to Timeline view (the default
 // is Conversation, which renders chat cards rather than the event spine). The
@@ -22,9 +23,7 @@ async function openSeededSessionTimeline(page) {
   // fully parallel, that was whatever another spec had just written.
   await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
 
-  const timelineTab = page.getByRole('button', { name: 'Timeline', exact: true })
-  await expect(timelineTab).toBeVisible({ timeout: 10_000 })
-  await timelineTab.click()
+  await selectViewMode(page, 'Timeline')
 }
 
 test.describe('Session Trace View', () => {

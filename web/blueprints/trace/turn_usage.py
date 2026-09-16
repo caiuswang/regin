@@ -237,11 +237,19 @@ def api_session_turn_usage(trace_id):
     (input_tokens + cache_creation_tokens + output_tokens) seen across
     all turns — so the frontend can scale per-row consumption bars
     without a client-side reduce.
+
+    Pass `?detail=1` for each turn's `span_refs` and `tool_summary`. They are
+    the turns SIDEBAR's, and it renders behind the detail rail — closed on a
+    fresh conversation-tab load, which is the one place this is fetched
+    eagerly. `request_id` is never sent: nothing renders it.
     """
     from sqlmodel import select as _select
     from lib.tokens.model_windows import infer_window as _infer_window
 
-    rows = trace_service.fetch_turn_usage(trace_id)
+    detail = request.args.get('detail', '').lower() in ('1', 'true')
+    rows = trace_service.fetch_turn_usage(trace_id, with_refs=detail)
+    for row in rows:
+        row.pop('request_id', None)
 
     # Fetch context window once for ctx_pct computation. Window
     # inference uses the all-inclusive peak so the 1M-variant promotion

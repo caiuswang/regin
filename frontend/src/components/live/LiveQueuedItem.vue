@@ -34,7 +34,14 @@ const inputEl = ref(null)
 // operator sent that is waiting to be picked up.
 const steer = computed(() => props.item.source === 'bridge'
   || props.item.source === 'sdk')
-const label = computed(() => (steer.value ? '⧗ steering…' : '⧗ queued'))
+// A dropped row is the opposite of the others: not a promise that the text
+// will run, but a report that it never will — so it names the reason instead
+// of a wait state, and the operator can copy the text back out.
+const dropped = computed(() => props.item.source === 'dropped')
+const label = computed(() => {
+  if (dropped.value) return `✗ not sent — ${props.item.detail || 'dropped'}`
+  return steer.value ? '⧗ steering…' : '⧗ queued'
+})
 const text = computed(() => stripMarkdown(props.item.content || ''))
 const canSave = computed(() => !!draft.value.trim() && !props.busy)
 
@@ -60,7 +67,11 @@ function save() {
 <template>
   <div
     class="live-row-msg live-queued-item"
-    :class="{ 'live-queued-steer': steer, 'live-queued-editing': editing }"
+    :class="{
+      'live-queued-steer': steer,
+      'live-queued-dropped': dropped,
+      'live-queued-editing': editing,
+    }"
     data-testid="live-queued-item"
     :title="editing ? undefined : text"
   >

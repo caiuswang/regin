@@ -99,6 +99,37 @@ class AgentProvider:
         matches = glob.glob(str(Path(base) / '*' / f'{session_id}.jsonl'))
         return matches[0] if matches else None
 
+    def live_sessions(self) -> dict[str, str] | None:
+        """`{session_id: handle}` for every session this CLI still holds.
+
+        The handle is whatever name the CLI's own "open this one" command
+        takes, and it is `''` when there is none — regin uses it to take a
+        conversation over, so a session that cannot be opened must be
+        distinguishable from one that can rather than guessed at.
+
+        None means the CLI could not be asked; see `live_session_ids`.
+        """
+        return None
+
+    def live_session_ids(self) -> frozenset[str] | None:
+        """Session ids this CLI reports as running right now, or None if it
+        cannot say.
+
+        The tmux pane registry answers a narrower question — which session owns
+        a pane — and callers have been reading it as "which session is alive".
+        Those diverge for any conversation the CLI hosts off-pane: Claude
+        Code's background sessions run under its own daemon on a private PTY,
+        so they own no pane and are indistinguishable there from a session that
+        exited. Asking the CLI closes that gap for both kinds at once.
+
+        None, not an empty set, is the answer when the CLI is absent or
+        refuses: a caller must be able to tell "nothing is running" from
+        "nobody could be asked", or a probe that fails reads as a session that
+        died.
+        """
+        rows = self.live_sessions()
+        return None if rows is None else frozenset(rows)
+
     def subagent_transcript_paths(self, main_path: str) -> list[str]:
         """Every subagent transcript belonging to the session at `main_path`.
 

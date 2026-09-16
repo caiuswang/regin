@@ -16,7 +16,7 @@ from __future__ import annotations
 from flask import Blueprint, request, jsonify
 
 from lib.auth import require_editor
-from lib.agent_sdk import client, resumable, store, supervisor
+from lib.agent_sdk import client, resumable, store, supervisor, worktree
 from lib.settings import settings
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
@@ -90,10 +90,28 @@ def _resume_target(resume: str) -> tuple[str | None, str | None]:
                           "its session is up")
     if agent_sdk.is_sdk_owned(trace_id):
         raise _BadRequest("that run is still live — stop it before resuming")
-    child = row.get("cli_session_id")
+    child = _resumed_child(resume, row)
     if not child:
         raise _BadRequest("that run never reported a CLI session to resume")
     return child, trace_id
+
+
+def _resumed_child(resume: str, row: dict) -> str | None:
+    """Which of a run's conversations "resume this run" means.
+
+    The id the operator arrived with, whenever that is itself one of the run's
+    children — `find_run` resolved the row through the alias group, so any id
+    that is not the run's own `sdk-…` is one. `agent_runs.cli_session_id` pins
+    the FIRST child forever by design, so reading the column instead reopens
+    the conversation they left behind and strands the one they were reading:
+    it is neither the live child (no composer) nor resumable (its run is now
+    live), which renders as a page with no controls at all.
+
+    The run's own id names no conversation, so it takes the newest child.
+    """
+    if resume != row["trace_id"] and not resume.startswith(_SYNTHETIC_PREFIX):
+        return resume
+    return store.latest_cli_session(row["trace_id"])
 
 
 def _launch_params(payload: dict) -> dict:
@@ -121,6 +139,52 @@ def _launch_params(payload: dict) -> dict:
         "resume": resume,
         "trace_id": trace_id,
     }
+
+
+def _worktree_spec(payload: dict) -> dict | None:
+    """The requested worktree, or `None` for a run in the cwd as it stands.
+
+    Keyed off the branch rather than a separate flag: a worktree with no branch
+    named is not a request this route can serve, so the branch *is* the ask.
+    """
+    spec = payload.get("worktree")
+    if not isinstance(spec, dict):
+        return None
+    raw = spec.get("branch")
+    branch = raw.strip() if isinstance(raw, str) else ""
+    if not branch:
+        return None
+    # Refused rather than clipped like the other identifiers here: this string
+    # is not looked up, it is *created*, so a silently shortened one would put
+    # the operator on a branch nobody named — and leave the one they asked for
+    # nowhere. An over-long base is safe to clip by contrast: it resolves to no
+    # ref and comes back as "unknown base ref".
+    if len(branch) > _ID_MAX:
+        raise _BadRequest(f"branch name is longer than {_ID_MAX} characters")
+    return {"branch": branch, "base": _text(spec, "base", _ID_MAX)}
+
+
+def _worktree_cwd(spec: dict | None, params: dict) -> dict | None:
+    """Create the requested worktree and point the launch at it.
+
+    Refused alongside a resume because `claude --resume` resolves the session
+    id relative to the working directory: a continuation started in a tree the
+    session has never run in finds nothing to continue, and would come up as a
+    silent fresh session instead of an error.
+
+    The anchor for an unset `cwd` is the install's own project root — the same
+    directory the run itself would have inherited from the server process, so
+    the worktree lands beside the repo the operator was implicitly launching in.
+    """
+    if spec is None:
+        return None
+    if params["resume"]:
+        raise _BadRequest("a resumed session cannot move into a new worktree — "
+                          "it resolves its id against the directory it ran in")
+    anchor = params["cwd"] or str(settings.project_root)
+    created = worktree.ensure_worktree(anchor, spec["branch"], spec["base"])
+    params["cwd"] = created["path"]
+    return created
 
 
 def _require_prompt_only_for_one_shot(prompt: str, params: dict) -> None:
@@ -162,6 +226,24 @@ def api_launch_options():
     })
 
 
+@agent_runs_bp.route('/api/agent-runs/worktree-options', methods=['GET'])
+@require_editor
+def api_worktree_options():
+    """The branches and worktree root for one working directory.
+
+    Keyed on `cwd` rather than served with the rest of the launch options
+    because it is per-repo: the sheet's directory menu spans every registered
+    repo, and each answers this differently. A directory that is not a git
+    checkout is a 400 with the reason — the form disables its worktree section
+    on it rather than offering branches it made up.
+    """
+    cwd = (request.args.get('cwd') or '').strip()[:_PATH_MAX]
+    try:
+        return jsonify(worktree.options(cwd or str(settings.project_root)))
+    except worktree.WorktreeRefused as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @agent_runs_bp.route('/api/agent-runs/resumable', methods=['GET'])
 @require_editor
 def api_resumable_sessions():
@@ -199,18 +281,24 @@ def api_launch_agent_run():
     try:
         params = _launch_params(payload)
         _require_prompt_only_for_one_shot(prompt, params)
-    except _BadRequest as exc:
+        created_worktree = _worktree_cwd(_worktree_spec(payload), params)
+    except (_BadRequest, worktree.WorktreeRefused) as exc:
         return jsonify({"error": str(exc)}), 400
+    # Reported on the refusal paths as well as the success one: the tree is
+    # already on disk by now, and an operator told only "refused" would go
+    # looking for a directory nothing mentioned. A retry reuses it.
+    made = {"worktree": created_worktree} if created_worktree else {}
     try:
         trace_id = supervisor.launch(prompt[:_PROMPT_MAX], **params)
     except supervisor.LaunchRefused as exc:
-        return jsonify({"launched": False, "detail": str(exc)})
+        return jsonify({"launched": False, "detail": str(exc), **made})
     except ImportError:
         return jsonify({
             "launched": False,
             "detail": 'claude-agent-sdk not installed (pip install -e ".[agent-sdk]")',
+            **made,
         })
-    body = {"launched": True, "trace_id": trace_id}
+    body = {"launched": True, "trace_id": trace_id, **made}
     # A mode the operator picked can make gating inert for this run alone, which
     # the settings-keyed report at launch would not have caught.
     warning = settings.agent_sdk.shadowed_gating(params["permission_mode"])

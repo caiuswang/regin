@@ -7,7 +7,8 @@
 import { computed } from 'vue'
 import { spanLabel, fmtDuration, fmtTokens, fmtCost, mcpParts } from '../utils/traceFormatters.js'
 import { barColor } from '../utils/spanColors.js'
-import { isAskSpan } from '../utils/liveRows.js'
+import { isAskSpan, runStateOf } from '../utils/liveRows.js'
+import SpanRunningTag from './SpanRunningTag.vue'
 import Button from './ui/Button.vue'
 
 const props = defineProps({
@@ -22,6 +23,9 @@ const props = defineProps({
   // Trace start in epoch ms, so the row can render a t+m:ss offset.
   traceStart: { type: Number, default: 0 },
   showCost: { type: Boolean, default: true },
+  // In-flight state rolled up from this node's collapsed subtree (empty while
+  // it is expanded — the descendant row carries its own marker then).
+  foldedRunState: { type: String, default: '' },
 })
 const emit = defineEmits(['select', 'toggle'])
 
@@ -48,6 +52,8 @@ const barWidth = computed(() => {
   return `${pct}%`
 })
 const indent = computed(() => `${Math.min(props.depth, 5) * 24}px`)
+
+const runState = computed(() => runStateOf(props.span))
 
 // Status/kind badge shown after the meta chips — mirrors the pill logic from
 // the source design, keyed off regin's real span names/attributes.
@@ -110,7 +116,8 @@ const pill = computed(() => {
       <div class="absolute inset-y-0 w-0.5 bg-slate-200"></div>
       <div
         class="relative z-[1] mt-3 h-3 w-3 rounded-full border-2 border-white ring-1 ring-slate-300"
-        :class="dotColor"
+        :class="[dotColor, runState ? 'spine-dot-run' : '']"
+        :data-run-state="runState || undefined"
       ></div>
     </div>
 
@@ -122,6 +129,15 @@ const pill = computed(() => {
              align because the minimum holds the column. -->
         <span class="min-w-[3.5rem] shrink-0 font-mono text-[10.5px] tabular-nums text-slate-400">t+{{ relStartTxt }}</span>
         <span class="min-w-0 truncate text-[13.5px] font-semibold text-slate-800">{{ label }}</span>
+        <!-- The second desktop projection of the same spans: a reader who
+             switches view mode must not lose the one row still moving. -->
+        <SpanRunningTag :span="span" class="shrink-0" />
+        <SpanRunningTag
+          v-if="!runState && foldedRunState"
+          folded
+          :state="foldedRunState"
+          class="shrink-0"
+        />
         <Button
           v-if="hasKids"
           variant="ghost"

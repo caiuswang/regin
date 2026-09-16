@@ -97,7 +97,17 @@ function componentStack(el) {
  */
 function revealHints(el) {
   const hints = []
-  if (el.closest('details')) hints.push(`--reveal 'open-details'`)
+
+  // A dialog is closed on a fresh load and nothing in the DOM says what
+  // reopens it — the trigger is a keystroke, a double-click, or a control in a
+  // row that is itself off-screen. So the surface declares its own way back in
+  // and grab just relays it; without this the command measures a closed
+  // overlay and reports "not found" for an element you were pointing at.
+  // It goes FIRST: a <details> inside the dialog cannot be opened before the
+  // dialog exists.
+  const declared = el.closest('[data-grab-reveal]')
+  const entry = declared && declared.getAttribute('data-grab-reveal')
+  if (entry && !entry.includes(`'`)) hints.push(`--reveal 'click:${entry}'`)
 
   // Match the tab that owns *this* panel, not whichever tab happens to be
   // selected elsewhere on the page.
@@ -108,8 +118,14 @@ function revealHints(el) {
     : (panel ? document.querySelector('[role="tab"][aria-selected="true"]') : null)
   const tabText = tab && (tab.textContent || '').trim()
   if (tabText && !tabText.includes('"')) {
-    hints.unshift(`--reveal 'click:button:has-text("${tabText}")'`)
+    hints.push(`--reveal 'click:button:has-text("${tabText}")'`)
   }
+
+  // Last, and the reason every step here is pushed in outside-in order: a
+  // <details> can only be opened once the dialog and the tab panel holding it
+  // are on screen.
+  if (el.closest('details')) hints.push(`--reveal 'open-details'`)
+
   return hints
 }
 
@@ -168,6 +184,7 @@ async function copy(textToCopy) {
 export function installGrab() {
   let armed = false
   let target = null
+  const pointer = { x: -1, y: -1 }
 
   const box = document.createElement('div')
   box.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;'
@@ -222,14 +239,21 @@ export function installGrab() {
       e.preventDefault()
       armed = !armed
       document.body.style.cursor = armed ? 'crosshair' : ''
-      if (!armed) clear()
-      else flash(`grab armed — click an element (Esc to cancel)`)
+      if (!armed) { clear(); return }
+      // Arming is a keystroke, so the pointer is already parked on whatever you
+      // meant to grab and no mousemove follows it — seed the highlight from the
+      // last known position instead of waiting for one.
+      const under = pointer.x >= 0 && document.elementFromPoint(pointer.x, pointer.y)
+      if (under) { target = under; paint(under) }
+      flash(`grab armed — click an element (Esc to cancel)`)
       return
     }
     if (e.key === 'Escape' && armed) { e.preventDefault(); disarm() }
   })
 
   window.addEventListener('mousemove', (e) => {
+    pointer.x = e.clientX
+    pointer.y = e.clientY
     if (!armed) return
     const el = document.elementFromPoint(e.clientX, e.clientY)
     if (!el || el === target) return
@@ -239,11 +263,21 @@ export function installGrab() {
 
   // Capture phase: the app's own click handlers must not fire while grabbing.
   window.addEventListener('click', async (e) => {
-    if (!armed || !target) return
+    if (!armed) return
     e.preventDefault()
     e.stopPropagation()
-    const el = target
+    // The click carries its own coordinates, so the element being copied never
+    // depends on a mousemove having landed first — arming with the pointer
+    // already still meant an unset target and a click that fell through to the
+    // page. A keyboard-synthesised click (detail 0) reports (0, 0), which would
+    // resolve to whatever sits in the page corner.
+    const el = (e.detail > 0 && document.elementFromPoint(e.clientX, e.clientY))
+      || target || e.target
     disarm()
+    if (!el || el.nodeType !== 1) {
+      flash('grab: nothing under the cursor', true)
+      return
+    }
     const ok = await copy(buildPayload(el))
     flash(ok ? `copied ${describe(el)} — paste into your agent`
              : 'copy failed — see console', !ok)

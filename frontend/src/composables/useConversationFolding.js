@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 // All expand/collapse state for the conversation spine, in one place. Each
 // concern is a Set of span_ids plus is*/toggle* helpers; the orchestrator and
@@ -8,19 +8,23 @@ import { ref, computed } from 'vue'
 //   onLoadSubtree(spanId)  — lazily pull a span's collapsed subtree
 //   onExpandPrompt(spanId) — load-subtree + fetch missing content for a prompt
 // (passed in from the orchestrator, which owns the emit + content fetch).
-export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, onExpandPrompt }) {
+export function useConversationFolding({ childrenOf, onLoadSubtree, onExpandPrompt }) {
   // Prompts are expanded by default — the conversation tab reads like a
   // continuous document; the auto-expand watcher (orchestrator) seeds this.
   const expandedPromptIds = ref(new Set())
+  // Turns the reader closed by hand. A second set rather than the absence of
+  // the first, because a turn can be open for two different reasons — the
+  // reader opened it, or the detail mode / a running span opened it for them —
+  // and only an explicit collapse closes the second kind. With one set, folding
+  // a turn that was open by default was a silent no-op.
+  const collapsedPromptIds = ref(new Set())
   const expandedPromptBodyIds = ref(new Set())
   // Bash spans collapse their stdout/stderr by default; Edit/Write/MultiEdit
   // diffs and ToolSearch attribute cards do the same — keep the spine scannable.
   const expandedBashIds = ref(new Set())
   const expandedDiffIds = ref(new Set())
   const expandedToolSearchIds = ref(new Set())
-  // Every subagent folds its whole subtree by default; same for a
-  // `tool.Workflow` launch (its re-parented `subagent.start` markers).
-  const expandedAgents = ref(new Set())
+  // A `tool.Workflow` launch folds its re-parented `subagent.start` markers.
   const expandedWorkflows = ref(new Set())
   // A `/rewind` marker hides its discarded branch by default — the abandoned
   // prompt + work collapse behind the rose divider; expanding pulls the subtree.
@@ -29,34 +33,6 @@ export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, on
   // collapse independently on the same span).
   const expandedAgentPrompts = ref(new Set())
   const expandedAgentResults = ref(new Set())
-
-  // ── Agents ──────────────────────────────────────────────────
-  function isAgentExpanded(spanId) { return expandedAgents.value.has(spanId) }
-  function toggleAgentExpanded(spanId) {
-    const next = new Set(expandedAgents.value)
-    if (next.has(spanId)) next.delete(spanId)
-    else { next.add(spanId); onLoadSubtree(spanId) }
-    expandedAgents.value = next
-  }
-  // Only agents that actually have captured descendants are foldable; many
-  // session `tool.Agent` launches record just the header with no child spans.
-  function agentHasChildren(spanId) { return childrenOf(spanId).length > 0 }
-  const foldableAgentIds = computed(() =>
-    (getSpans() || [])
-      .filter((s) => s.name === 'subagent.start' && agentHasChildren(s.span_id))
-      .map((s) => s.span_id),
-  )
-  const allAgentsExpanded = computed(() =>
-    foldableAgentIds.value.length > 0
-    && foldableAgentIds.value.every((id) => expandedAgents.value.has(id)))
-  function expandAllAgents() {
-    const next = new Set(expandedAgents.value)
-    for (const id of foldableAgentIds.value) {
-      if (!next.has(id)) { next.add(id); onLoadSubtree(id) }
-    }
-    expandedAgents.value = next
-  }
-  function collapseAllAgents() { expandedAgents.value = new Set() }
 
   // ── Rewind markers ──────────────────────────────────────────
   function isRewindExpanded(spanId) { return expandedRewinds.value.has(spanId) }
@@ -82,22 +58,27 @@ export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, on
 
   // ── Prompts ─────────────────────────────────────────────────
   function isPromptExpanded(spanId) { return expandedPromptIds.value.has(spanId) }
+  function isPromptCollapsed(spanId) { return collapsedPromptIds.value.has(spanId) }
   function isPromptBodyExpanded(spanId) { return expandedPromptBodyIds.value.has(spanId) }
-  function togglePromptExpanded(spanId, forceOpen = false) {
-    if (forceOpen) {
+  // `open` is the state the caller WANTS, not a flip of set membership: a turn
+  // the detail mode opened by default is not in `expandedPromptIds`, so a flip
+  // read off that set would re-open it instead of closing it. Only the caller
+  // knows what is on screen.
+  function setPromptExpanded(spanId, open) {
+    if (open) {
+      collapsedPromptIds.value.delete(spanId)
       if (!expandedPromptIds.value.has(spanId)) {
         expandedPromptIds.value.add(spanId)
         onExpandPrompt(spanId)
       }
       return
     }
-    if (expandedPromptIds.value.has(spanId)) {
-      expandedPromptIds.value.delete(spanId)
-      expandedPromptBodyIds.value.delete(spanId)
-    } else {
-      expandedPromptIds.value.add(spanId)
-      onExpandPrompt(spanId)
-    }
+    collapsedPromptIds.value.add(spanId)
+    expandedPromptIds.value.delete(spanId)
+    expandedPromptBodyIds.value.delete(spanId)
+  }
+  function togglePromptExpanded(spanId, forceOpen = false) {
+    setPromptExpanded(spanId, forceOpen || !expandedPromptIds.value.has(spanId))
   }
   function togglePromptBodyExpanded(spanId) {
     if (expandedPromptBodyIds.value.has(spanId)) expandedPromptBodyIds.value.delete(spanId)
@@ -136,12 +117,11 @@ export function useConversationFolding({ getSpans, childrenOf, onLoadSubtree, on
   }
 
   return {
-    expandedPromptIds,
-    isAgentExpanded, toggleAgentExpanded, agentHasChildren,
-    foldableAgentIds, allAgentsExpanded, expandAllAgents, collapseAllAgents,
+    expandedPromptIds, collapsedPromptIds,
     isRewindExpanded, toggleRewindExpanded,
     isWorkflowExpanded, toggleWorkflowExpanded, workflowAgentCount,
-    isPromptExpanded, isPromptBodyExpanded, togglePromptExpanded, togglePromptBodyExpanded,
+    isPromptExpanded, isPromptCollapsed, isPromptBodyExpanded,
+    setPromptExpanded, togglePromptExpanded, togglePromptBodyExpanded,
     bashExpanded, toggleBashExpanded,
     diffExpanded, toggleDiffExpanded,
     toolSearchExpanded, toggleToolSearchExpanded,

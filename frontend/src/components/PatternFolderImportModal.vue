@@ -296,7 +296,7 @@ const folderResultGlyph = {
 .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.4);
+    background: rgba(var(--scrim-rgb), 0.4);
     backdrop-filter: blur(4px);
     z-index: 50;
     display: flex;

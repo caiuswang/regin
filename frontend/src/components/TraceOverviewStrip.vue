@@ -17,11 +17,6 @@ const props = defineProps({
   selectedTurnUuid: { type: [String, null], default: null },
   // Set of span_ids overlapping the selected turn (cross-highlight dimming).
   spanIdsInSelectedTurn: { type: Object, default: () => new Set() },
-  turns: { type: Array, default: null },
-  // Workflow runs have no user-prompt turns: their turn_usage rows are the
-  // subagents' API responses, so the turns fallback below would flag every
-  // agent turn as a prompt.
-  isWorkflow: { type: Boolean, default: false },
   traceStart: { type: Number, default: 0 },
   traceEnd: { type: Number, default: 0 },
   traceDuration: { type: Number, default: 0 },
@@ -72,21 +67,35 @@ const KIND_BAR = Object.fromEntries(KINDS.map(k => [k.key, k.bar]))
 // of that vocabulary. Anything unrecognised falls to 'other' rather than being
 // forced into a bucket, so a new span family shows up as visibly unclassified
 // instead of silently miscolored.
-const SYSTEM_PREFIXES = ['harness.', 'cwd.', 'instructions.', 'session.', 'permission.', 'compact.']
+const EXACT_KINDS = {
+  prompt: 'prompt',
+  'rule.check': 'check',
+  'file.edit': 'write',
+  'plan.edit': 'write',
+  'tool.Bash': 'shell',
+  'tool.Write': 'write',
+  'tool.Edit': 'write',
+  'tool.MultiEdit': 'write',
+  'tool.Agent': 'agent',
+  'tool.Task': 'agent',
+}
+
+// First match wins, so the order is the rule: the broad `tool.` catch-all has
+// to stay last or it would swallow every tool name above it.
+const PREFIX_KINDS = [
+  ['subagent', 'agent'], ['workflow.agent', 'agent'],
+  ['assistant', 'model'],
+  ['harness.', 'system'], ['cwd.', 'system'], ['instructions.', 'system'],
+  ['session.', 'system'], ['permission.', 'system'], ['compact.', 'system'],
+  ['skill.', 'read'], ['memory.', 'read'], ['tool.', 'read'],
+]
 
 function spanKind(name) {
   if (!name) return 'other'
-  if (name === 'prompt') return 'prompt'
-  if (name === 'rule.check') return 'check'
-  if (name === 'file.edit' || name === 'plan.edit') return 'write'
-  if (name.startsWith('subagent') || name.startsWith('workflow.agent')) return 'agent'
-  if (name.startsWith('assistant')) return 'model'
-  if (SYSTEM_PREFIXES.some(p => name.startsWith(p))) return 'system'
-  if (name === 'tool.Bash') return 'shell'
-  if (name === 'tool.Write' || name === 'tool.Edit' || name === 'tool.MultiEdit') return 'write'
-  if (name === 'tool.Agent' || name === 'tool.Task') return 'agent'
-  if (name.startsWith('skill.') || name.startsWith('memory.') || name.startsWith('tool.')) return 'read'
-  return 'other'
+  // hasOwn, not a bare lookup: a span literally named `constructor` would
+  // otherwise resolve up the prototype chain and return a function.
+  if (Object.hasOwn(EXACT_KINDS, name)) return EXACT_KINDS[name]
+  return PREFIX_KINDS.find(([prefix]) => name.startsWith(prefix))?.[1] || 'other'
 }
 
 // A very long session can hold thousands of spans; past a few hundred bars the
@@ -120,10 +129,6 @@ function barColor(span) {
   return KIND_BAR[spanKind(span?.name)] || 'bg-slate-400'
 }
 
-function turnStartMs(turn) {
-  return turn && turn.timestamp ? new Date(turn.timestamp).getTime() : null
-}
-
 function offsetPct(startTime) {
   const start = new Date(startTime).getTime()
   return ((start - props.traceStart) / props.traceDuration) * 100
@@ -151,23 +156,17 @@ const timelineTicks = computed(() => {
 // cadence changed but not which turn a burst belonged to, which is the only
 // reason to look at turn boundaries in the first place.
 //
-// Driven off the PROMPT SPANS, not the turn_usage rows. A "turn" here means
-// "the user said something", which is what the reader is orienting by; the
-// turn_usage table is a per-API-response billing record that is often still
-// null on a live session, so keying off it left the strip with no flags at all
-// on exactly the sessions people watch most.
+// Prompt spans are the ONLY source, with no fallback. `turn_usage` rows are
+// per-API-response billing records, never user prompts, so standing in for a
+// missing prompt span invents turns rather than recovering them: a session
+// whose tree failed to load once painted 212 of them, each captioned "user
+// prompt". No prompt spans loaded means no flags — the honest empty.
 const turnBoundaries = computed(() => {
   if (!props.traceStart || !props.traceDuration) return []
-  const prompts = props.treeNodes
+  return props.treeNodes
     .filter(n => n?.data?.name === 'prompt' && n.data.start_time)
     .map(n => ({ ms: new Date(n.data.start_time).getTime(), node: n }))
-  const source = prompts.length
-    ? prompts
-    : props.isWorkflow
-      ? []
-      : (props.turns || []).map(t => ({ ms: turnStartMs(t), node: null }))
-  return source
-    .filter(t => t.ms != null && t.ms >= props.traceStart && t.ms <= props.traceEnd)
+    .filter(t => t.ms >= props.traceStart && t.ms <= props.traceEnd)
     .sort((a, b) => a.ms - b.ms)
     .map((t, i) => ({
       num: i + 1,

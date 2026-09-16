@@ -101,3 +101,16 @@ def test_gate_key_refuses_an_unserializable_input():
 def test_resolved_with_no_text_or_tool_use_id_supersedes_nothing():
     span = {'span_id': 'resp-x', 'name': 'assistant_response', 'trace_id': 's'}
     assert pending_id_for_resolved(span, {'turn_uuid': 'x'}) == []
+
+
+def test_subagent_marker_launch_link_supersedes_nothing():
+    """The `subagent.start` marker names the `tool.Agent` call that launched it
+    under `launch_tool_use_id`, NOT `tool_use_id`. The distinction is the whole
+    reason for the name: keyed on the real attribute, the marker would retire
+    the launching call's `pending-…` placeholder — killing the running Agent
+    card the instant its subagent starts, while the subagent is still working.
+    """
+    span = {'span_id': 'start-ag123', 'name': 'subagent.start', 'trace_id': 's'}
+    attrs = {'agent_id': 'ag123', 'child_trace_id': 'sa-ag123',
+             'launch_tool_use_id': 'toolu_01CBd2'}
+    assert pending_id_for_resolved(span, attrs) == []

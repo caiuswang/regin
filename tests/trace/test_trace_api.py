@@ -49,12 +49,14 @@ def _seed(db_path, rows):
             conn.execute(
                 """INSERT INTO session_spans
                    (trace_id, span_id, parent_id, name, kind,
-                    start_time, end_time, duration_ms, attributes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    start_time, end_time, duration_ms, attributes,
+                    status_code)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (r['trace_id'], r['span_id'], r.get('parent_id'),
                  r['name'], 'internal',
                  r['start_time'], r.get('end_time'),
-                 r.get('duration_ms'), json.dumps(r.get('attributes', {}))),
+                 r.get('duration_ms'), json.dumps(r.get('attributes', {})),
+                 r.get('status_code', 'UNSET')),
             )
         conn.commit()
     finally:
@@ -62,7 +64,8 @@ def _seed(db_path, rows):
 
 
 def _seed_session_row(db_path, trace_id, *, origin='session', is_test=0,
-                      agent_type=None, title=None, last_seen='2026-01-01T00:00:00'):
+                      agent_type=None, title=None, last_seen='2026-01-01T00:00:00',
+                      cost_usd=None):
     """Minimal `sessions` row so `_session_summary` / the list endpoint see it.
 
     `is_test` defaults to 0 so the row matches the list endpoint's default
@@ -74,10 +77,11 @@ def _seed_session_row(db_path, trace_id, *, origin='session', is_test=0,
     try:
         conn.execute(
             "INSERT INTO sessions "
-            "(trace_id, started_at, last_seen, origin, is_test, agent_type, title) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(trace_id, started_at, last_seen, origin, is_test, agent_type, "
+            "title, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (trace_id, '2026-01-01T00:00:00', last_seen,
-             origin, is_test, agent_type, title))
+             origin, is_test, agent_type, title, cost_usd))
         conn.commit()
     finally:
         conn.close()
@@ -728,6 +732,62 @@ def test_span_content_returns_decoded_attributes(client, trace_db):
     assert body['attributes'] == {'text': 'hello world', 'image_count': 0}
 
 
+def test_span_content_serves_the_absorbed_slash_command_expansion(
+        client, trace_db):
+    """A slash-command prompt's anchor stores only the bare `/command` echo;
+    the submitted text lives on the PENDING `promptlive-` placeholder and the
+    serve-time merge moves it onto the anchor. This endpoint reads ONE row, so
+    it has to replay that absorb — the client's content cache overlays what it
+    returns on top of the `/map` projection, so a raw answer here REPLACED the
+    full prompt already on screen with the command name alone."""
+    trace_id = 'span-content-slash'
+    _seed(trace_db, [
+        {'trace_id': trace_id, 'span_id': 'promptlive-abc', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'status_code': 'PENDING',
+         'attributes': {'text': '/goal fix the parser\n\nwith this code'}},
+        {'trace_id': trace_id, 'span_id': 'prompt-u1', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:00', 'status_code': 'OK',
+         'attributes': {'text': '/goal', 'slash_command': '/goal'}},
+    ])
+    body = client.get(
+        f'/api/sessions/{trace_id}/spans/prompt-u1/content').get_json()
+    assert body['attributes']['text'] == '/goal fix the parser\n\nwith this code'
+    # The rest of the anchor's own bag survives the transfer.
+    assert body['attributes']['slash_command'] == '/goal'
+
+
+def test_span_content_leaves_an_ordinary_prompt_alone(client, trace_db):
+    """No placeholder to absorb: the row is served exactly as stored."""
+    trace_id = 'span-content-plain'
+    _seed(trace_db, [
+        {'trace_id': trace_id, 'span_id': 'prompt-u1', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:00', 'status_code': 'OK',
+         'attributes': {'text': 'just a typed prompt'}},
+    ])
+    body = client.get(
+        f'/api/sessions/{trace_id}/spans/prompt-u1/content').get_json()
+    assert body['attributes'] == {'text': 'just a typed prompt'}
+
+
+def test_span_content_still_serves_a_live_placeholder_its_own_text(
+        client, trace_db):
+    """The in-flight placeholder is what the live view reads before its anchor
+    lands. The absorb consumes it, so the endpoint must fall back to its row
+    rather than answer with nothing."""
+    trace_id = 'span-content-live'
+    _seed(trace_db, [
+        {'trace_id': trace_id, 'span_id': 'promptlive-abc', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01', 'status_code': 'PENDING',
+         'attributes': {'text': '/goal in flight, still typing'}},
+        {'trace_id': trace_id, 'span_id': 'prompt-u1', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:00', 'status_code': 'OK',
+         'attributes': {'text': '/goal'}},
+    ])
+    body = client.get(
+        f'/api/sessions/{trace_id}/spans/promptlive-abc/content').get_json()
+    assert body['attributes']['text'] == '/goal in flight, still typing'
+
+
 def test_span_content_404_when_missing(client, trace_db):
     """Unknown span ids return a 404, not a crash. Pins behaviour
     across the ORM migration."""
@@ -913,6 +973,19 @@ def test_sessions_workflow_hide_count_respects_other_filters(client, trace_db):
     assert body['workflow_hidden_count'] == 1   # only run_x, not run_y
 
 
+def test_sessions_rows_carry_cost_usd(client, trace_db):
+    """Each row carries the stored `sessions.cost_usd`, distinguishing a priced
+    session from one regin has no usage for. Omitting the column made every row
+    read as `undefined` — indistinguishable from NULL — so the feature ledger's
+    declare-a-session picker labelled every candidate 'no usage'."""
+    _seed_session_row(trace_db, 'priced', cost_usd=1.25,
+                      last_seen='2026-01-01T00:00:02')
+    _seed_session_row(trace_db, 'unpriced', last_seen='2026-01-01T00:00:01')
+    rows = {it['trace_id']: it for it in client.get('/api/sessions').get_json()['items']}
+    assert rows['priced']['cost_usd'] == 1.25
+    assert rows['unpriced']['cost_usd'] is None
+
+
 def test_sessions_rows_carry_origin_and_is_workflow(client, trace_db):
     """Each row exposes the orthogonal axes: `origin` (defaulting to 'session'
     for NULL legacy rows) and the derived `is_workflow` boolean. agent_type is
@@ -988,3 +1061,31 @@ def test_graft_orphans_pending_placeholder_anchors_its_own_turn_not_prior():
     assert out['promptlive-x']['parent_id'] is None
     # the in-flight tool nests under the placeholder (its turn)
     assert out['tool-new']['parent_id'] == 'promptlive-x'
+
+
+def test_sessions_rows_carry_the_runner_phase_only_for_owned_runs(
+        client, trace_db, monkeypatch):
+    """`runner_phase` is the verdict of a runner regin LAUNCHED, and its
+    absence is the signal a row falls back to the recency heuristic.
+
+    Recency cannot see an agent parked at the prompt — it emits no spans, so
+    the list aged it out to `inactive` while the switcher, which does ask the
+    runner, called it alive. Serving the runner's own answer per row is cheap
+    (a dict lookup under a lock, no query), so only rows it can answer for
+    carry it.
+    """
+    _seed_origin_mix(trace_db)
+    from web.blueprints.trace import sessions as S
+    monkeypatch.setattr(
+        S, '_owned_run_phase', lambda tid: 'idle' if tid == 'sess_a' else None)
+
+    rows = {it['trace_id']: it for it in client.get('/api/sessions').get_json()['items']}
+    assert rows['sess_a']['runner_phase'] == 'idle'
+    assert rows['sess_b']['runner_phase'] is None
+
+
+def test_sessions_runner_phase_survives_an_unimportable_sdk(client, trace_db):
+    """The SDK tier is optional and gated off by default — a session list must
+    not depend on it being importable."""
+    rows = client.get('/api/sessions').get_json()['items']
+    assert all('runner_phase' in it for it in rows)

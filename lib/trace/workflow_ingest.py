@@ -1672,6 +1672,10 @@ def _stamp_parent_link(run_ref: RunRef, workflow_name: str | None,
         _reparent_session_subagents(
             conn, parent_trace_id, parent_span_id, agent_ids)
         conn.commit()
+        # All three writes above are in-place attribute/parent rewrites, which
+        # leave every read-side identifier untouched.
+        from lib.trace.trace_service import projection_cache
+        projection_cache.invalidate((parent_trace_id, run_ref.run_id))
     finally:
         conn.close()
 

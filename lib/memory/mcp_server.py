@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 
 # The server is spawned by the agent harness with an arbitrary cwd; make
 # `lib.*` importable the same way `cli/regin.py` does.
@@ -47,6 +48,20 @@ def _nav():
     return tree_nav
 
 
+def _scope(requested: str) -> Optional[str]:
+    """Resolve a tool's `scope` argument against `agent_memory.scope_policy`.
+
+    Deferred for the same reason as `_nav()`: reaching `lib.memory.scoping`
+    executes `lib/memory/__init__.py`.
+
+    The server's cwd is the repo the harness launched in, which is the signal
+    the policy needs; a caller that wants another repo — or every repo, via
+    `"all"` — says so explicitly and is passed through untouched.
+    """
+    from lib.memory.scoping import resolve_tool_scope
+    return resolve_tool_scope(requested, os.getcwd())
+
+
 @mcp.tool()
 def recall(query: str, top_k: int = 5, scope: str = "",
            reinforce: bool = True, brief: bool = True) -> str:
@@ -68,8 +83,9 @@ def recall(query: str, top_k: int = 5, scope: str = "",
         query: What you want experience about. Keyword-style works best
             ("playwright stale backend", "schema drift alembic").
         top_k: Max memories to return (default 5).
-        scope: Optional repo scope filter like "repo:regin"; empty
-            searches every scope.
+        scope: Optional repo scope filter like "repo:regin". Empty
+            applies the configured scope policy (under `per-repo`,
+            this repo plus `global`); pass "all" to search every scope.
         reinforce: Whether this pull counts as usage. A genuine pull
             (default) bumps the hit's recall_count/last_recalled — the
             usefulness signal that feeds quality ranking and the forget
@@ -86,7 +102,7 @@ def recall(query: str, top_k: int = 5, scope: str = "",
         or a note that nothing matched. The originating session id is carried
         only when `brief=False`; in brief mode read it back with `memory_read`.
     """
-    return _nav().render_recall(query, top_k=top_k, scope=scope,
+    return _nav().render_recall(query, top_k=top_k, scope=_scope(scope),
                                 reinforce=reinforce, brief=brief)
 
 
@@ -122,13 +138,14 @@ def index_root(scope: str = "") -> str:
     a long-tail topic not yet classified).
 
     Args:
-        scope: Optional repo scope filter like "repo:regin"; empty counts
+        scope: Optional repo scope filter like "repo:regin". Empty
+            applies the configured scope policy; pass "all" to count
             memories across every scope.
 
     Returns:
         Each root as `id · label (N sub, M mem)` with its router blurb.
     """
-    return _nav().render_index_root(scope)
+    return _nav().render_index_root(_scope(scope))
 
 
 @mcp.tool()
@@ -138,13 +155,14 @@ def index_expand(node_id: str, scope: str = "") -> str:
 
     Args:
         node_id: A topic node id from `index_root` / a prior `index_expand`.
-        scope: Optional repo scope filter like "repo:regin".
+        scope: Optional repo scope filter like "repo:regin";
+            empty applies the scope policy, "all" opts out.
 
     Returns:
         The node's blurb + subtree memory count, then each child as a card.
         A leaf node says so and points you at `index_fetch`.
     """
-    return _nav().render_index_expand(node_id, scope)
+    return _nav().render_index_expand(node_id, _scope(scope))
 
 
 @mcp.tool()
@@ -166,7 +184,8 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "",
     Args:
         node_id: The topic node to read (its subtree's memories are listed).
         top_k: Max memory titles to list (default 10, capped at 50).
-        scope: Optional repo scope filter like "repo:regin".
+        scope: Optional repo scope filter like "repo:regin";
+            empty applies the scope policy, "all" opts out.
         reinforce: Whether this fetch counts as wiki usage. A genuine
             navigation pull (default) bumps the wiki's exposure counter;
             pass False for AUDIT / curation / eval sweeps so surveying the
@@ -175,7 +194,7 @@ def index_fetch(node_id: str, top_k: int = 10, scope: str = "",
     Returns:
         `## wiki`, `## source refs`, `## memories` sections of pointers.
     """
-    return _nav().render_index_fetch(node_id, top_k=top_k, scope=scope,
+    return _nav().render_index_fetch(node_id, top_k=top_k, scope=_scope(scope),
                                      reinforce=reinforce)
 
 

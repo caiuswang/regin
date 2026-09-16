@@ -48,6 +48,7 @@ dir so the user scan is hermetic.
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import types
@@ -94,6 +95,21 @@ def tree(tmp_path, monkeypatch):
 
 def _by_name(rows):
     return {r["name"]: r for r in rows}
+
+
+def _write_command_span(trace_id: str, span_id: str, start: str,
+                        command_name: str) -> None:
+    """A `harness.local_command` span, as the transcript ingest records one."""
+    from lib.orm.engine import get_connection
+
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO session_spans (trace_id, span_id, name, start_time, "
+            "attributes) VALUES (?, ?, ?, ?, ?)",
+            (trace_id, span_id, "harness.local_command", start,
+             json.dumps({"kind": "local_command",
+                         "command_name": command_name})))
+        conn.commit()
 
 
 def test_enumerates_project_and_user(tree):
@@ -445,6 +461,106 @@ def test_sdk_empty_result_falls_back_to_scan(tree, monkeypatch):
     _stub_sdk(monkeypatch, [])
     names = _by_name(commands.list_session_commands("t1"))
     assert names.keys() == {"deploy", "spec:create", "lint", "userskill"}
+
+
+# ── /reload-skills, /reload-plugins bust the cache ───────────
+#
+# The catalog is fixed for the life of a session EXCEPT when the operator
+# reloads it, and a 5-minute TTL is not what should notice: a skill or plugin
+# MCP server installed and reloaded has to show up in the composer's menu on
+# the next `/`, not five minutes later. The marker is the newest reload span
+# in the asking session; a value past the one the cache entry was filled at
+# discards it.
+
+
+def _marker(monkeypatch, value):
+    """Force what `_reload_marker` reports, without a DB."""
+    monkeypatch.setattr(commands, "_reload_marker", lambda trace_id: value)
+
+
+def test_reload_busts_the_cache_inside_the_ttl(tree, monkeypatch):
+    calls = _stub_sdk(monkeypatch)
+    _marker(monkeypatch, "")
+    commands.list_session_commands("t1")
+    commands.list_session_commands("t1")
+    assert len(calls) == 1                    # warm cache, no second handshake
+
+    _marker(monkeypatch, "2026-09-02T17:53:40")
+    commands.list_session_commands("t1")
+    assert len(calls) == 2                    # the reload re-handshook
+    commands.list_session_commands("t1")
+    assert len(calls) == 2                    # and refilled the cache
+
+    _marker(monkeypatch, "2026-09-02T18:10:00")
+    commands.list_session_commands("t1")
+    assert len(calls) == 3                    # a SECOND reload busts it again
+
+
+def test_older_marker_never_drags_the_cache_back(tree, monkeypatch):
+    """Two sessions share a root; the one that never reloaded must not
+    re-handshake on every alternating request."""
+    calls = _stub_sdk(monkeypatch)
+    _marker(monkeypatch, "2026-09-02T17:53:40")
+    commands.list_session_commands("t1")
+    assert len(calls) == 1
+
+    _marker(monkeypatch, "")                  # sibling session, no reload
+    commands.list_session_commands("t2")
+    _marker(monkeypatch, "2026-09-02T17:00:00")   # an older one
+    commands.list_session_commands("t2")
+    assert len(calls) == 1
+
+
+def test_reload_retries_a_failed_handshake(tree, monkeypatch):
+    """The 30s failure TTL must not keep answering from the degraded scan
+    after the operator reloaded — the reload is the retry signal."""
+    calls: list[str] = []
+    healthy = False
+
+    async def _flaky(root):
+        calls.append(root)
+        if not healthy:
+            raise RuntimeError("no claude binary")
+        return [dict(entry) for entry in _SDK_ENTRIES]
+
+    monkeypatch.setattr(commands, "_server_info_commands", _flaky)
+    commands._sdk_cache.clear()
+    _marker(monkeypatch, "")
+    assert _by_name(commands.list_session_commands("t1")).keys() == {
+        "deploy", "spec:create", "lint", "userskill"}      # scan fallback
+    commands.list_session_commands("t1")
+    assert len(calls) == 1                                 # negative cache held
+
+    healthy = True
+    _marker(monkeypatch, "2026-09-02T17:53:40")
+    assert "help" in _by_name(commands.list_session_commands("t1"))
+    assert len(calls) == 2
+
+
+def test_reload_marker_reads_the_session_span(tree, tmp_db, monkeypatch):
+    """The real marker: newest `harness.local_command` reload in the session."""
+    _write_command_span("t1", "cmd-1", "2026-09-02T17:50:26", "/reload-plugins")
+    _write_command_span("t1", "cmd-2", "2026-09-02T17:53:40", "/reload-skills")
+    _write_command_span("t1", "cmd-3", "2026-09-02T17:55:00", "/clear")
+    _write_command_span("t2", "cmd-4", "2026-09-02T18:00:00", "/reload-plugins")
+    assert commands._reload_marker("t1") == "2026-09-02T17:53:40"
+    assert commands._reload_marker("t2") == "2026-09-02T18:00:00"
+    assert commands._reload_marker("t3") == ""     # session that never reloaded
+    assert commands._reload_marker("") == ""
+
+
+def test_reload_marker_accepts_the_unslashed_spelling(tree, tmp_db):
+    _write_command_span("t9", "cmd-9", "2026-09-02T19:00:00", "reload-skills")
+    assert commands._reload_marker("t9") == "2026-09-02T19:00:00"
+
+
+def test_reload_marker_degrades_to_no_reload(tree, monkeypatch):
+    """A DB that will not answer must not break a read-only convenience list."""
+    def _boom():
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(commands, "SessionLocal", _boom)
+    assert commands._reload_marker("t1") == ""
 
 
 # ── the handshake body itself, against a fake SDK module ─────

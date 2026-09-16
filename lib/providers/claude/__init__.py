@@ -185,6 +185,60 @@ class ClaudeProvider(AgentProvider):
     def transcript_projects_dir(self) -> Path:
         return self._path("transcript_projects_dir", Path.home() / ".claude" / "projects")
 
+    def live_sessions(self) -> dict[str, str] | None:
+        """`claude agents --json` — every session id the CLI still HOLDS.
+
+        Holds, not "is mid-turn": a parked conversation reports
+        `status: idle, state: done` and is listed all the same, because the CLI
+        is still the process that owns the id. That is the predicate resume
+        needs — `--resume` against a held id starts a *copy* rather than
+        continuing the conversation — so the per-row `status`/`state` must not
+        be read as the answer. Some rows carry neither field.
+
+        Covers both `kind`s it reports: `interactive` (a claude in someone's
+        terminal) and `background` (one the CLI's own daemon holds on a private
+        PTY). Without `--all` the listing is exactly the held set — that flag
+        is what adds background sessions the CLI has let go of — so membership
+        is the whole answer.
+
+        The handle is the row's `id`, which is what `claude attach` takes.
+        Only background rows carry one: a claude someone is driving in their
+        own terminal is not something a second client may open, and the CLI
+        says so by omitting the field.
+
+        Every failure degrades to None rather than an empty dict, which leaves
+        callers exactly where they were before this method existed. `claude`
+        may not be on PATH at all: regin ingests traces from installs it does
+        not own.
+        """
+        import json
+        import subprocess
+
+        try:
+            r = subprocess.run(["claude", "agents", "--json"],
+                               capture_output=True, text=True,
+                               timeout=_AGENTS_QUERY_TIMEOUT_SEC)
+            if r.returncode != 0:
+                return None
+            rows = json.loads(r.stdout)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        if not isinstance(rows, list):
+            return None
+        out: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sid, handle = row.get("sessionId"), row.get("id")
+            if isinstance(sid, str) and sid:
+                out[sid] = handle if isinstance(handle, str) else ""
+        return out
+
+
+# Asked on the trace-view poll, so it must never become the reason a page
+# hangs; the call measures ~0.12s against a warm daemon.
+_AGENTS_QUERY_TIMEOUT_SEC = 3.0
+
 
 def _summarize_tool_input(tool_input: dict) -> dict:
     from lib.trace.tool_input_summary import summarize_tool_input

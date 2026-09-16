@@ -944,6 +944,31 @@ async function bridgeReachableMap(page, traceId, { pane = '%3', phase, agentPhas
   })
 }
 
+// Reachability the test can flip mid-session. The server reports
+// `bridge_reachable:false` whenever the pane registry could not be READ (a
+// locked DB in `store.resolve_reachable_pane`), so the card has to survive a
+// poll that lies about a session that is still perfectly reachable. `last_seen`
+// is NOW here (not quietLastSeen) to hold the 4s active cadence, and `polls`
+// lets a test wait on a real poll instead of a sleep.
+async function flappingBridgeMap(page, traceId, { pane = '%3' } = {}) {
+  const state = { reachable: true, polls: 0 }
+  await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+    const resp = await route.fetch()
+    const json = await resp.json()
+    state.polls += 1
+    await route.fulfill({
+      response: resp,
+      json: {
+        ...json,
+        bridge_reachable: state.reachable,
+        bridge_pane: state.reachable ? pane : null,
+        last_seen: new Date().toISOString(),
+      },
+    })
+  })
+  return state
+}
+
 // Stub the proxy; returns the collected POST bodies. `delayMs` keeps the
 // "delivering…" phase observable.
 async function stubBridgeSend(page, traceId, result, { delayMs = 0 } = {}) {
@@ -962,6 +987,15 @@ async function stubBridgeAnswer(page, traceId, result = { delivered: true, detai
   await page.route(`**/api/sessions/${traceId}/bridge-answer`, async (route) => {
     posts.push(route.request().postDataJSON())
     await route.fulfill({ json: { id: 1, ...result } })
+  })
+  return posts
+}
+
+async function stubBridgeInterrupt(page, traceId, result = { delivered: true, detail: 'interrupt sent' }) {
+  const posts = []
+  await page.route(`**/api/sessions/${traceId}/bridge-interrupt`, async (route) => {
+    posts.push(route.request().postDataJSON() || {})
+    await route.fulfill({ json: result })
   })
   return posts
 }
@@ -1241,6 +1275,27 @@ test.describe('Terminal peek sheet', () => {
     await page.goto(`/live/${traceId}`)
     await settle(page)
     await expect(page.locator('[data-testid="live-terminal-btn"]')).toHaveCount(0)
+  })
+
+  test('SDK-spawned run → no terminal button, reachable or not', async ({ page }) => {
+    // `_steerability()` reports an SDK-owned run as reachable — regin can type
+    // into it — while leaving `bridge_pane` null, because nothing is holding it
+    // in tmux. Offering the peek there only ever yields a capture failure.
+    const { traceId } = await postActiveSession(page)
+    await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
+      const resp = await route.fetch()
+      const json = await resp.json()
+      await route.fulfill({
+        response: resp,
+        json: { ...json, bridge_reachable: true, sdk_owned: true, bridge_pane: null },
+      })
+    })
+
+    await page.goto(`/live/${traceId}`)
+    await settle(page)
+    await expect(page.locator('[data-testid="live-terminal-btn"]')).toHaveCount(0)
+    // The NOW zone's labelled chip is the second route to the same sheet.
+    await expect(page.locator('[data-testid="live-screen-peek"]')).toHaveCount(0)
   })
 
   test('bridge reachable → button opens a one-shot snapshot with pane label', async ({ page }) => {
@@ -1597,7 +1652,7 @@ test.describe('Long-content invariant (acceptance #8b)', () => {
 // (`label — note`) since the terminal has no note field. These tests pin the
 // browser-side contract (POST bodies, staging, confirm) — not tmux.
 test.describe('Answer a pending ask from the QA sheet', () => {
-  async function seedPendingQuestion(page, { options } = {}) {
+  async function seedPendingQuestion(page, { options, multiSelect = false } = {}) {
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)
     const now = new Date().toISOString()
@@ -1608,7 +1663,7 @@ test.describe('Answer a pending ask from the QA sheet', () => {
         name: 'tool.AskUserQuestion', start_time: now, status_code: 'PENDING',
         attributes: { tool_name: 'AskUserQuestion', tool_use_id: `tu-${sfx}`, is_test: true,
           questions: [{ question: 'ANSWERABLE_MARKER — which database?', header: 'DB',
-            multiSelect: false,
+            multiSelect,
             options: options || [{ label: 'Postgres', description: 'relational' },
               { label: 'SQLite', description: 'embedded' }] }] } },
     ])
@@ -1652,6 +1707,45 @@ test.describe('Answer a pending ask from the QA sheet', () => {
     expect(posts[0].chat).toBeUndefined()
     await expect(sheet).toBeHidden({ timeout: 5_000 })
   })
+
+  test('a lone multi-select question ticks many boxes and posts an answers array',
+    async ({ page }) => {
+      // The shape a real one-question multi-select ask has. It must go out as
+      // `answers: [...]`, not the flat single-pick payload: only that walk
+      // presses the review tab's mandatory final "Submit answers".
+      const { traceId } = await seedPendingQuestion(page, { multiSelect: true })
+      const posts = await stubBridgeAnswer(page, traceId,
+        { delivered: true, detail: 'submitted 1 answers' })
+
+      const sheet = await openAnswerer(page, traceId)
+      const picks = sheet.locator('[data-testid="live-qa-pick"]')
+      await picks.nth(0).click()
+      await picks.nth(1).click()
+      await expect(picks.nth(0)).toHaveAttribute('aria-pressed', 'true')
+      await expect(picks.nth(1)).toHaveAttribute('aria-pressed', 'true')
+      await page.waitForTimeout(200)
+      expect(posts.length).toBe(0)  // still nothing sent on select
+
+      await sheet.locator('[data-testid="live-qa-confirm-send"]').click()
+      await expect.poll(() => posts.length).toBe(1)
+      expect(posts[0].answers[0].option_index).toEqual([0, 1])
+      expect(posts[0].answers[0].option_count).toBe(2)
+      expect(posts[0].answers[0].label).toBe('Postgres, SQLite')
+      expect(posts[0].option_index).toBeUndefined()  // never the flat shape
+    })
+
+  test('a ticked box unticks, and the last one leaves nothing to confirm',
+    async ({ page }) => {
+      const { traceId } = await seedPendingQuestion(page, { multiSelect: true })
+      const sheet = await openAnswerer(page, traceId)
+      const pick = sheet.locator('[data-testid="live-qa-pick"]').nth(0)
+
+      await pick.click()
+      await expect(sheet.locator('[data-testid="live-qa-confirm"]')).toBeVisible()
+      await pick.click()
+      await expect(pick).toHaveAttribute('aria-pressed', 'false')
+      await expect(sheet.locator('[data-testid="live-qa-confirm"]')).toHaveCount(0)
+    })
 
   test('Cancel discards the staged option and POSTs nothing', async ({ page }) => {
     const { traceId } = await seedPendingQuestion(page)
@@ -1727,6 +1821,44 @@ test.describe('Answer a pending ask from the QA sheet', () => {
     await expect(sheet).toBeVisible()  // not closed on failure
   })
 
+  // The card had every verb for ANSWERING a question and none for refusing it:
+  // the NOW zone's cancel is gated off the question park on purpose, so an
+  // operator who did not want to answer could only leave the agent blocked.
+  test('declining posts bridge-interrupt once, behind a confirm', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    const answers = await stubBridgeAnswer(page, traceId)
+    const interrupts = await stubBridgeInterrupt(page, traceId)
+
+    const sheet = await openAnswerer(page, traceId)
+    await sheet.locator('[data-testid="live-qa-dismiss-open"]').click()
+    await expect(sheet.locator('[data-testid="live-qa-dismiss-confirm"]')).toBeVisible()
+    await page.waitForTimeout(150)
+    expect(interrupts.length).toBe(0)  // the first tap reaches nobody
+
+    // Backing out restores the plain verb and still sends nothing.
+    await sheet.locator('[data-testid="live-qa-dismiss-abort"]').click()
+    await expect(sheet.locator('[data-testid="live-qa-dismiss-open"]')).toBeVisible()
+    expect(interrupts.length).toBe(0)
+
+    await sheet.locator('[data-testid="live-qa-dismiss-open"]').click()
+    await sheet.locator('[data-testid="live-qa-dismiss-send"]').click()
+    await expect.poll(() => interrupts.length).toBe(1)
+    expect(answers.length).toBe(0)  // declining is not an answer
+    await expect(sheet).toBeHidden({ timeout: 5_000 })
+  })
+
+  test('a refused dismiss surfaces the detail and keeps the sheet open', async ({ page }) => {
+    const { traceId } = await seedPendingQuestion(page)
+    await stubBridgeInterrupt(page, traceId, { delivered: false, detail: 'no reachable session' })
+
+    const sheet = await openAnswerer(page, traceId)
+    await sheet.locator('[data-testid="live-qa-dismiss-open"]').click()
+    await sheet.locator('[data-testid="live-qa-dismiss-send"]').click()
+    await expect(sheet).toContainText('no reachable session')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.locator('[data-testid="live-qa-pick"]').first()).toBeVisible()
+  })
+
   test('an option preview renders as a disclosure in the answerer', async ({ page }) => {
     const { traceId } = await seedPendingQuestion(page, {
       options: [{ label: 'Postgres', description: 'relational', preview: 'CREATE TABLE t (id int);' },
@@ -1748,7 +1880,8 @@ test.describe('Answer a pending ask from the QA sheet', () => {
 // Prev/Next stepper: the operator answers each question (changing any freely),
 // and NOTHING reaches the pane until "Send all", which delivers the answers in
 // order — each POST carrying `confirm_text` (that question) so the backend can
-// refuse a stale focus. An ask with a multi-select question stays read-only.
+// refuse a stale focus. A multi-select question stages as checkboxes in that
+// same stepper and delivers a LIST of indices plus its option_count.
 test.describe('Answer a pending multi-question ask', () => {
   async function seedMultiQuestion(page, { firstMultiSelect = false } = {}) {
     const traceId = randomUUID()
@@ -1837,6 +1970,50 @@ test.describe('Answer a pending multi-question ask', () => {
     expect(posts[0].answers[1].label).toBe('Bust')
   })
 
+  // The regression that made a long walk unusable: `bridge_reachable` rides the
+  // 4s map poll and the server reports it false whenever the pane registry
+  // could not be READ, so one locked-DB tick unmounted the stepper and threw
+  // away every answer staged so far. Reachability latches per span instead.
+  test('a bridge_reachable blip mid-walk does not wipe the staged answers', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const bridge = await flappingBridgeMap(page, traceId)
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()  // Q1 Search
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(2).click()  // Q2 Reset
+    await expect(sheet.locator('[data-testid="live-qa-send-all"]')).toBeEnabled()
+
+    // One poll claims the bridge is gone — wait for a real tick, not a sleep.
+    const before = bridge.polls
+    bridge.reachable = false
+    await expect.poll(() => bridge.polls, { timeout: 30_000 }).toBeGreaterThan(before + 1)
+
+    // The stepper is still mounted and still holds both answers.
+    await expect(sheet.locator('[data-testid="live-qa-answer-multi"]')).toBeVisible()
+    const summary = sheet.locator('[data-testid="live-qa-summary"]')
+    await expect(summary).toContainText('Search')
+    await expect(summary).toContainText('Reset')
+
+    bridge.reachable = true
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+    await expect.poll(() => posts.length).toBe(1)
+    expect(posts[0].answers.map(x => x.label)).toEqual(['Search', 'Reset'])
+  })
+
+  // The latch is not a bypass: an ask that was never answerable stays read-only.
+  test('an ask over an unreachable bridge stays read-only', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page)
+    const bridge = await flappingBridgeMap(page, traceId)
+    bridge.reachable = false
+    const sheet = await openMulti(page, traceId)
+
+    await expect(sheet.locator('[data-testid="live-qa-answer-multi"]')).toHaveCount(0)
+    await expect(sheet.locator('[data-testid="live-qa-dismiss"]')).toHaveCount(0)
+    await expect(sheet).toContainText('read-only')
+  })
+
   test('a backend refusal surfaces the detail and keeps the sheet open', async ({ page }) => {
     const { traceId } = await seedMultiQuestion(page)
     // The atomic walk refused mid-way (a focus-guard failure names the question).
@@ -1874,12 +2051,46 @@ test.describe('Answer a pending multi-question ask', () => {
     expect(answers[1].label).toBe('Keep')
   })
 
-  test('an ask with a multi-select question stays read-only with a reason', async ({ page }) => {
+  test('a multi-select tab toggles many options and sends them as a list', async ({ page }) => {
+    const { traceId } = await seedMultiQuestion(page, { firstMultiSelect: true })
+    const posts = await stubBridgeAnswer(page, traceId, { delivered: true, detail: 'submitted' })
+    const sheet = await openMulti(page, traceId)
+    // The stepper renders, rather than the old read-only note.
+    await expect(sheet.locator('[data-testid="live-qa-answer-multi"]')).toBeVisible()
+
+    // Q1 is multi-select: both picks stay staged instead of replacing.
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(0).click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()
+    await sheet.locator('[data-testid="live-qa-next"]').click()
+    await sheet.locator('[data-testid="live-qa-pick"]').nth(1).click()  // Q2 Keep
+    await sheet.locator('[data-testid="live-qa-send-all"]').click()
+
+    await expect.poll(() => posts.length).toBe(1)
+    const { answers } = posts[0]
+    expect(answers[0].option_index).toEqual([0, 1])
+    expect(answers[0].option_count).toBe(2)
+    expect(answers[0].label).toBe('Composer, Search')
+    expect(answers[1].option_index).toBe(1)   // Q2 stays a single pick
+    expect(answers[1].label).toBe('Keep')
+  })
+
+  test('untoggling a multi-select tab back to empty makes it unanswered again', async ({ page }) => {
+    // An emptied checkbox set is not "answered with nothing" — the walk would
+    // submit a tab the operator never staged, so the tab blocks advancing
+    // exactly as an untouched one does.
     const { traceId } = await seedMultiQuestion(page, { firstMultiSelect: true })
     const sheet = await openMulti(page, traceId)
-    await expect(sheet.locator('[data-testid="live-qa-answer-multi"]')).toHaveCount(0)
-    await expect(sheet.locator('[data-testid="live-qa-answer"]')).toHaveCount(0)
-    await expect(sheet).toContainText('multi-select')
+    const first = sheet.locator('[data-testid="live-qa-pick"]').nth(0)
+    const next = sheet.locator('[data-testid="live-qa-next"]')
+
+    await expect(next).toBeDisabled()
+    await first.click()
+    await expect(first).toHaveAttribute('aria-pressed', 'true')
+    await expect(next).toBeEnabled()
+
+    await first.click()
+    await expect(first).toHaveAttribute('aria-pressed', 'false')
+    await expect(next).toBeDisabled()
   })
 
   test('tapping an option after typing keeps the draft; switching back restores and sends it', async ({ page }) => {
@@ -2006,7 +2217,7 @@ test.describe('Review regressions', () => {
     const header = page.locator('[data-testid="live-header"]')
     const nowZone = page.locator('[data-testid="live-now"]')
     await expect(rows(page).first()).toBeVisible({ timeout: 10_000 })
-    await expect(header).toContainText('running', { timeout: 5_000 })
+    await expect(header).toContainText('working', { timeout: 5_000 })
     await expect(nowZone).not.toHaveAttribute('data-state', 'finished')
 
     await post(page, [
@@ -2015,7 +2226,7 @@ test.describe('Review regressions', () => {
     ])
 
     // Two poll cycles at the 4s active cadence, plus fetch/render slack.
-    await expect(header).toContainText('✓ finished', { timeout: 15_000 })
+    await expect(header).toContainText('✓ ended', { timeout: 15_000 })
     await expect(nowZone).toHaveAttribute('data-state', 'finished', { timeout: 15_000 })
   })
 
@@ -3451,14 +3662,14 @@ test.describe('Scoped tail opens with the agent prompt (Slice C)', () => {
   })
 })
 
-// ---- auto-page on scope entry (useLiveScope.autoPageScope) -----------------
+// ---- scope entry reads the agent's OWN trace (useLiveScope + useAgentTrace) --
 //
-// Roster span_count > 0 for an agent whose spans sit several older turn-pages
-// back must not force a manual "load earlier history" tap: entering scope
-// auto-pages via loadOlder() until the spans surface or history/the
-// MAX_AUTO_PAGE_ITERS=20 backstop gives out (useLiveScope.js).
+// A subagent's spans are served under `sa-<agent_id>`, not by this session's
+// tail — so entering a scope is ONE addressed fetch, and the tail's paging
+// (`before_id=`, loadOlder) is never touched. Age is irrelevant: an agent whose
+// spans sit far behind the loaded window arrives in the same single request.
 
-test.describe('Auto-page on scope entry (per-agent)', () => {
+test.describe('Scope entry fetches the agent trace (per-agent)', () => {
   // Only 'prompt' spans page the tail (lib/trace/trace_service/queries.py
   // _TURN_ANCHOR_NAMES), 5 anchors/page (useLiveTail's PAGE_SIZE) — 15 turns
   // spaced 30s apart puts the target agent's internal span in turn 0's
@@ -3491,18 +3702,21 @@ test.describe('Auto-page on scope entry (per-agent)', () => {
     await expect(page.locator('[data-testid="live-agent-sheet"]')).toBeVisible({ timeout: 5_000 })
   }
 
-  test('arrives at the agent\'s spans after a few loadOlder fetches, with no manual load tap', async ({ page }) => {
-    const { traceId } = await seedFarAgent(page, { turnCount: 15, spacingMs: 30_000 })
+  test('an agent far behind the loaded window arrives in ONE sa- fetch, with zero tail paging', async ({ page }) => {
+    const { traceId, agId } = await seedFarAgent(page, { turnCount: 15, spacingMs: 30_000 })
 
+    // The old contract paged this session's tail (2 older turn-pages) to reach
+    // the agent's spans. Both counters must now stay at their new truth: the
+    // agent's trace is addressed directly, once, and `before_id` never fires.
     let beforeIdHits = 0
-    // Delay each before_id (loadOlder) round trip so the transient
-    // "live-scope-loading" state is observable instead of racing past it —
-    // same delay-the-route convention as stubBridgeSend's delayMs above.
     await page.route(`**/api/sessions/${traceId}/map*`, async (route) => {
-      if (route.request().url().includes('before_id=')) {
-        beforeIdHits += 1
-        await new Promise((r) => setTimeout(r, 250))
-      }
+      if (route.request().url().includes('before_id=')) beforeIdHits += 1
+      const resp = await route.fetch()
+      await route.fulfill({ response: resp })
+    })
+    let agentMapHits = 0
+    await page.route(`**/api/sessions/sa-${agId}/map*`, async (route) => {
+      agentMapHits += 1
       const resp = await route.fetch()
       await route.fulfill({ response: resp })
     })
@@ -3515,23 +3729,18 @@ test.describe('Auto-page on scope entry (per-agent)', () => {
     await page.locator('[data-testid="live-agent-card"]').first().click()
     await expect(page.locator('[data-testid="live-scope-bar"]')).toBeVisible({ timeout: 5_000 })
 
-    // Auto-paging surfaces a loading state while it hunts for the spans...
-    await expect(page.locator('[data-testid="live-scope-loading"]')).toBeVisible({ timeout: 5_000 })
-
-    // ...and resolves to the real rows — no manual "load earlier history" tap,
-    // and never the terminal empty state.
+    // The rows arrive with no manual "load earlier history" tap, and the
+    // terminal empty state never flashes.
     await expect(page.locator('[data-testid="live-scope-load"]')).toHaveCount(0)
     await expect(rows(page).first()).toContainText('AUTOPAGE_INTERNAL_MARKER', { timeout: 10_000 })
     await expect(page.locator('[data-testid="live-scope-loading"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="live-scope-empty"]')).toHaveCount(0)
 
-    expect(beforeIdHits, 'must exit as soon as the spans arrive, nowhere near the 20-iter cap')
-      .toBeLessThan(20)
-    expect(beforeIdHits, 'exactly 2 older turn-pages should reach turn 0 (5 anchors/page, 15 turns)')
-      .toBe(2)
+    expect(agentMapHits, 'the scope is ONE addressed read of the agent trace').toBe(1)
+    expect(beforeIdHits, 'entering a scope must not page this session\'s tail').toBe(0)
   })
 
-  test('an over-claiming roster whose spans never arrive stops at the 20-iter cap, not indefinitely', async ({ page }) => {
+  test('an over-claiming roster whose agent trace is empty settles at once, with zero tail paging', async ({ page }) => {
     const traceId = randomUUID()
     const sfx = traceId.slice(0, 8)
     const now = new Date().toISOString()
@@ -3548,9 +3757,9 @@ test.describe('Auto-page on scope entry (per-agent)', () => {
       if (route.request().url().includes('before_id=')) beforeIdHits += 1
       await route.fulfill({ response: resp, json: {
         ...json,
-        // Over-claims forever: has_more_older never goes false, and the
-        // ghost agent's spans never actually land in any page — the roster
-        // knowing about spans that never arrive must not spin the loop.
+        // Over-claims forever: has_more_older never goes false, and the ghost
+        // agent has no spans under `sa-<agent_id>` either — a roster claiming
+        // spans that do not exist must not cost a single tail page.
         has_more_older: true,
         agent_roster: [{
           agent_id: ghostAgentId, agent_type: 'ghost', description: 'Never captured',
@@ -3575,7 +3784,7 @@ test.describe('Auto-page on scope entry (per-agent)', () => {
     await expect(page.locator('[data-testid="live-scope-loading"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="live-scope-load"]')).toBeVisible()
 
-    expect(beforeIdHits, 'the 20-iter cap must stop the loop, not spin forever').toBe(20)
+    expect(beforeIdHits, 'an empty agent trace is the answer — never a paging hunt').toBe(0)
   })
 })
 

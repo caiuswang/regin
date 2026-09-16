@@ -316,12 +316,12 @@ test.describe('Empty vs loading scope (acceptance 5)', () => {
   test('span_count > 0 with the subtree fetch in flight → spinner, never a false empty', async ({ page }) => {
     const { traceId, agId } = await seedScoped(page)
 
-    // Hold EVERY children fetch (the scoped deep fetch AND the prompt
-    // auto-expand fetch that would populate the same subtree) so the
+    // Hold EVERY children fetch — this session's AND the scoped agent's own
+    // trace (`sa-<agent_id>`, where its spans are now served from) — so the
     // loading state is actually observable, then release.
     let release
     const gate = new Promise((resolve) => { release = resolve })
-    await page.route(`**/api/sessions/${traceId}/spans/**/children*`, async (route) => {
+    await page.route('**/api/sessions/*/spans/**/children*', async (route) => {
       await gate
       await route.continue()
     })

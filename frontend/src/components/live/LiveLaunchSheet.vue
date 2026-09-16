@@ -18,15 +18,28 @@ import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
+import LaunchWorktreeFields from './LaunchWorktreeFields.vue'
 import LiveResumePicker from './LiveResumePicker.vue'
 import Select from '../ui/Select.vue'
 import Textarea from '../ui/Textarea.vue'
 import { useLaunchDraft } from '../../composables/useLaunchDraft.js'
 import { resumeKindLabel } from '../../utils/resumeKind.js'
+import { slugifyBranch } from '../../utils/worktreeSlug.js'
 import { shortTraceId } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
   resumeFrom: { type: String, default: '' },
+  // The working directory of the page the form was opened from, offered as the
+  // starting pick. A session page knows which repo the operator is looking at,
+  // and making them find it again in a menu of every registered repo is asking
+  // them to re-answer a question the page already answered.
+  initialCwd: { type: String, default: '' },
+  // Which surface this form belongs to, for the draft's scope. `/live` has no
+  // identity beyond the card it is open on, so it passes none and the session
+  // id below stands in; the desktop dialogs are their own surfaces and must
+  // say so, or a draft typed on the sessions LIST — a repo, a branch, a ticked
+  // worktree box — walks onto an unrelated session's page and launches there.
+  scope: { type: String, default: '' },
 })
 const emit = defineEmits(['launched'])
 
@@ -47,8 +60,8 @@ const held = ref(null)
 // picker the operator was leaving.
 const {
   prompt, cwd, model, modelCustom, effort, mode, oneShot, resume, beforePick,
-  resetDraft,
-} = useLaunchDraft(props.resumeFrom)
+  useWorktree, worktreeBranch, worktreeBase, resetDraft,
+} = useLaunchDraft(props.scope || props.resumeFrom)
 const picking = ref(false)
 
 // Sentinel for "not one of the offered aliases". The launch route accepts any
@@ -63,8 +76,8 @@ const CUSTOM_MODEL = '__custom__'
 // server default.
 const cwdOptions = computed(() => {
   const known = opts.value?.cwds || []
-  const picked = resume.value?.cwd
-  const extra = picked && !known.includes(picked) ? [picked] : []
+  const extra = [resume.value?.cwd, props.initialCwd].filter(
+    (p, i, all) => p && !known.includes(p) && all.indexOf(p) === i)
   return [
     { value: '', label: 'server working directory' },
     ...[...known, ...extra].map(p => ({ value: p, label: p })),
@@ -178,10 +191,24 @@ const oneShotNeedsPrompt = computed(() => oneShot.value && !prompt.value.trim())
 // the mistake is legible before the click, not after the run.
 const customModelIsBlank = computed(() => (
   model.value === CUSTOM_MODEL && !modelCustom.value.trim()))
+// A resume outranks the worktree toggle rather than clearing it: the operator
+// may drop the pick again, and a checkbox that silently unticked itself
+// meanwhile would launch in the repo when they asked for a tree.
+const worktreeActive = computed(() => useWorktree.value && !resume.value)
+// The same test the fields' own warning uses, not a blank check: a name of
+// pure punctuation is non-blank and slugifies to nothing, so the two readings
+// disagreed — the warning appeared under a Launch button that was still live,
+// and the click bought a 400 the form could have refused itself.
+const worktreeNeedsBranch = computed(() => (
+  worktreeActive.value && !slugifyBranch(worktreeBranch.value)))
 const canLaunch = computed(() => !oneShotNeedsPrompt.value
-  && !customModelIsBlank.value && !launching.value)
+  && !customModelIsBlank.value && !worktreeNeedsBranch.value
+  && !launching.value)
 
 onMounted(async () => {
+  // Only into an empty slot: the draft outlives this component, so a seed that
+  // overwrote it would undo a directory the operator picked before dismissing.
+  if (props.initialCwd && !cwd.value) cwd.value = props.initialCwd
   try {
     opts.value = await api.get('/agent-runs/launch-options')
   } catch (e) {
@@ -203,6 +230,9 @@ function launchBody() {
     permission_mode: mode.value || undefined,
     one_shot: oneShot.value || undefined,
     resume: resume.value?.session_id || undefined,
+    worktree: worktreeActive.value
+      ? { branch: worktreeBranch.value.trim(), base: worktreeBase.value }
+      : undefined,
   }
 }
 
@@ -291,6 +321,14 @@ async function launch() {
         :options="cwdOptions"
         data-testid="live-launch-cwd"
         aria-label="Working directory"
+      />
+
+      <LaunchWorktreeFields
+        v-model:enabled="useWorktree"
+        v-model:branch="worktreeBranch"
+        v-model:base="worktreeBase"
+        :cwd="cwd"
+        :disabled="!!resume"
       />
 
       <label class="live-launch-lbl" for="live-launch-mode">permission mode</label>

@@ -1,0 +1,16 @@
+
+⏺ Bash(mkdir -p tests/fixtures/screen && tmux capture-pane -pt %147 > tests/fixtures/screen/busy_claude.txt 2>/dev/null; tmux
+      capture-pane -pt %113 > tests/fixtures/sc…)
+  ⎿  Running…
+
+✻ Sock-hopping… (5m 34s · ↓ 18.2k tokens)
+  ↓ No response from the API after 16m 30s · retrying once, waiting up to 8m
+    A proxy or gateway that buffers streaming responses can cause this · set CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS to change the first wait
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  d7509d5d-b9ad-4cc3-88aa-8df7c278817d  \~/regin (feat/trace-chrome-redesign) Opus 5 ctx:11%;                                       /rc
+  -- INSERT -- ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+

@@ -99,7 +99,8 @@ function askRowModel(a, pending) {
   const chosen = Array.isArray(ans) ? ans.join(', ') : (ans || '')
   return {
     glyph: '?',
-    eyebrow: `Ask user${qs.length > 1 ? ` · +${qs.length - 1} more` : ''}`,
+    eyebrow: ['Ask user', q.multiSelect ? 'multi-select' : 'single-select',
+      qs.length > 1 ? `+${qs.length - 1} more` : ''].filter(Boolean).join(' · '),
     badge: a.denied ? (a.deny_kind === 'chat' ? 'chat instead' : 'denied') : '',
     denied: !!a.denied,
     main: q.question || 'Question for you',
@@ -144,6 +145,36 @@ export function qaRowModel(span) {
   return isAskSpan(span)
     ? askRowModel(a, pending)
     : permRowModel(span, a, pending)
+}
+
+// ── In-flight run state ──────────────────────────────────────
+//
+// A span the agent has not finished. `status_code === 'PENDING'` is the whole
+// signal — the merge keeps a placeholder row only while its resolved span is
+// absent, so a PENDING row that reached the reader IS still open.
+//
+// Two outcomes, not one, because they ask opposite things of the reader. The
+// split follows the attention ramp the session switcher already states
+// (sessionSwitcher.js STATES): amber is the one state allowed to demand
+// action, emerald means moving on its own. A parked question or permission
+// request is blocked ON THE USER; a running tool is not.
+// `queued` is the serve-time merge's verdict on a runner placeholder with no
+// hook twin yet (lib/trace/merge.py `_mark_queued_sdk_placeholders`): the
+// model asked for the call, the harness has not started it. It is not in
+// flight, so nothing that means "running" — the promotion to a full card,
+// the Focus keep-set, a turn's liveness — may read it as such.
+export function runStateOf(span) {
+  if (span?.status_code !== 'PENDING') return ''
+  if (span.status_message === 'queued') return 'queued'
+  return isQaSpan(span) ? 'waiting' : 'running'
+}
+
+// The states that mean a turn is still open: the agent is doing something,
+// is blocked on the reader, or has a call waiting its turn behind one. A
+// queued call counts — the batch it belongs to is what is in flight, and the
+// reader sees the whole batch, as the terminal shows it.
+export function isLiveRunState(state) {
+  return !!state
 }
 
 // Signal spans that keep a full-saturation dot (edits, failures, denials);
@@ -393,7 +424,7 @@ export function findLastSpan(spans, predicate) {
 // A span is agent-internal iff attributes.agent_id is set. The three marker
 // names are the compact representation of each subagent in the MAIN timeline
 // (they also carry agent_id, but belong to main's view, never a scope).
-const SCOPE_MARKERS = new Set(['tool.Agent', 'subagent.start', 'subagent.stop'])
+export const SCOPE_MARKERS = new Set(['tool.Agent', 'subagent.start', 'subagent.stop'])
 
 // scopeId null → main scope: spans WITHOUT agent_id, plus the markers.
 // scopeId set → that agent's spans only (agent_id === scopeId), markers out.

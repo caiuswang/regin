@@ -90,15 +90,12 @@ export async function mockInbox(page, { messages = [], liveTraces = ['trace-live
   await page.route('**/api/agent-messages/inbox*', (route) => route.fulfill({
     json: { messages, unread_count: messages.filter(m => !m.read_at).length },
   }))
-  await page.route('**/api/sessions?active=active*', (route) => route.fulfill({
-    json: {
-      sessions: [
-        ...liveTraces.map(t => ({ trace_id: t, status: 'active', last_seen: isoMinutesAgo(1) })),
-        // Present and still flagged `active`, but long unseen — the case a
-        // status-only gate gets wrong.
-        { trace_id: 'trace-dead', status: 'active', last_seen: isoMinutesAgo(600) },
-      ],
-    },
+  // The view asks the server which sessions are parked rather than re-deriving
+  // it from session recency, so this mock IS the authority: `trace-dead` is
+  // absent because the server's own derivation (retire signals, dismissal, the
+  // reachability proof) already dropped it — not because a window aged it out.
+  await page.route('**/api/agent-messages/blockers*', (route) => route.fulfill({
+    json: { blockers: liveTraces.map(t => ({ trace_id: t, alias_trace_ids: [] })) },
   }))
   for (const p of ['**/api/agent-messages/read', '**/api/agent-messages/read-all',
     '**/api/agent-messages/*/dismiss', '**/api/agent-messages/unread-count']) {

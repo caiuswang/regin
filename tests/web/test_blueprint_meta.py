@@ -23,8 +23,6 @@ def stubbed_deps(monkeypatch):
     monkeypatch.setattr(meta_bp, "load_rules_index",
                         lambda: {"rules": []})
     monkeypatch.setattr(meta_bp, "run_checks", lambda: {"ok": True})
-    monkeypatch.setattr(meta_bp, "search_patterns",
-                        lambda q: [{"slug": "matched", "title": f"for {q}"}])
     # Block auto-discovery of bundles from the user's real patterns dir so
     # tests don't see engine-rule counts from the developer's installed
     # frontend-style-convention bundle.
@@ -135,36 +133,7 @@ def test_dashboard_returns_stats_envelope(
     assert stats["rules"]["total"] == 0
 
 
-# ── GET /api/quicksearch ─────────────────────────────────────
 
-def test_quicksearch_empty_query_returns_empty_groups(
-        flask_client, tmp_db):
-    resp = flask_client.get("/api/quicksearch?q=%20%20")
-    assert resp.status_code == 200
-    assert resp.get_json() == {"query": "", "groups": []}
-
-
-def test_quicksearch_returns_only_matching_pattern_group(
-        flask_client, tmp_db, stubbed_deps):
-    # stubbed_deps makes search_patterns return one match and
-    # load_rules_index return no rules; no sessions are seeded and the
-    # query won't match any skill id, so only the Patterns group fills.
-    resp = flask_client.get("/api/quicksearch?q=matched")
-    assert resp.status_code == 200
-    body = resp.get_json()
-    assert body["query"] == "matched"
-    assert body["groups"] == [{
-        "label": "Patterns",
-        "icon": "patterns",
-        "items": [{
-            "title": "for matched",
-            "subtitle": "",
-            "href": "/patterns/matched",
-        }],
-    }]
-
-
-# ── GET /api/repos/<name> ───────────────────────────────────
 
 def test_repo_detail_unknown_returns_404(flask_client, tmp_db):
     resp = flask_client.get("/api/repos/unknown")

@@ -29,7 +29,7 @@ from typing import NamedTuple
 
 from lib.activity_log import get_activity_logger
 from lib.agent_bridge import store
-from lib.agent_bridge.menu_parse import parse_select_menu
+from lib.agent_bridge.menu_parse import parse_multi_select, parse_select_menu
 from lib.settings import settings
 
 log = get_activity_logger("agent_bridge")
@@ -37,11 +37,23 @@ log = get_activity_logger("agent_bridge")
 # tmux subprocess guard — a hung socket must not stall the delivery path.
 _TMUX_TIMEOUT_SEC = 3.0
 
-# Lifted verbatim from scripts/bridge_mvp.py: printable single-line text
-# only. A raw Ctrl-C would interrupt the agent; ANSI escapes drive the TUI;
-# a raw newline submits early.
+# Printable text only: a raw Ctrl-C would interrupt the agent and ANSI escapes
+# drive the TUI. The sweep spares TAB (0x09) and LF (0x0a) — the line structure
+# of a pasted diff, stack trace or source file IS the message, and the bracketed
+# paste below carries it without submitting the half-typed line.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b.")
-_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_CTRL_KEEP_BREAKS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_BREAK_RE = re.compile(r"[\n\t]")
+
+# Claude's composer runs in bracketed-paste mode, and that is the ONLY input
+# mode that survives a body the terminal cannot take in one burst: a single
+# `send-keys -l` of a 1448-byte prompt reached the composer as a byte-exact
+# SUFFIX FROM OFFSET 1024 — the head was silently gone and the send still
+# ACKed, because the surviving tail is what the echo matched (trace aac4dd29,
+# bridge_messages 917/918). Chunking the same literal send does not fix it;
+# the markers do, byte-exactly, up to `max_text_len` (probed live against
+# Claude Code v2.1.259). Inside them a newline INSERTS rather than submits.
+_PASTE_START, _PASTE_END = "\x1b[200~", "\x1b[201~"
 
 # Claude's composer draws typed input inside a bordered box and SOFT-WRAPS a
 # long line, injecting a newline + a `│` left-gutter mid-text. Collapsing runs
@@ -50,6 +62,40 @@ _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 # would otherwise never be found in the raw capture (the false "not visible"
 # that stranded the typed text; see `_type_and_ack`).
 _PANE_DECOR_RE = re.compile(r"[\s│┃║|]+")
+
+# Past roughly 880 characters the composer stops rendering the input at all and
+# draws a `[Pasted text #N]` chip in its place (measured on Claude Code
+# v2.1.252: the flip is at 886 chars on a 137-column pane, 864 on a 159-column
+# one). The literal-echo ack then CANNOT match, so a long prompt was refused
+# nine times running while its text sat correctly in the composer.
+#
+# The chip's counter is monotonic for the life of the claude process — it does
+# not reset on `/clear` — so a chip numbered ABOVE the highest one present
+# before we typed is proof that OUR burst reached the composer. A pre-existing
+# chip (a human's staged paste, or one still in scrollback from an earlier
+# turn) is not, which is why the baseline is read rather than assumed zero.
+#
+# A MULTI-LINE paste draws `[Pasted text #2 +48 lines]`, not the bare
+# `[Pasted text #2]` of a single-line one, so BOTH closing forms are spelled
+# out — matching the single-line one alone failed the ack on every pasted
+# diff/source body and cleared it unsent. Still terminated, so prose that
+# merely quotes a chip ("the log said [Pasted text #99 was odd") cannot poison
+# the baseline to a number the real counter will never exceed.
+_PASTE_CHIP_RE = re.compile(r"\[Pasted text #(\d+)(?:\s+\+\d+\s+lines?)?\s*\]")
+
+
+def _paste_chip_high_water(capture: str) -> int:
+    """Highest `[Pasted text #N]` counter anywhere in `capture`; 0 for none.
+
+    Normalizes first, and does so HERE rather than at the call sites: reading
+    the pre-type baseline raw while the ack reads it decoration-normalized lets
+    a soft-wrapped STALE chip go unseen in the baseline (0) and seen after the
+    send (`5 > 0`) — a blind submit of text that never landed, which is exactly
+    what the baseline exists to prevent."""
+    return max((int(n) for n in
+                _PASTE_CHIP_RE.findall(_PANE_DECOR_RE.sub(" ", capture or ""))),
+               default=0)
+
 
 # Per-trace_id delivery timestamps (monotonic seconds) behind a lock. The
 # lock is held ONLY for the in-memory check/record — never across a tmux
@@ -90,19 +136,32 @@ def _tmux(socket: str | None, *args: str):
                                            stderr=str(exc))
 
 
-def sanitize_text(text: str) -> str:
-    """Printable single-line text only: no ANSI, no control bytes, no
-    newlines; capped at `settings.agent_bridge.max_text_len`.
+def sanitize_body(text: str) -> str:
+    """Printable text with its LINE STRUCTURE intact: no ANSI, no control
+    bytes but tab and newline, `\r\n`/`\r` normalized to `\n`; capped at
+    `settings.agent_bridge.max_text_len`.
 
-    Public so the HTTP surface can bound/clean the STORED body (the inbox
-    row) with the same rule delivery applies to the typed copy — one
-    sanitizer, no drift. Idempotent: re-sanitizing already-clean text is a
-    no-op, so the view may store the cleaned text and still pass it to
-    deliver()."""
+    The sanitizer for anything typed into the composer as a MESSAGE. Flattening
+    a prompt to one line is not a safety property, it is data loss — the same
+    reasoning `_sdk_prompt_text` already applies to the queue path, now that
+    `_PASTE_START` lets the tmux path carry a newline without submitting on it.
+
+    Public so the HTTP surface can bound/clean the STORED body (the inbox row)
+    with the same rule delivery types with — one sanitizer, no drift.
+    Idempotent: re-sanitizing already-clean text is a no-op."""
     text = _ANSI_RE.sub("", text or "")
-    text = text.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-    text = _CTRL_RE.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _CTRL_KEEP_BREAKS_RE.sub("", text)
     return text[:settings.agent_bridge.max_text_len].strip()
+
+
+def sanitize_text(text: str) -> str:
+    """`sanitize_body` flattened to a single line.
+
+    For text that must not carry a line break at all: a slash command, a menu
+    label, a decision reason, an answer. Keeps the `.strip()` that lets
+    `is_slash_command` anchor at the first character."""
+    return _BREAK_RE.sub(" ", sanitize_body(text)).strip()
 
 
 def _rate_ok(trace_id: str) -> bool:
@@ -191,6 +250,14 @@ def _verify_identity(row: dict) -> dict:
 # blind with a sequence that is correct either way — in NORMAL `i` re-enters
 # INSERT, and with vim off `i` types one stray char that the trailing C-u
 # removes. Both worlds end on an empty line that accepts literal text.
+#
+# Because the sequence CLEARS the line, it long ran only for commands, whose
+# caller owns the composer. That left ordinary steering exposed to the same
+# NORMAL mode, and the loss there is silent rather than loud: a body opening
+# with `S` (substitute-line, which itself enters INSERT) lost exactly that one
+# character, the ack matched on the tail, and the agent answered a prompt
+# missing its first letter. An EMPTY composer has no draft to protect, so the
+# reset is safe there too — `_composer_is_empty` is what separates the two.
 _COMPOSER_RESET_KEYS = ("C-u", "i", "C-u")
 
 # The composer redraws between keys; sending them back-to-back let `i` outrun
@@ -210,13 +277,27 @@ def _reset_composer(socket: str | None, pane: str) -> bool:
     return sent
 
 
+def _composer_is_empty(capture) -> bool:
+    """True only when `capture` plainly shows a composer holding no draft.
+
+    Fails closed: an unreadable capture, or a screen `parse_screen` will not
+    vouch for, answers False — the reset this gates clears the line, so
+    "don't know" has to mean "leave the operator's draft alone".
+    """
+    from lib.agent_bridge import screen_state
+    if capture.returncode != 0:
+        return False
+    state = screen_state.parse_screen(capture.stdout)
+    return state is not None and not state.draft
+
+
 # Typing a slash command opens claude's autocomplete menu, and Enter then runs
 # the HIGHLIGHTED entry rather than the line you typed. Its ranking is fuzzy,
 # so the highlight need not be on your command: a live run of this close path
 # typed `/exit` and submitted `/python-complexity` — "compl-EXIT-y" contains
 # e-x-i-t in order. A trailing space completes the command token, which
 # dismisses the menu, leaving Enter nothing to do but submit the literal line.
-_COMMAND_TERMINATOR = " "
+_MENU_TERMINATOR = " "
 
 # A leading slash TOKEN (slash + command chars, then whitespace or end) is the
 # shape claude's composer treats as a command. A path never matches — its
@@ -235,67 +316,159 @@ def is_slash_command(text: str) -> bool:
     return bool(_SLASH_COMMAND_RE.match(text or ""))
 
 
+# The same swallowed-Enter hazard as the slash menu above, at the other end of
+# the line: a trailing `@token` leaves claude's FILE-MENTION picker open, and
+# Enter then inserts the highlighted path instead of submitting. Probed live in
+# a scratch pane — `hello @/Users/taowang/regin/` held the picker open over the
+# composer; one space closed it and Enter submitted with the mention still
+# resolved ("Listed directory .../regin/"). Only a token at END of text can eat
+# the Enter; a mention mid-message was already closed by the space after it.
+_MENTION_TAIL_RE = re.compile(r"(?:^|\s)@\S*$")
+
+
+def ends_with_mention(text: str) -> bool:
+    """True when `text` would leave the file-mention picker open at the cursor.
+
+    An operator body of this shape acks "delivered" (the text IS in the
+    composer) while nothing was ever submitted — trace 212ebe7f sat on two such
+    sends, silent, with the picker still open. Public for the answer paths,
+    which type into the same composer without going through `_type_and_ack`."""
+    return bool(_MENTION_TAIL_RE.search(text or ""))
+
+
+def _typed_payload(text: str, as_command: bool) -> str:
+    """The literal keystrokes to send: `text`, terminated when it would leave
+    an autocomplete menu open under the cursor."""
+    if as_command or ends_with_mention(text):
+        return f"{text}{_MENU_TERMINATOR}"
+    return text
+
+
+def _pasted_payload(text: str) -> str:
+    """`text` wrapped in bracketed-paste markers — how composer MESSAGES are
+    sent (`_PASTE_START`). A slash command keeps the plain literal path: it is
+    one short line the burst limit cannot reach, and it is typed precisely so
+    the autocomplete menu opens for `_MENU_TERMINATOR` to close."""
+    return f"{_PASTE_START}{_typed_payload(text, False)}{_PASTE_END}"
+
+
 def _type_and_ack(row: dict, text: str, in_mode: bool,
                   as_command: bool = False) -> DeliveryResult:
     """Cancel copy-mode if needed, type the text literally, verify it landed
     in the composer (capture-pane ack), then submit. Ack failure => not
     delivered, and Enter is NOT sent.
 
-    `as_command` types `text` as a slash COMMAND rather than as a message:
-    the composer is reset first (a key sent just before may have left vim's
-    NORMAL mode, where literal text runs as motions) and the command token is
-    terminated so the autocomplete menu cannot swallow the Enter. Reserved for
-    callers that own the composer outright — the reset discards any draft a
-    human had in it.
+    The composer is reset out of a possible vim NORMAL mode (where literal
+    text runs as motions) before typing — always for `as_command`, which owns
+    the composer outright, and otherwise only when the composer is provably
+    empty, since the reset discards any draft a human had in it.
+
+    Text ending in an `@mention` is terminated the same way `as_command` is,
+    for the same reason at the other end of the line: the file picker it leaves
+    open would otherwise eat the submitting Enter (`ends_with_mention`).
+
+    `as_command` types `text` as a slash COMMAND rather than as a message: the
+    command token is terminated so the autocomplete menu cannot swallow the
+    Enter.
     """
     socket, pane = row.get("tmux_socket"), row["pane_id"]
     if in_mode:
         _tmux(socket, "send-keys", "-t", pane, "-X", "cancel")
         time.sleep(0.1)
-    if as_command and not _reset_composer(socket, pane):
+    # A baseline read that FAILED is unknown, not zero. `_tmux` flattens every
+    # failure (timeout, dead socket) to rc=1 with empty stdout, and a zero
+    # baseline would promote any stale chip already in the window to "newer
+    # than before we typed" — submitting text that never reached the composer.
+    # Unknown turns the chip rule off and falls back to the literal echo.
+    # One read serves both the baseline and the emptiness probe below: it has
+    # to precede the typing either way, and a second round-trip per steer buys
+    # nothing (the reset only ever runs on a composer this read saw empty).
+    baseline_read = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+    baseline = (_paste_chip_high_water(baseline_read.stdout)
+                if baseline_read.returncode == 0 else None)
+    if ((as_command or _composer_is_empty(baseline_read))
+            and not _reset_composer(socket, pane)):
         return DeliveryResult(False, "composer reset failed; not typing")
     r = _tmux(socket, "send-keys", "-l", "-t", pane, "--",
-              f"{text}{_COMMAND_TERMINATOR}" if as_command else text)
+              _typed_payload(text, True) if as_command else _pasted_payload(text))
     if r.returncode != 0:
         return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
     # Ack that the text landed in the composer before submitting. Claude's
     # echo can lag the keystroke, so POLL the pane (up to ~1.5s) rather than
     # reading once at 0.3s — a single early read was a false "not visible"
     # failure on a perfectly good send.
-    needle = text[:30]
-    if not _await_pane_text(socket, pane, needle):
-        # The keystrokes DID land — the ack only failed to SEE them. Leaving
-        # them in the composer makes the client's preserved-draft retry type
-        # ON TOP, submitting duplicated or two concatenated prompts, so clear
-        # the input line first. Enter is still never sent: nothing submits.
-        # The full reset rather than a bare C-u: a NORMAL-mode composer ignores
-        # C-u, so the residue would survive the "clear" a retry depends on.
-        left = "" if _reset_composer(socket, pane) else "; composer may hold residue"
-        return DeliveryResult(
-            False, f"typed text not visible in pane; not submitting{left}")
+    refusal = _composer_ack_refusal(socket, pane, text, baseline)
+    if refusal:
+        return DeliveryResult(False, f"typed text {refusal}")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
     return DeliveryResult(True, f"delivered to {pane}")
 
 
+def _composer_ack_refusal(socket: str | None, pane: str, text: str,
+                          baseline: int | None) -> str | None:
+    """None once the composer has echoed `text`; else the refusal detail.
+
+    The composer renders a long line three ways and only one of them shows the
+    head, so all three signals go to `_await_pane_text`. On failure the
+    keystrokes DID land — the ack only failed to SEE them — and leaving them
+    makes the client's preserved-draft retry type ON TOP, submitting two
+    concatenated prompts; so the line is cleared first. Enter is never sent
+    either way: nothing submits. The full reset rather than a bare C-u because
+    a NORMAL-mode composer ignores C-u, and the residue would survive the
+    "clear" a retry depends on."""
+    if _await_pane_text(socket, pane, text[:30], tail=text[-30:],
+                        paste_baseline=baseline):
+        return None
+    left = "" if _reset_composer(socket, pane) else "; composer may hold residue"
+    return f"not visible in pane; not submitting{left}"
+
+
+def _echo_seen(raw: str, wants: list[str], paste_baseline: int | None) -> bool:
+    """True when `raw` shows any of `wants`, or a paste chip newer than
+    `paste_baseline`. See `_await_pane_text` for why one needle is not enough."""
+    if any(w in _PANE_DECOR_RE.sub(" ", raw) for w in wants):
+        return True
+    return (paste_baseline is not None
+            and _paste_chip_high_water(raw) > paste_baseline)
+
+
 def _await_pane_text(socket: str | None, pane: str, needle: str,
-                     attempts: int = 5, interval: float = 0.3) -> bool:
+                     attempts: int = 5, interval: float = 0.3,
+                     tail: str | None = None,
+                     paste_baseline: int | None = None) -> bool:
     """Poll capture-pane until `needle` appears (echo can lag the keystroke).
     True as soon as it is seen; False if it never shows within the budget.
 
     Both sides are decoration-normalized (`_PANE_DECOR_RE`) so a needle broken
     by the composer's line-wrap (newline + `│` gutter) still matches — the same
-    reflow-tolerant compare the multi-question focus guard uses."""
-    want = _PANE_DECOR_RE.sub(" ", needle or "").strip()
-    if not want:
+    reflow-tolerant compare the multi-question focus guard uses.
+
+    A long line has THREE renderings and `needle` (the head of the text) only
+    survives one of them, which is why the other two are opt-in here:
+
+      * soft-wrapped across the box   → the head is on screen; `needle` matches
+      * horizontally scrolled         → only the END is on screen; `tail` does
+      * collapsed to `[Pasted text #N]` → neither is; `paste_baseline` does
+
+    So a composer caller passes all three. Callers that type somewhere other
+    than the composer — a menu's free-text entry, which is short and neither
+    scrolls nor collapses — pass only `needle` and keep the strict rule.
+    """
+    head = _PANE_DECOR_RE.sub(" ", needle or "").strip()
+    if not head:
         # A needle that is ALL whitespace/bars leaves nothing to confirm.
-        # Fail CLOSED — an empty `want` would substring-match any capture and
+        # Fail CLOSED — an empty `head` would substring-match any capture and
         # submit text we never actually saw echo. (`sanitize_text` .strip()s,
         # so a real prompt never reduces to this; a bar-only prompt refuses.)
         return False
+    wants = [head]
+    tail_want = _PANE_DECOR_RE.sub(" ", tail or "").strip()
+    if tail_want:
+        wants.append(tail_want)
     for _ in range(attempts):
         time.sleep(interval)
         capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
-        if want in _PANE_DECOR_RE.sub(" ", capture.stdout or ""):
+        if _echo_seen(capture.stdout or "", wants, paste_baseline):
             return True
     return False
 
@@ -431,18 +604,33 @@ def _send_answer(row: dict, option_index: int, free_text: str | None,
         if r.returncode != 0:
             return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
         return DeliveryResult(True, f"selected option {option_index + 1} in {pane}")
+    baseline = None
     if is_chat:
         # Chat: this Enter dismisses the menu into the composer before typing.
         _tmux(socket, "send-keys", "-t", pane, "Enter")
         time.sleep(0.1)
-    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--", free_text)
+        # A long chat body collapses to a `[Pasted text #N]` chip that echoes
+        # neither head nor tail, so only a chip numbered above this pre-type
+        # baseline can prove the send landed. A read that FAILED is unknown,
+        # not zero — see `_type_and_ack`.
+        read = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+        baseline = _paste_chip_high_water(read.stdout) if read.returncode == 0 else None
+    # Chat lands in the REAL composer, so it is pasted and acked exactly as a
+    # steer is. The non-chat branch types into the ask's own inline field — a
+    # different widget, unprobed, which neither scrolls nor collapses and which
+    # `_reset_composer` does not address: left verbatim, strict ack, no clear.
+    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--",
+              _pasted_payload(free_text) if is_chat else free_text)
     if r.returncode != 0:
         return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
-    # Same reflow-tolerant, poll-until-echoed ack `_type_and_ack` and
-    # `_answer_one` use — a single early read false-negatived a good send and
-    # a raw substring missed a wrapped echo.
-    if not _await_pane_text(socket, pane, free_text[:30]):
-        return DeliveryResult(False, "typed answer not visible in pane; not submitting")
+    if is_chat:
+        refusal = _composer_ack_refusal(socket, pane, free_text, baseline)
+    elif _await_pane_text(socket, pane, free_text[:30]):
+        refusal = None
+    else:
+        refusal = "not visible in pane; not submitting"
+    if refusal:
+        return DeliveryResult(False, f"typed answer {refusal}")
     _tmux(socket, "send-keys", "-t", pane, "Enter")
     kind = "chat message" if is_chat else "typed answer"
     return DeliveryResult(True, f"{kind} delivered to {pane}")
@@ -668,22 +856,134 @@ def _answer_one(row: dict, option_index: int,
     return DeliveryResult(True, "typed answer delivered")
 
 
-def _parse_one_answer(a) -> tuple | None:
-    """One answer dict → (option_index, clean_text|None, confirm_text|None), or
-    None if invalid."""
-    if not isinstance(a, dict):
+# A MULTI-SELECT question is a different widget from a single-select one, and
+# the difference is entirely in the row list (claude v2.1.252, probed live):
+#
+#   single: 0..N-1 options · N "Type something." · N+1 "Chat about this"
+#   multi:  0..N-1 options · N "Type something" · N+1 "Next"/"Submit" · N+2 chat
+#
+# Enter on a single-select option selects AND advances; on a multi-select option
+# it TOGGLES `[ ]`→`[✔]` and leaves the cursor where it is. So a multi-select
+# question is driven as: toggle each chosen row, then Enter the N+1 row to
+# advance. That row reads "Next" mid-walk and "Submit" on the last question, so
+# it is targeted by index, never by label.
+_MULTI_ADVANCE_OFFSET = 1
+
+
+def _is_index(value) -> bool:
+    """A real 0-based index. `isinstance(True, int)` is True in Python, and a
+    bool reaching the arrow arithmetic is unvalidated input driving keystrokes."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _parse_multi_answer(a) -> tuple | None:
+    """A multi-select entry → (sorted_indices, option_count), or None if the
+    shape is invalid. `option_count` is what locates the advance row, so it is
+    required and must cover every index."""
+    indices, count = a.get("option_index"), a.get("option_count")
+    if not _is_index(count) or count < 1 or count > _ANSWER_MAX_NAV:
         return None
+    if not indices or len(indices) > count:
+        return None
+    if not all(_is_index(i) and 0 <= i < count for i in indices):
+        return None
+    # A free-typed answer rides the "Type something." row, which is a
+    # different verb from toggling — refuse the mix rather than guess.
+    if a.get("text") is not None:
+        return None
+    return (sorted(set(indices)), count)
+
+
+def _parse_pick_answer(a) -> tuple | None:
+    """A single-select entry → (option_index, clean_text|None), or None."""
     oi = a.get("option_index")
     if not isinstance(oi, int) or oi < 0 or oi > _ANSWER_MAX_NAV:
         return None
     raw = a.get("text")
-    text = None
-    if raw is not None:
-        text = sanitize_text(raw) if isinstance(raw, str) else ""
-        if not text:
-            return None
+    if raw is None:
+        return (oi, None)
+    text = sanitize_text(raw) if isinstance(raw, str) else ""
+    return (oi, text) if text else None
+
+
+def _parse_one_answer(a) -> tuple | None:
+    """One answer dict → a `(option_index, clean_text|None, confirm_text|None)`
+    pick, or a `(indices, option_count, confirm_text|None)` multi-select toggle
+    (distinguished by a LIST `option_index`). None if invalid."""
+    if not isinstance(a, dict):
+        return None
     confirm = a.get("confirm_text")
-    return (oi, text, confirm if isinstance(confirm, str) else None)
+    confirm = confirm if isinstance(confirm, str) else None
+    parse = (_parse_multi_answer if isinstance(a.get("option_index"), list)
+             else _parse_pick_answer)
+    parsed = parse(a)
+    return None if parsed is None else (parsed[0], parsed[1], confirm)
+
+
+def _send_toggles(socket, pane, widget, desired: set) -> DeliveryResult:
+    """Enter each row whose state has to flip, navigating from the MEASURED
+    cursor. The symmetric difference is what makes this idempotent: a row that
+    already holds its wanted state is left alone rather than toggled off."""
+    cursor = widget.cursor_index
+    live = {i for i, on in enumerate(widget.checked) if on}
+    for target in sorted(desired ^ live):
+        _navigate_delta(socket, pane, target - cursor)
+        cursor = target
+        r = _tmux(socket, "send-keys", "-t", pane, "Enter")
+        if r.returncode != 0:
+            return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+        time.sleep(_NAV_STEP_SEC)
+    return DeliveryResult(True, "toggles sent")
+
+
+def _toggle_multi(row: dict, indices: list, option_count: int) -> DeliveryResult:
+    """Bring the focused multi-select question to exactly `indices`, then Enter
+    its advance row.
+
+    Driven from the PARSED widget, never from an assumed one. Three things are
+    measured rather than trusted, because each was a way to submit a subset the
+    operator never chose:
+
+      * the widget itself — `parse_multi_select` returns None for a
+        single-select menu, where these same Enters would SELECT and advance;
+      * `option_count` — the advance row's position. A stale card naming a
+        different count would drive Enter at an arbitrary row;
+      * which boxes are already ticked. Toggling the requested set blindly
+        UNTICKS a box a human (or a failed earlier attempt) already ticked, so
+        the toggles sent are the symmetric difference against the live state.
+        That also makes a retry after a partial failure converge instead of
+        undoing itself.
+
+    The post-condition is checked per row inside the widget, not as a count:
+    a count cannot tell WHICH rows are ticked, and one stale `[✔]` elsewhere on
+    screen would let a dropped toggle pass. On any mismatch this refuses
+    without touching the advance row, leaving the ask parked and re-answerable.
+    """
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    widget = parse_multi_select(_capture_recent(socket, pane, 40))
+    if widget is None:
+        return DeliveryResult(False, "focused question is not multi-select")
+    if widget.option_count != option_count:
+        return DeliveryResult(
+            False, f"pane shows {widget.option_count} options, not {option_count}")
+    desired = set(indices)
+    step = _send_toggles(socket, pane, widget, desired)
+    if not step.delivered:
+        return step
+    after = parse_multi_select(_capture_recent(socket, pane, 40))
+    if after is None:
+        return DeliveryResult(False, "lost the question after toggling")
+    ticked = {i for i, on in enumerate(after.checked) if on}
+    if ticked != desired:
+        return DeliveryResult(
+            False, f"pane has {sorted(ticked)} ticked, wanted {sorted(desired)}; "
+                   "not advancing")
+    _navigate_delta(socket, pane,
+                    option_count + _MULTI_ADVANCE_OFFSET - after.cursor_index)
+    r = _tmux(socket, "send-keys", "-t", pane, "Enter")
+    if r.returncode != 0:
+        return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
+    return DeliveryResult(True, f"toggled {len(desired)} options")
 
 
 def _parse_answers(answers) -> list | None:
@@ -705,10 +1005,11 @@ def _walk_answers(row: dict, parsed: list) -> DeliveryResult:
     question is the focused tab before each — the select Enter checks the tab
     and auto-advances. Stops (structured) at the first desync/failure."""
     socket, pane = row.get("tmux_socket"), row["pane_id"]
-    for i, (option_index, text, confirm) in enumerate(parsed):
+    for i, (first, second, confirm) in enumerate(parsed):
         if confirm and not _pane_shows_question(socket, pane, confirm):
             return DeliveryResult(False, f"question {i + 1} not focused in pane")
-        step = _answer_one(row, option_index, text)
+        step = (_toggle_multi(row, first, second) if isinstance(first, list)
+                else _answer_one(row, first, second))
         if not step.delivered:
             return DeliveryResult(False, f"question {i + 1}: {step.detail}")
     return DeliveryResult(True, "all questions answered")
@@ -719,8 +1020,12 @@ def deliver_answers(trace_id: str, answers) -> DeliveryResult:
 
     `answers` is the ordered per-question list ({option_index, text?,
     confirm_text?}). Each question is answered in order (focus-guarded); the
-    select Enter checks that tab and advances. After the last, the review/Submit
-    tab is verified and Enter'd to submit. Refuses (structured, never raising) on
+    select Enter checks that tab and advances. A question whose `option_index`
+    is a LIST is multi-select: its chosen rows are toggled and its own advance
+    row Enter'd instead (`_toggle_multi`), which needs `option_count` to locate
+    that row. After the last, the review/Submit tab is verified and Enter'd to
+    submit — so a SINGLE multi-select question is sent through here too, since
+    that final Submit is mandatory for it as well. Refuses (structured, never raising) on
     any desync, so a stuck walk can neither answer the wrong tab nor submit a
     half-filled form. Same reachability / identity / rate guards as `deliver`;
     audited."""
@@ -754,7 +1059,7 @@ def deliver(trace_id: str, text: str,
     expected failure; every outcome is audited.
 
     `as_command` sends `text` as a slash command instead of as a message —
-    see `_COMPOSER_RESET_KEYS` and `_COMMAND_TERMINATOR` for the two ways a
+    see `_COMPOSER_RESET_KEYS` and `_MENU_TERMINATOR` for the two ways a
     naively typed command misses. Off for ordinary steering, whose composer
     may hold a human's draft the reset would discard.
     """
@@ -762,7 +1067,7 @@ def deliver(trace_id: str, text: str,
         return _refuse(trace_id, "bridge disabled")
     if not _rate_ok(trace_id):
         return _refuse(trace_id, "rate limit exceeded")
-    clean = sanitize_text(text)
+    clean = sanitize_text(text) if as_command else sanitize_body(text)
     if not clean:
         return _refuse(trace_id, "empty message after sanitization")
     row = store.get_reachable_pane(trace_id)
@@ -785,25 +1090,35 @@ def deliver(trace_id: str, text: str,
 LIVE = "live"
 GONE = "gone"
 UNKNOWN = "unknown"
+INDETERMINATE = "indeterminate"
 
 
 def session_liveness(trace_id: str) -> str:
-    """LIVE / GONE / UNKNOWN for `trace_id`'s registered pane.
+    """LIVE / GONE / UNKNOWN / INDETERMINATE for `trace_id`'s registered pane.
 
     GONE is a POSITIVE reading: the pane was queried and something other than
-    the registered claude holds it. Everything that merely prevented the
-    question from being answered — bridge off, no row, a tmux call that
-    failed or timed out — is UNKNOWN.
+    the registered claude holds it.
+
+    The two non-answers are NOT the same, and collapsing them is how a failed
+    probe comes to read as a successful exit. UNKNOWN is "there was nothing to
+    ask" — a clean read that found no pane row, or a bridge the operator
+    switched off — which for a caller deciding whether it can end a session is
+    a settled no. INDETERMINATE is "regin could not get an answer": the pane
+    registry itself would not answer, or it named a pane tmux then refused to
+    describe. There the honest reading is that the session may still be
+    running, and no caller may report it stopped.
     """
     if not settings.agent_bridge.enabled:
         return UNKNOWN
-    row = store.get_reachable_pane(trace_id)
+    row, answered = store.resolve_reachable_pane(trace_id)
+    if not answered:
+        return INDETERMINATE
     if row is None:
         return UNKNOWN
     identity = _verify_identity(row)
     if identity["ok"]:
         return LIVE
-    return GONE if identity.get("read") else UNKNOWN
+    return GONE if identity.get("read") else INDETERMINATE
 
 
 def session_is_live(trace_id: str) -> bool:
@@ -825,7 +1140,8 @@ def session_is_live(trace_id: str) -> bool:
     return session_liveness(trace_id) == LIVE
 
 
-def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:
+def capture_screen(trace_id: str, lines: int | None = None,
+                   color: bool = True) -> CaptureResult:
     """Read-only `capture-pane` snapshot of `trace_id`'s reachable pane.
 
     Default (`lines=None`) captures just the pane's CURRENT visible screen —
@@ -838,6 +1154,9 @@ def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:
     callers convert to HTML for display. Structured refusal (never an
     exception) on every expected failure; audited like every other bridge
     outcome.
+
+    `color=False` drops `-e`, which is what a PARSER wants: SGR sequences
+    split the very tokens `screen_state` anchors on.
     """
     if not settings.agent_bridge.enabled:
         return CaptureResult(False, "", "bridge disabled")
@@ -848,7 +1167,7 @@ def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:
     if not identity["ok"]:
         return CaptureResult(False, "", identity["detail"])
     socket, pane = row.get("tmux_socket"), row["pane_id"]
-    args = ["capture-pane", "-t", pane, "-p", "-e"]
+    args = ["capture-pane", "-t", pane, "-p"] + (["-e"] if color else [])
     if lines:
         args += ["-S", f"-{lines}"]
     r = _tmux(socket, *args)
@@ -859,3 +1178,87 @@ def capture_screen(trace_id: str, lines: int | None = None) -> CaptureResult:
     log.write("bridge_capture_outcome", trace_id=trace_id, ok=True,
               detail=f"captured {pane}")
     return CaptureResult(True, r.stdout, f"captured {pane}")
+
+
+def live_state(trace_id: str, accept: set | None = None):
+    """Parsed live status of `trace_id`'s pane, or None for no verdict.
+
+    The rich per-session read behind the /live card's NOW zone. None covers
+    every "we cannot tell" case — bridge off, no reachable pane, a failed
+    identity check, an unparseable screen — and callers must fall back to the
+    span-derived phase rather than treating it as idle.
+
+    The screen's own footer id is checked against `accept` (the session's
+    alias group; defaults to `trace_id` alone) on top of `capture_screen`'s
+    pid guards. A registry row names the pane, never the session inside it,
+    so a terminal reused across sessions can pass the pid check while showing
+    a different conversation — and reporting THAT one's status under this id
+    is precisely the lie this module exists to remove.
+    """
+    from lib.agent_bridge import screen_state
+    result = capture_screen(trace_id, color=False)
+    if not result.ok:
+        return None
+    state = screen_state.parse_screen(result.text)
+    if state is None:
+        return None
+    ids = accept or {trace_id}
+    if state.session_id and state.session_id not in ids:
+        log.write("bridge_screen_identity_mismatch", trace_id=trace_id,
+                  on_screen=state.session_id)
+        return None
+    return state
+
+
+# Ceiling on how many panes one sweep will capture. Pane count is bounded by
+# nothing on the host side — a machine with several tmux servers can hold far
+# more claude panes than any session list shows — and each capture is a
+# subprocess, so the sweep needs its own bound rather than the caller's.
+_MAX_SCREEN_PANES = 32
+
+
+def _list_claude_panes(socket: str | None) -> list[str]:
+    """Pane ids on `socket` whose foreground process is an allowlisted claude.
+
+    One tmux call for the whole server — the batch read exists so a session
+    list costs a bounded number of subprocesses instead of two per row.
+    """
+    r = _tmux(socket, "list-panes", "-a", "-F",
+              "#{pane_id}\t#{pane_current_command}")
+    if r.returncode != 0:
+        return []
+    allowed = settings.agent_bridge.allowed_pane_commands
+    panes = []
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[1] in allowed:
+            panes.append(parts[0])
+    return panes
+
+
+def screen_states() -> dict:
+    """`{session_uuid: ScreenState}` for every live claude pane tmux can see.
+
+    Keyed by the UUID claude PRINTS in its footer, not by
+    `bridge_panes.trace_id`. That registry is append-only and never retired,
+    so one long-lived terminal accumulates a row per session that ever ran in
+    it and cannot say which is in there now; the footer can, because the TUI
+    renders its own session id. Sockets come from the registry (that is how
+    regin knows which tmux servers are its own), but pane discovery does not,
+    which is what lets this see a session whose row is stale.
+    """
+    if not settings.agent_bridge.enabled:
+        return {}
+    from lib.agent_bridge import screen_state
+    out: dict = {}
+    budget = _MAX_SCREEN_PANES
+    for socket in store.list_tmux_sockets():
+        for pane in _list_claude_panes(socket)[:budget]:
+            budget -= 1
+            r = _tmux(socket, "capture-pane", "-t", pane, "-p")
+            if r.returncode != 0:
+                continue
+            state = screen_state.parse_screen(r.stdout)
+            if state and state.session_id:
+                out[state.session_id] = state
+    return out

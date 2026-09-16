@@ -38,11 +38,11 @@ second verifier for a named gap, and cannot recover the wall-clock.
    on — do not run them yourself. Three verifiers re-running one suite is the
    largest single source of wasted wall-clock in this loop.
 
-   **When you do own the gates, scope them to the diff**:
-   `.venv/bin/python -m pytest -q -n auto --dist=loadfile <touched paths>`
-   (the bare form is ~7× slower and gets killed at the harness's 600s Bash
-   ceiling, returning nothing after ten minutes), and Playwright to the specs
-   covering the changed route plus `responsive.spec.js`.
+   **When you do own the gates, scope them to the diff**: your repo's test
+   runner limited to the touched paths, parallelised if it supports it (the
+   whole-suite form is commonly several times slower and gets killed at the
+   harness's 600s Bash ceiling, returning nothing after ten minutes), and
+   browser/e2e specs limited to the ones covering the changed route.
 
    **Run long commands in the foreground with a timeout.** Never background a
    suite and poll for it (`until … do sleep N; done`) — polling costs the same

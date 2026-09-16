@@ -73,7 +73,13 @@ const popStyle = ref({})
 function placePopover() {
   const rect = rootEl.value?.getBoundingClientRect()
   const vw = window.innerWidth
-  const width = Math.min(320, vw - 16)
+  const avail = vw - 16
+  // Right-anchored to the button — but where the button sits too far left for
+  // a 320px menu to reach it, the clamp below shoves the menu to the viewport
+  // edge and strands a column of dead space on the other side (62px at 390).
+  // Filling the width there reads as intent rather than as a misplacement.
+  const anchored = (rect?.right ?? vw) - 8 >= 320
+  const width = anchored ? Math.min(320, avail) : avail
   const left = Math.min(Math.max(8, (rect?.right ?? vw) - width), vw - width - 8)
   popStyle.value = {
     position: 'fixed',

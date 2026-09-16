@@ -10,7 +10,11 @@
 // Catalog comes from GET /api/sessions/<id>/bridge-commands — the slash
 // commands + skills the *target session* accepts, enumerated server-side from
 // its own `.claude/` + `~/.claude/`. Cached per session (module-level) so
-// re-focusing or switching back doesn't refetch.
+// re-focusing or switching back doesn't refetch — but revalidated in the
+// background on each closed → open transition of the menu, because
+// `/reload-skills` and `/reload-plugins` change what that session accepts
+// mid-run and a cache with no expiry would otherwise pin the pre-reload list
+// until a page reload.
 import { ref, computed } from 'vue'
 import api from '../api'
 
@@ -105,13 +109,41 @@ export function useSlashCommands() {
     return hit.rows
   }
 
+  // Which session the visible catalog is for, so a revalidation that lands
+  // after the composer switched sessions doesn't overwrite the new one's rows.
+  let showing = null
+
+  function apply(sessionId, rows) {
+    if (sessionId !== showing) return
+    catalog.value = rows
+    // A shrunken catalog can strand the highlight past the end, and then
+    // Enter accepts nothing and falls through to the composer as a send.
+    clampIndex()
+  }
+
   async function ensureLoaded(sessionId) {
     if (!sessionId) return
+    showing = sessionId
     const hit = cached(sessionId)
     if (hit) { catalog.value = hit; return }
     loading.value = true
-    catalog.value = await fetchCatalog(sessionId)
+    apply(sessionId, await fetchCatalog(sessionId))
     loading.value = false
+  }
+
+  // Ask again for a catalog we already have. Cheap on the server unless the
+  // session actually reloaded (the endpoint answers from its own per-root
+  // cache), but only ever fired on the closed → open edge below: the composer
+  // calls `ensureLoaded` on both `input` and `keyup`, so revalidating from
+  // there would be a request per keystroke of an ordinary prompt.
+  function revalidate() {
+    const sessionId = showing
+    if (!sessionId || !cached(sessionId) || inflight.has(sessionId)) return
+    // An empty result is a failed fetch, not a real answer (see EMPTY_TTL_MS),
+    // so it must not blank a menu that is already showing rows.
+    fetchCatalog(sessionId).then((rows) => {
+      if (rows.length) apply(sessionId, rows)
+    })
   }
 
   function clampIndex() {
@@ -128,8 +160,13 @@ export function useSlashCommands() {
       close()
       return
     }
+    const wasOpen = open.value
     query.value = tok.name
     open.value = true
+    // Opening the menu is the moment the catalog has to be current: the target
+    // session may have run `/reload-skills` or `/reload-plugins` since we last
+    // asked, and this cache has no expiry of its own.
+    if (!wasOpen) revalidate()
     clampIndex()
   }
 

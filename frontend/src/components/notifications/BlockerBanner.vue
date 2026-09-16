@@ -9,7 +9,7 @@
 // strip (still counted, reopen any time), DISMISS retires this decision for
 // good (server-backed — it never comes back). Neither claims the agent
 // resumed; only a delivered answer may do that.
-import { computed } from 'vue'
+import { computed, ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import Button from '../ui/Button.vue'
 import BlockerHead from './BlockerHead.vue'
 import BlockerPopout from './BlockerPopout.vue'
@@ -35,6 +35,38 @@ const mobileMeta = computed(() => {
   return `${waiting} · Decision ${blockerPos.value + 1} of ${blockerCount.value}`
 })
 
+// The mobile bar is `position: fixed` across the whole bottom edge, so every
+// other bottom-anchored affordance has to clear it. Published as a measured
+// band rather than re-stated as a constant per consumer — the same contract
+// `--trace-rail-h` and `--trace-dock-h` use, and the reason a back-to-top
+// button pinned bottom-left landed on top of this bar.
+const BAR_H = '--blocker-bar-h'
+const barEl = ref(null)
+let barRo = null
+
+function publishBarHeight() {
+  const el = barEl.value
+  if (!el) return document.documentElement.style.removeProperty(BAR_H)
+  document.documentElement.style.setProperty(BAR_H, `${Math.round(el.offsetHeight)}px`)
+}
+
+watch(() => bannerVisible.value && isMobile.value, async (on) => {
+  barRo?.disconnect()
+  barRo = null
+  if (!on) return document.documentElement.style.removeProperty(BAR_H)
+  await nextTick()
+  publishBarHeight()
+  if (typeof ResizeObserver === 'function' && barEl.value) {
+    barRo = new ResizeObserver(publishBarHeight)
+    barRo.observe(barEl.value)
+  }
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  barRo?.disconnect()
+  document.documentElement.style.removeProperty(BAR_H)
+})
+
 function dismissCurrent() {
   dismissBlocker(blocker.value)
 }
@@ -53,6 +85,7 @@ function dismissCurrent() {
        decision opens as a sheet on top of it, not in place of it. -->
   <div
     v-else-if="bannerVisible && isMobile"
+    ref="barEl"
     class="blocker-bar"
     role="alert"
     :inert="popoutVisible || undefined"

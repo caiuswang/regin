@@ -1,12 +1,15 @@
 /**
- * Workflow span folding (collapse-by-default + drill-in):
+ * Workflow spans in the conversation spine:
  *
- *  - Run view: a captured workflow run with many agents folds every agent's
- *    subtree by default — the agent header rows stay, their turns/tools are
- *    hidden until the chevron expands one. "expand all" opens them at once.
+ *  - Run view: a captured workflow run reads straight through — every agent's
+ *    turns render inline under its header, closed by the agent's result card.
+ *    There is no per-agent fold: a subagent's work is either in this trace (a
+ *    workflow run's is) or served by `sa-<agent_id>`, so a chevron would only
+ *    ever hide rows the reader came for.
  *  - Parent session: the launching session's `tool.Workflow` row renders a
  *    rich collapsed summary (agent count + status) sourced from the enriched
  *    /workflow-runs endpoint, without containing any of the run's detail spans.
+ *    THAT fold stays — it hides a whole other trace's markers, not work.
  *
  * Both traces are injected via `/api/session-spans` with `is_test=true`, so
  * they stay out of the sessions list and the test is portable to any clean DB.
@@ -25,7 +28,11 @@ function runSpans() {
     trace_id: runId, span_id: `wfagent-${id}`, parent_id: 'wfphase-1',
     name: 'subagent.start', start_time: T,
     attributes: { agent_id: id, label, state: 'done', tokens,
-                  tool_calls: tools, agent_type: 'workflow-subagent', is_test: true },
+                  tool_calls: tools, agent_type: 'workflow-subagent',
+                  // A workflow agent carries its result on the marker — the
+                  // spine projects it as a trailing `workflow.agent_result`.
+                  result_preview: `${id.toUpperCase()}_AGENT_RESULT_MARKER`,
+                  is_test: true },
   })
   const turn = (id, parent, text) => ({
     trace_id: runId, span_id: id, parent_id: parent,
@@ -85,7 +92,7 @@ function parentSpans(runId) {
   }
 }
 
-test('run view folds agent subtrees by default and drills in on expand', async ({ page }) => {
+test('run view reads through: every agent\'s turns inline, closed by its result card', async ({ page }) => {
   const { runId, spans } = runSpans()
   expect((await page.request.post('/api/session-spans', { data: spans })).ok()).toBeTruthy()
 
@@ -94,41 +101,36 @@ test('run view folds agent subtrees by default and drills in on expand', async (
   })
   await page.goto(`/trace/sessions/${runId}`)
 
-  // Count a turn marker only inside the spine's in-agent rows (the
-  // nested rail, keyed by testid not colour) — that's exactly what folding
-  // controls. The
-  // right-hand detail sidebar also echoes a selected span's text, which is
-  // unrelated to the fold, so a bare getByText would double-count it.
+  // Count a turn marker only inside the spine's in-agent rows (the nested
+  // rail, keyed by testid not colour): the right-hand detail sidebar also
+  // echoes a selected span's text, and a bare getByText would double-count it.
   const inAgentTurn = (text) =>
     page.getByTestId('in-agent-row').filter({ hasText: text })
 
-  // The agent headers render (projection ran).
+  // The agent headers render (projection ran)…
   await expect(page.getByText('find:bugs').first()).toBeVisible({ timeout: 10_000 })
   await expect(page.getByText('find:perf').first()).toBeVisible()
 
-  // expand-all forces the subtrees to load + render, so a later count(0)
-  // means "folded away", not "not yet fetched" (avoids the deep-load race).
-  await page.getByRole('button', { name: 'expand all' }).click()
+  // …and so do their turns, with nothing to expand first.
   await expect(inAgentTurn('BUGS_AGENT_THINKING_MARKER')).toHaveCount(1)
   await expect(inAgentTurn('PERF_AGENT_THINKING_MARKER')).toHaveCount(1)
 
-  // collapse-all hides every agent's turns — the headers stay.
-  await page.getByRole('button', { name: 'collapse all' }).click()
-  await expect(page.getByText('find:bugs').first()).toBeVisible()
-  await expect(inAgentTurn('BUGS_AGENT_THINKING_MARKER')).toHaveCount(0)
-  await expect(inAgentTurn('PERF_AGENT_THINKING_MARKER')).toHaveCount(0)
+  // The synthetic `workflow.agent_result` row closes each agent — it is only
+  // reachable because nothing collapses an agent's run any more.
+  await expect(page.getByText('BUGS_AGENT_RESULT_MARKER').first())
+    .toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('PERF_AGENT_RESULT_MARKER').first()).toBeVisible()
 
-  // Drill into just the first agent → its turn returns; the other stays folded.
-  await page.locator('[title="Expand agent"]').first().click()
-  await expect(inAgentTurn('BUGS_AGENT_THINKING_MARKER')).toHaveCount(1)
-  await expect(inAgentTurn('PERF_AGENT_THINKING_MARKER')).toHaveCount(0)
+  // No per-agent fold survives: no chevron, no expand/collapse all.
+  await expect(page.locator('[title="Expand agent"], [title="Collapse agent"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /expand all|collapse all/ })).toHaveCount(0)
 
   await page.screenshot({ path: '/tmp/wf-fold-run.png', fullPage: false })
 })
 
 // A regular interactive session (no workflow.phase, no run_id) that fanned out
-// `tool.Agent` subagents whose internal turns WERE captured — the same fold
-// must apply here, not just to dynamic-workflow runs.
+// `tool.Agent` subagents whose internal turns WERE captured into this trace
+// (rows predating the agent_id tagging that now routes them to `sa-…`).
 function plainSessionWithSubagents() {
   const traceId = randomUUID()
   const prompt = `p-${traceId.slice(0, 8)}`
@@ -150,7 +152,7 @@ function plainSessionWithSubagents() {
   }
 }
 
-test('regular session folds its tool.Agent subagents too', async ({ page }) => {
+test('regular session shows a subagent\'s in-trace turns inline, with no fold', async ({ page }) => {
   const { traceId, spans } = plainSessionWithSubagents()
   expect((await page.request.post('/api/session-spans', { data: spans })).ok()).toBeTruthy()
 
@@ -161,17 +163,14 @@ test('regular session folds its tool.Agent subagents too', async ({ page }) => {
 
   const inAgentTurn = (text) => page.getByTestId('in-agent-row').filter({ hasText: text })
 
-  // Agent headers render, but their captured turns are folded by default —
-  // this session is NOT a workflow (no phases / run_id), proving the fold is
-  // no longer workflow-gated.
+  // Headers AND turns, for both agents at once — this session is NOT a
+  // workflow (no phases / run_id), so it proves the read-through is general.
   await expect(page.getByText('explore:auth').first()).toBeVisible({ timeout: 10_000 })
-  await expect(inAgentTurn('AUTH_SUBAGENT_WORK')).toHaveCount(0)
-  await expect(inAgentTurn('DB_SUBAGENT_WORK')).toHaveCount(0)
-
-  // Drill into the first agent → its turn appears; the other stays folded.
-  await page.locator('[title="Expand agent"]').first().click()
   await expect(inAgentTurn('AUTH_SUBAGENT_WORK')).toHaveCount(1)
-  await expect(inAgentTurn('DB_SUBAGENT_WORK')).toHaveCount(0)
+  await expect(inAgentTurn('DB_SUBAGENT_WORK')).toHaveCount(1)
+
+  // Nothing to expand — and the rows keep their in-agent rail either way.
+  await expect(page.locator('[title="Expand agent"], [title="Collapse agent"]')).toHaveCount(0)
 })
 
 test('parent session shows a rich collapsed workflow summary node', async ({ page }) => {

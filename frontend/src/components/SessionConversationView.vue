@@ -1,22 +1,31 @@
 <script setup>
-import { ref, computed, nextTick, watch, provide, toRef } from 'vue'
-import PromptBody from './PromptBody.vue'
-import Icon from './ui/Icon.vue'
+import { ref, computed, nextTick, watch, provide, toRef, onMounted, onBeforeUnmount } from 'vue'
 import ConversationToc from './conversation/ConversationToc.vue'
-import ConversationSpanCard from './conversation/ConversationSpanCard.vue'
-import SpineDot from './conversation/SpineDot.vue'
+import ConversationSpineCard from './conversation/ConversationSpineCard.vue'
+import ConversationPromptCard from './conversation/ConversationPromptCard.vue'
+import TurnToolChips from './conversation/TurnToolChips.vue'
+import CompactionDivider from './conversation/CompactionDivider.vue'
+import SpineLiveNode from './conversation/SpineLiveNode.vue'
+import { runStateOf } from '../utils/liveRows.js'
 import TurnUsageFooter from './conversation/TurnUsageFooter.vue'
 import RewindCard from './conversation/RewindCard.vue'
-import { rendersInConversation } from './conversation/dispatch.js'
+import ConversationFooter from './conversation/ConversationFooter.vue'
+import FoldStrip from './conversation/cards/FoldStrip.vue'
+import CarriedSpan from './conversation/CarriedSpan.vue'
+import SpineFoldToggle from './conversation/SpineFoldToggle.vue'
+import { rendersInConversation, foreignAgentIds, tierOf, keepsOwnCard, chipSpans, TIER_CONDENSED, TIER_FOLDED } from './conversation/dispatch.js'
 import { taskSnapshotsBySpan } from '../utils/taskSnapshots.js'
 import { useSpanTree } from '../composables/useSpanTree.js'
 import { useConversationPins } from '../composables/useConversationPins.js'
 import { useConversationFolding } from '../composables/useConversationFolding.js'
+import { useFocusMode } from '../composables/useFocusMode.js'
+import { useDetailSpine } from '../composables/useDetailSpine.js'
+import { useSendReveal } from '../composables/useSendReveal.js'
 import { useAgentLaunchMerge } from '../composables/useAgentLaunchMerge.js'
-import { useCopy } from '../composables/useCopy.js'
+import { useBoundedTrace } from '../composables/useBoundedTrace.js'
+import { getTraceScroller } from '../utils/traceScroller.js'
 import {
-  fmtClock, fmtTokens, fullLabel, dotColor, toolDisplayName,
-  promptPreviewText, promptPreviewMeta, isUnresolvedPrompt,
+  fmtClock, fullLabel, dotColor, isSupersededSegment,
 } from '../utils/traceFormatters.js'
 
 const props = defineProps({
@@ -70,9 +79,25 @@ const props = defineProps({
   // owning prompt is still collapsed) and replayed here into per-span
   // snapshots for the task-list cards.
   taskEvents: { type: Array, default: () => [] },
+  // The session's follow-up context, as ONE object:
+  // { canFollowUp, model, ctxPct, liveScreen, bridgeSession }. Taken whole
+  // rather than unpacked so this feed and the span reader's docked composer
+  // cannot be handed different subsets of it — which is exactly how the two
+  // drifted apart.
+  followUp: { type: Object, default: () => ({}) },
+  // Bumped by a send from ANOTHER surface addressed at this session (the span
+  // reader's Reply). A send is a send: it should clear the deck here too.
+  sendSeq: { type: Number, default: 0 },
+  // The session's whole agent roster (useLiveAgents entries). The server owns
+  // each agent's status, so a subagent card's liveness — and whether its rows
+  // may appear here at all — is read off this, never off the marker span.
+  agents: { type: Array, default: () => [] },
+  // Server clock pair for elapsed readouts (see useAgentElapsed).
+  serverNow: { type: String, default: '' },
+  serverNowAt: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-live', 'enter-scope'])
+const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'load-subtrees', 'jump-live', 'enter-scope', 'present', 'follow-latest', 'resumed'])
 
 // Active-scope highlight signal for the descendant SubagentCards (≥xl split):
 // provided rather than prop-threaded through the ConversationSpanCard
@@ -80,12 +105,47 @@ const emit = defineEmits(['select-span', 'fetch-content', 'load-subtree', 'jump-
 // feed's originating card lights up.
 provide('traceScopedAgentId', toRef(props, 'scopedAgentId'))
 
+// agent_id → roster entry, for the subagent cards' liveness and progress line
+// and for `runStateFor` below. Provided rather than prop-threaded through the
+// card dispatcher, like the scope signal above.
+const agentById = computed(() => new Map(props.agents.map((a) => [a.agentId, a])))
+provide('traceAgentById', agentById)
+// Which roster ids mark a row as belonging to some OTHER feed than this one.
+const foreignAgents = computed(() => foreignAgentIds(props.agents, props.scopeAgent))
+provide('traceServerClock', computed(() => ({ now: props.serverNow, at: props.serverNowAt })))
+
+// One reading of a span's liveness for the whole spine. A subagent card is
+// live when its AGENT is: the marker span is never PENDING, and the
+// `tool.Agent` placeholder that is (`runStateOf`) gets folded into the card
+// and lost — so the roster's status is what answers, with the folded launch
+// as the fallback for an agent the roster does not know yet. `queued` from
+// the merge is the runner's stream-time placeholder for a call the harness
+// has not started, and passes through as itself.
+const AGENT_RUN_STATES = { running: 'running', waiting: 'waiting' }
+function runStateFor(span) {
+  if (span?.name !== 'subagent.start') return runStateOf(span)
+  if (isSupersededSegment(span.attributes)) return ''
+  const entry = agentById.value.get(span.attributes?.agent_id)
+  if (entry) return AGENT_RUN_STATES[entry.status] || ''
+  return runStateOf(agentMerge.launchForSubagent(span))
+}
+
 // span_id → task-list snapshot as of that task-write span, for the cards the
 // dispatcher renders. Provided (not prop-threaded) for the same reason as the
 // scope signal above: it would otherwise cross every card boundary.
-provide('traceTaskSnapshots', computed(() => taskSnapshotsBySpan(props.taskEvents)))
+const taskSnapshots = computed(() => taskSnapshotsBySpan(props.taskEvents))
+provide('traceTaskSnapshots', taskSnapshots)
+// `TaskListCard` is the second self-contained collapsed card in the chain, and
+// the condensed row has nowhere to put the checklist it replays — so Focus
+// swapping it in threw the whole task list away for no density gain.
+const keepsCard = (span) =>
+  keepsOwnCard(span, !!taskSnapshots.value.get(span?.span_id)?.tasks?.length)
 
-const { copyText } = useCopy()
+// Only the instance nobody handed a scroller to owns the view's scroll region:
+// the companion pane's embedded feed scrolls the PANE, so marking its column
+// too would leave `getTraceScroller()` picking whichever matched first.
+const bounded = useBoundedTrace()
+const ownsScroller = computed(() => bounded.value && !props.scrollerGetter)
 
 // Tracks span_ids we've already asked the parent to fetch content for, so the
 // lazy fetch fires at most once per span.
@@ -114,6 +174,10 @@ const {
       promptText: props.scopeAgent.promptPreview || props.scopeAgent.description || '',
       spanCount: props.scopeAgent.spanCount,
       running: props.scopeAgent.running,
+      // The marker stays in the PARENT conversation while `spans` here is the
+      // agent's own trace, so the run facts a workflow marker carries inline
+      // (task prompt, result) reach the scope through the roster entry.
+      marker: props.scopeAgent.startSpan?.attributes || {},
     }
   : null))
 
@@ -122,15 +186,7 @@ const {
 // card there — provided so the flag skips the dispatcher's prop chain.
 provide('traceIsWorkflowRun', isWorkflow)
 
-// A surviving `promptlive-` placeholder is only "stranded" once the session
-// can no longer resolve it — i.e. it has ended. While live, the newest
-// placeholder is just the in-flight prompt. Gate the unresolved styling on
-// `session.end` being present so a live prompt is never flagged. See
-// `isUnresolvedPrompt`.
 const sessionEnded = computed(() => props.spans.some(s => s.name === 'session.end'))
-function promptUnresolved(prompt) {
-  return sessionEnded.value && isUnresolvedPrompt(prompt)
-}
 
 // ── Pin a span / follow tail ──────────────────────────────────
 // Pin holds a chosen span at its on-screen position across the live poll;
@@ -143,9 +199,7 @@ function resolvePinEl(spanId) {
 }
 function getConversationScroller() {
   if (props.scrollerGetter) return props.scrollerGetter()
-  return document.querySelector('.content-scroll')
-    || document.scrollingElement
-    || document.documentElement
+  return getTraceScroller()
 }
 // `block: 'nearest'` semantics against THIS instance's own scroller.
 //
@@ -187,8 +241,6 @@ function ensurePinVisible(spanId) {
   const owner = promptGroups.value.find(g =>
     g.prompt.span_id === spanId || g.descendants.some(d => d.span.span_id === spanId))
   if (owner && !isPromptExpanded(owner.prompt.span_id)) togglePromptExpanded(owner.prompt.span_id, true)
-  const agentId = agentAncestorId(spanId)
-  if (agentId && !isAgentExpanded(agentId)) toggleAgentExpanded(agentId)
 }
 function promptOwnsPinned(promptId) {
   const pid = pinnedSpanId.value
@@ -212,6 +264,15 @@ const {
 // pill, it rides this prop. flush:'post' so the immediate fire (pane opening
 // while the main feed is already following) scrolls a mounted scroller.
 defineExpose({ followTail })
+
+// Only the pill's own click announces follow-latest. The mirror watcher below
+// drives the companion pane off the main feed's state, and letting that path
+// emit would report one reader gesture twice.
+function onFollowPill() {
+  if (followTail.value) { disableFollow(); return }
+  enableFollow()
+  emit('follow-latest')
+}
 watch(() => props.followActive, (on) => {
   if (on == null) return
   if (on) enableFollow()
@@ -225,18 +286,31 @@ const agentMerge = useAgentLaunchMerge(() => props.spans, childrenOf)
 // All expand/collapse state. Two callbacks keep it decoupled from this
 // component's emit + content-fetch concerns.
 const folding = useConversationFolding({
-  getSpans: () => props.spans,
   childrenOf,
   onLoadSubtree: (id) => emit('load-subtree', id),
   onExpandPrompt: (id) => { emit('load-subtree', id); fetchMissingContentForPrompt(id) },
 })
 const {
-  expandedPromptIds,
-  isPromptExpanded, isPromptBodyExpanded, togglePromptExpanded, togglePromptBodyExpanded,
-  isAgentExpanded, toggleAgentExpanded, isWorkflowExpanded,
+  expandedPromptIds, collapsedPromptIds,
+  isPromptExpanded, isPromptCollapsed, isPromptBodyExpanded,
+  setPromptExpanded, togglePromptExpanded, togglePromptBodyExpanded,
+  isWorkflowExpanded,
   isRewindExpanded, toggleRewindExpanded,
-  foldableAgentIds, allAgentsExpanded, expandAllAgents, collapseAllAgents,
 } = folding
+
+// Everything one spine row's card chain needs, as ONE prop. Taken whole for
+// the same reason `rewindCtx` below is: threading eight of these through the
+// row would let this feed and its rows disagree about any of them.
+const spineCtx = computed(() => ({
+  selectedSpan: props.selectedSpan,
+  folding,
+  agentMerge,
+  workflowRunsById: props.workflowRunsById,
+  pinnedSpanId: pinnedSpanId.value,
+  pinnable: isPinnable,
+  keepsCard,
+  bodyOpen: isManuallyOpen,
+}))
 
 // Context bundle the discarded-branch span cards (rendered inside RewindCard)
 // need — passed as one prop so the marker's template footprint stays small.
@@ -247,19 +321,7 @@ const rewindCtx = computed(() => ({
   workflowRunsById: props.workflowRunsById,
 }))
 
-// Climb the parent_id chain to the nearest enclosing agent (inclusive), so a
-// span selected from the TOC or a deep-link can auto-expand the agent that
-// owns it.
-function agentAncestorId(spanId) {
-  let cur = spanById.value.get(spanId)
-  while (cur) {
-    if (cur.name === 'subagent.start') return cur.span_id
-    cur = cur.parent_id ? spanById.value.get(cur.parent_id) : null
-  }
-  return null
-}
-
-// Fold collapsed agents/workflows out of an expanded prompt's descendant list.
+// Fold collapsed workflows out of an expanded prompt's descendant list.
 // Reads the fold predicates so it stays reactive — keep it here (not in a
 // card) so toggling a chevron reflows the spine and re-registers spanRefs.
 function renderableDescendants(entry, keepRewound = false) {
@@ -276,21 +338,24 @@ function renderableDescendants(entry, keepRewound = false) {
   // attached — and they inflated the turn header's event count well past what
   // the reader could see (259 claimed vs 61 shown on one turn).
   const dispatched = live.filter(({ span }) => rendersInConversation(span))
-  const base = merged.size
+  const launchless = merged.size
     ? dispatched.filter(({ span }) => !merged.has(span.span_id))
     : dispatched
-  // Every row inside an agent carries `inAgent` (set once flattenDescendants
-  // crosses a `subagent.start`), so a collapsed agent's rows are a contiguous
-  // run from its header to the next agent/phase. Drop those — keep the header.
+  // A subagent's work is served by its own trace and stands here as its
+  // card alone: a row tagged with a roster agent's id is the child's, never
+  // the parent's, whichever read window delivered it. A scoped feed's OWN
+  // agent is not foreign to it (see `foreignAgentIds`).
+  const base = foreignAgents.value.size
+    ? launchless.filter(({ span }) => span.name.startsWith('subagent.')
+      || !foreignAgents.value.has(span.attributes?.agent_id))
+    : launchless
   const visible = []
-  let collapsing = false
   let collapsingWorkflow = false
   for (const d of base) {
-    // Workflow fold takes precedence: a collapsed `tool.Workflow` hides its
-    // entire subtree behind the single workflow card. Keep the card row.
+    // A collapsed `tool.Workflow` hides its entire subtree behind the single
+    // workflow card. Keep the card row.
     if (d.span.name === 'tool.Workflow') {
       collapsingWorkflow = !isWorkflowExpanded(d.span.span_id)
-      collapsing = false
       visible.push(d)
       continue
     }
@@ -299,13 +364,6 @@ function renderableDescendants(entry, keepRewound = false) {
     } else {
       collapsingWorkflow = false
     }
-    if (d.span.name === 'subagent.start') {
-      collapsing = !isAgentExpanded(d.span.span_id)
-      visible.push(d)
-      continue
-    }
-    if (!d.inAgent) { collapsing = false; visible.push(d); continue }
-    if (collapsing) continue
     visible.push(d)
   }
   // Flag each agent header that should get a separator line above it: between
@@ -322,6 +380,9 @@ function renderableDescendants(entry, keepRewound = false) {
 // one when a newer prompt arrives. `lastAutoExpandedId` tracks what we
 // auto-opened so a manual collapse of the latest prompt sticks.
 const lastAutoExpandedId = ref(null)
+const { arm: armSendReveal, applyTo: applySendReveal } =
+  useSendReveal({ expandedPromptIds, isExempt: promptOwnsPinned, traceId: toRef(props, 'traceId') })
+watch(() => props.sendSeq, () => armSendReveal())
 watch(promptGroups, (groups) => {
   if (!groups.length) return
   const latest = groups[groups.length - 1].prompt
@@ -331,8 +392,12 @@ watch(promptGroups, (groups) => {
   if (lastAutoExpandedId.value && !promptOwnsPinned(lastAutoExpandedId.value)) {
     expandedPromptIds.value.delete(lastAutoExpandedId.value)
   }
+  // Clear any stale collapse on this id first, or the two sets disagree and
+  // the arriving turn lands closed.
+  collapsedPromptIds.value.delete(latest.span_id)
   expandedPromptIds.value.add(latest.span_id)
   lastAutoExpandedId.value = latest.span_id
+  applySendReveal(latest.span_id)
   emit('load-subtree', latest.span_id)
   fetchMissingContentForPrompt(latest.span_id)
 }, { immediate: true })
@@ -341,6 +406,33 @@ watch(promptGroups, (groups) => {
 function onSelectSpan(span) { emit('select-span', span) }
 // User clicked a card body → select + lazily fetch its content.
 function onActivate(span) { onSelectSpan(span); maybeFetchContent(span) }
+// Reaching a span's full content must never require the detail rail, so every
+// row carries three routes to it: the ⤢ button, a double-click, and `P` on the
+// selection. The reader selects for itself (usePresentReader's `onSelect`), so
+// closing it still leaves the feed on the span that was just read — routing
+// this through `onActivate` instead emitted the "explicit selection" intent
+// that opens the mobile bottom sheet, stacking span details under the reader.
+function onPresent(span) {
+  maybeFetchContent(span)
+  emit('present', span)
+}
+// Double-click-to-read is DELEGATED from the feed root rather than bound per
+// row: every span row already carries `data-span-id`, and a `@dblclick` on the
+// row wrapper would make the whole row — spine gutter included — a clickable
+// container owing a pointer cursor and a hover wash that belong to the card
+// inside it, not to the rail.
+//
+// No drag-selection guard here, unlike the single-click handlers: a
+// double-click ALWAYS leaves a word selected, so that guard would reject every
+// double-click there is.
+const feedRootEl = ref(null)
+function onFeedDblClick(e) {
+  const host = e.target.closest?.('[data-span-id]')
+  const span = host && spanById.value.get(host.getAttribute('data-span-id'))
+  if (span) onPresent(span)
+}
+onMounted(() => feedRootEl.value?.addEventListener('dblclick', onFeedDblClick))
+onBeforeUnmount(() => feedRootEl.value?.removeEventListener('dblclick', onFeedDblClick))
 
 function onPromptClick(prompt) {
   // Skip the toggle when the click ended a drag-selection — otherwise
@@ -351,7 +443,7 @@ function onPromptClick(prompt) {
   }
   emit('select-span', prompt)
   maybeFetchContent(prompt)
-  togglePromptExpanded(prompt.span_id)
+  toggleTurnExpanded(prompt.span_id)
 }
 
 async function selectTurn(item) {
@@ -379,16 +471,40 @@ function promptOwnerOf(spanId) {
   return promptGroups.value.find(g =>
     g.descendants.some(d => d.span.span_id === spanId)) || null
 }
-// Unfold whatever hides the selected row — its turn, then the agent it ran
-// inside — so there is a row to reveal at all.
+// Unfold whatever hides the selected row — its turn — so there is a row to
+// reveal at all.
 async function unfoldFor(spanId, owner) {
   if (owner && !isPromptExpanded(owner.prompt.span_id)) {
     togglePromptExpanded(owner.prompt.span_id, true)
     await nextTick()
   }
-  const agentId = agentAncestorId(spanId)
-  if (agentId && !isAgentExpanded(agentId)) {
-    toggleAgentExpanded(agentId)
+  // Focus adds a second way for a row to be out of sight, so the reveal path
+  // has to clear tier as well as fold: a `?span=` deep link into a condensed
+  // or folded span otherwise lands on nothing at all.
+  //
+  // The two tiers hide differently and need different keys. A condensed row is
+  // already on the spine, so seeding `manuallyOpen` opens its body. A folded
+  // one is behind its TURN's strip, so only `openFold` can surface it —
+  // seeding `manuallyOpen` for it reveals nothing, because the Tier 3 render
+  // path never reads that set. With no owning turn there is no strip to open,
+  // and the selection still reaches the detail rail, so this is a real no-op
+  // rather than a missing case. A condensed span that kept its own card reads
+  // neither set — its body is `folding`'s to open, and Focus-off does not
+  // auto-open it either, so the deep link lands on it closed and selected.
+  if (latestOn.value) {
+    // Focus sets aside everything outside its keep-set, so the only way back to
+    // one of those spans is that turn's own strip. A span already ON the spine
+    // must not open it — that would make a plain click on a card the mode
+    // chose to show spill the whole turn back out.
+    if (owner && !detail.isKeptRow(owner.prompt.span_id, spanId)) {
+      openFold(owner.prompt.span_id, 'latest')
+      await nextTick()
+    }
+  } else if (condensedOn.value && spanById.value.has(spanId)) {
+    const span = spanById.value.get(spanId)
+    const tier = tierOf(span)
+    if (tier === TIER_FOLDED) { if (owner) openFold(owner.prompt.span_id) }
+    else if (tier === TIER_CONDENSED && !keepsCard(span)) revealSpan(spanId)
     await nextTick()
   }
 }
@@ -512,42 +628,147 @@ function eventCount(entry) {
   return renderableFor(entry).length
 }
 
-// ── Tool-chip categorization (collapsed-turn preview) ─────────
-// Group descendant spans into semantic chips so the user sees
-// `Read×2  Edit×4  doc-hygiene` instead of an unstructured wall.
-function toolChipsForEntry(entry) {
-  const buckets = new Map() // label -> { count, color }
-  function add(label, color) {
-    const cur = buckets.get(label) || { count: 0, color }
-    cur.count++
-    buckets.set(label, cur)
+// ── Detail modes ──────────────────────────────────────────────
+// Tier and rows come from the SAME list the spine renders, so what the turn
+// header says about a turn cannot drift from the DOM the way `259 events` over
+// 61 rows did. `tierOf` lives beside `rendersInConversation` for that reason.
+const { condensedOn, latestOn, isManuallyOpen, toggleManuallyOpen, revealSpan, openFold }
+  = useFocusMode()
+const detail = useDetailSpine({
+  getEntries: () => entries.value,
+  getRowsFor: (turnId) => renderableByPrompt.value.get(turnId) || [],
+  runStateFor,
+  isPromptExpanded,
+  isPromptCollapsed,
+})
+
+// The spine model lives in useDetailSpine: which rows a mode renders, what a
+// strip sets aside, which turns the mode forces open, and what each turn
+// carries down from the one above. What stays here is only the part that
+// touches the DOM — element refs, scroll anchoring, and the fetch emits.
+function focusRowsFor(entry) {
+  return detail.rowsFor(entry.prompt.span_id)
+}
+// Reads the RENDERED state rather than flipping the expanded set: a turn the
+// mode or a running span opened is not in that set, so a membership flip would
+// re-open what the reader just asked to close.
+function toggleTurnExpanded(turnId) {
+  setPromptExpanded(turnId, !detail.isTurnExpanded(turnId))
+}
+// A folded turn's own useful tail, shown under its chips.
+const ownTailFor = (entry) => detail.ownTailByTurn.value.get(entry.prompt.span_id) || null
+
+// Opening strips only — the closing one is wherever the reader happens to be,
+// and it is the OPENING one they need brought back into view.
+const stripRefs = ref(new Map())
+function registerStrip(row, el) {
+  const key = detail.stripKey(row.turnId, row.kind)
+  if (el) stripRefs.value.set(key, el); else stripRefs.value.delete(key)
+}
+
+// Folding from the gutter deletes every row between the reader and whatever
+// opened them, so the scroller clamps and leaves them wherever the shortened
+// document happens to end. Put them back on the row that now stands for
+// everything that disappeared — the strip, or the turn's own prompt card.
+// Where the reader lands after a gutter fold. Only the FOLDING actions have an
+// entry: opening grows the page below the control, so there is nothing to
+// re-anchor. Folding deletes every row between the reader and whatever opened
+// them, and the scroller then clamps and leaves them wherever the shortened
+// document happens to end — so put them on the row that now stands for what
+// disappeared.
+const GUTTER_ANCHOR = {
+  turn: (refs, turnId) => refs.prompts.get(turnId),
+}
+
+// The button's `v-if` is this same `gutterAction`, but a click already in
+// flight outlives it: a poll that turns the turn live, or a merge that drops
+// the entry, recomputes the action to ''. Bail rather than fold a turn the
+// reader never asked to fold.
+async function onGutterFold(entry) {
+  const turnId = entry.prompt.span_id
+  const what = detail.gutterAction(turnId)
+  if (!what) return
+  toggleTurnExpanded(turnId)
+  const anchor = GUTTER_ANCHOR[what]
+  if (!anchor) return
+  await nextTick()
+  revealRow(anchor({ prompts: promptRefs.value }, turnId))
+}
+
+// ── Hydrating what the mode put on screen ─────────────────────
+// A turn the MODE opened never went through `togglePromptExpanded`, so nothing
+// asked the server for its subtree or for the bodies the shallow `/map`
+// projection serves lazily — and Focus promises the newest span "with its full
+// body intact". Without this, every turn but the latest renders an empty card
+// (or, with no subtree at all, no spine).
+//
+// Both re-run on every span change on purpose: the subtree lands a poll AFTER
+// the request, and the bodies inside it can only be asked for once it has.
+// The repeat is free — `requestedContent` here and `subtreeLoaded` in
+// useTraceData both short-circuit an id that was already asked for.
+watch([detail.forcedOpenTurnIds, () => props.spans], ([ids]) => {
+  // ONE request for the whole page: asked per turn this was a deep fetch each,
+  // 50 of them on a full page, and each one re-merged the entire session.
+  emit('load-subtrees', ids)
+  for (const id of ids) fetchMissingContentForPrompt(id)
+}, { immediate: true })
+
+// The carried span is on screen while its OWN turn is closed, so nothing else
+// will ever fetch its body: an `assistant_response` tail — the common case —
+// would render an empty card, and C2 is "rendered, not summarised".
+watch([detail.ownTailByTurn, () => props.spans], () => {
+  for (const span of detail.ownTailByTurn.value.values()) maybeFetchContent(span)
+}, { immediate: true })
+
+const chipDescendants = (entry) => chipSpans(entry.descendants, detail.mode.value)
+
+// Same reason as `liveNode` below: a carried span is rendered twice — above a
+// prompt, and under the LAST turn's chips — and four separate prop bindings per
+// site put this template over its directive budget.
+const carriedCtx = computed(() => ({
+  selectedSpan: props.selectedSpan,
+  folding,
+  agentMerge,
+  workflowRunsById: props.workflowRunsById,
+}))
+
+// Bundled so each consumer costs ONE binding: this template already sits a
+// few directives under its budget.
+const liveNode = computed(() => ({
+  bridgeSession: props.followUp.bridgeSession,
+  screen: props.followUp.liveScreen,
+}))
+
+// Everything the prompt card shows that only the span tree knows. No numeral
+// here describes spans the mode set aside: an exact tally reads as an error
+// budget and invites counting instead of reading. Whether anything IS set
+// aside is a different question, and the reader needs the answer to it.
+function promptMeta(entry) {
+  return {
+    ...detail.turnMeta(entry.prompt.span_id),
+    turnNumber: turnNumber(entry.prompt),
+    eventCount: eventCount(entry),
+    pinnable: isPinnable(entry.prompt),
   }
-  for (const { span } of entry.descendants) {
-    const n = span.name || ''
-    if (n === 'tool.Bash') {
-      add('Shell', 'bg-slate-100 text-slate-700 border-slate-200')
-    } else if (n.startsWith('tool.')) {
-      add(toolDisplayName(n.slice(5)), 'bg-blue-50 text-blue-700 border-blue-200')
-    } else if (n === 'skill.read' || n === 'skill.invoke') {
-      add(span.attributes?.skill_id || 'skill', 'bg-green-50 text-green-700 border-green-200')
-    } else if (n === 'file.edit' || n === 'plan.edit') {
-      add('Edit', 'bg-orange-50 text-orange-700 border-orange-200')
-    } else if (n === 'rule.check') {
-      add('rule', 'bg-red-50 text-red-700 border-red-200')
-    } else if (n === 'memory.recall') {
-      add('recall', 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200')
-    } else if (n === 'assistant_response') {
-      add('assistant', 'bg-green-50 text-emerald-700 border-green-200')
-    } else if (n.startsWith('subagent.')) {
-      add('subagent', 'bg-violet-50 text-violet-700 border-violet-200')
-    }
-  }
-  return Array.from(buckets.entries()).map(([label, v]) => ({ label, ...v }))
+}
+
+// The header's folded count is a button: it opens every fold in the turn.
+// Tier 2 bodies stay closed — this reveals what was set aside, it does not
+// expand everything that could be expanded. It TOGGLES, because the label
+// already does: once open the card relabels itself "N revealed", and a
+// non-toggling handler left that as a focusable, hoverable, underlined no-op
+// whose only undo was scrolling down to the strip.
+function revealFolds(entry) {
+  const turnId = entry.prompt.span_id
+  const kind = latestOn.value ? 'latest' : 'fold'
+  if (detail.isFoldOpen(turnId, kind)) { detail.toggleFold(turnId, kind); return }
+  togglePromptExpanded(turnId, true)
+  openFold(turnId, kind)
 }
 </script>
 
 <template>
-  <div class="flex gap-4 items-start">
+  <div ref="feedRootEl" class="flex gap-4 items-start" :class="{ 'conv-bounded': ownsScroller }">
     <!-- ──────── LEFT RAIL: TURNS / PHASES TOC ──────── -->
     <ConversationToc
       v-if="!scopeAgent && !hideToc"
@@ -557,359 +778,294 @@ function toolChipsForEntry(entry) {
       :phase-plan="phasePlan"
       :turn-items="turnItems"
       :selected-span="selectedSpan"
-      :foldable-agent-ids="foldableAgentIds"
-      :all-agents-expanded="allAgentsExpanded"
+      :context-window-tokens="contextWindowTokens"
+      :expanded-prompt-ids="expandedPromptIds"
       @select-turn="selectTurn"
       @select-workflow-row="selectWorkflowRow"
       @jump-live="$emit('jump-live')"
-      @expand-all-agents="expandAllAgents"
-      @collapse-all-agents="collapseAllAgents"
     />
 
     <!-- ──────── CENTER COLUMN: CHAT DOCUMENT ──────── -->
-    <div class="flex-1 min-w-0 font-sans text-sm leading-relaxed space-y-[26px]">
+    <div class="conversation-feed flex-1 min-w-0 font-sans text-sm leading-relaxed">
       <div
-        v-for="(entry, entryIdx) in entries"
-        :key="entryIdx"
+        class="conversation-scroll space-y-[26px]"
+        :data-trace-scroller="ownsScroller ? '' : undefined"
       >
-        <!-- Prompt group -->
-        <div
-          v-if="entry.type === 'group'"
-          :ref="(el) => { if (el) promptRefs.set(entry.prompt.span_id, el); else promptRefs.delete(entry.prompt.span_id) }"
-          class="space-y-2"
-          :style="{ scrollMarginTop: 'calc(var(--regin-trace-header-h, 5rem) + 0.75rem)' }"
-        >
-          <!-- USER prompt card: avatar tile + `PROMPT · TURN n` + event count -->
           <div
-            class="group relative flex gap-3 rounded-[12px] border border-purple-200 px-3.5 py-3 cursor-pointer hover:border-purple-300 transition-colors"
-            :class="[
-              isPromptExpanded(entry.prompt.span_id) ? 'bg-purple-50' : 'bg-purple-50/40',
-              selectedSpan && selectedSpan.span_id === entry.prompt.span_id ? 'event-selected' : '',
-              pinnedSpanId === entry.prompt.span_id ? 'ring-2 ring-amber-400' : '',
-              promptUnresolved(entry.prompt) ? 'border-dashed !border-amber-300 !bg-amber-50/50' : '',
-            ]"
-            @click="onPromptClick(entry.prompt)"
+            v-for="(entry, entryIdx) in entries"
+            :key="entryIdx"
           >
-            <button
-              v-if="isPinnable(entry.prompt)"
-              type="button"
-              class="absolute -left-4 top-1.5 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
-              :class="pinnedSpanId === entry.prompt.span_id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 grayscale'"
-              :title="pinnedSpanId === entry.prompt.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
-              :aria-pressed="pinnedSpanId === entry.prompt.span_id"
-              @click.stop="togglePin(entry.prompt.span_id)"
-            >📌</button>
-            <span
-              class="shrink-0 w-[30px] h-[30px] rounded-[9px] bg-gradient-to-br from-purple-600 to-violet-700 text-white text-[11px] font-bold flex items-center justify-center select-none"
-              aria-hidden="true"
-            >You</span>
-            <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mb-[3px]">
-              <span
-                data-testid="conversation-prompt-label"
-                class="font-bold uppercase tracking-[0.08em] text-[10px] text-purple-700 shrink-0"
-              >Prompt<template v-if="turnNumber(entry.prompt)"> · Turn {{ turnNumber(entry.prompt) }}</template></span>
-              <span
-                v-if="promptUnresolved(entry.prompt)"
-                class="px-1 rounded bg-amber-200/70 text-amber-800 text-[9px] font-semibold uppercase tracking-wider not-italic"
-                title="Unresolved — a live prompt placeholder whose real anchor never landed. Usually a scheduled/loop wakeup (delivered as a plain prompt, never anchored) or an interrupted final prompt, not a turn the user typed."
-              >unresolved</span>
-              <span class="font-mono text-[11px] text-purple-500 shrink-0">{{ fmtClock(entry.prompt.start_time) }}</span>
-              <div class="ml-auto flex items-center gap-2 min-w-0">
-                <button
-                  v-if="entry.prompt.attributes?.text && isPromptBodyExpanded(entry.prompt.span_id)"
-                  type="button"
-                  class="inline-flex items-center gap-1 transition-colors px-1.5 py-0.5 rounded text-[10px] text-purple-600 hover:bg-purple-200/60 focus-visible:outline-2 focus-visible:outline-purple-400"
-                  title="Collapse full prompt"
-                  @click.stop="togglePromptBodyExpanded(entry.prompt.span_id)"
-                ><Icon name="chevron-down" :size="12" class="rotate-180" />Collapse</button>
-                <button
-                  v-if="entry.prompt.attributes?.text"
-                  type="button"
-                  class="opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded text-[10px] text-purple-600 hover:bg-purple-200/60 focus-visible:outline-2 focus-visible:outline-purple-400"
-                  title="Copy"
-                  @click.stop="copyText(entry.prompt.attributes.text)"
-                >Copy</button>
-                <!-- How much work this turn drove, and whether it's open — the
-                     same affordance as the `show detail ▾` trigger below. The
-                     count is omitted, not shown as 0, while the turn's subtree
-                     is still unfetched (only expanded turns are loaded). -->
-                <span
-                  class="font-mono text-[11px] text-slate-400"
-                ><template v-if="eventCount(entry)">{{ eventCount(entry) }} event<template v-if="eventCount(entry) !== 1">s</template> · </template>{{ isPromptExpanded(entry.prompt.span_id) ? '▴' : '▾' }}</span>
-              </div>
-            </div>
+            <!-- Prompt group -->
             <div
-              v-if="entry.prompt.attributes?.text && isPromptBodyExpanded(entry.prompt.span_id)"
-              class="max-h-[60vh] overflow-y-auto rounded border border-purple-200/70 bg-white/40 px-2 py-1"
+              v-if="entry.type === 'group'"
+              :ref="(el) => { if (el) promptRefs.set(entry.prompt.span_id, el); else promptRefs.delete(entry.prompt.span_id) }"
+              class="space-y-2"
+              :style="{ scrollMarginTop: 'calc(var(--regin-trace-header-h, 5rem) + 0.75rem)' }"
             >
-              <PromptBody
-                :text="entry.prompt.attributes.expanded_text || entry.prompt.attributes.text"
+              <ConversationPromptCard
+                :prompt="entry.prompt"
+                :meta="promptMeta(entry)"
+                :folding="folding"
                 :trace-id="traceId"
-                :span-id="entry.prompt.span_id"
-                :image-indices="entry.prompt.attributes?.image_indices || []"
-                force-expanded
+                :selected="!!selectedSpan && selectedSpan.span_id === entry.prompt.span_id"
+                :pinned="pinnedSpanId === entry.prompt.span_id"
+                :session-ended="sessionEnded"
+                @click="onPromptClick(entry.prompt)"
+                @toggle-pin="togglePin(entry.prompt.span_id)"
+                @present="onPresent(entry.prompt)"
+                @reveal-folds="revealFolds(entry)"
               />
-            </div>
-            <PromptBody
-              v-if="entry.prompt.attributes?.text && !isPromptBodyExpanded(entry.prompt.span_id)"
-              :text="promptPreviewText(entry.prompt)"
-              :trace-id="traceId"
-              :span-id="entry.prompt.span_id"
-              :image-indices="entry.prompt.attributes?.image_indices || []"
-            />
-            <div
-              v-if="entry.prompt.attributes?.text && !isPromptBodyExpanded(entry.prompt.span_id) && (promptPreviewMeta(entry.prompt).truncated || promptPreviewMeta(entry.prompt).imageCount)"
-              class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-purple-700/70"
-            >
-              <button
-                v-if="promptPreviewMeta(entry.prompt).truncated"
-                type="button"
-                class="inline-flex items-center gap-1 rounded border border-purple-200 bg-white/70 px-1.5 py-0.5 text-purple-600 hover:bg-purple-200/60 hover:border-purple-300 focus-visible:outline-2 focus-visible:outline-purple-400 transition-colors"
-                title="Show full prompt"
-                @click.stop="togglePromptBodyExpanded(entry.prompt.span_id)"
-              ><Icon name="chevron-down" :size="12" />Show full prompt</button>
-              <span
-                v-if="promptPreviewMeta(entry.prompt).imageCount"
-                class="inline-flex items-center rounded border border-purple-200 bg-white/70 px-1.5 py-0.5"
-                :title="promptPreviewMeta(entry.prompt).imageTokens
-                  ? `Estimated image cost: ~${promptPreviewMeta(entry.prompt).imageTokens} tokens (rolled into the next turn's input_tokens / cache_creation_input_tokens by Anthropic)`
-                  : null"
-              >{{ promptPreviewMeta(entry.prompt).imageCount }} image<span v-if="promptPreviewMeta(entry.prompt).imageCount > 1">s</span><span
-                v-if="promptPreviewMeta(entry.prompt).imageTokens"
-                class="ml-1 text-purple-600/80"
-              >· ~{{ promptPreviewMeta(entry.prompt).imageTokens }} tok</span></span>
-            </div>
-            <span v-if="!entry.prompt.attributes?.text" class="text-purple-700">{{ fullLabel(entry.prompt) }}</span>
-            </div>
-          </div>
 
-          <!-- Tool/skill chips for this turn (collapsed preview) -->
-          <div
-            v-if="!isPromptExpanded(entry.prompt.span_id)"
-            class="flex flex-wrap items-center gap-1.5 pt-[3px] pl-[42px]"
-          >
-            <span
-              v-for="chip in toolChipsForEntry(entry)"
-              :key="chip.label"
-              class="inline-flex items-center gap-1 px-[9px] py-[3px] text-[11px] rounded-[7px] border"
-              :class="chip.color"
-            >{{ chip.label }}<span v-if="chip.count > 1" class="opacity-65">×{{ chip.count }}</span></span>
-            <button
-              type="button"
-              class="font-mono text-[11px] text-slate-400 hover:text-slate-700 ml-1 cursor-pointer rounded px-1 focus-visible:outline-2 focus-visible:outline-blue-500"
-              @click="togglePromptExpanded(entry.prompt.span_id)"
-            >show detail ▾</button>
-          </div>
-
-          <!-- Expanded turn body: one spine, every event a node punched onto
-               it. The `:ref` wrapper + pin button stay here;
-               ConversationSpanCard renders only the card body. -->
-          <div
-            v-if="isPromptExpanded(entry.prompt.span_id) && renderableFor(entry).length"
-            class="event-spine"
-          >
-            <template v-for="{ span, inAgent, agentSep } in renderableFor(entry)" :key="span.span_id">
-              <div
-                :ref="(el) => { if (el) spanRefs.set(span.span_id, el); else spanRefs.delete(span.span_id) }"
-                :data-span-id="span.span_id"
-                :data-testid="inAgent ? 'in-agent-row' : undefined"
-                class="event-spine-row group/pin"
-                :class="[
-                  inAgent ? 'spine-nested border-l-2 border-violet-200 bg-violet-50/20' : '',
-                  agentSep ? 'border-t-2 border-slate-200 mt-6 pt-5' : '',
-                  pinnedSpanId === span.span_id ? 'rounded-md ring-2 ring-amber-400' : '',
-                ]"
-              >
-                <SpineDot :span="span" />
-                <button
-                  v-if="isPinnable(span)"
-                  type="button"
-                  class="spine-pin absolute -left-[30px] top-0 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
-                  :class="pinnedSpanId === span.span_id ? 'opacity-100' : 'opacity-0 group-hover/pin:opacity-100 grayscale'"
-                  :title="pinnedSpanId === span.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
-                  :aria-pressed="pinnedSpanId === span.span_id"
-                  @click.stop="togglePin(span.span_id)"
-                >📌</button>
-                <ConversationSpanCard
-                  :span="span"
-                  :selected-span="selectedSpan"
-                  :folding="folding"
-                  :agent-merge="agentMerge"
-                  :workflow-runs-by-id="workflowRunsById"
+              <!-- Tool/skill chips for this turn (collapsed preview), with
+                   the gutter's other half: the same round control that folds a
+                   turn opens it again, from the same column. -->
+              <div v-if="!detail.isTurnExpanded(entry.prompt.span_id)">
+                <SpineFoldToggle
+                  v-if="renderableFor(entry).length"
+                  action="expand"
+                  @toggle="toggleTurnExpanded(entry.prompt.span_id)"
+                />
+                <TurnToolChips
+                  :descendants="chipDescendants(entry)"
+                  @expand="toggleTurnExpanded(entry.prompt.span_id)"
+                />
+                <!-- What this turn produced, kept visible while it is folded.
+                     Keyed by the turn that produced it, so it does not depend
+                     on there being a next turn to hang it above. -->
+                <CarriedSpan
+                  v-if="ownTailFor(entry)"
+                  :span="ownTailFor(entry)"
+                  v-bind="carriedCtx"
                   @activate="onActivate"
                   @enter-scope="$emit('enter-scope', $event)"
                 />
               </div>
-            </template>
-          </div>
 
-          <!-- Turn footer: usage rollup + the collapse trigger, one filled bar -->
-          <TurnUsageFooter
-            v-if="turnItemFor(entry.prompt)?.turnAgg || isPromptExpanded(entry.prompt.span_id)"
-            :key="entry.prompt.span_id"
-            :item="turnItemFor(entry.prompt)"
-            :context-window-tokens="contextWindowTokens"
-            :detail-open="isPromptExpanded(entry.prompt.span_id)"
-            @toggle-detail="togglePromptExpanded(entry.prompt.span_id)"
-          />
-        </div>
-
-        <!-- Rewind boundary divider (collapsed discarded branch + file rollback) -->
-        <div
-          v-else-if="entry.span.name === 'rewind'"
-          :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
-        >
-          <RewindCard
-            :span="entry.span"
-            :trace-id="props.traceId"
-            :descendants="renderableDescendants(entry, true)"
-            :ctx="rewindCtx"
-            :expanded="isRewindExpanded(entry.span.span_id)"
-            :loaded="props.loadedSubtrees.has(entry.span.span_id)"
-            @select="onSelectSpan"
-            @toggle="toggleRewindExpanded(entry.span.span_id)"
-            @activate="onActivate"
-            @enter-scope="$emit('enter-scope', $event)"
-          />
-        </div>
-
-        <!-- Compaction boundary divider (PreCompact / PostCompact) -->
-        <div
-          v-else-if="entry.span.name === 'compact.pre' || entry.span.name === 'compact.post'"
-          :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
-          class="my-3 px-2 py-1 cursor-pointer group rounded-lg border border-transparent transition-colors hover:bg-amber-50/60 focus-visible:outline-2 focus-visible:outline-amber-400"
-          :class="selectedSpan && selectedSpan.span_id === entry.span.span_id ? 'event-selected' : ''"
-          tabindex="0"
-          role="button"
-          @click="onSelectSpan(entry.span)"
-          @keydown.enter.prevent="onSelectSpan(entry.span)"
-          @keydown.space.prevent="onSelectSpan(entry.span)"
-        >
-          <div class="flex min-w-0 items-center gap-2 text-amber-700">
-            <div class="flex-1 border-t border-dashed border-amber-300"></div>
-            <!-- The pill wraps rather than staying on one line: with a trigger,
-                 a freed-tokens figure and a clock it runs ~407px, wider than a
-                 phone's content pane, and `whitespace-nowrap` turned that into
-                 a sideways scroll of the whole feed. -->
-            <span class="inline-flex min-w-0 max-w-full flex-wrap items-center justify-center gap-1.5 text-[11px] font-mono uppercase tracking-[0.05em] px-2.5 py-[3px] rounded-[7px] bg-amber-50 border border-amber-200">
-              <span>{{ entry.span.name === 'compact.pre' ? '▼ context compacting' : '▲ context compacted' }}</span>
-              <span v-if="entry.span.attributes?.trigger" class="text-amber-500">·</span>
-              <span v-if="entry.span.attributes?.trigger" class="lowercase">{{ entry.span.attributes.trigger }}</span>
-              <span
-                v-if="entry.span.attributes?.reclaimed_tokens"
-                class="text-emerald-700 normal-case"
-                :title="'context tokens reclaimed: last turn before compaction minus first turn after (measured from turn_usage.context_used_tokens)'"
-              >· freed ~{{ fmtTokens(entry.span.attributes.reclaimed_tokens) }}</span>
-              <span class="text-amber-400">·</span>
-              <span class="text-amber-600 normal-case">{{ fmtClock(entry.span.start_time) }}</span>
-            </span>
-            <div class="flex-1 border-t border-dashed border-amber-300"></div>
-          </div>
-          <div
-            v-if="entry.span.attributes?.custom_instructions"
-            class="mt-1 text-xs text-amber-800/80 italic text-center px-4 break-words"
-          >
-            “{{ entry.span.attributes.custom_instructions }}”
-          </div>
-          <div
-            v-if="entry.span.attributes?.summary"
-            class="mt-1 text-[11px] text-slate-500 px-4"
-          >
-            <div v-if="!isPromptBodyExpanded(entry.span.span_id)" class="text-center break-words">
-              <span class="text-slate-600">summary:</span>
-              {{ entry.span.attributes.summary.slice(0, 180) }}{{ entry.span.attributes.summary.length > 180 ? '…' : '' }}
-              <span v-if="entry.span.attributes.summary_chars" class="text-slate-400">({{ entry.span.attributes.summary_chars.toLocaleString() }} chars)</span>
-              <button
-                v-if="entry.span.attributes.summary.length > 180"
-                type="button"
-                class="ml-1 text-amber-600 hover:text-amber-700 hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-amber-400 rounded"
-                @click.stop="togglePromptBodyExpanded(entry.span.span_id)"
-              >show full ▾</button>
-            </div>
-            <div v-else>
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-slate-600 font-medium">summary <span v-if="entry.span.attributes.summary_chars" class="text-slate-400 font-normal">({{ entry.span.attributes.summary_chars.toLocaleString() }} chars)</span></span>
-                <button
-                  type="button"
-                  class="text-amber-600 hover:text-amber-700 hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-amber-400 rounded"
-                  @click.stop="togglePromptBodyExpanded(entry.span.span_id)"
-                >collapse ▴</button>
+              <!-- Expanded turn body: one spine, every event a node punched onto
+                   it. The `:ref` wrapper + pin button stay here;
+                   ConversationSpanCard renders only the card body. -->
+              <div
+                v-if="detail.isTurnExpanded(entry.prompt.span_id) && renderableFor(entry).length"
+                class="event-spine"
+              >
+                <!-- Rides the turn's rail so folding it back up is reachable
+                     from anywhere in the run, not only from its top.
+                     Zero-height and in the gutter: it displaces no row and
+                     covers no card. -->
+                <SpineFoldToggle
+                  v-if="detail.gutterAction(entry.prompt.span_id)"
+                  :action="detail.gutterAction(entry.prompt.span_id)"
+                  @toggle="onGutterFold(entry)"
+                />
+                <template v-for="row in focusRowsFor(entry)" :key="row.strip ? `${row.kind}-${row.turnId}` : row.span.span_id">
+                  <!-- Tier 3 anchor: sits where the turn's first folded span
+                       occurred, so expanding restores session order. -->
+                  <div
+                    v-if="row.strip"
+                    :ref="(el) => registerStrip(row, el)"
+                    class="event-spine-row mb-2"
+                  >
+                    <FoldStrip
+                      :spans="row.foldedSpans"
+                      :variant="row.kind"
+                      :expanded="detail.isFoldOpen(row.turnId, row.kind)"
+                      @toggle="detail.toggleFold(row.turnId, row.kind)"
+                    />
+                  </div>
+                  <div
+                    v-else
+                    :ref="(el) => { if (el) spanRefs.set(row.span.span_id, el); else spanRefs.delete(row.span.span_id) }"
+                    :data-span-id="row.span.span_id"
+                    :data-testid="row.inAgent ? 'in-agent-row' : undefined"
+                    :data-tier="row.tier"
+                    class="event-spine-row group/pin"
+                    :data-run-state="row.runState || undefined"
+                    :class="[
+                      row.inAgent ? 'spine-nested border-l-2 border-violet-200 bg-violet-50/20' : '',
+                      row.agentSep ? 'border-t-2 border-slate-200 mt-6 pt-5' : '',
+                      pinnedSpanId === row.span.span_id ? 'rounded-md ring-2 ring-amber-400' : '',
+                      row.runState === 'running' || row.runState === 'waiting' ? 'spine-row-run' : '',
+                    ]"
+                  >
+                    <ConversationSpineCard
+                      :row="row"
+                      :ctx="spineCtx"
+                      @activate="onActivate"
+                      @present="onPresent"
+                      @toggle-body="toggleManuallyOpen"
+                      @toggle-pin="togglePin"
+                      @enter-scope="$emit('enter-scope', $event)"
+                    />
+                  </div>
+                </template>
               </div>
-              <pre class="whitespace-pre-wrap break-words text-slate-600 bg-amber-50/30 border border-amber-100 rounded px-3 py-2 max-h-[60vh] overflow-y-auto font-sans">{{ entry.span.attributes.summary }}</pre>
+
+              <!-- Turn footer: usage rollup + the collapse trigger, one filled bar -->
+              <TurnUsageFooter
+                v-if="turnItemFor(entry.prompt)?.turnAgg || detail.isTurnExpanded(entry.prompt.span_id)"
+                :key="entry.prompt.span_id"
+                :item="turnItemFor(entry.prompt)"
+                :context-window-tokens="contextWindowTokens"
+                :detail-open="detail.isTurnExpanded(entry.prompt.span_id)"
+                @toggle-detail="toggleTurnExpanded(entry.prompt.span_id)"
+              />
+            </div>
+
+            <!-- Rewind boundary divider (collapsed discarded branch + file rollback) -->
+            <div
+              v-else-if="entry.span.name === 'rewind'"
+              :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
+            >
+              <RewindCard
+                :span="entry.span"
+                :trace-id="props.traceId"
+                :descendants="renderableDescendants(entry, true)"
+                :ctx="rewindCtx"
+                :expanded="isRewindExpanded(entry.span.span_id)"
+                :loaded="props.loadedSubtrees.has(entry.span.span_id)"
+                @select="onSelectSpan"
+                @toggle="toggleRewindExpanded(entry.span.span_id)"
+                @activate="onActivate"
+                @enter-scope="$emit('enter-scope', $event)"
+              />
+            </div>
+
+            <!-- Compaction boundary divider (PreCompact / PostCompact) -->
+            <div
+              v-else-if="entry.span.name === 'compact.pre' || entry.span.name === 'compact.post'"
+              :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
+            >
+              <CompactionDivider
+                :span="entry.span"
+                :folding="folding"
+                :selected="!!selectedSpan && selectedSpan.span_id === entry.span.span_id"
+                @select="onSelectSpan(entry.span)"
+              />
+            </div>
+
+            <!-- Standalone root (non-prompt) -->
+            <div
+              v-else
+              :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
+              class="relative group/pin flex items-center gap-2 text-xs text-slate-500 px-2.5 py-1 rounded-lg border border-transparent cursor-pointer hover:bg-slate-50"
+              :class="[
+                selectedSpan && selectedSpan.span_id === entry.span.span_id ? 'event-selected' : '',
+                pinnedSpanId === entry.span.span_id ? 'ring-2 ring-amber-400' : '',
+              ]"
+              @click="onSelectSpan(entry.span)"
+            >
+              <button
+                v-if="isPinnable(entry.span)"
+                type="button"
+                class="absolute -left-4 top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
+                :class="pinnedSpanId === entry.span.span_id ? 'opacity-100' : 'opacity-0 group-hover/pin:opacity-100 grayscale'"
+                :title="pinnedSpanId === entry.span.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
+                :aria-pressed="pinnedSpanId === entry.span.span_id"
+                @click.stop="togglePin(entry.span.span_id)"
+              >📌</button>
+              <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(entry.span.name)"></span>
+              <span class="font-mono text-[11px]">{{ fmtClock(entry.span.start_time) }}</span>
+              <span class="break-words">{{ fullLabel(entry.span) }}</span>
             </div>
           </div>
-        </div>
 
-        <!-- Standalone root (non-prompt) -->
-        <div
-          v-else
-          :ref="(el) => { if (el) standaloneRefs.set(entry.span.span_id, el); else standaloneRefs.delete(entry.span.span_id) }"
-          class="relative group/pin flex items-center gap-2 text-xs text-slate-500 px-2.5 py-1 rounded-lg border border-transparent cursor-pointer hover:bg-slate-50"
-          :class="[
-            selectedSpan && selectedSpan.span_id === entry.span.span_id ? 'event-selected' : '',
-            pinnedSpanId === entry.span.span_id ? 'ring-2 ring-amber-400' : '',
-          ]"
-          @click="onSelectSpan(entry.span)"
+          <!-- Anchored to the SESSION, after every turn: a last prompt with no
+               children renders no spine, and the way to the live terminal must
+               not go down with it. -->
+          <SpineLiveNode :live="liveNode" />
+
+          <!-- Terminator: the feed has a bottom, so a reader who reaches it knows
+               there is nothing further to load rather than guessing. -->
+          <div
+            v-if="entries.length"
+            class="text-center pt-3.5 pb-[30px] font-mono text-[11px] uppercase tracking-[0.1em] text-slate-400"
+          >End of timeline</div>
+
+          <!-- Empty state. While scoped, "no spans ever captured" (server
+               span_count 0) and "spans exist but the subtree fetch is in flight"
+               are different states — never flash a false empty for the latter. -->
+          <div v-if="!entries.length" class="text-slate-400 text-center py-8">
+            <span v-if="scopeAgent && !scopeAgent.spanCount && !scopeAgent.running" data-testid="trace-scope-empty">no spans captured for this agent</span>
+            <span v-else-if="scopeAgent && (scopeLoading || scopeAgent.running)" data-testid="trace-scope-loading" class="inline-flex items-center gap-2">
+              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
+                <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Loading agent spans…
+            </span>
+            <span v-else-if="scopeAgent" data-testid="trace-scope-unreachable">agent spans not loaded — load earlier history to view</span>
+            <template v-else>No events recorded for this session.</template>
+          </div>
+      </div>
+
+      <!-- Follow-tail pill: terminal-style stick-to-newest. Hidden once you're
+           already parked at the bottom and not following; while scrolled up it
+           surfaces a count of spans that arrived since. Bounded, its rail is a
+           zero-height row between the transcript and the composer, so the pill
+           hangs over the transcript's last line without reserving space. -->
+      <div class="follow-pill-rail">
+        <button
+          v-if="showFollowTail && (followTail || !atBottom)"
+          type="button"
+          class="follow-pill fixed bottom-[calc(1.5rem+max(var(--trace-rail-h,0px),var(--trace-dock-h,0px),var(--blocker-bar-h,0px)))] left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-lg transition-colors focus-visible:outline-2 focus-visible:outline-orange-400"
+          :class="followTail
+            ? 'bg-orange-500 border-orange-600 text-white hover:bg-orange-600'
+            : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'"
+          :title="followTail ? 'Stop following the latest activity' : 'Jump to and follow the latest activity'"
+          @click="onFollowPill"
         >
-          <button
-            v-if="isPinnable(entry.span)"
-            type="button"
-            class="absolute -left-4 top-1 z-10 w-5 h-5 flex items-center justify-center rounded text-[11px] leading-none transition-opacity focus-visible:outline-2 focus-visible:outline-amber-400"
-            :class="pinnedSpanId === entry.span.span_id ? 'opacity-100' : 'opacity-0 group-hover/pin:opacity-100 grayscale'"
-            :title="pinnedSpanId === entry.span.span_id ? 'Unpin from view' : 'Pin to view (hold position across updates)'"
-            :aria-pressed="pinnedSpanId === entry.span.span_id"
-            @click.stop="togglePin(entry.span.span_id)"
-          >📌</button>
-          <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="dotColor(entry.span.name)"></span>
-          <span class="font-mono text-[11px]">{{ fmtClock(entry.span.start_time) }}</span>
-          <span class="break-words">{{ fullLabel(entry.span) }}</span>
-        </div>
+          <span aria-hidden="true">⤓</span>
+          <span>{{ followTail ? 'Following' : 'Follow latest' }}</span>
+          <span
+            v-if="!followTail && newSinceScroll > 0"
+            class="inline-flex items-center justify-center min-w-[1rem] h-4 px-1 rounded-full bg-orange-500 text-white text-[10px] tabular-nums"
+          >{{ newSinceScroll > 99 ? '99+' : newSinceScroll }}</span>
+        </button>
       </div>
 
-      <!-- Terminator: the feed has a bottom, so a reader who reaches it knows
-           there is nothing further to load rather than guessing. -->
-      <div
-        v-if="entries.length"
-        class="text-center pt-3.5 pb-[30px] font-mono text-[11px] uppercase tracking-[0.1em] text-slate-400"
-      >End of timeline</div>
-
-      <!-- Empty state. While scoped, "no spans ever captured" (server
-           span_count 0) and "spans exist but the subtree fetch is in flight"
-           are different states — never flash a false empty for the latter. -->
-      <div v-if="!entries.length" class="text-slate-400 text-center py-8">
-        <span v-if="scopeAgent && !scopeAgent.spanCount && !scopeAgent.running" data-testid="trace-scope-empty">no spans captured for this agent</span>
-        <span v-else-if="scopeAgent && (scopeLoading || scopeAgent.running)" data-testid="trace-scope-loading" class="inline-flex items-center gap-2">
-          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-opacity="0.25"/>
-            <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          Loading agent spans…
-        </span>
-        <span v-else-if="scopeAgent" data-testid="trace-scope-unreachable">agent spans not loaded — load earlier history to view</span>
-        <template v-else>No events recorded for this session.</template>
-      </div>
+      <!-- Below the transcript's scroll region, never inside it: at any scroll
+           position there is no row for the composer to cover. -->
+      <ConversationFooter
+        :session-id="traceId"
+        :turn-number="turnItems.length + 1"
+        :context="followUp"
+        @sent="armSendReveal"
+        @resumed="emit('resumed')"
+      />
     </div>
-
-    <!-- Follow-tail pill: terminal-style stick-to-newest. Hidden once you're
-         already parked at the bottom and not following; while scrolled up it
-         surfaces a count of spans that arrived since. -->
-    <button
-      v-if="showFollowTail && (followTail || !atBottom)"
-      type="button"
-      class="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium shadow-lg transition-colors focus-visible:outline-2 focus-visible:outline-orange-400"
-      :class="followTail
-        ? 'bg-orange-500 border-orange-600 text-white hover:bg-orange-600'
-        : 'bg-white border-orange-300 text-orange-700 hover:bg-orange-50'"
-      :title="followTail ? 'Stop following the latest activity' : 'Jump to and follow the latest activity'"
-      @click="followTail ? disableFollow() : enableFollow()"
-    >
-      <span aria-hidden="true">⤓</span>
-      <span>{{ followTail ? 'Following' : 'Follow latest' }}</span>
-      <span
-        v-if="!followTail && newSinceScroll > 0"
-        class="inline-flex items-center justify-center min-w-[1rem] h-4 px-1 rounded-full bg-orange-500 text-white text-[10px] tabular-nums"
-      >{{ newSinceScroll > 99 ? '99+' : newSinceScroll }}</span>
-    </button>
   </div>
 </template>
+
+<style scoped>
+/* Floor for the chat column so the rail + detail rail can't squeeze it into a
+   one-word-per-line strip. Below 1120px the rail is in its mini form, which
+   buys the column back the difference. */
+.conversation-feed { min-width: 300px; }
+
+@media (max-width: 1119px) {
+  .conversation-feed { min-width: 236px; }
+}
+
+/* Bounded layout: the column is handed a height, the transcript scrolls inside
+   `.conversation-scroll`, and the composer is the flex sibling under it. Off
+   this path every rule here is inert and the app shell scrolls the page.
+   `min-height: 0` on each link or the scroll box just grows to its content. */
+.conv-bounded { align-items: stretch; min-height: 0; }
+.conv-bounded .conversation-feed { display: flex; flex-direction: column; min-height: 0; }
+.conv-bounded .conversation-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  /* The pin buttons hang 1rem into the gutter left of the cards; a scroll box
+     ending at the column edge would clip them away. */
+  margin-left: -1rem;
+  padding-left: 1rem;
+}
+
+/* Anchored to the transcript's bottom edge rather than the viewport, so it
+   rides above the composer without either measuring the other. */
+.conv-bounded .follow-pill-rail { position: relative; height: 0; }
+.conv-bounded .follow-pill { position: absolute; bottom: 0.75rem; }
+</style>

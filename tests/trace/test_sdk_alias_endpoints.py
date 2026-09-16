@@ -119,6 +119,58 @@ def test_full_map_merges_without_duplicating(client, aliased):
     assert names.count('rule.check') == 1    # only the hooks saw it
 
 
+@pytest.fixture
+def shared_pending_id(trace_db):
+    """Both writers minting the SAME `pending-<tool_use_id>` for one call.
+
+    The SDK row has no flat `command_preview`, so a survivor of each renders as
+    `Bash: ls` beside a bare `Bash` — one running tool, two cards.
+    """
+    conn = _conn(trace_db)
+    try:
+        conn.execute(
+            "INSERT INTO agent_runs (trace_id, status, cli_session_id) "
+            "VALUES (?, 'running', ?)", (RUN, CHILD))
+        _session_row(conn, CHILD, span_count=2, status='active')
+        _span(conn, CHILD, 'p-1', 'prompt', '2026-08-01T10:00:00',
+              attrs={'text': 'the shared prompt'})
+        _span(conn, CHILD, 'pending-toolu_1', 'tool.Bash',
+              '2026-08-01T10:00:05', tool_use_id='toolu_1',
+              attrs={'tool_name': 'Bash', 'tool_use_id': 'toolu_1',
+                     'live': True, 'command_preview': 'ls'})
+        _session_row(conn, RUN, span_count=1, status='active')
+        _span(conn, RUN, 'pending-toolu_1', 'tool.Bash',
+              '2026-08-01T10:00:05', tool_use_id='toolu_1',
+              attrs={'tool_name': 'Bash', 'tool_use_id': 'toolu_1',
+                     'live': True})
+        conn.commit()
+    finally:
+        conn.close()
+    return trace_db
+
+
+def _dupes(spans):
+    ids = [s['span_id'] for s in spans]
+    return sorted({i for i in ids if ids.count(i) > 1})
+
+
+@pytest.mark.parametrize('url', [
+    f'/api/sessions/{CHILD}/map',
+    f'/api/sessions/{CHILD}/map?shallow=1&limit=50',
+])
+def test_map_ships_one_body_per_span_id(client, shared_pending_id, url):
+    body = client.get(url).get_json()
+    assert _dupes(body['spans']) == []
+
+
+@pytest.mark.parametrize('deep', ['', '?deep=1'])
+def test_children_ship_one_body_per_span_id(client, shared_pending_id, deep):
+    body = client.get(
+        f'/api/sessions/{CHILD}/spans/p-1/children{deep}').get_json()
+    assert _dupes(body['spans']) == []
+    assert [s['span_id'] for s in body['spans']] == ['pending-toolu_1']
+
+
 def test_map_span_dict_keeps_its_shape(client, aliased):
     """`tool_use_id` and the origin marker are fetched for the reconcile only;
     neither is part of this endpoint's contract."""
@@ -282,3 +334,43 @@ def test_an_unaliased_session_is_its_own_canonical_id(client, trace_db):
         conn.close()
 
     assert _map(client, 'plain-session')['canonical_trace_id'] == 'plain-session'
+
+
+CLEARED_CHILD = '99999999-aaaa-bbbb-cccc-dddddddddddd'
+
+
+def test_a_cleared_session_names_the_conversation_the_run_moved_to(
+        client, aliased, monkeypatch):
+    """`/clear` ends the child and opens another under a new id, while the run
+    keeps working. Until this field existed the page the operator was on read
+    `ended` with no composer, and nothing anywhere pointed at the live half.
+    """
+    from lib import agent_sdk
+
+    monkeypatch.setattr(
+        agent_sdk, 'live_child',
+        lambda trace_id: CLEARED_CHILD if trace_id in (RUN, CHILD) else None)
+
+    assert _map(client, RUN)['successor_trace_id'] == CLEARED_CHILD
+    assert _map(client, CHILD)['successor_trace_id'] == CLEARED_CHILD
+
+
+def test_an_ordinary_session_has_no_successor(client, aliased):
+    """Null is the 99% case; a self-referential id would make every live
+    session look like it had been cleared."""
+    assert _map(client, RUN)['successor_trace_id'] is None
+    assert _map(client, CHILD)['successor_trace_id'] is None
+
+
+def test_a_broken_sdk_read_degrades_to_no_successor(client, aliased,
+                                                    monkeypatch):
+    """Every other SDK read on this path is best-effort — the tier is optional
+    and off by default, so the whole map must not 500 with it unavailable."""
+    from lib import agent_sdk
+
+    def _boom(trace_id):
+        raise RuntimeError('agent_sdk unavailable')
+
+    monkeypatch.setattr(agent_sdk, 'live_child', _boom)
+
+    assert _map(client, RUN)['successor_trace_id'] is None

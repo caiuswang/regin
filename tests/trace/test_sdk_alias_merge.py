@@ -39,6 +39,10 @@ def _alias_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("""CREATE TABLE agent_runs (
         trace_id TEXT, cli_session_id TEXT, status TEXT, cwd TEXT)""")
+    # The alias group the heal sweep checks a candidate against, and writes
+    # into when it links one.
+    conn.execute("""CREATE TABLE agent_run_sessions (
+        trace_id TEXT, cli_session_id TEXT UNIQUE)""")
     conn.execute("""CREATE TABLE sessions (
         trace_id TEXT, started_at TEXT, cwd TEXT, title TEXT)""")
     conn.execute("""CREATE TABLE session_spans (
@@ -232,6 +236,64 @@ def test_liveness_survives_the_placeholder_filter():
              start='2026-08-01T10:00:00', id=2, tool_use_id='toolu_7'),
     ]
     assert [s['span_id'] for s in merge_spans(rows)] == ['sdk-done']
+
+
+def test_one_span_id_is_one_row_even_without_a_second_writer():
+    """The collapse keys on `(trace_id, span_id)`, which the store's unique
+    index forbids within a trace — so a pair under one id is one event however
+    the window was assembled, and must not depend on an origin marker being
+    present to be seen."""
+    rows = [
+        _row('pending-toolu_9', 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_9', 'live': True},
+             origin='hook', status='PENDING', start='2026-08-01T10:00:01',
+             id=1, tool_use_id='toolu_9'),
+        _row('pending-toolu_9', 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_9', 'live': True,
+              'command_preview': 'ls -la'},
+             origin='hook', status='PENDING', start='2026-08-01T10:00:01',
+             id=2, tool_use_id='toolu_9'),
+    ]
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['pending-toolu_9']
+    assert merged[0]['attributes']['command_preview'] == 'ls -la'
+
+
+def test_unique_ids_pass_through_the_collapse_untouched():
+    """The no-op guarantee an ordinary session rests on: nothing to collapse
+    returns the very list it was handed."""
+    from lib.trace.merge import _collapse_shared_span_ids
+
+    rows = [
+        _row('prompt-a', 'prompt', {'text': 'hi', 'entry_uuid': 'a'},
+             origin='hook', start='2026-08-01T10:00:00', id=1),
+        _row('h-tool', 'tool.Bash', {'command_preview': 'ls'}, origin='hook',
+             start='2026-08-01T10:00:02', id=2, tool_use_id='toolu_1'),
+    ]
+    assert _collapse_shared_span_ids(rows) is rows
+
+
+def test_ordinary_session_rows_survive_the_merge_one_for_one():
+    """A single-writer session keeps every row, its order and its attributes —
+    only the projection's parent grafting touches it."""
+    rows = [
+        _row('prompt-a', 'prompt', {'text': 'hi', 'entry_uuid': 'a'},
+             origin='hook', start='2026-08-01T10:00:00', id=1),
+        _row('pending-toolu_1', 'tool.Bash',
+             {'tool_name': 'Bash', 'tool_use_id': 'toolu_1', 'live': True},
+             origin='hook', status='PENDING', start='2026-08-01T10:00:01',
+             id=2, tool_use_id='toolu_1'),
+        _row('h-tool', 'tool.Bash', {'command_preview': 'ls'}, origin='hook',
+             start='2026-08-01T10:00:02', id=3, tool_use_id='toolu_1'),
+        _row('h-think', 'assistant.thinking',
+             {'thinking_blocks': 1, 'message_id': 'msg_1'}, origin='hook',
+             start='2026-08-01T10:00:03', id=4),
+    ]
+    merged = merge_spans([dict(r) for r in rows])
+    assert [s['span_id'] for s in merged] == [r['span_id'] for r in rows]
+    assert [s['attributes'] for s in merged] == [r['attributes'] for r in rows]
+    assert [s['status_code'] for s in merged] == [r['status_code']
+                                                  for r in rows]
 
 
 def test_an_event_only_one_writer_saw_survives_unpaired():
@@ -742,3 +804,40 @@ def test_heal_ignores_a_child_outside_the_window():
     conn = _alias_db()
     _seed_heal(conn, children=[dict(tid=HOOK, started='2026-08-01T10:05:00')])
     assert heal_cli_session_ids(conn) == 0
+
+
+# ── queued: the runner's stream-time placeholder is not a running call ──
+
+def test_sdk_placeholder_without_a_hook_twin_is_queued():
+    """The runner posts every placeholder of a parallel batch at once; the
+    harness runs them one at a time and the hook's PreToolUse twin marks the
+    start of each. The twin-less one is queued, the twinned one runs."""
+    rows = [
+        _row('pending-toolu_1', 'tool.Bash', {'tool_use_id': 'toolu_1'},
+             origin='sdk', status='PENDING', start='2026-08-01T10:00:00',
+             id=1, tool_use_id='toolu_1'),
+        _row('pending-toolu_2', 'tool.Bash', {'tool_use_id': 'toolu_2'},
+             origin='sdk', status='PENDING', start='2026-08-01T10:00:00',
+             id=2, tool_use_id='toolu_2'),
+        _row('pending-toolu_1', 'tool.Bash', {'tool_use_id': 'toolu_1'},
+             origin='hook', status='PENDING', start='2026-08-01T10:00:01',
+             id=3, tool_use_id='toolu_1'),
+    ]
+    by_id = {s['span_id']: s for s in merge_spans(rows)}
+    assert by_id['pending-toolu_1'].get('status_message') is None
+    assert by_id['pending-toolu_2']['status_message'] == 'queued'
+    assert by_id['pending-toolu_2']['status_code'] == 'PENDING'
+
+
+def test_single_writer_placeholders_are_never_queued():
+    """A hook-less SDK session has only the runner's placeholders to show
+    liveness with; the rule applies to dual-writer windows alone."""
+    rows = [
+        _row('pending-toolu_1', 'tool.Bash', {'tool_use_id': 'toolu_1'},
+             origin='sdk', status='PENDING', start='2026-08-01T10:00:00',
+             id=1, tool_use_id='toolu_1'),
+        _row('sdk-resp', 'assistant_response', {'text': 'hi'}, origin='sdk',
+             start='2026-08-01T09:59:00', id=0),
+    ]
+    merged = {s['span_id']: s for s in merge_spans(rows)}
+    assert merged['pending-toolu_1'].get('status_message') is None

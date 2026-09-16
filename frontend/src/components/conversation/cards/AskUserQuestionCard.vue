@@ -2,6 +2,7 @@
 import {
   fmtDuration,
   askOptLabel, askOptDescription, askIsChosen, askFreeText, askNote,
+  askModeLabel, askModeMark, askOptMark,
 } from '../../../utils/traceFormatters.js'
 
 // AskUserQuestion: full Q&A cards inline. Both approved and denied calls land
@@ -51,8 +52,17 @@ defineEmits(['activate'])
             v-if="q.header"
             class="text-[10px] font-semibold uppercase tracking-wider mb-0.5"
             :class="span.attributes.denied ? 'text-amber-700' : 'text-slate-500'"
-          >{{ q.header }}{{ q.multiSelect ? ' · multi-select' : '' }}</div>
+          >{{ q.header }}</div>
           <div class="text-[13px] font-medium text-slate-800">{{ q.question }}</div>
+          <div
+            class="mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium"
+            :class="q.multiSelect
+              ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+              : 'border-slate-200 bg-white text-slate-500'"
+          >
+            <span aria-hidden="true">{{ askModeMark(q.multiSelect) }}</span>
+            {{ askModeLabel(q.multiSelect) }}
+          </div>
         </div>
         <ul class="divide-y divide-slate-100">
           <li
@@ -64,7 +74,7 @@ defineEmits(['activate'])
             <span
               class="shrink-0 mt-0.5 w-4 text-center font-mono text-xs"
               :class="askIsChosen(span, q, opt) ? 'text-green-600' : 'text-slate-300'"
-            >{{ askIsChosen(span, q, opt) ? '✓' : '○' }}</span>
+            >{{ askOptMark(q.multiSelect, askIsChosen(span, q, opt)) }}</span>
             <span class="min-w-0 flex-1">
               <span
                 class="block"

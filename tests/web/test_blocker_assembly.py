@@ -33,6 +33,27 @@ def _reachable(monkeypatch):
                           'sdk_owned': False})
 
 
+def _panes(monkeypatch, resolve):
+    """Drive `resolve_reachable_pane` — the three-valued view (row, answered),
+    not the fail-closed `get_reachable_pane` the feed must never use here."""
+    monkeypatch.setattr('lib.settings.settings.agent_bridge.enabled', True)
+    monkeypatch.setattr('lib.agent_bridge.store.resolve_reachable_pane', resolve)
+
+
+@pytest.fixture
+def _pane(monkeypatch):
+    """Give the session a live bridge pane — the proof-of-life an aged park
+    must show. Sessions inside the live window never consult it."""
+    _panes(monkeypatch, lambda trace_id: ({'pane_id': '%1'}, True))
+
+
+@pytest.fixture
+def _no_pane(monkeypatch):
+    """The bridge is on and answering, but the session's pane is gone: the
+    agent was killed while parked, so nobody is behind the question."""
+    _panes(monkeypatch, lambda trace_id: (None, True))
+
+
 def _reach(monkeypatch, *, reachable=True, sdk=False):
     monkeypatch.setattr(
         'web.blueprints.trace.sessions._bridge_reachability',
@@ -116,6 +137,11 @@ def _seed_sdk_link(tmp_db, trace_id, cli_session_id):
         conn.execute(
             "INSERT INTO agent_runs (trace_id, status, cli_session_id) "
             "VALUES (?, 'running', ?)", (trace_id, cli_session_id))
+        # Membership lives in the alias group, which is what every reader asks;
+        # `store.set_cli_session` writes both, so a seed must too.
+        conn.execute(
+            "INSERT INTO agent_run_sessions (trace_id, cli_session_id) "
+            "VALUES (?, ?)", (trace_id, cli_session_id))
         conn.commit()
     finally:
         conn.close()
@@ -218,11 +244,104 @@ def test_an_old_dismissal_does_not_suppress_a_new_park(tmp_db):
     assert rows[0]['span_id'] == _TU_B
 
 
-def test_a_silent_session_drops_out_even_while_status_active(tmp_db):
-    """`status` is exactly wrong for the sessions this matters for: an agent
-    killed mid-prompt never writes its end event and stays 'active' forever."""
+def test_a_silent_session_keeps_its_park(tmp_db, _pane):
+    """Silence is not evidence against a park. The agent cannot emit anything
+    until a human answers, so `last_seen` freezes at the question and the live
+    window measures the wait, not the session's health — ageing it out took
+    every genuinely-blocked session out of the feed at LIVE_WINDOW_MINUTES
+    while its own `_main_phase` verdict still read `waiting-input`."""
     _seed_session(tmp_db, status='active', minutes_ago=45)
     _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    _seed_card(minutes_ago=45, tmp_db=tmp_db)
+    assert [r['trace_id'] for r in blockers.live_blockers()] == [_TRACE]
+
+
+def test_an_ended_session_drops_its_park(tmp_db):
+    """`session.end` is what retires an aged park — the one signal that
+    proves nobody is waiting behind it."""
+    _seed_session(tmp_db, status='ended', minutes_ago=45)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    _seed_card(minutes_ago=45, tmp_db=tmp_db)
+    assert blockers.live_blockers() == []
+
+
+def test_an_unreachable_silent_park_is_not_a_blocker(tmp_db, _no_pane):
+    """A PENDING span is not on its own proof that anyone is waiting. An agent
+    killed mid-park never resolves the span and never writes `session.end`, so
+    it outlives the process forever; the pane going away is what says so."""
+    _seed_session(tmp_db, status='active', minutes_ago=45)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    assert blockers.live_blockers() == []
+
+
+def test_a_recent_park_needs_no_pane(tmp_db, _no_pane):
+    """Reachability gates only the aged leg. A session that spoke a minute ago
+    is present on its own evidence — the bridge may simply not be registered
+    yet, and the emit precedes the pane row."""
+    _seed_session(tmp_db, status='active', minutes_ago=1)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(1))
+    assert [r['trace_id'] for r in blockers.live_blockers()] == [_TRACE]
+
+
+def test_zombie_parks_cannot_starve_a_fresh_blocker(tmp_db, monkeypatch):
+    """The feed is oldest-first and capped, so abandoned parks admitted purely
+    on an unresolved span would sit at the head of the sort forever and push
+    the live blocker off the end — the same "a real blocker is missing" bug
+    reached from the other side. Only the fresh session has a pane."""
+    _panes(monkeypatch, lambda trace_id:
+           ({'pane_id': '%1'}, True) if trace_id == 'sess-alive' else (None, True))
+    for i in range(25):
+        zombie = f'zombie-{i:02d}'
+        _seed_session(tmp_db, zombie, status='active', minutes_ago=5000)
+        _seed_span(tmp_db, 'permreq-1', trace_id=zombie, attrs=_ASK_ATTRS,
+                   start=_stamp(5000))
+    _seed_session(tmp_db, 'sess-alive', minutes_ago=1)
+    _seed_span(tmp_db, 'permreq-1', trace_id='sess-alive', attrs=_ASK_ATTRS,
+               start=_stamp(1))
+    assert [r['trace_id'] for r in blockers.live_blockers()] == ['sess-alive']
+
+
+def test_an_unanswerable_bridge_keeps_the_park(tmp_db, monkeypatch):
+    """`answered=False` means the store could not be ASKED — a locked DB, or a
+    pre-migration shape missing a column its SELECT names. Treating that as
+    "no pane" would deny every aged park on every poll and silently restore the
+    vanishing card. No evidence a session died is not evidence that it did."""
+    _panes(monkeypatch, lambda trace_id: (None, False))
+    _seed_session(tmp_db, status='active', minutes_ago=45)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    assert [r['trace_id'] for r in blockers.live_blockers()] == [_TRACE]
+
+
+def test_with_the_bridge_off_the_window_stands(tmp_db, monkeypatch):
+    """The shipped default (`agent_bridge.enabled = False`) offers no liveness
+    authority to appeal to, so the aged leg cannot run and behaviour falls back
+    to the old recency window. Documented, deliberate, and pinned here because
+    it is the configuration a fresh install actually has."""
+    monkeypatch.setattr('lib.settings.settings.agent_bridge.enabled', False)
+    _seed_session(tmp_db, status='active', minutes_ago=45)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    assert blockers.live_blockers() == []
+    # ...while a session inside the window is unaffected by any of this.
+    _seed_session(tmp_db, 'sess-fresh', minutes_ago=1)
+    _seed_span(tmp_db, 'permreq-2', trace_id='sess-fresh', attrs=_ASK_ATTRS,
+               start=_stamp(1))
+    assert [r['trace_id'] for r in blockers.live_blockers()] == ['sess-fresh']
+
+
+def test_a_retired_park_stays_down_however_old(tmp_db):
+    """Age buys a park nothing: the read-time retirement signals still decide,
+    so a resolved span in a long-silent session raises no card."""
+    _seed_session(tmp_db, status='active', minutes_ago=45)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    _resolve_span(tmp_db, 'permreq-1')
+    _seed_card(minutes_ago=45, tmp_db=tmp_db)
+    assert blockers.live_blockers() == []
+
+
+def test_a_silent_session_with_no_park_is_not_a_blocker(tmp_db):
+    """The card alone never was presence — a stale session whose park is gone
+    stays out of the feed."""
+    _seed_session(tmp_db, status='active', minutes_ago=45)
     _seed_card(minutes_ago=45, tmp_db=tmp_db)
     assert blockers.live_blockers() == []
 
@@ -661,9 +780,10 @@ def test_a_multi_question_ask_carries_every_question(tmp_db, monkeypatch):
     assert row['question'] == 'first?'
 
 
-def test_one_multi_select_tab_makes_the_whole_ask_read_only(tmp_db, monkeypatch):
-    """The walk submits every tab together, so a single undrivable question
-    makes the whole ask undrivable — not just its own tab."""
+def test_a_mixed_single_and_multi_select_ask_is_answerable(tmp_db, monkeypatch):
+    """The walk drives both widget kinds — a single-select tab is one pick, a
+    multi-select tab is toggles plus its own advance row — so a mixed ask is
+    answerable. `multi_select` still reports that a tab is one, for display."""
     _reach(monkeypatch)
     _seed_session(tmp_db)
     _seed_span(tmp_db, 'toolu_1', attrs={'kind': 'question', 'questions': [
@@ -672,7 +792,7 @@ def test_one_multi_select_tab_makes_the_whole_ask_read_only(tmp_db, monkeypatch)
          'options': [{'label': 'C'}]},
     ]})
     row = blockers.live_blockers()[0]
-    assert row['answerable'] is None
+    assert row['answerable'] == 'question'
     assert row['multi_select'] is True
 
 
@@ -705,15 +825,15 @@ def test_an_option_preview_reaches_the_card(tmp_db, monkeypatch):
     assert row['questions'][0]['options'][0]['preview'] == '| one | two |'
 
 
-def test_a_multi_select_ask_is_read_only(tmp_db, monkeypatch):
-    """A multi-select TUI needs per-option toggles the bridge cannot drive
-    blindly — the same rule LiveQaSheet applies."""
+def test_a_multi_select_ask_is_answerable(tmp_db, monkeypatch):
+    """Its rows are checkboxes `delivery._toggle_multi` ticks before Enter'ing
+    the question's advance row — the same rule LiveQaSheet applies."""
     _reach(monkeypatch)
     _seed_session(tmp_db)
     attrs = json.loads(json.dumps(_ASK_ATTRS))
     attrs['questions'][0]['multiSelect'] = True
     _seed_span(tmp_db, 'toolu_1', attrs=attrs)
-    assert blockers.live_blockers()[0]['answerable'] is None
+    assert blockers.live_blockers()[0]['answerable'] == 'question'
 
 
 def test_a_plan_on_an_owned_session_is_decidable(tmp_db, monkeypatch):
@@ -745,6 +865,26 @@ def test_a_kindless_park_is_never_decidable(tmp_db, monkeypatch):
     assert blockers.live_blockers()[0]['answerable'] is None
 
 
+# ── The index the parked probe depends on ────────────────────────
+
+def test_the_pending_index_mirrors_the_decision_predicate():
+    """SQLite uses a partial index only when the query's WHERE terms are
+    syntactically implied by the index's, so a predicate that drifts from
+    `idx_session_spans_pending` does not error — it silently falls back to
+    scanning every PENDING span (75k rows, 58ms vs 1ms). Both the fresh-install
+    schema and the migration must keep spelling it the same way."""
+    from pathlib import Path
+    predicate = blockers._decision_predicate()
+    root = Path(__file__).resolve().parents[2]
+    schema = (root / 'db' / 'schema.sql').read_text()
+    assert 'idx_session_spans_pending' in schema
+    assert predicate in schema
+    migration = (root / 'alembic' / 'versions'
+                 / '0015_session_spans_pending_index.py').read_text()
+    for name in blockers._DECISION_SPAN_NAMES:
+        assert f"'{name}'" in migration
+
+
 # ── Hygiene: orphaned rows are retired, with a grace window ──────
 
 def test_an_orphaned_card_is_healed_not_just_hidden(tmp_db):
@@ -767,6 +907,19 @@ def test_a_fresh_orphan_is_left_alone(tmp_db):
     row = _seed_card()
     assert blockers.live_blockers() == []
     assert store.get_message(row['id'])['dismissed_at'] is None
+
+
+def test_a_silent_sessions_orphan_is_finally_reachable(tmp_db, _pane):
+    """A long-silent session used to leave the trace list entirely, so its
+    rows were never read and its orphaned card could never be healed —
+    invisible in the banner yet unread in the badge forever. Keeping the
+    parked session in scope also brings its rows back within reach."""
+    _seed_session(tmp_db, status='active', minutes_ago=45)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS, start=_stamp(45))
+    _seed_span(tmp_db, 'prompt-1', name='prompt', status='OK', start=_stamp(30))
+    row = _seed_card(minutes_ago=45, tmp_db=tmp_db)
+    assert blockers.live_blockers() == []
+    assert store.get_message(row['id'])['dismissed_at'] is not None
 
 
 def test_a_claimed_card_is_not_healed(tmp_db):

@@ -143,3 +143,93 @@ test('last-seen ages are server-anchored: no "just now" across timezones', async
   await expect(cells.nth(1)).toHaveText(/^2h ago$/)
   await expect(page.locator('.slist__grid')).not.toContainText('just now')
 })
+
+test('copying a session id acknowledges on the icon, not in a page-level toast', async ({ page }) => {
+  const traceId = randomUUID()
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (text) => { window.__copied = text } },
+    })
+  })
+  await mockList(page, [row(traceId)])
+  await page.goto('/trace/sessions')
+
+  const copy = page.locator(`[aria-label="Copy session id ${traceId}"]`)
+  await expect(copy).toHaveCount(1)
+  await page.locator('.srow').first().hover()
+  const before = await copy.evaluate(el => getComputedStyle(el).color)
+
+  await copy.click()
+  await expect(copy).toHaveClass(/srow__copy--done/)
+  expect(await page.evaluate(() => window.__copied)).toBe(traceId)
+
+  // The success colour is read back through the token, so the assertion holds
+  // in either theme rather than pinning one palette step.
+  const success = await page.evaluate(() => {
+    const probe = document.createElement('div')
+    probe.style.color = 'var(--color-success)'
+    document.body.appendChild(probe)
+    const c = getComputedStyle(probe).color
+    probe.remove()
+    return c
+  })
+  // Polled, not read once: `color` is transitioned, so an immediate read
+  // catches an interpolated oklab step rather than the settled token.
+  await expect
+    .poll(() => copy.evaluate(el => getComputedStyle(el).color), { timeout: 1000 })
+    .toBe(success)
+  expect(success).not.toBe(before)
+  await expect(page.getByText('Copied!')).toHaveCount(0)
+
+  // Transient: the row returns to its resting glyph on its own.
+  await expect(copy).not.toHaveClass(/srow__copy--done/, { timeout: 3000 })
+})
+
+// A run regin LAUNCHED reports its own phase (`runner_phase`, served only for
+// SDK-owned rows). The list must prefer it over the recency heuristic: an
+// agent parked at the prompt emits no spans, so recency alone ages it out to
+// "inactive" while regin is holding the runner and knows it is alive.
+test('an SDK-owned run parked at the prompt reads idle, not inactive', async ({ page }) => {
+  const idleId = randomUUID()
+  const tracedId = randomUUID()
+  // Both rows are equally silent — 1h since last_seen, well past the 10min
+  // stale window. The ONLY difference is who can answer for them.
+  await mockList(page, [
+    row(idleId, { status: 'active', runner_phase: 'idle' }),
+    row(tracedId, { status: 'active', runner_phase: null }),
+  ])
+  await page.goto('/trace/sessions')
+
+  const statusOf = (id) => page
+    .locator('.srow', { hasText: `SESSIONS_LIST_FIXTURE_${id.slice(0, 8)}` })
+    .locator('.srow__status')
+
+  await expect(statusOf(idleId)).toHaveText('idle')
+  // The heuristic is untouched for a session regin merely traces.
+  await expect(statusOf(tracedId)).toHaveText('inactive')
+})
+
+test('a working runner outranks a stale last_seen in the list', async ({ page }) => {
+  const workingId = randomUUID()
+  await mockList(page, [row(workingId, { status: 'active', runner_phase: 'working' })])
+  await page.goto('/trace/sessions')
+  await expect(page
+    .locator('.srow', { hasText: `SESSIONS_LIST_FIXTURE_${workingId.slice(0, 8)}` })
+    .locator('.srow__status')).toHaveText('working')
+})
+
+// `_aliases` is pruned only on run teardown, so a child that `/clear` retired
+// still resolves through `owning_run` and the runner answers for it. An ended
+// row must not render green on the strength of a runner that has moved on —
+// the server keeps the same guard in `_session_phase`.
+test('an ended row ignores a runner that still answers for it', async ({ page }) => {
+  const retiredId = randomUUID()
+  await mockList(page, [
+    row(retiredId, { status: 'ended', ended_reason: 'clear', runner_phase: 'working' }),
+  ])
+  await page.goto('/trace/sessions')
+  await expect(page
+    .locator('.srow', { hasText: `SESSIONS_LIST_FIXTURE_${retiredId.slice(0, 8)}` })
+    .locator('.srow__status')).toHaveText('ended')
+})

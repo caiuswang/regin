@@ -171,18 +171,52 @@ def _agent_kind(raw: dict) -> str | None:
     return kind or name
 
 
+def _child_trace_id(agent_id) -> str | None:
+    """The logical trace id this marker's subagent is addressable as."""
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    from lib.trace.subagent_trace import subagent_trace_id  # type: ignore
+    return subagent_trace_id(agent_id)
+
+
+def _launch_tool_use_id(raw: dict) -> str | None:
+    """The `tool_use` id of the Task call that launched this subagent, read off
+    the meta file Claude Code writes beside the subagent transcript. None when
+    the file is absent, unreadable, malformed or carries no `toolUseId`.
+
+    NOT named `tool_use_id`: `pending_spans.pending_id_for_resolved` treats any
+    span carrying that attribute as superseding the call's `pending-<id>`
+    placeholder, so a marker under the real name would retire the launching
+    `tool.Agent` card the moment its subagent starts.
+    """
+    path = raw.get('agent_transcript_path')
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        from lib.trace.claude_subagents import _read_agent_meta  # type: ignore
+        tool_use_id = _read_agent_meta(path).get('toolUseId')
+    except Exception:
+        return None
+    if isinstance(tool_use_id, str) and tool_use_id:
+        return tool_use_id
+    return None
+
+
 def _span_attributes(raw: dict) -> dict:
     """Identity + preview attributes for a subagent marker span. Claude Code has
     used both `agent_*` and `subagent_*` field names across versions — accept
     either. `prompt_preview` (SubagentStart) and `result_preview` (SubagentStop)
     let the Kimi reconciler bind a marker to its wire by content."""
     attrs: dict = {}
+    agent_id = raw.get('subagent_id') or raw.get('agent_id')
     fields = {
         'agent_type': _agent_kind(raw),
-        'agent_id': raw.get('subagent_id') or raw.get('agent_id'),
+        'agent_id': agent_id,
         'agent_name': raw.get('subagent_name') or raw.get('agent_name'),
         'description': raw.get('description'),
         'result_preview': _result_preview(raw),
+        'child_trace_id': _child_trace_id(agent_id),
+        'launch_tool_use_id': _launch_tool_use_id(raw),
     }
     attrs.update({k: v for k, v in fields.items() if v})
     prompt = raw.get('prompt')
@@ -234,12 +268,22 @@ def _subagent_capture(transcript_path, agent_id) -> tuple[bool, int | None]:
 _SUBAGENT_PROMPT_MAX_BYTES = 8 * 1024
 
 
-def _first_user_prompt(transcript_path) -> tuple[str, str | None] | None:
-    """`(text, timestamp)` of a subagent transcript's first user message — its
-    launch prompt — or None. Accepts either a bare-string content or a
-    text-block list; a tool_result-only first entry (shouldn't happen for a
-    subagent) yields no text."""
+def _user_prompts(transcript_path) -> list[tuple[str, str | None, str | None]]:
+    """`(text, timestamp, entry_uuid)` for every user message a subagent was
+    asked, oldest first.
+
+    Usually one — the launch prompt. A RESUMED agent has more: a `SendMessage`
+    continuation appends another user turn to the SAME transcript ("The
+    coordinator sent a message while you were working: …"), and the agent
+    answers it in a second working period with its own start/stop markers. Each
+    of those turns is the prompt of the run it opens, so each gets a span.
+
+    The tool_result entries that make up most of a transcript are also
+    `type: user`; `_user_entry_text` reads only top-level text blocks, so they
+    contribute nothing.
+    """
     import json
+    out: list[tuple[str, str | None, str | None]] = []
     try:
         with open(transcript_path) as f:
             for line in f:
@@ -254,11 +298,10 @@ def _first_user_prompt(transcript_path) -> tuple[str, str | None] | None:
                     continue
                 text = _user_entry_text(e.get('message', {}).get('content'))
                 if text:
-                    return text, e.get('timestamp')
-                return None
+                    out.append((text, e.get('timestamp'), e.get('uuid')))
     except OSError:
-        return None
-    return None
+        return out
+    return out
 
 
 def _user_entry_text(content) -> str:
@@ -272,30 +315,65 @@ def _user_entry_text(content) -> str:
     return ''
 
 
-def _emit_subagent_prompt(trace_id, transcript_path, agent_id) -> None:
-    """Emit one `prompt` span (`prompt-sa-<agent_id>`) from the subagent's
-    launch prompt, agent_id-tagged so a scoped view opens with the task
-    statement. Idempotent via the deterministic span_id."""
-    import os
+def _prompt_span_id(agent_id: str, index: int, uuid) -> str | None:
+    """The launch prompt keeps the bare `prompt-sa-<agent_id>` id: it anchors
+    the child trace's root and is matched by name across the readers. A resumed
+    agent's later turns hang off their transcript entry uuid — an identity the
+    re-read reproduces, so re-scanning re-posts the same row rather than
+    minting a new one per pass.
 
+    A later turn with no uuid has no identity to key on, and falling back to
+    the bare id would file it as the LAUNCH prompt — the first card would then
+    show the resume's text. Losing the turn is the better failure."""
+    if index == 0:
+        return f'prompt-sa-{agent_id}'
+    if not isinstance(uuid, str) or not uuid:
+        return None
+    return f'prompt-sa-{agent_id}-{uuid[:13]}'
+
+
+def _readable_transcript(transcript_path, agent_id) -> bool:
+    import os
+    return bool(isinstance(transcript_path, str) and transcript_path
+                and agent_id and os.path.isfile(transcript_path))
+
+
+def _post_prompt_span(trace_id, agent_id, span_id, text, ts) -> None:
     from lib.hook_plugin import post_span  # type: ignore
-    if not (isinstance(transcript_path, str) and transcript_path
-            and os.path.isfile(transcript_path) and agent_id):
-        return
-    first = _first_user_prompt(transcript_path)
-    if first is None:
-        return
-    text, ts = first
     capped = text.encode('utf-8')[:_SUBAGENT_PROMPT_MAX_BYTES].decode(
         'utf-8', 'ignore')
     attrs = {'text': capped, 'chars': len(text), 'agent_id': agent_id}
     if len(capped) < len(text):
         attrs['text_truncated'] = True
     ts_norm = _normalize_subagent_ts(ts) if isinstance(ts, str) and ts else None
-    post_span(
-        trace_id=trace_id, span_id=f'prompt-sa-{agent_id}', name='prompt',
-        start_time=ts_norm, end_time=ts_norm, attributes=attrs,
-    )
+    post_span(trace_id=trace_id, span_id=span_id, name='prompt',
+              start_time=ts_norm, end_time=ts_norm, attributes=attrs)
+
+
+def _emit_subagent_prompt(trace_id, transcript_path, agent_id, *,
+                          seen=None) -> None:
+    """Emit one `prompt` span per user turn in the subagent's transcript,
+    agent_id-tagged so a scoped view opens with the task statement and each
+    resumed run shows what IT was asked.
+
+    `seen` is the session's posted-uuid cache, the same throttle the turn
+    spans use. A resumed agent's later turn lands AFTER the first scan, so
+    this has to run on every poll; without the cache every poll would re-post
+    every prompt already sent. None posts all — the one-shot read at
+    SubagentStop."""
+    from hook_manager.handlers.turn_trace.cache import _mark_seen  # type: ignore
+    if not _readable_transcript(transcript_path, agent_id):
+        return
+    posted = []
+    for index, (text, ts, uuid) in enumerate(_user_prompts(transcript_path)):
+        span_id = _prompt_span_id(agent_id, index, uuid)
+        if span_id is None or (seen is not None and uuid in seen):
+            continue
+        _post_prompt_span(trace_id, agent_id, span_id, text, ts)
+        posted.append(uuid)
+    known = [u for u in posted if u]
+    if known:
+        _mark_seen(trace_id, known)
 
 
 def emit_subagent_responses(trace_id, transcript_path, agent_id, *, seen=None) -> None:
@@ -305,7 +383,7 @@ def emit_subagent_responses(trace_id, transcript_path, agent_id, *, seen=None) -
     (full-read) path used at SubagentStop; the live rescan uses the resumable
     variant below. `seen` (a turn-uuid set) gates re-posts; None posts all
     (idempotent via the `resp-sa-`/`think-sa-` span_id)."""
-    _emit_subagent_prompt(trace_id, transcript_path, agent_id)
+    _emit_subagent_prompt(trace_id, transcript_path, agent_id, seen=seen)
     ok, read_cap = _subagent_capture(transcript_path, agent_id)
     if not ok:
         return
@@ -321,11 +399,13 @@ def emit_subagent_responses_resumable(
     """Resumable variant for the live rescan: parse only bytes appended to the
     subagent transcript since the last poll (reusing the accumulator in
     `state`), then post the same spans. Returns the updated
-    `ResumableScanState` to thread back into the next poll. The launch-prompt
-    span is emitted once, on the first scan (`state is None`) — the first user
-    message sits before the committed byte offset on every later poll."""
-    if state is None:
-        _emit_subagent_prompt(trace_id, transcript_path, agent_id)
+    `ResumableScanState` to thread back into the next poll.
+
+    The PROMPT spans are re-checked on EVERY scan, not just the first: a
+    `SendMessage` continuation appends a new user turn long after the first
+    poll committed its byte offset, and that turn is the resumed run's prompt.
+    The seen-uuid cache is what keeps the re-check cheap."""
+    _emit_subagent_prompt(trace_id, transcript_path, agent_id, seen=seen)
     ok, read_cap = _subagent_capture(transcript_path, agent_id)
     if not ok:
         return state

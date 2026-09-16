@@ -753,3 +753,57 @@ def test_post_tool_trace_task_output_failed_task_keeps_span_ok(captured_spans):
     span = captured_spans[0]
     assert span['attributes']['exit_code'] == 1
     assert 'status_code' not in span or span.get('status_code') in (None, 'OK')
+
+
+_TASK_NOTIFICATION_WITH_RESULT = (
+    '<task-notification>\n'
+    '<task-id>a3c88e215a255291e</task-id>\n'
+    '<status>completed</status>\n'
+    '<summary>Agent "Verify the fold" finished</summary>\n'
+    '<note>A task-notification fires each time this agent stops.</note>\n'
+    '<result>## Verdict\n\n**1. PASS** — `a &lt; b` holds.\n\nSHIP.</result>\n'
+    '<usage><subagent_tokens>42228</subagent_tokens>'
+    '<tool_uses>14</tool_uses><duration_ms>200548</duration_ms></usage>\n'
+    '</task-notification>'
+)
+
+
+def test_task_notification_span_carries_result_and_usage(captured_spans):
+    """The agent's own report and its cost live in the envelope; both have to
+    reach the span or two thirds of these cards render one stale line."""
+    prompt_trace.handle(_p('UserPromptSubmit',
+                           prompt=_TASK_NOTIFICATION_WITH_RESULT,
+                           session_id='s1'))
+    a = captured_spans[0]['attributes']
+    assert a['result'].startswith('## Verdict')
+    assert a['result'].endswith('SHIP.')          # multi-line, survives DOTALL
+    assert a['subagent_tokens'] == 42228
+    assert a['tool_uses'] == 14
+    assert a['duration_ms'] == 200548
+
+
+def test_task_notification_without_result_keeps_the_old_shape(captured_spans):
+    prompt_trace.handle(_p('UserPromptSubmit',
+                           prompt=_TASK_NOTIFICATION_SAMPLE, session_id='s1'))
+    a = captured_spans[0]['attributes']
+    assert 'result' not in a
+    assert 'subagent_tokens' not in a
+    assert a['summary'].startswith('Background command "Retry embed"')
+
+
+def test_a_report_quoting_the_usage_tags_cannot_poison_the_counters():
+    """The report precedes `<usage>` in the envelope, and a verifier reporting
+    on this very parser embeds those tag literals — so an unscoped search would
+    read the counters out of the prose."""
+    from lib.trace.task_notification import parse_task_notification
+
+    parsed = parse_task_notification(
+        '<task-notification>\n'
+        '<result>the report says <tool_uses>777</tool_uses> here</result>\n'
+        '<usage><subagent_tokens>10</subagent_tokens>'
+        '<tool_uses>2</tool_uses><duration_ms>30</duration_ms></usage>\n'
+        '</task-notification>'
+    )
+    assert parsed['tool_uses'] == 2
+    assert parsed['subagent_tokens'] == 10
+    assert '777' in parsed['result']

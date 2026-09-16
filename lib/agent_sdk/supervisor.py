@@ -73,6 +73,31 @@ def _undo_revive(trace_id: str, revived: list[dict]) -> None:
     store.restore_trace_session(revived)
 
 
+def _retire_terminal_claim(resume: str | None) -> None:
+    """Drop the pane claim a resumed session's terminal life left behind.
+
+    The claim is provably false by the time a resume is admitted:
+    `resumable._refusal` turns one down with `in_pane` while a terminal still
+    holds the id, so an admitted resume means no terminal does. The child then
+    registers no pane of its own (`REGIN_BRIDGE=0` in `client.py`), and the
+    session that abnormally ended — its tmux server killed with it — never
+    fired the SessionEnd that would have retired the row. Left standing it is
+    read as evidence about a live session: the tmux sweep settles the
+    conversation as 'tmux server gone' while this run is driving it, and
+    `store._still_claimed` reports a terminal that is not there.
+
+    Never fatal to the launch: a registry that cannot be written is a stale
+    row, not a reason to refuse a run.
+    """
+    if not resume:
+        return
+    try:
+        from lib.agent_bridge.store import retire_pane
+        retire_pane(resume)
+    except Exception:
+        log.error("sdk_pane_retire_failed", trace_id=resume, exc_info=True)
+
+
 def _on_done(trace_id: str, token: object, future) -> None:
     """Give the trace id back, and drain the run's result so a failure is
     logged rather than swallowed by the loop's default exception handler.
@@ -243,6 +268,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     # operator's card is open on an id nothing owns, and its first prompt falls
     # through to the tmux bridge: a pane, not this run.
     registry.register_alias(resume or "", trace_id)
+    _retire_terminal_claim(resume)
     # Both halves of the alias group: `resume` is the child session id, which
     # is the one a trace read resolves to.
     revived = store.revive_trace_session(trace_id, resume or "") if reused else []

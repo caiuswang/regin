@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import api from '../api'
-import { dropRetiredSpans } from '../utils/traceFormatters.js'
+import { dropRetiredSpans, isPendingPlaceholderId } from '../utils/traceFormatters.js'
 import {
   isActiveSession, parseLocalIso, STALE_FALLBACK_WINDOW_MS,
 } from '../utils/sessionActivity.js'
@@ -38,9 +38,6 @@ const DEEP_REFRESH_TAIL = 3
 const CHILD_CONCURRENCY = 4
 const MAX_ROOT_RETRIES = 5
 
-// Reserved live-placeholder span_id prefixes (lib/trace/pending_spans.py).
-const PENDING_PREFIXES = ['promptlive-', 'pending-', 'permreq-']
-
 function bySpanTime(a, b) {
   const at = a.start_time ? (parseLocalIso(a.start_time)?.getTime() ?? 0) : 0
   const bt = b.start_time ? (parseLocalIso(b.start_time)?.getTime() ?? 0) : 0
@@ -50,8 +47,7 @@ function bySpanTime(a, b) {
 
 function isPendingPlaceholder(s) {
   if (s.status_code === 'PENDING') return true
-  const sid = s.span_id || ''
-  return PENDING_PREFIXES.some(p => sid.startsWith(p))
+  return isPendingPlaceholderId(s.span_id)
 }
 
 export function useLiveTail(getRouteId) {
@@ -223,14 +219,19 @@ export function useLiveTail(getRouteId) {
 
   // Track window roots (turn anchors) for the deep-children fetches.
   // Returns the span_ids that are new to this client.
-  function recordRoots(tree) {
+  //
+  // The tree names its spans by id and the bodies ride the same response's
+  // `spans` list (`_wire_nodes` server-side), so the DB `id` this sorts on
+  // comes from there rather than from the node.
+  function recordRoots(tree, spans) {
+    const idBySpan = new Map((spans || []).map(s => [s.span_id, s.id]))
     const fresh = []
     for (const node of tree || []) {
-      const d = node.data || {}
-      if (!d.span_id || rootIds.has(d.span_id)) continue
-      rootIds.add(d.span_id)
-      roots.push({ id: d.id ?? 0, span_id: d.span_id, leaf: !!node.leaf })
-      fresh.push(d.span_id)
+      const spanId = node.span_id
+      if (!spanId || rootIds.has(spanId)) continue
+      rootIds.add(spanId)
+      roots.push({ id: idBySpan.get(spanId) ?? 0, span_id: spanId, leaf: !!node.leaf })
+      fresh.push(spanId)
     }
     roots.sort((a, b) => a.id - b.id)
     return fresh
@@ -250,7 +251,9 @@ export function useLiveTail(getRouteId) {
     // model / repo (header meta line), and the segment-aware live-peak
     // context_pct (ctx meter) all refresh every poll off the same summary.
     // phase / agent_phase are the server's state verdict — the card renders
-    // them, never re-derives state (no client idle debounce).
+    // them, never re-derives state (no client idle debounce). live_screen is
+    // the parsed terminal frame behind that verdict (verb / elapsed / tokens /
+    // in-flight tool) — null whenever the screen had no verdict.
     // queued_prompts (transcript-derived + bridge steers) drive the queued chips.
     // canonical_trace_id is the id this session is really keyed on — the
     // child's for a regin-launched run. The view rewrites the URL onto it; a
@@ -259,8 +262,8 @@ export function useLiveTail(getRouteId) {
     const keys = ['title', 'started_at', 'ended_at', 'last_seen',
       'status', 'ended_reason', 'bridge_reachable', 'bridge_pane', 'server_now',
       'task_list', 'agent_roster', 'model', 'repo', 'context_pct',
-      'phase', 'agent_phase', 'queued_prompts', 'sdk_owned',
-      'canonical_trace_id']
+      'phase', 'agent_phase', 'queued_prompts', 'sdk_owned', 'live_screen',
+      'canonical_trace_id', 'successor_trace_id', 'resumable']
     for (const k of keys) {
       if (k in data) patch[k] = data[k]
     }
@@ -338,7 +341,7 @@ export function useLiveTail(getRouteId) {
 
   function applyWindow(data) {
     mergeSpans(data.spans || [])
-    const fresh = recordRoots(data.tree)
+    const fresh = recordRoots(data.tree, data.spans)
     applyPageBounds(data)
     return fresh
   }
@@ -501,7 +504,7 @@ export function useLiveTail(getRouteId) {
       const data = await api.get(`${mapUrl()}&before_id=${oldestLoadedId}`)
       if (isStale(gen)) return
       const staged = [...(data.spans || [])]
-      const fresh = recordRoots(data.tree)
+      const fresh = recordRoots(data.tree, data.spans)
       staged.push(...await loadChildrenFor(fresh, { gen }))
       if (isStale(gen)) return
       mergeSpans(staged)

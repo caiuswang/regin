@@ -40,8 +40,8 @@ you did not get to.
 
 2. **Drop wrong-area noise.** If the change is single-area, cut the skills,
    references, and gates dragged in by an over-fired area. Example: a
-   pure-Vue UI change should not carry Python skills, `lib/**` references, or
-   a pytest gate just because the goal said "session" or "trace".
+   pure UI change should not carry backend skills, server-module references,
+   or a backend test gate just because the goal named a backend concept.
 
 3. **Keep only lessons that apply.** For each `[lesson-id]`, keep it ONLY if
    it bears on this change as seen in the actual file. Drop vocabulary-only

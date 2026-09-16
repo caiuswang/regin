@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from './auth-fixture.js'
+import { BASELINE_TRACE } from './helpers/fixtures.js'
 
 // Serial, and not by accident: the stream is a broadcast to every open
 // tab, so a message one test records is delivered to every other test's
@@ -1040,6 +1041,49 @@ test.describe('an ask with several questions', () => {
       await expect(page.getByRole('dialog')).toHaveCount(0)
     })
 
+  // The defect: `/agent-messages/blockers` is re-read on a 60s reconcile and on
+  // every route entry, and the response replaces each row object wholesale.
+  // The answer card watched the QUESTIONS computed — whose identity changes on
+  // every such replace even when the server returned the same card — and reset
+  // the step to 0, dropping the operator back to question 1 mid-ask.
+  test('a /blockers reconcile keeps the question step and the staged draft',
+    async ({ page }) => {
+      let reads = 0
+      await page.route('**/api/agent-messages/blockers', (route) => {
+        reads += 1
+        return route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify(MULTI),
+        })
+      })
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      await popout.getByRole('radio', { name: /From a folder/ }).click()
+      await popout.getByTestId('blocker-next').click()
+      await expect(popout.getByTestId('blocker-step')).toContainText('Question 2 of 2')
+      await popout.getByTestId('blocker-stage-free').click()
+      await popout.getByTestId('blocker-free-input').fill('neither, use both')
+
+      // A real route entry, which is what AppLayout re-reads the parked set on.
+      // Driven through history rather than a click because the modal's scrim
+      // covers the nav, and through popstate rather than page.goto because a
+      // document reload is a different scenario with its own honest state loss.
+      const before = reads
+      await page.evaluate(() => {
+        window.history.pushState({}, '', '/sessions')
+        window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }))
+      })
+      await expect.poll(() => reads).toBeGreaterThan(before)
+
+      await expect(popout.getByTestId('blocker-step')).toContainText('Question 2 of 2')
+      await expect(popout.getByText('What is the ground truth?')).toBeVisible()
+      await expect(popout.getByTestId('blocker-free-input'))
+        .toHaveValue('neither, use both')
+      await expect(popout.getByTestId('blocker-summary')).toContainText('From a folder')
+    })
+
   test('a pick survives stepping back to revise it', async ({ page }) => {
     await stubMulti(page)
     await page.goto('/patterns')
@@ -1091,8 +1135,8 @@ test.describe('an ask with several questions', () => {
     })
 })
 
-test.describe('an ask the bridge cannot drive', () => {
-  test('a multi-select question says why instead of rendering a dead card',
+test.describe('a multi-select ask', () => {
+  test('stages as checkboxes and delivers every ticked index',
     async ({ page }) => {
       await page.route('**/api/agent-messages/blockers', route => route.fulfill({
         status: 200, contentType: 'application/json',
@@ -1103,12 +1147,20 @@ test.describe('an ask the bridge cannot drive', () => {
             body: '', session_title: 'multisel', kind: 'question',
             created_at: new Date().toISOString(), span_id: 'toolu_multisel',
             question: 'Which of these apply?', header: '', multi_select: true,
-            options: [{ index: 0, label: 'One', description: '' }],
+            options: [
+              { index: 0, label: 'One', description: '' },
+              { index: 1, label: 'Two', description: '' },
+              { index: 2, label: 'Three', description: '' },
+            ],
             questions: [{
               question: 'Which of these apply?', header: '', multiSelect: true,
-              options: [{ index: 0, label: 'One', description: '' }],
+              options: [
+                { index: 0, label: 'One', description: '' },
+                { index: 1, label: 'Two', description: '' },
+                { index: 2, label: 'Three', description: '' },
+              ],
             }],
-            bridge_reachable: true, sdk_owned: false, answerable: null,
+            bridge_reachable: true, sdk_owned: false, answerable: 'question',
           }],
         }),
       }))
@@ -1116,10 +1168,156 @@ test.describe('an ask the bridge cannot drive', () => {
       await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
       const popout = await openDecision(page)
 
-      await expect(popout.getByText(/multi-select question, which cannot be driven/))
-        .toBeVisible()
-      await expect(popout.getByRole('button', { name: /Send/ })).toHaveCount(0)
-      await expect(popout.getByRole('button', { name: /Open live session/ }))
-        .toBeVisible()
+      const posts = []
+      await page.route('**/api/sessions/stub-multisel/bridge-answer', route => {
+        posts.push(JSON.parse(route.request().postData() || '{}'))
+        return route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ delivered: true, detail: 'submitted' }),
+        })
+      })
+
+      // Checkboxes, not radios — and ticking a second option keeps the first.
+      const boxes = popout.getByRole('checkbox')
+      await expect(boxes).toHaveCount(3)
+      await boxes.nth(0).click()
+      await boxes.nth(2).click()
+      await expect(boxes.nth(0)).toHaveAttribute('aria-checked', 'true')
+      await expect(boxes.nth(2)).toHaveAttribute('aria-checked', 'true')
+      await expect(boxes.nth(1)).toHaveAttribute('aria-checked', 'false')
+
+      await popout.getByRole('button', { name: /Send/ }).click()
+
+      // The `answers` array shape, because only that walk presses the TUI's
+      // mandatory final Submit; option_count locates the advance row.
+      await expect.poll(() => posts.length).toBe(1)
+      expect(posts[0].answers[0].option_index).toEqual([0, 2])
+      expect(posts[0].answers[0].option_count).toBe(3)
     })
+
+  test('offers no one-tap option button that bypasses the staged checkboxes',
+    async ({ page }) => {
+      // The regression: BlockerActions rendered its one-tap options beside
+      // BlockerAnswer's checkboxes. One tap posted the flat single-pick shape,
+      // which on a multi-select widget only TICKS a box — the walk never
+      // reaches Submit, so the agent stayed parked while `delivered: true`
+      // retired the card. The operator saw the card vanish, no boxes staged,
+      // and the option selected in the terminal.
+      await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          blockers: [{
+            id: 999008, version: 1, trace_id: 'stub-multisel3',
+            msg_key: 'permission-pending', msg_type: 'blocker', title: 'Question',
+            body: '', session_title: 'multisel3', kind: 'question',
+            created_at: new Date().toISOString(), span_id: 'toolu_multisel3',
+            question: 'Which of these apply?', header: '', multi_select: true,
+            options: [
+              { index: 0, label: 'One', description: '' },
+              { index: 1, label: 'Two', description: '' },
+            ],
+            questions: [{
+              question: 'Which of these apply?', header: '', multiSelect: true,
+              options: [
+                { index: 0, label: 'One', description: '' },
+                { index: 1, label: 'Two', description: '' },
+              ],
+            }],
+            bridge_reachable: true, sdk_owned: false, answerable: 'question',
+          }],
+        }),
+      }))
+      const posts = []
+      await page.route('**/bridge-answer', route => {
+        posts.push(JSON.parse(route.request().postData() || '{}'))
+        return route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ delivered: true, detail: 'ok' }),
+        })
+      })
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      // The checkboxes are the only way to answer; no bypassing pick button.
+      await expect(popout.getByRole('checkbox')).toHaveCount(2)
+      await expect(page.locator('.blocker-opt-btn')).toHaveCount(0)
+
+      // And what does go out is the array shape, never a flat single pick.
+      await popout.getByRole('checkbox').first().click()
+      await popout.getByRole('button', { name: /Send/ }).click()
+      await expect.poll(() => posts.length).toBe(1)
+      expect(posts[0].answers).toBeTruthy()
+      expect(posts[0].option_index).toBeUndefined()
+    })
+
+  test('unticking the last box leaves the ask unanswered', async ({ page }) => {
+      await page.route('**/api/agent-messages/blockers', route => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          blockers: [{
+            id: 999007, version: 1, trace_id: 'stub-multisel2',
+            msg_key: 'permission-pending', msg_type: 'blocker', title: 'Question',
+            body: '', session_title: 'multisel2', kind: 'question',
+            created_at: new Date().toISOString(), span_id: 'toolu_multisel2',
+            question: 'Which of these apply?', header: '', multi_select: true,
+            options: [{ index: 0, label: 'One', description: '' }],
+            questions: [{
+              question: 'Which of these apply?', header: '', multiSelect: true,
+              options: [{ index: 0, label: 'One', description: '' }],
+            }],
+            bridge_reachable: true, sdk_owned: false, answerable: 'question',
+          }],
+        }),
+      }))
+      await page.goto('/patterns')
+      await expect(page.locator('.blocker-banner')).toBeVisible({ timeout: 10_000 })
+      const popout = await openDecision(page)
+
+      const box = popout.getByRole('checkbox').first()
+      await box.click()
+      await expect(popout.getByRole('button', { name: /Send/ })).toBeEnabled()
+      await box.click()
+      await expect(box).toHaveAttribute('aria-checked', 'false')
+      await expect(popout.getByRole('button', { name: /Send/ })).toBeDisabled()
+    })
+})
+
+
+// A frozen viewport (`meta.fixedViewport`) has no scroll to give back, so
+// whatever the in-flow banner pushes down is gone rather than merely lower:
+// the view root is sized to the whole scroller, and its last rows — the
+// composer, the follow-up — used to spill past a clipped edge.
+test.describe('a banner over a frozen viewport', () => {
+  test('the view yields the banner its band instead of spilling past the clip', async ({ page }) => {
+    const ids = []
+    clearBlockers()
+    // Above the bounded threshold. Below it the shell scrolls as usual and
+    // there is nothing to clip, so the bug cannot reproduce.
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
+    await streamReady(page)
+
+    ids.push(record({
+      type: 'blocker', title: 'The agent is asking you a question',
+      body: 'Pick one\n\u2022 Yes\n\u2022 No',
+      traceId: `e2e-${randomUUID()}`, key: 'permission-pending',
+    }))
+
+    const banner = page.locator('.blocker-banner')
+    await expect(banner).toBeVisible({ timeout: 10_000 })
+    const shell = page.locator('.trace-shell-bounded')
+    await expect(shell).toBeVisible()
+
+    const scrollerBox = await page.locator('.content-scroll').boundingBox()
+    const shellBox = await shell.boundingBox()
+    const bannerBox = await banner.boundingBox()
+
+    // The banner is in flow ABOVE the view — without this the assertion below
+    // would pass on a banner that simply floated over the page.
+    expect(shellBox.y).toBeGreaterThanOrEqual(bannerBox.y + bannerBox.height)
+    expect(shellBox.y + shellBox.height).toBeLessThanOrEqual(scrollerBox.y + scrollerBox.height + 1)
+
+    await cleanup(page, ids)
+  })
 })

@@ -18,8 +18,13 @@ import TraceAgentPane from './TraceAgentPane.vue'
 
 const props = defineProps({
   // useTraceScope reactive object (scopeId, scopedAgent, notFound, pending,
-  // loadingSubtree, active, enter, exit, …).
+  // active, enter, exit, …).
   traceScope: { type: Object, required: true },
+  // useAgentTrace: the scoped agent's OWN spans, fetched from its child
+  // trace. Neither scoped surface can re-project `feed.spans` any more — a
+  // delegating parent's conversation keeps only the agent's markers.
+  agentSpans: { type: Array, default: () => [] },
+  agentLoading: { type: Boolean, default: false },
   // useLiveAgents reactive object (runningAgents / finishedAgents for the
   // pane roster mode).
   liveAgents: { type: Object, required: true },
@@ -33,12 +38,16 @@ const props = defineProps({
   // a readable width (three columns only fit at ≥2xl).
   hideToc: { type: Boolean, default: false },
   // { spans, turns, selectedSpan, traceId, contextWindowTokens,
-  //   workflowRunsById, loadedSubtrees, serverNow, serverNowAt }
+  //   workflowRunsById, loadedSubtrees, serverNow, serverNowAt,
+  //   followUp, sendSeq }
   feed: { type: Object, required: true },
   stickyTop: { type: Number, default: 0 },
+  // The presentation reader is open over the whole viewport.
+  readerOpen: { type: Boolean, default: false },
 })
 const emit = defineEmits([
-  'select-span', 'fetch-content', 'load-subtree', 'jump-live', 'enter-scope', 'exit', 'expand',
+  'select-span', 'fetch-content', 'load-subtree', 'load-subtrees', 'jump-live', 'enter-scope', 'exit', 'expand',
+  'present', 'follow-latest', 'resumed',
 ])
 
 // Which of the two feeds raised the current selection. The split mounts
@@ -70,10 +79,20 @@ const mainFollowing = computed(() => !!mainFeed.value?.followTail)
 // keyboard sibling of the pane ✕ / scope-bar ✕. Only acts while a scope or the
 // roster is open, so it never swallows Escape for the rest of the view.
 function onKeydown(e) {
+  // While the presentation reader owns the viewport it swallows every key —
+  // Escape there means "close the reader", not "leave the agent scope".
+  if (props.readerOpen) return
   if (e.key === 'Escape' && props.traceScope.active) emit('exit')
 }
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))
+// One object, forwarded whole — the feed and the span reader's docked composer
+// read the same bundle, so neither surface can be handed a subset of it. The
+// takeover case is this region's own call, not the bundle's: a feed scoped to
+// one agent's subtree is not the session, so it offers no follow-up.
+const feedFollowUp = computed(() => (props.takeover
+  ? { ...props.feed.followUp, canFollowUp: false, canResume: false }
+  : props.feed.followUp))
 </script>
 
 <template>
@@ -88,7 +107,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   <SessionConversationView
     v-else
     ref="mainFeed"
-    :spans="feed.spans"
+    :spans="takeover && traceScope.scopedAgent ? agentSpans : feed.spans"
     :turns="feed.turns"
     :selected-span="feed.selectedSpan"
     :trace-id="feed.traceId"
@@ -97,17 +116,26 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     :loaded-subtrees="feed.loadedSubtrees"
     :task-events="feed.taskEvents"
     :scope-agent="takeover ? traceScope.scopedAgent : null"
-    :scope-loading="traceScope.loadingSubtree"
+    :scope-loading="agentLoading"
     :scoped-agent-id="(!takeover && isXl && traceScope.scopeId) ? traceScope.scopeId : ''"
+    :agents="liveAgents.agents"
+    :server-now="feed.serverNow"
+    :server-now-at="feed.serverNowAt"
     :hide-toc="hideToc"
+    :follow-up="feedFollowUp"
+    :send-seq="feed.sendSeq"
     :follow-selection="selectionOrigin !== 'pane'"
     class="flex-1 min-w-0 xl:min-w-72"
     data-testid="trace-conversation-feed"
     @select-span="onSelect('feed', $event)"
     @fetch-content="emit('fetch-content', $event)"
     @load-subtree="emit('load-subtree', $event)"
+    @load-subtrees="emit('load-subtrees', $event)"
     @jump-live="emit('jump-live')"
     @enter-scope="emit('enter-scope', $event)"
+    @present="emit('present', $event)"
+    @follow-latest="emit('follow-latest')"
+    @resumed="emit('resumed')"
   />
 
   <TraceAgentPane
@@ -115,10 +143,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     :mode="traceScope.rosterOpen ? 'roster' : 'scope'"
     :agent="traceScope.scopedAgent"
     :not-found="traceScope.notFound"
-    :scope-loading="traceScope.loadingSubtree"
+    :scope-loading="agentLoading"
     :running-agents="liveAgents.runningAgents"
     :finished-agents="liveAgents.finishedAgents"
-    :spans="feed.spans"
+    :agents="liveAgents.agents"
+    :spans="agentSpans"
     :turns="feed.turns"
     :selected-span="feed.selectedSpan"
     :trace-id="feed.traceId"
@@ -137,6 +166,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
     @select-span="onSelect('pane', $event)"
     @fetch-content="emit('fetch-content', $event)"
     @load-subtree="emit('load-subtree', $event)"
+    @load-subtrees="emit('load-subtrees', $event)"
     @jump-live="emit('jump-live')"
+    @present="emit('present', $event)"
   />
 </template>

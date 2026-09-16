@@ -243,6 +243,45 @@ def test_turn_model_upgrades_when_strictly_different():
     assert bucket['model'] == 'claude-sonnet-4-7'
 
 
+def test_a_launch_alias_is_replaced_by_the_concrete_id():
+    # An SDK run stamps session.start with the alias the operator picked
+    # (`opus`); the transcript later names the exact build it resolved to.
+    spans = [
+        _span('t', 'a', 'session.start', start='2026-05-15T10:00:00',
+              attrs={'model': 'opus'}),
+        _span('t', 'b', 'turn', start='2026-05-15T10:05:00',
+              attrs={'model': 'claude-opus-5'}),
+    ]
+    bucket = _span_counter_buckets(spans, set())['t']
+    assert bucket['model'] == 'claude-opus-5'
+
+
+def test_a_relaunch_does_not_downgrade_the_id_back_to_the_alias():
+    # `launch_run(trace_id=…)` revives a run under its own trace id, so the
+    # second session.start re-stamps the launch alias at a later timestamp.
+    spans = [
+        _span('t', 'a', 'session.start', start='2026-05-15T10:00:00',
+              attrs={'model': 'opus'}),
+        _span('t', 'b', 'turn', start='2026-05-15T10:05:00',
+              attrs={'model': 'claude-opus-5'}),
+        _span('t', 'c', 'session.start', start='2026-05-15T10:10:00',
+              attrs={'model': 'opus'}),
+    ]
+    bucket = _span_counter_buckets(spans, set())['t']
+    assert bucket['model'] == 'claude-opus-5'
+
+
+def test_a_different_family_alias_is_a_real_switch_not_a_downgrade():
+    spans = [
+        _span('t', 'a', 'session.start', start='2026-05-15T10:00:00',
+              attrs={'model': 'claude-opus-5'}),
+        _span('t', 'b', 'session.start', start='2026-05-15T10:10:00',
+              attrs={'model': 'haiku'}),
+    ]
+    bucket = _span_counter_buckets(spans, set())['t']
+    assert bucket['model'] == 'haiku'
+
+
 def test_assistant_response_sets_model_when_no_turn_or_start_model():
     # Transcript-replayed llm-stage sessions carry the model only on
     # assistant_response spans — their session.start has no model and they

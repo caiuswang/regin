@@ -490,3 +490,173 @@ def test_ensure_schema_creates_table_on_bare_db(monkeypatch):
     assert rows[0]["tmux_server_pid"] == 555
     assert rows[0]["pane_pid"] == 66
     assert rows[0]["reachable"] == 1
+
+
+def _end_payload(session_id="s-bridge", cwd="/tmp/proj"):
+    raw = {"cwd": cwd, "session_id": session_id, "reason": "other"}
+    return HookPayload(event="SessionEnd", cwd=cwd,
+                       session_id=session_id, raw=raw)
+
+
+def test_session_end_retires_the_pane_claim(monkeypatch):
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%5")
+    _mock_tmux(monkeypatch)
+    bridge_registry.handle_start(_payload())
+    assert [r["reachable"] for r in _rows()] == [1]
+
+    resp = bridge_registry.handle_end(_end_payload())
+
+    assert resp is not None and resp.suppress_output is True
+    rows = _rows()
+    assert [r["reachable"] for r in rows] == [0]
+    # The identity row survives: it is the audit trail of pane ownership.
+    assert rows[0]["pane_id"] == "%5"
+
+
+def test_session_end_retires_without_needing_the_bridge_env(monkeypatch):
+    """The retirement must not be gated on REGIN_BRIDGE/$TMUX_PANE: SessionEnd
+    can fire from a process whose env no longer carries them, and a claim left
+    reachable is exactly the bug."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%5")
+    _mock_tmux(monkeypatch)
+    bridge_registry.handle_start(_payload())
+
+    monkeypatch.delenv("REGIN_BRIDGE", raising=False)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    _forbid_subprocess(monkeypatch)
+    bridge_registry.handle_end(_end_payload())
+
+    assert [r["reachable"] for r in _rows()] == [0]
+
+
+def test_session_end_for_an_unregistered_session_is_a_noop(monkeypatch):
+    bridge_registry._registered_panes.clear()
+    _forbid_subprocess(monkeypatch)
+
+    resp = bridge_registry.handle_end(_end_payload("never-registered"))
+
+    assert resp is not None and resp.suppress_output is True
+    assert _rows() == []
+
+
+def test_session_end_without_a_session_id_is_a_noop(monkeypatch):
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%5")
+    _mock_tmux(monkeypatch)
+    bridge_registry.handle_start(_payload())
+
+    bridge_registry.handle_end(_end_payload(session_id=""))
+
+    assert [r["reachable"] for r in _rows()] == [1]
+
+
+# ── /clear succession announcement ──────────────────────────────────
+
+def _capture_notify(monkeypatch):
+    """What the handler told the dashboard, without a dashboard."""
+    sent = []
+    from lib.notifications import notify
+    monkeypatch.setattr(notify, "notify_successor", sent.append)
+    return sent
+
+
+def _seed_cleared_predecessor(pane_id="%3"):
+    from lib.orm.engine import get_connection
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO bridge_panes (trace_id, pane_id, tmux_server_pid, "
+            "pane_pid, tmux_socket, reachable, cwd, created_at, updated_at) "
+            "VALUES ('s-cleared', ?, 4242, 777, NULL, 1, '/tmp/proj', "
+            "'2026-08-01 10:00:00', '2026-08-01 10:00:00')", (pane_id,))
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+            "ended_at, ended_reason) VALUES ('s-cleared', 'ended', "
+            "'2026-08-01 09:00:00', '2026-08-01 10:30:00', "
+            "'2026-08-01 10:30:00', 'clear')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_session_start_announces_the_session_it_replaced(monkeypatch):
+    """Claiming the pane is one of the two writes that make a succession
+    resolvable, and the only one this process performs — so it has to say so.
+    The predecessor's id is what travels: the dashboard resolves the heir."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%3")
+    # The identity triple includes the socket, and a run inside the
+    # developer's own tmux would register one the seed below does not have.
+    monkeypatch.delenv("TMUX", raising=False)
+    _mock_tmux(monkeypatch)
+    _seed_cleared_predecessor()
+    sent = _capture_notify(monkeypatch)
+
+    bridge_registry.handle_start(_payload(session_id="s-heir"))
+
+    assert sent == ["s-cleared"]
+
+
+def test_the_turn_heal_does_not_re_announce(monkeypatch):
+    """`_register_pane` re-runs on every prompt and tool call to heal a
+    SessionStart that fell through. A succession does not become true a second
+    time, so re-notifying would be loopback traffic per turn for a frame that
+    can only be raised once."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%3")
+    # The identity triple includes the socket, and a run inside the
+    # developer's own tmux would register one the seed below does not have.
+    monkeypatch.delenv("TMUX", raising=False)
+    _mock_tmux(monkeypatch)
+    _seed_cleared_predecessor()
+    sent = _capture_notify(monkeypatch)
+
+    bridge_registry.handle_turn(_turn_payload(session_id="s-heir"))
+
+    assert sent == []
+    assert [r["trace_id"] for r in _rows() if r["trace_id"] == "s-heir"]
+
+
+def test_a_first_claude_in_a_pane_announces_nothing(monkeypatch):
+    """Nothing was replaced, so there is no stranded page to move."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%3")
+    # The identity triple includes the socket, and a run inside the
+    # developer's own tmux would register one the seed below does not have.
+    monkeypatch.delenv("TMUX", raising=False)
+    _mock_tmux(monkeypatch)
+    sent = _capture_notify(monkeypatch)
+
+    bridge_registry.handle_start(_payload(session_id="s-first"))
+
+    assert sent == []
+
+
+def test_an_announcement_failure_never_breaks_registration(monkeypatch):
+    """SessionStart is on the interactive startup path; a dashboard that is
+    down must cost the launch nothing and must not lose the row."""
+    bridge_registry._registered_panes.clear()
+    monkeypatch.setenv("REGIN_BRIDGE", "1")
+    monkeypatch.setenv("TMUX_PANE", "%3")
+    # The identity triple includes the socket, and a run inside the
+    # developer's own tmux would register one the seed below does not have.
+    monkeypatch.delenv("TMUX", raising=False)
+    _mock_tmux(monkeypatch)
+    _seed_cleared_predecessor()
+    from lib.notifications import notify
+    monkeypatch.setattr(
+        notify, "notify_successor",
+        lambda *_a: (_ for _ in ()).throw(RuntimeError("dashboard down")))
+
+    resp = bridge_registry.handle_start(_payload(session_id="s-heir"))
+
+    assert resp.suppress_output is True
+    assert [r["trace_id"] for r in _rows() if r["trace_id"] == "s-heir"]

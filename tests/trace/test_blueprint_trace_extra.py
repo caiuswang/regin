@@ -174,9 +174,57 @@ def test_session_map_shallow_returns_root_only_with_tree(flask_client, tmp_db):
     assert [s["span_id"] for s in body["spans"]] == ["root"]
     assert len(body["tree"]) == 1
     root = body["tree"][0]
-    assert root["data"]["span_id"] == "root"
+    # The tree names its spans by id; the bodies ride `spans` once (_wire_nodes).
+    assert root["span_id"] == "root"
+    assert "data" not in root
     assert root["leaf"] is False
-    assert root["data"]["child_count"] == 1
+    assert root["child_count"] == 1
+
+
+def test_deep_children_do_not_repeat_span_bodies(flask_client, tmp_db):
+    """One prompt's `?deep=1` subtree came to 841KB, of which 491KB was the
+    same spans a second and third time: once inlined as each node's `data`,
+    and again as a group node's `data.spans`. The tree names its spans; the
+    bodies ride `spans` once."""
+    with SessionLocal() as session:
+        session.add(SessionModel(
+            trace_id="trace-deep", title="S",
+            started_at="2026-04-22 10:00:00", last_seen="2026-04-22 10:00:09",
+        ))
+        session.add(SessionSpan(
+            trace_id="trace-deep", span_id="root", parent_id=None,
+            name="prompt", kind="internal", start_time="2026-04-22 10:00:00",
+            attributes=json.dumps({"text": "hello"}),
+        ))
+        session.add(SessionSpan(
+            trace_id="trace-deep", span_id="mid", parent_id="root",
+            name="tool.Task", kind="internal", start_time="2026-04-22 10:00:01",
+            attributes=json.dumps({"stdout": "x" * 4000}),
+        ))
+        session.add(SessionSpan(
+            trace_id="trace-deep", span_id="leaf", parent_id="mid",
+            name="tool.Read", kind="internal", start_time="2026-04-22 10:00:02",
+            attributes=json.dumps({"file_path": "a.py"}),
+        ))
+        session.commit()
+
+    body = flask_client.get(
+        "/api/sessions/trace-deep/spans/root/children?deep=1").get_json()
+
+    def walk(nodes):
+        for n in nodes:
+            yield n
+            yield from walk(n.get("children") or [])
+
+    nodes = list(walk(body["children"]))
+    assert {n["span_id"] for n in nodes} == {"mid", "leaf"}
+    # No node carries a span body, under any key.
+    assert all("data" not in n and "attributes" not in n for n in nodes)
+    # And every node's span DID ride along, or the client cannot render it.
+    shipped = {s["span_id"] for s in body["spans"]}
+    assert {n["span_id"] for n in nodes} <= shipped
+    # The 4000-char attribute appears exactly once in the whole response.
+    assert json.dumps(body).count("x" * 4000) == 1
 
 
 # ── structural map keeps the compact memory.recall labels ──────────
@@ -225,6 +273,69 @@ def test_structural_map_keeps_skill_experience_attrs(flask_client, tmp_db):
     assert attrs.get("skill_id") == "playwright-skill"
     assert attrs.get("hit_count") == 2
     assert "block" not in attrs  # heavy attr stripped, fetched lazily
+
+
+# ── an in-flight tool row is self-describing in the structural map ─────
+# Regression: the agent companion pane assembles itself from the structural
+# /map plus LATER content reads. A PENDING tool row stripped by the map had
+# only those later reads to give it a label, so the running chip rendered its
+# bare tool name ("Bash") whenever they missed it.
+
+def test_pending_tool_row_keeps_its_label_attrs(flask_client, tmp_db):
+    # Fresh timestamps: the merge demotes a long-silent PENDING row to
+    # interrupted, and this is a row that is genuinely still running.
+    from datetime import datetime, timedelta
+    t0 = datetime.now() - timedelta(seconds=3)
+    ts = t0.strftime("%Y-%m-%d %H:%M:%S")
+    with SessionLocal() as session:
+        session.add(SessionModel(
+            trace_id="trace-live", title="S",
+            started_at=ts, last_seen=ts))
+        session.add(SessionSpan(
+            trace_id="trace-live", span_id="prompt-live", parent_id=None,
+            name="prompt", kind="internal", start_time=ts))
+        session.add(SessionSpan(
+            trace_id="trace-live", span_id="pending-toolu_live1",
+            parent_id=None, name="tool.Bash", kind="internal",
+            status_code="PENDING", start_time=ts,
+            tool_use_id="toolu_live1",
+            attributes=json.dumps({
+                "tool_name": "Bash", "tool_use_id": "toolu_live1",
+                "live": True, "command_preview": "sleep 30",
+                "command": "sleep 30 " + "x" * 9000,
+                "tool_input": {"command": "y" * 9000},
+            })))
+        session.add(SessionSpan(
+            trace_id="trace-live", span_id="done-1", parent_id=None,
+            name="tool.Bash", kind="internal", status_code="OK",
+            start_time=ts, tool_use_id="toolu_done1",
+            attributes=json.dumps({
+                "tool_name": "Bash", "tool_use_id": "toolu_done1",
+                "command_preview": "ls -la",
+            })))
+        session.commit()
+
+    body = flask_client.get("/api/sessions/trace-live/map").get_json()
+    live = next(s for s in body["spans"]
+                if s["span_id"] == "pending-toolu_live1")
+    live_attrs = live.get("attributes") or {}
+    assert live_attrs.get("command_preview") == "sleep 30"
+    # Only the capped preview keys ride along. The full command and the raw
+    # tool_input are what make a pending bag reach 18KB; they stay lazy.
+    assert "command" not in live_attrs and "tool_input" not in live_attrs
+    assert json.dumps(body).count("x" * 9000) == 0
+    # A resolved row keeps the narrow keep-list — its body is still lazy.
+    done = next(s for s in body["spans"] if s["span_id"] == "done-1")
+    assert "command_preview" not in (done.get("attributes") or {})
+
+
+def test_live_tool_row_predicate_is_pending_tools_only():
+    from web.blueprints.trace.sessions import _is_live_tool_row
+    assert _is_live_tool_row({"status_code": "PENDING", "name": "tool.Bash"})
+    assert not _is_live_tool_row({"status_code": "OK", "name": "tool.Bash"})
+    # A parked prompt placeholder carries the whole submitted text — it stays
+    # on the lazy path.
+    assert not _is_live_tool_row({"status_code": "PENDING", "name": "prompt"})
 
 
 # ── POST /api/sessions/batch-delete ─────────────────────────

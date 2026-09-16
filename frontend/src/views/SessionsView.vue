@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api'
 import CursorControls from '../components/CursorControls.vue'
+import NewSessionButton from '../components/live/NewSessionButton.vue'
 import SessionActiveFilters from '../components/sessions/SessionActiveFilters.vue'
 import SessionCard from '../components/sessions/SessionCard.vue'
 import SessionListRow from '../components/sessions/SessionListRow.vue'
@@ -18,7 +20,8 @@ import {
 } from '../composables/useSessionListQuery'
 import { useStickyHeader } from '../composables/useStickyHeader'
 import { useTraceHeaderPublisher } from '../composables/useTraceHeader'
-import { isActiveWithClock } from '../utils/sessionActivity.js'
+import { sessionLivenessWithClock } from '../utils/sessionActivity.js'
+import { isActiveRowStatus } from '../utils/sessionStatus.js'
 import { titlePreview } from '../utils/sessionRowFormat.js'
 import { shortTraceId } from '../utils/traceFormatters.js'
 
@@ -39,7 +42,19 @@ const {
 const { customTags, loadCustomTags, patchRowTags, addTag, removeTag } = useSessionTags()
 const repoOptions = ref([])
 
-const isActive = (s) => isActiveWithClock(s, serverClock.value)
+// Starting a session from the list, in a worktree or in the repo as it stands.
+// It goes to /live rather than the trace: a run that was just launched has
+// nothing to read yet, and everything it will ask for — a permission, an
+// AskUserQuestion, the first follow-up — is answered there.
+const router = useRouter()
+
+function onLaunched({ traceId }) {
+  if (traceId) router.push(`/live/${traceId}`)
+}
+
+// Resolved the same way each row's own chip is, so the group header and the
+// facet count cannot disagree with the word beside them.
+const isActive = (s) => isActiveRowStatus(s, sessionLivenessWithClock(s, serverClock.value))
 const { mode: groupMode, groups } = useSessionGrouping(sessions, isActive)
 
 // Grouping partitions the rows ALREADY LOADED, while the header pill and the
@@ -324,7 +339,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         @range-preset="(v) => query.selectRangePreset(v)"
         @range-pick="(d) => query.pickRangeDay(d)"
         @range-clear="query.clearFilter('range')"
-      />
+      >
+        <template #actions>
+          <NewSessionButton scope="sessions-list" @launched="onLaunched" />
+        </template>
+      </SessionToolbar>
 
       <SessionActiveFilters
         :filters="activeFilters"

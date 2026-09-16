@@ -49,21 +49,31 @@ declare system/pip dependencies. regin's skills depend on regin two ways:
 | Dependency | Bundled here? | Status |
 |---|---|---|
 | **`memory` / `send-to-user` / `topics` MCP servers** (`index_*`, `recall`, `send_to_user`, topic tools) | ✅ yes, via `.mcp.json` + `bin/regin-mcp.sh` | the recall arm + progress messages work as soon as the plugin is enabled (given `REGIN_HOME`) |
-| **`regin` CLI** (`regin gate recall-ran`, `regin route`, `regin goal feedback`, `regin topics wiki-debt`) | ❌ no | still requires `regin` installed on PATH in the target repo |
+| **`regin` CLI** (`regin gate recall-ran`, `regin route`, `regin goal feedback`, `regin topics wiki-debt`) | ⚠️ not bundled | `scripts/setup.sh` links the `regin` console script into `~/.local/bin` (override with `REGIN_BIN_DIR`), so a set-up checkout puts it on PATH for every repo. A machine that skipped setup still has no `regin`. |
 
-So this prototype makes the **MCP-backed** half of the loop portable, and leaves
-the **CLI-shell-out** half as the explicit remaining contract. `bin/regin-mcp.sh`
-localizes the regin-checkout path to a single file so you can see exactly where
-that contract lives.
+So this prototype makes the **MCP-backed** half of the loop portable, and pins
+the **CLI-shell-out** half to one requirement: a regin checkout that ran
+`scripts/setup.sh`. Both halves still resolve through that checkout —
+`bin/regin-mcp.sh` localizes its path to a single file so you can see exactly
+where that contract lives.
+
+The failure mode this guards against is asymmetric, not total: regin's hooks
+carry an absolute interpreter path, so the sensor half keeps working in every
+repo while an unlinked CLI makes every skill's gate leg fail — a harness that
+half-works without saying so.
 
 ## Notes
 
-- The skills bundled here are the portability-fixed copies: bare `regin` (no
+- The skills **and agents** bundled here are the portability-fixed copies: bare `regin` (no
   absolute-path / `.venv/bin/python` fallbacks), and regin-repo-only
   *conventions* genericized — the machine-gate floor reads "your repo's test +
   lint/complexity gates" rather than regin's `pytest`/radon/grit, and the
   convention-skill routing points at "your repo's file→convention mapping"
-  rather than regin's `CLAUDE.local.md` table. This is why the bundled copies
+  rather than regin's `CLAUDE.local.md` table. The agents got the same
+  treatment: `goal-builder`/`goal-verifier` name "your repo's test runner,
+  scoped to the diff" instead of `.venv/bin/python -m pytest`, keeping the
+  durable advice (scope to the diff, parallelise, foreground with a timeout,
+  paste verbatim output) that the literal command was carrying. This is why the bundled copies
   intentionally diverge from `.claude/skills/` (which stay regin-specific
   because they run *in* the regin repo) — don't "sync" them back verbatim.
 - regin-repo-only skills (`generated/*`, `regin-python-conventions`,

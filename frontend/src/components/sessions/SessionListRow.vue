@@ -6,7 +6,8 @@
 // (SessionsView) and both the header and every row read it.
 import { computed } from 'vue'
 import { shortTraceId } from '../../utils/traceFormatters.js'
-import { fmtRelativeAge, isActiveWithClock, serverAgeMs } from '../../utils/sessionActivity.js'
+import { fmtRelativeAge, sessionLivenessWithClock, serverAgeMs } from '../../utils/sessionActivity.js'
+import { phaseLabel, statusOfRow, statusLabel as labelOf } from '../../utils/sessionStatus.js'
 import {
   activityMoreLabel, activityMoreTitle, fmtDuration, otherRepoTitle,
   primaryRepo, shortTestName, timeTitle, titlePreview, totalMs,
@@ -31,7 +32,7 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle', 'delete', 'close', 'add-tag', 'remove-tag'])
 
-const { copyText } = useCopy()
+const { copyText, isCopied } = useCopy()
 // The list is where you go looking for "which one needs me". A blocker that
 // only lives in a banner you dismissed leaves that question unanswered here.
 const { awaitingTraceIds, resumedTraceId, waitedForTrace } = useNotificationCenter()
@@ -39,27 +40,39 @@ const { awaitingTraceIds, resumedTraceId, waitedForTrace } = useNotificationCent
 const awaiting = computed(() => awaitingTraceIds.value.has(props.s.trace_id))
 const resumed = computed(() => resumedTraceId.value === props.s.trace_id)
 
-const active = computed(() => isActiveWithClock(props.s, props.clock))
+const liveness = computed(() => sessionLivenessWithClock(props.s, props.clock))
 const repo = computed(() => primaryRepo(props.s))
 const idLabel = computed(() => `${shortTraceId(props.s.trace_id, 12)}…`)
 
-const statusLabel = computed(() => {
-  if (active.value) return 'active'
-  if (props.s.status === 'ended') return props.s.ended_reason === 'manual' ? 'closed' : 'ended'
-  return 'idle'
-})
+// The class keys on the canonical status, the text on its shared label — so
+// a multi-word label can never leak into a selector.
+const status = computed(() => statusOfRow(props.s, liveness.value))
+const statusLabel = computed(() => labelOf(status.value))
+
+// Row highlight follows the resolved status, not raw recency — a run regin
+// holds is alive whether or not it emitted a span in the last ten minutes.
+const active = computed(() => ['working', 'idle'].includes(status.value))
 
 const statusTitle = computed(() => {
-  if (active.value) {
+  // A runner verdict explains itself; the recency prose below is about a
+  // session nobody is holding and would be wrong here.
+  if (props.s.runner_phase && !['ended', 'closed'].includes(status.value)) {
+    return status.value === 'idle'
+      ? 'regin is holding this run and it is waiting for your prompt'
+      : `reported by the runner regin launched: ${phaseLabel(props.s.runner_phase)}`
+  }
+  if (liveness.value === 'closed') return 'Manually closed'
+  if (liveness.value === 'ended') {
+    return props.s.ended_reason ? `reason: ${props.s.ended_reason}` : 'SessionEnd fired'
+  }
+  if (liveness.value === 'active') {
     return props.s.status === 'active'
       ? 'SessionStart fired without a matching SessionEnd'
       : 'No explicit lifecycle — last span within 10 minutes'
   }
-  if (props.s.status === 'ended') {
-    if (props.s.ended_reason === 'manual') return 'Manually closed'
-    return props.s.ended_reason ? `reason: ${props.s.ended_reason}` : 'SessionEnd fired'
-  }
-  return 'No lifecycle marker and no recent spans'
+  return props.s.status === 'active'
+    ? 'Claims active, but nothing ingested for over 10 minutes — its SessionEnd was probably lost'
+    : 'No lifecycle marker and no recent spans'
 })
 </script>
 
@@ -95,14 +108,15 @@ const statusTitle = computed(() => {
           awaiting decision · {{ waitedForTrace(s.trace_id) }}
         </span>
         <span v-else-if="resumed" class="srow__resumed">resumed</span>
-        <span class="srow__status" :class="`srow__status--${statusLabel}`" :title="statusTitle">
+        <span class="srow__status" :class="`srow__status--${status}`" :title="statusTitle">
           <span class="srow__status-dot" aria-hidden="true"></span>{{ statusLabel }}
         </span>
         <code class="srow__id" :title="s.trace_id">{{ idLabel }}</code>
         <Button
           variant="ghost"
           size="sm"
-          class="srow__copy focus-visible:outline-2 focus-visible:outline-blue-500"
+          :class="['srow__copy focus-visible:outline-2 focus-visible:outline-blue-500',
+                   { 'srow__copy--done': isCopied(s.trace_id) }]"
           title="Copy session id"
           :aria-label="`Copy session id ${s.trace_id}`"
           @click.stop="copyText(s.trace_id)"
@@ -283,14 +297,15 @@ const statusTitle = computed(() => {
   width: 0.3125rem;
   background: currentColor;
 }
-.srow__status--active { color: var(--color-emerald-700); }
-.srow__status--active .srow__status-dot { animation: srow-pulse 2s ease-in-out infinite; }
+.srow__status--working,
+.srow__status--idle { color: var(--color-emerald-700); }
+.srow__status--working .srow__status-dot { animation: srow-pulse 2s ease-in-out infinite; }
 .srow__status--ended,
 .srow__status--closed,
-.srow__status--idle { color: var(--color-fg-faint); }
+.srow__status--inactive { color: var(--color-fg-faint); }
 @keyframes srow-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) {
-  .srow__status--active .srow__status-dot { animation: none; }
+  .srow__status--working .srow__status-dot { animation: none; }
 }
 
 .srow__id {
@@ -318,6 +333,8 @@ const statusTitle = computed(() => {
 .srow__copy:focus-visible { opacity: 1; }
 .srow__copy:hover { color: var(--color-fg-muted); }
 .srow__copy:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 1px; }
+.srow__copy--done,
+.srow__copy--done:hover { color: var(--color-success); opacity: 1; }
 .srow__copy svg {
   fill: none;
   height: 0.75rem;

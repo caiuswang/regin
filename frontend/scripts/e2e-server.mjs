@@ -13,7 +13,7 @@
  * cross-run accumulation this replaces.
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { copyFileSync, mkdirSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -37,6 +37,13 @@ mkdirSync(join(SCRATCH_DIR, 'data', 'logs'), { recursive: true })
 mkdirSync(join(SCRATCH_DIR, 'config'), { recursive: true })
 copyFileSync(resolve(ROOT, 'config/settings.json'),
   join(SCRATCH_DIR, 'config', 'settings.json'))
+// `terminal-pane.spec.js` needs the pane terminal on (it is off in every real
+// install). Written to the machine-local file at provisioning time rather than
+// PUT at test time, so it does not race `settings-agent-bridge.spec.js` saving
+// the same block from another worker — and rather than an env var, which would
+// outrank the file and make the Settings UI's own toggle untestable.
+writeFileSync(join(SCRATCH_DIR, 'config', 'settings.local.json'),
+  JSON.stringify({ agent_bridge: { terminal_enabled: true } }, null, 2))
 
 const run = (args) =>
   execFileSync(PY, [CLI, ...args], { cwd: ROOT, env, encoding: 'utf8' })

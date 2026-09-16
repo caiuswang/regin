@@ -21,6 +21,7 @@
  */
 import { test, expect } from './auth-fixture.js'
 import { randomUUID } from 'node:crypto'
+import { setTraceScrollTop, traceScrollTop } from './helpers/traceScroller.js'
 
 const XL = { width: 1440, height: 900 }      // ≥xl, <2xl — the split floor.
 const XXL = { width: 1600, height: 900 }     // ≥2xl — three columns fit.
@@ -30,6 +31,8 @@ const MAIN_CMD = 'echo MAIN_ONLY_CMD_MARKER'
 const INT_FILE = 'src/AGENT_INTERNAL_MARKER.js'
 const INT_FILE_B = 'src/AGENT_B_INTERNAL_MARKER.js'
 const REAL_TASK_PROMPT = 'REAL_TASK_PROMPT_MARKER — verify the acceptance items'
+const AGENT_EARLY_ANSWER = 'AGENT_EARLY_ANSWER_MARKER'
+const AGENT_LAST_ANSWER = 'AGENT_LAST_ANSWER_MARKER'
 
 async function post(page, spans) {
   const res = await page.request.post('/api/session-spans', { data: spans })
@@ -41,8 +44,7 @@ async function post(page, spans) {
 // finished agent (terminal-empty state), a second agent (switch test), filler.
 async function seedScoped(page, {
   realPrompt = false, emptyAgent = false, secondAgent = false, filler = 0,
-  nested = false,
-  desc = 'Map the breakpoints',
+  agentTurn = false, desc = 'Map the breakpoints',
 } = {}) {
   const traceId = randomUUID()
   const sfx = traceId.slice(0, 8)
@@ -68,6 +70,16 @@ async function seedScoped(page, {
       name: 'prompt', start_time: now,
       attributes: { text: REAL_TASK_PROMPT, agent_id: agId, is_test: true } })
   }
+  // A two-response run under the captured task prompt, so the scoped feed has
+  // a Focus headline (the LAST response) and an earlier one to fall back to.
+  if (agentTurn) {
+    spans.push({ trace_id: traceId, span_id: `saresp1-${sfx}`, parent_id: startId,
+      name: 'assistant_response', start_time: now,
+      attributes: { text: AGENT_EARLY_ANSWER, agent_id: agId, is_test: true } })
+    spans.push({ trace_id: traceId, span_id: `saresp2-${sfx}`, parent_id: startId,
+      name: 'assistant_response', start_time: later,
+      attributes: { text: AGENT_LAST_ANSWER, agent_id: agId, is_test: true } })
+  }
   if (emptyAgent) {
     spans.push({ trace_id: traceId, span_id: `substart2-${sfx}`, parent_id: `prompt-${sfx}`,
       name: 'subagent.start', start_time: now,
@@ -76,18 +88,6 @@ async function seedScoped(page, {
       name: 'subagent.stop', start_time: now,
       attributes: { agent_type: 'ghost', agent_id: `ag-empty-${sfx}`,
         result_preview: 'nothing captured', is_test: true } })
-  }
-  // A subagent launched BY the scoped agent — collapsed in both feeds, so
-  // "did the other feed unfold something it wasn't asked to" is observable.
-  const nestedAgId = `ag-nested-${sfx}`
-  const nestedStartId = `substart-nested-${sfx}`
-  if (nested) {
-    spans.push({ trace_id: traceId, span_id: nestedStartId, parent_id: startId,
-      name: 'subagent.start', start_time: later,
-      attributes: { agent_type: 'nested-worker', agent_id: nestedAgId, is_test: true } })
-    spans.push({ trace_id: traceId, span_id: `int-nested-${sfx}`, parent_id: nestedStartId,
-      name: 'tool.Read', start_time: later,
-      attributes: { file_path: 'src/NESTED_INTERNAL_MARKER.js', agent_id: nestedAgId, is_test: true } })
   }
   const agIdB = `ag-run-b-${sfx}`
   if (secondAgent) {
@@ -106,8 +106,7 @@ async function seedScoped(page, {
       attributes: { file_path: `src/fill${i}.js`, is_test: true } })
   }
   await post(page, spans)
-  return { traceId, sfx, agId, agIdB, nestedStartId, intReadId: `int-read-${sfx}`,
-    nestedIntId: `int-nested-${sfx}`, startId }
+  return { traceId, sfx, agId, agIdB, intReadId: `int-read-${sfx}`, startId }
 }
 
 const pane = (page) => page.locator('[data-testid="trace-agent-pane"]')
@@ -204,7 +203,7 @@ test.describe('Companion pane split (≥xl)', () => {
 // only scroll to a row the reader unfolded themselves — it must never unfold.
 
 const feed = (page) => page.locator('[data-testid="trace-conversation-feed"]')
-const scroller = (page) => page.locator('.content-scroll')
+
 
 test.describe('Cross-feed selection containment (≥xl)', () => {
   test.use({ viewport: XL })
@@ -219,8 +218,8 @@ test.describe('Cross-feed selection containment (≥xl)', () => {
     // Agents fold by default, so the internal row exists ONLY in the pane.
     await expect(feed(page).locator(`[data-span-id="${intReadId}"]`)).toHaveCount(0)
 
-    await scroller(page).evaluate((el) => { el.scrollTop = el.scrollHeight })
-    const before = await scroller(page).evaluate((el) => el.scrollTop)
+    await setTraceScrollTop(page, 'bottom')
+    const before = await traceScrollTop(page)
     expect(before, 'fixture must be tall enough for a jump to be measurable')
       .toBeGreaterThan(100)
 
@@ -230,60 +229,42 @@ test.describe('Cross-feed selection containment (≥xl)', () => {
     await page.waitForTimeout(700)   // outlast a smooth scrollIntoView
 
     await expect(feed(page).locator(`[data-span-id="${intReadId}"]`)).toHaveCount(0)
-    const after = await scroller(page).evaluate((el) => el.scrollTop)
+    const after = await traceScrollTop(page)
     expect(Math.abs(after - before), 'main feed must not scroll for a pane click')
       .toBeLessThan(8)
   })
 
-  test('an agent the reader unfolded themselves still follows a pane selection', async ({ page }) => {
-    // The carve-out: containment blocks unfolding, not highlighting. Once the
-    // reader has opened the agent in the main feed, the row is theirs to keep
-    // and the pane's selection may scroll it back into view.
-    const { traceId, agId, intReadId, startId } = await seedScoped(page, { filler: 25 })
-    await gotoTrace(page, traceId, `?agent=${agId}`)
+})
+
+// ---- the agent card is a summary, not a foldable subtree ----------------------
+//
+// A delegating parent's conversation keeps only the agent's markers; its work
+// is served by `sa-<agent_id>`. So the card carries no expand affordance — the
+// chevron is gone because the rows it used to reveal are gone — and the ONLY
+// way into that work is "Agent view →".
+
+test.describe('Agent card carries no subtree (≥xl)', () => {
+  test.use({ viewport: XL })
+
+  test('no expand affordance, no descendant rows — the work lives in the pane', async ({ page }) => {
+    const { traceId, intReadId, startId } = await seedScoped(page)
+    await gotoTrace(page, traceId)
+
+    const card = feed(page).locator(`[data-span-id="${startId}"]`)
+    await expect(card).toBeVisible({ timeout: 10_000 })
+    await expect(card.locator('[title="Expand agent"], [aria-expanded]')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /expand all|collapse all/ })).toHaveCount(0)
+    // Its spans are not in this conversation at all — no fold state can hide
+    // or reveal them here.
+    await expect(feed(page).locator(`[data-span-id="${intReadId}"]`)).toHaveCount(0)
+
+    // The one way in, and where the rows actually are.
+    await card.locator('[data-testid="trace-agent-view"]').click()
     await expect(pane(page)).toBeVisible({ timeout: 10_000 })
-
-    await feed(page).locator(`[data-span-id="${startId}"] [title="Expand agent"]`).click()
-    const mainRow = feed(page).locator(`[data-span-id="${intReadId}"]`)
-    await expect(mainRow).toBeVisible({ timeout: 10_000 })
-
-    await scroller(page).evaluate((el) => { el.scrollTop = el.scrollHeight })
-    await pane(page).locator(`[data-span-id="${intReadId}"]`).click()
-    await page.waitForTimeout(700)
-
-    await expect(mainRow).toBeVisible()          // never re-folded
-    const bb = await mainRow.boundingBox()
-    expect(bb.y, 'the already-open row scrolls back into view').toBeGreaterThan(0)
-    expect(bb.y).toBeLessThan(XL.height)
-  })
-
-  test('a main-feed click does not unfold the nested agent inside the pane', async ({ page }) => {
-    const { traceId, agId, startId, nestedStartId, nestedIntId, intReadId } =
-      await seedScoped(page, { nested: true })
-    await gotoTrace(page, traceId, `?agent=${agId}`)
-    await expect(pane(page)).toBeVisible({ timeout: 10_000 })
-    await expect(pane(page).locator(`[data-span-id="${nestedStartId}"]`))
+    await expect(pane(page).locator(`[data-span-id="${intReadId}"]`))
       .toBeVisible({ timeout: 10_000 })
-    await expect(pane(page).locator(`[data-span-id="${nestedIntId}"]`)).toHaveCount(0)
-
-    // A pane click first, so the following main-feed click also proves the
-    // origin flips back — a latched 'pane' origin would leave the main feed
-    // permanently unable to follow its own selection.
-    await pane(page).locator(`[data-span-id="${intReadId}"]`).click()
-    await page.waitForTimeout(300)
-
-    // Open the outer agent in the MAIN feed, then select the nested agent there.
-    await feed(page).locator(`[data-span-id="${startId}"] [title="Expand agent"]`).click()
-    const mainNested = feed(page).locator(`[data-span-id="${nestedStartId}"]`)
-    await expect(mainNested).toBeVisible({ timeout: 10_000 })
-    await mainNested.click()
-    await page.waitForTimeout(700)
-
-    // Its own click unfolds the main feed; the pane is left exactly as it was.
-    await expect(feed(page).locator(`[data-span-id="${nestedIntId}"]`)).toHaveCount(1)
-    await expect(pane(page).locator(`[data-span-id="${nestedIntId}"]`)).toHaveCount(0)
+    await expect(feed(page).locator(`[data-span-id="${intReadId}"]`)).toHaveCount(0)
   })
-
 })
 
 // ---- acceptance 7: roster mode fills the pane ---------------------------------
@@ -367,7 +348,8 @@ test.describe('Pane divergence states (≥xl)', () => {
     const { traceId, agId } = await seedScoped(page)
     let release
     const gate = new Promise((resolve) => { release = resolve })
-    await page.route(`**/api/sessions/${traceId}/spans/**/children*`, async (route) => {
+    // Both traces: the agent's spans come from its own `sa-<agent_id>` trace.
+    await page.route('**/api/sessions/*/spans/**/children*', async (route) => {
       await gate
       await route.continue()
     })
@@ -550,7 +532,65 @@ test.describe('Roster popover at 390px', () => {
     await expect(pop).toBeVisible()
     await page.waitForTimeout(400)
 
-    await page.locator('.content-scroll').evaluate((el) => { el.scrollTop = 200 })
+    await setTraceScrollTop(page, 200)
     await expect(pop).toBeHidden()
+  })
+})
+
+// ---- a pane click must not delete the row it selected -------------------------
+//
+// The scoped feed renders the agent's OWN trace, where every row carries that
+// agent's `agent_id` — the id the main feed uses to drop rows that belong to a
+// child. The child's `/map` projection strips the bag, so the rows render until
+// the reader clicks one: the `/content` fetch that selection triggers caches the
+// full bag, the drop filter then matches, and the row leaves the pane for good
+// (the content cache is write-once). In Focus mode that walked the headline
+// backwards one span per click.
+
+test.describe('Pane row selection (≥xl)', () => {
+  test.use({ viewport: XL })
+
+  const paneRowIds = (page) => pane(page).locator('[data-span-id]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('data-span-id')))
+
+  test('clicking a row in the pane leaves every pane row in place', async ({ page }) => {
+    const { traceId, agId } = await seedScoped(page, { realPrompt: true, agentTurn: true })
+    await gotoTrace(page, traceId, `?agent=${agId}`)
+    await expect(pane(page)).toBeVisible({ timeout: 10_000 })
+    const row = pane(page).getByText(AGENT_EARLY_ANSWER).first()
+    await expect(row).toBeVisible({ timeout: 10_000 })
+
+    const before = await paneRowIds(page)
+    expect(before.length, 'fixture must put several rows in the pane').toBeGreaterThan(2)
+    await row.click()
+    // The row survives its own selection — and so does everything after it.
+    await expect(pane(page).getByText(AGENT_EARLY_ANSWER).first()).toBeVisible()
+    await expect(pane(page).getByText(AGENT_LAST_ANSWER).first()).toBeVisible()
+    await expect.poll(() => paneRowIds(page)).toEqual(before)
+  })
+
+  test('Focus mode keeps its headline after the headline is clicked', async ({ page }) => {
+    const { traceId, agId } = await seedScoped(page, { realPrompt: true, agentTurn: true })
+    await page.addInitScript(() => localStorage.setItem('regin.detail', 'latest'))
+    await gotoTrace(page, traceId, `?agent=${agId}`)
+    await expect(pane(page)).toBeVisible({ timeout: 10_000 })
+
+    // Focus headlines the LAST response; the earlier one is behind the strip.
+    const headline = pane(page).getByText(AGENT_LAST_ANSWER).first()
+    await expect(headline).toBeVisible({ timeout: 10_000 })
+    await headline.click()
+    await expect(pane(page).getByText(AGENT_LAST_ANSWER).first()).toBeVisible()
+    await expect(pane(page).getByText(AGENT_EARLY_ANSWER)).toHaveCount(0)
+  })
+
+  test('the main feed still drops rows tagged with a roster agent id', async ({ page }) => {
+    const { traceId, agId } = await seedScoped(page, { realPrompt: true, agentTurn: true })
+    await gotoTrace(page, traceId, `?agent=${agId}`)
+    await expect(pane(page)).toBeVisible({ timeout: 10_000 })
+    // The agent's own work belongs to the pane alone — the main feed carries
+    // its card, never its rows.
+    await expect(feed(page).getByText(AGENT_LAST_ANSWER)).toHaveCount(0)
+    await expect(feed(page).getByText('AGENT_INTERNAL_MARKER')).toHaveCount(0)
+    await expect(mainMarker(page)).toBeVisible()
   })
 })

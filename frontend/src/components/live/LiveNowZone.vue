@@ -21,6 +21,7 @@
 import { computed, ref, watch, onUnmounted } from 'vue'
 import Button from '../ui/Button.vue'
 import LiveComposer from './LiveComposer.vue'
+import LiveScreenStatus from './LiveScreenStatus.vue'
 import LiveStopControl from './LiveStopControl.vue'
 import LiveCancelControl from './LiveCancelControl.vue'
 import {
@@ -54,6 +55,10 @@ const props = defineProps({
   // Segment-aware live-peak ctx% — passed straight through to the composer's
   // bridge row (the second surface for the header's ctx meter).
   ctxPct: { type: Number, default: null },
+  // The server's parse of the real terminal frame (summary.live_screen).
+  // Null = no verdict, which the strip renders as "status unavailable"; it
+  // is never treated as idle.
+  liveScreen: { type: Object, default: null },
   // When the tail is scoped to a subagent, the NOW zone shows that agent's
   // status + a way back — the composer is hidden (the bridge only reaches
   // the MAIN agent). null = normal main-scope zone.
@@ -67,9 +72,16 @@ const props = defineProps({
   // — the one tier a browser can actually end. Everything else regin merely
   // observes, so it gets no Stop.
   sdkOwned: { type: Boolean, default: false },
+  // The tmux pane id, empty when there is none — an SDK-owned run is
+  // `bridgeReachable` yet has no pane, so the terminal chip must key off this
+  // and not off reachability.
+  bridgePane: { type: String, default: '' },
 })
+// `open-sheet` carries the sheet KIND, so a zone that learns to open another
+// one costs no new binding on the view — open-response/open-question stay
+// separate because they carry a span, not a kind.
 const emit = defineEmits([
-  'open-response', 'open-question', 'exit-scope', 'open-agents',
+  'open-response', 'open-question', 'exit-scope', 'open-sheet',
 ])
 
 // Scoped elapsed: same server−server anchor as the main pending-span elapsed,
@@ -420,7 +432,7 @@ const elapsed = computed(() => {
           class="live-now-more"
           :class="{ 'live-now-agents-warn': agentsWaiting > 0 }"
           data-testid="live-now-agents-note"
-          @click="emit('open-agents')"
+          @click="emit('open-sheet', 'agents')"
         >◈ {{ agentsRunning }} agent{{ agentsRunning === 1 ? '' : 's' }} running{{
           agentsWaiting > 0 ? ` · ${agentsWaiting} waiting` : '' }}</Button>
       </div>
@@ -435,7 +447,7 @@ const elapsed = computed(() => {
           aria-hidden="true"
         ></span>
         <span class="live-now-label" :class="{ 'live-now-done': state === 'finished' }">
-          {{ state === 'finished' ? '✓ finished'
+          {{ state === 'finished' ? '✓ ended'
             : (lastResponse ? 'assistant' : (showWorking ? 'working…' : 'assistant')) }}
         </span>
         <span v-if="lastResponse" class="live-now-elapsed">
@@ -460,6 +472,19 @@ const elapsed = computed(() => {
         >more ▾</Button>
       </div>
     </template>
+
+    <!-- Outside the per-state branches, like the controls below: "what is
+         this session really doing" has to be answerable from whichever state
+         the zone happens to be in, so the terminal chip is always present and
+         the parsed status fills in when there is one. Scoped to a subagent it
+         is hidden — the bridge reaches only the main agent's pane. -->
+    <LiveScreenStatus
+      v-if="!scopeAgent"
+      :screen="liveScreen"
+      :bridge-pane="bridgePane"
+      :show-tool="state !== 'tool'"
+      @open-terminal="emit('open-sheet', 'terminal')"
+    />
 
     <!-- Outside the per-state branches: a run must be stoppable in EVERY
          state it can be stuck in, including the blocked ones (a question or

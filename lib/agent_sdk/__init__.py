@@ -13,16 +13,23 @@ from .registry import (
     cancel_queued,
     edit_queued,
     interrupt_run,
+    is_driving,
     is_sdk_owned,
+    live_session_ids,
     is_starting,
+    live_child,
     queued_prompts,
     resolve_ask,
     resolve_permission,
+    run_live_state,
+    run_live_states,
     run_phase,
     stop_run,
     submit_prompt,
 )
 
-__all__ = ['cancel_queued', 'edit_queued', 'interrupt_run', 'is_sdk_owned',
-           'is_starting', 'queued_prompts', 'resolve_ask',
-           'resolve_permission', 'run_phase', 'stop_run', 'submit_prompt']
+__all__ = ['cancel_queued', 'edit_queued', 'interrupt_run', 'is_driving', 'is_sdk_owned',
+           'is_starting', 'live_child', 'live_session_ids',
+           'queued_prompts', 'resolve_ask',
+           'resolve_permission', 'run_live_state', 'run_live_states',
+           'run_phase', 'stop_run', 'submit_prompt']

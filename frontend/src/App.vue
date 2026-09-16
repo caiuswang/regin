@@ -6,6 +6,6 @@ const route = useRoute()
 </script>
 
 <template>
-  <router-view v-if="route.meta.public" />
+  <router-view v-if="route.meta.public || route.meta.chromeless" />
   <AppLayout v-else-if="route.matched.length" />
 </template>

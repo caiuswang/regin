@@ -327,6 +327,77 @@ def _asst_with_content(*, msg_id: str, content: list, uuid: str,
     return e
 
 
+def _synthetic_entry(*, uuid: str, text: str, parent: str | None = None,
+                     api_error: bool = False,
+                     timestamp: str = "2026-04-27T12:00:00Z") -> dict:
+    """A `model: <synthetic>` assistant entry with an all-zero usage block —
+    the shape Claude Code writes for BOTH init banners and failed API calls."""
+    e: dict = {
+        "type": "assistant",
+        "uuid": uuid,
+        "parentUuid": parent,
+        "timestamp": timestamp,
+        "message": {
+            "id": f"msg-{uuid}",
+            "model": "<synthetic>",
+            "content": [{"type": "text", "text": text}],
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        },
+    }
+    if api_error:
+        e["isApiErrorMessage"] = True
+    return e
+
+
+def test_api_error_turn_keeps_its_prompt_anchored(tmp_path):
+    """A failed API call is written as model=<synthetic> with zero usage.
+    Dropping it deletes the user's prompt too — anchors are resolved by
+    walking parentUuid BACKWARD from an assistant entry, so a prompt whose
+    only reply failed has nothing to be reached from."""
+    path = _write(
+        tmp_path,
+        _user_entry("u-failed-000000", "continue", "2026-04-27T11:59:00Z"),
+        _synthetic_entry(uuid="a-error-000000", parent="u-failed-000000",
+                         text="API Error: 500 Internal server error.",
+                         api_error=True),
+        _user_entry("u-ok-0000000000", "and now this", "2026-04-27T12:01:00Z",
+                    parent="a-error-000000"),
+        _assistant(input_tokens=100, output=10, uuid="a-ok-0000000000",
+                   timestamp="2026-04-27T12:01:05Z", parent="u-ok-0000000000"),
+    )
+    u = read_usage(path)
+    assert u is not None
+    assert [t.prompt_uuid for t in u.turns] == ["u-failed-000000", "u-ok-0000000000"]
+    assert u.prompt_texts["u-failed-000000"] == "continue"
+    failed = u.turns[0]
+    assert (failed.is_api_error, failed.model) == (True, None)
+    assert "API Error" in failed.text
+    # A failure is billed nothing, and must never become the session's model.
+    assert (failed.input_tokens, failed.output_tokens,
+            failed.cache_read_tokens, failed.cache_creation_tokens) == (0, 0, 0, 0)
+    assert (u.model, u.input_tokens, u.output_tokens,
+            u.cache_read_tokens, u.cache_creation_tokens) == (
+                "claude-opus-4-7", 100, 10, 0, 0)
+
+
+def test_synthetic_entry_without_api_error_flag_produces_no_turn(tmp_path):
+    """Init banners / `/compact` markers share model=<synthetic> with a failed
+    request but are not API calls — only `isApiErrorMessage` promotes one to a
+    turn, so these stay skipped."""
+    path = _write(
+        tmp_path,
+        _user_entry("u-banner-00000", "hello", "2026-04-27T11:59:00Z"),
+        _synthetic_entry(uuid="a-banner-00000", parent="u-banner-00000",
+                         text="Caveat: The messages below were generated ..."),
+    )
+    assert read_usage(path) is None
+
+
 def test_extracts_response_text_from_text_blocks(tmp_path):
     """A turn's `text` is the concatenation of every `type: text` block
     in `message.content[]` only. `type: thinking` blocks land in a
@@ -1366,6 +1437,87 @@ def test_task_notification_boundary_blocks_command_anchor(tmp_path):
     assert _turn_by_assistant(u, "a1").prompt_uuid == "p0"
 
 
+def test_command_that_opened_a_turn_keeps_its_notification_turns(tmp_path):
+    # The other side of the boundary rule. Here the command DID open a turn
+    # (a1 chains to the expansion without crossing a notification), so the
+    # background task it launched belongs to that turn: a2 must stay on the
+    # command rather than walking past it to p0. Blanket-blocking on the
+    # boundary stranded the whole back half of a 30-minute command turn —
+    # its final answer included — under an unrelated prompt.
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "an earlier, unrelated prompt",
+                    "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        _command_echo("cmd", "/goal", "2026-05-20T10:01:00Z", parent="a0"),
+        _meta_expansion("exp", "goal expansion",
+                        "2026-05-20T10:01:01Z", parent="cmd"),
+        # the command's own turn — this is what makes it a turn opener
+        _assistant(input_tokens=10, uuid="a1", parent="exp",
+                   timestamp="2026-05-20T10:01:05Z"),
+        _user_entry("tn", "<task-notification>\n<task-id>z</task-id>",
+                    "2026-05-20T10:02:00Z", parent="a1"),
+        _assistant(input_tokens=10, uuid="a2", parent="tn",
+                   timestamp="2026-05-20T10:02:05Z"),
+    )
+    u = read_usage(path)
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "cmd"
+    assert _turn_by_assistant(u, "a2").prompt_uuid == "cmd"
+
+
+# Claude Code writes the marker as a list of text blocks; the bare string and
+# the padded forms are equally valid `message.content` shapes, so all three
+# must be recognised. The list form is the one seen in real transcripts.
+INTERRUPT_CONTENT_FORMS = [
+    pytest.param([{"type": "text", "text": "[Request interrupted by user]"}],
+                 id="list-blocks"),
+    pytest.param("[Request interrupted by user]", id="bare-string"),
+    pytest.param("  [Request interrupted by user]\n", id="padded"),
+    pytest.param("[Request interrupted by user for tool use]",
+                 id="tool-use-variant"),
+]
+
+
+@pytest.mark.parametrize("marker", INTERRUPT_CONTENT_FORMS)
+def test_interrupt_marker_never_anchors_a_turn(tmp_path, marker):
+    # Pressing Esc writes a standalone user text entry carrying none of the
+    # synthetic-entry flags. Left in the real-prompt set it became a phantom
+    # `PROMPT · TURN n` card that swallowed the turn the user typed next.
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "do the thing", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        _user_entry("int", marker, "2026-05-20T10:01:00Z", parent="a0"),
+        _user_entry("p1", "do it differently",
+                    "2026-05-20T10:01:30Z", parent="int"),
+        _assistant(input_tokens=10, uuid="a1", parent="p1",
+                   timestamp="2026-05-20T10:01:35Z"),
+    )
+    u = read_usage(path)
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "p1"
+    assert "int" not in u.prompt_texts
+    assert not any("interrupted by user" in t for t in u.prompt_texts.values())
+
+
+@pytest.mark.parametrize("marker", INTERRUPT_CONTENT_FORMS)
+def test_interrupt_marker_is_transparent_to_the_anchor_walk(tmp_path, marker):
+    # A turn whose chain crosses the marker resolves THROUGH it to the real
+    # prompt behind it, rather than stopping on the marker.
+    path = _write(
+        tmp_path,
+        _user_entry("p0", "do the thing", "2026-05-20T10:00:00Z"),
+        _assistant(input_tokens=10, uuid="a0", parent="p0",
+                   timestamp="2026-05-20T10:00:05Z"),
+        _user_entry("int", marker, "2026-05-20T10:01:00Z", parent="a0"),
+        _assistant(input_tokens=10, uuid="a1", parent="int",
+                   timestamp="2026-05-20T10:01:05Z"),
+    )
+    u = read_usage(path)
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "p0"
+
+
 # --- finalize purity / golden equivalence ---------------------------------
 #
 # The live resumable rescan feeds appended transcript lines into ONE
@@ -1404,7 +1556,9 @@ def _golden_entries():
     """A transcript hitting every cross-boundary hazard: a turn split across
     two same-message.id assistant entries with a large output residual (tool
     redistribution), a `/review` command-anchored turn, and a task-
-    notification turn that must nest under the prior prompt."""
+    notification turn continuing it (`/review` opened a turn of its own, so
+    the completion stays on the command — see
+    `test_command_that_opened_a_turn_keeps_its_notification_turns`)."""
     return [
         _user_entry("p0", "first typed prompt", "2026-05-20T10:00:00Z"),
         # split turn: text block (owns usage) + tool_use block (same msg id)
@@ -1421,7 +1575,7 @@ def _golden_entries():
                         "2026-05-20T10:01:01Z", parent="cmd"),
         _assistant(input_tokens=10, output=10, uuid="a1", parent="exp",
                    timestamp="2026-05-20T10:01:05Z"),
-        # background task completion: turn nests under p0, not the command
+        # background task completion: continues the command's own turn
         _user_entry("tn", "<task-notification>\n<task-id>z</task-id>",
                     "2026-05-20T10:02:00Z", parent="a1"),
         _assistant(input_tokens=10, output=10, uuid="a2", parent="tn",
@@ -1565,3 +1719,37 @@ def test_resumable_resets_on_inode_change(tmp_path):
     # the old turn is gone; the fresh content is fully reflected
     assert all(t.uuid != "old" for t in usage.turns)
     assert any(t.uuid == "a2" for t in usage.turns)
+
+
+def test_api_error_never_merges_into_a_billed_turn_sharing_its_dedup_key(tmp_path):
+    """A failed request keyed like a successful one must not contaminate it.
+
+    Sharing a dedup key would flag the billed turn `is_api_error` (zeroing its
+    span output_tokens) and splice the error string into its response text.
+    """
+    err = _synthetic_entry(uuid="a-error-000000", parent="u-ask-000000000",
+                           text="API Error: 529 Overloaded.", api_error=True)
+    del err["message"]["id"]
+    err["requestId"] = "req-shared-00"
+
+    ok = _assistant(input_tokens=1000, output=500, uuid="a-ok-0000000000",
+                    timestamp="2026-04-27T12:00:05Z", parent="u-ask-000000000",
+                    request_id="req-shared-00")
+    ok["message"]["content"] = [{"type": "text", "text": "real answer"}]
+
+    usage = read_usage(_write(
+        tmp_path,
+        _user_entry("u-ask-000000000", "do the thing", "2026-04-27T12:00:00Z"),
+        ok,
+        err,
+    ))
+
+    billed = [t for t in usage.turns if t.output_tokens == 500]
+    assert len(billed) == 1
+    assert billed[0].is_api_error is False
+    assert billed[0].text == "real answer"
+    assert billed[0].input_tokens == 1000
+    failed = [t for t in usage.turns if t.is_api_error]
+    assert len(failed) == 1
+    assert failed[0].output_tokens == 0
+    assert "API Error" in (failed[0].text or "")

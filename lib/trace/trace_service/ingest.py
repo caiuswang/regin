@@ -255,6 +255,29 @@ def _live_context_peak(conn, trace_id, main_rows, peak_main):
     return max(seg) if seg else peak_main
 
 
+def _turn_usage_model(conn, tid: str) -> str | None:
+    """Newest non-empty `turn_usage.model` for a session, walked back to the
+    most specific id the rows hold.
+
+    Bare base id (no `[1m]` suffix), so callers must only ever use it as a
+    fallback — `_is_less_specific_model` guards the span-borne path from
+    being downgraded by it. The walk applies that same guard within these
+    rows: a turn that completes before any assistant message names a model is
+    priced against the launch alias, and newest-wins alone would let that
+    alias shadow the resolved id an earlier turn recorded.
+    """
+    rows = conn.execute("""
+        SELECT model FROM turn_usage
+         WHERE trace_id = ? AND model IS NOT NULL AND model <> ''
+         ORDER BY turn_index DESC
+    """, (tid,)).fetchall()
+    best = None
+    for (model,) in rows:
+        if best is None or _is_less_specific_model(best, model):
+            best = model
+    return best
+
+
 def _refresh_session_aggregates(conn, trace_ids) -> None:
     """Re-derive session-row aggregates from turn_usage so the
     header/list views stay authoritative."""
@@ -315,7 +338,16 @@ def _refresh_session_aggregates(conn, trace_ids) -> None:
         sess = conn.execute(
             "SELECT model FROM sessions WHERE trace_id = ?", (tid,)
         ).fetchone()
-        model = sess[0] if sess else None
+        model = (sess[0] if sess else None) or None
+        # A live session has no model yet: the only span-borne carriers
+        # (`session.start`, `turn`, `assistant_response`) arrive with
+        # transcript replay, while `turn_usage` — already open here — has
+        # carried the model from the first turn. Without this the window
+        # falls back to 200K mid-session and every ctx% reads inflated
+        # (a 1M-window model showed 5x its real usage) until the session
+        # ends. Persisted below so read-time window inference agrees.
+        if not model:
+            model = _turn_usage_model(conn, tid)
         window = infer_window(model, int(peak or 0))
         conn.execute("""
             UPDATE sessions SET
@@ -325,10 +357,11 @@ def _refresh_session_aggregates(conn, trace_ids) -> None:
                 peak_main_context_tokens = ?,
                 live_context_tokens = ?,
                 context_window_tokens = ?,
-                cost_usd = ?
+                cost_usd = ?,
+                model = COALESCE(model, ?)
             WHERE trace_id = ?
         """, (in_tot, out_tot, cread, ccreate, peak, peak_main, live, window,
-              cost_tot, tid))
+              cost_tot, model, tid))
 
 
 def ingest_turn_usage(rows: list[dict]) -> tuple[int, int]:
@@ -460,6 +493,10 @@ def _attribute_one_call(
         (out_tok, in_tok, img_tok, usd, tu_id, turn_uuid, parent_span_id,
          dur_ms, src_prompt, trace_id, tu_id, tu_id),
     )
+    if cur.rowcount > 0:
+        # Token/cost columns ride the projection out to the view, and this
+        # UPDATE moves them without touching any row id.
+        _invalidate_projection(trace_id)
     return cur.rowcount > 0
 
 
@@ -706,7 +743,17 @@ def _is_less_specific_model(incoming: str, current: str | None) -> bool:
         return False
     if incoming == current:
         return False
-    return current.startswith(incoming + '[')
+    if current.startswith(incoming + '['):
+        return True
+    # A launch sheet offers model *aliases* (`opus`), which the CLI resolves to
+    # a concrete build (`claude-opus-5`). An SDK run stamps the alias on
+    # session.start before the agent speaks, and a relaunch under a reused
+    # trace id re-emits it — so the alias must never displace the resolved id
+    # it names. A bare single-token id that appears as a segment of `current`
+    # is that alias; anything hyphenated is already a full id.
+    if '-' in incoming:
+        return False
+    return incoming in current.split('[')[0].split('-')
 
 
 _TITLE_MAX_CHARS = 400
@@ -853,15 +900,33 @@ def _apply_timed_attr(
     bucket[tracker_field] = start
 
 
+def _apply_model(bucket: dict, model, start) -> None:
+    """Latest-wins model application, guarded against a downgrade.
+
+    Shared by session.start and the transcript carriers so the two cannot
+    diverge: the bare base of a variant-bracketed id, and the launch alias an
+    SDK run stamps before the agent speaks, both arrive later in time than the
+    richer value they name and would otherwise win on timestamp alone.
+    """
+    if not (isinstance(model, str) and model.strip()):
+        return
+    if bucket['_model_start'] is not None and (
+            not start or start <= bucket['_model_start']):
+        return
+    if _is_less_specific_model(model, bucket['model']):
+        return
+    bucket['model'] = model
+    bucket['_model_start'] = start
+
+
 def _handle_session_start(bucket: dict, attrs: dict, start) -> None:
     """session.start carries `last_start_at` (latest wins), `agent_type`
-    (earliest non-empty wins), and `model` (latest wins)."""
+    (earliest non-empty wins), and `model` (latest wins, downgrade-guarded)."""
     if start and (bucket['last_start_at'] is None or start > bucket['last_start_at']):
         bucket['last_start_at'] = start
     _apply_timed_attr(bucket, attrs, 'agent_type', 'agent_type',
                       '_agent_type_start', start, latest=False, store_stripped=True)
-    _apply_timed_attr(bucket, attrs, 'model', 'model',
-                      '_model_start', start, latest=True, store_stripped=False)
+    _apply_model(bucket, attrs.get('model'), start)
     _apply_timed_attr(bucket, attrs, 'cwd', 'cwd',
                       '_cwd_start', start, latest=False, store_stripped=True)
 
@@ -886,15 +951,7 @@ def _handle_transcript_model(bucket: dict, attrs: dict, start) -> None:
     them: a subagent's model must not overwrite the parent session's."""
     if attrs.get('agent_id'):
         return
-    m = attrs.get('model')
-    if not (isinstance(m, str) and m.strip()):
-        return
-    if bucket['_model_start'] is not None and (not start or start <= bucket['_model_start']):
-        return
-    if _is_less_specific_model(m, bucket['model']):
-        return
-    bucket['model'] = m
-    bucket['_model_start'] = start
+    _apply_model(bucket, attrs.get('model'), start)
 
 
 def _handle_session_end(bucket: dict, attrs: dict, start) -> None:
@@ -1157,6 +1214,19 @@ def _infer_source(span_id) -> str:
     return 'transcript' if sid.startswith(_TRANSCRIPT_ID_PREFIXES) else 'hook'
 
 
+def _invalidate_projection(trace_id) -> None:
+    """Drop the read-side memo for a trace this process just wrote.
+
+    Lives at the lowest write level because the upsert below rewrites a span
+    IN PLACE, preserving its row id — so no read-side aggregate can notice an
+    assistant response growing, and only the writer can say the answer moved.
+    """
+    if not trace_id:
+        return
+    from lib.trace.trace_service import projection_cache
+    projection_cache.invalidate(trace_id)
+
+
 def _insert_span_row(conn, span, attrs) -> None:
     """Append one normalised span into both span tables, keyed by
     (trace_id, span_id). The store is APPEND-ONLY: a placeholder and its real
@@ -1229,6 +1299,9 @@ def _insert_span_row(conn, span, attrs) -> None:
          span.get('end_time'), span.get('duration_ms'),
          span.get('status_code', 'UNSET'), span.get('status_message')),
     )
+    # Eager, and before the commit: invalidating a write that later rolls back
+    # costs one recompute, while missing one serves a stale tree.
+    _invalidate_projection(span.get('trace_id'))
 
 
 def _detect_existing_spans(conn, normalised: list[tuple]) -> tuple[set, int]:

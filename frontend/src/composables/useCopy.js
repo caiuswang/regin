@@ -1,16 +1,38 @@
+import { onScopeDispose, ref } from 'vue'
 import { useFlash } from './useFlash.js'
 
-// Clipboard copy with the standard "Copied!" flash. Shared by every
-// conversation card that surfaces a Copy affordance (prompt, assistant
-// response, bash command/output, diff, tool failure, server-tool reply).
+const COPIED_MS = 1400
+
+// Clipboard copy whose acknowledgement is rendered by the caller, in the
+// affordance the user just clicked — a toast for something that happened under
+// the pointer reads as an unrelated interruption, and in a dialog it lands
+// behind the backdrop. Only a *failure* still flashes: that one needs words.
+//
+// `copied` is keyed by the copied text (override with an explicit `key`) so a
+// component holding several copy buttons lights up only the one that was hit.
 export function useCopy() {
   const { flash } = useFlash()
-  async function copyText(text) {
-    if (!text) return
-    if (await writeClipboard(text)) flash('Copied!')
-    else flash('Copy failed', 'error')
+  const copiedKey = ref(null)
+  let timer = null
+
+  async function copyText(text, key = text) {
+    if (!text) return false
+    if (!await writeClipboard(text)) {
+      flash('Copy failed', 'error')
+      return false
+    }
+    copiedKey.value = key
+    clearTimeout(timer)
+    timer = setTimeout(() => { copiedKey.value = null }, COPIED_MS)
+    return true
   }
-  return { copyText }
+
+  function isCopied(key) {
+    return copiedKey.value !== null && copiedKey.value === key
+  }
+
+  onScopeDispose(() => clearTimeout(timer))
+  return { copyText, copiedKey, isCopied }
 }
 
 // navigator.clipboard is undefined outside a secure context — exactly the

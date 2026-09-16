@@ -4,14 +4,16 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
+import NewSessionButton from '../components/live/NewSessionButton.vue'
 import SessionMessagesView from '../components/SessionMessagesView.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
+import SessionTerminalPane from '../components/trace/SessionTerminalPane.vue'
 import TraceConversationRegion from '../components/TraceConversationRegion.vue'
 import SuppressButton from '../components/triggers/SuppressButton.vue'
 import { dropRetiredSpans, fmtTokens, fmtCost, fmtDuration } from '../utils/traceFormatters.js'
 import { useTraceScroll } from '../composables/useTraceScroll.js'
 import { useStickyHeader, useStickyChromeHeight } from '../composables/useStickyHeader.js'
-import { useViewMode } from '../composables/useViewMode.js'
+import { MODE_OPTIONS, useViewMode } from '../composables/useViewMode.js'
 import { useFilterState } from '../composables/useFilterState.js'
 import { useRuleTriggers } from '../composables/useRuleTriggers.js'
 import { useTraceTimeline } from '../composables/useTraceTimeline.js'
@@ -24,13 +26,18 @@ import { useTraceData } from '../composables/useTraceData.js'
 import { useTurns } from '../composables/useTurns.js'
 import { useLiveAgents } from '../composables/useLiveAgents.js'
 import { useTraceScope } from '../composables/useTraceScope.js'
+import { useAgentTrace } from '../composables/useAgentTrace.js'
 import { useBreakpoint } from '../composables/useBreakpoint.js'
 import TraceScopeBar from '../components/TraceScopeBar.vue'
 import TraceAgentPane from '../components/TraceAgentPane.vue'
 import TraceAgentsPopover from '../components/TraceAgentsPopover.vue'
 import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
+import { getTraceScroller } from '../utils/traceScroller.js'
+import { useHeaderRevealPull } from '../composables/useHeaderRevealPull.js'
+import { useBoundedTrace } from '../composables/useBoundedTrace.js'
 import Icon from '../components/ui/Icon.vue'
 import SessionTraceHeader from '../components/SessionTraceHeader.vue'
+import { useFocusMode } from '../composables/useFocusMode.js'
 import { useFoldTransition } from '../composables/useFoldTransition.js'
 import TraceVitalsStrip from '../components/TraceVitalsStrip.vue'
 import TraceSpendPanel from '../components/TraceSpendPanel.vue'
@@ -39,11 +46,29 @@ import SpanDetailPanel from '../components/SpanDetailPanel.vue'
 import { findNodeBySpanId, findNodePath, findNodeKey } from '../utils/spanTree.js'
 import SessionTurnsSidebar from '../components/SessionTurnsSidebar.vue'
 import SessionTimelineSpine from '../components/SessionTimelineSpine.vue'
+import SpanPresentReader from '../components/present/SpanPresentReader.vue'
+import { usePresentReader } from '../composables/usePresentReader.js'
+import { useSpanTree } from '../composables/useSpanTree.js'
+import { registerTraceSearchSource } from '../composables/useTraceSearchSource.js'
+import { onTraceSpans, setTraceInterest } from '../composables/useTraceSpanEvents.js'
+import { useSuccessorFollow } from '../composables/useSuccessorFollow'
+import { useQueuedPrompts } from '../composables/useQueuedPrompts.js'
+import TraceQueuedPrompts from '../components/TraceQueuedPrompts.vue'
 
 const route = useRoute()
 const router = useRouter()
 const session = ref(null)
 const loading = ref(true)
+// Queued / steer prompts (server-authoritative), plus the edit/remove round
+// trips for the rows that carry a server id. Same rows and same routes the
+// /live card drives — `_queued_prompts` serves both surfaces — so the write
+// surface is the composable, not a second copy of the logic.
+const queued = useQueuedPrompts(
+  () => session.value?.queued_prompts, () => session.value?.trace_id || '')
+
+async function onQueueEdit({ id, text, done }) {
+  if (await queued.edit(id, text)) done?.()
+}
 // Detail of a failed INITIAL load. "Loading session…" is the view's only
 // loading affordance, so without an explicit failure exit a rejected first
 // /map leaves it on screen forever.
@@ -82,6 +107,12 @@ const selectedKeys = ref({})   // PrimeVue TreeTable v-model:selection-keys
 // mobile bottom sheet (lg). See useBreakpoint / the redesign artifact.
 const { isLgUp, isXl, is2xl } = useBreakpoint()
 
+// Above the shell's `fixedViewport` freeze this view stops being a long page
+// and becomes a bounded column: header on top, one internally-scrolling region
+// per pane below it. Drives the layout classes; the panes' own offsets change
+// with it (see `headerOffset`).
+const boundedLayout = useBoundedTrace()
+
 // Sticky page header: everything that frames the trace (title row, tokens
 // rollup, mini-timeline, more-history banner) pins to the top of the scroll
 // container so the user keeps navigation context while scrolling a long
@@ -101,12 +132,23 @@ const { stickyHeaderEl: compactBarEl, stickyHeaderHeight: compactBarHeight } =
   useStickyHeader(loading)
 const stickyChromeHeight = useStickyChromeHeight(isLgUp, stickyHeaderHeight, compactBarHeight)
 
+// Clearance the rails and the feed's scroll-margins reserve under the pinned
+// header. Bounded, the header sits OUTSIDE every scroll region, so reserving
+// its height would push each pane down by a header nothing scrolls under.
+const headerOffset = computed(() => (
+  boundedLayout.value || !stickyChromeHeight.value ? '0px' : `${stickyChromeHeight.value}px`
+))
+
 // Header collapse: once the reader has scrolled PAST the full header's own
 // height, it folds into a single compact row — status dot, title, a mono
 // digest, the view switcher, Reload — so the spans get the space exactly
-// when they're being read. The Details button / H key toggle pins the choice;
-// scrolling back to the top (within 24px) re-expands — always for the auto
-// fold, but a pin only unlocks when that return is the reader's own scroll.
+// when they're being read. The Details button / H key toggle pins the choice.
+//
+// Losing the header and getting it back are deliberately ASYMMETRIC. Hiding is
+// one threshold, no gesture: it costs the reader nothing, and H brings it back.
+// Revealing is a sustained pull past the top (useHeaderRevealPull below),
+// because the old rule — any upward scroll within 24px of the top re-expands —
+// threw the details bar in the face of anyone reading back a few lines.
 const headerCollapsed = ref(false)
 const headerPinned = ref(false)
 // The fold otherwise swaps ~200px of header in one frame — dazzling in
@@ -120,20 +162,73 @@ const headerFold = useFoldTransition(stickyHeaderEl, headerCollapsed, {
   glideWhen: (collapsed) => !collapsed,
 })
 
+// Only the pull's own commit and the explicit toggles below ever expand the
+// header, and all three carry user input by construction. That is what keeps a
+// layout-driven scroll — anchoring answering the fold's own shrink, a live
+// poll's shift, a programmatic scrollTop write — from popping the header open
+// under a reader who folded it by hand. The expand side therefore needs no
+// input gate of its own; only auto-collapse still consults one.
+const headerPull = useHeaderRevealPull({
+  getScroller: getTraceScroller,
+  canReveal: () => headerCollapsed.value && !headerPinned.value && isLgUp.value,
+  onReveal: () => {
+    // The single reactive write of the whole gesture. `glideWhen` already
+    // tweens the expand direction, so the fold softens itself from here.
+    headerCollapsed.value = false
+    headerPinned.value = false
+  },
+})
+
 function toggleHeaderDetails() {
   // A click/keypress means the scroll is settled, so even the collapse
   // direction can glide safely here.
   headerFold.glideNext()
   headerCollapsed.value = !headerCollapsed.value
   headerPinned.value = true
-  if (expandTimer) { clearTimeout(expandTimer); expandTimer = null }
+  // An explicit toggle settles the question the meter was asking; a half-built
+  // pull must not survive to commit a second reveal a moment later.
+  headerPull.reset()
   // Folding shrinks the header, and scroll anchoring answers with a scroll
-  // that can land in the top band — near the top the pullback reaches it from
-  // anywhere under the header's own height. Consuming the input gate keeps
-  // that anchor scroll (still riding the wheel flick that preceded the click)
-  // from reading as the reader arriving at the top and unlocking the pin the
-  // same click just created.
+  // that can land in the top band. Consuming the input gate keeps that anchor
+  // scroll — still riding the wheel flick that preceded the click — from
+  // reading as a deliberate scroll and re-folding the header the same click
+  // just expanded.
   lastScrollInputAt = -1e9
+}
+
+// The <lg twin of `toggleHeaderDetails`, from the pinned compact strip. It
+// carries the scroll as well as the state, because at this width the header is
+// NOT sticky: expanding it in place only inserts content far above the reading
+// position, and scroll anchoring then holds the view still — the reader taps
+// "Details" and nothing visibly happens. The details live at the top, so
+// asking for them means going there.
+function onCompactDetailsToggle() {
+  const wasCollapsed = headerCollapsed.value
+  toggleHeaderDetails()
+  if (wasCollapsed) scrollToTop()
+}
+
+// Following the tail is a request for transcript space: the reader is watching
+// new spans land, not reading the header. The scroll `enableFollow` fires to
+// reach the bottom is programmatic, so canAutoCollapse's input gate refuses it
+// — the fold has to be asked for here or a fresh page keeps ~200px of header
+// pinned above a feed nobody is reading the top of. Turning follow off leaves
+// the fold alone; re-expanding would move the page under a reader who only
+// wanted the spans to stop moving.
+//
+// The pin is CLEARED, not left standing. It is the follow gesture's fold now,
+// not the H press that came before it, and a stale pin would strand it: the
+// reveal pull refuses to fire while pinned (canReveal), and the isLgUp watch
+// refuses to undo a pinned fold — so a reader who had used H once would be
+// left, after a resize below lg, staring at a folded header that isn't even
+// sticky there.
+function collapseHeaderForFollow() {
+  if (!isLgUp.value || headerCollapsed.value) return
+  // A click means the scroll is settled, so the collapse can glide.
+  headerFold.glideNext()
+  headerCollapsed.value = true
+  headerPinned.value = false
+  headerPull.reset()
 }
 
 // The collapse threshold is the EXPANDED header's measured height (floored
@@ -151,16 +246,30 @@ const expandedHeaderHeight = ref(0)
 // The !animating guard keeps mid-tween heights out: a threshold read off a
 // half-grown header drops under the expand pushback and the two transitions
 // fire each other again — the same oscillation, reintroduced by the glide.
+// The compact strip's Details toggle exists only because the full header is not
+// sticky below lg and scrolls away carrying its own copy. While both are on
+// screen that is two buttons for one job, a step apart. Measured against the
+// header's actual position rather than a scroll threshold: its height varies
+// with the title, the feature row and the fold state, so a constant would be
+// wrong for most sessions.
+const headerOffscreen = ref(false)
+function syncHeaderOffscreen() {
+  const scroller = getTraceScroller()
+  const header = stickyHeaderEl.value
+  if (!scroller || !header) { headerOffscreen.value = false; return }
+  const scrollerTop = scroller.getBoundingClientRect?.().top ?? 0
+  headerOffscreen.value = header.getBoundingClientRect().bottom <= scrollerTop + 1
+}
+
 watch(stickyHeaderHeight, (h) => {
   if (!headerCollapsed.value && h && !headerFold.animating.value) {
     expandedHeaderHeight.value = h
   }
+  // A fold changes whether the header still covers the strip without any
+  // scroll happening, so the scroll handler alone would leave the strip's
+  // Details toggle a fold behind.
+  syncHeaderOffscreen()
 }, { immediate: true })
-
-// The expand at the top is additionally DWELLED 150ms — far longer than an
-// anchor-adjustment frame pair, far shorter than a deliberate pause at the
-// top — so a transient anchor scroll can't flip it.
-let expandTimer = null
 
 // Both transitions only react to scrolls backed by a recent USER INPUT
 // (wheel / touch / scrollbar drag / scroll keys). Layout-driven scrolls —
@@ -174,14 +283,16 @@ let lastScrollInputAt = -1e9
 const SCROLL_INPUT_KEYS = new Set(['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '])
 function markScrollInput() { lastScrollInputAt = performance.now() }
 function hasRecentScrollInput() { return performance.now() - lastScrollInputAt <= 1200 }
-// A manual pin only unlocks when the reader ARRIVES at the top themselves. A
-// layout-driven scroll can land in the band with nobody asking — anchoring
-// answering the fold's own shrink, a live poll's shift, a programmatic write —
-// and popping the header open under the reader makes the fold they just chose
-// a no-op.
-function pinUnlockBlocked() { return headerPinned.value && !hasRecentScrollInput() }
 function isTextEntry(t) {
-  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  // SELECT counts: its own type-ahead consumes bare letters (and `\`), so a
+  // global single-key shortcut fired from a focused select silently changes
+  // both the option and the page. `role=combobox` is the same thing wearing a
+  // <button> — that is what every Reka Select trigger in this app renders as,
+  // and it type-aheads too.
+  if (!t) return false
+  if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true
+  if (t.isContentEditable) return true
+  return !!t.closest?.('[role="combobox"], [role="listbox"], [role="option"]')
 }
 function onScrollInputKey(e) {
   // Space/arrows typed into a filter field are text entry, not scrolling. The
@@ -194,7 +305,7 @@ function onScrollbarMouseDown(e) {
   // click must not: the layout shift it can trigger (e.g. the spend panel
   // opening pushes the page down via scroll anchoring) would otherwise
   // inherit the click's input and read as a deliberate user scroll.
-  const r = getScroller()?.getBoundingClientRect?.()
+  const r = getTraceScroller()?.getBoundingClientRect?.()
   if (r && e.clientX >= r.right - 20) markScrollInput()
 }
 
@@ -209,63 +320,55 @@ const scrolledDeep = ref(false)
 // control's state correct — re-read the scroller rather than waiting for a
 // scroll event that may never come.
 function syncScrolledDeep() {
-  scrolledDeep.value = (getScroller()?.scrollTop ?? 0) > BACK_TO_TOP_AFTER_PX
+  scrolledDeep.value = (getTraceScroller()?.scrollTop ?? 0) > BACK_TO_TOP_AFTER_PX
+  syncHeaderOffscreen()
 }
+
 function scrollToTop() {
-  const scroller = getScroller()
+  const scroller = getTraceScroller()
   if (!scroller) return
-  // Clearing the manual pin here rather than waiting for the dwelled auto-expand
-  // at the top: arriving via this button IS the request to see the header again.
-  headerPinned.value = false
+  // Deliberately does NOT clear the pin. Arriving at the top is no longer what
+  // reveals the header, so treating it as one would silently re-arm
+  // auto-collapse against a reader who pinned the header open by hand.
   if (typeof scroller.scrollTo === 'function') scroller.scrollTo({ top: 0, behavior: 'smooth' })
   else scroller.scrollTop = 0
 }
 
-function onCollapseScroll(e) {
-  const scroller = getScroller()
-  const el = e?.target
-  if (!el || (el !== scroller && el !== document && el !== document.scrollingElement)) return
-  const top = scroller.scrollTop ?? 0
-  syncScrolledDeep()
-  if (top < 24) {
-    // The expand is DWELLED and re-checked at fire time. The 24px band (not
-    // 0) and the re-check both matter: a live poll's layout shift can nudge
-    // the scroll a few px off the top, and a dead timer would never re-arm —
-    // the header would stay folded while the user is effectively at the top.
-    // The AUTO fold expands with no input gate (it can't cycle, because its
-    // collapse side only fires on user input); only the pin unlock demands one.
-    if (!expandTimer) {
-      expandTimer = setTimeout(() => {
-        expandTimer = null
-        const nowTop = getScroller()?.scrollTop ?? 0
-        if (nowTop >= 24) return
-        if (pinUnlockBlocked()) return
-        if (headerCollapsed.value || headerPinned.value) {
-          headerCollapsed.value = false
-          headerPinned.value = false
-        }
-      }, 150)
-    }
-    return
-  }
-  if (!hasRecentScrollInput()) return
-  if (headerPinned.value) return
+function canAutoCollapse(scroller, top) {
+  if (!hasRecentScrollInput()) return false
+  if (headerPinned.value) return false
   // Auto-collapse is a ≥lg feature: there the header pins and collapsing buys
   // back reading space. Below lg the full header scrolls away on its own (the
   // compact bar is the pin), and folding it would only unmount the spend
   // panel / strips out from under a reader who scrolled to them.
-  if (!isLgUp.value) return
-  if (headerCollapsed.value) return
-  if (top <= Math.max(72, expandedHeaderHeight.value)) return
+  if (!isLgUp.value) return false
+  if (headerCollapsed.value) return false
+  if (top <= Math.max(72, expandedHeaderHeight.value)) return false
   // Only collapse once the header has actually reached its sticky pin. The
   // pin offset is measured from the scroller's CONTENT box (top: -24px vs
   // the 24px padding), so a stuck header's top edge lands exactly on the
   // scrollport's top.
   const header = stickyHeaderEl.value
-  if (!header) return
+  if (!header) return false
   const scrollerTop = scroller.getBoundingClientRect?.().top ?? 0
-  if (header.getBoundingClientRect().top > scrollerTop + 1) return
-  headerCollapsed.value = true
+  return header.getBoundingClientRect().top <= scrollerTop + 1
+}
+
+function onCollapseScroll(e) {
+  const scroller = getTraceScroller()
+  const el = e?.target
+  if (!el || (el !== scroller && el !== document && el !== document.scrollingElement)) return
+  const top = scroller.scrollTop ?? 0
+  syncScrolledDeep()
+  // Scroll GATES the gesture (is the reader resting at the top?) and hides the
+  // header. It never reveals — that takes the pull, which rides wheel/touch.
+  headerPull.noteScroll(top)
+  if (canAutoCollapse(scroller, top)) {
+    headerCollapsed.value = true
+    // Stamping the hide starts the cooldown, so the momentum of the very
+    // scroll that folded the header cannot carry through into a reveal.
+    headerPull.noteHidden()
+  }
 }
 
 // Below lg the header isn't sticky, so a fold that survives the resize takes
@@ -277,27 +380,48 @@ function onCollapseScroll(e) {
 watch(isLgUp, (up) => {
   headerFold.snap()
   if (!up && headerCollapsed.value && !headerPinned.value) headerCollapsed.value = false
+  headerPull.reset()
 })
+
+// The effect a single-letter trace shortcut asks for, or null when this key
+// does nothing here. Returning the action rather than running it keeps the
+// preventDefault in one place: a key that resolves to nothing must fall
+// through untouched.
+function headerShortcut(e) {
+  const key = e.key
+  if (key === 'h' || key === 'H') return toggleHeaderDetails
+  // The detail modes govern the conversation feed only; firing one from
+  // Timeline or Terminal would flip a mode with nothing on screen to show for
+  // it. Each key toggles against Full, so the same keystroke undoes itself.
+  if (viewMode.value === 'conversation') {
+    if (key === 'f' || key === 'F') return toggleLatest
+    if (key === 'c' || key === 'C') return toggleCondensed
+  }
+  // Presentation mode on the current selection. No-op with nothing selected —
+  // the reader is keyed to one span, and guessing which one is worse than
+  // doing nothing.
+  //
+  // Enter additionally stands down whenever a control has focus: Enter is that
+  // control's OWN activation key, so binding it globally hijacked every
+  // keyboard press of Copy, 📌, a mode tab, or the ⤢ button itself.
+  const onControl = !!e.target?.closest?.('button, a, summary, [role="button"], [role="tab"]')
+  const wantsReader = key === 'p' || key === 'P' || (key === 'Enter' && !onControl)
+  if (wantsReader && selectedSpan.value) return () => openPresent(selectedSpan.value)
+  return null
+}
 
 function onHeaderKey(e) {
   if (isTextEntry(e.target)) return
   if (e.metaKey || e.ctrlKey || e.altKey) return
-  if (e.key === 'h' || e.key === 'H') {
-    e.preventDefault()
-    toggleHeaderDetails()
-  }
+  const action = headerShortcut(e)
+  if (!action) return
+  e.preventDefault()
+  action()
 }
-
-const MODE_OPTIONS = [
-  { id: 'conversation', label: 'Conversation' },
-  { id: 'timeline', label: 'Timeline' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'messages', label: 'Messages' },
-]
 
 // On-demand span content cache; `allSpans` overlays it onto session.spans so
 // every consumer reads one merged list (see useSpanContentCache).
-const { spanContentCache, allSpans, fetchSpanContent } =
+const { spanContentCache, allSpans, withContent, fetchSpanContent } =
   useSpanContentCache(session, route)
 
 // Trace data core: owns treeNodes + pagination + every fetch/merge/reconcile
@@ -313,9 +437,10 @@ const {
   newestLoadedId,
   loadSession, reloadLiveTail, loadOlder,
   subtreeLoaded,
-  ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded, refreshSpanSubtree,
+  ensureNodeChildrenLoaded, ensureSpanSubtreeLoaded, ensureSpanSubtreesLoaded,
+  noteSpanFrame,
   ensureTerminalSpansLoaded, ensureWorkflowSpansLoaded,
-} = useTraceData(route, { session, allSpans, selectedSpan })
+} = useTraceData(route, { session, allSpans, selectedSpan, router })
 
 // ≥xl the user chooses how a scope is presented: the 'split' companion pane
 // (beside the main feed) or the 'full' only-subagent takeover (the same
@@ -336,19 +461,33 @@ const liveAgents = useLiveAgents(() => allSpans.value, () => session.value?.agen
 const traceScope = useTraceScope(route, router, {
   getAgents: () => liveAgents.agents,
   getRoster: () => session.value?.agent_roster,
-  ensureSpanSubtreeLoaded,
-  ensureTerminalSpansLoaded,
   isTakeover: () => !isXl.value || scopeMode.value === 'full',
 })
+// The scoped agent's spans come from its own trace — this conversation holds
+// only its markers.
+const agentTrace = useAgentTrace(() => traceScope.scopeId)
+// Through the same content cache as the main feed: the child's map ships the
+// structure, the bodies are still fetched (and cached) per span.
+const agentSpans = computed(() => withContent(agentTrace.spans))
+// A `?span=` inside delegated work: useTraceData resolves it to `?agent=` (it
+// has no such row to select), and the row itself only exists once the child
+// fetch lands — so the selection is made here, against those spans.
+watch(agentSpans, (spans) => {
+  const target = route.query.span
+  if (!target || selectedSpan.value?.span_id === target) return
+  const hit = spans.find(s => s.span_id === target)
+  if (hit) selectedSpan.value = hit
+})
 
-// View mode: 'conversation' | 'timeline' | 'terminal' | 'messages'.
+// View mode: 'conversation' | 'timeline' | 'log' | 'pane' | 'messages'.
 // Resolution order: `?view=` query param > localStorage > default (see useViewMode).
 const { viewMode, setViewMode } = useViewMode(route)
+const { toggleCondensed, toggleLatest, resetForTrace } = useFocusMode()
 watch(viewMode, () => nextTick(syncScrolledDeep))
 
 // The conversation tab defaults to the clean centered feed: the right rail
 // (span details + turns) stays hidden until explicitly opened, so selecting
-// a span doesn't squeeze the feed. Timeline/terminal keep the rail whenever
+// a span doesn't squeeze the feed. Timeline/log keep the rail whenever
 // a span is selected. Persisted so the choice survives navigation.
 const detailRailOpen = useFilterState('regin.trace.detailRail', false,
   v => typeof v === 'boolean')
@@ -367,9 +506,19 @@ const scopeTakeover = computed(() => viewMode.value === 'conversation'
 // ≥2xl: feed + pane + rail coexist as three columns. At xl the right slot is
 // shared and the rail wins when invoked — the pane yields (restored by
 // closing the rail, since the scope state is untouched).
+// 'pane' joins 'messages' in never showing it: a terminal has no span to
+// detail, and the rail's close control is rendered only on the conversation
+// tab — so on the terminal it appeared with no way to dismiss it and simply
+// ate the width.
+const RAILLESS_MODES = ['messages', 'pane']
 const detailRailShown = computed(() => !!selectedSpan.value
-  && viewMode.value !== 'messages'
+  && !RAILLESS_MODES.includes(viewMode.value)
   && (viewMode.value !== 'conversation' || detailRailOpen.value))
+// Whether the rail is actually on screen — the span detail panel AND the turns
+// sidebar ride inside it. Named once so the template's gate and the turn-detail
+// fetch below cannot drift apart: the sidebar being unrendered is exactly what
+// makes a turn's `span_refs`/`tool_summary` not worth fetching.
+const turnsSidebarShown = computed(() => isLgUp.value && detailRailShown.value)
 const paneVisible = computed(() => {
   if (viewMode.value !== 'conversation' || !isXl.value) return false
   if (!traceScope.active) return false
@@ -383,12 +532,8 @@ const paneVisible = computed(() => {
 // 'split' restores it, so maximizing and returning doesn't lose the reader's
 // place in the main thread.
 let savedMainScroll = null
-function getScroller() {
-  return document.querySelector('.content-scroll')
-    || document.scrollingElement || document.documentElement
-}
 function setScopeMode(mode) {
-  const scroller = getScroller()
+  const scroller = getTraceScroller()
   if (mode === 'full') {
     savedMainScroll = scroller ? scroller.scrollTop : null
   }
@@ -417,6 +562,107 @@ function openAgentsRoster() {
 // Shared span/turn inputs the conversation feed + companion pane both consume,
 // bundled so the region tag doesn't re-spell a dozen binds (keeps this host's
 // template-directive budget in check).
+// A zero-span session is still a real session — one opened before its first
+// prompt fired any hook — and must render the full chrome (header, tabs, the
+// follow-up composer). Only an id the server has no session row for falls to
+// the empty state: _session_summary returns {} there, so canonical_trace_id
+// is the discriminator between "no row" and "row, no spans yet".
+const sessionKnown = computed(() =>
+  !!session.value
+  && (!!session.value.canonical_trace_id || allSpans.value.length > 0))
+
+// The other exit from a conversation with no composer: not steerable, but the
+// CLI can still reopen it. `resumable` is served derived rather than inferred
+// here — whether an id can be handed to `--resume` turns on a transcript still
+// on disk, which the client cannot see. Its own computed so the follow-up
+// bundle below stays a flat projection of one row.
+const resumeMeta = computed(() => {
+  const s = session.value
+  // `cli_held` is the third state, and it exists because the first two are
+  // both an empty rail: unsteerable AND unresumable renders nothing, and only
+  // this says the conversation is alive — the CLI is holding it somewhere
+  // regin cannot type, so there is nothing to resume and nothing is wrong.
+  const heldByCli = !!s && !s.bridge_reachable && !!s.cli_held
+  if (!s || !s.resumable || s.bridge_reachable) return { canResume: false, heldByCli }
+  return { canResume: true, heldByCli: false,
+           cwd: s.cwd || '', endedReason: s.ended_reason || '' }
+})
+
+// A session started from this page is a NEW conversation, not this one
+// continued, so it gets its own page — and it stays on this surface rather
+// than jumping to /live: an operator launching from the desktop trace view
+// asked for a trace, and the run is readable here immediately because the
+// launch posts its prompt span before the request returns (see
+// `_announce_prompt` in lib/agent_sdk/supervisor.py).
+function onSessionLaunched({ traceId }) {
+  if (traceId && traceId !== route.params.id) router.push(`/trace/sessions/${traceId}`)
+}
+
+// …but the id it lands on is the run's own `sdk-…`, the only one that exists
+// before the child names itself. Everything else keys the session on the
+// child's id — the transcript on disk, the session list, and the endpoints
+// that do NOT alias-resolve (`/tool-rollup`, `/turn-usage`, `/agent-messages`,
+// `/workflow-runs` all answer 200 with a fraction of the rows) — so rewrite
+// the URL onto it the moment the server reports it, exactly as `/live` does.
+// `replace`, not `push`: the sdk- URL is a staging post, not somewhere Back
+// should return to. The shell keys this component by `$route.path`, so the
+// replace remounts and refetches under the canonical id.
+watch(() => session.value?.canonical_trace_id, (canon) => {
+  const from = route.params.id
+  if (!canon || !from || canon === from) return
+  if (!route.path.startsWith('/trace/sessions/')) return
+  // Only rename the session the poll actually loaded — a canonical id left
+  // over from the row we just navigated away from would redirect back to it.
+  if (session.value?.trace_id !== from) return
+  // A successor outranks a rename, but only when they name DIFFERENT sessions:
+  // `successor_trace_id` is not clear-only (`register_alias` points
+  // `_live_children` at the first child it sees), so a page on a run's own
+  // `sdk-…` id carries it equal to the canonical id from the first poll, and
+  // suppressing on that would strand the URL on the staging post forever.
+  const heir = session.value?.successor_trace_id
+  if (heir && heir !== canon) return
+  router.replace({ path: `/trace/sessions/${canon}`, query: route.query })
+})
+
+// The follow-up composer exists only where a follow-up can actually land: a
+// session still running that regin can steer.
+const followUpMeta = computed(() => {
+  const s = session.value
+  return {
+    // `successor_trace_id` is the /clear case: this conversation is over but
+    // the run that held it is not, and a steer sent to this id still reaches
+    // it. Gating on ended_at alone left the operator on a dead page with no
+    // way to type while the agent worked on under an id nothing linked to.
+    canFollowUp: !!s && !!s.bridge_reachable
+      && (!s.ended_at || !!s.successor_trace_id),
+    ...resumeMeta.value,
+    model: s?.model || '',
+    ctxPct: s?.context_pct ?? null,
+    // Just the three fields the terminal peek reads, not the whole row: the
+    // feed has no other business with the session record.
+    liveScreen: s?.live_screen || null,
+    // Gated on the PANE, not on `bridge_reachable`: the server sets that flag
+    // for an SDK-owned run too (it means "regin can type into this"), but such
+    // a run has no tmux pane at all — `capture_screen` would fail every time,
+    // so the peek must not be offered.
+    bridgeSession: s?.bridge_pane
+      ? { trace_id: s.trace_id, bridge_reachable: true, bridge_pane: s.bridge_pane }
+      : null,
+  }
+})
+
+// A send from the span reader is the same send the feed's own composer makes,
+// so it has to arm the feed's send-reveal too. Counted rather than passed as a
+// boolean: the signal is the occurrence, and a flag would need resetting.
+// Not counted under takeover: the feed is then one agent's subtree, and the
+// turn this send produces belongs to the session, not to that subtree — the
+// reveal would collapse prompts the reader opened to make room for a turn that
+// never arrives there.
+const sendSeq = ref(0)
+function onReaderSent() {
+  if (!scopeTakeover.value) sendSeq.value += 1
+}
+
 const feedProps = computed(() => ({
   spans: allSpans.value,
   turns: turns.value,
@@ -428,7 +674,10 @@ const feedProps = computed(() => ({
   taskEvents: session.value?.task_list?.events || [],
   serverNow: session.value?.server_now || '',
   serverNowAt: session.value?.server_now_at || 0,
+  followUp: followUpMeta.value,
+  sendSeq: sendSeq.value,
 }))
+
 
 const { sheetOpen, selectSpan } = useSpanSheet(selectedSpan, isLgUp, route.query.span)
 
@@ -442,6 +691,146 @@ const spanDetailProps = computed(() => ({
   traceStart: traceStart.value,
 }))
 
+// ── Presentation mode ─────────────────────────────────────────
+// A second, UNSCOPED span tree: the reader walks the whole trace in order
+// (prompts, subagent children inline) regardless of what the feed has folded,
+// what Focus has demoted, or which agent scope is active. Cheap — the same
+// pure derivations the feed already runs, over the same span list.
+const readerTree = useSpanTree(() => allSpans.value, () => turns.value, () => null)
+// Selection ONLY — not `selectSpan`, whose contract is "an explicit selection
+// opens the mobile sheet". The reader calls this on open, on every ↑↓ step, on
+// a child click and on the live-poll heir rebind, so routing it through that
+// intent stacked the bottom sheet under the reader on every phone-sized
+// viewport and re-opened it faster than it could be dismissed.
+const present = usePresentReader(readerTree.entries, {
+  onSelect: (span) => { if (span) selectedSpan.value = span },
+})
+// Below lg the reader IS the full-content surface, so a sheet opened by an
+// earlier card tap would sit under it as a second modal the user has to
+// dismiss twice. The selection is kept either way.
+watch(present.isOpen, (open) => { if (open) sheetOpen.value = false })
+
+// The term the palette matched on, marked in the reader it hands off to.
+// Cleared by every other entry route so a stale mark cannot outlive its hit.
+const searchHighlight = ref('')
+
+const presentSpan = computed(() => present.current.value?.span || null)
+
+// Is the span in the reader still being WRITTEN?
+//
+// The two concessions the reader gets — a forced content re-read on every
+// reconcile, and the live poll declining to suspend under it — both exist for
+// one reason: a span's body grows with no identifier moving, so no tail
+// fingerprint can see it. That reason expires the moment the span finishes.
+// Held open on a settled span it just means a reader parked on a completed
+// tool call polls the session for as long as the tab stays open.
+//
+// Unknown counts as growing: a detached span (one the walk cannot see) is
+// rendered from a snapshot, and guessing "finished" there would freeze it.
+const presentSpanGrowing = computed(() => {
+  if (!present.isOpen.value) return false
+  const span = presentSpan.value
+  if (!span) return true
+  return !(span.end_time && span.status_code !== 'PENDING')
+})
+// Subagent launches list their children as rows that re-key the reader. The
+// trace loads SHALLOW, so an unopened agent has none until its subtree lands.
+const presentChildren = computed(() => (
+  presentSpan.value?.name === 'subagent.start'
+    ? readerTree.childrenOf(presentSpan.value.span_id)
+    : []
+))
+const presentTurnLabel = computed(() => {
+  const id = present.presentId.value
+  if (!id) return ''
+  const idx = readerTree.promptGroups.value.findIndex(g =>
+    g.prompt.span_id === id || g.descendants.some(d => d.span.span_id === id))
+  return idx >= 0 ? `turn #${idx + 1}` : ''
+})
+
+// One bundle rather than ten binds, matching `feedProps` / `spanDetailProps`:
+// the template's binding budget is a measured gate in this file.
+const presentProps = computed(() => (!present.isOpen.value ? { span: null } : {
+  span: presentSpan.value,
+  prev: present.prev.value,
+  next: present.next.value,
+  position: present.readableIndex.value + 1,
+  total: present.readable.value.length,
+  onlyBody: present.onlyBody.value,
+  skipped: present.skipped.value,
+  offList: present.offList.value,
+  turnLabel: presentTurnLabel.value,
+  children: presentChildren.value,
+  navSeq: present.navSeq.value,
+  highlight: searchHighlight.value,
+  followUp: followUpMeta.value,
+  sessionId: session.value?.trace_id || '',
+  // The turn the reply would BECOME — prompt groups, the same count the feed's
+  // own composer shows; `turns` here is per-API-response billing, not turns.
+  replyTurn: readerTree.promptGroups.value.length + 1,
+}))
+
+// Keyed off what the reader IS showing, not off the two moves that put it
+// there: the live poll can re-bind a retired placeholder to its resolved span
+// under the reader, and that arrival needs the same body as a click would.
+watch(() => presentSpan.value?.span_id, (id) => {
+  const span = presentSpan.value
+  if (!id || !span) return
+  // Fill the children list for an agent the reader opened cold.
+  if (span.name === 'subagent.start') ensureSpanSubtreeLoaded(id)
+  if (!spanContentCache.value.has(id)) fetchSpanContent(id)
+}, { immediate: true })
+
+function openPresent(spanOrId) { searchHighlight.value = ''; present.openPresent(spanOrId) }
+
+// What "open" means for a span the search palette surfaced (spec §08): the
+// palette closes, the span is selected, and presentation mode opens on it.
+//
+// Scoping comes FIRST — a span that ran inside a subagent belongs to that
+// agent's feed, and entering the scope afterwards would re-render the feed
+// out from under the reader. Everything after selection is already handled
+// by machinery the `?span=` deep link uses: SessionConversationView's
+// selection watcher unfolds the owning turn, clears the Focus tier that was
+// hiding the row (`revealSpan` / `openFold`), and scrolls it into view — so
+// a folded target is revealed rather than skipped, without a second opinion
+// about tiers living here.
+async function openSpanFromSearch(spanId, query = '') {
+  if (!spanId) return
+  // Hydrate FIRST. The palette's span group is answered by the server against
+  // the whole session, while this view holds only the pages it has loaded — so
+  // a hit is routinely a span the client has never seen, and reading
+  // `agent_id` off `allSpans` before `selectSpanById` fetched its subtree read
+  // `undefined` and silently skipped the scope for exactly the spans the
+  // server-side search exists to reach.
+  await selectSpanById(spanId)
+  const span = allSpans.value.find(s => s.span_id === spanId)
+  if (!span) return
+  // Scoping after selection re-renders the feed under the reader, so open the
+  // reader last: entering the scope is what decides WHICH feed the reader
+  // steps through.
+  if (span.agent_id && traceScope.scopeId !== span.agent_id) {
+    await traceScope.enter(span.agent_id)
+  }
+  openPresent(span)
+  searchHighlight.value = query
+}
+function movePresent(delta) { present.movePresent(delta) }
+
+// `<router-view>` has no `:key`, so routing from one session detail page to
+// another REUSES this component. Presentation and Focus both hold state keyed
+// on span/turn ids of the trace that is going away: without this the reader
+// kept displaying a span from the previous session over the new one — `held`
+// stands forever, since a non-placeholder id resolves no heir — and the fold
+// sets accumulated ids for the tab's lifetime.
+watch(() => route.params.id, () => {
+  present.closePresent()
+  searchHighlight.value = ''
+  resetForTrace()
+  // Queue ids are per-runner, so a pending op from the outgoing session would
+  // mask or hide an unrelated row in the incoming one.
+  queued.reset()
+})
+
 // send_to_user messages (Messages tab). Null until first load so the tab
 // can distinguish "not fetched yet" from "fetched, empty". Refreshed by
 // reload() while the tab is active, so the live poll keeps it current.
@@ -454,19 +843,15 @@ const sessionGoal = ref(null)
 // and a duplicate there would be noise. Messages stays absent until its first
 // fetch — a `0` pill would claim "no messages" when the truth is "not loaded".
 // "Turns" in the vitals strip means user prompts, counted off the loaded root
-// spans — NOT `turns.length`. The turn_usage table is per-API-response billing
-// data that is frequently still empty on a live session, which rendered the
-// cell as an em-dash next to a feed visibly showing several prompts.
-const promptCount = computed(() => {
-  const n = treeNodes.value.filter(t => t?.data?.name === 'prompt').length
-  // Workflow runs: turn_usage rows are the subagents' API responses, not
-  // user prompts — falling back to them read as hundreds of "turns".
-  if (session.value?.is_workflow) return n || null
-  return n || (turns.value ? turns.value.length : null)
-})
+// spans — NOT `turns.length`. A turn_usage row is one API response, so counting
+// them here reported a tool-heavy turn as dozens; an em-dash while none are
+// loaded is the honest reading, and the same rule governs the Activity strip's
+// flags (see TraceOverviewStrip's turnBoundaries).
+const promptCount = computed(() =>
+  treeNodes.value.filter(t => t?.data?.name === 'prompt').length || null)
 
 const modeCounts = computed(() => ({
-  terminal: session.value?.span_count_total ?? allSpans.value.length,
+  log: session.value?.span_count_total ?? allSpans.value.length,
   messages: agentMessages.value?.length ?? 0,
 }))
 async function ensureAgentMessagesLoaded() {
@@ -510,8 +895,14 @@ const { toolRollupData, fetchToolRollup } = useToolRollup(route)
 // attaches its own document listeners on mount; we hand it the loader
 // callbacks and the gating refs it reads.
 useTraceScroll({
-  reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload,
+  reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive,
+  // The pull is a gesture, so it re-arms a suspended poll as well as
+  // reloading — see `reloadFromUser`.
+  reload: reloadFromUser,
   loadOlder: () => guarded(loadOlder),
+  // The reader is a modal over the feed: while it owns the viewport, a scroll
+  // is the operator reading a span, never a pull on a feed they cannot see.
+  paused: () => present.isOpen.value,
 })
 
 // General live poll. The trace view is a live dashboard but `reload()`
@@ -521,14 +912,30 @@ useTraceScroll({
 // scroll. A lightweight visibility-gated tick keeps the reconcile
 // (`reloadLiveTail`) converging the tail to the DB every few seconds.
 //
-// The poll is self-terminating: it consumes resources (a /map fetch + a
-// backend transcript rescan) every tick, which is pure waste once a session
-// has ended and its tail has stopped growing. So we stop polling once the
-// session is closed (`ended_at` set — the ingest clears it again on a
-// genuine resume) AND the tail has converged — see `maybeStopOnConverge`.
-// An already-ended session never starts the recurring poll at all; it runs
-// one bounded catch-up instead (`syncClosedSessionTail`), which is also the
-// crash-recovery path (reopening the view re-runs it).
+// The poll is self-terminating, in two ways, because every tick costs a /map
+// and a backend transcript rescan:
+//
+//   - A closed session (`ended_at` set — the ingest clears it again on a
+//     genuine resume) stops for good once its tail has converged. An
+//     already-ended session never starts the recurring poll at all; it runs one
+//     bounded catch-up instead (`syncClosedSessionTail`), which is also the
+//     crash-recovery path (reopening the view re-runs it).
+//   - A session that is still marked live but has stopped changing SUSPENDS —
+//     `ended_at` is written by the SessionEnd hook, so a session that never got
+//     one would otherwise poll for as long as its tab stayed open. The way back
+//     is the span ingest's own `trace_spans` frame, plus every deliberate
+//     gesture. See `maybeStopOnConverge` and `wakeLivePoll`.
+
+// Stamped when this instance is torn down. `onMounted` awaits
+// `runInitialLoad()`, and the Trace shell keys the routed component by
+// `$route.path` — so switching sessions while that load is still walking its
+// awaits unmounts the instance mid-flight. The teardown then ran
+// `stopLivePoll()` against a timer that did not exist yet, and the pending
+// load armed one afterwards: an interval on a dead instance that no unmount
+// can reach. `reload()` reads `route.params.id` off the live route, so each
+// orphan went on polling whichever session was opened next, and they
+// accumulated one per fast switch.
+let disposed = false
 let livePollTimer = null
 const LIVE_POLL_MS = 4000
 // Max reconciles the bounded catch-up will run before giving up on an
@@ -536,8 +943,20 @@ const LIVE_POLL_MS = 4000
 const CLOSED_SYNC_MAX_TICKS = 3
 // newest DB id observed at the previous reconcile, for the convergence test.
 let convergeAnchorId = null
+// Consecutive reconciles whose tail fingerprint did not move.
+let quietTicks = 0
+// How many of those retire a LIVE session's poll. `ended_at` used to be the
+// only thing that ever stopped it, and it is written by the SessionEnd hook —
+// so a session killed, crashed or closed without one (106 of 2,489 rows in a
+// year-old database) polled for as long as its tab stayed open. Counting
+// unchanged reconciles rather than elapsed seconds keeps the rule on the
+// tail's identifiers; the floor comes from the server, not from taste: the
+// fingerprint's transcript half only moves when the live rescan runs, and that
+// is gated at 10s between runs (`lib/trace/live_rescan.py`), so fewer than
+// three ticks would read a working agent as quiet. Five leaves margin.
+const QUIET_TICKS_BEFORE_SUSPEND = 5
 function startLivePoll() {
-  if (livePollTimer) return
+  if (disposed || livePollTimer) return
   livePollTimer = setInterval(() => {
     if (document.hidden) return
     if (reloading.value || loading.value || loadingOlder.value) return
@@ -548,20 +967,33 @@ function stopLivePoll() {
   if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null }
 }
 
-// Called after every reconcile. While the session is live, keep polling. Once
-// it has ended, stop — but only after the tail stops advancing, so the final
-// SessionEnd flush is captured first. A count/items divergence (the marker
-// says ended while spans are still landing) must NOT stop us on the first
-// `ended_at`; we require one unchanged-newest tick.
-function maybeStopOnConverge() {
+// Called after every reconcile, with whether the tail actually moved. A live
+// session keeps polling while it is still changing and suspends when it is
+// not. Once it has ended, stop for good — but only after the tail stops
+// advancing, so the final SessionEnd flush is captured first. A count/items
+// divergence (the marker says ended while spans are still landing) must NOT
+// stop us on the first `ended_at`; we require one unchanged-newest tick.
+function maybeStopOnConverge(tailChanged) {
   if (!session.value?.ended_at) {
     convergeAnchorId = null
     // Live (again): the ingest clears `ended_at` when a genuine resume lands,
     // so a poll that retired on the old "ended" read — and the scroll/wheel
     // pull-to-refresh retired with it — re-arms here, on whichever reload
     // first observes the cleared marker.
-    if (!livePollTimer) startLivePoll()
     liveSyncActive.value = true
+    quietTicks = tailChanged ? 0 : quietTicks + 1
+    // Suspending is a PAUSE, not the retirement an ended session gets: the
+    // ingest's `trace_spans` frame re-arms it (`wakeLivePoll`), as does the
+    // tab coming back, a pull-to-refresh or the header's Refresh. That is why
+    // `liveSyncActive` stays true — the reader's own way back must keep
+    // working. A reader open on a span STILL BEING WRITTEN is exempt: its
+    // content grows in place, which no tail identifier can see. A finished
+    // span cannot, so it earns no exemption.
+    if (quietTicks >= QUIET_TICKS_BEFORE_SUSPEND && !presentSpanGrowing.value) {
+      stopLivePoll()
+    } else {
+      startLivePoll()
+    }
     return
   }
   if (!livePollTimer) return
@@ -574,6 +1006,88 @@ function maybeStopOnConverge() {
     return
   }
   convergeAnchorId = newestLoadedId.value
+}
+
+// The way back from a suspended poll.
+//
+// `traceId` null means the stream reconnected and cannot say which trace
+// moved, or that a person asked for this (Refresh, pull-to-refresh, the tab
+// coming back) — either way the answer is to look. An ingest names the
+// canonical id, which is the one the header carries; a session whose spans
+// land under an `sdk-` or child alias would otherwise never wake the view
+// reading it.
+// One pushed span frame for this session: record what it says about stream
+// continuity BEFORE waking, because the wake is what triggers the refresh
+// that acts on it. Frames for other sessions are dropped here rather than
+// inside each consumer, so neither the continuity tally nor the poll sees
+// another trace's changes.
+function onSpanFrame(traceId, frame) {
+  const mine = session.value?.canonical_trace_id || route.params.id
+  if (traceId && traceId !== mine && traceId !== route.params.id) return
+  noteSpanFrame(frame)
+  wakeLivePoll(traceId)
+}
+
+// `/clear` retires this conversation and opens another in the same pane. The
+// poll cannot find that heir — its spans land under a trace this view is not
+// watching, and the poll is suspended anyway once the cleared session stops
+// changing — so the server-pushed frame is the only signal that arrives.
+useSuccessorFollow(() => session.value?.trace_id,
+                   () => session.value?.successor_trace_id)
+
+function wakeLivePoll(traceId) {
+  if (disposed || loading.value || reloading.value) return
+  const mine = session.value?.canonical_trace_id || route.params.id
+  if (traceId && traceId !== mine && traceId !== route.params.id) return
+  quietTicks = 0
+  // A poll that is already running needs nothing else — its next tick is at
+  // most LIVE_POLL_MS away, and resetting the count above is what keeps it
+  // alive. Reloading here instead would be a loop with no cadence: every
+  // /map kicks the server's transcript rescan, whose ingest raises the very
+  // frame that brought us here.
+  //
+  // Suspended, one reload is the whole recovery: it re-arms through
+  // `maybeStopOnConverge` on the way out, and on a session the ingest has
+  // just un-ended it is also what observes the cleared `ended_at`.
+  if (livePollTimer) return
+  reload()
+}
+
+// The explicit half. A deliberate gesture — Refresh, a pull at the bottom
+// edge, the tab coming back — always earns a fresh look, and buys the poll
+// another full quiet budget whether or not the tail has moved.
+function reloadFromUser() {
+  if (disposed) return
+  quietTicks = 0
+  reload()
+}
+
+function onTraceVisible() {
+  if (!document.hidden) reloadFromUser()
+}
+
+// A resume launched from the conversation's own Resume bar. The run continues
+// under the id this page is already open on, so there is nothing to navigate
+// to — what the page needs is to stop believing the session is over.
+//
+// The reload is the ordinary mechanism: the launch clears `ended_at`
+// (`agent_sdk.store.revive_trace_session`) synchronously BEFORE the route
+// answers, so it reads a live session and `maybeStopOnConverge` re-arms the
+// poll on the way through.
+//
+// The poll is armed here as well because that reload is not guaranteed to
+// happen: `reload()` no-ops while another is in flight (a pull-to-refresh, the
+// tab regaining focus), and a closed session has only `syncClosedSessionTail`
+// behind it, not a recurring poll — so a dropped refresh would have nothing to
+// retry it and the page would sit on a Resume bar over a running session.
+// I did not reproduce that window in a test; this is defensive, and free:
+// `startLivePoll` is idempotent and its next tick re-derives liveness from the
+// server like any other.
+function onResumed() {
+  liveSyncActive.value = true
+  quietTicks = 0
+  startLivePoll()
+  reloadFromUser()
 }
 
 // Crash-recovery / one-shot sync for a session that is already closed when the
@@ -667,6 +1181,7 @@ async function runInitialLoad() {
     initialLoadInFlight = false
   }
   await Promise.all([rollupP, plansP, wfRunsP])
+  if (disposed) return
   // A session that is already closed never needs the perpetual poll: run one
   // bounded catch-up (crash recovery) and stop. Live sessions keep the poll.
   if (session.value?.ended_at) {
@@ -681,9 +1196,36 @@ async function runInitialLoad() {
   }
 }
 
+// The palette is mounted by AppLayout, a SIBLING of this view under
+// <router-view>, so provide/inject cannot reach it — the registry is how the
+// open trace hands over its spans and its open-a-span move. Unregistering on
+// unmount matters: a stale source would let the palette offer to open spans
+// of a session that is no longer on screen.
+let unregisterSearchSource = null
+let unregisterSpanEvents = null
+
+// The ingest addresses its frame at the canonical id, which this view only
+// learns once the session loads — so the route id is declared on mount and the
+// pair once it is known, rather than leaving a window where the open session's
+// own frames are addressed to nobody.
+watch(() => [route.params.id, session.value?.canonical_trace_id],
+      ([routeId, canonical]) =>
+        setTraceInterest(onSpanFrame, [routeId, canonical]))
+
 onMounted(async () => {
+  unregisterSpanEvents = onTraceSpans(onSpanFrame)
+  setTraceInterest(onSpanFrame,
+                   [route.params.id, session.value?.canonical_trace_id])
+  unregisterSearchSource = registerTraceSearchSource({
+    traceId: route.params.id,
+    spans: () => allSpans.value,
+    openSpan: openSpanFromSearch,
+    // The preview reads spans the same way `openSpan` does, minus the reader:
+    // a server-side hit is routinely outside the pages this view has loaded.
+    hydrate: loadSpanById,
+  })
   await runInitialLoad()
-  if (viewMode.value === 'terminal') guarded(ensureTerminalSpansLoaded)
+  if (viewMode.value === 'log') guarded(ensureTerminalSpansLoaded)
   if (viewMode.value === 'messages') guarded(ensureAgentMessagesLoaded)
   // The watcher below only fires on a CHANGE, so a load that lands directly on
   // the conversation tab (its localStorage default) never fetched turn_usage —
@@ -696,31 +1238,39 @@ onMounted(async () => {
   // app shell's `.content-scroll`, an ancestor of this view.
   document.addEventListener('scroll', onCollapseScroll, { capture: true, passive: true })
   document.addEventListener('keydown', onHeaderKey)
+  await nextTick()
+  syncScrolledDeep()
   document.addEventListener('wheel', markScrollInput, { capture: true, passive: true })
   document.addEventListener('touchmove', markScrollInput, { capture: true, passive: true })
   document.addEventListener('mousedown', onScrollbarMouseDown, { capture: true, passive: true })
   document.addEventListener('keydown', onScrollInputKey)
+  document.addEventListener('visibilitychange', onTraceVisible)
 })
 
 onUnmounted(() => {
   // Scroll/wheel/touch listeners are detached by useTraceScroll(); the
   // sticky-header observer + compact poll are torn down by their composables.
+  disposed = true
+  unregisterSpanEvents?.()
+  unregisterSpanEvents = null
+  unregisterSearchSource?.()
+  unregisterSearchSource = null
   stopLivePoll()
-  if (expandTimer) { clearTimeout(expandTimer); expandTimer = null }
   document.removeEventListener('scroll', onCollapseScroll, { capture: true })
   document.removeEventListener('keydown', onHeaderKey)
   document.removeEventListener('wheel', markScrollInput, { capture: true })
   document.removeEventListener('touchmove', markScrollInput, { capture: true })
   document.removeEventListener('mousedown', onScrollbarMouseDown, { capture: true })
   document.removeEventListener('keydown', onScrollInputKey)
+  document.removeEventListener('visibilitychange', onTraceVisible)
 })
 
-// When the user enters the Terminal tab (or lands on it via localStorage
+// When the user enters the Log tab (or lands on it via localStorage
 // restore), fetch every span — not the shallow root-only set the other
 // tabs use. Conversation tab also needs turns to render the right-rail
 // timeline, so trigger that load here too.
 watch(viewMode, async (mode) => {
-  if (mode === 'terminal') {
+  if (mode === 'log') {
     await guarded(ensureTerminalSpansLoaded)
   } else if (mode === 'messages') {
     await guarded(ensureAgentMessagesLoaded)
@@ -729,31 +1279,56 @@ watch(viewMode, async (mode) => {
   }
 })
 
+// The requests a reconcile owes on top of `/map`. Every one of them reads data
+// derived from the tail, so a tick whose fingerprint did not move owes none —
+// the single exception is the open reader, whose span grows in place and is
+// therefore invisible to any tail identifier.
+function reloadFollowUps(tailChanged) {
+  const tasks = []
+  // A span open in the reader may still be being written — a running Bash's
+  // stdout, an assistant response mid-stream. Its content is cached
+  // write-once and that cache is overlaid on top of every later /map, so
+  // without an explicit re-read the reader shows the length the span had
+  // when it was opened, forever, while the poll delivers the rest. Scoped to
+  // the ONE span being read, and only while it can still GROW: a settled span
+  // re-read every four seconds is a request that can never return anything.
+  // `index >= 0` as well: a DETACHED span (one the walk cannot see, so the
+  // reader is rendering a snapshot captured at open) is never re-read from
+  // `allSpans`, so a forced fetch for it could not reach the screen.
+  if (presentSpanGrowing.value && present.index.value >= 0) {
+    tasks.push(fetchSpanContent(present.presentId.value, { force: true }))
+  }
+  if (!tailChanged) return tasks
+  tasks.push(fetchToolRollup())
+  // A scoped agent's spans live in ITS trace — nothing the parent's tail
+  // reconcile can see. The roster rides every tick, so its entry is what
+  // says whether the child moved (useAgentTrace.refresh keys on it).
+  if (traceScope.scopedAgent) tasks.push(agentTrace.refresh(traceScope.scopedAgent))
+  // Messages tab rides the same live poll: cheap per-session query.
+  if (viewMode.value === 'messages') tasks.push(ensureAgentMessagesLoaded())
+  // Only refetch turns if they're loaded AND visible. While folded the
+  // user isn't reading them, so defer the cost; mark stale and let the
+  // unfold action pull the fresh copy in.
+  if (turns.value != null) {
+    if (turnsCollapsed.value) turnsStale.value = true
+    else tasks.push(fetchTurns())
+  }
+  return tasks
+}
+
 async function reload() {
   if (reloading.value) return
   reloading.value = true
   try {
-    const tasks = [reloadLiveTail(), fetchToolRollup()]
-    // A RUNNING scoped agent keeps growing spans under its start marker —
-    // the trailing-roots refresh misses agents anchored under older prompts.
-    if (traceScope.scopedAgent?.running && traceScope.startSpanId) {
-      tasks.push(refreshSpanSubtree(traceScope.startSpanId))
-    }
-    // Messages tab rides the same live poll: cheap per-session query.
-    if (viewMode.value === 'messages') tasks.push(ensureAgentMessagesLoaded())
-    // Only refetch turns if they're loaded AND visible. While folded the
-    // user isn't reading them, so defer the cost; mark stale and let the
-    // unfold action pull the fresh copy in.
-    if (turns.value != null && !turnsCollapsed.value) {
-      tasks.push(fetchTurns())
-    } else if (turns.value != null && turnsCollapsed.value) {
-      turnsStale.value = true
-    }
-    await Promise.all(tasks)
+    // Serialised, not raced with the rest: the tail's answer is what says
+    // whether the rest is worth asking for. One extra round-trip on a tick
+    // that changed, five requests saved on one that did not.
+    const tailChanged = await reloadLiveTail()
+    await Promise.all(reloadFollowUps(tailChanged))
     lastReloadedAt.value = new Date()
     reloadFailed.value = false
     reloadErrorDetail.value = ''
-    maybeStopOnConverge()
+    maybeStopOnConverge(tailChanged)
   } catch (e) {
     // Swallowed on purpose: every caller but syncClosedSessionTail invokes
     // this unawaited, so a rethrow is an unhandled rejection and nothing more.
@@ -837,7 +1412,7 @@ async function onOverviewSpanClick(node) {
     expandedKeys.value = { ...expandedKeys.value, [node.key]: true }
     await ensureNodeChildrenLoaded(spanId)
   }
-  // Timeline + terminal rows live inside data-span-id-marked tables, so
+  // Timeline + log rows live inside data-span-id-marked tables, so
   // the existing poll-and-scroll helper finds them. Conversation view
   // tracks DOM refs via promptRefs and scrolls itself off its own
   // selectedSpan watcher — calling scrollSpanRowIntoView there would
@@ -853,6 +1428,18 @@ async function onOverviewSpanClick(node) {
 const { traceStart, traceEnd, traceDuration, activeWorkMs } =
   useTraceTimeline(session, allSpans)
 
+// Highest floor first — the find() below returns on the first one cleared.
+const CTX_TONE_STEPS = [[80, 'text-red-600'], [50, 'text-amber-600']]
+
+// Thresholds mirror TraceVitalsStrip's gauge, so a session reading "amber" in
+// the strip reads amber in the collapsed header too.
+function ctxTone(pct) {
+  if (pct == null) return 'text-slate-400'
+  return CTX_TONE_STEPS.find(([floor]) => pct >= floor)?.[1] ?? 'text-emerald-600'
+}
+
+const orDash = (value, format) => (value != null ? format(value) : '—')
+
 // Compact-header digest: the five vitals that survive the collapse — spans,
 // duration, tokens, cost, ctx%. Reads the same sources as TraceVitalsStrip
 // (tool rollup first, session fields as fallback) so the two never disagree.
@@ -865,14 +1452,13 @@ const headerDigest = computed(() => {
   const totalTok = (Number.isFinite(rollTokens) && rollTokens > 0)
     ? rollTokens : (s.total_tokens ?? null)
   const ctx = Number.isFinite(s.context_pct) ? s.context_pct : null
-  const ctxTone = ctx == null ? 'text-slate-400'
-    : ctx >= 80 ? 'text-red-600' : ctx >= 50 ? 'text-amber-600' : 'text-emerald-600'
+  const spend = Number.isFinite(spendUsd) ? spendUsd : null
   return [
     { key: 'spans', value: String(s.span_count_total ?? allSpans.value.length), label: 'spans', tone: 'text-slate-700' },
     { key: 'duration', value: fmtDuration(Math.round(traceDuration.value)) || '—', label: '', tone: 'text-slate-700' },
-    { key: 'tokens', value: totalTok != null ? fmtTokens(totalTok) : '—', label: 'tok', tone: 'text-slate-700' },
-    { key: 'cost', value: Number.isFinite(spendUsd) ? fmtCost(spendUsd) : '—', label: '', tone: 'text-emerald-600' },
-    { key: 'ctx', value: ctx != null ? `${ctx}%` : '—', label: 'ctx', tone: ctxTone },
+    { key: 'tokens', value: orDash(totalTok, fmtTokens), label: 'tok', tone: 'text-slate-700' },
+    { key: 'cost', value: orDash(spend, fmtCost), label: '', tone: 'text-emerald-600' },
+    { key: 'ctx', value: orDash(ctx, p => `${p}%`), label: 'ctx', tone: ctxTone(ctx) },
   ]
 })
 
@@ -881,20 +1467,29 @@ const headerDigest = computed(() => {
 // jump. If the span isn't in the loaded shallow set, walk the roots
 // calling `ensureSpanSubtreeLoaded` until it materialises; the existing
 // `selectedSpan` watcher then does the scroll-and-highlight.
+// The fetch half of `selectSpanById`, with no view side effects at all. The
+// search palette previews a span without navigating to it, so hydrating one
+// must not switch the tab (which also persists), move the selection or open
+// the rail — closing the palette has to leave the trace where it was.
+async function loadSpanById(spanId) {
+  if (!spanId) return null
+  let span = allSpans.value.find(s => s.span_id === spanId)
+  if (span) return span
+  for (const node of treeNodes.value) {
+    if (node?.data?.span_id) {
+      // eslint-disable-next-line no-await-in-loop
+      await ensureSpanSubtreeLoaded(node.data.span_id)
+      span = allSpans.value.find(s => s.span_id === spanId)
+      if (span) return span
+    }
+  }
+  return null
+}
+
 async function selectSpanById(spanId) {
   if (!spanId) return
   setViewMode('conversation')
-  let span = allSpans.value.find(s => s.span_id === spanId)
-  if (!span) {
-    for (const node of treeNodes.value) {
-      if (node?.data?.span_id) {
-        // eslint-disable-next-line no-await-in-loop
-        await ensureSpanSubtreeLoaded(node.data.span_id)
-        span = allSpans.value.find(s => s.span_id === spanId)
-        if (span) break
-      }
-    }
-  }
+  const span = await loadSpanById(spanId)
   if (!span) return
   selectSpan(span)
   // These jumps come from chrome ABOVE the feed (a task row, a spend
@@ -960,12 +1555,24 @@ watch(selectedSpan, async (span) => {
 const {
   turns, turnsLoading, turnsCollapsed, turnsStale,
   selectedTurnUuid, expandedTurnUuid, maxTurnConsumption,
-  spanIdsInSelectedTurn,
+  spanIdsInSelectedTurn, turnsDetailLoaded,
   fetchTurns, loadTurns, toggleTurnsCollapsed,
   selectTurn, toggleTurnExpanded, storeTurnRow, handleSpanRefClick,
 } = useTurns(route, {
   allSpans, treeNodes, selectedSpan, selectedKeys, expandedKeys,
   ensureSpanSubtreeLoaded,
+  // The turns sidebar is the only reader of a turn's `span_refs` and
+  // `tool_summary`, and it renders inside the detail rail — closed by default
+  // on the conversation tab, which is where turns are fetched eagerly.
+  wantsDetail: () => turnsSidebarShown.value,
+})
+
+// Opening the rail is what makes those two fields worth their bytes, so the
+// first open re-reads with them rather than leaving the sidebar's click-jump
+// and tool line permanently missing from a lean first fetch.
+watch(turnsSidebarShown, (shown) => {
+  if (!shown || turns.value == null || turnsDetailLoaded.value) return
+  guarded(fetchTurns)
 })
 
 </script>
@@ -989,13 +1596,14 @@ const {
       @click="runInitialLoad"
     >Retry</Button>
   </div>
-  <div v-else-if="!session || !allSpans.length" class="empty-state">
+  <div v-else-if="!sessionKnown" class="empty-state">
     No spans found for this session.
   </div>
   <div
     v-else
     class="trace-detail-root"
-    :style="{ '--regin-trace-header-h': stickyChromeHeight ? stickyChromeHeight + 'px' : '0px' }"
+    :class="{ 'trace-bounded': boundedLayout }"
+    :style="{ '--regin-trace-header-h': headerOffset }"
   >
     <!-- Sticky page header: title row, tokens rollup, mini-timeline and
          the "more history" affordance pin to the top of `.content-scroll`
@@ -1008,9 +1616,39 @@ const {
     <div
       ref="stickyHeaderEl"
       data-testid="trace-sticky-header"
-      class="lg:sticky lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+      class="relative lg:sticky lg:-top-6 z-20 bg-white -mx-4 -mt-4 px-4 pt-4 lg:-mx-8 lg:-mt-6 lg:px-8 lg:pt-6 mb-4 border-b border-slate-200 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
       :class="headerCollapsed ? 'pb-3' : 'pb-4'"
     >
+    <!-- Pull-to-reveal meter: how much of the gesture that brings the full
+         header back has been paid. Deliberately OUT of flow — carried inside
+         the compact row it took 132-436px of layout width away from the title
+         at every width, permanently, to show something visible only during a
+         gesture; measured, the title collapsed from 382px to 75px at 1920 and
+         to zero at 1440. Absolute costs the row nothing.
+         Both the fill's scaleX and this wrapper's opacity are written
+         imperatively by the rAF loop in `useHeaderRevealPull`: routing
+         per-frame progress through reactive state re-renders the whole trace
+         and the page visibly shimmers. scaleX, never width — width relayouts
+         every frame. The hint names the cheaper route in the same breath as
+         the gesture, so the meter teaches H and then stops mattering. -->
+    <div
+      v-show="headerCollapsed"
+      data-header-pull-meter
+      data-testid="trace-header-pull-meter"
+      class="pointer-events-none absolute bottom-1 left-4 z-10 hidden items-center gap-2 opacity-0 transition-opacity duration-[140ms] ease-out lg:left-8 lg:flex"
+      aria-hidden="true"
+    >
+      <span class="inline-block h-[3px] w-[132px] overflow-hidden rounded-full bg-slate-200">
+        <span
+          data-header-pull-bar
+          class="block h-full w-full origin-left rounded-full bg-blue-600 will-change-transform"
+          style="transform: scaleX(0)"
+        ></span>
+      </span>
+      <span class="whitespace-nowrap font-mono text-[10.5px] leading-none tracking-wide text-slate-400">
+        keep pulling for session details · or press H
+      </span>
+    </div>
     <SessionTraceHeader
       :key="session?.trace_id"
       :session="session"
@@ -1029,11 +1667,20 @@ const {
       :collapsed="headerCollapsed"
       :digest="headerDigest"
       @update:view-mode="setViewMode"
-      @reload="reload"
+      @reload="reloadFromUser"
       @jump-to-task="jumpToTaskSpan"
       @toggle-collapse="toggleHeaderDetails"
     >
       <template #actions>
+        <!-- Seeded with this session's own cwd: the page already knows which
+             repo the operator is looking at, and a menu of every registered
+             repo would make them answer that again. -->
+        <NewSessionButton
+          variant="ghost"
+          :initial-cwd="session?.cwd || ''"
+          :scope="session?.trace_id || ''"
+          @launched="onSessionLaunched"
+        />
         <!-- Pane roster mode only in the ≥xl SPLIT presentation. In 'full'
              mode the popover picker is kept (as below xl): opening the pane
              roster there would silently yank the takeover back to a split
@@ -1071,8 +1718,6 @@ const {
       :selected-span="selectedSpan"
       :selected-turn-uuid="selectedTurnUuid"
       :span-ids-in-selected-turn="spanIdsInSelectedTurn"
-      :turns="turns"
-      :is-workflow="session?.is_workflow === true"
       :trace-start="traceStart"
       :trace-end="traceEnd"
       :trace-duration="traceDuration"
@@ -1128,12 +1773,39 @@ const {
          the pin as the header scrolls out. -->
     <div
       ref="compactBarEl"
-      class="lg:hidden sticky -top-4 z-20 -mx-4 mb-3 border-b border-slate-200 bg-white px-4 py-2 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
+      data-testid="trace-compact-bar"
+      class="lg:hidden sticky top-0 z-20 -mx-4 mb-3 border-b border-slate-200 bg-white px-4 py-2 shadow-[0_2px_4px_-2px_rgba(15,23,42,0.06)]"
     >
-      <div class="truncate text-[13px] font-semibold text-slate-800" :title="session.title || ''">
-        {{ session.title || 'Session timeline' }}
+      <div class="flex items-center gap-2">
+        <div class="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-800" :title="session.title || ''">
+          {{ session.title || 'Session timeline' }}
+        </div>
+        <!-- The only way back to the session details below lg, and only once
+             the full header has actually gone: it is not sticky at this width,
+             so while it is still on screen its own Details button is right
+             there and this would be a second one a step away. Once it scrolls
+             off, both of the other routes back are gone too — the
+             pull-to-reveal meter is `lg:flex`, and H is a keyboard the phone
+             does not have. -->
+        <Button
+          v-if="headerOffscreen"
+          variant="ghost"
+          size="sm"
+          class="h-auto shrink-0 gap-1 border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500"
+          :title="headerCollapsed ? 'Show session details' : 'Collapse header for more transcript'"
+          :aria-expanded="!headerCollapsed"
+          data-testid="compact-details-toggle"
+          @click="onCompactDetailsToggle"
+        ><span
+          aria-hidden="true"
+          class="inline-block leading-none transition-transform"
+          :class="headerCollapsed ? 'rotate-180' : ''"
+        >⌃</span>{{ headerCollapsed ? 'Details' : 'Hide' }}</Button>
       </div>
-      <div class="mt-1.5 flex gap-1 overflow-x-auto">
+      <!-- A scroller, not a wrapping row: a second line of tabs costs ~32px of
+           transcript on every scrolled screen. The edge fade is what stops the
+           clipped last tab from reading as a broken layout. -->
+      <div data-testid="trace-compact-modes" class="trace-compact-modes mt-1.5 flex gap-1 overflow-x-auto">
         <Button
           v-for="opt in MODE_OPTIONS"
           :key="opt.id"
@@ -1149,20 +1821,18 @@ const {
     </div>
 
     <!-- Queued prompts: typed while the agent is busy fire no hook, so they
-         can't show as spans; derived live from the transcript and transient —
-         they vanish from here the moment the agent dequeues them. -->
-    <div v-if="session?.queued_prompts?.length"
-         class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-      <div class="text-[11px] font-semibold uppercase tracking-wider text-amber-700 mb-1">
-        ⏳ {{ session.queued_prompts.length }} queued
-      </div>
-      <div v-for="(q, qi) in session.queued_prompts" :key="qi"
-           class="text-sm text-amber-900 truncate" :title="q.content">
-        {{ q.content }}
-      </div>
-    </div>
+         can't show as spans; served live and transient — they vanish from
+         here the moment the agent dequeues them. Editable/removable per row,
+         wherever the server gave the row an id. -->
+    <TraceQueuedPrompts
+      :items="queued.items"
+      :busy-ids="queued.busyIds"
+      :notice="queued.notice"
+      @edit="onQueueEdit"
+      @remove="e => queued.remove(e.id)"
+    />
 
-    <div class="flex flex-col lg:flex-row gap-4 lg:items-start">
+    <div class="trace-mode-row flex flex-col lg:flex-row gap-4 lg:items-start">
       <!-- Conversation view: feed (+ ≥xl companion pane) rendered outside Card
            so the feed sidebar, the pane, and the detail rail can each be
            sticky. The region owns the responsive scope layout (takeover <xl,
@@ -1170,6 +1840,8 @@ const {
       <template v-if="viewMode === 'conversation'">
         <TraceConversationRegion
           :trace-scope="traceScope"
+          :agent-spans="agentSpans"
+          :agent-loading="agentTrace.loading"
           :live-agents="liveAgents"
           :is-xl="isXl"
           :takeover="scopeTakeover"
@@ -1177,18 +1849,29 @@ const {
           :hide-toc="paneVisible && !is2xl"
           :feed="feedProps"
           :sticky-top="stickyChromeHeight"
+          :reader-open="present.isOpen.value"
+          @present="openPresent"
           @select-span="selectSpan($event)"
           @fetch-content="fetchSpanContent"
           @load-subtree="ensureSpanSubtreeLoaded"
+          @load-subtrees="ensureSpanSubtreesLoaded"
           @jump-live="jumpToLatestSpan"
           @enter-scope="traceScope.enter($event)"
           @exit="traceScope.exit()"
           @expand="setScopeMode('full')"
+          @follow-latest="collapseHeaderForFollow"
+          @resumed="onResumed"
         />
       </template>
 
       <template v-else>
-        <Card :no-padding="true" class="trace-content-card flex-1 min-w-0 w-full">
+        <!-- Timeline / log / pane / messages share one region: bounded, the card
+             IS the scroller, so the same helper finds it as finds the feed. -->
+        <Card
+          :no-padding="true"
+          class="trace-content-card flex-1 min-w-0 w-full"
+          :data-trace-scroller="boundedLayout ? '' : undefined"
+        >
           <!-- Timeline view: chronological event spine -->
           <template v-if="viewMode === 'timeline'">
             <SessionTimelineSpine
@@ -1202,8 +1885,8 @@ const {
             />
           </template>
 
-          <!-- Terminal view: flat log -->
-          <template v-else-if="viewMode === 'terminal'">
+          <!-- Log view: flat span log -->
+          <template v-else-if="viewMode === 'log'">
             <SessionTerminalLog
               :spans="allSpans"
               :turns="turns"
@@ -1212,6 +1895,16 @@ const {
               @fetch-content="fetchSpanContent"
               @load-subtree="ensureSpanSubtreeLoaded"
             />
+          </template>
+
+          <!-- Terminal view: a real PTY on the session's tmux pane -->
+          <template v-else-if="viewMode === 'pane'">
+            <div class="h-full min-h-[28rem]">
+              <SessionTerminalPane
+                :trace-id="String(route.params.id)"
+                :popout="true"
+              />
+            </div>
           </template>
 
           <!-- Messages view: send_to_user feed as a vertical timeline -->
@@ -1246,9 +1939,9 @@ const {
            end of this template instead of a stacked-below-the-feed aside
            the user would never see. -->
       <aside
-        v-if="isLgUp && detailRailShown"
-        class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:self-start lg:overflow-y-auto z-10"
-        :style="{
+        v-if="turnsSidebarShown"
+        class="trace-detail-rail w-full lg:shrink-0 lg:sticky lg:self-start lg:overflow-y-auto z-10"
+        :style="boundedLayout ? null : {
           /* Page header is sticky-pinned with top: -1.5rem (lg padding-top)
              so its background covers .content-scroll padding-top. The
              sidebar pins flush under it: `header_h - 1.5rem + small gap`. */
@@ -1256,7 +1949,15 @@ const {
           maxHeight: stickyHeaderHeight ? `calc(100vh - ${stickyHeaderHeight}px - 2rem)` : 'calc(100vh - 6rem)',
         }"
       >
-        <div v-if="viewMode === 'conversation'" class="flex justify-end mb-2">
+        <div v-if="viewMode === 'conversation'" class="flex justify-end gap-1.5 mb-2">
+          <Button
+            v-if="selectedSpan"
+            variant="ghost"
+            class="gap-1 px-2 py-1 h-auto rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
+            aria-label="Open full content"
+            title="Read this span in full (P)"
+            @click="openPresent(selectedSpan)"
+          >⤢ Present</Button>
           <Button
             variant="ghost"
             class="gap-1 px-2 py-1 h-auto rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
@@ -1299,12 +2000,17 @@ const {
          visible feedback. Backdrop tap or the close button dismisses the
          sheet; the selection itself is kept (desktop parity). -->
     <Teleport to="body">
+      <!-- `bg-slate-900/40` INVERTS under the dark theme (the whole slate ramp
+           does), so the dim scrim became a near-white veil over the page.
+           `--scrim-rgb` is the token every other modal layer moved to; this
+           teleported sheet — the one that stacks directly under the
+           presentation reader — was the surface that sweep missed. -->
       <div
         v-if="!isLgUp && sheetOpen && selectedSpan && viewMode !== 'messages'"
-        class="fixed inset-0 z-40 cursor-pointer bg-slate-900/40 hover:bg-slate-900/45"
+        class="fixed inset-0 z-40 cursor-pointer transition-colors bg-[rgba(var(--scrim-rgb),0.4)] hover:bg-[rgba(var(--scrim-rgb),0.45)]"
         @click.self="sheetOpen = false"
       >
-        <div class="absolute inset-x-0 bottom-0 flex max-h-[75vh] cursor-auto flex-col rounded-t-xl bg-white shadow-2xl">
+        <div class="absolute inset-x-0 bottom-0 flex max-h-[75vh] cursor-auto flex-col rounded-t-xl bg-surface shadow-2xl">
           <div class="flex items-center justify-between border-b border-slate-200 px-4 py-1.5">
             <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Span details</span>
             <Button
@@ -1327,13 +2033,22 @@ const {
         </div>
       </div>
     </Teleport>
+    <SpanPresentReader
+      v-bind="presentProps"
+      @close="present.closePresent()"
+      @sent="onReaderSent"
+      @move="movePresent"
+      @open-child="openPresent"
+      @toggle-only-body="present.toggleOnlyBody()"
+    />
+
     <!-- Infinite-feed-style footer: a quiet end-of-timeline marker, nothing
          else. Reload progress is signalled only by the header's Reload button
          (spinning icon + disabled); a second indicator down here blinked in and
          out on every live-poll tick, which read as the page flickering.
          `pb-20` below lg keeps the last rows scrollable clear of the fixed
          "Follow latest" pill. -->
-    <div class="mt-8 mb-4 pb-20 lg:pb-0 flex items-center justify-center text-slate-400">
+    <div class="trace-page-footer mt-8 mb-4 pb-20 lg:pb-0 flex items-center justify-center text-slate-400">
       <!-- Fixed-height row: parked at the bottom of a live session, any
            per-poll height change here clamped the scroll and the feed twitched
            up/down every few seconds. -->
@@ -1346,12 +2061,24 @@ const {
       </span>
     </div>
 
-    <!-- Back to top. Right-anchored so it never collides with the conversation
-         feed's centred "Follow latest" pill, which shares this bottom band. -->
+    <!-- Back to top takes whichever bottom corner is genuinely free, which is
+         not the same one at every width:
+           <lg  the sidebar is a drawer, so bottom-LEFT is empty — and the
+                right column is full (the quick-capture bubble, with the
+                follow-up composer's resting bubble stacked over it).
+           ≥lg  the sidebar owns the left corner and the button lands on its
+                nav rows, so it goes right, one tier above the quick-capture
+                bubble. `--corner-fab-*` (style.css) is that bubble's own box
+                and inset, so the clearance is by construction rather than by a
+                constant to re-guess whenever either moves — which is how the
+                two came to overlap at 375 and at 1440 alike. The composer's
+                bubble is inset from the viewport edge at this width (the feed
+                column is), so it does not join the stack.
+         The centred "Follow latest" pill keeps the middle of the same band. -->
     <Button
       v-if="scrolledDeep"
       variant="ghost"
-      class="fixed bottom-6 right-5 lg:right-8 z-20 h-auto gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 shadow-lg hover:border-slate-400 hover:bg-slate-50 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-blue-500"
+      class="fixed bottom-[calc(var(--corner-fab-inset)+max(var(--trace-rail-h,0px),var(--trace-dock-h,0px),var(--blocker-bar-h,0px)))] left-[var(--corner-fab-inset)] lg:left-auto lg:right-[var(--corner-fab-inset)] lg:bottom-[calc(var(--corner-fab-inset)+var(--corner-fab-size)+var(--corner-fab-gap)+max(var(--trace-rail-h,0px),var(--trace-dock-h,0px),var(--blocker-bar-h,0px)))] z-20 h-auto gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-600 shadow-lg hover:border-slate-400 hover:bg-slate-50 hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-blue-500"
       data-testid="trace-back-to-top"
       title="Back to the top of this session"
       @click="scrollToTop"
@@ -1363,6 +2090,39 @@ const {
 </template>
 
 <style scoped>
+/* Bounded layout: the header keeps its place and everything below it fills the
+   leftover height, each pane scrolling inside itself. `min-height: 0` on every
+   link of the chain, or a pane grows to its content and there is nothing left
+   to scroll. */
+.trace-bounded {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.trace-bounded > * { flex-shrink: 0; }
+.trace-bounded .trace-mode-row {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+/* Each pane ends at its own visible bottom edge now, so a page-wide end marker
+   would just be a permanent bar under them. */
+.trace-bounded .trace-page-footer { display: none; }
+.trace-bounded .trace-detail-rail {
+  position: static;
+  align-self: stretch;
+  max-height: none;
+}
+
+/* Narrower than the feed's own floor allows below 1120px, so the rail, the
+   mini TOC and a readable chat column all fit without a sideways scroll. */
+@media (min-width: 1024px) {
+  .trace-detail-rail { width: 340px; }
+}
+@media (min-width: 1024px) and (max-width: 1119px) {
+  .trace-detail-rail { width: 296px; }
+}
+
 /* The Terminal/Messages tabs render inside `.trace-content-card`, which the
    Card wraps in an overflow-auto container; keep it `overflow: visible` so a
    sticky descendant resolves to `.content-scroll`, and let a wide flat log
@@ -1375,4 +2135,22 @@ const {
     overflow-x: auto;
   }
 }
+/* Bounded, the card is the scroll region itself — a sticky descendant resolves
+   to it, which is the box that moves. */
+.trace-detail-root.trace-bounded :deep(.trace-content-card.card) {
+  overflow: auto !important;
+  min-height: 0;
+}
+
+/* The mode rail holds more tabs than a phone is wide. Scrolling is the right
+   answer (a second row costs transcript on every screen), but a hard clip
+   reads as a broken layout rather than as "there is more" — the fade is what
+   says which. `scrollbar-width: none` because an overlay scrollbar on a strip
+   this short covers the tab labels it is meant to describe. */
+.trace-compact-modes {
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
+}
+.trace-compact-modes::-webkit-scrollbar { display: none; }
 </style>

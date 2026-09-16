@@ -66,7 +66,9 @@ test('a text-bearing thinking card copies its full text; an empty one has no Cop
   await expect(fullRow).toBeVisible({ timeout: 10_000 })
   await expect(emptyRow).toBeVisible()
 
-  const copy = fullRow.getByRole('button', { name: 'Copy' })
+  // By test id, not by role: an accessible-name query over this view's DOM
+  // costs >1s, which loses the race against the button's own copied window.
+  const copy = fullRow.getByTestId('copy-button')
   await expect(copy).toHaveCount(1)
   await expect(emptyRow.getByRole('button', { name: 'Copy' })).toHaveCount(0)
 
@@ -77,17 +79,21 @@ test('a text-bearing thinking card copies its full text; an empty one has no Cop
 
   // Header layout with a duration present (the shape ~99% of real thinking
   // spans have): Copy and the duration share the row, Copy first, and both
-  // stay clear of the scrolling text box below.
+  // stay clear of the reasoning text below. That text is no longer its own
+  // scroller — presentation mode replaced the card's internal `overflow-y-auto`
+  // box with a clamp whose release valve is the reader — so the anchor is the
+  // clamped body itself.
   const duration = fullRow.getByText('4.0s')
   await expect(duration).toBeVisible()
   const [copyBox, durationBox] = await Promise.all([copy.boundingBox(), duration.boundingBox()])
   expect(copyBox.x + copyBox.width).toBeLessThanOrEqual(durationBox.x)
   expect(copyBox.y + copyBox.height).toBeLessThanOrEqual(
-    await fullRow.locator('.overflow-y-auto').first().evaluate(el => el.getBoundingClientRect().top),
+    await fullRow.getByText(THINKING_TEXT).evaluate(el => el.getBoundingClientRect().top),
   )
 
+  // The acknowledgement lands in the button itself, not in a page-level toast.
   await copy.click()
-  await expect(page.getByText('Copied!')).toBeVisible()
+  await expect(copy).toHaveText('Copied')
   expect(await page.evaluate(() => window.__copied)).toEqual([THINKING_TEXT])
 
   // The click belongs to the button, not the card: copying must not also

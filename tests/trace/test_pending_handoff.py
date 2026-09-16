@@ -437,6 +437,9 @@ def test_merge_slash_command_expansion_transferred_to_resolved_anchor():
     assert survivor['status_code'] == 'OK'
     assert survivor['attributes']['text'] == expansion
     assert len(survivor['attributes']['text']) > len('/goal-verified')
+    # `chars` counts the text it ships with. Left at the anchor's own 14, the
+    # reader's attribute rail contradicts the body beside it.
+    assert survivor['attributes']['chars'] == len(expansion)
 
 
 def test_merge_truncated_prompt_anchor_absorbs_full_placeholder_text():

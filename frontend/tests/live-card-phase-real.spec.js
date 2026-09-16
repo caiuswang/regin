@@ -93,7 +93,7 @@ test('real /map summary carries phase + agent_phase.main, and the header dot is 
   // The rendered header dot must match the server's main phase.
   const dot = header.locator('.live-status-dot')
   await expect(dot).toHaveClass(new RegExp(PHASE_TO_DOT[body.agent_phase.main]))
-  await expect(header.locator('.live-hd-status')).toContainText('finished')
+  await expect(header.locator('.live-hd-status')).toContainText('ended')
 })
 
 // ── The runner's own verdict, for a session regin launched ───────────
@@ -159,7 +159,7 @@ test('a stopping run says so, and offers neither stop nor cancel', async ({ page
   await expect(page.getByTestId('live-cancel-btn')).toHaveCount(0)
 })
 
-test('an owned run working through a silent tool call reads running, not inactive',
+test('an owned run working through a silent tool call reads working, not inactive',
   async ({ page }) => {
     // The bug: no spans for longer than the stale window, so the heuristic said
     // "inactive" while the child was plainly working. The runner's verdict wins.
@@ -167,7 +167,7 @@ test('an owned run working through a silent tool call reads running, not inactiv
     await stubbedPhase(page, traceId, 'working')
 
     const header = page.locator('[data-testid="live-header"]')
-    await expect(header.locator('.live-hd-status')).toContainText('running')
+    await expect(header.locator('.live-hd-status')).toContainText('working')
     await expect(header.locator('.live-status-dot'))
       .toHaveClass(/live-status-running/)
     await expect(page.getByTestId('live-cancel-btn')).toBeVisible()

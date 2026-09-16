@@ -8,7 +8,9 @@
 // mark-as-noise control; all the per-section display helpers live here. The
 // parent still owns trigger fetching (we emit `suppress-changed` to re-fetch).
 import { ref, computed } from 'vue'
-import { mcpParts, fmtTokens, denyBadgeLabel } from '../utils/traceFormatters.js'
+import { fmtTokens, denyBadgeLabel, askModeLabel, askModeMark, askOptMark } from '../utils/traceFormatters.js'
+import { plainText } from '../utils/plainText.js'
+import { visibleAttributeKeys as resolveAttributeKeys, isSendToUserSpan, mcpCallFor } from '../utils/spanAttributes.js'
 import { isAskSpan } from '../utils/liveRows.js'
 import Card from './Card.vue'
 import McpCallDetail from './McpCallDetail.vue'
@@ -29,75 +31,26 @@ defineEmits(['suppress-changed', 'view-message'])
 
 const promptExpanded = ref(false)
 
-// A send_to_user MCP call: its `user_message` is full markdown prose that the
-// Messages tab already renders properly. Don't dump the raw text in the
-// attributes table — offer a jump to the rendered feed instead.
-const isSendToUser = computed(() =>
-  /send[_-]to[_-]user/i.test(props.selectedSpan?.name || '')
-  || /send[_-]to[_-]user/i.test(props.selectedSpan?.attributes?.tool_name || ''))
-
-// An MCP tool call (e.g. memory recall): show the params asked and the
-// result returned as a dedicated round-trip, so the keys aren't just dumped
-// as opaque rows in the generic attributes table. send_to_user is excluded —
-// it has its own "View in Messages" affordance.
-const mcpCall = computed(() => {
-  const span = props.selectedSpan
-  if (!span || isSendToUser.value) return null
-  const a = span.attributes || {}
-  if (!a.mcp && !mcpParts(span.name)) return null
-  if (a.mcp_input == null && a.mcp_result == null) return null
-  return {
-    input: a.mcp_input,
-    inputDropped: a.mcp_input_truncated_bytes,
-    result: a.mcp_result,
-    resultDropped: a.mcp_result_truncated_bytes,
-  }
-})
-const MCP_HIDDEN_KEYS = ['mcp', 'mcp_input', 'mcp_result',
-  'mcp_input_truncated_bytes', 'mcp_result_truncated_bytes', 'tool_input_keys']
-
-// Hide keys from the generic attributes table that are rendered by a dedicated
-// section above (prose, Q&A, rule list, deny panel) to avoid duplicate reads.
-const visibleAttributeKeys = computed(() => {
-  const span = props.selectedSpan
-  if (!span || !span.attributes) return []
-  const keys = Object.keys(span.attributes)
-  const attrs = span.attributes
-  if (isSendToUser.value) {
-    return keys.filter(k => k !== 'user_message')
-  }
-  if (mcpCall.value) {
-    return keys.filter(k => !MCP_HIDDEN_KEYS.includes(k))
-  }
-  if (span.name === 'assistant_response' || span.name === 'prompt') {
-    return keys.filter(k => k !== 'text' && k !== 'estimated_start_time')
-  }
-  if (span.name === 'assistant.thinking') {
-    return keys.filter(k => k !== 'estimated_start_time')
-  }
-  if (isAskSpan(span)) {
-    return keys.filter(k => !['questions', 'answers', 'annotations',
-                              'denied', 'denial_reason', 'denial_reason_truncated_bytes',
-                              'deny_kind'].includes(k))
-  }
-  if (attrs.denied) {
-    return keys.filter(k => !['denied', 'denial_reason',
-                              'denial_reason_truncated_bytes', 'deny_kind'].includes(k))
-  }
-  if (span.name === 'rule.check') {
-    return keys.filter(k => ![
-      'applicable_rules', 'engine_tags',
-      'applicable_rule_count', 'violating_rule_count',
-      'total_rules', 'status', 'relative_path',
-    ].includes(k))
-  }
-  return keys
-})
+// Identity + which attributes are still worth a generic table row now resolve
+// through utils/spanAttributes.js, shared with the presentation reader: one
+// resolver means the rail and the reader can never disagree about a span.
+const isSendToUser = computed(() => isSendToUserSpan(props.selectedSpan))
+const mcpCall = computed(() => mcpCallFor(props.selectedSpan))
+const visibleAttributeKeys = computed(() => resolveAttributeKeys(props.selectedSpan))
 
 const selectedPromptText = computed(() => {
   if (props.selectedSpan?.name !== 'prompt') return ''
   return props.selectedSpan?.attributes?.text || ''
 })
+
+// The rail is a metadata surface: its prose box is an excerpt, so collapsed it
+// shows plain text — a clipped prompt that opens on "## " reads as broken. The
+// expanded state shows the prompt verbatim, marks and all.
+const promptBoxText = computed(() => (
+  promptExpanded.value || !selectedPromptNeedsExpand.value
+    ? selectedPromptText.value
+    : plainText(selectedPromptText.value)
+))
 
 const PROMPT_COLLAPSE_CHAR_THRESHOLD = 500
 const PROMPT_COLLAPSE_LINE_THRESHOLD = 8
@@ -176,7 +129,7 @@ function annotationNote(q) {
         class="relative bg-slate-50 border border-slate-200 rounded px-3 py-2 text-sm text-slate-800 whitespace-pre-wrap break-words"
         :class="promptExpanded || !selectedPromptNeedsExpand ? 'max-h-[40rem] overflow-y-auto' : 'max-h-40 overflow-hidden'"
       >
-        {{ selectedPromptText }}
+        {{ promptBoxText }}
         <div
           v-if="selectedPromptNeedsExpand && !promptExpanded"
           class="pointer-events-none absolute inset-x-0 bottom-0 h-12 rounded-b bg-gradient-to-t from-slate-50 to-transparent"
@@ -349,8 +302,17 @@ function annotationNote(q) {
           <div
             v-if="q.header"
             class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-0.5"
-          >{{ q.header }}{{ q.multiSelect ? ' · multi-select' : '' }}</div>
+          >{{ q.header }}</div>
           <div class="text-sm font-medium text-slate-800">{{ q.question }}</div>
+          <div
+            class="mt-1 inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium"
+            :class="q.multiSelect
+              ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+              : 'border-slate-200 bg-white text-slate-500'"
+          >
+            <span aria-hidden="true">{{ askModeMark(q.multiSelect) }}</span>
+            {{ askModeLabel(q.multiSelect) }}
+          </div>
         </div>
         <ul class="divide-y divide-slate-100">
           <li
@@ -362,7 +324,7 @@ function annotationNote(q) {
             <span
               class="shrink-0 mt-0.5 w-4 text-center font-mono text-xs"
               :class="isChosenOption(q, opt) ? 'text-green-600' : 'text-slate-300'"
-            >{{ isChosenOption(q, opt) ? '✓' : '○' }}</span>
+            >{{ askOptMark(q.multiSelect, isChosenOption(q, opt)) }}</span>
             <span class="min-w-0 flex-1">
               <span
                 class="block font-medium"

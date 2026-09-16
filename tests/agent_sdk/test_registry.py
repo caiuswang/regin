@@ -209,10 +209,15 @@ def test_a_reserved_run_counts_against_capacity():
 
 def test_a_reserved_run_is_not_reachable_yet():
     """Ownership is not reachability. A reservation must not put anything in
-    `_runs` for the control paths to call methods on."""
+    `_runs` for the control paths to call methods on.
+
+    A prompt is the one exception, and not a violation of that: it is held on
+    the reservation (`test_parked_prompts.py`) rather than handed to a runner
+    that does not exist. The controls have no such answer — stopping a run
+    that has not started is not a thing to defer — so they still refuse.
+    """
     registry.reserve_run("t1")
 
-    assert registry.submit_prompt("t1", "hi") == (False, "no live agent session")
     assert registry.stop_run("t1") == (False, "no live agent session")
     assert registry.queued_prompts("t1") == []
 
@@ -265,3 +270,149 @@ def test_reserving_waits_on_the_registry_lock():
 
     assert blocked is True
     assert claimed.is_set() is True
+
+
+def test_the_run_and_the_retired_child_both_point_at_the_live_child():
+    """`/clear` retires a child and opens another. Every id the operator may
+    be holding has to resolve to the conversation that is actually running."""
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+    assert registry.live_child("t1") == "child-a"
+    assert registry.live_child("child-a") is None
+
+    registry.register_alias("child-b", "t1")
+
+    assert registry.live_child("t1") == "child-b"
+    assert registry.live_child("child-a") == "child-b"
+    # The live one has nothing to redirect to — that is what makes the field
+    # null in the ordinary case rather than self-referential.
+    assert registry.live_child("child-b") is None
+    # The retired id still reaches the runner, or a steer sent from the page
+    # the operator is on would have nowhere to go.
+    assert registry.owning_run("child-a") == "t1"
+
+
+def test_a_run_that_is_not_live_has_no_live_child():
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+    registry.unregister_run("t1")
+
+    assert registry.live_child("t1") is None
+    assert registry.live_child("child-a") is None
+
+
+def test_an_unknown_id_has_no_live_child():
+    assert registry.live_child("nobody") is None
+
+
+def test_restating_an_old_alias_does_not_move_the_live_child_backwards():
+    """The supervisor registers a resumed session's id at claim time, and the
+    runner may by then have moved on to a child `/clear` opened. A repeat of
+    the older alias must not re-point the run at a conversation that is over."""
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+    registry.register_alias("child-b", "t1")
+
+    registry.register_alias("child-a", "t1")
+
+    assert registry.live_child("t1") == "child-b"
+
+
+# ── publishing the succession a `/clear` makes ───────────────
+#
+# The frame is the only thing that moves a page off a session that has ended.
+# `agent_bridge.succession` cannot raise it for a run: it resolves the heir
+# through the pane registry, and a regin-launched child never registers one
+# (`agent_sdk/client.py` sets `REGIN_BRIDGE=0`). So this module publishes it,
+# from the reader that hears the CLI name the new child.
+
+
+@pytest.fixture
+def frames(monkeypatch):
+    """Collect what `register_alias` broadcasts, without a live hub."""
+    from lib.notifications import hub
+    seen = []
+    monkeypatch.setattr(hub, "broadcast_event",
+                        lambda name, payload, **kw: seen.append((name, payload)))
+    return seen
+
+
+def test_a_clear_publishes_the_successor_to_both_stranded_ids(frames):
+    """A page can be mounted on the retired child OR on the run itself, whose
+    durable `cli_session_id` names the first child forever. The client acts
+    only on the frame matching its route, so both have to be raised."""
+    from lib.notifications import hub
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+    assert frames == []                      # the first child succeeds nothing
+
+    registry.register_alias("child-b", "t1")
+
+    assert frames == [
+        (hub.SUCCESSOR_EVENT,
+         {'trace_id': 'child-a', 'successor_trace_id': 'child-b'}),
+        (hub.SUCCESSOR_EVENT,
+         {'trace_id': 't1', 'successor_trace_id': 'child-b'}),
+    ]
+
+
+def test_restating_a_known_alias_publishes_nothing(frames):
+    """The supervisor re-registers a resumed session's id at claim time. That
+    is not a succession, and a frame for it would bounce the operator onto a
+    conversation that is over."""
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+    registry.register_alias("child-b", "t1")
+    frames.clear()
+
+    registry.register_alias("child-b", "t1")
+
+    assert frames == []
+
+
+def test_an_older_alias_restated_publishes_nothing(frames):
+    """`child-a` is already known, so it neither moves the pointer backwards
+    nor announces itself as anyone's successor."""
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+    registry.register_alias("child-b", "t1")
+    frames.clear()
+
+    registry.register_alias("child-a", "t1")
+
+    assert frames == []
+    assert registry.live_child("t1") == "child-b"
+
+
+def test_a_broadcast_failure_does_not_reach_the_runner(monkeypatch):
+    """This runs on the runner's message path; a fan-out failure must cost the
+    turn nothing, and the pointer must still have moved."""
+    from lib.notifications import hub
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError("hub down")
+
+    monkeypatch.setattr(hub, "broadcast_event", _explode)
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+
+    registry.register_alias("child-b", "t1")
+
+    assert registry.live_child("t1") == "child-b"
+
+
+def test_the_pointer_is_committed_before_the_frame_is_raised(frames,
+                                                             monkeypatch):
+    """A frame that raced its own write would send every reader back to
+    re-read the child that just retired."""
+    from lib.notifications import hub
+    observed = []
+    monkeypatch.setattr(
+        hub, "broadcast_event",
+        lambda name, payload, **kw: observed.append(registry.live_child("t1")))
+    registry.register_run("t1", object())
+    registry.register_alias("child-a", "t1")
+
+    registry.register_alias("child-b", "t1")
+
+    assert observed == ["child-b", "child-b"]

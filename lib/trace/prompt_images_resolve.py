@@ -85,7 +85,7 @@ def resolve_prompt_images(
     """
     inline_images = inline_images or []
 
-    indices = _parse_marker_indices(prompt_text)
+    indices = parse_markers(prompt_text)
     if not indices:
         # Legacy fallback: prompts that didn't include `[Image #N]` markers
         # but did inline image parts (rare). Number them 1..N by order.
@@ -106,7 +106,7 @@ def resolve_prompt_images(
     return out
 
 
-def _parse_marker_indices(prompt_text: str) -> list[int]:
+def parse_markers(prompt_text: str) -> list[int]:
     """Ordered, de-duplicated `[Image #N]` indices in the prompt text."""
     indices: list[int] = []
     seen: set[int] = set()

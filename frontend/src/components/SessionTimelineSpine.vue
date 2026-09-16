@@ -9,6 +9,7 @@
 // `onNodeSelect` / `toggleTimelineNode` handlers already expect.
 import { computed } from 'vue'
 import { fmtDuration } from '../utils/traceFormatters.js'
+import { runStateOf } from '../utils/liveRows.js'
 import TimelineSpineRow from './TimelineSpineRow.vue'
 
 const props = defineProps({
@@ -23,13 +24,33 @@ const props = defineProps({
 })
 const emit = defineEmits(['node-select', 'toggle-node'])
 
+// The strongest in-flight state anywhere in a node's LOADED subtree. A
+// collapsed node otherwise hides the only row that is still moving — the
+// marker is worth least exactly when the reader cannot see the row it is on.
+// `waiting` outranks `running`: one of them needs the reader, the other does
+// not. Unloaded children yield nothing, which is honest — the tree cannot
+// claim a state for spans it has never seen.
+function subtreeRunState(node) {
+  let found = ''
+  for (const child of node?.children || []) {
+    const own = runStateOf(child?.data) || subtreeRunState(child)
+    // Not an early return on the first hit: a `waiting` anywhere below must
+    // beat a `running` found earlier in the walk, so only `waiting` short-
+    // circuits.
+    if (own === 'waiting') return 'waiting'
+    if (own) found = own
+  }
+  return found
+}
+
 const rows = computed(() => {
   const out = []
   const walk = (nodes, depth) => {
     for (const n of nodes || []) {
       if (!n?.key || !n?.data?.span_id) continue
-      out.push({ node: n, depth })
-      if (props.expandedKeys[n.key] && n.children?.length) walk(n.children, depth + 1)
+      const open = props.expandedKeys[n.key] && n.children?.length
+      out.push({ node: n, depth, foldedRunState: open ? '' : subtreeRunState(n) })
+      if (open) walk(n.children, depth + 1)
     }
   }
   walk(props.treeNodes, 0)
@@ -64,6 +85,7 @@ function onToggle(node) { emit('toggle-node', node) }
       :expanded="!!expandedKeys[r.node.key]"
       :has-kids="!r.node.leaf"
       :child-count="r.node.data.child_count || 0"
+      :folded-run-state="r.foldedRunState"
       :root-max-ms="rootMaxMs"
       :trace-start="traceStart"
       :show-cost="showCost"

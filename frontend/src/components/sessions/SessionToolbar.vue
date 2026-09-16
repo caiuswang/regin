@@ -103,6 +103,11 @@ const traceId = defineModel('traceId', { type: String, default: '' })
       @commit-trace-id="emit('search')"
     />
 
+    <!-- Trailing actions that act on the LIST rather than on a filter — the
+         batch group below is the same corner, but only while a selection
+         exists, so the two share the auto margin instead of competing. -->
+    <div v-if="$slots.actions" class="stoolbar__actions"><slot name="actions" /></div>
+
     <div v-if="selectionCount" class="stoolbar__batch" role="group" aria-label="Selected sessions">
       <span class="stoolbar__selcount">{{ selectionCount }} selected</span>
       <Button
@@ -161,12 +166,16 @@ const traceId = defineModel('traceId', { type: String, default: '' })
   height: 1.75rem;
   padding: 0 0.6875rem;
 }
+.stoolbar__actions,
 .stoolbar__batch {
   align-items: center;
   display: inline-flex;
   gap: 0.375rem;
   margin-left: auto;
 }
+/* Only the first trailing block claims the free space; the batch group then
+   sits directly beside it rather than being pushed onto its own line. */
+.stoolbar__actions ~ .stoolbar__batch { margin-left: 0; }
 .stoolbar__selcount {
   color: var(--color-fg-muted);
   font-size: 0.75rem;

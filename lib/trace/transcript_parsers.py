@@ -9,6 +9,18 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+# Claude Code writes the user's Esc as a standalone `type:user` text entry.
+# It carries none of the synthetic-entry flags (no isMeta, no
+# sourceToolAssistantUUID), so only the text distinguishes it from a typed
+# prompt. Prefix, not equality: the tool-call variant reads
+# `[Request interrupted by user for tool use]`.
+INTERRUPT_MARKER_PREFIX = '[Request interrupted by user'
+
+
+def is_interrupt_marker(text: str | None) -> bool:
+    """True when a user entry's text is Claude Code's interrupt marker."""
+    return bool(text) and text.strip().startswith(INTERRUPT_MARKER_PREFIX)
+
 
 def _delta_ms(start_iso: str | None, end_iso: str | None) -> int | None:
     """Return `end - start` in whole milliseconds, or None when either

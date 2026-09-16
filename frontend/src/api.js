@@ -52,6 +52,23 @@ function handleUnauthorized() {
   }
 }
 
+// The reading calls throw, so their failure detail has to ride on the Error.
+// `message` is the server's own `error`/`msg` field rather than the raw body —
+// a caller that renders it should not have to show `{"error":"not found"}` —
+// and `status` is carried so a caller can tell a refusal it has a sentence for
+// (400) apart from one it does not (a missing route, a dead server).
+async function requestError(res) {
+  const text = await res.text()
+  let msg = text
+  try {
+    const parsed = JSON.parse(text)
+    msg = parsed.error || parsed.msg || text
+  } catch { /* a non-JSON body is already its own message */ }
+  const err = new Error(msg || `Server error (${res.status})`)
+  err.status = res.status
+  return err
+}
+
 async function get(path) {
   const res = await fetch(`/api${path}`, {
     headers: authHeaders(),
@@ -60,7 +77,7 @@ async function get(path) {
     handleUnauthorized()
     throw new Error('Session expired. Please log in again.')
   }
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await requestError(res)
   return res.json()
 }
 
@@ -75,7 +92,7 @@ async function getBlobUrl(path) {
     handleUnauthorized()
     throw new Error('Session expired. Please log in again.')
   }
-  if (!res.ok) throw new Error(await res.text())
+  if (!res.ok) throw await requestError(res)
   return URL.createObjectURL(await res.blob())
 }
 

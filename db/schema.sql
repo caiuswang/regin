@@ -214,6 +214,35 @@ CREATE TABLE IF NOT EXISTS bridge_messages (
 CREATE INDEX IF NOT EXISTS idx_bridge_messages_trace ON bridge_messages(trace_id);
 CREATE INDEX IF NOT EXISTS idx_bridge_messages_created ON bridge_messages(created_at DESC);
 
+-- Images staged by a web composer (the /live card, the session-detail
+-- follow-up) on their way into a live session. Distinct from `prompt_images`,
+-- which is the settled record keyed to a real prompt span: a row here has no
+-- span yet, because the prompt it belongs to has not been typed. `idx` is the
+-- `[Image #N]` number handed to the composer, allocated per trace so it shares
+-- the terminal's own numbering; the marker travels in the delivered text and
+-- is what binds the bytes to the span once it lands (`claimed_span_id`).
+-- `dispatched_sha` is the disambiguator: the terminal's own paste numbers
+-- `[Image #N]` from 1 in the SAME trace, so a marker alone cannot say whether
+-- a prompt carried THIS image. It holds the digest of the exact text regin
+-- delivered, and a row binds only to a span whose text matches it.
+CREATE TABLE IF NOT EXISTS bridge_attachments (
+    id              TEXT PRIMARY KEY,
+    trace_id        TEXT NOT NULL,
+    idx             INTEGER NOT NULL,
+    media_type      TEXT NOT NULL,
+    bytes           BLOB NOT NULL,
+    byte_size       INTEGER NOT NULL,
+    sha256          TEXT NOT NULL,
+    file_path       TEXT,
+    dispatched_sha  TEXT,
+    claimed_span_id TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bridge_attachments_trace ON bridge_attachments(trace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bridge_attachments_trace_idx
+    ON bridge_attachments(trace_id, idx);
+
 -- Sessions regin launched itself through the Claude Agent SDK
 -- (`lib/agent_sdk/`). This is to the SDK tier what `bridge_panes` is to the
 -- tmux tier: a canonical, mutable, one-row-per-session identity record, and
@@ -243,6 +272,28 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_cli_session_id
     ON agent_runs(cli_session_id);
+
+-- Every `claude` session a run has been traced as. `agent_runs.cli_session_id`
+-- holds one child and stays pinned to the FIRST — which is what the trace view
+-- unions on, because a `/clear` opens a new conversation rather than
+-- continuing the old one. A run still accumulates children (the same runner
+-- drives each one in turn), and this is where the whole alias group lives, so
+-- `find_run`, the dual-writer guard, the resume picker and the settle sweep
+-- can see an heir instead of only the first child.
+-- One row per (run, child) pair; neither side is unique alone. A run has many
+-- children (that is what `/clear` makes), and a child appears under several
+-- runs, because resuming keeps the child's session id and leaves the previous
+-- `exited` row still naming it — the shape `reap_orphaned_runs` depends on.
+CREATE TABLE IF NOT EXISTS agent_run_sessions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id       TEXT NOT NULL,
+    cli_session_id TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (trace_id, cli_session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_run_sessions_trace_id
+    ON agent_run_sessions(trace_id);
 
 -- Post-hoc rubric grades for captured sessions (lib/grader/). Two
 -- independent axes per session — 'correctness' (claim groundedness /
@@ -318,6 +369,11 @@ CREATE INDEX IF NOT EXISTS idx_session_spans_name ON session_spans(name);
 CREATE INDEX IF NOT EXISTS idx_session_spans_parent ON session_spans(parent_id);
 CREATE INDEX IF NOT EXISTS idx_session_spans_tool_use_id ON session_spans(tool_use_id);
 CREATE INDEX IF NOT EXISTS idx_session_spans_trace_agent ON session_spans(trace_id, agent_id);
+-- Partial: the blocker feed asks which sessions hold an unresolved decision
+-- span on every poll. The predicate mirrors blockers._decision_predicate() —
+-- SQLite only uses a partial index when the query's terms are syntactically
+-- implied by the index's, so the two must not drift.
+CREATE INDEX IF NOT EXISTS idx_session_spans_pending ON session_spans(trace_id) WHERE status_code = 'PENDING' AND (name IN ('permission.request','tool.AskUserQuestion','tool.ExitPlanMode') OR span_id LIKE 'permreq-%');
 CREATE UNIQUE INDEX IF NOT EXISTS ux_session_spans_trace_span ON session_spans(trace_id, span_id);
 
 -- Per-session metadata, maintained incrementally at ingest time so the

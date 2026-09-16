@@ -16,7 +16,9 @@
 // and removable; a bridge steer's `b<row>` id can only dismiss its chip —
 // the keystrokes were already typed into the pane, so offering edit would be
 // a control that silently changes nothing. A transcript-derived row has no
-// id and no write path at all: it belongs to Claude Code.
+// id and no write path at all: it belongs to Claude Code. A `dropped` row is
+// a prompt the session accepted and then abandoned — dismiss-only, and the
+// only surviving copy of that text, since the send's ack cleared the composer.
 // The parent owns both round trips — a refusal has to keep the row.
 import LiveQueuedItem from './LiveQueuedItem.vue'
 
@@ -35,7 +37,7 @@ const emit = defineEmits(['edit', 'remove'])
       v-for="(q, i) in items"
       :key="q.id || `${i}-${(q.content || '').slice(0, 24)}`"
       :item="q"
-      :editable="!!q.id && q.source !== 'bridge'"
+      :editable="!!q.id && q.source === 'sdk'"
       :removable="!!q.id"
       :busy="busyIds.has(q.id)"
       @edit="e => emit('edit', e)"

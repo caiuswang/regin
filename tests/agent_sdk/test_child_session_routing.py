@@ -119,7 +119,7 @@ class _LiveRun:
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def enqueue(self, text: str) -> None:
+    def enqueue(self, text: str, *, images=None, row_id=None) -> None:
         self.queued.append(text)
 
     def wait_for_queued(self, timeout: float = 5.0) -> list[str]:

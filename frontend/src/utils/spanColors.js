@@ -36,3 +36,13 @@ export function barColor(name) {
 export function toolBadgeColor(name) {
   return barColor(name.startsWith('tool.') ? name : 'tool.' + name)
 }
+
+// Which colour family the ⤢ present affordance borrows on a span's card, so it
+// reads as part of the card rather than as floating chrome.
+export function presentTintFor(span) {
+  const n = span?.name || ''
+  if (n === 'tool.Edit' || n === 'tool.Write' || n === 'tool.MultiEdit' || n === 'file.edit') return 'diff'
+  if (n === 'rule.check') return 'rule'
+  if (n === 'subagent.start' || n === 'tool.Agent') return 'subagent'
+  return 'neutral'
+}

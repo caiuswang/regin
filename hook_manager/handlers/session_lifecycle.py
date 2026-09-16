@@ -134,7 +134,29 @@ def handle_end(payload: HookPayload) -> HookResponse | None:
                    key_aliases=(('reason', 'reason'),))
     except Exception:
         pass
+    _discard_pasted_images(payload.session_id)
     return HookResponse(suppress_output=True)
+
+
+def _discard_pasted_images(trace_id: str | None) -> None:
+    """Reclaim the image files this session's composer pasted.
+
+    They exist only so a tmux pane could open a path — keystrokes cannot carry
+    bytes — and the durable copy is the `prompt_images` blob the trace UI
+    serves, so nothing on screen changes when they go. The session ending is
+    the event that makes them dead rather than a guess about how long an
+    operator might still want them.
+
+    Best-effort, and deliberately silent: a session is ending, and a failure
+    to tidy up must not be the last thing that happens to it.
+    """
+    if not trace_id:
+        return
+    try:
+        from lib.agent_bridge import attachments  # noqa: PLC0415
+        attachments.discard_files(trace_id)
+    except Exception:  # noqa: BLE001 — housekeeping never breaks SessionEnd
+        pass
 
 
 def handle_stop_fallback(payload: HookPayload) -> HookResponse | None:

@@ -164,6 +164,36 @@ def test_recall_excludes_retired_expired_and_scoped():
     assert other_repo not in ids  # repo:other ∉ {global, repo:regin}
 
 
+def test_topic_lookups_scope_to_repo_plus_global():
+    """A scoped tree-nav walk sees `global` memories, as `recall` does.
+
+    The walk and the ranker read the same corpus through different queries; a
+    repo-only topic lookup would hide every cross-repo lesson from the walk
+    while `recall` for the same query still surfaced it.
+    """
+    store = memory.get_store()
+    here = _remember("topic scope union: repo memory", scope="repo:regin")
+    shared = _remember("topic scope union: global memory", scope="global")
+    elsewhere = _remember("topic scope union: other repo", scope="repo:other")
+    for mid in (here, shared, elsewhere):
+        store.link_authoritative_topic(mid, "scope-union-node",
+                                       source="manual")
+
+    scoped = set(store.memories_for_topic_subtree(["scope-union-node"],
+                                                  scope="repo:regin"))
+    assert {here, shared} <= scoped
+    assert elsewhere not in scoped
+
+    node = set(store.memories_for_topic_node("scope-union-node",
+                                             scope="repo:regin"))
+    assert {here, shared} <= node
+    assert elsewhere not in node
+
+    unscoped = set(store.memories_for_topic_subtree(["scope-union-node"],
+                                                    scope=None))
+    assert elsewhere in unscoped
+
+
 def test_recall_skips_test_rows_by_default():
     _remember("zulu yankee xray special words")
     assert memory.recall("zulu yankee xray", mode="fts") == []
@@ -586,8 +616,12 @@ def test_memories_for_topic_node_scope_and_status_filter():
     store.link_authoritative_topic(b, "topic-routing", source="manual")
     both = set(store.memories_for_topic_node("topic-routing"))
     assert both == {a, b}
+    # A scope filter on a retrieval path selects that repo *plus* global —
+    # the same union `recall` applies — so `b` stays visible to a scoped walk.
     scoped = store.memories_for_topic_node("topic-routing", scope="repo:regin")
-    assert scoped == [a]
+    assert set(scoped) == {a, b}
+    assert store.memories_for_topic_node("topic-routing",
+                                         scope="repo:other") == [b]
     # Retired memories drop out of the recall-time lookup.
     memory.forget(a)
     assert a not in store.memories_for_topic_node("topic-routing")

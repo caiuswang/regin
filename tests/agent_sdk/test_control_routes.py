@@ -19,7 +19,7 @@ def owned(monkeypatch):
     """A run this process claims to own, with its control calls stubbed."""
     calls = {}
 
-    def _prompt(trace_id, text):
+    def _prompt(trace_id, text, images=None):
         calls["prompt"] = (trace_id, text)
         return True, "prompt queued"
 

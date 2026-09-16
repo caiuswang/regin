@@ -7,9 +7,16 @@
 import { DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui'
 
 const open = defineModel('open', { type: Boolean, default: false })
+// Reka's own auto-focus stays prevented; a consumer that wants a specific
+// field focused listens for this instead of racing the portal's mount.
+defineEmits(['open-auto-focus'])
 defineProps({
   title: { type: String, default: '' },
   description: { type: String, default: '' },
+  // Opt-in wider shell for bodies that carry their own wide content — a
+  // terminal capture, a diff — which the default reading width squeezes into
+  // a horizontal-scroll ribbon.
+  wide: { type: Boolean, default: false },
 })
 </script>
 
@@ -20,7 +27,11 @@ defineProps({
     </DialogTrigger>
     <DialogPortal>
       <DialogOverlay class="ds-dialog-overlay" />
-      <DialogContent class="ds-dialog" @open-auto-focus.prevent>
+      <DialogContent
+        class="ds-dialog"
+        :class="{ 'ds-dialog-wide': wide }"
+        @open-auto-focus.prevent="$emit('open-auto-focus', $event)"
+      >
         <DialogTitle v-if="title" class="ds-dialog-title">{{ title }}</DialogTitle>
         <DialogDescription v-if="description" class="ds-dialog-desc">
           {{ description }}
@@ -39,7 +50,7 @@ defineProps({
   position: fixed;
   inset: 0;
   z-index: var(--z-modal);
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(var(--scrim-rgb), 0.45);
   backdrop-filter: blur(2px);
 }
 .ds-dialog {
@@ -58,6 +69,7 @@ defineProps({
   box-shadow: var(--ds-shadow-lg);
   padding: 1.25rem;
 }
+.ds-dialog-wide { width: min(72rem, calc(100vw - 3rem)); }
 .ds-dialog-title { font-size: 1rem; font-weight: 600; color: var(--color-fg); }
 .ds-dialog-desc { margin-top: 0.25rem; font-size: 0.8125rem; color: var(--color-fg-muted); }
 .ds-dialog-body { margin-top: 0.875rem; font-size: 0.8125rem; color: var(--color-fg); }

@@ -41,8 +41,9 @@ state, so deriving it fresh each poll avoids any append-only retire problem
 from __future__ import annotations
 
 import json
+import os
 import re
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from typing import NamedTuple
 
 # Single-pop removals: one item leaves the queue. `remove` is the legacy
@@ -136,6 +137,35 @@ def _apply_op(queue: list, enqueued: list, entry: dict) -> None:
         queue.clear()
 
 
+# Fold state per transcript: `{offset, queue, enqueued}`. The replay below is
+# a left fold over the file's lines, and the transcript is append-only, so the
+# bytes already folded can never change their contribution — resuming from the
+# offset is the same answer as re-reading from zero. It matters because this
+# runs on every poll of a live session, against a transcript that reaches tens
+# of megabytes: re-reading it whole was the single most expensive thing left in
+# the reconcile, and a mtime check could not have helped, because the file
+# grows on exactly the ticks that matter.
+#
+# Bounded to the few sessions a viewer has open; the state per entry is the
+# queue itself plus its enqueue log, both of which scale with the session's
+# queue traffic rather than with the transcript.
+_MAX_REPLAY_STATES = 8
+_replay_states: OrderedDict = OrderedDict()
+
+
+def _fold_line(raw: bytes, queue: list, enqueued: list) -> None:
+    # cheap prefilter — queue-ops are a tiny fraction of lines
+    if b'"queue-operation"' not in raw:
+        return
+    try:
+        e = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return
+    if e.get('type') != 'queue-operation':
+        return
+    _apply_op(queue, enqueued, e)
+
+
 def _replay_queue_ops(path: str) -> tuple[list, list]:
     """Replay a transcript's queue-operation entries in arrival order.
 
@@ -144,25 +174,50 @@ def _replay_queue_ops(path: str) -> tuple[list, list]:
     replayed: system auto-queue items occupy queue slots too, so they must
     take part in FIFO accounting; callers drop them from what they surface
     afterwards.
+
+    Only the bytes appended since the last call are folded; see the note on
+    `_replay_states`. A file that has SHRUNK was rewritten rather than
+    appended to, and the fold restarts from zero.
     """
-    queue: list = []
-    enqueued: list = []
     try:
-        with open(path) as f:
-            for line in f:
-                # cheap prefilter — queue-ops are a tiny fraction of lines
-                if '"queue-operation"' not in line:
-                    continue
-                try:
-                    e = json.loads(line)
-                except (ValueError, UnicodeDecodeError):
-                    continue
-                if e.get('type') != 'queue-operation':
-                    continue
-                _apply_op(queue, enqueued, e)
+        st = os.stat(path)
     except OSError:
         return [], []
-    return queue, enqueued
+    size = st.st_size
+    # Identity, not just length: a path can be replaced by a different file of
+    # equal or greater size (a rotated or rewritten transcript, or a path a
+    # later session reuses), and folding fresh bytes onto the previous file's
+    # state would carry a queue that never existed.
+    identity = (st.st_dev, st.st_ino)
+
+    state = _replay_states.get(path)
+    if state is None or state['identity'] != identity or size < state['offset']:
+        state = {'identity': identity, 'offset': 0, 'queue': [], 'enqueued': []}
+        _replay_states[path] = state
+    _replay_states.move_to_end(path)
+    while len(_replay_states) > _MAX_REPLAY_STATES:
+        # Least recently READ, so the session being polled is never the one
+        # evicted — insertion order would have thrown out the hottest entry
+        # and sent it back to re-reading the whole transcript.
+        _replay_states.popitem(last=False)
+
+    if size > state['offset']:
+        try:
+            with open(path, 'rb') as f:
+                f.seek(state['offset'])
+                chunk = f.read()
+        except OSError:
+            return [], []
+        # Stop at the last newline: a trailing partial line is a half-written
+        # record, and folding it would both fail to parse and consume bytes
+        # the next call must see whole.
+        cut = chunk.rfind(b'\n')
+        if cut != -1:
+            for raw in chunk[:cut + 1].split(b'\n'):
+                _fold_line(raw, state['queue'], state['enqueued'])
+            state['offset'] += cut + 1
+
+    return list(state['queue']), list(state['enqueued'])
 
 
 def _norm(content) -> str:
@@ -219,24 +274,46 @@ def _consumed_enqueue_ids(enqueued: list, consumed: dict) -> set:
     return done
 
 
+# A prompt that was QUEUED is not logged as a `type:user` turn when it finally
+# runs — Claude Code records it as a `queued_command` attachment carrying the
+# delivered text. Reading user turns alone therefore never sees a mid-turn
+# steer get processed, which is precisely the case a steer chip exists for: it
+# would stay up for the session's lifetime with the prompt long since answered.
+_QUEUED_COMMAND = 'queued_command'
+
+
+def _processed_text(entry: dict) -> str:
+    """Normalized body this record shows as PROCESSED, or '' for anything
+    that is not a completed prompt."""
+    kind = entry.get('type')
+    if kind == 'user':
+        if entry.get('isMeta'):
+            return ''
+        return _norm(_turn_text((entry.get('message') or {}).get('content')))
+    if kind == 'attachment':
+        attachment = entry.get('attachment') or {}
+        if attachment.get('type') == _QUEUED_COMMAND:
+            return _norm(attachment.get('prompt'))
+    return ''
+
+
 def _consumed_turns(path: str) -> dict:
-    """Normalized body → timestamps of the user turns the transcript has
-    already PROCESSED (non-meta `type:user`). Empty when unreadable."""
+    """Normalized body → timestamps of the prompts the transcript has already
+    PROCESSED (non-meta `type:user` turns and run queue entries). Empty when
+    unreadable."""
     turns: dict = defaultdict(list)
     try:
         with open(path) as f:
             for line in f:
-                # cheap prefilter on the value token — matches both compact
+                # cheap prefilter on the value tokens — matches both compact
                 # transcripts and any pretty-printed spacing around the colon
-                if '"user"' not in line:
+                if '"user"' not in line and _QUEUED_COMMAND not in line:
                     continue
                 try:
                     e = json.loads(line)
                 except (ValueError, UnicodeDecodeError):
                     continue
-                if e.get('type') != 'user' or e.get('isMeta'):
-                    continue
-                text = _norm(_turn_text((e.get('message') or {}).get('content')))
+                text = _processed_text(e)
                 if text:
                     turns[text].append(e.get('timestamp'))
                     command = _command_line(text)

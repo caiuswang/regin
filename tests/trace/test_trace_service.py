@@ -931,10 +931,8 @@ def test_session_title_user_override_is_sticky_against_ai_title(tmp_db):
     }
 
 
-def test_fetch_turn_usage_groups_spans_into_turns(tmp_db):
-    """Each turn row gets the spans whose start_time falls in its
-    interval `(prev_ts, this_ts]`, with structural names filtered and
-    tool_summary derived from `attributes.tool_name`."""
+def _seed_two_turns_with_spans(tmp_db):
+    """Two turns ~40s apart, with tool spans on both sides of the boundary."""
     import sqlite3, json
     # Two turns, ~40 s apart, in UTC (the transcript's format).
     #
@@ -993,6 +991,13 @@ def test_fetch_turn_usage_groups_spans_into_turns(tmp_db):
     finally:
         conn.close()
 
+
+
+def test_fetch_turn_usage_groups_spans_into_turns(tmp_db):
+    """Each turn row gets the spans whose start_time falls in its
+    interval `(prev_ts, this_ts]`, with structural names filtered and
+    tool_summary derived from `attributes.tool_name`."""
+    _seed_two_turns_with_spans(tmp_db)
     rows = trace_service.fetch_turn_usage('t-group')
     assert [r['turn_uuid'] for r in rows] == ['uuid-A', 'uuid-B']
 
@@ -1012,6 +1017,19 @@ def test_fetch_turn_usage_groups_spans_into_turns(tmp_db):
     assert b['span_count'] == 1
     assert b['span_refs'][0]['span_id'] == 's-mid-b'
     assert b['tool_summary'] == [{'name': 'Read', 'count': 1}]
+
+
+def test_fetch_turn_usage_without_refs_keeps_only_the_count(tmp_db):
+    """`span_refs` + `tool_summary` are the turns SIDEBAR's, and it renders
+    behind a rail that is closed on a fresh conversation-tab load — the one
+    place turns are fetched eagerly. They were 86KB of a 180KB first-open
+    response on a 223-turn session. `span_count` is a scalar and stays."""
+    _seed_two_turns_with_spans(tmp_db)
+    rows = trace_service.fetch_turn_usage('t-group', with_refs=False)
+    assert [r['span_count'] for r in rows] == [2, 1]
+    assert all('span_refs' not in r and 'tool_summary' not in r for r in rows)
+    # The default is still the full shape — the sidebar depends on it.
+    assert all('span_refs' in r for r in trace_service.fetch_turn_usage('t-group'))
 
 
 def test_fetch_turn_usage_empty_when_no_turns(tmp_db):

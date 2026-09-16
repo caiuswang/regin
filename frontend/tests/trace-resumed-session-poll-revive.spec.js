@@ -24,6 +24,19 @@ async function post(page, spans) {
 
 // Live-tail / initial-load map fetches: `/sessions/<id>/map?shallow=1&limit=...`
 // with NO `before_id` (load-older carries before_id and is scroll-driven only).
+// The resume's spans are stamped NOW: the flip is only visible as "Working"
+// while the session also looks recently-active, and a backdated resume reads
+// the (equally correct) "Inactive" instead.
+//
+// Server-local NAIVE, not UTC — the backend writes stamps with no zone and
+// `parseLocalIso` reads them as local, so a `toISOString()` stamp lands hours
+// off the server clock and the row ages out before the assertion runs.
+function nowIso(offsetSec) {
+  const tzOffsetMs = new Date().getTimezoneOffset() * 60_000
+  return new Date(Date.now() - tzOffsetMs + offsetSec * 1000)
+    .toISOString().replace('Z', '')
+}
+
 function isLiveTailMap(url, traceId) {
   return url.includes(`/sessions/${traceId}/map`) && !url.includes('before_id=')
 }
@@ -55,8 +68,8 @@ test('a resumed session flips back to Live and the poll re-arms', async ({ page 
   await page.goto(`/trace/sessions/${traceId}`)
   await expect(page.getByText('resumed session fixture prompt').first())
     .toBeVisible({ timeout: 10_000 })
-  await expect(page.getByText('Ended', { exact: true }).first())
-    .toBeVisible({ timeout: 10_000 })
+  const pill = page.getByTestId('session-status-pill')
+  await expect(pill).toHaveText('Ended', { timeout: 10_000 })
 
   // Let the bounded catch-up settle, then prove the poll has STOPPED before
   // the resume — otherwise the revival below proves nothing.
@@ -70,12 +83,12 @@ test('a resumed session flips back to Live and the poll re-arms', async ({ page 
   await post(page, [
     {
       trace_id: traceId, span_id: `start2-${short}`, parent_id: null, name: 'session.start',
-      start_time: '2026-05-18T09:00:00.000000', end_time: '2026-05-18T09:00:00.000000',
+      start_time: nowIso(0), end_time: nowIso(0),
       status_code: 'OK', attributes: { cwd: '/repo', source: 'resume', is_test: true },
     },
     {
       trace_id: traceId, span_id: `prompt2-${short}`, parent_id: null, name: 'prompt',
-      start_time: '2026-05-18T09:00:01.000000', end_time: '2026-05-18T09:00:02.000000',
+      start_time: nowIso(1), end_time: nowIso(2),
       status_code: 'OK', attributes: { text: 'keep going after resume', is_test: true },
     },
   ])
@@ -84,8 +97,7 @@ test('a resumed session flips back to Live and the poll re-arms', async ({ page 
   // Reload is the observation point that must re-arm the view.
   const beforeManualReload = liveTailMaps
   await page.getByRole('button', { name: 'Reload' }).first().click()
-  await expect(page.getByText('Live', { exact: true }).first())
-    .toBeVisible({ timeout: 10_000 })
+  await expect(pill).toHaveText('Working', { timeout: 10_000 })
 
   // The poll is back: beyond the manual reload's own fetch, further
   // live-tail map requests arrive on the 4s tick.

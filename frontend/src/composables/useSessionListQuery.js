@@ -32,7 +32,7 @@ export const KIND_OPTIONS = [
 export const ACTIVE_OPTIONS = [
   { value: 'all', label: 'Any' },
   { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Ended' },
+  { value: 'inactive', label: 'Not active' },
 ]
 
 export const RANGE_OPTIONS = [

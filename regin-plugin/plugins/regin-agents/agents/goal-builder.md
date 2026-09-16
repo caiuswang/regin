@@ -24,11 +24,12 @@ components, design tokens, hard gates, and the acceptance checklist).
    primitive, never raw emoji/glyphs as icons).
 3. **Implement against the acceptance checklist**, including the edge cases
    it names (states at 0 / 1 / N, empty/loading/error, counts vs source).
-4. **Run the hard gates yourself** (build, tests, lint/bundle engines),
-   **scoped to the diff** — `.venv/bin/python -m pytest -q -n auto
-   --dist=loadfile <touched paths>`, Playwright limited to the specs covering
-   the changed route. The bare `pytest -q` form is ~7× slower and gets killed
-   at the harness's 600s Bash ceiling, returning nothing for ten minutes.
+4. **Run the hard gates yourself** (build, tests, lint/complexity engines),
+   **scoped to the diff** — your repo's test runner limited to the touched
+   paths and parallelised if it supports it, browser/e2e specs limited to the
+   ones covering the changed route. The whole-suite form is commonly several
+   times slower and gets killed at the harness's 600s Bash ceiling, returning
+   nothing for ten minutes.
    **Paste each gate's verbatim command and output** — the verifier is told to
    reuse it rather than re-run the suite, so an unquoted "gates passed" costs
    the loop a full extra suite run.

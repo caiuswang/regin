@@ -18,6 +18,7 @@ import Button from '../ui/Button.vue'
 import Textarea from '../ui/Textarea.vue'
 import { useNotificationCenter } from '../../composables/useNotificationCenter'
 import { askQuestions, isAnswered, answerSummary } from '../../utils/blockerAsk'
+import { askModeLabel, askModeMark } from '../../utils/traceFormatters.js'
 
 const props = defineProps({
   row: { type: Object, required: true },
@@ -31,8 +32,17 @@ const total = computed(() => questions.value.length)
 const stepped = computed(() => total.value > 1)
 
 const at = ref(0)
-// The pager can swap in a card with fewer questions than the step we are on.
-watch(questions, () => { at.value = 0 })
+// Clamped on the question COUNT, never on `questions`'s identity. The card
+// surface re-reads `/agent-messages/blockers` on a 60s reconcile and on every
+// route entry, and that response replaces every row object wholesale, so an
+// identity watch fired on refreshes that changed nothing and threw the
+// operator back to question 1 in the middle of a multi-tab ask — the same
+// trap `BlockerPopout` keys its `phase`/`detail` off the card to avoid. A
+// card that genuinely changed remounts this component (the pop-out keys it by
+// card), so the only case left here is a re-prompt that shortened the ask.
+watch(total, (count) => {
+  if (at.value >= count) at.value = Math.max(0, count - 1)
+})
 
 const question = computed(() => questions.value[at.value] || {})
 const options = computed(() => (question.value.options || []).map((option, oi) => ({
@@ -44,8 +54,15 @@ const options = computed(() => (question.value.options || []).map((option, oi) =
 })))
 
 const answer = computed(() => blockerAnswers.value[at.value] || null)
+const multiSelect = computed(() => !!question.value.multiSelect)
 const picked = computed(
   () => (answer.value?.kind === 'option' ? answer.value.index : null))
+function isPicked(option) {
+  if (answer.value?.kind === 'multi') {
+    return (answer.value.indices || []).includes(option.index)
+  }
+  return picked.value === option.index
+}
 const typing = computed(() => answer.value?.kind === 'free')
 const draft = computed({
   get: () => answer.value?.text || '',
@@ -62,6 +79,18 @@ function stage(next) {
 }
 
 function pick(option) {
+  // A multi-select question is a checkbox list, not a radiogroup: tapping
+  // toggles membership and an emptied set is unanswered again, so Send stays
+  // blocked rather than submitting a question with nothing checked.
+  if (multiSelect.value) {
+    const chosen = new Set(answer.value?.kind === 'multi'
+      ? answer.value.indices : [])
+    if (chosen.has(option.index)) chosen.delete(option.index)
+    else chosen.add(option.index)
+    const indices = [...chosen].sort((a, b) => a - b)
+    stage(indices.length ? { kind: 'multi', indices } : { kind: null })
+    return
+  }
   stage({ kind: 'option', index: option.index, label: option.label })
 }
 
@@ -81,7 +110,9 @@ const groupEl = ref(null)
 
 function moveChoice(delta) {
   const count = options.value.length
-  if (!count) return
+  // Arrows select-and-move in a radiogroup; in a checkbox list they must only
+  // move focus, or navigating would silently tick every box passed over.
+  if (!count || multiSelect.value) return
   const from = picked.value === null ? 0 : picked.value + delta
   const next = ((from % count) + count) % count
   pick(options.value[next])
@@ -99,20 +130,24 @@ function moveChoice(delta) {
 
     <div class="blocker-popout-question">{{ question.question }}</div>
     <p v-if="question.header" class="blocker-popout-context">{{ question.header }}</p>
+    <div class="blocker-mode" :class="{ 'blocker-mode-multi': multiSelect }" data-testid="blocker-mode">
+      <span aria-hidden="true">{{ askModeMark(multiSelect) }}</span>
+      {{ askModeLabel(multiSelect) }}
+    </div>
 
     <div
       ref="groupEl"
       class="blocker-popout-options"
-      role="radiogroup"
+      :role="multiSelect ? 'group' : 'radiogroup'"
       :aria-label="`Answer options for question ${at + 1}`"
     >
       <div v-for="option in options" :key="option.at" class="blocker-optwrap">
         <Button
           variant="ghost"
           size="sm"
-          role="radio"
-          :aria-checked="picked === option.index"
-          :tabindex="option.at === (picked ?? 0) ? 0 : -1"
+          :role="multiSelect ? 'checkbox' : 'radio'"
+          :aria-checked="isPicked(option)"
+          :tabindex="multiSelect || option.at === (picked ?? 0) ? 0 : -1"
           :disabled="disabled"
           @keydown.down.prevent="moveChoice(1)"
           @keydown.right.prevent="moveChoice(1)"
@@ -121,11 +156,15 @@ function moveChoice(delta) {
           :class="[
             'blocker-popout-option h-auto w-full items-start justify-start',
             'whitespace-normal px-3 py-2.5 text-start hover:bg-transparent',
-            { 'blocker-popout-option-on': picked === option.index },
+            { 'blocker-popout-option-on': isPicked(option) },
           ]"
           @click="pick(option)"
         >
-          <span class="blocker-popout-radio" aria-hidden="true" />
+          <span
+            class="blocker-popout-radio"
+            :class="{ 'blocker-popout-check': multiSelect }"
+            aria-hidden="true"
+          />
           <span class="blocker-popout-option-text">
             <span class="blocker-popout-option-label">
               {{ option.label }}
@@ -282,10 +321,41 @@ function moveChoice(delta) {
   border: 2px solid var(--color-border-strong);
 }
 
+.blocker-mode {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+}
+
+.blocker-mode-multi {
+  border-color: var(--color-info);
+  background: var(--color-info-soft);
+  color: var(--color-info-strong);
+}
+
 .blocker-popout-option-on .blocker-popout-radio {
   border-color: var(--color-amber-500);
   background:
     radial-gradient(circle, var(--color-amber-500) 0 3.5px, transparent 3.5px);
+}
+
+/* A checkbox list must not wear a radio's circle: the control shape is the
+   only affordance saying more than one answer is allowed. */
+.blocker-popout-check {
+  border-radius: 0.22rem;
+}
+
+.blocker-popout-option-on .blocker-popout-check {
+  border-color: var(--color-amber-500);
+  background: var(--color-amber-500);
+  background-image: none;
 }
 
 .blocker-popout-option-text {

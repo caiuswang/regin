@@ -28,7 +28,9 @@ import { useLiveTail } from '../composables/useLiveTail.js'
 import { useLiveAgents } from '../composables/useLiveAgents.js'
 import { useLiveScope } from '../composables/useLiveScope.js'
 import { useQueuedPrompts } from '../composables/useQueuedPrompts.js'
+import { useSuccessorFollow } from '../composables/useSuccessorFollow'
 import { fmtClock, fmtDuration, fmtModel, terminalSpanLabel } from '../utils/traceFormatters.js'
+import { phaseLabel } from '../utils/sessionStatus.js'
 import { parseLocalIso } from '../utils/sessionActivity.js'
 import {
   CATEGORIES, filterSpans, countByCategory, isSignal, rowKind, isQaSpan,
@@ -64,13 +66,10 @@ async function onQueueEdit({ id, text, done }) {
 // source of truth (window-independent — the loaded tail silently drops
 // agents whose markers aged out); the server owns classification.
 const liveAgents = useLiveAgents(() => spans.value, () => meta.value.agent_roster)
-// Per-agent span scoping: scopeId re-partitions the tail to one subagent;
-// the header keeps showing MAIN-session truth. Scroll save/restore on
+// Per-agent span scoping: scopeId swaps the tail for one subagent's own
+// trace; the header keeps showing MAIN-session truth. Scroll save/restore on
 // enter/exit stays here (this view owns the tail element) via a watch.
-// loadOlder/hasMoreOlder are threaded in so the scope can auto-page an old
-// subagent's spans into view on first entry — no manual fold-row tap.
-const scope = useLiveScope(
-  () => spans.value, () => liveAgents.agents, loadOlder, () => hasMoreOlder.value)
+const scope = useLiveScope(() => spans.value, () => liveAgents.agents)
 
 // ── Filters (signal tier + category + search, all in the filter sheet) ──
 const showSystem = ref(false)
@@ -130,17 +129,24 @@ const hdScrolled = ref(false)
 // pulses only while working; waiting-* gets amber attention; idle a steady
 // green; inactive-stale amber; ended a grey done dot. A pre-summary fallback
 // keeps the header honest for the sub-second before the first phase lands.
+//
+// This header renders a FINER grain than the six-state fold in
+// sessionStatus.js — it keeps `idle` (alive at the prompt) apart from
+// `working`, and `stopping` apart from both, because an operator staring at
+// one session wants the distinction a rail dot has no room for. The words
+// still come from that vocabulary, so nothing here is a synonym for a state
+// the sessions list or the ⌘J palette already named.
 const PHASE_STATUS = {
-  ended: { cls: 'live-status-ended', label: '✓ finished' },
-  'inactive-stale': { cls: 'live-status-stale', label: 'inactive' },
-  idle: { cls: 'live-status-idle', label: 'idle' },
-  'waiting-permission': { cls: 'live-status-waiting', label: 'waiting' },
-  'waiting-input': { cls: 'live-status-waiting', label: 'waiting' },
-  working: { cls: 'live-status-running', label: 'running' },
+  ended: { cls: 'live-status-ended', label: `✓ ${phaseLabel('ended')}` },
+  'inactive-stale': { cls: 'live-status-stale', label: phaseLabel('inactive-stale') },
+  idle: { cls: 'live-status-idle', label: phaseLabel('idle') },
+  'waiting-permission': { cls: 'live-status-waiting', label: phaseLabel('waiting-permission') },
+  'waiting-input': { cls: 'live-status-waiting', label: phaseLabel('waiting-input') },
+  working: { cls: 'live-status-running', label: phaseLabel('working') },
   // Only a run regin owns reaches these: the server reads them off the live
   // runner, which knows things no span-derived heuristic can see.
-  starting: { cls: 'live-status-running', label: 'starting' },
-  stopping: { cls: 'live-status-waiting', label: 'stopping' },
+  starting: { cls: 'live-status-running', label: phaseLabel('starting') },
+  stopping: { cls: 'live-status-waiting', label: phaseLabel('stopping') },
 }
 const headerStatus = computed(() => {
   const s = PHASE_STATUS[mainPhase.value]
@@ -479,9 +485,27 @@ watch(() => meta.value.canonical_trace_id, (canon) => {
   // Only rename the session the poll actually loaded. A canonical id left over
   // from the card we just navigated away from would otherwise redirect to it.
   if (sessionId.value !== from) return
+  // A successor outranks a rename — both watchers read the same `meta` and can
+  // fire in one flush, where `route.params.id` has not moved yet, so both
+  // guards pass and the landing page would fall to declaration order.
+  //
+  // Only when they name DIFFERENT sessions, though. `successor_trace_id` is
+  // not clear-only: `register_alias` points `_live_children` at the first
+  // child it sees, so a page on a run's own `sdk-…` id carries it from the
+  // first poll, equal to the canonical id. Suppressing on that would strand a
+  // reloaded or bookmarked `/live/<sdk-id>` on the staging post forever — the
+  // rename gets one chance, and `successor_trace_id` never changes again to
+  // give it another.
+  const heir = meta.value.successor_trace_id
+  if (heir && heir !== canon) return
   canonicalizedTo = canon
   router.replace('/live/' + canon)
 })
+
+// `/clear` opens the next conversation in the same pane under a new id, which
+// this card's poll can never reach: it polls THIS session, and the heir's rows
+// land under another.
+useSuccessorFollow(() => sessionId.value, () => meta.value.successor_trace_id)
 
 // Re-init only while we're still ON the live route — leaving it also
 // changes route.params and would otherwise restart the poll mid-unmount.
@@ -570,7 +594,7 @@ onUnmounted(() => {
             >{{ liveAgents.runningCount }}</span>
           </Button>
           <Button
-            v-if="meta.bridge_reachable"
+            v-if="meta.bridge_pane"
             variant="ghost"
             size="icon"
             class="live-hd-btn"
@@ -653,12 +677,11 @@ onUnmounted(() => {
         <div v-if="error" class="live-empty">{{ error }}</div>
         <div v-else-if="loading && !spans.length" class="live-empty">loading…</div>
         <div v-else-if="!spans.length" class="live-empty">no spans yet</div>
-        <!-- Auto-paging (scope entry looking for the agent's spans in older
-             windows) is a LOADING state, not the terminal empty one below —
-             conflating them would flash "no spans captured" for an agent
-             whose spans just haven't paged in yet. -->
+        <!-- Fetching the agent's own trace is a LOADING state, not the
+             terminal empty one below — conflating them would flash "no spans
+             captured" for an agent whose spans are still in flight. -->
         <div
-          v-else-if="scope.scopeId && scope.autoPaging && !visibleRows.length"
+          v-else-if="scope.scopeId && scope.scopeLoading && !visibleRows.length"
           class="live-empty"
           data-testid="live-scope-loading"
         >loading…</div>
@@ -744,13 +767,14 @@ onUnmounted(() => {
         :server-now="meta.server_now || ''"
         :server-now-at="meta.server_now_at || 0"
         :ctx-pct="ctxPct"
+        :live-screen="meta.live_screen || null"
         :scope-agent="scope.scopedAgent"
         :agents-running="liveAgents.runningCount"
         :agents-waiting="liveAgents.waitingCount"
         @open-response="s => openSheet('message', s)"
         @open-question="s => openSheet('qa', s)"
         @exit-scope="scope.exit"
-        @open-agents="openSheet('agents')"
+        @open-sheet="openSheet"
       />
 
       <LiveSheet v-model:open="sheetOpen" :title="sheetTitle" :copy-payload="sheetCopy">

@@ -37,7 +37,7 @@ defineProps({
   // run_id → enriched workflow-run summary
   workflowRunsById: { type: Object, default: () => ({}) },
 })
-defineEmits(['activate', 'enter-scope'])
+defineEmits(['activate', 'enter-scope', 'present'])
 
 // span_id → replayed task-list snapshot, provided by the hosting
 // SessionConversationView. Injected (not a prop) so the whole-session task
@@ -58,11 +58,13 @@ const snapshotFor = (span) => taskSnapshots.value.get(span.span_id)
     v-else-if="span.name === 'assistant.thinking'"
     :span="span" :selected-span="selectedSpan"
     @activate="$emit('activate', $event)"
+    @present="$emit('present', $event)"
   />
   <AssistantResponseCard
     v-else-if="span.name === 'assistant_response'"
     :span="span" :selected-span="selectedSpan"
     @activate="$emit('activate', $event)"
+    @present="$emit('present', $event)"
   />
   <AskUserQuestionCard
     v-else-if="isAskSpan(span) && span.attributes?.questions"
@@ -145,6 +147,7 @@ const snapshotFor = (span) => taskSnapshots.value.get(span.span_id)
       || span.name === 'skill.invoke'
       || span.name === 'file.edit'
       || span.name === 'plan.edit'
+      || span.name === 'harness.api_retry'
       || span.name.startsWith('subagent.')
     "
     :span="span" :selected-span="selectedSpan"

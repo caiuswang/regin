@@ -1,39 +1,34 @@
 import { ref } from 'vue'
 import api from '../api'
 import { isDecisionMessage } from '../constants/inboxTypes'
-import { serverAgeMs, STALE_FALLBACK_WINDOW_MS } from '../utils/sessionActivity'
 
 // A parked-agent card is only actionable while its session is still there to
-// receive the answer. `status='active'` alone is NOT that signal: a session
-// that dies without an end event stays `active` forever, so the inbox
-// accumulates long-orphaned `permission-pending` cards. One measurement of
-// the live DB (2026-07-31) found 30 such cards, 7 whose session still claimed
-// `active`, and 1 genuinely live: the recency term is what collapses 30 → 1,
-// and the absolute figures only grow with the feed. Gate the
-// "needs your decision" surface on liveness, never on the mere absence of a
-// resolve (which `events.resolve` frequently never delivers).
+// receive the answer, and `status='active'` alone is NOT that signal: a
+// session that dies without an end event stays `active` forever, so the inbox
+// accumulates long-orphaned `permission-pending` cards.
+//
+// This used to re-derive that judgement here, by aging /api/sessions rows
+// against a 10-minute window. That was the same rule the server has since
+// repudiated (lib/agent_messages/blockers._live_hook_trace_ids): an agent
+// parked on a question emits nothing until it is answered, so the window was
+// measuring the wait and hiding exactly the sessions this surface exists for.
+// Re-deriving it also guaranteed drift — the banner and the inbox answered
+// "is this parked?" with two different rules. Ask the one authority instead:
+// /agent-messages/blockers already applies the park derivation, the retire
+// signals, dismissal, and the reachability proof that replaced the window.
 export function useLiveDecisions() {
   const liveTraceIds = ref(new Set())
 
-  // `size`, not `limit`: /api/sessions ignores `limit` and falls back to a
-  // default page of 50, which silently hid active sessions from the set. 200
-  // is the endpoint's hard cap, and rows come back last_seen DESC, so the
-  // 10-minute window is always inside the first page.
   async function refreshLive() {
     try {
-      const data = await api.get('/sessions?active=active&size=200')
-      // Age server-minus-server. The API serialises naive host-local stamps,
-      // so a viewer in a different timezone than the host measuring against
-      // its own Date.now() reads every session as hours stale (or hours in
-      // the future) — the exact trap utils/sessionActivity documents.
-      const clock = {
-        local: data.server_now, utc: data.server_now_utc, atMs: Date.now(),
-      }
+      const data = await api.get('/agent-messages/blockers')
       const fresh = new Set()
-      for (const s of data.sessions || []) {
-        if (!s.trace_id) continue
-        const age = serverAgeMs(s.last_seen, clock.local ? clock : null)
-        if (age !== null && age >= 0 && age < STALE_FALLBACK_WINDOW_MS) fresh.add(s.trace_id)
+      for (const b of data.blockers || []) {
+        if (b.trace_id) fresh.add(b.trace_id)
+        // An SDK run is traced twice; the inbox rows carry the CLI child's id
+        // while the card is keyed by the `sdk-` one, so a card that names an
+        // alias must match under both or its own row reads as unparked.
+        for (const alias of b.alias_trace_ids || []) fresh.add(alias)
       }
       liveTraceIds.value = fresh
     } catch {

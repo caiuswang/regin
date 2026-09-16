@@ -16,7 +16,7 @@ const props = defineProps({
 
 const emit = defineEmits(['regenerate', 'dismiss'])
 
-const { copyText } = useCopy()
+const { copyText, isCopied } = useCopy()
 
 // The reviewer writes the note as free-form markdown; copy hands back that same
 // source text (all comments joined), not the rendered HTML.
@@ -91,12 +91,13 @@ const showActions = computed(() => !props.readonly && !isClosed.value)
           variant="ghost"
           size="sm"
           class="gap-1 px-1 py-0.5 text-[11px] text-slate-500 hover:text-slate-800"
+          :class="isCopied(copyBody) && 'text-success hover:text-success'"
           title="Copy review note"
           data-testid="review-note-copy"
           @click.stop="copyText(copyBody)"
         >
-          <Icon name="copy" :size="12" class="shrink-0" />
-          Copy
+          <Icon :name="isCopied(copyBody) ? 'check' : 'copy'" :size="12" class="shrink-0" />
+          {{ isCopied(copyBody) ? 'Copied' : 'Copy' }}
         </Button>
         <span class="text-[11px] text-slate-400">{{ fmtLocalDateTime(thread.updated_at) }}</span>
       </div>

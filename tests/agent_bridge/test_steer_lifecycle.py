@@ -97,3 +97,71 @@ def test_dismiss_route_retires_the_chip(flask_client):
     assert store.list_pending_steers("T-5") == []
     stale = flask_client.delete(f"/api/agent-runs/T-5/queue/b{row}").get_json()
     assert stale["removed"] is False
+
+
+# ── the retire predicate: what the transcript "already speaks for" ──
+# A steer chip has no time window, so anything the predicate cannot match
+# stays on screen for the session's lifetime. The tmux tier does not deliver
+# the body byte-for-byte, and each rewrite below stranded real chips.
+
+def _partition(body, seen):
+    from web.blueprints.trace import sessions
+    return sessions._partition_steers([{"id": 1, "body": body}], seen)
+
+
+def test_a_head_truncated_delivery_still_retires_its_chip():
+    # A composer left in vim NORMAL mode runs the head of the typed text as
+    # motions, so the turn claude logged is a proper suffix of what was sent.
+    body = "So I would recommend the base64 route for the session SDK work"
+    out, settled = _partition(body, {body[1:]})
+
+    assert out == []
+    assert settled == [1]
+
+
+def test_a_short_suffix_never_retires_an_unrelated_steer():
+    # Below the floor a shared ending is coincidence, not a truncated echo.
+    out, settled = _partition("ship it now", {"p it now"})
+
+    assert settled == []
+    assert len(out) == 1
+
+
+def test_an_image_steer_retires_against_its_materialized_paths():
+    # `attachments.for_tmux` substitutes an `@<path>` for every `[Image #N]`
+    # marker, so the transcript turn carries paths the recorded body — which
+    # keeps the bare markers, to bind the bytes to the span — never had.
+    from web.blueprints.trace import sessions
+    body = "[Image #1]look at this and tell me what broke [Image #2]"
+    turn = ("@/data/regin/pasted/t1/aa.png [Image #1]look at this and tell me "
+            "what broke @/data/regin/pasted/t1/bb.png [Image #2]")
+    out, settled = _partition(body, {sessions._delivered_key(turn)})
+
+    assert out == []
+    assert settled == [1]
+
+
+def test_an_operator_at_mention_survives_the_path_strip():
+    # Only the bridge's own `pasted/` materializations come off. Stripping
+    # every `@token` would let two different prompts retire each other.
+    from web.blueprints.trace import sessions
+
+    assert sessions._delivered_key("@src/foo.py fix it") == "@src/foo.py fix it"
+
+
+def test_a_steer_typed_onto_a_draft_still_retires_its_chip():
+    # A composer already holding a human's draft is never cleared, so the
+    # submitted turn is that draft followed by the steer — the body is a
+    # suffix of the turn rather than the other way round.
+    body = "and please double-check the retire predicate while you are there"
+    out, settled = _partition(body, {f"half a thought {body}"})
+
+    assert out == []
+    assert settled == [1]
+
+
+def test_the_path_strip_leaves_no_double_space():
+    from web.blueprints.trace import sessions
+    turn = "@/data/regin/pasted/t1/aa.png [Image #1] then the rest of it"
+
+    assert sessions._delivered_key(turn) == "[Image #1] then the rest of it"

@@ -386,14 +386,16 @@ test('R2-B3: "Show them" pages to a parked agent hidden by pagination', async ({
   await expect(page.locator('.inbox-offpage')).toHaveCount(0)
 })
 
-test('R2-N1: the liveness probe asks for a page big enough to hold the window',
+test('R2-N1: liveness comes from the blocker feed, never re-derived here',
   async ({ page }) => {
     const urls = []
-    page.on('request', (r) => { if (r.url().includes('/api/sessions')) urls.push(r.url()) })
+    page.on('request', (r) => urls.push(r.url()))
     await mount(page, { messages: [msg({ id: 1 })] })
-    // `limit` is not a parameter this endpoint reads — it silently served 50.
-    expect(urls.join(' ')).toContain('size=')
-    expect(urls.join(' ')).not.toContain('limit=')
+    // The banner and the inbox must answer "is this parked?" with one rule.
+    // Paging `/api/sessions` to age rows against a local window was a second,
+    // divergent copy of it — and the copy the server has since repudiated.
+    expect(urls.join(' ')).toContain('/api/agent-messages/blockers')
+    expect(urls.join(' ')).not.toContain('/api/sessions?active=active')
   })
 
 test('R2: the row preview strips tables, rules, strike and raw HTML', async ({ page }) => {

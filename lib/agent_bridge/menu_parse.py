@@ -39,6 +39,12 @@ class ParsedMenu(NamedTuple):
     cursor_index: int   # which option currently carries the cursor.
 
 
+class ParsedMultiSelect(NamedTuple):
+    checked: list[bool]  # per OPTION row, in display order.
+    cursor_index: int    # nav index of the focused row.
+    option_count: int    # listed options, MEASURED — not what a client claimed.
+
+
 def _candidates(lines: list[str]) -> list[tuple[bool, int, str]]:
     """(cursor, ordinal, label) for every line that looks like a menu row.
 
@@ -108,3 +114,49 @@ def parse_select_menu(text: str) -> ParsedMenu | None:
         return None
 
     return ParsedMenu(options=[c[2] for c in run], cursor_index=cursor_index)
+
+
+# A multi-select row renders its state ahead of the label: `[ ] Alpha` before
+# it is ticked, `[✔] Alpha` after. The free-text row carries a box too, which
+# is what makes the widget's option count readable off the screen: the boxed
+# run is the options PLUS that one row. "Chat about this" carries none, so it
+# terminates the run.
+_CHECKBOX_RE = re.compile(r'^\[([ ✔x✓X])\]\s*(.*)$')
+_MIN_BOXED_ROWS = 2  # at least one real option, plus the free-text row
+
+
+def parse_multi_select(text: str) -> ParsedMultiSelect | None:
+    """The live MULTI-select question in `text`, or `None` when it is not one
+    or cannot be trusted.
+
+    Built on `parse_select_menu`, so it inherits every refusal that one makes
+    (last-run anchoring, 1..N with no gaps, exactly one cursor). On top of
+    that it requires the leading rows to be checkboxes and nothing after them
+    to be — a shape a single-select menu cannot produce, which is what makes
+    this safe to gate keystrokes on.
+
+    `option_count` is measured from the screen rather than taken from the
+    caller: it is what locates the question's advance row, and a stale card
+    naming a different count would otherwise drive Enter at an arbitrary row.
+
+    The cursor is reported as a NAV index, valid only while it sits inside the
+    boxed run — beyond it the unnumbered "Next"/"Submit" row makes ordinals and
+    arrow positions diverge, so a cursor past the run refuses instead.
+    """
+    menu = parse_select_menu(text)
+    if menu is None:
+        return None
+    marks = [_CHECKBOX_RE.match(option) for option in menu.options]
+    boxed = 0
+    for mark in marks:
+        if mark is None:
+            break
+        boxed += 1
+    if boxed < _MIN_BOXED_ROWS or any(m is not None for m in marks[boxed:]):
+        return None
+    if menu.cursor_index >= boxed:
+        return None
+    option_count = boxed - 1
+    checked = [marks[i].group(1) != ' ' for i in range(option_count)]
+    return ParsedMultiSelect(checked=checked, cursor_index=menu.cursor_index,
+                             option_count=option_count)

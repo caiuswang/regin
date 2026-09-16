@@ -25,9 +25,16 @@
 // still owns the data model.
 import { ref, computed } from 'vue'
 import { fmtTokens } from '../utils/traceFormatters.js'
+import SessionAttribution from './trace/SessionAttribution.vue'
 import { badgeScopeOf, badgeTasks, countTasks, taskAgentSections } from '../utils/taskScope.js'
+import { sessionLivenessWithClock } from '../utils/sessionActivity.js'
+import { statusOfRow, statusLabel as labelOf } from '../utils/sessionStatus.js'
+import { MODE_OPTIONS } from '../composables/useViewMode.js'
 import Button from './ui/Button.vue'
 import Icon from './ui/Icon.vue'
+import TraceProjectChip from './TraceProjectChip.vue'
+import TraceViewModeMenu from './TraceViewModeMenu.vue'
+import TraceDetailControl from './trace/TraceDetailControl.vue'
 
 // Date formatters kept local (exact copies of SessionTraceView's) rather than
 // imported: traceFormatters exposes a differently-behaved `fmtTime` (HH:MM), so
@@ -75,13 +82,6 @@ const props = defineProps({
   digest: { type: Array, default: () => [] },
 })
 
-const MODE_OPTIONS = [
-  { id: 'conversation', label: 'Conversation' },
-  { id: 'timeline', label: 'Timeline' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'messages', label: 'Messages' },
-]
-
 defineEmits(['update:viewMode', 'reload', 'jump-to-task', 'toggle-collapse'])
 
 // Presentational toggle state — lives with the header, not the data model.
@@ -115,12 +115,64 @@ const sessionTitle = computed(() => {
   return t.slice(0, max) + '…'
 })
 
-// A session with no `ended_at` is still attached to a live agent — the pulsing
-// pill is the one piece of session state that has to be legible without
-// reading a number, so it sits on the title line rather than in the vitals.
-// (The ingest clears `ended_at` when a genuine resume lands, so an
-// exited-then-resumed session reads Live again here.)
-const isLive = computed(() => !props.session?.ended_at)
+// The pulsing pill is the one piece of session state that has to be legible
+// without reading a number, so it sits on the title line rather than in the
+// vitals. The rule itself is shared (utils/sessionActivity) with the session
+// list, the cards and the live picker: `ended_at` alone said Live forever for
+// a session whose SessionEnd hook never fired.
+const statusClock = computed(() => (
+  props.session?.server_now && props.session?.server_now_at
+    ? {
+      local: props.session.server_now,
+      utc: props.session.server_now_utc || props.session.server_now,
+      atMs: props.session.server_now_at,
+    }
+    : null
+))
+const liveness = computed(() => sessionLivenessWithClock(props.session, statusClock.value))
+// Only the *presentation* is local — these are Tailwind utility classes, not
+// the CSS-var tokens the rail uses. The words come from the shared vocabulary
+// so the pill, the sessions list and the ⌘J palette cannot call one session
+// three things; Title Case is this chip's house style, not a fifth word.
+//
+// Note the dots: `inactive` is slate, not amber. Silence is benign — spending
+// the attention colour on it leaves nothing left for a session that actually
+// wants you.
+const STATUS_PRESENTATION = {
+  working: {
+    dot: 'bg-emerald-500 animate-pulse',
+    pill: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    title: 'spans are still arriving',
+  },
+  // Same green as `working`, no pulse: equally alive, not mid-turn.
+  idle: {
+    dot: 'bg-emerald-500',
+    pill: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    title: 'regin is holding this run and it is waiting for your prompt',
+  },
+  inactive: {
+    dot: 'bg-slate-400',
+    pill: 'border-slate-200 bg-slate-50 text-slate-500',
+    title: 'no SessionEnd was recorded, but nothing has been ingested for '
+      + 'over 10 minutes — this session is probably gone',
+  },
+  ended: {
+    dot: 'bg-slate-400',
+    pill: 'border-slate-200 bg-slate-50 text-slate-500',
+    title: 'this session has ended',
+  },
+  closed: {
+    dot: 'bg-slate-400',
+    pill: 'border-slate-200 bg-slate-50 text-slate-500',
+    title: 'this session was closed manually',
+  },
+}
+const statusKey = computed(() => statusOfRow(props.session, liveness.value))
+const status = computed(() => {
+  const p = STATUS_PRESENTATION[statusKey.value] || STATUS_PRESENTATION.ended
+  const l = labelOf(statusKey.value)
+  return { ...p, label: l.charAt(0).toUpperCase() + l.slice(1) }
+})
 const startedClock = computed(() => fmtLocalClock(props.session?.started_at))
 
 // Pre-compaction high-water mark. The headline ctx% is the *live* peak
@@ -217,36 +269,54 @@ function titleSourceTooltip(src) {
     <!-- Keyed by fold state: the two layouts share no DOM, so only a fresh
          subtree can restart the enter fade; the height glide across the swap
          is the parent view's useFoldTransition tween. -->
-    <!-- basis-80 is what makes the header's flex-wrap fire: the actions column
-         is ~600px intrinsic, so a basis-0 `flex-1` title never overflows the
-         line and instead shrinks to ~40px, wrapping the title one character
-         per line below xl. The floor drops the actions onto their own row
-         there, and is low enough that ≥xl still lays out on one row. The
-         compact row is exempt: it truncates rather than wraps, so it wants
-         to keep sharing the row. -->
+    <!-- basis-96 is what makes the header's flex-wrap fire: a wrapping flex
+         container lines items up by their BASIS, so a basis-0 `flex-1` title
+         never overflows the line and instead shrinks — to ~40px at 1024px,
+         wrapping the title one character per line. The floor drops the
+         actions onto their own row there, and is low enough that ≥xl still
+         lays out on one row. It has to clear (available width − the actions'
+         intrinsic width) at 1024px: the mode menu made that column ~270px
+         narrower than the segmented strip did, and at basis-80 the two fit
+         one line again, squeezing the title to 184px. The compact row is
+         exempt: it truncates rather than wraps, so it wants to keep sharing
+         the row. `session-header-collapse.spec.js` pins the floor. -->
     <div
       :key="collapsed ? 'compact' : 'full'"
       class="min-w-0 flex-1 trace-fold-enter"
-      :class="collapsed ? '' : 'basis-80'"
+      :class="collapsed ? '' : 'basis-96'"
     >
       <!-- Compact identity row: status dot + title + mono digest. Everything
            else (eyebrow, title row, meta chips, expanded lists) only renders
            in the full state. -->
-      <div v-if="collapsed" class="flex items-center gap-2.5 overflow-hidden">
+      <!-- Wraps below lg, one line from lg up. The digest is the whole point
+           of the collapsed header — session status at a glance while scrolling
+           a long transcript — and `shrink-0` inside an `overflow-hidden` row
+           means a phone gets the first stat and silently loses the rest: at
+           390px it ran to x=559 against a pane ending at 382, clipped with no
+           indication that 177px of it was there. Two short lines beat four
+           missing numbers. -->
+      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1 overflow-hidden lg:flex-nowrap" v-if="collapsed">
+        <router-link
+          to="/trace/sessions"
+          class="-ml-1 shrink-0 inline-flex items-center rounded p-0.5 text-slate-400 no-underline hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-blue-500"
+          aria-label="Back to the session list"
+          title="Back to the session list"
+        ><Icon name="chevron-left" size="14" /></router-link>
         <span
           class="h-1.5 w-1.5 shrink-0 rounded-full"
-          :class="isLive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"
-          :title="isLive ? 'this session has not ended — spans are still arriving' : 'this session has ended'"
+          :class="status.dot"
+          :title="status.title"
         ></span>
         <!-- Still the page's h1: collapsed is the normal reading state at ≥lg,
              and swapping it for a span leaves heading navigation with no
              page heading for most of the session. -->
         <h1
-          class="truncate text-sm font-semibold text-slate-800"
+          class="min-w-0 truncate text-sm font-semibold text-slate-800"
           :title="session.title || ''"
         >{{ sessionTitle }}</h1>
+        <TraceProjectChip compact :session="session" />
         <span
-          class="flex shrink-0 items-center gap-2 overflow-hidden font-mono text-[11px] text-slate-500"
+          class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden font-mono text-[11px] text-slate-500 lg:shrink-0 lg:flex-nowrap"
           data-testid="trace-header-digest"
         >
           <span
@@ -261,9 +331,21 @@ function titleSourceTooltip(src) {
         </span>
       </div>
       <template v-else>
-      <div class="text-[11px] tracking-widest uppercase text-slate-400 font-semibold mb-1">
-        Observability · Session Trace
-      </div>
+      <!-- The way back takes the eyebrow's slot rather than a line of its own,
+           and rather than the title row: sharing that row indented the h1 90px
+           past the eyebrow, the chip row and the id row, leaving the title the
+           only ragged line in the header. `-ml-[5px]` cancels the lead inside
+           the chevron's own box (its path starts at x=9 of a 24 viewBox, i.e.
+           5.25px in at size 14), so the glyph — not the box — sits on the
+           margin every other line starts from.
+           "Observability · Session Trace" is what it replaces: the sidebar and
+           this link both already say where you are, and it was the one line
+           here carrying nothing about THIS session. -->
+      <router-link
+        to="/trace/sessions"
+        class="-ml-[5px] mb-1 inline-flex items-center gap-1 text-sm font-semibold text-slate-500 no-underline hover:text-slate-800 focus-visible:outline-2 focus-visible:outline-blue-500"
+        title="Back to the session list"
+      ><Icon name="chevron-left" size="14" />Sessions</router-link>
       <!-- items-start + a nudge, NOT items-baseline: the pill is a bordered
            box whose padding hangs below its text baseline, so baseline
            alignment drops it ~6px under the title's optical centre. The nudge
@@ -281,16 +363,15 @@ function titleSourceTooltip(src) {
           :title="titleSourceTooltip(session.title_source)"
         >{{ titleSourceLabel(session.title_source) }}</span></h1>
         <span
+          data-testid="session-status-pill"
           class="mt-1 shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"
-          :class="isLive
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : 'border-slate-200 bg-slate-50 text-slate-500'"
-          :title="isLive ? 'this session has not ended — spans are still arriving' : 'this session has ended'"
+          :class="status.pill"
+          :title="status.title"
         >
           <span
             class="h-1.5 w-1.5 rounded-full"
-            :class="isLive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"
-          ></span>{{ isLive ? 'Live' : 'Ended' }}
+            :class="status.dot"
+          ></span>{{ status.label }}
         </span>
       </div>
       <div
@@ -306,6 +387,10 @@ function titleSourceTooltip(src) {
         </Button>
       </div>
       <p class="mt-1.5 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500 m-0">
+        <!-- Leads the row on purpose: a terminal statusline answers "where am
+             I" before anything else, and the trace id answers a question the
+             reader only asks once they already know that. -->
+        <TraceProjectChip :session="session" />
         <code class="font-mono text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ session.trace_id }}</code>
         <!-- Stale-snapshot badge: the run resumed past the manifest snapshot,
              which the runtime only flushes at pause/completion — so phases
@@ -530,44 +615,36 @@ function titleSourceTooltip(src) {
       </div>
       </template>
     </div>
+    <!-- Below lg this column wraps to the full width of the header, so
+         right-aligning it leaves every control hugging the right edge over a
+         column of dead space — three ragged rows on a phone. Alignment is a
+         property of the two-column layout, which only exists from lg up. -->
     <div
+      data-testid="trace-header-actions"
       class="flex min-w-0 max-w-full"
-      :class="collapsed ? 'flex-row flex-wrap items-center gap-x-3 gap-y-1.5' : 'flex-col items-end gap-1.5'"
+      :class="collapsed
+        ? 'flex-row flex-wrap items-center gap-x-3 gap-y-1.5'
+        : 'flex-col items-stretch lg:items-end gap-1.5'"
     >
-      <div class="flex flex-wrap justify-end items-center gap-1.5">
+      <div class="flex flex-wrap justify-start lg:justify-end items-center gap-1.5">
         <!-- Header-row actions the parent owns (e.g. the agents popover).
              These survive the fold: the roster's running-count badge is live
              session status, not a detail, and folding it away hid it during
              the exact stretch — scrolled into a long transcript — when the
              reader most needs to see whether subagents are still working. -->
         <slot name="actions"></slot>
-        <!-- Segmented control on one recessed track: the four modes are a
-             single exclusive choice, and loose bordered pills read as four
-             independent toggles. Below lg the compact sticky strip owns the
-             switcher; a second visible copy here would double every button. -->
-        <div class="hidden lg:inline-flex gap-0.5 rounded-[11px] bg-slate-100 p-[3px]">
-          <Button
-            v-for="opt in MODE_OPTIONS"
-            :key="opt.id"
-            variant="ghost"
-            size="sm"
-            class="h-auto gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px]"
-            :class="viewMode === opt.id
-              ? 'bg-white text-blue-800 font-semibold shadow-[0_1px_3px_rgba(15,23,42,0.12)] hover:bg-white'
-              : 'text-slate-500 hover:bg-slate-200/60 hover:text-slate-700'"
-            :aria-pressed="viewMode === opt.id"
-            :title="modeCounts[opt.id] ? `${opt.label} · ${modeCounts[opt.id]} rows` : opt.label"
-            @click="$emit('update:viewMode', opt.id)"
-          >{{ opt.label }}<!-- aria-hidden: the count is a visual density hint,
-            and folding it into the accessible name would turn every mode
-            button's name into a moving target ("Terminal" → "Terminal 38").
-            The title above carries it for anyone who wants it. --><span
-            v-if="modeCounts[opt.id]"
-            aria-hidden="true"
-            class="rounded-md px-1.5 text-[10.5px] font-semibold tabular-nums"
-            :class="viewMode === opt.id ? 'bg-blue-50 text-blue-800' : 'bg-slate-200 text-slate-500'"
-          >{{ modeCounts[opt.id] }}</span></Button>
-        </div>
+        <!-- Below lg the compact sticky strip owns the switcher; a second
+             visible copy here would double every control. -->
+        <TraceViewModeMenu
+          class="hidden lg:inline-flex"
+          :modes="MODE_OPTIONS"
+          :view-mode="viewMode"
+          :counts="modeCounts"
+          @update:view-mode="$emit('update:viewMode', $event)"
+        />
+        <!-- Reading-density control for the conversation feed. Conversation
+             only: the other views render no spine for a density to act on. -->
+        <TraceDetailControl v-if="viewMode === 'conversation'" />
         <!-- Manual override for the collapse: pins the choice until the body
              scroll returns to the top (the parent owns that state; H is the
              keyboard twin). -->
@@ -585,7 +662,7 @@ function titleSourceTooltip(src) {
           :class="collapsed ? 'rotate-180' : ''"
         >⌃</span>{{ collapsed ? 'Details' : 'Hide details' }}</Button>
       </div>
-      <div class="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+      <div class="flex flex-wrap items-center justify-start lg:justify-end gap-2 text-[11px] text-slate-400 font-mono">
         <!-- tabular-nums: a proportional-width timestamp jitters the column
              width on every live poll, which can toggle a wrap in the row
              above and bounce everything below the header. -->

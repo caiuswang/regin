@@ -347,6 +347,18 @@ REGISTRY: list[Handler] = [
         fn=bridge_registry.handle_turn,
     ),
     Handler(
+        name='bridge_pane_registry_retire',
+        label='Bridge Pane Registry (Retire)',
+        summary='Releases the session\'s tmux pane claim on SessionEnd so a '
+                'short-lived session cannot keep displacing the session that '
+                'is still live in that pane.',
+        match_hint='SessionEnd, whenever the session holds a reachable pane row',
+        events=['SessionEnd'],
+        kind='trace',
+        priority=55,
+        fn=bridge_registry.handle_end,
+    ),
+    Handler(
         name='session_end',
         label='Session End',
         summary='Writes the session-end lifecycle span.',

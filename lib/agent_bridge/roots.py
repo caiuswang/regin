@@ -15,6 +15,14 @@ rootless — and therefore with an empty `/` menu and no `@` suggestions.
 traced under two ids (its own `sdk-…` and its child `claude` session's) and
 the composer may address it by either.
 
+Neither registry is guaranteed to hold a row, though, and a session missing
+from both is not the same as a session whose cwd is unknown: the trace itself
+recorded one at `session.start`. Sessions succeeding a `/clear` routinely
+register no pane, so the composer answered them `{"commands": []}` — a menu
+that reads as "no command matches" — while `sessions.cwd` named the directory
+all along. `sessions.cwd` is therefore the last rung, below both live
+registries because they are re-registered on resume and it is written once.
+
 `project_root` is the separate, narrower question — the nearest ancestor with a
 `.claude/` dir — and exists only to locate the command/skill files that supply
 provenance badges. It is never used to scope a search, and it has no fallback:
@@ -28,7 +36,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sqlmodel import select
+
+from lib.activity_log import get_activity_logger
 from lib.agent_bridge import store
+from lib.orm.engine import SessionLocal
+from lib.orm.models.trace import Session as SessionRow
+
+log = get_activity_logger("agent_bridge")
 
 
 def _sdk_run_cwd(trace_id: str) -> str | None:
@@ -44,16 +59,38 @@ def _sdk_run_cwd(trace_id: str) -> str | None:
     return (run or {}).get("cwd") or None
 
 
+def _traced_session_cwd(trace_id: str) -> str | None:
+    """The cwd the trace recorded for `trace_id` at `session.start`, or None.
+
+    Fail-closed like the registries it backs: an absent table or a drifted
+    schema degrades to "unknown", never an exception on a read-only list.
+    """
+    try:
+        with SessionLocal() as session:
+            cwd = session.exec(
+                select(SessionRow.cwd)
+                .where(SessionRow.trace_id == trace_id)
+            ).first()
+    except Exception:  # noqa: BLE001 — degrade to rootless
+        log.error("bridge_traced_cwd_failed", trace_id=trace_id, exc_info=True)
+        return None
+    log.read("bridge_traced_cwd_resolved", trace_id=trace_id, found=bool(cwd))
+    return cwd or None
+
+
 def session_cwd(trace_id: str) -> Path | None:
-    """The recorded cwd for `trace_id` in either tier, or None if unknown.
+    """The recorded cwd for `trace_id` in any tier, or None if unknown.
 
     The pane registry answers first: a tmux session is the only tier that can
     have been *re*-registered on resume, so its row is the fresher fact when a
-    trace id somehow exists in both.
+    trace id somehow exists in both. The trace's own `session.start` cwd
+    answers last, for the sessions that registered nowhere.
     """
     if not trace_id:
         return None
-    cwd = store.get_pane_cwd(trace_id) or _sdk_run_cwd(trace_id)
+    cwd = (store.get_pane_cwd(trace_id)
+           or _sdk_run_cwd(trace_id)
+           or _traced_session_cwd(trace_id))
     return Path(cwd) if cwd else None
 
 

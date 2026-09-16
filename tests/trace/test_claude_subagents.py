@@ -380,3 +380,97 @@ def test_reconcile_stamps_nested_workflow_subagents(tmp_db, claude_home):
     assert by_agent["ccc333"][1:] == (180, 90)
     assert by_agent["ccc333"][0] > 0
     assert _SID in discover_subagent_sessions()
+
+
+def _seed_markers(db_path, agent_ids: list) -> None:
+    """A `subagent.start` AND a `subagent.stop` per agent, plus one unrelated
+    tool span per agent, all carrying the agent_id the reconciler matches on."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, started_at, last_seen, model) "
+            "VALUES (?, ?, ?, ?)",
+            (_SID, "2026-06-01T00:00:00", "2026-06-01T00:00:00", "claude-opus-4-8"),
+        )
+        for agent_id in agent_ids:
+            for span_id, name in (
+                (f"start-{agent_id}", "subagent.start"),
+                (f"stop-{agent_id}", "subagent.stop"),
+                (f"tool-{agent_id}", "tool.Edit"),
+            ):
+                conn.execute(
+                    "INSERT INTO session_spans (trace_id, span_id, name, "
+                    "start_time, attributes) VALUES (?, ?, ?, ?, ?)",
+                    (_SID, span_id, name, "2026-06-01T00:00:20",
+                     json.dumps({"agent_id": agent_id})),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _span_attrs(db_path) -> dict:
+    """`span_id → raw attributes text` for the whole session."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return dict(conn.execute(
+            "SELECT span_id, attributes FROM session_spans WHERE trace_id=?",
+            (_SID,),
+        ).fetchall())
+    finally:
+        conn.close()
+
+
+def test_reconcile_links_markers_to_their_launch_call(tmp_db, claude_home):
+    """Backfill for the 3.5k agents already in the store: each subagent's
+    start AND stop marker gets `child_trace_id` (the id the subagent is
+    addressable as) and `launch_tool_use_id` (the `tool.Agent` call that
+    spawned it, from the meta file) — the launch→agent identity edge neither
+    span carried on its own."""
+    sub = claude_home / "-proj-hash" / _SID / "subagents"
+    _write_meta(sub / "agent-aaa111.meta.json", tool_use_id="toolu_launch_a")
+    _write_meta(sub / "agent-bbb222.meta.json", tool_use_id="toolu_launch_b")
+    _seed_markers(tmp_db, ["aaa111", "bbb222"])
+
+    result = reconcile_claude_subagents(_SID)
+    assert result["markers_linked"] == 2
+
+    attrs = {sid: json.loads(a) for sid, a in _span_attrs(tmp_db).items()}
+    for agent_id, tool_use_id in (("aaa111", "toolu_launch_a"),
+                                  ("bbb222", "toolu_launch_b")):
+        for span_id in (f"start-{agent_id}", f"stop-{agent_id}"):
+            assert attrs[span_id]["child_trace_id"] == f"sa-{agent_id}"
+            assert attrs[span_id]["launch_tool_use_id"] == tool_use_id
+        # Only the marker pair is the link span — the agent's own tool spans
+        # are left exactly as ingested.
+        assert attrs[f"tool-{agent_id}"] == {"agent_id": agent_id}
+
+
+def test_reconcile_marker_link_is_idempotent(tmp_db, claude_home):
+    """Re-running must leave the rows byte-identical (value-stable json_set) —
+    it runs on every SubagentStop and again during backfill."""
+    sub = claude_home / "-proj-hash" / _SID / "subagents"
+    _write_meta(sub / "agent-aaa111.meta.json", tool_use_id="toolu_launch_a")
+    _write_meta(sub / "agent-bbb222.meta.json", tool_use_id="toolu_launch_b")
+    _seed_markers(tmp_db, ["aaa111", "bbb222"])
+
+    reconcile_claude_subagents(_SID)
+    first = _span_attrs(tmp_db)
+    reconcile_claude_subagents(_SID)
+    assert _span_attrs(tmp_db) == first
+
+
+def test_reconcile_links_child_trace_id_without_a_meta_file(tmp_db, claude_home):
+    """`child_trace_id` derives from the agent id alone, so a subagent with no
+    meta file (or one naming no toolUseId) still becomes addressable — it just
+    carries no `launch_tool_use_id`."""
+    sub = claude_home / "-proj-hash" / _SID / "subagents"
+    _write_meta(sub / "agent-bbb222.meta.json")  # no toolUseId key
+    _seed_markers(tmp_db, ["aaa111", "bbb222"])  # aaa111 has no meta at all
+
+    reconcile_claude_subagents(_SID)
+
+    attrs = {sid: json.loads(a) for sid, a in _span_attrs(tmp_db).items()}
+    for agent_id in ("aaa111", "bbb222"):
+        assert attrs[f"start-{agent_id}"]["child_trace_id"] == f"sa-{agent_id}"
+        assert "launch_tool_use_id" not in attrs[f"stop-{agent_id}"]

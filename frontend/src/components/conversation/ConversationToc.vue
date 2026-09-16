@@ -1,10 +1,12 @@
 <script setup>
-import { computed, watch, nextTick, ref } from 'vue'
+import { computed, watch, nextTick, onUnmounted, ref } from 'vue'
 import { fmtTime, fmtDuration, fmtTokens, fmtCost, fmtModel, truncate } from '../../utils/traceFormatters.js'
 import { useStickyMaxHeight } from '../../composables/useStickyMaxHeight.js'
 import { useConversationRail } from '../../composables/useConversationRail.js'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import ConversationTurnFlyout from './ConversationTurnFlyout.vue'
+import ConversationTurnMeta from './ConversationTurnMeta.vue'
 
 // Left-rail table of contents for the conversation spine. Two modes:
 //   • regular session → a flat list of turns (prompt previews + token meta)
@@ -20,12 +22,19 @@ const props = defineProps({
   phasePlan: { type: Array, default: () => [] },
   turnItems: { type: Array, default: () => [] },
   selectedSpan: { type: Object, default: null },
-  foldableAgentIds: { type: Array, default: () => [] },
-  allAgentsExpanded: { type: Boolean, default: false },
+  contextWindowTokens: { type: Number, default: null },
+  // Which prompt groups the feed currently has unfolded — the hover detail
+  // reports it, and only the feed knows.
+  expandedPromptIds: { type: Object, default: () => new Set() },
 })
-const emit = defineEmits(['select-turn', 'select-workflow-row', 'jump-live', 'expand-all-agents', 'collapse-all-agents'])
+const emit = defineEmits(['select-turn', 'select-workflow-row', 'jump-live'])
 
-const { railWidth, onRailResizeStart, onRailResizeKey } = useConversationRail()
+// `autoFolded` (the viewport, not the user, forcing the mini form) comes from
+// the composable so the chevron and the `T` shortcut share one guard.
+const {
+  railMini, autoFolded, effectiveWidth, toggleRailCollapsed,
+  onRailResizeStart, onRailResizeKey,
+} = useConversationRail()
 
 // The Turns TOC rail is `position: sticky`. useStickyMaxHeight keeps its
 // max-height fitted to the viewport in both natural and stuck positions.
@@ -81,6 +90,75 @@ watch(activeTurnIdx, async (idx) => {
   }
 })
 
+// Secondary counts for the hover surfaces (flyout + the expanded card's
+// reveal row). Kept out of turnItems' hot path: nothing renders these until a
+// pointer lands on a row.
+function turnMetrics(item) {
+  const agg = item.turnAgg || {}
+  const tools = item.toolCounts || {}
+  const used = agg.lastTurn?.context_used_tokens
+  return {
+    spans: item.spanCount || 0,
+    tools: (tools.tool || 0) + (tools.skill || 0) + (tools.edit || 0),
+    agents: tools.agent || 0,
+    inputTokens: agg.inputTokens || 0,
+    outputTokens: agg.outputTokens || 0,
+    costUsd: agg.costUsd ?? null,
+    ctxPct: used && props.contextWindowTokens
+      ? Math.round(Math.min(100, (used / props.contextWindowTokens) * 100))
+      : null,
+  }
+}
+
+// Hover state. `hoveredId` reveals the extra metadata row inside an expanded
+// card; `flyoutId` opens the fixed-position card beside a mini chip.
+const hoveredId = ref('')
+const flyoutId = ref('')
+const flyoutAnchor = ref(null)
+const miniRefs = new Map()
+
+const flyoutItem = computed(() => (flyoutId.value
+  ? props.turnItems.find(t => t.promptSpanId === flyoutId.value) || null
+  : null))
+
+function rectOf(el) {
+  const r = el.getBoundingClientRect()
+  return { top: r.top, left: r.left, right: r.right, bottom: r.bottom }
+}
+
+function openFlyout(item) {
+  const el = miniRefs.get(item.promptSpanId)
+  if (!el) return
+  flyoutId.value = item.promptSpanId
+  flyoutAnchor.value = rectOf(el)
+}
+
+function closeFlyout() {
+  flyoutId.value = ''
+  flyoutAnchor.value = null
+}
+
+// A fixed popover measured once at open detaches from its anchor the moment
+// anything scrolls — including the rail's OWN list, which is why this listens
+// in the capture phase. Re-anchor while the chip is still inside the list's
+// box, drop the card once it scrolls out of it.
+function reanchorFlyout() {
+  const el = miniRefs.get(flyoutId.value)
+  if (!el) { closeFlyout(); return }
+  const r = rectOf(el)
+  const box = tocScrollEl.value?.getBoundingClientRect()
+  if (box && (r.bottom < box.top || r.top > box.bottom)) { closeFlyout(); return }
+  flyoutAnchor.value = r
+}
+
+function trackFlyout(on) {
+  const fn = on ? window.addEventListener : window.removeEventListener
+  fn.call(window, 'scroll', reanchorFlyout, true)
+  fn.call(window, 'resize', reanchorFlyout)
+}
+watch(() => !!flyoutId.value, trackFlyout)
+onUnmounted(() => trackFlyout(false))
+
 // Snap the rail to its bottom, then ask the orchestrator to jump the chat.
 function jumpToLive() {
   if (tocScrollEl.value) tocScrollEl.value.scrollTop = tocScrollEl.value.scrollHeight
@@ -93,9 +171,10 @@ function jumpToLive() {
        header and "Jump to live" footer stay pinned. -->
   <aside
     ref="turnsAsideEl"
-    class="hidden lg:flex shrink-0 sticky self-start flex-col"
+    class="toc-rail hidden lg:flex shrink-0 sticky self-start flex-col"
+    data-testid="conversation-toc"
     :style="{
-      width: railWidth + 'px',
+      width: effectiveWidth + 'px',
       top: 'calc(var(--regin-trace-header-h, 5rem) + 0.5rem)',
       maxHeight: turnsMaxH || 'calc(100vh - var(--regin-trace-header-h, 5rem) - 2rem)',
     }"
@@ -103,6 +182,7 @@ function jumpToLive() {
     <!-- Drag handle on the rail's right edge (in the gutter). A <button> so
          it's keyboard focusable (arrow keys resize). -->
     <button
+      v-if="!railMini"
       type="button"
       class="absolute top-0 -right-1.5 w-3 h-full p-0 bg-transparent border-0 cursor-col-resize group z-10 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
       title="Drag (or ←/→) to resize panel"
@@ -112,22 +192,77 @@ function jumpToLive() {
     >
       <span class="block mx-auto w-px h-full bg-slate-200 group-hover:bg-blue-400 transition-colors"></span>
     </button>
-    <div class="flex items-baseline justify-between mb-2.5 shrink-0">
-      <h3 class="text-[10px] uppercase tracking-[0.08em] text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
-      <div class="flex items-baseline gap-2">
-        <Button
-          v-if="foldableAgentIds.length"
-          variant="link"
-          size="sm"
-          class="text-[11px]"
-          @click="allAgentsExpanded ? $emit('collapse-all-agents') : $emit('expand-all-agents')"
-        >{{ allAgentsExpanded ? 'collapse all' : 'expand all' }}</Button>
-        <span class="text-[11px] text-slate-400 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
-      </div>
+    <div class="flex items-center gap-[7px] mb-2.5 shrink-0" :class="railMini ? 'justify-center' : ''">
+      <template v-if="!railMini">
+        <h3 class="text-[10px] uppercase tracking-[0.08em] text-slate-400 font-semibold">{{ isWorkflow ? 'Phases' : 'Turns' }}</h3>
+        <span class="text-[10px] font-bold text-slate-500 bg-slate-100 rounded-md px-1.5 tabular-nums">{{ isWorkflow ? (hasPhaseSpans ? phaseItems.length : (phasePlan.length || phaseItems.length)) : turnItems.length }}</span>
+      </template>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="shrink-0 w-[26px] h-[26px] rounded-lg border border-slate-200 text-slate-400"
+        :class="{ 'ml-auto': !railMini }"
+        :disabled="autoFolded"
+        :title="autoFolded ? 'Window too narrow for the full rail'
+          : railMini ? 'Show turns (T)' : 'Collapse turns (T)'"
+        :aria-label="railMini ? 'Show turns' : 'Collapse turns'"
+        :aria-expanded="!railMini"
+        data-testid="toc-rail-toggle"
+        @click="toggleRailCollapsed"
+      ><Icon :name="railMini ? 'chevron-right' : 'chevron-left'" :size="14" /></Button>
+    </div>
+    <!-- Mini rail: numbered chips only; the detail lives in the hover flyout. -->
+    <div
+      v-if="railMini"
+      ref="tocScrollEl"
+      class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [overscroll-behavior:contain]"
+    >
+      <template v-if="isWorkflow">
+      <button
+        v-for="p in phaseItems"
+        :key="p.phaseSpanId"
+        type="button"
+        class="mb-0.5 flex w-full cursor-pointer flex-col items-center gap-1 rounded-[10px] border-0 bg-transparent py-[5px] transition-colors hover:bg-slate-50"
+        :aria-label="p.title"
+        :title="p.title"
+        @click="$emit('select-workflow-row', p.phaseSpanId)"
+      >
+        <span
+          class="inline-flex h-6 w-6 items-center justify-center rounded-lg text-[10.5px] font-bold tabular-nums"
+          :class="p.complete ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'"
+        >{{ p.index }}</span>
+      </button>
+      </template>
+      <template v-else>
+      <button
+        v-for="item in turnItems"
+        :key="item.promptSpanId"
+        :ref="(el) => { if (el) { miniRefs.set(item.promptSpanId, el); turnTocRefs.set(item.promptSpanId, el) } else miniRefs.delete(item.promptSpanId) }"
+        type="button"
+        class="mb-0.5 flex w-full cursor-pointer flex-col items-center gap-1 rounded-[10px] border-0 py-[5px] transition-colors focus-visible:outline-2 focus-visible:outline-blue-500"
+        :class="activeTurnIdx === item.idx ? 'bg-slate-100' : 'bg-transparent hover:bg-slate-50'"
+        :aria-label="`Turn ${item.idx + 1}`"
+        data-testid="toc-mini-chip"
+        @click="$emit('select-turn', item)"
+        @mouseenter="openFlyout(item)"
+        @mouseleave="closeFlyout"
+        @focus="openFlyout(item)"
+        @blur="closeFlyout"
+      >
+        <span
+          class="inline-flex h-6 w-6 items-center justify-center rounded-lg text-[10.5px] font-bold tabular-nums"
+          :class="activeTurnIdx === item.idx ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-700'"
+        >{{ item.idx + 1 }}</span>
+        <span
+          class="h-[3px] w-3.5 rounded-full opacity-60"
+          :class="turnConsumptionPct(item) > 66 ? 'bg-amber-500' : 'bg-blue-400'"
+        ></span>
+      </button>
+      </template>
     </div>
     <!-- Workflow phase TOC -->
     <div
-      v-if="isWorkflow"
+      v-else-if="isWorkflow"
       ref="tocScrollEl"
       class="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3 [scrollbar-gutter:stable] [scrollbar-width:thin] [overscroll-behavior:contain]"
     >
@@ -256,6 +391,8 @@ function jumpToLive() {
         class="cursor-pointer rounded-[9px] px-2.5 py-[9px] transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-500"
         :class="activeTurnIdx === item.idx ? 'bg-slate-50' : ''"
         @click="$emit('select-turn', item)"
+        @mouseenter="hoveredId = item.promptSpanId"
+        @mouseleave="hoveredId = ''"
       >
         <div class="mb-[5px] flex items-center gap-[7px]">
           <span
@@ -289,14 +426,50 @@ function jumpToLive() {
             :style="{ width: turnConsumptionPct(item) + '%' }"
           ></div>
         </div>
+        <div
+          v-if="hoveredId === item.promptSpanId"
+          class="mt-[7px] flex items-center gap-1 border-t border-dashed border-slate-200 pt-[7px] text-[10px]"
+          data-testid="toc-turn-reveal"
+        >
+          <ConversationTurnMeta :metrics="turnMetrics(item)" chip-class="rounded-[5px] px-1.5" />
+          <span class="ml-auto shrink-0 text-slate-400">{{ expandedPromptIds.has(item.promptSpanId) ? 'click to jump' : 'click to open' }}</span>
+        </div>
       </div>
     </div>
     <Button
       variant="link"
       size="sm"
       class="shrink-0 mt-2 pt-2 border-t border-slate-100 text-[11px]"
+      :class="railMini ? 'justify-center' : ''"
       title="Scroll to the most recent turn"
+      aria-label="Jump to live"
       @click="jumpToLive"
-    ><Icon name="chevron-down" :size="12" />Jump to live</Button>
+    ><Icon name="chevron-down" :size="12" /><template v-if="!railMini">Jump to live</template></Button>
+    <ConversationTurnFlyout
+      v-if="flyoutItem && flyoutAnchor"
+      :item="flyoutItem"
+      :metrics="turnMetrics(flyoutItem)"
+      :expanded="expandedPromptIds.has(flyoutItem.promptSpanId)"
+      :anchor="flyoutAnchor"
+    />
   </aside>
 </template>
+
+<style scoped>
+.toc-rail { transition: width 240ms cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* Bounded layout: the rail is a full-height column beside the feed and already
+   scrolls inside itself, so the sticky offset and the fitted max-height it
+   needs while the PAGE scrolls would only strand it short of the bottom.
+   `!important` beats the inline max-height those two share. */
+.trace-bounded .toc-rail {
+  position: static;
+  align-self: stretch;
+  min-height: 0;
+  max-height: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toc-rail { transition: none; }
+}
+</style>

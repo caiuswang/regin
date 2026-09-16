@@ -105,6 +105,8 @@ function countToolish(descendants) {
       toolCounts['skill'] = (toolCounts['skill'] || 0) + 1
     } else if (name === 'file.edit' || name === 'plan.edit') {
       toolCounts['edit'] = (toolCounts['edit'] || 0) + 1
+    } else if (name === 'subagent.start') {
+      toolCounts['agent'] = (toolCounts['agent'] || 0) + 1
     }
   }
   return toolCounts
@@ -165,9 +167,11 @@ export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {
 
   const childrenByParent = computed(() => {
     const map = new Map()
+    const seen = new Set()
     for (const s of spans()) {
       const pid = s.parent_id
-      if (!pid) continue
+      if (!pid || seen.has(s.span_id)) continue
+      seen.add(s.span_id)
       if (!map.has(pid)) map.set(pid, [])
       map.get(pid).push(s)
     }
@@ -322,19 +326,40 @@ export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {
       .map((span) => ({ span, depth: 0, inAgent: false, inWorkflow: false }))
   }
 
+  // The child trace's own tree, rooted at ITS roots. A delegated agent's
+  // spans arrive as their own session — the `subagent.start` anchor stays
+  // behind in the parent, so there is no marker here to flatten from.
+  function scopedRootTree() {
+    const out = []
+    for (const root of rootSpans.value) {
+      out.push({ span: root, depth: 0, inAgent: false, inWorkflow: false })
+      out.push(...flattenDescendants(root.span_id, 1))
+    }
+    return out
+  }
+
   function scopedEntries(sc) {
     if (sc.spanCount === 0 && !sc.running) return []
     let flat = flattenDescendants(sc.startSpanId)
+    if (!flat.length) flat = scopedRootTree()
+    // A workflow agent's child is not prompt-anchored, so its rows are no
+    // conversational root's descendants — the flat attribute match is what
+    // reaches them (and an orphan roster entry's).
     if (!flat.length) flat = scopedAttrFallback(sc.agentId)
     if (!flat.length) return []
     // A workflow agent's start marker carries the run facts inline (task
     // prompt + result) — lead with the real prompt, close with the result,
     // mirroring the run projection's prompt → work → result reading order.
-    const startSpan = spanById.value.get(sc.startSpanId) || null
-    const marker = startSpan?.attributes || {}
+    const marker = sc.marker || {}
     if (marker.result_full || marker.result_preview) {
       flat = [...flat, {
-        span: { ...startSpan, span_id: `${startSpan.span_id}::result`, name: 'workflow.agent_result' },
+        span: {
+          span_id: `${sc.startSpanId}::result`,
+          name: 'workflow.agent_result',
+          parent_id: null,
+          start_time: flat[flat.length - 1].span.start_time,
+          attributes: marker,
+        },
         depth: 0, inAgent: false, inWorkflow: false,
       }]
     }
@@ -414,6 +439,7 @@ export function useSpanTree(spansInput, turnsInput = null, scopeInput = null) {
         startMs,
         endMs,
         durationMs: Math.max(0, endMs - startMs),
+        spanCount: entry.descendants.length,
         toolCounts,
         turns: promptTurns,
         turnAgg: aggregateTurns(promptTurns),

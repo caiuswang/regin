@@ -233,7 +233,11 @@ def test_subagent_prompt_span_emitted_once(tmp_path, monkeypatch):
     assert attrs['text'].startswith('You are the BUILDER')
 
 
-def test_subagent_resumable_emits_prompt_only_on_first_scan(tmp_path, monkeypatch):
+def test_subagent_resumable_rechecks_prompts_on_every_scan(tmp_path, monkeypatch):
+    """A `SendMessage` continuation appends the resumed run's prompt long
+    after the first poll committed its byte offset, so gating the prompt read
+    on `state is None` left that run's card with nothing to show. The
+    seen-uuid cache — not the scan number — is what keeps it cheap."""
     from hook_manager.handlers import subagent_lifecycle as sl
     sub = tmp_path / 'agent-b9.jsonl'
     _write_transcript(sub, [
@@ -248,7 +252,28 @@ def test_subagent_resumable_emits_prompt_only_on_first_scan(tmp_path, monkeypatc
 
     sl.emit_subagent_responses_resumable('t', str(sub), 'b9', None)
     sl.emit_subagent_responses_resumable('t', str(sub), 'b9', object())
-    assert calls['n'] == 1                              # only the state=None scan
+    assert calls['n'] == 2
+
+
+def test_the_seen_cache_stops_a_prompt_being_posted_twice(tmp_path, monkeypatch):
+    from hook_manager.handlers import subagent_lifecycle as sl
+    sub = tmp_path / 'agent-b8.jsonl'
+    _write_transcript(sub, [
+        {'type': 'user', 'uuid': 'p0', 'parentUuid': None,
+         'timestamp': '2026-01-01T10:00:00Z',
+         'message': {'content': 'task text'}},
+    ])
+    posted = []
+    monkeypatch.setattr(sl, '_post_prompt_span',
+                        lambda t, a, sid, text, ts: posted.append(sid))
+    monkeypatch.setattr(
+        'hook_manager.handlers.turn_trace.cache._mark_seen',
+        lambda *a, **k: None)
+
+    sl._emit_subagent_prompt('t', str(sub), 'b8', seen=set())
+    assert posted == ['prompt-sa-b8']
+    sl._emit_subagent_prompt('t', str(sub), 'b8', seen={'p0'})
+    assert posted == ['prompt-sa-b8']
 
 
 # ── Rescan throttle ─────────────────────────────────────────────────

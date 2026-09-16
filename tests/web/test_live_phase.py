@@ -54,14 +54,38 @@ def test_main_waiting_permission_beats_working_window():
     assert S._main_phase(act, now, ended=False) == 'waiting-permission'
 
 
-def test_stale_blocker_not_waiting_on_inactive_session():
-    """A PENDING permission that is the newest span but on a long-silent
-    session is demoted (merge.py) → the phase is inactive-stale, not
-    waiting-permission."""
+def test_blocker_stays_waiting_past_the_stale_window():
+    """A PENDING permission that is the newest span keeps 'waiting-permission'
+    however long it waits: the agent cannot emit until a human answers, so the
+    silence measures the wait, not the session's health. Ageing it out is what
+    made a blocking session read 'quiet' in the switcher and the rail."""
     now = _now()
     ts = (now - timedelta(seconds=1200)).isoformat()
-    act = {'last_ts': ts, 'perm_ts': ts}
-    assert S._main_phase(act, now, ended=False) == 'inactive-stale'
+    assert S._main_phase({'last_ts': ts, 'perm_ts': ts}, now,
+                         ended=False) == 'waiting-permission'
+    assert S._main_phase({'last_ts': ts, 'ask_ts': ts}, now,
+                         ended=False) == 'waiting-input'
+
+
+def test_ended_session_demotes_even_a_newest_blocker():
+    """`ended` is the only thing that clears a blocker: once the session is
+    over nothing can still be waiting on the human."""
+    now = _now()
+    ts = (now - timedelta(seconds=1200)).isoformat()
+    assert S._main_phase({'last_ts': ts, 'perm_ts': ts}, now,
+                         ended=True) == 'ended'
+
+
+def test_silence_without_a_blocker_still_stales():
+    """The age gate is intact for the un-blocked case — only a blocker is
+    exempt from it."""
+    now = _now()
+    ts = (now - timedelta(seconds=1200)).isoformat()
+    older = (now - timedelta(seconds=1300)).isoformat()
+    assert S._main_phase({'last_ts': ts}, now, ended=False) == 'inactive-stale'
+    # a resolved span AFTER the permission means the gate was answered
+    assert S._main_phase({'last_ts': ts, 'perm_ts': older}, now,
+                         ended=False) == 'inactive-stale'
 
 
 def test_rollup_waiting_permission_beats_working():
@@ -458,3 +482,342 @@ def test_roster_workflow_state_done_marker_is_finished(trace_db):
     entry = _roster_by_id('tWF1')['a9']
     assert entry['status'] == 'finished'
     assert entry['description'] == 'survey:tags'
+
+
+# ── terminal-screen override ─────────────────────────────────────
+# The span heuristic starves during any hook-silent stretch (extended
+# thinking, one long tool call, a streamed response): activity ages past
+# WORKING_WINDOW_SEC and the session reads `idle` while the real terminal
+# plainly shows it working. `screen` is that terminal, parsed.
+
+from lib.agent_bridge.screen_state import ScreenState  # noqa: E402
+
+
+# `_session_phase` reads the real clock (unlike `_main_phase`, which takes
+# `now`), so these ages are anchored to it rather than to the fixed `_now()`.
+def _quiet_activity(seconds: int, **extra):
+    base = datetime.now()
+    act = {'last_ts': (base - timedelta(seconds=seconds)).isoformat()}
+    act.update({k: (base - timedelta(seconds=v)).isoformat()
+                for k, v in extra.items()})
+    return {None: act}
+
+
+def test_screen_promotes_a_hook_silent_session_back_to_working():
+    by_aid = _quiet_activity(120)
+    assert S._main_phase(by_aid[None], datetime.now(), ended=False) == 'idle'
+    phase, agent_phase = S._session_phase(
+        by_aid, [], ended=False, screen=ScreenState(busy=True, verb='Thinking'))
+    assert phase == 'working'
+    assert agent_phase['main'] == 'working'
+
+
+def test_a_quiet_screen_never_contradicts_a_span_that_says_working():
+    """`busy=False` also covers "status line not recognised", so it must not
+    outrank a span-derived working — that would reinstate the false-idle bug
+    with more authority than the heuristic it overrode."""
+    by_aid = _quiet_activity(3)
+    assert S._main_phase(by_aid[None], datetime.now(), ended=False) == 'working'
+    phase, _ = S._session_phase(by_aid, [], ended=False,
+                                screen=ScreenState(busy=False))
+    assert phase == 'working'
+
+
+def test_a_quiet_screen_clears_the_likely_crashed_verdict():
+    """The one demotion a quiet screen earns: a readable claude pane proves
+    the session is alive, which is all `inactive-stale` was claiming."""
+    by_aid = _quiet_activity(1200)
+    assert S._main_phase(by_aid[None], datetime.now(),
+                         ended=False) == 'inactive-stale'
+    phase, _ = S._session_phase(by_aid, [], ended=False,
+                                screen=ScreenState(busy=False))
+    assert phase == 'idle'
+
+
+def test_no_screen_verdict_leaves_the_span_phase_untouched():
+    by_aid = _quiet_activity(120)
+    phase, _ = S._session_phase(by_aid, [], ended=False, screen=None)
+    assert phase == 'idle'
+
+
+def test_screen_never_resurrects_an_ended_session():
+    """A settled pane can still show the last frame of a finished turn."""
+    by_aid = _quiet_activity(3)
+    phase, agent_phase = S._session_phase(
+        by_aid, [], ended=True, screen=ScreenState(busy=True, verb='Thinking'))
+    assert phase == 'ended'
+    assert agent_phase['main'] == 'ended'
+
+
+def test_screen_never_overrides_a_blocked_verdict():
+    """waiting-* comes from a structured hook payload; a spinner glyph read
+    off the terminal must not outrank it."""
+    by_aid = _quiet_activity(5, perm_ts=2)
+    phase, _ = S._session_phase(by_aid, [], ended=False,
+                                screen=ScreenState(busy=False))
+    assert phase == 'waiting-permission'
+
+
+def test_run_owner_verdict_still_outranks_the_screen():
+    by_aid = _quiet_activity(120)
+    phase, _ = S._session_phase(by_aid, [], ended=False,
+                                main_override='starting',
+                                screen=ScreenState(busy=True))
+    assert phase == 'starting'
+
+
+# ── the SDK tier ─────────────────────────────────────────────────
+# A run regin launched is spawned with the bridge off, so it never registers
+# a pane and no screen exists to read: its NOW zone said "status unavailable"
+# and a long tool call decayed to `inactive-stale`. The runner in this process
+# is the source instead, and which source answers is decided once, from the
+# `agent_runs` row written at launch.
+
+from lib import agent_sdk as _agent_sdk  # noqa: E402
+from lib.agent_sdk import registry as _registry, store as _sdk_store  # noqa: E402
+from lib.settings import settings  # noqa: E402
+
+
+class _Loop:
+    def is_running(self):
+        return True
+
+    def is_closed(self):
+        return False
+
+
+class _OwnedRunner:
+    """Just the surface the live-state read touches."""
+
+    def __init__(self, state):
+        self._state = state
+        self.loop = _Loop()
+
+    def live_state(self):
+        return self._state
+
+
+@pytest.fixture
+def owned_run(monkeypatch):
+    """Register a run this process owns, and refuse every tmux probe.
+
+    The refusal is the point of the tier split: an SDK child provably has no
+    pane, so a probe for one can only spend a subprocess to learn nothing.
+    """
+    from lib.agent_bridge import delivery
+
+    def _no_probe(*args, **kwargs):
+        raise AssertionError("an SDK session must never probe tmux")
+
+    monkeypatch.setattr(delivery, "live_state", _no_probe)
+    monkeypatch.setattr(delivery, "capture_screen", _no_probe)
+    monkeypatch.setattr(_sdk_store, "find_run", lambda sid: None)
+    registered: list[str] = []
+
+    def _own(trace_id, state):
+        registered.append(trace_id)
+        _registry.register_run(trace_id, _OwnedRunner(state))
+
+    yield _own
+    for trace_id in registered:
+        _registry.unregister_run(trace_id)
+
+
+def _sdk_session(trace_db, trace_id, *, quiet_sec):
+    """A session whose last span is `quiet_sec` old — the hook-silent stretch
+    the span heuristic misreads."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, trace_id, last_seen=now.isoformat())
+        _seed_span(conn, trace_id, 'r1', 'assistant_response',
+                   start=(now - timedelta(seconds=quiet_sec)).isoformat())
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_long_tool_call_with_no_spans_still_reads_working(trace_db,
+                                                            owned_run):
+    """The exact case that failed: no span for twenty minutes while one tool
+    runs, which the recency rule can only read as a crashed session."""
+    _sdk_session(trace_db, 'sdkA', quiet_sec=1200)
+    owned_run('sdkA', ScreenState(busy=True, verb='Working', elapsed_sec=1200,
+                                  tool='Bash'))
+
+    summary = S._session_summary('sdkA')
+
+    assert summary['live_screen']['busy'] is True
+    assert summary['live_screen']['tool'] == 'Bash'
+    assert summary['phase'] == 'working'
+    assert summary['agent_phase']['main'] == 'working'
+
+
+def test_between_turns_the_run_reports_quiet_rather_than_unavailable(trace_db,
+                                                                     owned_run):
+    """`busy=False` is a verdict the runner can give and a screen cannot, so
+    the card reads idle instead of "inactive"."""
+    _sdk_session(trace_db, 'sdkB', quiet_sec=1200)
+    owned_run('sdkB', ScreenState(busy=False))
+
+    summary = S._session_summary('sdkB')
+
+    assert summary['live_screen']['busy'] is False
+    assert summary['phase'] == 'idle'
+
+
+def test_a_run_this_process_does_not_own_has_no_status_and_no_probe(
+        trace_db, monkeypatch):
+    """Tier without a runner: null, never a fabricated `busy: false` — and
+    still no tmux, because the child never had a pane to read."""
+    from lib.agent_bridge import delivery
+
+    def _no_probe(*args, **kwargs):
+        raise AssertionError("an SDK session must never probe tmux")
+
+    monkeypatch.setattr(delivery, "live_state", _no_probe)
+    monkeypatch.setattr(_sdk_store, "find_run",
+                        lambda sid: {"trace_id": 'sdkC', "status": "running"})
+    _sdk_session(trace_db, 'sdkC', quiet_sec=5)
+
+    assert S._session_summary('sdkC')['live_screen'] is None
+
+
+def test_sdk_status_is_not_gated_on_the_bridge_being_enabled(trace_db,
+                                                             owned_run,
+                                                             monkeypatch):
+    """A run's status comes from its runner, not from the bridge, so an
+    operator who never turned the bridge on still gets it."""
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    _sdk_session(trace_db, 'sdkD', quiet_sec=2)
+    owned_run('sdkD', ScreenState(busy=True, verb='Working'))
+
+    assert S._session_summary('sdkD')['live_screen']['busy'] is True
+
+
+def test_a_terminal_session_is_still_read_off_its_screen(trace_db,
+                                                         monkeypatch):
+    """The other tier, unchanged: no run row, so the screen answers."""
+    asked: list = []
+
+    def _fake(trace_id, accept=None):
+        asked.append((trace_id, accept))
+        return ScreenState(busy=True, verb='Thinking')
+
+    from lib.agent_bridge import delivery
+    monkeypatch.setattr(delivery, "live_state", _fake)
+    monkeypatch.setattr(_sdk_store, "find_run", lambda sid: None)
+    _sdk_session(trace_db, 'tmuxA', quiet_sec=1200)
+
+    summary = S._session_summary('tmuxA')
+
+    assert asked == [('tmuxA', {'tmuxA'})]
+    assert summary['live_screen']['verb'] == 'Thinking'
+    assert summary['phase'] == 'working'
+
+
+# ── the picker's sweep ───────────────────────────────────────────
+
+def test_screen_states_lists_the_runs_child_session_id(flask_client,
+                                                       monkeypatch):
+    """The dot lights on the row the list actually shows — the child's id, the
+    same key the tmux sweep uses."""
+    from lib.agent_bridge import delivery
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        _seed_session(conn, 'child-1', last_seen=datetime.now().isoformat())
+        conn.commit()
+    finally:
+        conn.close()
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    monkeypatch.setattr(delivery, "screen_states", dict)
+    monkeypatch.setattr(_agent_sdk, "run_live_states",
+                        lambda: {'child-1': ScreenState(busy=True,
+                                                        verb='Working',
+                                                        elapsed_sec=12,
+                                                        tool='Bash')})
+
+    body = flask_client.get('/api/bridge/screen-states').get_json()
+
+    assert body['states'] == {
+        'child-1': {'busy': True, 'verb': 'Working', 'elapsed_sec': 12}}
+
+
+def test_a_failing_tmux_sweep_still_reports_the_runs_regin_owns(flask_client,
+                                                                monkeypatch):
+    from lib.agent_bridge import delivery
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        _seed_session(conn, 'child-2', last_seen=datetime.now().isoformat())
+        conn.commit()
+    finally:
+        conn.close()
+
+    def _boom():
+        raise RuntimeError("tmux is gone")
+
+    monkeypatch.setattr(delivery, "screen_states", _boom)
+    monkeypatch.setattr(_agent_sdk, "run_live_states",
+                        lambda: {'child-2': ScreenState(busy=False)})
+
+    body = flask_client.get('/api/bridge/screen-states').get_json()
+
+    assert body['states']['child-2']['busy'] is False
+
+
+def test_a_failing_run_sweep_never_500s_the_picker(flask_client, monkeypatch):
+    from lib.agent_bridge import delivery
+
+    def _boom():
+        raise RuntimeError("registry is wedged")
+
+    monkeypatch.setattr(delivery, "screen_states", dict)
+    monkeypatch.setattr(_agent_sdk, "run_live_states", _boom)
+
+    resp = flask_client.get('/api/bridge/screen-states')
+
+    assert resp.status_code == 200
+    assert resp.get_json() == {"states": {}}
+
+
+def test_a_ghost_subagent_never_outranks_an_idle_runner():
+    """A run regin OWNS rolls up to its runner's verdict, not the roster's.
+
+    Subagents execute inside a turn, so a runner reporting `idle` means none
+    is running and a roster still claiming one is a lost `subagent.stop`.
+    Before this, that ghost rolled the session up to `working` and the
+    switcher put a parked session above the ones actually moving.
+    """
+    by_aid = _quiet_activity(1200)
+    roster = [{'agent_id': 'ag-1', 'status': 'running'}]
+    phase, agent_phase = S._session_phase(
+        by_aid, roster, ended=False, main_override='idle')
+    assert phase == 'idle'
+    # The roster is still the only source for the subagent's OWN entry.
+    assert agent_phase['ag-1'] == 'working'
+    assert agent_phase['main'] == 'idle'
+
+
+def test_a_ghost_subagent_still_rolls_up_without_a_runner():
+    """The demotion is scoped to runs regin owns. A session it merely traces
+    has no better source than the roster, so the rollup is unchanged."""
+    by_aid = _quiet_activity(1200)
+    roster = [{'agent_id': 'ag-1', 'status': 'running'}]
+    phase, _ = S._session_phase(by_aid, roster, ended=False)
+    assert phase == 'working'
+
+
+
+def test_a_parked_subagent_still_outranks_an_idle_runner():
+    """The ghost demotion drops only `working` votes. A park outlives the turn
+    that opened it, and surfacing it is the rollup's whole job."""
+    by_aid = _quiet_activity(1200)
+    roster = [{'agent_id': 'ag-1', 'status': 'waiting'}]
+    phase, agent_phase = S._session_phase(
+        by_aid, roster, ended=False, main_override='idle')
+    assert phase == 'waiting-input'
+    assert agent_phase['main'] == 'idle'

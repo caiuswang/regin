@@ -3,7 +3,7 @@
 # Usage: ./scripts/setup.sh [scan_path]
 #
 # What it does:
-#   1. Creates Python venv and installs dependencies
+#   1. Creates Python venv, installs dependencies, links the `regin` CLI onto PATH
 #   2. Installs frontend dependencies and builds the SPA
 #   3. Initializes SQLite (local cache) from git-tracked files
 #   4. Configures local settings (mode, database_url) and registers source repos
@@ -38,6 +38,22 @@ echo "  Installing Python dependencies (this may take a few minutes)..."
 # Dependencies are declared in pyproject.toml; `-e .` installs the package + all of them.
 .venv/bin/pip install -e .
 echo "  Dependencies installed"
+
+# --- 1b. CLI on PATH ---
+# `pip install -e .` above produces `.venv/bin/regin` (pyproject `[project.scripts]`),
+# which is only reachable while this venv is activated. Agents run `regin ...` from
+# *other* repos' sessions, where it never is: the hooks keep working (they carry an
+# absolute interpreter path) while every skill's CLI leg fails, so the harness
+# half-works with no signal that half of it is missing. The link closes that gap.
+BIN_DIR="${REGIN_BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$BIN_DIR"
+ln -sf "$ROOT/.venv/bin/regin" "$BIN_DIR/regin"
+echo "[1b] Linked regin CLI -> $BIN_DIR/regin"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) echo "  WARNING: $BIN_DIR is not on PATH. Add it, or agents in other repos" ;
+     echo "           cannot run 'regin' and every skill's CLI gate silently fails." ;;
+esac
 
 # --- 2. Frontend build ---
 echo "[2/6] Building frontend..."

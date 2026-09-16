@@ -161,7 +161,12 @@ const displayLabel = computed(() => (selectedItem.value ? selectedItem.value.lab
 .ds-select-trigger[data-state="open"] .ds-select-chevron { transform: rotate(180deg); }
 
 .ds-select-content {
-  z-index: var(--z-dropdown);
+  /* Above --z-modal, not at --z-dropdown: the listbox is portalled to <body>,
+     so a Select inside a Dialog would otherwise render *under* that dialog's
+     overlay — visible, and impossible to click, because the overlay swallows
+     the pointer. Outside a modal nothing sits between the two tiers, so this
+     changes only the case that was broken. */
+  z-index: var(--z-popover);
   min-width: max(11rem, var(--reka-select-trigger-width));
   max-height: min(20rem, var(--reka-select-content-available-height, 20rem));
   background: var(--color-surface);
@@ -184,7 +189,7 @@ const displayLabel = computed(() => (selectedItem.value ? selectedItem.value.lab
   outline: none;
   user-select: none;
 }
-.ds-select-item[data-highlighted] { background: var(--color-surface-2); }
+.ds-select-item[data-highlighted] { background: var(--color-surface-selected); }
 .ds-select-item[data-state="checked"] { color: var(--color-primary); font-weight: 500; }
 .ds-select-item[data-disabled] { opacity: 0.5; cursor: not-allowed; }
 .ds-select-check {

@@ -121,6 +121,24 @@ def handle_turn(payload: HookPayload) -> HookResponse | None:
     return HookResponse(suppress_output=True)
 
 
+def handle_end(payload: HookPayload) -> HookResponse | None:
+    """Retire the session's pane claim when the session ends.
+
+    Occupancy is decided by the newest `reachable=1` row on a pane, and
+    `handle_turn` only fires on prompt/tool events — so a session parked
+    waiting for the operator emits nothing and cannot re-claim its pane. A
+    short-lived session that registers and exits therefore holds the pane
+    forever, silently stripping the /live composer off the session actually
+    sitting in it. Flipping `reachable` off here retires the claim at the
+    moment it stops being true, rather than inferring death from silence.
+    """
+    try:
+        _retire_pane(payload.session_id)
+    except Exception:
+        _log_register_failure(payload)
+    return HookResponse(suppress_output=True)
+
+
 def _already_registered(payload: HookPayload) -> bool:
     pane_id = (os.environ.get('TMUX_PANE') or '').strip()
     trace_id = payload.session_id or ''
@@ -165,7 +183,54 @@ def _register_pane(payload: HookPayload, *, healing: bool) -> bool:
     _upsert_pane(trace_id, pane_id, server_pid, pane_pid, tmux_socket,
                  payload.cwd)
     _registered_panes.add((trace_id, pane_id))
+    if not healing:
+        _announce_succession(trace_id)
     return True
+
+
+def _announce_succession(trace_id: str) -> None:
+    """Tell the dashboard that this row may have completed a `/clear` chain.
+
+    Claiming a pane is one of the two writes that make a succession
+    resolvable; the other is the predecessor's `ended_reason = 'clear'`,
+    committed by the span ingest in another process. Whichever lands second
+    is the one whose announcement resolves, so this fires unconditionally and
+    lets the walk decide.
+
+    SessionStart only. The turn-event heal re-runs this registration on every
+    prompt and tool call, and a succession does not become true again — a
+    notify per turn would be pure loopback traffic for a frame that can only
+    be raised once.
+
+    Best-effort like every other write on this path: SessionStart is on the
+    interactive startup path, so a dashboard that is down or a schema that is
+    absent must cost the launch nothing.
+    """
+    try:
+        from lib.agent_bridge import store
+        predecessor = store.cleared_predecessor(trace_id)
+        if not predecessor:
+            return
+        from lib.notifications import notify
+        notify.notify_successor(predecessor)
+    except Exception:  # noqa: BLE001 - never delay an interactive launch
+        return
+
+
+def _retire_pane(trace_id: str | None) -> None:
+    """Flip `reachable` off for `trace_id`, keeping the identity row.
+
+    SessionEnd is not the only moment a claim stops being true — the SDK tier
+    takes a conversation over from a terminal that can no longer fire one — so
+    the UPDATE lives in `lib.agent_bridge.store` where both callers reach it.
+    Only the schema guard is the hook's: it runs where the table may not exist
+    yet.
+    """
+    if not trace_id:
+        return
+    ensure_schema()
+    from lib.agent_bridge.store import retire_pane
+    retire_pane(trace_id)
 
 
 def _query_pane_identity(pane_id: str) -> tuple[int, int, str] | None:

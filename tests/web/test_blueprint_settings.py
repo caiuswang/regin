@@ -539,3 +539,103 @@ def test_settings_block_get_carries_a_warnings_list(
     assert body["warnings"] == []
 
 
+
+
+# ── /api/settings/agent-bridge ───────────────────────────────
+
+def test_agent_bridge_get_exposes_the_terminal_switch(
+        flask_client, isolated_settings_files):
+    """The switch has to be reachable from the UI: a config value with no
+    field spec never reaches the Settings page at all."""
+    body = flask_client.get("/api/settings/agent-bridge").get_json()
+    fields = {f["key"]: f for f in body["fields"]}
+    assert fields["terminal_enabled"]["default"] is False
+
+
+def test_agent_bridge_get_never_ships_the_token(
+        flask_client, isolated_settings_files):
+    """The bridge bearer token is the credential for headless callers and
+    must not reach the browser (docs/agent-bridge-design.md). `_block_get`
+    returns declared fields only, so leaving it out of the spec IS the
+    control — this pins that it stays out."""
+    isolated_settings_files["local"].write_text(json.dumps(
+        {"agent_bridge": {"token": "tok-must-not-leak"}}))
+    resp = flask_client.get("/api/settings/agent-bridge")
+    assert "token" not in {f["key"] for f in resp.get_json()["fields"]}
+    assert b"tok-must-not-leak" not in resp.data
+
+
+def test_agent_bridge_put_preserves_the_token_it_never_showed(
+        flask_client, isolated_settings_files):
+    """A partial PUT from the UI must not drop the unexposed field."""
+    isolated_settings_files["local"].write_text(json.dumps(
+        {"agent_bridge": {"token": "tok-keep-me", "enabled": True}}))
+    resp = flask_client.put("/api/settings/agent-bridge",
+                            json={"terminal_enabled": True},
+                            headers=_editor_auth_header())
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    block = json.loads(
+        isolated_settings_files["local"].read_text())["agent_bridge"]
+    assert block == {"token": "tok-keep-me", "enabled": True,
+                     "terminal_enabled": True}
+    assert not isolated_settings_files["shared"].exists()
+
+
+def test_agent_bridge_warns_that_the_terminal_grants_a_shell(monkeypatch):
+    """Turning it on is a security decision, so the tab says so."""
+    from lib.settings import settings
+    from web.blueprints.settings import _agent_bridge_warnings
+    monkeypatch.setattr(settings.agent_bridge, "terminal_enabled", True)
+    assert any("full shell" in w
+               for w in _agent_bridge_warnings(settings.agent_bridge))
+
+
+def test_agent_bridge_is_quiet_when_the_terminal_is_off(monkeypatch):
+    from lib.settings import settings
+    from web.blueprints.settings import _agent_bridge_warnings
+    monkeypatch.setattr(settings.agent_bridge, "terminal_enabled", False)
+    monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+    assert _agent_bridge_warnings(settings.agent_bridge) == []
+
+
+# ── /api/settings/tasks ──────────────────────────────────────
+
+def test_tasks_get_exposes_every_model_field(
+        flask_client, isolated_settings_files):
+    """A settings field with no field spec never reaches the Settings page."""
+    from lib.settings import TasksConfig
+    body = flask_client.get("/api/settings/tasks").get_json()
+    assert {f["key"] for f in body["fields"]} == set(
+        TasksConfig.model_fields)
+
+
+def test_tasks_put_persists_to_local(flask_client, isolated_settings_files):
+    """Machine-local: a git-tracked switch would arm the key-authenticated
+    capture route for everyone who pulls."""
+    resp = flask_client.put("/api/settings/tasks",
+                            json={"capture_enabled": True,
+                                  "capture_rate_limit_per_minute": 5},
+                            headers=_editor_auth_header())
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    block = json.loads(isolated_settings_files["local"].read_text())["tasks"]
+    assert block == {"capture_enabled": True,
+                     "capture_rate_limit_per_minute": 5}
+    assert not isolated_settings_files["shared"].exists()
+
+
+def test_tasks_put_requires_auth(anon_client, isolated_settings_files):
+    assert anon_client.put("/api/settings/tasks",
+                           json={"capture_enabled": True}).status_code == 401
+
+
+def test_tasks_warns_when_capture_is_armed_with_no_key(monkeypatch, tmp_db):
+    from lib.settings import TasksConfig
+    from web.blueprints.settings import _tasks_warnings
+    assert any("no live API key" in w
+               for w in _tasks_warnings(TasksConfig(capture_enabled=True)))
+
+
+def test_tasks_is_quiet_when_capture_is_off(monkeypatch, tmp_db):
+    from lib.settings import TasksConfig
+    from web.blueprints.settings import _tasks_warnings
+    assert _tasks_warnings(TasksConfig()) == []

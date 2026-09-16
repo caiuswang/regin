@@ -158,7 +158,25 @@ def start_server(token: str) -> ThreadingHTTPServer:
 # ---------------------------------------------------------------- selftest
 PROMPT_NEEDLE = "❯"
 TRUST_NEEDLE = "Is this a project you created or one you trust?"
-BUSY_NEEDLE = "esc to interrupt"
+
+
+# A turn's status line, matched on ANY of three marks. Was a substring test
+# for "esc to interrupt" alone, which claude 2.x stops rendering once a turn
+# runs long — a genuinely busy pane then reported idle. Deliberately a local
+# copy rather than an import: this spike is stdlib-only by design (see the
+# module docstring), and `lib/agent_bridge/screen_state.py` is the canonical
+# implementation this mirrors.
+BUSY_MARKS = (
+    re.compile(r'^\s*\S{1,2}\s+[A-Za-z][A-Za-z-]*…', re.MULTILINE),
+    re.compile(r'esc to interrupt', re.IGNORECASE),
+    re.compile(r'\([^()]*\b(?:\d+h\s+)?(?:\d+m\s+)?\d+s\b[^()]*·'),
+)
+
+
+def pane_is_busy(session: str) -> bool:
+    """True when the pane's own status line says a turn is in flight."""
+    capture = capture_pane(session)
+    return any(mark.search(capture) for mark in BUSY_MARKS)
 
 
 def launch_claude(session: str, workdir: Path) -> None:
@@ -261,7 +279,7 @@ def _test_busy_steering(token: str, session: str, workdir: Path) -> bool:
     )
     print(f"  T2 task POST -> {first}")
     time.sleep(5.0)  # let the sleep start so the session is genuinely busy
-    was_busy = BUSY_NEEDLE in capture_pane(session)
+    was_busy = pane_is_busy(session)
     steer = post_message(
         token, session,
         "Additional request: also create a file steer_ok.txt containing "

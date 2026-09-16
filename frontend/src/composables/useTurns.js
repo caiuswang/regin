@@ -16,7 +16,7 @@ import { scrollSpanRowIntoView } from '../utils/scrollSpanRow.js'
 // before calling useTurns() so it still fires first.
 export function useTurns(route, {
   allSpans, treeNodes, selectedSpan, selectedKeys, expandedKeys,
-  ensureSpanSubtreeLoaded,
+  ensureSpanSubtreeLoaded, wantsDetail,
 }) {
   const turns = ref(null)  // lazy-loaded via /api/sessions/:id/turn-usage
   const turnsLoading = ref(false)
@@ -38,10 +38,21 @@ export function useTurns(route, {
   // with both its writer (selectTurn) and the watcher it gates.
   let suppressSpanToTurnSync = false
 
+  // `span_refs` + `tool_summary` are the SIDEBAR's — the click-jump target and
+  // the "Read×2·Bash" line — and it sits behind the detail rail, which is
+  // closed on a fresh conversation-tab load. That load is the one place turns
+  // are fetched eagerly, so it asks for the counters only: 180KB → 88KB on a
+  // 223-turn session. `wantsDetail()` flips once the rail is actually open,
+  // and the watcher in the view re-reads then.
+  const turnsDetailLoaded = ref(false)
+
   async function fetchTurns() {
-    const res = await api.get(`/sessions/${route.params.id}/turn-usage`)
+    const detail = !!wantsDetail?.()
+    const res = await api.get(
+      `/sessions/${route.params.id}/turn-usage${detail ? '?detail=1' : ''}`)
     turns.value = res.turns || []
     maxTurnConsumption.value = res.max_consumption_tokens || 0
+    turnsDetailLoaded.value = detail
   }
 
   async function loadTurns() {
@@ -257,7 +268,7 @@ export function useTurns(route, {
   return {
     turns, turnsLoading, turnsCollapsed, turnsStale,
     selectedTurnUuid, expandedTurnUuid, maxTurnConsumption,
-    spanIdsInSelectedTurn,
+    spanIdsInSelectedTurn, turnsDetailLoaded,
     fetchTurns, loadTurns, toggleTurnsCollapsed,
     selectTurn, toggleTurnExpanded, storeTurnRow, handleSpanRefClick,
   }

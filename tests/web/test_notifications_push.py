@@ -650,3 +650,297 @@ def test_the_badge_severity_ignores_test_rows(tmp_db):
     _seed(msg_type="note")
     _seed(msg_type="blocker", is_test=True)
     assert hub.current_counts()["inbox_severity"] == "note"
+
+
+# ── /clear succession ───────────────────────────────────────────────
+
+def _seed_clear_chain():
+    """`T-old` cleared into `T-new`, both claiming pane %7."""
+    from lib.orm.engine import get_connection
+    conn = get_connection()
+    try:
+        for trace_id, at in (("T-old", "2026-08-01 10:00:00"),
+                             ("T-new", "2026-08-01 10:30:01")):
+            conn.execute(
+                "INSERT INTO bridge_panes (trace_id, pane_id, "
+                "tmux_server_pid, pane_pid, tmux_socket, reachable, cwd, "
+                "created_at, updated_at) "
+                "VALUES (?, '%7', 111, 222, NULL, 1, '/work', ?, ?)",
+                (trace_id, at, at))
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+            "ended_at, ended_reason) VALUES ('T-old', 'ended', "
+            "'2026-08-01 09:00:00', ?, ?, 'clear')",
+            ("2026-08-01 10:30:00", "2026-08-01 10:30:00"))
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen) "
+            "VALUES ('T-new', 'active', '2026-08-01 10:30:01', "
+            "'2026-08-01 11:00:00')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_loopback_successor_trigger_pushes_the_named_event(tmp_db,
+                                                             anon_client,
+                                                             monkeypatch):
+    """The registration side is out-of-process and reaches the stream only
+    here."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_bridge, "enabled", True)
+    _seed_clear_chain()
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify",
+                     json={"successor": {"trace_id": "T-old"}})
+    assert _events(q, hub.SUCCESSOR_EVENT) == [
+        {"trace_id": "T-old", "successor_trace_id": "T-new"}]
+
+
+def test_the_trigger_body_cannot_name_the_heir_itself(tmp_db, anon_client,
+                                                      monkeypatch):
+    """The endpoint is unauthenticated, so a body that could name where a page
+    jumps to would be a redirect anyone on the host could forge. Only the
+    predecessor's id is read; the heir comes from the guarded walk."""
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_bridge, "enabled", True)
+    _seed_clear_chain()
+    q, _ = hub.subscribe()
+    anon_client.post("/api/internal/notify",
+                     json={"successor": {"trace_id": "T-old",
+                                         "successor_trace_id": "T-attacker"}})
+    assert _events(q, hub.SUCCESSOR_EVENT) == [
+        {"trace_id": "T-old", "successor_trace_id": "T-new"}]
+
+
+def test_an_unresolvable_successor_trigger_raises_no_event(tmp_db,
+                                                           anon_client,
+                                                           monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings.agent_bridge, "enabled", True)
+    q, _ = hub.subscribe()
+    resp = anon_client.post("/api/internal/notify",
+                            json={"successor": {"trace_id": "T-nobody"}})
+    assert resp.status_code == 200
+    assert _events(q, hub.SUCCESSOR_EVENT) == []
+
+
+# ── Addressing: topic + role ────────────────────────────────────────
+
+def _sub(role=None, topics=(), user_id=1, stream_id=None):
+    q, _ = hub.subscribe(user_id=user_id, role=role, stream_id=stream_id)
+    if topics:
+        hub._subscribers[q] = hub._subscribers[q].__class__(
+            user_id=user_id, role=role, stream_id=stream_id,
+            topics=frozenset(topics))
+    return q
+
+
+def test_an_unaddressed_event_still_reaches_everyone(tmp_db):
+    """The whole existing surface — counts, notification, resolved — rides
+    this path, so an event naming no topic must keep fanning out."""
+    plain = _sub()
+    interested = _sub(topics=["trace:a"])
+    hub.broadcast_event("notification", {"id": 1})
+    assert _events(plain, "notification") == [{"id": 1}]
+    assert _events(interested, "notification") == [{"id": 1}]
+
+
+def test_an_addressed_event_reaches_only_the_matching_subscriber(tmp_db):
+    watching = _sub(topics=["trace:a"])
+    elsewhere = _sub(topics=["trace:b"])
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"trace_id": "a"},
+                        topic="trace:a")
+    assert _events(watching, hub.TRACE_SPANS_EVENT) == [{"trace_id": "a"}]
+    assert _events(elsewhere, hub.TRACE_SPANS_EVENT) == []
+
+
+def test_a_subscriber_that_declared_nothing_gets_no_addressed_event(tmp_db):
+    """A subscription starts interested in nothing. Anything else would mean a
+    tab keeps waking for every session until it happens to declare."""
+    q = _sub()
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"trace_id": "a"},
+                        topic="trace:a")
+    assert _events(q, hub.TRACE_SPANS_EVENT) == []
+
+
+def test_one_subscriber_can_hold_several_topics(tmp_db):
+    q = _sub(topics=["trace:a", "trace:b"])
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1}, topic="trace:a")
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 2}, topic="trace:b")
+    assert _events(q, hub.TRACE_SPANS_EVENT) == [{"n": 1}, {"n": 2}]
+
+
+def test_a_role_floor_skips_the_under_privileged(tmp_db):
+    viewer = _sub(role="viewer")
+    editor = _sub(role="editor")
+    admin = _sub(role="admin")
+    hub.broadcast_event("notification", {"id": 1}, min_role="editor")
+    assert _events(viewer, "notification") == []
+    assert _events(editor, "notification") == [{"id": 1}]
+    assert _events(admin, "notification") == [{"id": 1}]
+
+
+def test_an_unresolved_role_clears_no_floor(tmp_db):
+    """`None` is what the stream carries when the redeemed id no longer names
+    a user. An unknown privilege must not read as a sufficient one."""
+    unknown = _sub(role=None)
+    bogus = _sub(role="superuser")
+    hub.broadcast_event("notification", {"id": 1}, min_role="viewer")
+    assert _events(unknown, "notification") == []
+    assert _events(bogus, "notification") == []
+
+
+def test_topic_and_role_are_both_required(tmp_db):
+    right = _sub(role="admin", topics=["trace:a"])
+    wrong_role = _sub(role="viewer", topics=["trace:a"])
+    wrong_topic = _sub(role="admin", topics=["trace:b"])
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1},
+                        topic="trace:a", min_role="editor")
+    assert _events(right, hub.TRACE_SPANS_EVENT) == [{"n": 1}]
+    assert _events(wrong_role, hub.TRACE_SPANS_EVENT) == []
+    assert _events(wrong_topic, hub.TRACE_SPANS_EVENT) == []
+
+
+def test_an_unknown_role_floor_is_refused(tmp_db):
+    """A typo must not silently ship an open gate that reads as a closed one."""
+    _sub(role="viewer")
+    with pytest.raises(ValueError):
+        hub.broadcast_event("notification", {}, min_role="editors")
+
+
+def test_counts_ignore_topics_entirely(tmp_db):
+    q = _sub(topics=["trace:a"])
+    other = _sub()
+    hub.broadcast_counts()
+    assert len(_drain(q)) == 1
+    assert len(_drain(other)) == 1
+
+
+# ── Declaring interests on an open stream ───────────────────────────
+
+def test_set_topics_updates_the_owning_stream(tmp_db):
+    q = _sub(stream_id="s-1", user_id=1)
+    assert hub.set_topics("s-1", 1, ["trace:a"]) == 1
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1}, topic="trace:a")
+    assert _events(q, hub.TRACE_SPANS_EVENT) == [{"n": 1}]
+
+
+def test_set_topics_replaces_rather_than_adds(tmp_db):
+    """A client sends what it wants now, so a tab that navigated away stops
+    being woken without having to send a retraction it might never send."""
+    q = _sub(stream_id="s-1", user_id=1, topics=["trace:a"])
+    hub.set_topics("s-1", 1, ["trace:b"])
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1}, topic="trace:a")
+    assert _events(q, hub.TRACE_SPANS_EVENT) == []
+
+
+def test_set_topics_will_not_redirect_another_users_stream(tmp_db):
+    q = _sub(stream_id="s-1", user_id=1)
+    assert hub.set_topics("s-1", 2, ["trace:a"]) == 0
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1}, topic="trace:a")
+    assert _events(q, hub.TRACE_SPANS_EVENT) == []
+
+
+def test_set_topics_on_an_unknown_stream_changes_nothing(tmp_db):
+    _sub(stream_id="s-1", user_id=1)
+    assert hub.set_topics("s-2", 1, ["trace:a"]) == 0
+    assert hub.set_topics("", 1, ["trace:a"]) == 0
+
+
+def test_a_reconnecting_tab_reuses_its_stream_id(tmp_db):
+    """Briefly the old subscription and its replacement both carry the id;
+    updating one and not the other would leave a live stream deaf."""
+    old = _sub(stream_id="s-1", user_id=1)
+    new = _sub(stream_id="s-1", user_id=1)
+    assert hub.set_topics("s-1", 1, ["trace:a"]) == 2
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1}, topic="trace:a")
+    assert _events(old, hub.TRACE_SPANS_EVENT) == [{"n": 1}]
+    assert _events(new, hub.TRACE_SPANS_EVENT) == [{"n": 1}]
+
+
+def test_the_stream_carries_its_client_chosen_id(tmp_db, flask_client):
+    ticket = flask_client.post("/api/auth/stream-ticket").get_json()["ticket"]
+    resp = flask_client.get(
+        f"/api/notifications/stream?ticket={ticket}&stream=s-9",
+        buffered=False)
+    try:
+        next(resp.response)
+        assert [s.stream_id for s in hub._subscribers.values()] == ["s-9"]
+    finally:
+        resp.close()
+
+
+def test_topics_endpoint_requires_auth(tmp_db, anon_client):
+    resp = anon_client.post("/api/notifications/stream/topics",
+                            json={"stream": "s-1", "topics": []})
+    assert resp.status_code == 401
+
+
+def test_topics_endpoint_declares_interests(tmp_db, flask_client):
+    q = _sub(stream_id="s-1", user_id=1)
+    resp = flask_client.post("/api/notifications/stream/topics",
+                             json={"stream": "s-1", "topics": ["trace:a"]})
+    assert resp.status_code == 200
+    hub.broadcast_event(hub.TRACE_SPANS_EVENT, {"n": 1}, topic="trace:a")
+    assert _events(q, hub.TRACE_SPANS_EVENT) == [{"n": 1}]
+
+
+def test_topics_endpoint_rejects_a_stream_it_does_not_own(tmp_db,
+                                                          flask_client):
+    _sub(stream_id="s-1", user_id=2)
+    resp = flask_client.post("/api/notifications/stream/topics",
+                             json={"stream": "s-1", "topics": ["trace:a"]})
+    assert resp.status_code == 404
+
+
+def test_topics_endpoint_rejects_a_non_list(tmp_db, flask_client):
+    _sub(stream_id="s-1", user_id=1)
+    resp = flask_client.post("/api/notifications/stream/topics",
+                             json={"stream": "s-1", "topics": "trace:a"})
+    assert resp.status_code == 400
+
+
+def test_topics_endpoint_bounds_what_it_stores(tmp_db, flask_client):
+    """Both the id and the topics are client-chosen strings a subscription
+    then holds for the life of a connection."""
+    from web.blueprints import notifications
+    q = _sub(stream_id="s-1", user_id=1)
+    flask_client.post("/api/notifications/stream/topics",
+                      json={"stream": "s-1",
+                            "topics": [f"t{i}" for i in range(200)]
+                            + ["x" * 500]})
+    topics = hub._subscribers[q].topics
+    assert len(topics) == notifications._MAX_TOPICS
+    assert all(len(t) <= notifications._MAX_TOPIC_LEN for t in topics)
+
+
+def test_the_span_ingest_addresses_its_frame_at_the_trace(tmp_db, monkeypatch):
+    """The motivating defect: an ingest for one session must not wake the tabs
+    reading every other one."""
+    from web.blueprints.trace import spans_ingest
+    seen = {}
+
+    def _capture(name, payload, **kw):
+        seen[name] = kw
+
+    monkeypatch.setattr(hub, "broadcast_event", _capture)
+    monkeypatch.setattr(hub, "subscriber_count", lambda: 1)
+    from lib.trace.trace_service import projection_cache
+    monkeypatch.setattr(projection_cache, "epoch", lambda g: 1)
+    spans_ingest._announce_spans(
+        [({"trace_id": "sess-a", "span_id": "sp-1"}, {})])
+    assert seen[hub.TRACE_SPANS_EVENT] == {"topic": "trace:sess-a"}
+
+
+def test_a_stream_whose_user_vanished_still_opens(tmp_db, flask_client):
+    """The ticket already proved authentication, and the counters the stream
+    carries are the same for every account — so an id that no longer names a
+    user costs the subscription its role, not its stream."""
+    from web.blueprints import notifications
+    _seed()
+    ticket = flask_client.post("/api/auth/stream-ticket").get_json()["ticket"]
+    assert notifications._role_of(1) is None  # no users row in the scratch DB
+    resp, frame = _first_frame(flask_client, ticket)
+    assert resp.status_code == 200
+    assert json.loads(frame.removeprefix("data: ")) == {
+        "drift_pending": 0, "inbox_unread": 1, "inbox_severity": "progress"}

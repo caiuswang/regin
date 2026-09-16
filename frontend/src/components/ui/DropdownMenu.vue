@@ -58,7 +58,7 @@ defineProps({
   outline: none;
   user-select: none;
 }
-.ds-menu-item[data-highlighted] { background: var(--color-surface-2); }
+.ds-menu-item[data-highlighted] { background: var(--color-surface-selected); }
 .ds-menu-item[data-disabled] { opacity: 0.5; cursor: not-allowed; }
 .ds-menu-item-danger { color: var(--color-danger); }
 .ds-menu-item-danger[data-highlighted] { background: var(--color-danger-soft); }

@@ -46,5 +46,5 @@ __all__ = [
     "GraphSnapshot", "TopicAudit", "TopicRefDigest",
     "RuleTrigger", "RuleTriggerSuppression", "Experiment",
     "SessionSpan", "Session", "SkillRead", "PlanSession", "TurnUsage",
-    "SessionRepo", "SessionTag", "PromptImage",
+    "SessionRepo", "SessionTag", "PromptImage", "BridgeAttachment",
 ]

@@ -15,6 +15,9 @@ const props = defineProps({
   contextWindowTokens: { type: Number, default: null },
   // Whether the turn's event spine is open — drives the `hide/show detail` label.
   detailOpen: { type: Boolean, default: false },
+  // The turn is open because the mode says so (Focus, or a live turn), not
+  // because the reader opened it. Collapsing is meaningless there, so the
+  // trigger is absent rather than present-and-inert.
 })
 defineEmits(['toggle-detail'])
 

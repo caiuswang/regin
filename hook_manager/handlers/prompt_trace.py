@@ -19,10 +19,10 @@ anchor lands (matched by text hash — see `lib/trace/pending_spans.py`).
 from __future__ import annotations
 
 import os
-import re
 import time
 
 from lib.providers import get_active_provider
+from lib.trace.task_notification import parse_task_notification
 
 from ..core import HookPayload, HookResponse
 
@@ -67,43 +67,12 @@ def _plan_is_active(provider=None, fresh_seconds: int = 3600) -> bool:
     return False
 
 
-_TASK_NOTIFICATION_RE = re.compile(r'<task-notification>(.*?)</task-notification>', re.DOTALL)
-_TASK_FIELD_RE = {
-    'task_id': re.compile(r'<task-id>([^<]*)</task-id>'),
-    'tool_use_id': re.compile(r'<tool-use-id>([^<]*)</tool-use-id>'),
-    'output_file': re.compile(r'<output-file>([^<]*)</output-file>'),
-    'status': re.compile(r'<status>([^<]*)</status>'),
-    'summary': re.compile(r'<summary>([^<]*)</summary>'),
-}
-
-
-def _parse_task_notification(text: str) -> dict | None:
-    """Return parsed fields from a task-notification block, or None if not one.
-
-    Claude Code injects background-task completions as synthetic user prompts
-    wrapping the payload in `<task-notification>` XML tags. We want these to
-    surface as their own span type rather than masquerade as user prompts.
-    """
-    if '<task-notification>' not in text:
-        return None
-    body_match = _TASK_NOTIFICATION_RE.search(text)
-    if not body_match:
-        return None
-    body = body_match.group(1)
-    fields: dict[str, str] = {}
-    for key, regex in _TASK_FIELD_RE.items():
-        m = regex.search(body)
-        if m:
-            fields[key] = m.group(1).strip()
-    return fields
-
-
 def handle(payload: HookPayload) -> HookResponse | None:
     text = payload.prompt
     if not text:
         return None
 
-    task_fields = _parse_task_notification(text)
+    task_fields = parse_task_notification(text)
 
     # Background-task notifications are system-injected, not user prompts.
     # They get a dedicated `task.notification` span (best-effort) and skip
@@ -175,14 +144,7 @@ def _emit_task_notification_span(payload: HookPayload, text: str, fields: dict) 
     from lib.hook_plugin import post_span  # type: ignore
     task_id = fields.get('task_id') or ''
     span_id = f'task-{task_id[:13]}' if task_id else None
-    attributes = {
-        'text': text,
-        'task_id': fields.get('task_id'),
-        'tool_use_id': fields.get('tool_use_id'),
-        'output_file': fields.get('output_file'),
-        'status': fields.get('status'),
-        'summary': fields.get('summary'),
-    }
+    attributes = {'text': text, **fields}
     post_span(
         trace_id=payload.session_id,
         name='task.notification',

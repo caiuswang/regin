@@ -282,6 +282,40 @@ def test_emits_assistant_response_span_with_text_and_parent_link(
     assert s['attributes']['response_chars'] == len('Sure, here we go.\n\nDone.')
 
 
+def test_api_error_turn_emits_a_flagged_zero_token_response_span(
+    captured_spans, tmp_path,
+):
+    """A failed API call (model=<synthetic>, isApiErrorMessage, zero usage)
+    still gets an assistant_response span under its prompt, flagged so the UI
+    can render it as failed. Its error text must not be estimated into
+    output_tokens — nothing was generated, and nothing was billed."""
+    transcript = tmp_path / 'session.jsonl'
+    user_uuid = 'user-uuid-abcdef0123456'
+    turn_uuid = 'asst-err-98765432100'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': user_uuid, 'parentUuid': None,
+         'message': {'content': 'continue'}},
+        {'type': 'assistant', 'uuid': turn_uuid, 'parentUuid': user_uuid,
+         'timestamp': '2026-04-27T12:00:00Z', 'isApiErrorMessage': True,
+         'message': {
+             'id': 'msg-err', 'model': '<synthetic>',
+             'content': [{'type': 'text', 'text': 'API Error: 529 Overloaded.'}],
+             'usage': {'input_tokens': 0, 'output_tokens': 0,
+                       'cache_creation_input_tokens': 0,
+                       'cache_read_input_tokens': 0},
+         }},
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='s1',
+                         transcript_path=str(transcript)))
+    response_spans = [s for s in captured_spans if s.get('name') == 'assistant_response']
+    assert len(response_spans) == 1
+    attrs = response_spans[0]['attributes']
+    assert response_spans[0]['parent_id'] == f'prompt-{user_uuid[:13]}'
+    assert attrs['is_api_error'] is True
+    assert attrs['text'] == 'API Error: 529 Overloaded.'
+    assert (attrs['output_tokens'], attrs['model']) == (0, None)
+
+
 def test_assistant_response_concatenates_split_message_blocks(
     captured_spans, tmp_path,
 ):

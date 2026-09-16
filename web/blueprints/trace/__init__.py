@@ -46,5 +46,6 @@ from web.blueprints.trace import (  # noqa: E402,F401
     sessions,
     skill_reads,
     spans_ingest,
+    switcher,
     turn_usage,
 )

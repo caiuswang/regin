@@ -1,9 +1,10 @@
 <script setup>
-import { computed, ref, watch, watchEffect, onUnmounted } from 'vue'
-import api from '../api'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import Button from './ui/Button.vue'
 import ClampedText from './ui/ClampedText.vue'
 import Icon from './ui/Icon.vue'
+import { useSpanImages } from '../composables/useSpanImages.js'
+import { imageSegments, unreferencedImages } from '../utils/promptImages.js'
 
 const props = defineProps({
   text: { type: String, default: '' },
@@ -18,91 +19,14 @@ const props = defineProps({
   forceExpanded: { type: Boolean, default: false },
 })
 
-const validIndices = computed(() => new Set(props.imageIndices))
+const { blobUrls } = useSpanImages(() => ({
+  traceId: props.traceId,
+  spanId: props.spanId,
+  indices: props.imageIndices,
+}))
 
-// idx -> object-URL. Image-bytes endpoints require an Authorization
-// header that <img> tags can't attach, so we fetch each image via the
-// authenticated api client and hand the resulting blob to <img>. Revoke
-// URLs on unmount / when the prompt changes so we don't leak blob
-// references.
-const blobUrls = ref(new Map())
-
-function revokeAll() {
-  for (const url of blobUrls.value.values()) URL.revokeObjectURL(url)
-  blobUrls.value = new Map()
-}
-
-watchEffect(async () => {
-  const indices = props.imageIndices
-  const traceId = props.traceId
-  const spanId = props.spanId
-  if (!traceId || !spanId || !indices.length) {
-    revokeAll()
-    return
-  }
-  for (const idx of indices) {
-    if (blobUrls.value.has(idx)) continue
-    try {
-      const url = await api.getBlobUrl(
-        `/sessions/${encodeURIComponent(traceId)}/prompts/${encodeURIComponent(spanId)}/images/${idx}`,
-      )
-      // Re-check after the await — props.imageIndices may have changed
-      // and a stale fetch shouldn't repopulate the cache.
-      if (props.imageIndices.includes(idx)) {
-        blobUrls.value.set(idx, url)
-        blobUrls.value = new Map(blobUrls.value)
-      } else {
-        URL.revokeObjectURL(url)
-      }
-    } catch {
-      // Best-effort: a failed image fetch falls back to the [Image #N]
-      // placeholder rendering, not a broken img tag.
-    }
-  }
-})
-
-onUnmounted(revokeAll)
-
-// Split `text` into an ordered array of {type:'text'|'image', value|idx}
-// segments. A `[Image #N]` marker becomes an image segment only when N
-// is in the persisted set — typing `[Image #5]` without attaching
-// leaves the literal text alone.
-const segments = computed(() => {
-  const out = []
-  if (!props.text) return out
-  const re = /\[Image #(\d+)\]/g
-  let last = 0
-  let m
-  while ((m = re.exec(props.text)) !== null) {
-    const idx = parseInt(m[1], 10)
-    const valid = validIndices.value.has(idx)
-    if (m.index > last) {
-      out.push({ type: 'text', value: props.text.slice(last, m.index) })
-    }
-    if (valid) {
-      out.push({ type: 'image', idx })
-    } else {
-      out.push({ type: 'text', value: m[0] })
-    }
-    last = re.lastIndex
-  }
-  if (last < props.text.length) {
-    out.push({ type: 'text', value: props.text.slice(last) })
-  }
-  return out
-})
-
-// If the prompt text was truncated by the hook (`…` suffix) a trailing
-// image marker may have been cut. Render placeholder thumbnails for
-// any indices that didn't match a marker so they aren't silently
-// dropped.
-const trailingImages = computed(() => {
-  if (!props.imageIndices.length) return []
-  const referenced = new Set(
-    segments.value.filter(s => s.type === 'image').map(s => s.idx),
-  )
-  return props.imageIndices.filter(idx => !referenced.has(idx))
-})
+const segments = computed(() => imageSegments(props.text, props.imageIndices))
+const trailingImages = computed(() => unreferencedImages(segments.value, props.imageIndices))
 
 const lightboxIdx = ref(null)
 function openLightbox(idx) { lightboxIdx.value = idx }

@@ -731,12 +731,19 @@ def test_a_promptless_resume_steers_the_run_not_the_pane_it_came_from(
         typed.append((trace_id, text))
         return delivery.DeliveryResult(True, "delivered to %0")
 
-    def _submit(trace_id, text):
+    def _submit(trace_id, text, images=None):
         queued.append((trace_id, text))
         return True, "prompt queued"
 
+    stopped: list[str] = []
+
+    def _stop(trace_id):
+        stopped.append(trace_id)
+        return True, "stopping"
+
     monkeypatch.setattr(delivery, "deliver", _deliver)
     monkeypatch.setattr(bridge_bp.agent_sdk, "submit_prompt", _submit)
+    monkeypatch.setattr(bridge_bp.agent_sdk, "stop_run", _stop)
 
     running, release = threading.Event(), threading.Event()
 
@@ -756,12 +763,27 @@ def test_a_promptless_resume_steers_the_run_not_the_pane_it_came_from(
 
     assert res.status_code == 200
     # The route hands the id it was called with straight through; the registry
-    # resolves the alias to the run.
-    assert queued == [(_CHILD, "/exit")]
+    # resolves the alias to the run. `/exit` is the reported bug's own payload,
+    # and on this tier it now reaches the control that really ends a run rather
+    # than being queued as a prompt the CLI would refuse — either way the point
+    # of the test holds: it does not become keystrokes in someone else's pane.
+    assert stopped == [_CHILD]
+    assert queued == []
     assert typed == []
-    # The pane row is real and still resolves — routing, not reachability, is
-    # what keeps the keystrokes out of it.
-    assert bridge_store.get_reachable_pane(_CHILD) is not None
+    # Routing is what carried it: `stopped` is only reachable by resolving the
+    # alias to the run, and nothing about a pane produces that. The claim being
+    # retired is the second, independent guard — the resume proved no terminal
+    # holds this id — and the row survives it, since `clear_successor` walks
+    # these rows to follow a `/clear` chain.
+    assert bridge_store.get_reachable_pane(_CHILD) is None
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT reachable FROM bridge_panes WHERE trace_id = ?",
+            (_CHILD,)).fetchone()
+    finally:
+        conn.close()
+    assert row is not None and row["reachable"] == 0
 
 
 def test_an_ordinary_launch_still_mints_its_own_trace_id(tmp_db, monkeypatch):

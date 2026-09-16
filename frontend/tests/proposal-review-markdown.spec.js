@@ -90,8 +90,9 @@ test.describe('Review note markdown render + copy', () => {
     await expect(card.getByRole('button', { name: 'Show less' })).toBeVisible()
 
     // Copy hands back the verbatim source, not the rendered text.
-    await card.locator('[data-testid="review-overview-copy"]').click()
-    await expect(page.getByText('Copied!')).toBeVisible()
+    const overviewCopy = card.locator('[data-testid="review-overview-copy"]')
+    await overviewCopy.click()
+    await expect(overviewCopy).toHaveText('Copied')
     const clip = await page.evaluate(() => navigator.clipboard.readText())
     expect(clip).toBe(MD_BODY)
 

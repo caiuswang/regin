@@ -417,6 +417,15 @@ watch([activeSection, selectedProvider], ([section]) => {
         <button
           type="button"
           class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'agent-bridge' }"
+          @click="onSelectBlock('agent-bridge')"
+        >
+          Agent Bridge
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
           :class="{ active: activeSection === 'agent-sdk' }"
           @click="onSelectBlock('agent-sdk')"
         >

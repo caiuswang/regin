@@ -6,8 +6,8 @@ import {
 } from '../../../utils/traceFormatters.js'
 
 // Generic inline tool / skill / edit row — the fallback renderer for
-// `tool.*`, `skill.read|invoke`, `file.edit`, `plan.edit`, and bare
-// `subagent.*` markers that don't get a richer card.
+// `tool.*`, `skill.read|invoke`, `file.edit`, `plan.edit`, `harness.api_retry`
+// and bare `subagent.*` markers that don't get a richer card.
 //
 // Title-first: the semantic verb leads, the subject follows in mono and
 // ellipsizes, and the only right-aligned meta is the duration. The wall clock

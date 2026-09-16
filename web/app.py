@@ -26,6 +26,7 @@ import time
 import uuid
 
 from flask import Flask, g, jsonify, request, send_from_directory
+from flask_compress import Compress
 
 from lib.activity_log import configure_activity_log, get_activity_logger
 from lib.logging_setup import configure_logging
@@ -50,6 +51,14 @@ def create_app():
     configure_activity_log()
     app = Flask(__name__,
                 static_folder=os.path.join(os.path.dirname(__file__), 'static'))
+
+    # A trace response is unbounded: one prompt's `?deep=1` subtree measured
+    # 5.4MB across 1,943 descendants, of which 97% is span bodies. Werkzeug
+    # sends that byte for byte, which is minutes on a weak link. gzip takes
+    # the same payload to 1.36MB. `text/event-stream` is deliberately absent
+    # from Flask-Compress's mimetype set, so the SSE hub keeps streaming
+    # uncompressed and unbuffered.
+    Compress(app)
 
     _install_request_logging(app)
 
@@ -93,6 +102,10 @@ def create_app():
     # ── Meta / dashboard (extracted to blueprint) ────────────────
     from web.blueprints.meta import meta_bp
     app.register_blueprint(meta_bp)
+
+    # ── Full-text search across spans, patterns, sessions, files ─
+    from web.blueprints.search import search_bp
+    app.register_blueprint(search_bp)
 
     # ── Plans + plan-sessions (extracted to blueprint) ───────────
     from web.blueprints.plans import plans_bp
@@ -156,6 +169,11 @@ def create_app():
     from web.blueprints.bridge import bridge_bp
     app.register_blueprint(bridge_bp)
 
+    # ── Agent bridge WebSocket surface (a real terminal on the pane) ─
+    from web.blueprints.terminal import terminal_bp, sock as terminal_sock
+    app.register_blueprint(terminal_bp)
+    terminal_sock.init_app(app)
+
     # ── Agent SDK tier (sessions regin launches and owns) ─────────
     from web.blueprints.agent_runs import agent_runs_bp
     app.register_blueprint(agent_runs_bp)
@@ -174,7 +192,8 @@ def create_app():
 
 
 def _reap_orphaned_agent_runs() -> None:
-    """Close out SDK runs the previous process took with it.
+    """Close out the sessions the previous process took with it — the SDK runs
+    it launched, and the tmux-registered ones it merely observed.
 
     Unconditional: a run orphaned before the tier was switched off is exactly
     the row that would otherwise sit in the UI claiming to be steerable
@@ -196,6 +215,17 @@ def _reap_orphaned_agent_runs() -> None:
         agent_sdk_store.heal_cli_session_ids()
     except Exception:
         get_activity_logger("agent_sdk").error("sdk_heal_failed", exc_info=True)
+
+    # The sweeps above answer only for runs regin launched. A session the
+    # operator started in a tmux pane has no `agent_runs` row at all, so its
+    # orphans are settled from the pane registry instead.
+    from lib.agent_bridge import reaper as bridge_reaper
+
+    try:
+        bridge_reaper.settle_dead_tmux_sessions()
+    except Exception:
+        get_activity_logger("agent_bridge").error("bridge_reap_failed",
+                                                  exc_info=True)
 
 
 def _start_memory_warmup() -> None:
@@ -270,6 +300,7 @@ ADMIN_API_ENDPOINTS = frozenset({
     "trace.api_sessions",
     "trace.api_session_detail",
     "trace.api_session_span_children",
+    "trace.api_session_subtrees",
     "trace.api_session_map",
     "trace.api_span_content",
     "trace.api_span_rewind",
@@ -288,10 +319,16 @@ ADMIN_API_ENDPOINTS = frozenset({
     # particular returns the session goal text + every send_to_user message,
     # and prompt-images serves the raw prompt image bytes — all as much a
     # per-session content leak as the map/spans above.
+    "trace.api_session_features",
     "trace.api_session_tool_rollup",
     "trace.api_session_turn_usage",
     "trace.api_session_agent_messages",
     "trace.api_get_prompt_image",
+    # A session's grades live in their own blueprint but are the same kind of
+    # per-session content: a judge's report and detail quote the transcript
+    # they graded. The cross-session `/api/grades` list stays auth-only —
+    # the Grades view is not an admin route.
+    "grades.api_session_grades",
 })
 
 

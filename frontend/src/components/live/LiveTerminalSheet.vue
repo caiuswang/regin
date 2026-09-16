@@ -12,7 +12,8 @@
 // composer's insert-mode hint — so `.live-term-body` is its own scroll
 // region (not left to the outer sheet) and always opens scrolled to its
 // bottom, the same follow-tail idiom LiveSessionView uses for the main tail.
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -21,6 +22,11 @@ const props = defineProps({
   sessionId: { type: String, default: '' },
   bridgePane: { type: String, default: '' },
 })
+
+// The live terminal is admin-only (the socket refuses everyone else), so an
+// editor offered the link would only bounce off the route guard. This snapshot
+// itself stays available to them.
+const canOperate = computed(() => api.getStoredUser()?.role === 'admin')
 
 const html = ref('')
 const phase = ref('loading') // loading | ready | failed
@@ -53,6 +59,18 @@ onMounted(fetchScreen)
   <div class="live-term-sheet" data-testid="live-terminal-sheet">
     <div class="live-term-toolbar">
       <span class="live-term-hint">one-shot snapshot · not live</span>
+      <Button
+        v-if="canOperate && sessionId"
+        :as="RouterLink"
+        :to="`/terminal/${sessionId}`"
+        variant="secondary"
+        size="sm"
+        class="live-term-live-cta"
+        data-testid="live-terminal-open-live"
+      >
+        <Icon name="terminal" :size="12" />
+        live terminal ↗
+      </Button>
       <Button
         variant="ghost"
         size="sm"

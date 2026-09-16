@@ -254,6 +254,51 @@ def _reparent_nested_agents(conn, trace_id: str,
     return stamped
 
 
+def _stamp_launch_link(conn, trace_id: str, agent_id: str,
+                       tool_use_id: str | None) -> int:
+    """Stamp the launch link onto a subagent's ``subagent.start`` /
+    ``subagent.stop`` markers: ``child_trace_id`` (the id the subagent is
+    addressable as) and, when the meta file names it, ``launch_tool_use_id``
+    (the ``tool.Agent`` call that spawned it) — the identity edge neither the
+    launch span nor the marker carried on its own.
+
+    Marker-scoped, so the link sits on the one span pair that means "this
+    subagent"; value-stable ``json_set`` so re-runs are idempotent. Returns
+    rows updated."""
+    from lib.trace.subagent_trace import subagent_trace_id
+    where = (" WHERE trace_id = ? AND name IN ('subagent.start', 'subagent.stop') "
+             "   AND json_extract(attributes, '$.agent_id') = ?")
+    child = subagent_trace_id(agent_id)
+    if tool_use_id:
+        cur = conn.execute(
+            "UPDATE session_spans SET attributes = json_set(attributes, "
+            "'$.child_trace_id', ?, '$.launch_tool_use_id', ?)" + where,
+            (child, tool_use_id, trace_id, agent_id),
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE session_spans SET attributes = json_set(attributes, "
+            "'$.child_trace_id', ?)" + where,
+            (child, trace_id, agent_id),
+        )
+    return cur.rowcount or 0
+
+
+def _link_launch_markers(conn, trace_id: str,
+                         agents: list[tuple[str, str]]) -> int:
+    """Stamp every subagent's marker spans with its ``child_trace_id`` and its
+    launching ``tool_use`` id. Returns the count of agents whose markers were
+    found (>=1 span updated)."""
+    linked = 0
+    for agent_id, path in agents:
+        tool_use_id = _read_agent_meta(path).get('toolUseId')
+        if not isinstance(tool_use_id, str) or not tool_use_id:
+            tool_use_id = None
+        if _stamp_launch_link(conn, trace_id, agent_id, tool_use_id) > 0:
+            linked += 1
+    return linked
+
+
 def _stamp_stop_marker(conn, trace_id: str, agent_id: str,
                        cost: float, in_tok: int, out_tok: int) -> bool:
     """Write a subagent's totals onto its ``subagent.stop`` span. Returns True
@@ -300,6 +345,7 @@ def reconcile_claude_subagents(trace_id: str) -> dict:
                 stamped += 1
                 total_cost += cost
         nested_parented = _reparent_nested_agents(conn, trace_id, agents)
+        markers_linked = _link_launch_markers(conn, trace_id, agents)
         conn.commit()
     except Exception:
         try:
@@ -310,7 +356,13 @@ def reconcile_claude_subagents(trace_id: str) -> dict:
     finally:
         conn.close()
 
+    # Cost/token stamps and the nested reparent rewrite existing rows in
+    # place, which no read-side aggregate can see — drop the memo explicitly.
+    from lib.trace.trace_service import projection_cache
+    projection_cache.invalidate(trace_id)
+
     result = {"subagents": len(agents), "stamped": stamped,
-              "cost_usd": total_cost, "nested_parented": nested_parented}
+              "cost_usd": total_cost, "nested_parented": nested_parented,
+              "markers_linked": markers_linked}
     _log.write("claude_subagents_reconciled", trace_id=trace_id, **result)
     return result

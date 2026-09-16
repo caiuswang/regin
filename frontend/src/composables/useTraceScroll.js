@@ -1,4 +1,5 @@
 import { onMounted, onUnmounted } from 'vue'
+import { getTraceScroller } from '../utils/traceScroller.js'
 
 // Scroll/wheel/touch-driven auto-reload for the trace view. Extracted from
 // SessionTraceView so the view's setup stays focused on data, not DOM
@@ -25,10 +26,21 @@ import { onMounted, onUnmounted } from 'vue'
 // session — so scrolling to the end of a closed session no longer re-fires
 // reloadLiveTail() and its backend transcript rescan. `loadOlder` (the top
 // edge) is paginating immutable history, never live-sync, so it ignores this.
-export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload, loadOlder }) {
+export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder, liveSyncActive, reload, loadOlder, paused }) {
   // Treat an absent ref as always-live, so a caller that doesn't pass it keeps
   // the original behaviour.
   const syncActive = () => (liveSyncActive ? liveSyncActive.value : true)
+  // Both affordances are disarmed while something else owns the viewport.
+  //
+  // These listeners are on `document` in the capture phase, so they see every
+  // scroll and wheel on the page. With the presentation reader open the feed
+  // is not even on screen, yet reading to the end of a span still tripped its
+  // bottom-edge latch — and where the reader's own box does not overflow, the
+  // wheel falls through to the page scroller, which genuinely IS the feed's,
+  // so no amount of target-matching can tell that gesture from a real pull.
+  // The honest rule is that a pull-to-refresh belongs to whoever the reader is
+  // actually looking at.
+  const isPaused = () => (paused ? !!paused() : false)
   // Edge-trigger latches: keep parking at an edge with no new spans from
   // re-firing the loader every scroll tick.
   let bottomLatch = false
@@ -71,12 +83,24 @@ export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder,
     }
   }
 
+  // These listeners are on `document` in the capture phase, so they see every
+  // scroll on the page — including ones inside an overlay that has nothing to
+  // do with the feed. The presentation reader is its own scroll box, and
+  // reading to the bottom of a span used to hit the feed's bottom-edge latch
+  // and fire a reload (plus the backend transcript rescan behind it) on every
+  // pass. Only the region the feed itself scrolls may drive its pagination.
+  function ownsScroll(el) {
+    const scroller = getTraceScroller()
+    return !!el && !!scroller && (el === scroller || el.contains?.(scroller))
+  }
+
   function onAnyScroll(e) {
     const t = e.target
     const el = (t === document || t === document.documentElement)
       ? (document.scrollingElement || document.documentElement)
       : t
     if (!el || typeof el.scrollHeight !== 'number') return
+    if (isPaused() || !ownsScroll(el)) return
     handleBottomEdge(el)
     handleTopEdge(el)
   }
@@ -95,8 +119,11 @@ export function useTraceScroll({ reloading, loading, loadingOlder, hasMoreOlder,
   }
 
   function onAnyWheel(e) {
+    if (isPaused()) return
     const scroller = _findScrollerNearTarget(e.target)
-    if (!scroller) return
+    // Same rule as the scroll handler: a wheel inside another overflowing box
+    // resolves to that box, not the feed, and must not drive its pagination.
+    if (!ownsScroll(scroller)) return
     const now = Date.now()
     if (e.deltaY > 0) {
       // Wheel-down at the absolute bottom → reload (pull-to-refresh).

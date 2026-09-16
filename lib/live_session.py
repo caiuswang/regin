@@ -61,55 +61,69 @@ _EXIT_WATCH_SEC = 8.0
 
 
 def _tmux_liveness(trace_id: str) -> str:
-    """`delivery.session_liveness`, degraded to UNKNOWN on any exception.
+    """`delivery.session_liveness`, degraded to INDETERMINATE on any exception.
 
     The probe shells out to tmux and reads the pane registry, so it can fail
     for reasons that say nothing about the session. `manageability` promises
     callers it never raises (they use it to *word a confirmation*, and a
     probe that threw would block the very action it describes), so a broken
     probe has to resolve to an answer rather than propagate — and the honest
-    answer is "could not tell", which is not the same as "it is gone".
+    answer is "could not tell", which is not the same as "it is gone". A raised
+    probe is the plainest case of that, so it reads INDETERMINATE, not UNKNOWN.
     """
     try:
         return delivery.session_liveness(trace_id)
     except Exception:
         log.error("tmux_liveness_probe_failed", exc_info=True)
-        return delivery.UNKNOWN
-
-
-def _tmux_is_live(trace_id: str) -> bool:
-    return _tmux_liveness(trace_id) == delivery.LIVE
+        return delivery.INDETERMINATE
 
 
 def manageability(trace_id: str) -> dict:
     """Which tier can still end `trace_id`, and whether it is reachable now.
 
-    Returns `{tier, live, starting, detail}`. `tier` is None when nothing
-    here can act — an unowned session, a dead pane, or a bridge switched off
-    — which is the ordinary answer for the interrupted sessions Close exists
-    for. Read-only, and never raises.
+    Returns `{tier, live, starting, undetermined, detail}`. `tier` is None when
+    nothing here can act — an unowned session, a dead pane, or a bridge
+    switched off — which is the ordinary answer for the interrupted sessions
+    Close exists for. Read-only, and never raises.
 
     A *starting* SDK run reports its tier with `live` False on purpose:
     `is_sdk_owned` covers reserved-but-not-yet-connected ids, but only a
     registered run can be stopped, so promising a shutdown there would send
     the caller at a control that can only answer "no live agent session".
+
+    `undetermined` is the difference between the two ways `tier` comes back
+    None. Normally it means regin looked and nothing holds the session, and a
+    caller may report that as a settled outcome. When it is True the pane
+    registry named a pane regin then failed to read, so the session may still
+    be running and was certainly never touched — an outcome no caller may
+    report as a clean close.
     """
     if agent_sdk.is_starting(trace_id):
         return {"tier": TIER_SDK, "live": False, "starting": True,
+                "undetermined": False,
                 "detail": "agent run is still starting; no channel to stop yet"}
     if agent_sdk.is_sdk_owned(trace_id):
         return {"tier": TIER_SDK, "live": True, "starting": False,
+                "undetermined": False,
                 "detail": "regin-launched agent run, still owned by this server"}
-    if _tmux_is_live(trace_id):
+    liveness = _tmux_liveness(trace_id)
+    if liveness == delivery.LIVE:
         return {"tier": TIER_TMUX, "live": True, "starting": False,
+                "undetermined": False,
                 "detail": "live claude in a tmux pane regin can type into"}
+    if liveness == delivery.INDETERMINATE:
+        return {"tier": None, "live": False, "starting": False,
+                "undetermined": True,
+                "detail": "a pane is registered but regin could not read it; "
+                          "the session may still be running"}
     return {"tier": None, "live": False, "starting": False,
+            "undetermined": False,
             "detail": "no manageable tier holds this session"}
 
 
 def _await_exit(trace_id: str) -> str:
     """Watch the pane until it demonstrably stops running claude; returns the
-    last reading (`delivery.GONE` / `LIVE` / `UNKNOWN`).
+    last reading (`delivery.GONE` / `LIVE` / `UNKNOWN` / `INDETERMINATE`).
 
     The registry's `pane_pid` cannot answer this — it is the pane's SHELL,
     which outlives every claude that runs in it — so the evidence is the
@@ -136,7 +150,7 @@ def _close_tmux(trace_id: str) -> dict:
     in its transcript — hence the Escape first. That Escape, though, leaves
     the composer somewhere a naively typed command does not survive, which is
     what `as_command` handles (`delivery._COMPOSER_RESET_KEYS`,
-    `_COMMAND_TERMINATOR`). Finally the exit is *verified*: delivery can only
+    `_MENU_TERMINATOR`). Finally the exit is *verified*: delivery can only
     report that the keys were submitted, and both of those hazards failed
     silently by submitting something else.
 
@@ -169,10 +183,12 @@ def _close_tmux(trace_id: str) -> dict:
 def graceful_close(trace_id: str) -> dict:
     """End the live process behind `trace_id` the way its tier allows.
 
-    Returns `{tier, live, closed, interrupted, detail}`. `closed` False with
-    `tier` None is "there was nothing to close", not a failure — callers
-    settle the trace row either way, since a session regin cannot reach is
-    exactly the interrupted session the manual close was built for.
+    Returns `{tier, live, closed, interrupted, undetermined, detail}`. `closed`
+    False with `tier` None is "there was nothing to close", not a failure —
+    callers settle the trace row either way, since a session regin cannot reach
+    is exactly the interrupted session the manual close was built for. Unless
+    `undetermined` is True: then regin never established there was nothing to
+    close, and a caller that reads it as one reports a stop that never happened.
 
     `interrupted` separates the two ways a tmux close fails: one where the
     pane was never touched, and one where the turn in flight *was* cancelled
@@ -182,6 +198,7 @@ def graceful_close(trace_id: str) -> dict:
     state = manageability(trace_id)
     result = {"tier": state["tier"], "live": state["live"],
               "closed": False, "interrupted": False,
+              "undetermined": state["undetermined"],
               "detail": state["detail"]}
     if not state["live"]:
         return result

@@ -92,3 +92,63 @@ def test_listing_shows_only_current_occupants(tmp_db):
     _seed("other-pane", pane_id="%9", at="2026-08-01 09:00:00")
     listed = {r["trace_id"] for r in store.list_reachable_sessions()}
     assert listed == {"new", "other-pane"}
+
+
+def _seed_session(trace_id, *, ended_at=None):
+    """A `sessions` row, so occupancy can tell a live claimant from a dead one."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+            "ended_at) VALUES (?, ?, ?, ?, ?)",
+            (trace_id, "ended" if ended_at else "active",
+             "2026-08-01 09:00:00", ended_at or "2026-08-01 12:00:00",
+             ended_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_ended_newer_session_does_not_displace(tmp_db):
+    """The reported bug: a session that registered and exited seconds later
+    must not hold the pane against the session still live in it.
+
+    `handle_turn` fires only on prompt/tool events, so a session parked
+    waiting for the operator emits nothing and can never re-claim by moving
+    its own `updated_at` ahead — the dead claimant would win forever.
+    """
+    _seed("live", at="2026-08-01 10:00:00")
+    _seed_session("live")
+    _seed("phantom", at="2026-08-01 11:00:00")
+    _seed_session("phantom", ended_at="2026-08-01 11:00:02")
+    assert store.get_reachable_pane("live")["pane_id"] == "%0"
+    assert store.get_reachable_pane("phantom") is None
+
+
+def test_live_newer_session_still_displaces(tmp_db):
+    """The liveness guard must not weaken real takeover: a running session
+    that claimed the pane later still evicts the one it displaced."""
+    _seed("old", at="2026-08-01 10:00:00")
+    _seed_session("old")
+    _seed("new", at="2026-08-01 11:00:00")
+    _seed_session("new")
+    assert store.get_reachable_pane("old") is None
+    assert store.get_reachable_pane("new")["pane_id"] == "%0"
+
+
+def test_newer_row_without_a_session_row_still_displaces(tmp_db):
+    """Unknown liveness is treated as live: refusing to steer is the safe
+    default, since the cost of a wrong 'dead' verdict is typing into someone
+    else's terminal."""
+    _seed("old", at="2026-08-01 10:00:00")
+    _seed("orphan", at="2026-08-01 11:00:00")
+    assert store.get_reachable_pane("old") is None
+
+
+def test_ended_session_is_excluded_from_the_reachable_listing(tmp_db):
+    _seed("live", at="2026-08-01 10:00:00")
+    _seed_session("live")
+    _seed("phantom", at="2026-08-01 11:00:00")
+    _seed_session("phantom", ended_at="2026-08-01 11:00:02")
+    assert {r["trace_id"] for r in store.list_reachable_sessions()} == {"live"}

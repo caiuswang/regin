@@ -10,20 +10,19 @@ patterns / skills / trace / …), so they live together here.
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlmodel import select
 
 from lib import rule_engines
-from lib.skills import skill_registry, skill_sync as _ss
+from lib.skills import skill_sync as _ss
 from lib.doctor import run_checks
 from lib.rules.grit_rule_index import load_rules_index
 from lib.providers import active_provider_id, active_provider_skill_paths, provider_capability_rows
 from lib.orm import SessionLocal
 from lib.orm.models import (
     Branch, PatternDeployment, PatternDoc, Repo, RuleTrigger,
-    Session as SessionModel, Tag,
+    Tag,
 )
-from lib.search import search_patterns
 
 
 meta_bp = Blueprint("meta", __name__)
@@ -160,110 +159,6 @@ def api_dashboard():
         },
     }
     return jsonify({"repos": repos, "stats": stats})
-
-
-_QUICKSEARCH_LIMIT_PER_GROUP = 6
-
-
-def _quicksearch_patterns(q: str) -> list[dict]:
-    items: list[dict] = []
-    try:
-        for p in search_patterns(q)[:_QUICKSEARCH_LIMIT_PER_GROUP]:
-            items.append({
-                "title": p.get("title") or p.get("slug"),
-                "subtitle": p.get("category") or "",
-                "href": f"/patterns/{p['slug']}",
-            })
-    except Exception:
-        return []
-    return items
-
-
-def _quicksearch_skills(q_lower: str) -> list[dict]:
-    items: list[dict] = []
-    try:
-        for sid in skill_registry.all_ids():
-            if q_lower not in sid.lower():
-                continue
-            entry = skill_registry.get(sid) or {}
-            if entry.get("type") == "pattern":
-                href = f"/patterns/{entry.get('procedure_id', sid)}"
-            else:
-                href = f"/skills/{sid}"
-            items.append({
-                "title": sid,
-                "subtitle": entry.get("type", "skill"),
-                "href": href,
-            })
-            if len(items) >= _QUICKSEARCH_LIMIT_PER_GROUP:
-                break
-    except Exception:
-        return []
-    return items
-
-
-def _quicksearch_sessions(q: str) -> list[dict]:
-    items: list[dict] = []
-    try:
-        with SessionLocal() as session:
-            stmt = (
-                select(SessionModel)
-                .where(or_(
-                    SessionModel.trace_id.contains(q),
-                    SessionModel.title.contains(q),
-                ))
-                .order_by(SessionModel.last_seen.desc())
-                .limit(_QUICKSEARCH_LIMIT_PER_GROUP)
-            )
-            for s in session.exec(stmt).all():
-                day = (s.last_seen or "").split("T", 1)[0]
-                items.append({
-                    "title": s.title or s.trace_id[:12],
-                    "subtitle": " · ".join(filter(None, [f"{s.span_count} spans", day])),
-                    "href": f"/trace/sessions/{s.trace_id}",
-                })
-    except Exception:
-        return []
-    return items
-
-
-def _quicksearch_rules(q_lower: str) -> list[dict]:
-    items: list[dict] = []
-    try:
-        for r in load_rules_index().get("rules", []):
-            rule_id = r.get("id") or ""
-            guide = r.get("guide") or ""
-            if q_lower in rule_id.lower() or q_lower in guide.lower():
-                items.append({
-                    "title": rule_id,
-                    "subtitle": guide,
-                    "href": f"/rules/{rule_id}",
-                })
-                if len(items) >= _QUICKSEARCH_LIMIT_PER_GROUP:
-                    break
-    except Exception:
-        return []
-    return items
-
-
-@meta_bp.route("/api/quicksearch")
-def api_quicksearch():
-    q = (request.args.get("q") or "").strip()
-    if not q:
-        return jsonify({"query": "", "groups": []})
-
-    q_lower = q.lower()
-    candidates = [
-        ("Patterns", "patterns", _quicksearch_patterns(q)),
-        ("Skills", "skills", _quicksearch_skills(q_lower)),
-        ("Sessions", "trace", _quicksearch_sessions(q)),
-        ("Rules", "rules", _quicksearch_rules(q_lower)),
-    ]
-    groups = [
-        {"label": label, "icon": icon, "items": items}
-        for label, icon, items in candidates if items
-    ]
-    return jsonify({"query": q, "groups": groups})
 
 
 # /api/repos/<name> moved to web/blueprints/repos.py alongside the

@@ -8,7 +8,12 @@
 // Three shapes, decided by the server (`answerable`):
 //   question → the listed options, one tap each (a pick is reversible in
 //              conversation; making the operator confirm twice for a question
-//              is the friction that sent them to /live in the first place)
+//              is the friction that sent them to /live in the first place).
+//              A MULTI-select ask is excluded: one tap cannot express a set,
+//              and the single Enter it sends only TICKS a box on that widget —
+//              the walk never reaches Submit, so the agent stays parked while
+//              a `delivered: true` retires the card. Those are staged and sent
+//              from the answer surface (BlockerAnswer / LiveQaAnswer).
 //   decision → allow/deny behind a stage→confirm gate. NOT one tap: this one
 //              runs a shell command on the agent's machine, and LiveQaDecision
 //              gates it for the same reason.
@@ -18,6 +23,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import Button from '../ui/Button.vue'
 import { useNotificationCenter } from '../../composables/useNotificationCenter'
+import { askQuestions } from '../../utils/blockerAsk'
 
 const props = defineProps({
   row: { type: Object, required: true },
@@ -36,7 +42,10 @@ const staged = ref('')
 
 const sending = computed(() => phase.value === 'sending')
 const isPlan = computed(() => props.row.kind === 'plan')
-const canAnswer = computed(() => props.row.answerable === 'question')
+const multiSelect = computed(
+  () => askQuestions(props.row).some(question => question.multiSelect))
+const canAnswer = computed(
+  () => props.row.answerable === 'question' && !multiSelect.value)
 const canDecide = computed(() => props.row.answerable === 'decision')
 const options = computed(() => props.row.options || [])
 

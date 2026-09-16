@@ -148,15 +148,23 @@ transcript's model for window size.
 
 `lib/tokens/model_windows.infer_window(model, peak_tokens)`:
 
-1. Look up `model` in `_WINDOWS` — returns the base window size.
-2. If `peak_tokens > base`, try `f"{model}[1m]"` — returns the
-   extended window if it exists.
-3. Otherwise return the base (even if we've only observed small
-   prompts, we can't confirm 1M usage from the transcript alone).
+1. Look up `model` in `_BUILTIN_WINDOWS`, merged with any
+   `settings.model_context_windows` overrides. A `[1m]` suffix and a
+   trailing date alias are stripped and retried.
+2. Fall back to the models.dev catalogue
+   (`lib.tokens.pricing.model_context_limit`, the same source pricing
+   uses), so a model that launched after the table was last hand-edited
+   still gets its real window.
+3. If `peak_tokens > base`, try `f"{model}[1m]"` — returns the extended
+   window if it exists.
+4. Otherwise return the base, or `DEFAULT_WINDOW` (200K) when the model
+   is in neither the table nor the catalogue.
 
-Because of step 3, a 1M-context session that never gets over 200k of
-context looks like a 200k session to this code. That's the default
-limitation — see the opt-in statusline ingest below for how to fix it.
+Step 2 is what keeps this honest in practice: `claude-opus-5` and
+`claude-fable-5` are absent from the builtin table and still resolve to
+1M. The residual gap is a model missing from **both** sources while the
+user is on its 1M variant — then a session whose peak stays under 200K
+reads as 200K. The opt-in statusline ingest below closes that case.
 
 `_session_summary` and `_row_to_dict` in `web/blueprints/trace/sessions.py`
 call `infer_window(sessions.model, peak)` at API **read** time, so
@@ -173,20 +181,52 @@ include `model` in the `SessionStart` hook payload, and the
 transcript strips the variant from every `message.model`. That
 leaves three possible sources, in increasing order of reliability:
 
-1. **The `infer_window` step-2 fallback** — kicks in only once peak
+1. **The `infer_window` peak fallback** — kicks in only once peak
    actually exceeds the base window. Passive, and misreads 1M sessions
    as 200k until the threshold is crossed.
 2. **An opt-in POST to `POST /api/session-status`** — the variant
    and the true context-window total land immediately. Implemented
    in `scripts/regin-statusline`, which reads the same stdin JSON
    Claude Code feeds to any statusline and pulls out `model.id` +
-   `context_window.{used_tokens,total_tokens}`. The script is
-   independent of any existing statusline; opt in either by pointing
-   `statusLine.command` at it directly, or by chaining it from your
-   own statusline via `--ingest-only`. See
+   `context_window.{total_input_tokens,context_window_size}`. The
+   script is independent of any existing statusline; opt in either by
+   pointing `statusLine.command` at it directly, or by chaining it
+   from your own statusline via `--ingest-only`. See
    `docs/trace/SPAN_DESIGN.md` for wiring details.
 3. **Manual SQL override** — patch `sessions.model` by hand if a
    past session needs retroactive correction.
+
+Those two `context_window` keys were named `used_tokens` /
+`total_tokens` in older Claude Code builds. The script reads the
+current names first and falls back to the old ones; both spellings are
+pinned by `tests/core/test_regin_statusline.py`, which asserts the POST
+body rather than only that the script exits 0. That assertion exists
+because the earlier tests stubbed the *stale* names, so the rename went
+unnoticed while every real payload ingested nothing.
+
+### What the statusline feed does and doesn't add
+
+The token numbers are **not** a second source of truth — they are the
+same quantity by the same formula. On session `05acc689` turn 12 the
+statusline reported `total_input_tokens: 93076` and `turn_usage`
+recorded `context_used_tokens: 93076`. The feed's genuine contributions
+are the variant suffix (above) and freshness: it ticks mid-turn, while
+a `turn_usage` row only lands once the assistant record flushes.
+
+### Deferred: rate limits and prompt-cache health
+
+The statusline payload carries two blocks with **no analogue anywhere
+else** — not in the transcript, not in any hook payload — and regin
+ingests neither. Recorded here as future work; not scheduled.
+
+| Block | Fields | Why it would be worth capturing |
+|---|---|---|
+| `rate_limits` | `five_hour.{used_percentage,resets_at}`, `seven_day.{…}` | The only visibility into subscription-quota burn. Nothing in the trace can currently answer "how much of the weekly allowance did this session cost". |
+| `prompt_cache` | `hit_ratio`, `ttl`, `expires_at`, `requests`, `misses`, `cache_write_tokens`, `recache_tokens_if_cold` | Cache-surge diagnosis is today reconstructed from per-turn `cache_read` / `cache_creation` deltas. These fields report it directly, including the counterfactual re-cache cost. |
+
+Both would need a `sessions` column (or a side table) plus an
+`/api/session-status` field, i.e. an Alembic revision **and** a matching
+`db/schema.sql` edit — see the schema-drift note in `CLAUDE.md`.
 
 ## Schema
 

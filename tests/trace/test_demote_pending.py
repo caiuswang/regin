@@ -100,11 +100,67 @@ def test_demote_when_session_stale_and_old():
     now = datetime(2026, 4, 18, 13, 0, 0)
     old = now - timedelta(seconds=200)
     last_seen = now - timedelta(seconds=1200)  # > INACTIVE_THRESHOLD
-    rows = [_row('permreq-tu3', 'permission.request', {'tool_use_id': 'tu3'},
+    rows = [_row('pending-tu3', 'tool.Bash', {'tool_use_id': 'tu3'},
                  status='PENDING', start=_iso(old), id=1)]
     served = _served(rows, session_activity={
         'status': 'active', 'last_seen': _iso(last_seen), 'now': now})
-    assert served['permreq-tu3']['status_code'] == 'ERROR'
+    assert served['pending-tu3']['status_code'] == 'ERROR'
+
+
+# ── the human-blocker exemption from rule (b) ────────────────────
+
+def test_never_demote_a_human_blocker_that_is_the_newest_span():
+    """A permission gate / question the session is parked on stays PENDING no
+    matter how long the human takes. Its own age IS the wait — demoting it
+    rendered a live blocker as '⏹ interrupted' after 10 minutes, and left the
+    switcher's 'needs you' verdict contradicting the span it points at."""
+    now = datetime(2026, 4, 18, 13, 0, 0)
+    blocked = now - timedelta(seconds=1200)
+    for span_id, name in (('permreq-tu7', 'permission.request'),
+                          ('pending-tu8', 'tool.AskUserQuestion'),
+                          ('pending-tu9', 'tool.ExitPlanMode')):
+        rows = [_row(span_id, name, {'tool_use_id': span_id},
+                     status='PENDING', start=_iso(blocked), id=1)]
+        served = _served(rows, session_activity={
+            'status': 'active', 'last_seen': _iso(blocked), 'now': now})
+        assert served[span_id]['status_code'] == 'PENDING', name
+        assert 'is_interrupt' not in served[span_id]['attributes'], name
+
+
+def test_human_blocker_still_demotes_once_the_session_moved_past_it():
+    """The exemption is anchored to being the session's NEWEST span. A later
+    span means the gate was answered and this row is genuinely stuck."""
+    now = datetime(2026, 4, 18, 13, 0, 0)
+    blocked = now - timedelta(seconds=1200)
+    rows = [_row('permreq-tu10', 'permission.request', {'tool_use_id': 'tu10'},
+                 status='PENDING', start=_iso(blocked), id=1)]
+    served = _served(rows, session_activity={
+        'status': 'active', 'now': now,
+        'last_seen': _iso(blocked + timedelta(seconds=30))})
+    assert served['permreq-tu10']['status_code'] == 'ERROR'
+
+
+def test_human_blocker_demotes_on_an_ended_session():
+    """`ended` overrides the exemption — the same rule `_main_phase` applies."""
+    now = datetime(2026, 4, 18, 13, 0, 0)
+    blocked = now - timedelta(seconds=1200)
+    rows = [_row('permreq-tu11', 'permission.request', {'tool_use_id': 'tu11'},
+                 status='PENDING', start=_iso(blocked), id=1)]
+    served = _served(rows, session_activity={
+        'status': 'ended', 'last_seen': _iso(blocked), 'now': now})
+    assert served['permreq-tu11']['status_code'] == 'ERROR'
+
+
+def test_a_stuck_tool_gets_no_blocker_exemption():
+    """Nothing about a silent `tool.Bash` explains the session's silence, so
+    rule (b) still reaches it."""
+    now = datetime(2026, 4, 18, 13, 0, 0)
+    stuck = now - timedelta(seconds=1200)
+    rows = [_row('pending-tu12', 'tool.Bash', {'tool_use_id': 'tu12'},
+                 status='PENDING', start=_iso(stuck), id=1)]
+    served = _served(rows, session_activity={
+        'status': 'active', 'last_seen': _iso(stuck), 'now': now})
+    assert served['pending-tu12']['status_code'] == 'ERROR'
 
 
 def test_no_demote_when_inactive_but_pending_too_fresh():

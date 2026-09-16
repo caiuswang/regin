@@ -1,10 +1,20 @@
 <script setup>
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import { useTraceHeader } from '../composables/useTraceHeader'
+import { useBoundedTrace } from '../composables/useBoundedTrace'
 
 const route = useRoute()
+// The shell zeroes its own padding for a `fixedViewport` child route and, above
+// the bounded threshold, stops scrolling — so this shell re-adds the padding at
+// every width and becomes the column that hands the child the leftover height.
+const bounded = useBoundedTrace()
+const fixedChild = computed(() => !!route.meta.fixedViewport)
+// A detail route is not a peer of the tabs: the strip would only offer ways to
+// leave it, at the cost of a line the view spends on the session's own facts.
+const showTabs = computed(() => !route.meta.hideTraceTabs)
 const header = useTraceHeader()
 
 const tabs = [
@@ -28,7 +38,7 @@ function tabCount(tab) {
 </script>
 
 <template>
-  <div>
+  <div :class="{ 'trace-shell-fixed': fixedChild, 'trace-shell-bounded': fixedChild && bounded }">
     <header class="page-header">
       <div class="page-header-text">
         <div class="page-eyebrow">Observability · Trace</div>
@@ -54,7 +64,7 @@ function tabCount(tab) {
       </div>
     </header>
 
-    <div class="segmented mb-6">
+    <div v-if="showTabs" class="segmented mb-6">
       <router-link
         v-for="tab in tabs"
         :key="tab.path"
@@ -81,6 +91,26 @@ function tabCount(tab) {
 </template>
 
 <style scoped>
+.trace-shell-fixed { padding: 1.5rem 2rem; }
+@media (max-width: 767px) {
+  .trace-shell-fixed { padding: 1rem; }
+}
+/* Every link in the chain needs `min-height: 0`, or the child's inner scroll
+   region grows to its content and hands the scroll back to a shell that can no
+   longer take it. */
+.trace-shell-bounded {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.trace-shell-bounded > * { flex-shrink: 0; }
+/* Bounded, this chrome can never scroll away again, and a title + subtitle
+   parked permanently over the transcript costs more height than it informs —
+   the sidebar and the session header's own back link still say where you are. */
+.trace-shell-bounded > .page-header { display: none; }
+.trace-shell-bounded > *:last-child { flex: 1 1 auto; min-height: 0; }
+
 /* Refresh belongs beside the title, not baseline-aligned with the wrapped
    subtitle two lines below it. */
 .page-header { align-items: flex-start; }

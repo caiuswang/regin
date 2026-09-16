@@ -442,6 +442,45 @@ class PromptImage(Base, table=True):
     )
 
 
+class BridgeAttachment(Base, table=True):
+    """Image staged by a web composer, waiting for the prompt it belongs to.
+
+    `PromptImage` is keyed to a settled `prompt_span_id`; an image pasted into
+    the `/live` card or the follow-up composer has no span yet — the prompt is
+    still being typed. `idx` is the `[Image #N]` number handed back to the
+    composer, allocated per trace so it shares the terminal's own numbering,
+    and it travels in the delivered text: the marker is what names this row
+    when the span finally lands, so the join is by identifier rather than by
+    arrival time. `claimed_span_id` records that hand-off, which is what makes
+    the copy into `prompt_images` happen exactly once.
+
+    `file_path` is set only for the tmux tier — it cannot carry bytes, so it is
+    handed a path to the materialized file. The SDK tier sends the image inline
+    and leaves it NULL.
+    """
+
+    __tablename__ = "bridge_attachments"
+
+    id: str = Field(sa_column=Column("id", String, primary_key=True))
+    trace_id: str = Field(sa_column=Column("trace_id", String, nullable=False))
+    idx: int = Field(sa_column=Column("idx", Integer, nullable=False))
+    media_type: str = Field(sa_column=Column("media_type", String, nullable=False))
+    bytes_: bytes = Field(sa_column=Column("bytes", LargeBinary, nullable=False))
+    byte_size: int = Field(sa_column=Column("byte_size", Integer, nullable=False))
+    sha256: str = Field(sa_column=Column("sha256", String, nullable=False))
+    file_path: Optional[str] = Field(
+        default=None, sa_column=Column("file_path", Text, nullable=True))
+    dispatched_sha: Optional[str] = Field(
+        default=None, sa_column=Column("dispatched_sha", Text, nullable=True))
+    claimed_span_id: Optional[str] = Field(
+        default=None, sa_column=Column("claimed_span_id", Text, nullable=True))
+    created_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("created_at", Text, nullable=False,
+                         server_default=text("(datetime('now'))")),
+    )
+
+
 __all__ = ["SessionSpan", "SessionTraceMap", "Session", "TurnUsage",
            "SkillRead", "PlanSession", "SessionRepo", "SessionTag",
-           "PromptImage"]
+           "PromptImage", "BridgeAttachment"]

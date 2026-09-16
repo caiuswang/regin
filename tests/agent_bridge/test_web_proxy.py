@@ -197,6 +197,142 @@ def test_delivered_path_persists_row(flask_client, monkeypatch):
     assert row["delivery_detail"] == "delivered to %9"
 
 
+# ── /clear succession: a cleared page still reaches the live pane ──
+
+
+def _seed_cleared_pane(old="T-old", new="T-new"):
+    """The shape `/clear` leaves behind: `old` retired by reason, `new` in
+    the pane it held."""
+    conn = get_connection()
+    try:
+        for trace_id, at in ((old, "2026-08-01 10:00:00"),
+                             (new, "2026-08-01 11:00:01")):
+            conn.execute(
+                "INSERT INTO bridge_panes (trace_id, pane_id, "
+                "tmux_server_pid, pane_pid, tmux_socket, reachable, cwd, "
+                "created_at, updated_at) "
+                "VALUES (?, '%7', 111, 222, NULL, 1, '/work', ?, ?)",
+                (trace_id, at, at))
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+            "ended_at, ended_reason) VALUES (?, 'ended', ?, ?, ?, 'clear')",
+            (old, "2026-08-01 09:00:00", "2026-08-01 11:00:00",
+             "2026-08-01 11:00:00"))
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen) "
+            "VALUES (?, 'active', ?, ?)",
+            (new, "2026-08-01 11:00:01", "2026-08-01 12:00:00"))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_send_on_a_cleared_session_reaches_its_successor(flask_client,
+                                                         monkeypatch):
+    """The reported gap: the page the operator is on is over, but the pane
+    it named is still occupied by the conversation `/clear` opened."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    calls = _mock_deliver(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-old/bridge-send",
+                             json={"text": "carry on"})
+    assert resp.status_code == 200
+    assert calls == [("T-new", "carry on", False)]
+
+
+def test_the_send_response_names_the_successor(flask_client, monkeypatch):
+    """`trace_id` is what lets the composer's page follow the send."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    _mock_deliver(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-old/bridge-send",
+                             json={"text": "carry on"})
+    assert resp.get_json()["trace_id"] == "T-new"
+
+
+def test_an_ordinary_send_names_the_session_it_was_posted_to(flask_client,
+                                                             monkeypatch):
+    """No succession, no redirect — and the field is still present, so the
+    client has one rule rather than two."""
+    _enable(monkeypatch)
+    _mock_deliver(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-9/bridge-send",
+                             json={"text": "hi"})
+    assert resp.get_json()["trace_id"] == "T-9"
+
+
+def test_the_inbox_row_lands_on_the_successor(flask_client, monkeypatch):
+    """The row carries the /live queued chip, which belongs on the card the
+    operator is about to be looking at."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    _mock_deliver(monkeypatch)
+    flask_client.post("/api/sessions/T-old/bridge-send",
+                      json={"text": "carry on"})
+    assert [r["body"] for r in _rows("T-new")] == ["carry on"]
+    assert _rows("T-old") == []
+
+
+def test_a_slash_command_is_not_carried_into_the_successor(flask_client,
+                                                          monkeypatch):
+    """`/exit` on a dead page must not exit the live session that replaced it.
+
+    The redirect is right for a prompt and wrong for a command: the operator
+    typed it at the conversation they were looking at, and that one is over.
+    It goes to its own id and meets the ordinary guards there.
+    """
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    calls = _mock_deliver(monkeypatch)
+    resp = flask_client.post("/api/sessions/T-old/bridge-send",
+                             json={"text": "/exit"})
+    assert calls == [("T-old", "/exit", True)]
+    assert resp.get_json()["trace_id"] == "T-old"
+
+
+def test_a_leading_space_does_not_smuggle_a_command_into_the_successor(
+        flask_client, monkeypatch):
+    """`is_slash_command` anchors at the first character, so the guard holds
+    only because it reads the SANITIZED body — `sanitize_body` strips the
+    leading whitespace first. Pinned because that ordering is load-bearing and
+    invisible: sanitize before the command test, or `" /exit"` rides the
+    redirect into the live successor as a prompt."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    calls = _mock_deliver(monkeypatch)
+    for body in (" /exit", "  /clear", "\t/exit", "\n/exit"):
+        calls.clear()
+        flask_client.post("/api/sessions/T-old/bridge-send",
+                          json={"text": body})
+        assert [c[0] for c in calls] == ["T-old"], body
+
+
+def test_a_path_like_body_is_still_a_prompt_and_still_redirects(flask_client,
+                                                                monkeypatch):
+    """The command guard rides `is_slash_command`, which a path does not
+    match — "/Users/x/app.py crashes" is a sentence and follows the send."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    calls = _mock_deliver(monkeypatch)
+    flask_client.post("/api/sessions/T-old/bridge-send",
+                      json={"text": "/Users/x/app.py crashes on boot"})
+    assert calls == [("T-new", "/Users/x/app.py crashes on boot", False)]
+
+
+def test_interrupt_on_a_cleared_session_is_not_redirected(flask_client,
+                                                          monkeypatch):
+    """Only a prompt is worth carrying forward. An Escape aimed at a session
+    that is already over is aimed at nothing, and delivering it into the
+    pane's new occupant cancels a turn nobody asked to cancel — the same
+    shape as the stale `/exit` that once ended someone else's session."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    resp = flask_client.post("/api/sessions/T-old/bridge-interrupt")
+    body = resp.get_json()
+    assert body["delivered"] is False
+    assert body["detail"] == "no reachable session"
+
+
 # ── secrecy: the bridge token never appears in any response ──
 
 
@@ -214,6 +350,89 @@ def test_bridge_token_never_in_map_response(flask_client, monkeypatch):
     resp = flask_client.get("/api/sessions/T-map/map?shallow=1&limit=5")
     assert resp.status_code == 200
     assert _TOKEN not in resp.get_data(as_text=True)
+
+
+def test_the_map_names_a_cleared_session_s_successor(flask_client,
+                                                    monkeypatch):
+    """The tmux half of `successor_trace_id` — the field the SDK tier has
+    had since `caf8d3b0`, answered from the pane registry instead of an
+    in-process runner. It is what keeps the composer on the cleared page."""
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    body = flask_client.get(
+        "/api/sessions/T-old/map?shallow=1&limit=5").get_json()
+    assert body["successor_trace_id"] == "T-new"
+
+
+def test_the_sdk_answer_outranks_the_pane_registry(flask_client, monkeypatch):
+    """A run regin owns holds the succession in process; a `bridge_panes`
+    row for the same session could only ever be a weaker copy of it."""
+    from lib import agent_sdk
+
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    monkeypatch.setattr(agent_sdk, "live_child", lambda trace_id: "T-sdk")
+    body = flask_client.get(
+        "/api/sessions/T-old/map?shallow=1&limit=5").get_json()
+    assert body["successor_trace_id"] == "T-sdk"
+
+
+def test_a_cleared_session_is_reachable_through_its_successor(flask_client,
+                                                             monkeypatch):
+    """The headline outcome: the composer only renders where the client is
+    told regin can steer, and `canFollowUp` reads `bridge_reachable`.
+
+    A cleared session's OWN pane read fails by construction — `_SELF_NOT_ENDED`
+    refuses a row whose session has ended — so without the successor fallback
+    the page keeps a `successor_trace_id` it has no box to type into.
+    """
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    body = flask_client.get(
+        "/api/sessions/T-old/map?shallow=1&limit=5").get_json()
+    assert body["bridge_reachable"] is True
+    assert body["bridge_pane"] == "%7"
+
+
+def test_an_ended_session_with_no_successor_is_not_reachable(flask_client,
+                                                             monkeypatch):
+    """The fallback must not resurrect every dead page — only one whose
+    `/clear` left a live conversation in the same pane."""
+    _enable(monkeypatch)
+    _seed_reachable_pane(trace_id="T-dead")
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+            "ended_at, ended_reason) VALUES ('T-dead', 'ended', ?, ?, ?, "
+            "'logout')",
+            ("2026-08-01 09:00:00", "2026-08-01 10:00:00",
+             "2026-08-01 10:00:00"))
+        conn.commit()
+    finally:
+        conn.close()
+    body = flask_client.get(
+        "/api/sessions/T-dead/map?shallow=1&limit=5").get_json()
+    assert body["bridge_reachable"] is False
+    assert body["bridge_pane"] is None
+
+
+def test_a_disabled_bridge_names_no_successor(flask_client, monkeypatch):
+    """With the bridge off there is no terminal to reach the successor
+    through, so the field the page would act on must not be there."""
+    _enable(monkeypatch, enabled=False)
+    _seed_cleared_pane()
+    body = flask_client.get(
+        "/api/sessions/T-old/map?shallow=1&limit=5").get_json()
+    assert body["successor_trace_id"] is None
+
+
+def test_a_live_tmux_session_has_no_successor(flask_client, monkeypatch):
+    _enable(monkeypatch)
+    _seed_cleared_pane()
+    body = flask_client.get(
+        "/api/sessions/T-new/map?shallow=1&limit=5").get_json()
+    assert body["successor_trace_id"] is None
 
 
 # ── map payload: bridge_reachable rides the shallow poll ─────

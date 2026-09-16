@@ -17,7 +17,10 @@ import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import LiveQaGrowInput from './LiveQaGrowInput.vue'
-import { askOptLabel, askOptDescription } from '../../utils/traceFormatters.js'
+import {
+  askOptLabel, askOptDescription, askModeLabel, askModeMark, askOptMark,
+} from '../../utils/traceFormatters.js'
+import { chatIndex as chatIndexOf } from '../../utils/blockerAsk.js'
 
 const props = defineProps({
   span: { type: Object, required: true },
@@ -27,12 +30,15 @@ const emit = defineEmits(['answered'])
 
 const q0 = computed(() => (props.span?.attributes?.questions || [])[0] || null)
 const options = computed(() => q0.value?.options || [])
-// The "Type something." free-text entry sits right after the listed options;
-// "Chat about this" sits one past that (below the TUI's divider).
+// The "Type something." free-text entry sits right after the listed options.
+// "Chat about this" is one past that on a single-select question but two past
+// it on a multi-select one, which carries an extra advance row between them.
+const multiSelect = computed(() => !!q0.value?.multiSelect)
 const freeIndex = computed(() => options.value.length)
-const chatIndex = computed(() => options.value.length + 1)
+const chatIndex = computed(() => chatIndexOf(q0.value))
 
 // staged = null | { kind: 'option'|'free'|'chat', index, label }
+//               | { kind: 'multi', indices: number[] }
 const staged = ref(null)
 const note = ref('')
 const freeText = ref('')
@@ -50,9 +56,30 @@ function reset() {
 }
 function stageOption(oi) {
   if (sending.value) return
+  // Multi-select accumulates: tapping an option toggles it in the staged set,
+  // mirroring the terminal's checkboxes. Nothing is sent until Confirm, so a
+  // mis-tap is undone by tapping again rather than by answering the agent.
+  if (multiSelect.value) {
+    const chosen = new Set(staged.value?.kind === 'multi' ? staged.value.indices : [])
+    if (chosen.has(oi)) chosen.delete(oi)
+    else chosen.add(oi)
+    staged.value = chosen.size
+      ? { kind: 'multi', indices: [...chosen].sort((a, b) => a - b) }
+      : null
+    return
+  }
   staged.value = { kind: 'option', index: oi, label: askOptLabel(options.value[oi]) }
   note.value = ''
 }
+function isPicked(oi) {
+  const s = staged.value
+  if (!s) return false
+  if (s.kind === 'multi') return s.indices.includes(oi)
+  return s.kind === 'option' && s.index === oi
+}
+const multiLabels = computed(() => (staged.value?.kind === 'multi'
+  ? staged.value.indices.map(i => askOptLabel(options.value[i])).join(', ')
+  : ''))
 function stageFree() {
   if (sending.value) return
   staged.value = { kind: 'free', index: freeIndex.value, label: '' }
@@ -66,11 +93,19 @@ const canConfirm = computed(() => {
   const s = staged.value
   if (!s || sending.value) return false
   if (s.kind === 'free') return !!freeText.value.trim()
+  if (s.kind === 'multi') return s.indices.length > 0
   return true // option (note optional) · chat (message optional)
 })
 
 function buildPayload() {
   const s = staged.value
+  if (s.kind === 'multi') {
+    return {
+      option_index: s.indices,
+      option_count: options.value.length,
+      label: multiLabels.value,
+    }
+  }
   if (s.kind === 'option') {
     const n = note.value.trim()
     if (n) return { option_index: freeIndex.value, text: `${s.label} — ${n}`, label: s.label }
@@ -87,7 +122,12 @@ async function confirm() {
   detail.value = ''
   let res = null
   try {
-    res = await api.post(`/sessions/${props.sessionId}/bridge-answer`, buildPayload())
+    const payload = buildPayload()
+    // A multi-select question still ends on the TUI's review tab, whose final
+    // "Submit answers" only `deliver_answers` presses — so it is sent as a
+    // one-element `answers` array, never as the flat single-pick shape.
+    res = await api.post(`/sessions/${props.sessionId}/bridge-answer`,
+      Array.isArray(payload.option_index) ? { answers: [payload] } : payload)
   } catch { res = null }
   if (res && res.delivered) {
     emit('answered')
@@ -104,17 +144,22 @@ async function confirm() {
       <div class="live-qa-card-hd">
         <div v-if="q0?.header" class="live-qa-h">{{ q0.header }}</div>
         <div class="live-qa-title">{{ q0?.question }}</div>
+        <div class="live-qa-mode" :class="{ 'live-qa-mode-multi': multiSelect }">
+          <span aria-hidden="true">{{ askModeMark(multiSelect) }}</span>
+          {{ askModeLabel(multiSelect) }}
+        </div>
       </div>
       <div v-for="(opt, oi) in options" :key="oi" class="live-qa-optwrap">
         <component
           :is="'button'"
           class="live-qa-opt live-qa-pick"
-          :class="{ 'live-qa-staged': staged && staged.kind === 'option' && staged.index === oi }"
+          :class="{ 'live-qa-staged': isPicked(oi) }"
           :disabled="sending || undefined"
+          :aria-pressed="multiSelect ? isPicked(oi) : undefined"
           data-testid="live-qa-pick"
           @click="stageOption(oi)"
         >
-          <span class="live-qa-optmark">›</span>
+          <span class="live-qa-optmark">{{ multiSelect ? askOptMark(true, isPicked(oi)) : (isPicked(oi) ? '◉' : '○') }}</span>
           <span class="live-qa-optbody">
             <span class="live-qa-optlbl">{{ askOptLabel(opt) }}</span>
             <span v-if="askOptDescription(opt)" class="live-qa-optdesc">{{ askOptDescription(opt) }}</span>
@@ -141,6 +186,9 @@ async function confirm() {
     <div v-if="staged" class="live-qa-confirm" data-testid="live-qa-confirm">
       <div class="live-qa-confirm-hd">
         <template v-if="staged.kind === 'option'">Send answer: <b>{{ staged.label }}</b></template>
+        <template v-else-if="staged.kind === 'multi'">
+          Send {{ staged.indices.length }} selected: <b>{{ multiLabels }}</b>
+        </template>
         <template v-else-if="staged.kind === 'free'">Type your own answer</template>
         <template v-else>Chat about this — the menu closes and your message goes to the agent</template>
       </div>
@@ -187,6 +235,7 @@ async function confirm() {
       <template v-if="phase === 'sending'">sending answer to the live agent…</template>
       <template v-else-if="phase === 'failed'">✗ {{ detail }}</template>
       <template v-else-if="staged">confirm to deliver via the bridge, or cancel</template>
+      <template v-else-if="multiSelect">tap every option that applies, then confirm before it's sent</template>
       <template v-else>pick an option, type your own, or chat — then confirm before it's sent</template>
     </p>
   </div>

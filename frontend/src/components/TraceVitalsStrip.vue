@@ -94,12 +94,39 @@ const ctxTone = computed(() => {
 const spanCount = computed(() =>
   props.session?.span_count_total ?? props.session?.spans?.length ?? null)
 
+// A missing metric renders as EMPTY in the value slot and as nothing at all in
+// the sub-line. Hoisted so each cell below stays a flat literal.
+const shown = (value, format) => (value != null ? format(value) : EMPTY)
+const subOf = (value, format) => (value != null ? format(value) : '')
+
+const ctxSub = computed(() => {
+  const window = props.session?.context_window_tokens
+  if (ctxTokens.value == null || !window) return ''
+  return `${fmtTokens(ctxTokens.value)} / ${fmtTokens(window)}`
+})
+
+// The spans cell's sub-line. `span_count_delegated` is the share of
+// span_count_total served by a subagent's own trace rather than shown here —
+// named so the two numbers don't read as an unexplained gap. Absent when
+// nothing was delegated.
+const spansSub = computed(() => {
+  const parts = []
+  if (toolCalls.value != null) parts.push(`${toolCalls.value} tool calls`)
+  const delegated = props.session?.span_count_delegated
+  if (delegated) parts.push(`${delegated} in subagents`)
+  return parts.join(' · ')
+})
+
+const ctxGauge = computed(() => (ctxPct.value == null
+  ? null
+  : { pct: Math.min(100, ctxPct.value), bar: ctxTone.value.bar }))
+
 const cells = computed(() => [
   {
     key: 'spans',
     label: 'Spans',
-    value: spanCount.value != null ? String(spanCount.value) : EMPTY,
-    sub: toolCalls.value != null ? `${toolCalls.value} tool calls` : '',
+    value: shown(spanCount.value, String),
+    sub: spansSub.value,
     tone: 'text-slate-900',
     title: 'spans captured for this session',
   },
@@ -107,25 +134,23 @@ const cells = computed(() => [
     key: 'duration',
     label: 'Duration',
     value: fmtDuration(Math.round(props.traceDuration)),
-    sub: activePct.value != null ? `${activePct.value}% active` : '',
+    sub: subOf(activePct.value, p => `${p}% active`),
     tone: 'text-slate-900',
     title: 'wall-clock from first to last span — includes user-idle gaps between turns',
   },
   {
     key: 'context',
     label: 'Context peak',
-    value: ctxPct.value != null ? `${ctxPct.value}%` : EMPTY,
-    sub: ctxTokens.value != null && props.session?.context_window_tokens
-      ? `${fmtTokens(ctxTokens.value)} / ${fmtTokens(props.session.context_window_tokens)}`
-      : '',
+    value: shown(ctxPct.value, p => `${p}%`),
+    sub: ctxSub.value,
     tone: ctxTone.value.text,
-    gauge: ctxPct.value != null ? { pct: Math.min(100, ctxPct.value), bar: ctxTone.value.bar } : null,
+    gauge: ctxGauge.value,
     title: 'live context peak since the last /compact, as a share of the model window',
   },
   {
     key: 'tokens',
     label: 'Tokens',
-    value: totalTokens.value != null ? fmtTokens(totalTokens.value) : EMPTY,
+    value: shown(totalTokens.value, fmtTokens),
     sub: 'in + out + cache',
     tone: 'text-slate-900',
     title: 'every token billed for this session, including cache reads and writes',
@@ -133,7 +158,7 @@ const cells = computed(() => [
   {
     key: 'cost',
     label: 'Cost',
-    value: spend.value != null ? fmtCost(spend.value) : EMPTY,
+    value: shown(spend.value, fmtCost),
     sub: props.rollupData?.subagent_cost_usd ? 'incl. sub-model' : 'main model',
     tone: 'text-emerald-600',
     title: 'true spend: the main-model bill plus server-side sub-model (advisor) calls',
@@ -141,7 +166,7 @@ const cells = computed(() => [
   {
     key: 'turns',
     label: 'Turns',
-    value: props.turnCount != null ? String(props.turnCount) : EMPTY,
+    value: shown(props.turnCount, String),
     sub: props.agentCount ? `${props.agentCount} agent${props.agentCount === 1 ? '' : 's'}` : '',
     tone: 'text-slate-900',
     title: 'user prompts in this session',

@@ -164,6 +164,33 @@ An authenticated sender fully controls the agent — that is the feature, not
 a flaw to mitigate. Sender identity is recorded on the inbox row so the
 trail shows what came from where.
 
+**The pane terminal is outside all of that, by construction.** `WS
+/api/sessions/<id>/terminal` (`web/blueprints/terminal.py`,
+`lib/agent_bridge/terminal.py`) is a byte stream between `xterm.js` and a PTY
+running a tmux client, so controls 3, 4 and 7 above simply do not exist on it:
+no allowlist, no sanitizer, no rate budget, and no `deliver_key` mapping — a
+partial filter over a keystroke stream is false comfort, which is why the
+message tier's `_ALLOWED_KEYS` was left alone rather than widened. It is full
+shell access as the user running `regin serve`. Its controls are therefore two,
+and both are binary: `agent_bridge.terminal_enabled`, off by default and
+independent of `agent_bridge.enabled` so raw terminal access can be off while
+mobile steering stays on; and the **admin** role, one rung above the
+`require_editor` that gates message steering. Controls 1, 2 (as a single-use
+ticket — a `WebSocket` cannot send an Authorization header, so the route joins
+`PUBLIC_API_ENDPOINTS` and redeems `lib/notifications/tickets.py`, then checks
+the role), 5 and 6 apply unchanged, and the pane is still resolved through
+`store.get_reachable_pane` and re-verified by `delivery._verify_identity`
+before anything is spawned.
+
+While a browser terminal is open the pane's window follows the *browser's*
+size, not the operator's: a window has one size, tmux resolves it to the latest
+client (`window-size`), and a grouped session shares the target's windows.
+Measured on tmux 3.6 — 80x24 → 200x49 for the life of a 200x50 browser client,
+back to 80x24 on close. `window-size smallest` would prevent it by clamping
+every client to the smallest, but it is a window option on a window the
+operator owns; rewriting their tmux configuration is the larger harm for an
+effect that reverts itself.
+
 **Known limitation — no per-session ownership (IDOR).** The session-scoped
 routes (`/api/sessions/<sid>/bridge-*`) are gated by `@require_editor` *only*;
 there is no binding between a JWT and the sessions it may steer. In a

@@ -9,6 +9,7 @@ is documented under *Agent Memory* in `ARCHITECTURE.md`.
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 
 import typer
@@ -88,6 +89,16 @@ def _fingerprint(session: Optional[str], tool: str, **attrs) -> None:
             "re-run before treating a red gate as a skip.", err=True)
 
 
+def _tool_scope(scope: Optional[str]) -> Optional[str]:
+    """Apply `agent_memory.scope_policy` to a retrieval command's `--scope`.
+
+    The CLI runs in the user's repo, so cwd is the signal the policy needs.
+    An explicit `--scope` wins, and `--scope all` opts out entirely.
+    """
+    from lib.memory.scoping import resolve_tool_scope
+    return resolve_tool_scope(scope, os.getcwd())
+
+
 def tree_nav_module():
     """`lib.memory.tree_nav`, imported on use — the package __init__ pulls the
     store and embedding layers, which `regin memory --help` must not pay for."""
@@ -99,7 +110,9 @@ def tree_nav_module():
 def cmd_recall(
     query: str = typer.Argument(..., help="What to recall experience about"),
     top_k: int = typer.Option(5, "--top-k"),
-    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    scope: Optional[str] = typer.Option(
+        None, "--scope",
+        help="e.g. repo:regin; omitted applies the scope policy, 'all' opts out"),
     fts_only: bool = typer.Option(False, "--fts-only",
                                   help="Skip the dense leg + rerank"),
     json_out: bool = typer.Option(False, "--json"),
@@ -118,6 +131,7 @@ def cmd_recall(
     """
     import lib.memory as memory
     tree_nav = tree_nav_module()
+    scope = _tool_scope(scope)
     mode = "fts" if fts_only else "auto"
     # The kill switch has to be honoured HERE: `memory.recall` itself does not
     # consult `enabled()`, so reaching it while the subsystem is off would
@@ -174,11 +188,14 @@ def cmd_read(
 
 @memory_app.command("index-root")
 def cmd_index_root(
-    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    scope: Optional[str] = typer.Option(
+        None, "--scope",
+        help="e.g. repo:regin; omitted applies the scope policy, 'all' opts out"),
     session: Optional[str] = _SESSION_OPT,
 ) -> None:
     """List the top-level topic buckets — step 1 of the tree walk (CLI form of
     `mcp__memory__index_root`, for harnesses without MCP)."""
+    scope = _tool_scope(scope)
     _walk(session, "index-root",
           tree_nav_module().render_index_root(scope or ""), scope=scope or "")
 
@@ -186,10 +203,13 @@ def cmd_index_root(
 @memory_app.command("index-expand")
 def cmd_index_expand(
     node_id: str = typer.Argument(..., help="Topic node id from index-root"),
-    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    scope: Optional[str] = typer.Option(
+        None, "--scope",
+        help="e.g. repo:regin; omitted applies the scope policy, 'all' opts out"),
     session: Optional[str] = _SESSION_OPT,
 ) -> None:
     """Drill into one topic node and list its children — step 2 of the walk."""
+    scope = _tool_scope(scope)
     _walk(session, "index-expand",
           tree_nav_module().render_index_expand(node_id, scope or ""),
           node_id=node_id)
@@ -199,7 +219,9 @@ def cmd_index_expand(
 def cmd_index_fetch(
     node_id: str = typer.Argument(..., help="Topic node to read"),
     top_k: int = typer.Option(10, "--top-k", help="Max memory titles (max 50)"),
-    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    scope: Optional[str] = typer.Option(
+        None, "--scope",
+        help="e.g. repo:regin; omitted applies the scope policy, 'all' opts out"),
     reinforce: bool = typer.Option(
         True, "--reinforce/--no-reinforce",
         help="Count as wiki usage; pass --no-reinforce for audit sweeps"),
@@ -207,6 +229,7 @@ def cmd_index_fetch(
 ) -> None:
     """Read a topic node's wiki path, source refs and memory titles — step 3,
     the leaf. Returns addresses, not contents."""
+    scope = _tool_scope(scope)
     _walk(session, "index-fetch",
           tree_nav_module().render_index_fetch(
               node_id, top_k=top_k, scope=scope or "", reinforce=reinforce),
@@ -290,7 +313,9 @@ def cmd_recall_for_task(
         help="Topic node id to scope retrieval to; if omitted, routed from "
              "the task text"),
     top_k: int = typer.Option(3, "--top-k"),
-    scope: Optional[str] = typer.Option(None, "--scope", help="e.g. repo:regin"),
+    scope: Optional[str] = typer.Option(
+        None, "--scope",
+        help="e.g. repo:regin; omitted applies the scope policy, 'all' opts out"),
     json_out: bool = typer.Option(
         False, "--json",
         help="Emit the hits as JSON (subsystem, hit_count, and a hits array of "
@@ -313,6 +338,7 @@ def cmd_recall_for_task(
 
     store = memory.get_store()
     graph = _merged_graph()
+    scope = _tool_scope(scope)
     node_id = _resolve_subsystem_node(graph, subsystem, task,
                                       settings.project_root)
     mems = _task_subtree_memories(store, graph, node_id, top_k, scope)

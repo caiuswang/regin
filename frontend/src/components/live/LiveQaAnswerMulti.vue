@@ -1,7 +1,8 @@
 <script setup>
 // Interactive answerer for a PENDING MULTI-question ask over a reachable bridge
-// (all questions single-select) — the operator surface behind LiveQaSheet when
-// an ask carries more than one question.
+// — the operator surface behind LiveQaSheet when an ask carries more than one
+// question. A multi-select tab stages as checkboxes and delivers a LIST of
+// indices; every other tab is one pick.
 //
 // The claude select TUI shows one question at a time and lets a human step
 // forward AND back to revise, so this mirrors that: the operator picks an answer
@@ -24,7 +25,9 @@ import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import LiveQaGrowInput from './LiveQaGrowInput.vue'
-import { askOptLabel, askOptDescription } from '../../utils/traceFormatters.js'
+import {
+  askOptLabel, askOptDescription, askModeLabel, askModeMark, askOptMark,
+} from '../../utils/traceFormatters.js'
 
 const props = defineProps({
   span: { type: Object, required: true },
@@ -39,9 +42,9 @@ const q = computed(() => questions.value[idx.value] || null)
 const options = computed(() => q.value?.options || [])
 
 function blankAnswer() {
-  return { kind: null, index: -1, label: '', note: '', text: '' }
+  return { kind: null, index: -1, label: '', note: '', text: '', indices: [] }
 }
-// answers[i].kind: null (unanswered) | 'option' | 'free'
+// answers[i].kind: null (unanswered) | 'option' | 'multi' | 'free'
 const answers = ref(questions.value.map(() => blankAnswer()))
 function answerAt(i) {
   if (!answers.value[i]) answers.value[i] = blankAnswer()
@@ -54,15 +57,34 @@ const detail = ref('')
 const sendingLabel = ref('')
 const sending = computed(() => phase.value === 'sending')
 
+const multiSelect = computed(() => !!q.value?.multiSelect)
+
 function pickOption(oi) {
   if (sending.value) return
   const a = answerAt(idx.value)
+  // A multi-select tab accumulates instead of replacing: tapping toggles the
+  // index in place, mirroring the terminal's checkboxes. Emptying the set
+  // returns the tab to unanswered, so Send-all still blocks on it.
+  if (multiSelect.value) {
+    const chosen = new Set(a.indices || [])
+    if (chosen.has(oi)) chosen.delete(oi)
+    else chosen.add(oi)
+    a.indices = [...chosen].sort((x, y) => x - y)
+    a.kind = a.indices.length ? 'multi' : null
+    return
+  }
   // A note is written against one specific option — changing the pick must
   // not carry it over (the typed free-text draft, by contrast, is kept).
   if (a.index !== oi) a.note = ''
   a.kind = 'option'
   a.index = oi
   a.label = askOptLabel(options.value[oi])
+}
+function isPicked(i, oi) {
+  const a = answers.value[i]
+  if (!a) return false
+  if (a.kind === 'multi') return (a.indices || []).includes(oi)
+  return a.kind === 'option' && a.index === oi
 }
 function startFree() {
   if (sending.value) return
@@ -72,6 +94,7 @@ function startFree() {
 function answered(a) {
   if (!a) return false
   if (a.kind === 'option') return true
+  if (a.kind === 'multi') return (a.indices || []).length > 0
   return a.kind === 'free' && !!(a.text || '').trim()
 }
 const curAnswered = computed(() => answered(cur.value))
@@ -99,6 +122,15 @@ function payloadFor(i) {
   const confirm_text = qq?.question || undefined
   const freeIndex = (qq?.options || []).length
   if (a.kind === 'free') return { option_index: freeIndex, text: a.text.trim(), confirm_text }
+  if (a.kind === 'multi') {
+    const labels = a.indices.map(i => askOptLabel((qq?.options || [])[i]))
+    return {
+      option_index: [...a.indices],
+      option_count: (qq?.options || []).length,
+      label: labels.filter(Boolean).join(', '),
+      confirm_text,
+    }
+  }
   const note = (a.note || '').trim()
   if (note) return { option_index: freeIndex, text: `${a.label} — ${note}`, label: a.label, confirm_text }
   return { option_index: a.index, label: a.label, confirm_text }
@@ -141,18 +173,23 @@ async function sendAll() {
         <div class="live-qa-step" data-testid="live-qa-step">Question {{ idx + 1 }} of {{ total }}</div>
         <div v-if="q?.header" class="live-qa-h">{{ q.header }}</div>
         <div class="live-qa-title">{{ q?.question }}</div>
+        <div class="live-qa-mode" :class="{ 'live-qa-mode-multi': multiSelect }">
+          <span aria-hidden="true">{{ askModeMark(multiSelect) }}</span>
+          {{ askModeLabel(multiSelect) }}
+        </div>
       </div>
       <component
         :is="'button'"
         v-for="(opt, oi) in options"
         :key="oi"
         class="live-qa-opt live-qa-pick"
-        :class="{ 'live-qa-staged': cur && cur.kind === 'option' && cur.index === oi }"
+        :class="{ 'live-qa-staged': isPicked(idx, oi) }"
+        :aria-pressed="multiSelect ? isPicked(idx, oi) : undefined"
         :disabled="sending || undefined"
         data-testid="live-qa-pick"
         @click="pickOption(oi)"
       >
-        <span class="live-qa-optmark">›</span>
+        <span class="live-qa-optmark">{{ multiSelect ? askOptMark(true, isPicked(idx, oi)) : (isPicked(idx, oi) ? '◉' : '○') }}</span>
         <span class="live-qa-optbody">
           <span class="live-qa-optlbl">{{ askOptLabel(opt) }}</span>
           <span v-if="askOptDescription(opt)" class="live-qa-optdesc">{{ askOptDescription(opt) }}</span>

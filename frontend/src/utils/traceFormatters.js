@@ -1,3 +1,4 @@
+import { plainText, searchText } from './plainText.js'
 // Pure formatters extracted from SessionConversationView (PR 2.3a). All
 // functions in this module are stateless: given the same input they
 // produce the same output, with no closure over component state or
@@ -273,6 +274,51 @@ export function scheduleWakeupParts(a) {
   return { finished: false, main }
 }
 
+// The retry banner claude drew, rebuilt from the span. The attempt counter is
+// the load-bearing half — an operator reading a nine-minute turn needs to know
+// it is on attempt 7, not merely that something errored once.
+export function apiRetryLabel(a) {
+  const label = a.label || 'API error'
+  const attempt = Number(a.attempt)
+  const max = Number(a.max_attempts)
+  const wait = a.retry_in ? `, retrying in ${a.retry_in}` : ''
+  // `retrying once` — claude's last attempt, which names no number. Saying
+  // "final attempt" is what the screen said; inventing `attempt 10/10` here
+  // would be reporting a count nothing ever counted.
+  if (!Number.isFinite(attempt)) {
+    return a.final ? `${label} — final attempt${wait}` : label
+  }
+  const of = Number.isFinite(max) ? `/${max}` : ''
+  return `${label} — attempt ${attempt}${of}${wait}`
+}
+
+// ── Resumed-agent segments ────────────────────────────────────
+// A `SendMessage` continuation emits a SECOND `subagent.start` under the same
+// `agent_id` (lib/trace/projection `_reparent_subagents`), so one agent owns a
+// card per run — while every per-agent source is keyed on the agent alone.
+// `agent_segment_index`/`_count` (stamped by `_stamp_agent_segments`) are what
+// tell the cards apart. Null for a single-segment agent: nothing to tell apart.
+export function subagentSegment(attributes) {
+  const { agent_segment_index: index, agent_segment_count: count } = attributes || {}
+  if (index == null || !(count > 1)) return null
+  return { index, count, isLatest: index === count - 1, isContinuation: index > 0 }
+}
+
+// An earlier run of a resumed agent. Nothing that describes the agent as a
+// whole — the roster entry, the `tool.Agent` launch, which stays PENDING for
+// the length of a foreground call — speaks for a run that has already stopped.
+export function isSupersededSegment(attributes) {
+  const segment = subagentSegment(attributes)
+  return !!segment && !segment.isLatest
+}
+
+// The roster describes an agent's NEWEST run only, so an earlier segment that
+// read it would claim to still be running work it already finished.
+export function agentRosterEntryFor(attributes, agentById) {
+  if (isSupersededSegment(attributes)) return null
+  return agentById.get(attributes?.agent_id) || null
+}
+
 // NOTE: `fullLabel` (conversation view) and `spanLabel` (timeline/tree view,
 // below) are drifted twins — both turn a span into a one-line label but cover
 // different span families (fullLabel: task.notification / assistant_response /
@@ -283,10 +329,11 @@ export function scheduleWakeupParts(a) {
 export function fullLabel(span) {
   const a = span.attributes || {}
   const name = span.name || ''
-  if (name === 'prompt') return a.text || 'prompt'
-  if (name === 'task.notification') return a.summary || 'background task'
-  if (name === 'assistant_response') return a.text || 'response'
-  if (name === 'harness.recap') return a.content || 'recap'
+  if (name === 'prompt') return plainText(a.text) || 'prompt'
+  if (name === 'task.notification') return plainText(a.summary) || 'background task'
+  if (name === 'assistant_response') return plainText(a.text) || 'response'
+  if (name === 'harness.recap') return plainText(a.content) || 'recap'
+  if (name === 'harness.api_retry') return apiRetryLabel(a)
   if (name === 'tool.failure') {
     const tool = toolDisplayLabel(a.tool_name || 'tool')
     const bits = [`failed: ${tool}`]
@@ -463,7 +510,7 @@ export function spanLabel(span) {
     }
     case 'compact.post': return compactPostLabel(a)
     case 'rewind': return rewindLabel(a)
-    case 'prompt': return a.text ? a.text.slice(0, 60) : 'prompt'
+    case 'prompt': return a.text ? plainText(a.text).slice(0, 60) : 'prompt'
     case 'conversation': return 'conversation start'
     case 'harness.local_command': {
       const cmd = a.command_name || 'command'
@@ -471,6 +518,8 @@ export function spanLabel(span) {
     }
     case 'harness.recap':
       return a.content ? `recap: ${a.content.slice(0, 60)}` : 'recap'
+    case 'harness.api_retry':
+      return apiRetryLabel(a)
     case 'workflow.phase':
       return a.title ? `phase: ${a.title}` : 'phase'
     case 'subagent.start': {
@@ -511,7 +560,9 @@ export function spanLabel(span) {
 // Kept private so the two truncation behaviours can't be conflated.
 function _terminalTruncate(text, max) {
   if (!text) return ''
-  text = String(text).replace(/\s+/g, ' ').trim()
+  // Every terminal detail is an excerpt, so markdown marks are noise here: a
+  // clipped response otherwise reads `"## Where the limi…"`.
+  text = plainText(text).replace(/\s+/g, ' ').trim()
   if (text.length <= max) return text
   return text.slice(0, max) + '…'
 }
@@ -523,7 +574,8 @@ export function terminalAskQuestionPreview(a) {
   if (!qs.length) return ''
   const answers = a.answers || {}
   return qs.map(q => {
-    const text = q?.question || q?.header || ''
+    const mode = q?.multiSelect ? ' [multi-select]' : ''
+    const text = (q?.question || q?.header || '') + mode
     const ans = answers[q?.question]
     return ans ? `${text} → ${ans}` : text
   }).join('\n')
@@ -697,6 +749,7 @@ export function dotColor(name) {
     'subagent.start': 'bg-pink-500',
     'harness.local_command': 'bg-teal-500',
     'harness.recap': 'bg-indigo-400',
+    'harness.api_retry': 'bg-red-500',
     'environment.git_status': 'bg-cyan-600',
   }
   if (map[name]) return map[name]
@@ -740,6 +793,7 @@ export function isEmptyThinkingSpan(span) {
 
 export function toolRowTextClass(span) {
   if (span?.name?.startsWith('tool.failure')) return 'text-red-600'
+  if (span?.name === 'harness.api_retry') return 'text-red-600'
   if (isRejectedToolSpan(span)) return 'text-red-700'
   if (isDeniedToolSpan(span)) return 'text-amber-800'
   return 'text-slate-700'
@@ -754,12 +808,36 @@ export function toolRowTextClass(span) {
 // every attribute branch here.
 
 const _ROW_TITLES = {
+  // Focus's fold strip renders these as bare rows, where the raw span name is
+  // the only thing the reader would see. Their full cards carry their own
+  // headings, so these titles never showed up before.
+  'assistant.thinking': 'Thinking',
+  'rule.check': 'Rule check',
+  'memory.recall': 'Recall',
+  'harness.recap': 'Recap',
+  'harness.local_command': 'Command',
+  'harness.api_retry': 'API retry',
   'skill.read': 'Skill read',
   'skill.invoke': 'Skill',
   'file.edit': 'Edit',
   'plan.edit': 'Plan edit',
   'subagent.start': 'Subagent',
   'subagent.stop': 'Subagent done',
+  'task.notification': 'Notification',
+  'workflow.phase': 'Phase',
+  'workflow.agent_result': 'Agent result',
+  'assistant_response': 'Response',
+}
+
+// Last resort for a span the table above has no entry for. Focus's condensed
+// tier is the DEFAULT tier, so every kind that is neither promoted nor folded
+// lands in a row whose title used to be the raw dotted name — `task.notification`
+// where the card said "Background task". The namespace is already carried by
+// the row's dot colour, so the leaf is the readable half.
+function humanizeSpanName(name) {
+  const leaf = (name.split('.').pop() || name).replace(/[_-]+/g, ' ').trim()
+  if (!leaf) return name
+  return leaf.charAt(0).toUpperCase() + leaf.slice(1)
 }
 
 function _stripTitle(full, title) {
@@ -779,6 +857,20 @@ export function rowParts(span) {
     return { title, subject: _stripTitle(fullLabel(span), title) }
   }
   switch (name) {
+    case 'assistant.thinking':
+      return { title: _ROW_TITLES[name], subject: '' }
+    case 'rule.check':
+      return { title: _ROW_TITLES[name], subject: a.file_path ? a.file_path.split('/').pop() : (a.rule_id || '') }
+    case 'memory.recall':
+      // These spans carry no `query` — the attribute set is block/hit_count/
+      // hits/mode/topic — so keying off one rendered a bare "Recall" for all
+      // 672 of them. `memoryRecallOneLiner` is the existing resolver.
+      return { title: _ROW_TITLES[name], subject: memoryRecallOneLiner(span) }
+    case 'harness.recap':
+    case 'harness.local_command':
+      return { title: _ROW_TITLES[name], subject: plainText(a.content) || a.command || '' }
+    case 'harness.api_retry':
+      return { title: _ROW_TITLES[name], subject: apiRetryLabel(a) }
     case 'skill.read':
     case 'skill.invoke':
       return { title: _ROW_TITLES[name], subject: a.skill_id || '' }
@@ -788,9 +880,26 @@ export function rowParts(span) {
     case 'subagent.start':
       return { title: _ROW_TITLES[name], subject: a.agent_type || '' }
     case 'subagent.stop':
-      return { title: _ROW_TITLES[name], subject: '' }
+      return {
+        title: _ROW_TITLES[name],
+        subject: [a.agent_type, plainText(a.result_preview)].filter(Boolean).join(' — '),
+      }
+    case 'task.notification':
+      // `text` is the raw <task-notification> harness envelope; `summary` is
+      // the sentence a human wrote. `fullLabel` already picks the latter.
+      return { title: _ROW_TITLES[name], subject: plainText(a.summary) || '' }
+    case 'workflow.phase':
+      return {
+        title: _ROW_TITLES[name],
+        subject: [a.index != null ? `${a.index}.` : '', a.title || '', a.detail || '']
+          .filter(Boolean).join(' '),
+      }
+    case 'workflow.agent_result':
+      return { title: _ROW_TITLES[name], subject: a.label || a.agent_type || '' }
+    case 'assistant_response':
+      return { title: _ROW_TITLES[name], subject: plainText(a.text) }
   }
-  return { title: name, subject: '' }
+  return { title: humanizeSpanName(name), subject: '' }
 }
 
 // ── Span category buckets (Terminal filter bar + /live filter sheet) ──
@@ -854,8 +963,13 @@ export function spanMatchesSearch(span, q) {
     a.text,
     a.questions && a.questions.map(x => x.question).join(' '),
     a.answers && Object.values(a.answers).join(' '),
-  ].filter(Boolean).join(' ').toLowerCase()
-  return hay.includes(q.toLowerCase())
+  ].filter(Boolean).join(' ')
+  const needle = searchText(q).toLowerCase()
+  // A query made only of markdown marks normalizes to nothing, and '' is a
+  // substring of everything — matching the whole trace. Fall back to the raw
+  // query so searching for a literal backtick still means something.
+  if (!needle) return hay.toLowerCase().includes(q.toLowerCase())
+  return searchText(hay).toLowerCase().includes(needle)
 }
 
 // ── Task row chips ──────────────────────────────────────────
@@ -906,9 +1020,9 @@ const PROMPT_PREVIEW_MAX_CHARS = 1800
 const PROMPT_PREVIEW_MAX_LINES = 16
 
 export function promptPreviewText(prompt) {
-  const text = prompt?.attributes?.expanded_text || prompt?.attributes?.text || ''
-  if (!text) return ''
-  let preview = text
+  const raw = prompt?.attributes?.expanded_text || prompt?.attributes?.text || ''
+  if (!raw) return ''
+  let preview = plainText(raw)
   if (preview.length > PROMPT_PREVIEW_MAX_CHARS) {
     preview = preview.slice(0, PROMPT_PREVIEW_MAX_CHARS).trimEnd() + '…'
   }
@@ -986,7 +1100,32 @@ export function askNote(span, q) {
   return ann[q?.question]?.notes || ''
 }
 
+// How many answers a question takes is otherwise invisible: both modes render
+// the same option list, and the old `· multi-select` header suffix vanished
+// whenever the question carried no header. Every ask surface states the mode
+// on its own line and marks options with the matching control glyph.
+export function askModeLabel(multi) {
+  return multi ? 'Multi-select — choose any' : 'Single-select — choose one'
+}
+
+export function askModeMark(multi) {
+  return multi ? '☑' : '◉'
+}
+
+export function askOptMark(multi, chosen) {
+  if (multi) return chosen ? '☑' : '☐'
+  return chosen ? '✓' : '○'
+}
+
 // ── Live-span reconcile ──────────────────────────────────────
+
+// Reserved live-placeholder span_id prefixes (lib/trace/pending_spans.py).
+const PENDING_SPAN_ID_PREFIXES = ['promptlive-', 'pending-', 'permreq-']
+
+export function isPendingPlaceholderId(spanId) {
+  return typeof spanId === 'string'
+    && PENDING_SPAN_ID_PREFIXES.some(p => spanId.startsWith(p))
+}
 
 // Converge the append-only `session.spans` (which feeds the conversation cards)
 // to the server's reconciliation. `mergeLoadedSpans` is an append/update-only
@@ -1003,4 +1142,24 @@ export function dropRetiredSpans(spans, retiredIds) {
   const retired = retiredIds instanceof Set ? retiredIds : new Set(retiredIds || [])
   if (!retired.size) return spans || []
   return (spans || []).filter(s => !retired.has(s?.span_id))
+}
+
+// The other half of that convergence, for the placeholders `retired_span_ids`
+// structurally cannot name. The server computes that list from the REQUESTED
+// WINDOW's raw rows, so a placeholder whose turn anchor has since slid out of
+// the newest page is never listed again — one missed poll (a hidden tab) and it
+// is stranded, still PENDING, rendering a running chip that never stops.
+//
+// A live placeholder is always the NEWEST row the session has, so one sorting
+// below the fresh page's oldest anchor has been superseded by a row this client
+// never saw. Both halves of the test are load-bearing: a reserved prefix alone
+// is not proof (a resolved `pending-<tool_use_id>` row keeps its id, and merge
+// DEMOTES a superseded placeholder to an ERROR row the feed still renders).
+// `id`-less rows are kept — no id is no evidence.
+export function dropStalePendingSpans(spans, minFreshId) {
+  if (!minFreshId) return spans || []
+  return (spans || []).filter(s => !(
+    s?.status_code === 'PENDING'
+    && isPendingPlaceholderId(s?.span_id)
+    && (s?.id ?? Infinity) < minFreshId))
 }

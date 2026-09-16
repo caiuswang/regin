@@ -3,12 +3,16 @@ import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import Drawer from 'primevue/drawer'
 import ConfirmDialog from './ConfirmDialog.vue'
-import CommandPalette from './CommandPalette.vue'
+import FullTextSearch from './search/FullTextSearch.vue'
+import TraceSessionRail from './TraceSessionRail.vue'
+import { useSearchShortcuts } from '../composables/useSearchShortcuts.js'
+import { useQuickCapture } from '../composables/useQuickCapture.js'
 import FlashMessage from './FlashMessage.vue'
 import AppSidebar from './AppSidebar.vue'
 import NavIcon from './NavIcon.vue'
 import BlockerBanner from './notifications/BlockerBanner.vue'
 import NotificationHost from './notifications/NotificationHost.vue'
+import QuickCaptureBubble from './tasks/QuickCaptureBubble.vue'
 import api from '../api.js'
 import { useFeatures } from '../composables/useFeatures'
 import { useDriftSummary } from '../composables/useDriftSummary'
@@ -40,12 +44,13 @@ const user = ref(api.getStoredUser())
 const isAdmin = computed(() => user.value?.role === 'admin')
 const mode = ref('standalone')
 const navOpen = ref(false)
-const paletteOpen = ref(false)
+const { openSearch, closeSearch } = useSearchShortcuts()
+const { open: captureOpen } = useQuickCapture()
 
 watch(() => route.path, () => {
   user.value = api.getStoredUser()
   navOpen.value = false
-  paletteOpen.value = false
+  closeSearch()
 })
 
 // Pages that *are* the notification queue don't pop over themselves — you are
@@ -111,8 +116,8 @@ const navGroups = computed(() => [
       { to: '/live', label: 'Live', icon: 'live' },
       { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox',
         badge: () => inboxUnread.value, tone: () => inboxTone.value },
-      { to: '/memory', label: 'Memory', exact: true, icon: 'patterns' },
-      { to: '/grades', label: 'Grades', exact: true, icon: 'rules' },
+      { to: '/memory', label: 'Memory', exact: true, icon: 'memory' },
+      { to: '/grades', label: 'Grades', exact: true, icon: 'grades' },
       { to: '/audit', label: 'Audit', icon: 'audit' },
     ],
   },
@@ -186,6 +191,12 @@ const navGroups = computed(() => [
           <BlockerBanner />
           <router-view />
         </div>
+
+        <!-- The ambient half of the switcher. A flex sibling of the scroller,
+             so it takes its band out of `main.content` rather than covering
+             the last rows of the trace. It renders itself only on a trace
+             view. -->
+        <TraceSessionRail />
       </main>
     </div>
 
@@ -417,12 +428,22 @@ const navGroups = computed(() => [
 /* Routes flagged `meta.fixedViewport` (/live, /inbox): freeze the app-shell
    scroll and drop the padding so the view fills the viewport exactly and only
    its own inner region scrolls. Such a view must re-add whatever padding it
-   wants. Compound selector so it beats the scoped `.content-scroll` above. */
+   wants. Compound selector so it beats the scoped `.content-scroll` above.
+
+   Frozen, the scroller can't give back what anything above the view takes: the
+   view root is sized to the whole scroller (`height: 100%`), so an in-flow
+   banner offsets it and pushes its last rows — the composer, the follow-up —
+   past a clipped edge with no scroll left to reveal them. Column flex hands the
+   banner its own band and the view the remainder. */
 .content-scroll.content-scroll-fixed {
   overflow: hidden;
   padding: 0;
   overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
 }
+.content-scroll.content-scroll-fixed > * { flex-shrink: 0; }
+.content-scroll.content-scroll-fixed > *:last-child { flex: 1; min-height: 0; }
 
 /* Same freeze, but only where there is room for the view's own panes; below
    that the shell scrolls as usual. The padding is handed to the view at every
@@ -432,7 +453,11 @@ const navGroups = computed(() => [
   .content-scroll.content-scroll-fixed-lg {
     overflow: hidden;
     overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
   }
+  .content-scroll.content-scroll-fixed-lg > * { flex-shrink: 0; }
+  .content-scroll.content-scroll-fixed-lg > *:last-child { flex: 1; min-height: 0; }
 }
 
 @media (max-width: 767px) {

@@ -270,18 +270,29 @@ def list_mcp_calls_page(
         conn.close()
 # ── Session detail (read-only projection) ───────────────────
 
-def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
+def fetch_session_projection(
+    trace_id: str, *, drop_delegated: bool = False,
+) -> tuple[list[dict], list[dict]]:
     """Read-only: fetch + graft-orphans + widen-envelopes.
 
     Returns (widened_spans, tree). Does not mutate the DB — callers
     that want the cleanup persisted use `materialize_session`.
+
+    `drop_delegated` withholds the spans a subagent trace serves
+    (`projection.drop_delegated_spans`). Off by default and named at each call
+    site rather than inferred here: a reader that ANALYSES the session — the
+    grader's evidence index — needs every row the agents produced, and a
+    session whose work was all delegated would otherwise be graded as an empty
+    artifact.
     """
     from lib.orm.engine import get_connection
     from lib.trace.alias import strip_origin, trace_group
     from lib.trace.merge import merge_spans
     from lib.trace.projection import (
-        _build_span_tree, _fetch_spans_for_group, _widen_envelopes,
+        _attach_agent_rollups, _build_span_tree, _fetch_spans_for_group,
+        _widen_envelopes, drop_delegated_spans,
     )
+    from lib.trace.subagent_trace import stored_group
 
     conn = get_connection()
     try:
@@ -289,18 +300,32 @@ def fetch_session_projection(trace_id: str) -> tuple[list[dict], list[dict]]:
         # group, and an ordinary session resolves to just itself.
         group = trace_group(conn, trace_id)
         trace_id = group[0]
+        # Where the rows this id serves are STORED — the parent's group for a
+        # subagent trace, whose session row, workflow labels and transcript all
+        # belong to the run that launched it.
+        stored = stored_group(conn, trace_id)
         raw = _fetch_spans_for_group(conn, group)
         grafted = strip_origin(merge_spans(
             raw, prompt_id_ceiling=_prompt_ceiling(conn, group),
-            session_activity=_session_activity(conn, group),
+            session_activity=_session_activity(conn, stored),
         ))
         widened = _widen_envelopes(grafted)
-        _attach_compaction_reclaim(conn, trace_id, widened)
+        _attach_compaction_reclaim(conn, stored[0], widened)
         _attach_subagent_impact(widened)
-        _attach_prompt_expansions(trace_id, widened, conn)
-        attach_workflow_agent_attrs(trace_id, widened, conn)
-        tree = _build_span_tree(widened)
-        return widened, tree
+        _attach_prompt_expansions(stored[0], widened, conn)
+        attach_workflow_agent_attrs(stored[0], widened, conn)
+        # Recount on the MERGED rows. The fetch stamped the markers before
+        # `merge_spans` ran, and on a session both writers recorded that
+        # population holds each span twice under two different span_ids —
+        # only the cross-source pairing here can tell they are one call. One
+        # measured agent's card claimed 45 spans and 32 tools for the 29 and
+        # 16 its own trace served.
+        _attach_agent_rollups(widened)
+        # After the derivations above, every one of which reads the agent's
+        # spans to answer for the marker that survives them.
+        served = drop_delegated_spans(widened) if drop_delegated else widened
+        tree = _build_span_tree(served)
+        return served, tree
     finally:
         conn.close()
 
@@ -324,6 +349,24 @@ _AFTER_ID_ANCHOR_NAMES = (
 )
 
 
+# A subagent's turns are anchored by its `prompt-sa-…` launch prompt where it
+# has one, and by its `subagent.start` marker where it does not — the same
+# precedence `projection._fallback_orphan_anchor` gives the child's tree. Three
+# quarters of stored agents have no launch prompt, so paging a child on
+# `prompt` alone finds no anchor at all and serves it unwindowed.
+_SUBAGENT_ANCHOR_NAME = 'subagent.start'
+
+
+def _anchor_names(trace_id, *, after: bool) -> tuple:
+    """The span names that page `trace_id`."""
+    from lib.trace.subagent_trace import is_subagent_trace_id
+    ids = [trace_id] if isinstance(trace_id, str) else list(trace_id)
+    base = _AFTER_ID_ANCHOR_NAMES if after else _TURN_ANCHOR_NAMES
+    if ids and is_subagent_trace_id(ids[0]):
+        return (*base, _SUBAGENT_ANCHOR_NAME)
+    return base
+
+
 def _page_anchors(conn, trace_id, *, limit, before_id, after_id):
     """Step 1: page the turn anchors. Returns rows of `(id, start_time)`.
 
@@ -341,43 +384,43 @@ def _page_anchors(conn, trace_id, *, limit, before_id, after_id):
     up by `id > ?`. The frontend prunes the stale placeholder when
     the real anchor arrives, so there's no duplicate.
     """
-    from lib.trace.alias import sql_in
-    traces, tparams = sql_in(trace_id)
-    placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
+    from lib.trace.subagent_trace import span_scope
+    scope, sparams = span_scope(conn, trace_id)
+    names = _anchor_names(trace_id, after=after_id is not None)
+    placeholders = ','.join('?' for _ in names)
     if after_id is not None:
-        after_placeholders = ','.join('?' for _ in _AFTER_ID_ANCHOR_NAMES)
         return conn.execute(
             f"""
             SELECT id, start_time FROM session_spans
-            WHERE trace_id IN {traces}
-              AND name IN ({after_placeholders})
+            WHERE {scope}
+              AND name IN ({placeholders})
               AND (id > ? OR status_code = 'PENDING')
             ORDER BY start_time ASC, id ASC
             LIMIT 500
             """,
-            (*tparams, *_AFTER_ID_ANCHOR_NAMES, after_id),
+            (*sparams, *names, after_id),
         ).fetchall()
     if before_id is not None:
         return conn.execute(
             f"""
             SELECT id, start_time FROM session_spans
-            WHERE trace_id IN {traces}
+            WHERE {scope}
               AND name IN ({placeholders})
               AND id < ?
             ORDER BY start_time DESC, id DESC
             LIMIT ?
             """,
-            (*tparams, *_TURN_ANCHOR_NAMES, before_id, limit),
+            (*sparams, *names, before_id, limit),
         ).fetchall()
     return conn.execute(
         f"""
         SELECT id, start_time FROM session_spans
-        WHERE trace_id IN {traces}
+        WHERE {scope}
           AND name IN ({placeholders})
         ORDER BY start_time DESC, id DESC
         LIMIT ?
         """,
-        (*tparams, *_TURN_ANCHOR_NAMES, limit),
+        (*sparams, *names, limit),
     ).fetchall()
 
 
@@ -390,14 +433,14 @@ def _window_end_for(conn, trace_id, before_id):
     after_id pages, no upper bound — we want everything from the window
     start onward.
     """
-    from lib.trace.alias import sql_in
+    from lib.trace.subagent_trace import span_scope
     if before_id is None:
         return None
-    traces, tparams = sql_in(trace_id)
+    scope, sparams = span_scope(conn, trace_id)
     cursor_row = conn.execute(
         "SELECT start_time FROM session_spans "
-        f"WHERE trace_id IN {traces} AND id = ?",
-        (*tparams, before_id),
+        f"WHERE {scope} AND id = ?",
+        (*sparams, before_id),
     ).fetchone()
     return cursor_row['start_time'] if cursor_row else None
 
@@ -409,20 +452,21 @@ def _compute_has_more_older(conn, trace_id, after_id, window_start):
     Reload (after_id) doesn't care about older history — that's already
     rendered. Caller passes in its existing has_more_older.
     """
-    from lib.trace.alias import sql_in
+    from lib.trace.subagent_trace import span_scope
     if after_id is not None:
         return False
-    traces, tparams = sql_in(trace_id)
-    placeholders = ','.join('?' for _ in _TURN_ANCHOR_NAMES)
+    scope, sparams = span_scope(conn, trace_id)
+    names = _anchor_names(trace_id, after=False)
+    placeholders = ','.join('?' for _ in names)
     older = conn.execute(
         f"""
         SELECT 1 FROM session_spans
-        WHERE trace_id IN {traces}
+        WHERE {scope}
           AND name IN ({placeholders})
           AND start_time < ?
         LIMIT 1
         """,
-        (*tparams, *_TURN_ANCHOR_NAMES, window_start),
+        (*sparams, *names, window_start),
     ).fetchone()
     return older is not None
 
@@ -446,14 +490,24 @@ def _prompt_ceiling(conn, trace_id):
     merge._drop_stale_blockers). Subagent launch prompts (`prompt-sa-`,
     agent_id set) are excluded: they are not main turn anchors, so a subagent
     prompt with a higher id must never raise the cutoff and drop the user's
-    live main placeholder."""
+    live main placeholder.
+
+    In a subagent trace that exclusion is inverted: every prompt the child
+    serves is agent-scoped, so keeping it would leave the ceiling NULL and
+    forfeit the guard entirely."""
     from lib.trace.alias import sql_in
     from lib.trace.pending_spans import AGENT_ID_SQL
-    placeholders, params = sql_in(trace_id)
+    from lib.trace.subagent_trace import agent_span_scope
+    agent = agent_span_scope(conn, trace_id)
+    if agent is not None:
+        scope, params, main_only = agent.clause, list(agent.params), ''
+    else:
+        placeholders, params = sql_in(trace_id)
+        scope = f"trace_id IN {placeholders}"
+        main_only = f" AND {AGENT_ID_SQL} IS NULL"
     ceiling_row = conn.execute(
         "SELECT MAX(id) FROM session_spans "
-        f"WHERE trace_id IN {placeholders} AND name = 'prompt' "
-        f"AND {AGENT_ID_SQL} IS NULL",
+        f"WHERE {scope} AND name = 'prompt'{main_only}",
         params,
     ).fetchone()
     return ceiling_row[0] if ceiling_row else None
@@ -464,7 +518,11 @@ def _session_activity(conn, trace_id):
     the stuck-pending demotion can tell an active session (never demote) from
     an inactive/ended one (demote old blockers). None when the row is absent
     (a not-yet-summarised trace) — demotion then falls back to the
-    same-agent-moved-on path alone."""
+    same-agent-moved-on path alone.
+
+    Takes the STORED group (`subagent_trace.stored_group`), because a subagent
+    trace has no row of its own and is exactly as active as the run it is part
+    of."""
     from lib.trace.alias import sql_in
     placeholders, params = sql_in(trace_id)
     # Over an alias group the two rows are summarised independently, so the
@@ -496,6 +554,7 @@ def fetch_session_paginated(
     limit: int = 50,
     before_id: int | None = None,
     after_id: int | None = None,
+    drop_delegated: bool = False,
 ) -> tuple[list[dict], list[dict], bool]:
     """Read-only: SQL-paginated variant of `fetch_session_projection`.
 
@@ -511,6 +570,8 @@ def fetch_session_paginated(
       - `before_id`: next `limit` older anchors (scroll-up).
       - `after_id`: every anchor newer than `after_id` (additive reload).
 
+    `drop_delegated` is the display opt-in — see `fetch_session_projection`.
+
     Returns `(widened_spans, tree, has_more_older)`.
     """
     if before_id is not None and after_id is not None:
@@ -521,7 +582,8 @@ def fetch_session_paginated(
     from lib.orm.engine import get_connection
     from lib.trace.merge import merge_spans
     from lib.trace.projection import (
-        _build_span_tree, _widen_envelopes,
+        _attach_agent_rollups, _build_span_tree, _widen_envelopes,
+        drop_delegated_spans,
     )
     from lib.trace.wakeup_links import annotate_wakeup_resumes
 
@@ -531,28 +593,40 @@ def fetch_session_paginated(
         # session resolves to just itself. Every helper below takes the group,
         # so an anchor on the SDK side can't be paged past.
         from lib.trace.alias import strip_origin, trace_group
+        from lib.trace.subagent_trace import stored_group
         group = trace_group(conn, trace_id)
         # `group` addresses the store (every span-level query below);
         # `trace_id` stays the canonical id for the session-level joins, which
-        # key on one session and would break on a list.
+        # key on one session and would break on a list. For a subagent trace
+        # those joins follow the PARENT, which owns the session row and the
+        # workflow spans the child's markers are labelled from.
         trace_id = group[0]
+        stored = stored_group(conn, trace_id)
 
         # Step 1: page the turn anchors.
         anchors = _page_anchors(
             conn, group,
             limit=limit, before_id=before_id, after_id=after_id,
         )
-        if not anchors:
+        if not anchors and (before_id is not None or after_id is not None):
             return [], [], False, []
 
-        # Step 2: window = [earliest_anchor_in_page, upper_bound).
-        window_start = min(a['start_time'] for a in anchors)
-        window_end = _window_end_for(conn, group, before_id)
+        if anchors:
+            # Step 2: window = [earliest_anchor_in_page, upper_bound).
+            window_start = min(a['start_time'] for a in anchors)
+            window_end = _window_end_for(conn, group, before_id)
 
-        # Step 3: do we have any older anchors?
-        has_more_older = _compute_has_more_older(
-            conn, group, after_id, window_start,
-        )
+            # Step 3: do we have any older anchors?
+            has_more_older = _compute_has_more_older(
+                conn, group, after_id, window_start,
+            )
+        else:
+            # Initial mount of a session with no turn anchor yet (opened
+            # before its first prompt): serve every span unwindowed, or the
+            # pre-prompt roots (session.start, environment.*, …) are
+            # invisible until a prompt lands.
+            window_start = window_end = None
+            has_more_older = False
 
         # Step 4: fetch every span in the window.
         raw = _fetch_window_rows(conn, group, window_start, window_end)
@@ -562,16 +636,27 @@ def fetch_session_paginated(
         # runs the deterministic reparent ladder.
         grafted = strip_origin(merge_spans(
             raw, prompt_id_ceiling=_prompt_ceiling(conn, group),
-            session_activity=_session_activity(conn, group),
+            session_activity=_session_activity(conn, stored),
         ))
-        widened = _widen_envelopes(grafted)
-        _attach_compaction_reclaim(conn, trace_id, widened)
-        _attach_subagent_impact(widened)
-        attach_workflow_agent_attrs(trace_id, widened, conn)
-        annotate_wakeup_resumes(widened)
-        tree = _build_span_tree(widened)
+        # Before the delegated rows leave: the client prunes this list from
+        # its cards, and a row served by a child trace has not been superseded
+        # by anything the client holds.
         retired_ids = _compute_retired_ids(raw, grafted)
-        return widened, tree, has_more_older, retired_ids
+        widened = _widen_envelopes(grafted)
+        _attach_compaction_reclaim(conn, stored[0], widened)
+        _attach_subagent_impact(widened)
+        attach_workflow_agent_attrs(stored[0], widened, conn)
+        annotate_wakeup_resumes(widened)
+        # Recount on the MERGED rows. The fetch stamped the markers before
+        # `merge_spans` ran, and on a session both writers recorded that
+        # population holds each span twice under two different span_ids —
+        # only the cross-source pairing here can tell they are one call. One
+        # measured agent's card claimed 45 spans and 32 tools for the 29 and
+        # 16 its own trace served.
+        _attach_agent_rollups(widened)
+        served = drop_delegated_spans(widened) if drop_delegated else widened
+        tree = _build_span_tree(served)
+        return served, tree, has_more_older, retired_ids
     finally:
         conn.close()
 def _command_str(tool_input: object) -> str | None:
@@ -1372,7 +1457,7 @@ def _tool_summary(bucket: list[dict]) -> list[dict]:
     )
 
 
-def fetch_turn_usage(trace_id: str) -> list[dict]:
+def fetch_turn_usage(trace_id: str, *, with_refs: bool = True) -> list[dict]:
     """Return per-turn usage rows for a trace, oldest timestamp first.
 
     Each row carries the raw token counters from `turn_usage` plus
@@ -1389,6 +1474,12 @@ def fetch_turn_usage(trace_id: str) -> list[dict]:
       (falls back to the span `name` for non-tool spans like
       `skill.read`, `file.edit`). Lets the row render a compact
       "Read×2·Bash" summary without client-side grouping.
+
+    `with_refs=False` keeps `span_count` but drops the two heavy fields.
+    Both are read only by the turns SIDEBAR, which lives behind the detail
+    rail and is closed on a fresh conversation-tab load — while the feed's
+    own per-turn footers and the TOC need nothing but the counters. On a
+    223-turn session those two were 86KB of a 180KB first-open response.
 
     First-turn interval starts at `-inf` so any span preceding the
     first turn's timestamp gets attributed there rather than dropped.
@@ -1407,9 +1498,10 @@ def fetch_turn_usage(trace_id: str) -> list[dict]:
     buckets = _assign_spans_to_turns(span_rows, turn_bounds)
 
     for turn, bucket in zip(turns, buckets):
-        turn['span_refs'] = bucket
         turn['span_count'] = len(bucket)
-        turn['tool_summary'] = _tool_summary(bucket)
+        if with_refs:
+            turn['span_refs'] = bucket
+            turn['tool_summary'] = _tool_summary(bucket)
         turn['is_server_side'] = turn.get('turn_uuid') in server_side_uuids
 
     return turns

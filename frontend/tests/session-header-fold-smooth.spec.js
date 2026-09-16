@@ -5,13 +5,14 @@
  * change — verified: a mid-glide wheel flick died and stranded the reader
  * mid-feed), so the scroll-driven collapse — which fires mid-gesture by
  * definition — swaps instantly, softened by the compact row's compositor
- * fade. The auto-expand fires only after the scroll settles at the top, and
- * manual toggles fire on a click/keypress: both glide through intermediate
- * heights. Proven with per-frame geometry sampling, not eyeballing —
+ * fade. The pull-driven expand commits only once the scroller has settled at
+ * the top, and manual toggles fire on a click/keypress: both glide through
+ * intermediate heights. Proven with per-frame geometry sampling, not eyeballing —
  * screenshots can't catch a one-frame jump.
  */
 import { randomUUID } from 'node:crypto'
 import { test, expect } from './auth-fixture.js'
+import { wheelOverTrace } from './helpers/traceScroller.js'
 
 async function seedScrollableSession(page) {
   const traceId = randomUUID()
@@ -45,11 +46,11 @@ async function seedScrollableSession(page) {
   return traceId
 }
 
-async function wheel(page, deltaY) {
-  const vp = page.viewportSize()
-  await page.mouse.move(vp.width - 20, Math.round(vp.height / 2))
-  await page.mouse.wheel(0, deltaY)
-}
+const wheel = wheelOverTrace
+
+// The reveal gesture — see session-header-collapse.spec.js. 420px of credited
+// pull at 26px an event, with headroom for the events the dwell gate eats.
+const pull = (page) => wheel(page, -60, 24)
 
 // Sample the sticky wrapper's height every animation frame while `action`
 // runs, then reduce to the count of DISTINCT intermediate heights — values
@@ -96,11 +97,15 @@ test('expand at the top and manual toggles glide; the scroll-collapse swaps inst
   expect(collapse.hi - collapse.lo, 'the fold must actually happen').toBeGreaterThan(40)
   expect(collapse.intermediates, 'scroll-collapse must not glide').toBe(0)
 
-  // Scroll-driven expand back at the top (the "dazzling on scroll up"): the
-  // 150ms dwell means it fires on a settled scroll, so it glides. Act first,
-  // then sample the window the dwell resolves into.
-  await wheel(page, -99999)
-  const expand = await sampleFold(page, () => Promise.resolve(), 1200)
+  // Expanding is a deliberate pull now, and it can only commit once the
+  // scroller has settled at the top — so it always fires on a settled scroll
+  // and is always safe to glide. Sampled across the whole gesture: the commit
+  // lands partway through the wheel run, not after the call returns.
+  await wheel(page, -2500, 3)
+  // Clears the 1.2s post-hide cooldown and the 250ms dwell, so the pull below
+  // is measuring the glide rather than the gates.
+  await page.waitForTimeout(1400)
+  const expand = await sampleFold(page, () => pull(page), 2000)
   await expect(vitals).toBeVisible()
   expect(expand.intermediates,
     `expand jumped ${expand.lo}→${expand.hi}px without a glide`).toBeGreaterThanOrEqual(3)

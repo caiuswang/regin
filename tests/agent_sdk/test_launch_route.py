@@ -295,3 +295,158 @@ def test_a_model_outside_the_menu_is_still_accepted(flask_client, enabled,
                       json={"prompt": "hi", "model": "claude-opus-4-8"})
 
     assert stub_launch["model"] == "claude-opus-4-8"
+
+
+# ── Launching into a git worktree ────────────────────────────────────────────
+# `ensure_worktree` is stubbed here: what these pin is the route's wiring — that
+# the created path becomes the run's cwd, that a refusal is a 400, and that the
+# tree is reported even when the launch behind it is not. Real git behaviour
+# lives in `test_worktree.py`, including one end-to-end pass through this route.
+
+
+@pytest.fixture
+def stub_worktree(monkeypatch):
+    from lib.agent_sdk import worktree
+
+    asked = {}
+
+    def _ensure(cwd, branch, base=""):
+        asked.update(cwd=cwd, branch=branch, base=base)
+        return {"path": "/tmp/proj/.claude/worktrees/feat-x", "branch": branch,
+                "repo_root": "/tmp/proj", "created": True}
+
+    monkeypatch.setattr(worktree, "ensure_worktree", _ensure)
+    return asked
+
+
+def test_a_worktree_launch_runs_in_the_tree_it_just_made(flask_client, enabled,
+                                                         stub_launch,
+                                                         stub_worktree):
+    res = flask_client.post("/api/agent-runs", json={
+        "prompt": "hi", "cwd": "/tmp/proj",
+        "worktree": {"branch": "feat/x", "base": "main"},
+    })
+
+    assert res.status_code == 200
+    assert stub_launch["cwd"] == "/tmp/proj/.claude/worktrees/feat-x"
+    assert stub_worktree == {"cwd": "/tmp/proj", "branch": "feat/x",
+                             "base": "main"}
+    assert res.get_json()["worktree"]["path"] == stub_launch["cwd"]
+
+
+def test_a_worktree_with_no_branch_named_is_not_a_worktree_request(
+        flask_client, enabled, stub_launch, stub_worktree):
+    """The branch IS the ask — a blank one is an untouched form, not an error."""
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "hi", "cwd": "/tmp/proj",
+                                  "worktree": {"branch": "  "}})
+
+    assert res.status_code == 200
+    assert stub_launch["cwd"] == "/tmp/proj"
+    assert stub_worktree == {}
+    assert "worktree" not in res.get_json()
+
+
+def test_an_over_long_branch_is_refused_rather_than_clipped(flask_client,
+                                                            enabled,
+                                                            stub_launch,
+                                                            stub_worktree):
+    """The branch is created under the name given, so clipping it the way the
+    other identifiers are clipped would make a branch nobody asked for."""
+    res = flask_client.post("/api/agent-runs", json={
+        "prompt": "hi", "worktree": {"branch": "f" * 201},
+    })
+
+    assert res.status_code == 400
+    assert "longer than" in res.get_json()["error"]
+    assert stub_worktree == {}
+    assert stub_launch == {}
+
+
+def test_a_resume_cannot_be_moved_into_a_new_worktree(flask_client, enabled,
+                                                      stub_launch,
+                                                      stub_worktree):
+    """`claude --resume` resolves the id against the working directory, so a
+    continuation started in a fresh tree would silently be a new session."""
+    res = flask_client.post("/api/agent-runs", json={
+        "resume": str(uuid.uuid4()), "worktree": {"branch": "feat/x"},
+    })
+
+    assert res.status_code == 400
+    assert "worktree" in res.get_json()["error"]
+    assert stub_worktree == {}
+    assert stub_launch == {}
+
+
+def test_a_refused_worktree_is_a_bad_request_with_the_reason(flask_client,
+                                                             enabled,
+                                                             stub_launch,
+                                                             monkeypatch):
+    from lib.agent_sdk import worktree
+
+    def _refuse(cwd, branch, base=""):
+        raise worktree.WorktreeRefused("unknown base ref 'nope'")
+
+    monkeypatch.setattr(worktree, "ensure_worktree", _refuse)
+
+    res = flask_client.post("/api/agent-runs",
+                            json={"prompt": "hi",
+                                  "worktree": {"branch": "feat/x",
+                                               "base": "nope"}})
+
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "unknown base ref 'nope'"
+    assert stub_launch == {}
+
+
+def test_a_refused_launch_still_names_the_tree_it_left_behind(flask_client,
+                                                              enabled,
+                                                              stub_worktree,
+                                                              monkeypatch):
+    """The directory is on disk by the time the launch is refused; an operator
+    told only "refused" would go looking for something nothing mentioned."""
+    def _refuse(prompt, **kwargs):
+        raise supervisor.LaunchRefused("at capacity")
+
+    monkeypatch.setattr(supervisor, "launch", _refuse)
+
+    body = flask_client.post("/api/agent-runs",
+                             json={"prompt": "hi",
+                                   "worktree": {"branch": "feat/x"}}).get_json()
+
+    assert body["launched"] is False
+    assert body["worktree"]["path"] == "/tmp/proj/.claude/worktrees/feat-x"
+
+
+def test_worktree_options_serve_the_checkouts_own_branches(flask_client,
+                                                           enabled,
+                                                           monkeypatch):
+    from lib.agent_sdk import worktree
+
+    monkeypatch.setattr(
+        worktree, "options",
+        lambda cwd: {"repo_root": cwd, "branches": ["main"],
+                     "default_base": "main",
+                     "worktrees_root": f"{cwd}/.claude/worktrees"})
+
+    res = flask_client.get("/api/agent-runs/worktree-options?cwd=/tmp/proj")
+
+    assert res.status_code == 200
+    assert res.get_json()["repo_root"] == "/tmp/proj"
+
+
+def test_worktree_options_on_a_non_checkout_say_so(flask_client, enabled,
+                                                   monkeypatch):
+    """A 400 with the reason, so the form disables its worktree section rather
+    than offering branches it invented."""
+    from lib.agent_sdk import worktree
+
+    def _refuse(cwd):
+        raise worktree.WorktreeRefused(f"{cwd} is not a normal git checkout")
+
+    monkeypatch.setattr(worktree, "options", _refuse)
+
+    res = flask_client.get("/api/agent-runs/worktree-options?cwd=/tmp/plain")
+
+    assert res.status_code == 400
+    assert "not a normal git checkout" in res.get_json()["error"]

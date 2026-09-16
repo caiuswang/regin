@@ -43,7 +43,8 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
-from dataclasses import dataclass, replace
+import time
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from lib.activity_log import get_activity_logger
@@ -67,6 +68,7 @@ from lib.agent_events.usage import context_tokens, turn_uuid
 from lib.agent_events.ask import ask_questions
 from lib.agent_events.from_sdk import from_sdk_message, prompt_event
 from lib.settings import settings
+from lib.trace import alias
 from lib.trace.pending_spans import prompt_placeholder_id
 from . import client, policy, registry, store
 from .answers import build_updated_input
@@ -101,6 +103,14 @@ class _Turn:
     # see `_leave_a_sink`. Not work anyone is waiting on, so it must not read
     # as the agent working.
     sink: bool = False
+    # Monotonic, because this is only ever read as a duration: a wall clock
+    # stepped mid-turn would render an elapsed time that ran backwards.
+    started: float = field(default_factory=time.monotonic)
+    # tool_use_id → name for the calls this turn has open. Per-turn, because
+    # the session-wide `_tool_names` ledger is emptied only by a result: a
+    # call abandoned mid-flight — interrupted, or denied — stays in it for the
+    # life of the session, and every later turn would report it as running.
+    tools: dict = field(default_factory=dict)
 
 
 # `claude_agent_sdk._internal.query.DEFERRING_TASK_TYPES`. Copied rather than
@@ -241,6 +251,51 @@ class _Queued:
     id: str
     text: str
     cancelled: bool = False
+    # The `bridge_messages` row the composer recorded for this prompt, so a
+    # prompt abandoned after `submit_prompt` already acked "prompt queued" can
+    # correct that row instead of leaving it reading delivered forever.
+    row_id: int | None = None
+    # Set by `_report_drop` so an abandonment is reported once even when two
+    # paths reach the same record (a stop cancels it, then the pump skips it).
+    dropped: bool = False
+    # Images the composer staged for this prompt, as the CLI's stream-json
+    # input wants them: `{media_type, data_b64}` per entry. They ride the
+    # record rather than the text because the prompt SPAN must stay the plain
+    # sentence the operator typed — the bytes belong to the turn, not to the
+    # trace's copy of what was said.
+    images: list = field(default_factory=list)
+
+
+def _query_payload(text: str, images: list):
+    """What to hand `ClaudeSDKClient.query` for one prompt.
+
+    A prompt with no images stays the bare string it has always been — the SDK
+    wraps that itself, and routing it through the block form instead would
+    change the shape of every existing turn to carry an image feature nobody
+    asked for.
+
+    With images it becomes a one-message async iterable, because that is the
+    only form `query` writes through verbatim: the dict lands on the CLI's
+    stream-json stdin exactly as built, so the content blocks reach the model
+    as a real image rather than as a path it would have to go and read. The
+    text block goes last — the image is the thing being asked about, and a
+    question reads better after its subject.
+    """
+    if not images:
+        return text
+    content = [{"type": "image",
+                "source": {"type": "base64",
+                           "media_type": img["media_type"],
+                           "data": img["data_b64"]}}
+               for img in images]
+    content.append({"type": "text", "text": text})
+
+    async def _once():
+        yield {"type": "user",
+               "message": {"role": "user", "content": content},
+               "parent_tool_use_id": None}
+
+    return _once()
 
 
 class AgentRunner:
@@ -291,7 +346,15 @@ class AgentRunner:
         # operator is holding the UI open for. Never held across an `await`.
         self._queue_lock = threading.Lock()
         self._queue_seq = 0
-        self._model = settings.agent_sdk.model or None
+        # The per-run override wins over the install default: it is the model
+        # this run was actually launched on, and it is known here — before the
+        # first assistant message reveals one. Seeding it means the run row and
+        # `session.start` carry a model from the first byte instead of claiming
+        # none (or the wrong global default) until the transcript names it. An
+        # alias like `opus` is refined to the concrete id by `_track_model`, and
+        # ingest's `_is_less_specific_model` lets that id replace the alias.
+        self._model = (options.model if options else "") \
+            or settings.agent_sdk.model or None
         self._row_model = self._model
         # The last turn index handed out, not the turn currently running: an
         # index is the usage row's identity, so it is allocated once and never
@@ -302,6 +365,16 @@ class AgentRunner:
         # The CLI's own name for this session, learned from the first message
         # that carries it — see `_note_session`.
         self._session_id: str | None = None
+        # The trace this run's SDK-stream spans land on. Its own id while it
+        # drives the run's first child, a per-child segment for every heir a
+        # `/clear` opens after that — see `alias.sdk_span_trace_id`.
+        # Seeded from `resume` rather than left bare until the first message:
+        # the pump can send the resume's prompt before any message has named
+        # the child, and that prompt's span would land in whichever
+        # conversation the run started with — for a resume onto an heir, the
+        # cleared one.
+        self._span_trace_id = self._trace_for_child(
+            resume, store.cli_session_for(trace_id))
         self._stopping = asyncio.Event()
         # Set by `interrupt()` and cleared once the turn it cancelled is gone.
         # A stop ends the session; this one only ends the turn, so the pump has
@@ -326,10 +399,14 @@ class AgentRunner:
             return
         from lib.hook_plugin import post_span
 
+        # Events name the run; the spans belong to the conversation it is
+        # driving right now, which is a different trace after a `/clear`.
+        if span.get('trace_id') == self.trace_id:
+            span = {**span, 'trace_id': self._span_trace_id}
         await asyncio.to_thread(lambda: post_span(**span))
 
-    async def _emit(self, event) -> None:
-        span = to_span(self._name_tool(event))
+    async def _emit(self, event, turn: "_Turn | None" = None) -> None:
+        span = to_span(self._name_tool(event, turn))
         _enrich_ask(span, event)
         _enrich_permission(span, event)
         self._enrich_answer(span, event)
@@ -368,7 +445,7 @@ class AgentRunner:
         if isinstance(event, PromptDelivered) and not self._prompt_expected(event):
             return
         self._track_model(event)
-        await self._emit(self._stamp_turn(event, turn))
+        await self._emit(self._stamp_turn(event, turn), turn)
         if isinstance(event, TurnFailed):
             # An interrupted turn spent its tokens too, and it has a span AND a
             # usage row — the only event that produces both.
@@ -442,14 +519,24 @@ class AgentRunner:
             lambda: store.upsert_run(self.trace_id, status="running",
                                      model=self._model))
 
-    def _name_tool(self, event):
+    def _name_tool(self, event, turn: "_Turn | None" = None):
         """Tool results carry only a `tool_use_id`, so the call's name has to be
-        carried forward from the `ToolCall` to name the resolved span."""
+        carried forward from the `ToolCall` to name the resolved span.
+
+        `_tool_names` outlives the turn that made the call on purpose: a
+        result can arrive after its turn was abandoned (`_leave_a_sink`), and
+        the span it produces still has to be named. The turn's own copy is the
+        one that answers "what is running now", and it is dropped with the
+        turn rather than kept until a result that may never come."""
         if isinstance(event, ToolCall) and event.tool_use_id:
             self._tool_names[event.tool_use_id] = event.tool_name
+            if turn is not None:
+                turn.tools[event.tool_use_id] = event.tool_name
             return event
         if isinstance(event, ToolResult) and not event.tool_name:
             name = self._tool_names.pop(event.tool_use_id, '') or 'unknown'
+            if turn is not None:
+                turn.tools.pop(event.tool_use_id, None)
             return replace(event, tool_name=name)
         return event
 
@@ -828,6 +915,40 @@ class AgentRunner:
         """
         return any(not turn.sink for turn in self._open)
 
+    def live_state(self):
+        """This run's status now, in the shape the terminal tier reads off a
+        pane (`agent_bridge.screen_state.ScreenState`).
+
+        A run's child is spawned with the bridge off and never registers a
+        pane, so no screen exists to capture for it. The runner is the only
+        thing that knows, and answering in the screen's own shape is what lets
+        the card and the session picker render both tiers through one path.
+
+        Read from a Flask thread while the loop mutates what it reads, so each
+        container is copied once and every field is taken from that copy —
+        `busy` with no turn behind it to time is exactly the inconsistency two
+        separate lookups would show. Fields this tier does not carry stay None
+        rather than defaulted: streamed tokens and context percent are the
+        screen's, not the runner's.
+
+        The tool is the newest call the CURRENT turn still has open — the one
+        an operator watching the card is waiting on. Scoped to the turn
+        because a call can outlive it unresolved; see `_name_tool`.
+        """
+        from lib.agent_bridge.screen_state import ScreenState
+        turn = next((t for t in list(self._open) if not t.sink), None)
+        tools = list(turn.tools.values()) if turn else []
+        return ScreenState(
+            busy=turn is not None,
+            verb='Working' if turn else None,
+            elapsed_sec=(max(0, int(time.monotonic() - turn.started))
+                         if turn else None),
+            tool=tools[-1] if tools else None,
+            session_id=self._session_id,
+            cwd=self.cwd,
+            model=self._model,
+        )
+
     @property
     def stop_requested(self) -> bool:
         """True only when someone asked this session to stop — distinct from
@@ -835,7 +956,8 @@ class AgentRunner:
         at launch and which therefore *finished* rather than being stopped."""
         return self._stopping.is_set()
 
-    def enqueue(self, text: str, *, waiting: bool = True) -> None:
+    def enqueue(self, text: str, *, waiting: bool = True,
+                images: list | None = None, row_id: int | None = None) -> None:
         """Queue a prompt. Must run on this runner's loop — see
         `registry.submit_prompt` for the cross-thread entry point.
 
@@ -849,10 +971,50 @@ class AgentRunner:
         """
         with self._queue_lock:
             self._queue_seq += 1
-            item = _Queued(id=f"q{self._queue_seq}", text=text)
+            item = _Queued(id=f"q{self._queue_seq}", text=text,
+                           images=list(images or []), row_id=row_id)
             if waiting:
                 self._pending.append(item)
         self._prompts.put_nowait(item)
+        # `submit_prompt` acks the moment `call_soon_threadsafe` ACCEPTS this
+        # call, which a stopped loop also does; this line is the first proof
+        # the prompt actually reached the queue.
+        log.write("sdk_prompt_enqueued", trace_id=self.trace_id,
+                  prompt_id=item.id, row_id=row_id, chars=len(text),
+                  waiting=waiting)
+
+    def _report_drop(self, item: "_Queued", reason: str) -> None:
+        """Record a prompt the session accepted and will never run.
+
+        Every abandonment used to be silent — the queue is in-memory, the
+        composer had already cleared the operator's draft on `submit_prompt`'s
+        ack, and the `bridge_messages` row still read `delivered / "prompt
+        queued"`. So a lost prompt left no artifact anywhere and could only be
+        inferred from a missing span. Both surfaces are written here: the log
+        for diagnosis, the row for the operator looking at the Messages tab.
+        """
+        if item.dropped:
+            return
+        item.dropped = True
+        log.error("sdk_prompt_dropped", trace_id=self.trace_id,
+                  prompt_id=item.id, row_id=item.row_id, reason=reason,
+                  chars=len(item.text), text_head=item.text[:120])
+        if item.row_id is None:
+            return
+        try:
+            from lib.agent_bridge import store as bridge_store
+            bridge_store.mark_dropped(item.row_id, reason)
+        except Exception as exc:
+            log.error("sdk_prompt_drop_unrecorded", trace_id=self.trace_id,
+                      prompt_id=item.id, row_id=item.row_id, detail=str(exc))
+
+    def _drain_pending(self, reason: str) -> None:
+        """Report every prompt still waiting when the session stops running."""
+        with self._queue_lock:
+            stranded = list(self._pending)
+            self._pending.clear()
+        for item in stranded:
+            self._report_drop(item, reason)
 
     def pending_prompts(self) -> list[dict]:
         """Prompts queued behind the running turn, oldest first. Safe to call
@@ -914,7 +1076,7 @@ class AgentRunner:
         with self._queue_lock:
             for item in self._pending:
                 item.cancelled = True
-            self._pending.clear()
+        self._drain_pending("stopped_by_operator")
         self.close()
         if self._client is None:
             return
@@ -963,8 +1125,8 @@ class AgentRunner:
                 self._pending.remove(item)
         return True
 
-    async def _next_prompt(self) -> str | None:
-        """The next queued prompt's text, or None when the session should end.
+    async def _next_prompt(self) -> "_Queued | None":
+        """The next queued prompt, or None when the session should end.
 
         A cancelled record is skipped rather than run: it is already inside the
         queue when it is dropped, so this is where a removed prompt actually
@@ -979,24 +1141,27 @@ class AgentRunner:
                 item = await self._await_prompt()
             except asyncio.TimeoutError:
                 self._stop_reason = "idle timeout"
+                self._drain_pending("idle_timeout")
                 return None
             # `_CLOSE` was never a record, so it falls through untouched.
             if item is _CLOSE:
+                self._drain_pending(self._stop_reason or "session_ended")
                 return None
             if self._take(item):
-                return item.text
+                return item
+            self._report_drop(item, "cancelled")
 
     async def pump(self) -> None:
         """Run queued prompts one at a time until the session ends."""
         while True:
-            text = await self._next_prompt()
-            if text is _CLOSE:
+            item = await self._next_prompt()
+            if item is _CLOSE:
                 return
-            await self._drain_turn(text)
+            await self._drain_turn(item)
             if self._stopping.is_set():
                 return
 
-    async def _drain_turn(self, text: str) -> None:
+    async def _drain_turn(self, item: "_Queued") -> None:
         """Run one turn, abandoning it if the turn or the session is cancelled.
 
         A turn ends when the CLI sends its result, and a CLI that sends none
@@ -1017,7 +1182,7 @@ class AgentRunner:
         # turn's start nothing: the CLI was sent one either way, and its result
         # ends the turn through the ordinary path.
         self._interrupting.clear()
-        turn = asyncio.ensure_future(self._run_turn(text))
+        turn = asyncio.ensure_future(self._run_turn(item))
         waits = [asyncio.ensure_future(e.wait())
                  for e in (self._stopping, self._interrupting)]
         done, _ = await asyncio.wait({turn, *waits},
@@ -1088,9 +1253,22 @@ class AgentRunner:
         # The registry's alias is process-local and dies with the server; the
         # serve-time reader that unions the two traces into one session runs
         # long after this process is gone, so the link has to be durable.
-        store.set_cli_session(self.trace_id, session_id)
+        self._span_trace_id = self._trace_for_child(
+            session_id, store.set_cli_session(self.trace_id, session_id))
 
-    async def _run_turn(self, text: str) -> None:
+    def _trace_for_child(self, child: str | None,
+                         first_child: str | None) -> str:
+        """Where this run's spans go while it drives `child`.
+
+        Asked of the run's recorded first child rather than of whether this
+        process has seen one, because a resume reuses the run's trace id: its
+        very first child can be an heir an earlier process left behind.
+        """
+        if not child or not first_child or first_child == child:
+            return self.trace_id
+        return alias.sdk_span_trace_id(self.trace_id, child)
+
+    async def _run_turn(self, item: "_Queued") -> None:
         """Send one prompt and wait for the reader to close its turn.
 
         The turn is opened before the prompt goes out, or a turn the CLI
@@ -1113,7 +1291,9 @@ class AgentRunner:
         opened yet. Nothing else bounds the wait: a turn's result is not what
         `idle_timeout_sec` covers.
         """
+        text = item.text
         if self._stream_dead:
+            self._report_drop(item, "stream_dead_before_span")
             return
         self._submitted_prompt_ids.add(
             prompt_placeholder_id(self.trace_id, text))
@@ -1122,12 +1302,17 @@ class AgentRunner:
         else:
             await self._emit(prompt_event(self.trace_id, text))
         if self._stream_dead:
+            # The worst of the two: the prompt's span is already posted, so the
+            # trace shows the prompt while the CLI was never given it.
+            self._report_drop(item, "stream_dead_after_span")
             return
         self._take_the_floor()
         done = asyncio.get_running_loop().create_future()
         turn = self._open_turn(done)
         try:
-            await self._client.query(text)
+            log.write("sdk_prompt_sent", trace_id=self.trace_id,
+                      prompt_id=item.id, row_id=item.row_id, turn=turn.index)
+            await self._client.query(_query_payload(text, item.images))
             await done
         finally:
             self._drop_turn(turn)

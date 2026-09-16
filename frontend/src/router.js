@@ -75,7 +75,11 @@ const routes = [
     redirect: '/trace/sessions',
     children: [
       { path: 'sessions', component: SessionsView },
-      { path: 'sessions/:id', component: SessionTraceView },
+      // The transcript, its rails and the follow-up composer are laid out as
+      // bounded siblings that scroll inside themselves, so the composer sits
+      // BELOW the feed instead of over it. Below the threshold there isn't
+      // room to bound them and the shell scrolls as usual.
+      { path: 'sessions/:id', component: SessionTraceView, meta: { fixedViewport: 'lg', hideTraceTabs: true } },
       { path: 'triggers', component: TriggersView },
       { path: 'triggers/raw', component: TriggersRawView },
       { path: 'skill-reads', component: SkillReadsView },
@@ -85,12 +89,21 @@ const routes = [
   },
   { path: '/skill-reads', redirect: '/trace/skill-reads' },
   { path: '/mcp-calls', redirect: '/trace/mcp-calls' },
+  // Chromeless (rendered outside AppLayout): a terminal competing with a
+  // sidebar for width and keyboard is not a terminal. Still authenticated —
+  // `public` is what skips the guard, and this is not that.
+  { path: '/terminal/:id', name: 'terminal', component: TerminalPageView,
+    meta: { chromeless: true, fixedViewport: true } },
   { path: '/settings', name: 'settings', component: SettingsView },
   { path: '/audit', name: 'audit', component: AuditView },
   { path: '/schema-drift', name: 'schema-drift', component: SchemaDriftView },
   { path: '/payload-log', name: 'payload-log', component: PayloadLogView },
   { path: '/ds', name: 'design-system', component: DesignSystemView },
+  { path: '/prototype/native-stage', name: 'proto-native-stage', component: NativeStageView },
   { path: '/account', name: 'account', component: UsersView },
+  { path: '/tasks', name: 'tasks', component: TasksView },
+  { path: '/tasks/:id', name: 'task-detail', component: TaskDetailView },
+  { path: '/api-keys', name: 'api-keys', component: ApiKeysView },
   // Catch-all: App.vue only mounts the shell for matched routes, so an
   // unmatched path would otherwise render a blank page with no way out.
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },
@@ -115,7 +128,8 @@ router.beforeEach(async (to) => {
   // Trace (session list + transcripts) is admin-only — the backend enforces
   // this via ADMIN_API_ENDPOINTS; redirect non-admins here so a deep link
   // lands on the dashboard instead of a 403 error page.
-  if (to.path === '/trace' || to.path.startsWith('/trace/')) {
+  if (to.path === '/trace' || to.path.startsWith('/trace/')
+      || to.path.startsWith('/terminal/')) {
     let role = null
     try { role = JSON.parse(localStorage.getItem('regin_auth_user') || 'null')?.role } catch { /* ignore */ }
     if (role !== 'admin') return { name: 'dashboard' }

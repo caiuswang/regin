@@ -405,3 +405,25 @@ def test_session_usage_detail_forbidden_for_non_admin(flask_client, tmp_db):
     for path in ("/api/sessions/x/tool-rollup", "/api/sessions/x/turn-usage"):
         resp = flask_client.get(path, headers=_auth_header(2, "ed", "editor"))
         assert resp.status_code == 403, path
+
+
+def test_session_subtrees_forbidden_for_viewer(flask_client, tmp_db):
+    """`/subtrees` serves the same span bodies as `/map` and
+    `/spans/<id>/children`, in bulk — it belongs behind the same fence."""
+    resp = flask_client.get("/api/sessions/x/subtrees?ids=root",
+                            headers=_auth_header(3, "vw", "viewer"))
+    assert resp.status_code == 403
+    assert "Admin" in resp.get_json()["error"]
+
+
+def test_session_grades_forbidden_for_viewer(flask_client, tmp_db):
+    """A grade's report and detail quote the session they judge."""
+    resp = flask_client.get("/api/sessions/x/grades",
+                            headers=_auth_header(3, "vw", "viewer"))
+    assert resp.status_code == 403
+
+
+def test_session_subtrees_and_grades_forbidden_for_editor(flask_client, tmp_db):
+    for path in ("/api/sessions/x/subtrees?ids=root", "/api/sessions/x/grades"):
+        resp = flask_client.get(path, headers=_auth_header(2, "ed", "editor"))
+        assert resp.status_code == 403, path

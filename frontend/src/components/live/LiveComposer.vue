@@ -25,8 +25,11 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import LiveCommandMenu from './LiveCommandMenu.vue'
 import LiveCtxMeter from './LiveCtxMeter.vue'
+import ComposerHighlight from '../conversation/ComposerHighlight.vue'
 import { useSlashCommands } from '../../composables/useSlashCommands'
 import { useFileMentions } from '../../composables/useFileMentions'
+import { useImagePaste, imageFilesFrom } from '../../composables/useImagePaste'
+import { useSuccessorJump } from '../../composables/useSuccessorJump'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -41,12 +44,15 @@ const draft = defineModel('draft', { type: String, default: '' })
 const phase = ref('ready') // ready | delivering | delivered | failed
 const detail = ref('')
 const taEl = ref(null)
+const hlEl = ref(null)
+const fileEl = ref(null)
 let confirmTimer = null
 
 // Autocomplete: `/` commands+skills and `@` file mentions. Both composables own
 // their popup state; this component only wires textarea events into whichever
 // one is active and applies the accepted text. An `@` mention outranks `/`
 // (a draft can hold both, and the mention is where the caret is).
+const { jumpTo } = useSuccessorJump()
 const cmds = useSlashCommands()
 const files = useFileMentions()
 const active = computed(() => (files.open.value ? files : cmds.open.value ? cmds : null))
@@ -112,6 +118,14 @@ function autogrow() {
   if (!el) return
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, 88)}px`
+  syncHighlight()
+}
+
+// The mirror is inert and so has no scrollbar of its own: past the 88px cap it
+// only stays on its tokens while the field's scroll offset is copied onto it.
+function syncHighlight() {
+  const el = hlEl.value?.$el
+  if (el && taEl.value) el.scrollTop = taEl.value.scrollTop
 }
 
 function clearConfirmTimer() {
@@ -120,6 +134,18 @@ function clearConfirmTimer() {
 onUnmounted(clearConfirmTimer)
 // A remount may start with a preserved draft — size the textarea to it.
 onMounted(autogrow)
+
+// The row id is what ties a send to the server log and to the inbox row the
+// runner may later stamp `dropped:` — without it a prompt that went missing
+// left the operator nothing to quote.
+function logSend(res, chars) {
+  console.info('[bridge] send', {
+    row: res?.id ?? null,
+    delivered: !!res?.delivered,
+    detail: res?.detail || res?.msg || 'no response',
+    chars,
+  })
+}
 
 async function send() {
   const text = draft.value.trim()
@@ -130,6 +156,7 @@ async function send() {
   try {
     res = await api.post(`/sessions/${props.sessionId}/bridge-send`, { text })
   } catch { res = null }
+  logSend(res, text.length)
   if (res && res.delivered) {
     phase.value = 'delivered'
     detail.value = res.detail || 'delivered'
@@ -137,9 +164,11 @@ async function send() {
     // the moment of delivery (SDK queue entry or pending bridge row), so the
     // next poll serves the real thing; the "delivered" flash covers the gap.
     draft.value = ''
+    images.clear()
     closeMenus()
     if (taEl.value) taEl.value.style.height = 'auto'
     confirmTimer = setTimeout(() => { phase.value = 'ready' }, 2000)
+    jumpTo(props.sessionId, res.trace_id)
   } else {
     // Structured refusal or HTTP failure: surface the server detail and
     // keep the draft so the user can retry.
@@ -200,6 +229,48 @@ function onCaretSync() {
   if (!menuOpen.value) return
   syncMenus()
   if (menuOpen.value) updateMenuPos()
+}
+
+// Images pasted, dropped or picked into this composer. The markers it hands
+// back are spliced at the caret like an accepted mention, and cleared only
+// once the draft they belong to has actually been delivered.
+const images = useImagePaste()
+const stagedImages = images.staged
+const imgUploading = images.uploading
+watch(() => props.sessionId, id => images.bind(id), { immediate: true })
+
+function insertAtCaret(markers) {
+  if (!markers.length) return
+  const pos = caret()
+  const token = `${markers.join(' ')} `
+  const next = draft.value.slice(0, pos) + token + draft.value.slice(pos)
+  applyAccepted(next, pos + token.length)
+}
+
+async function onPaste(e) {
+  // Only claim the event when it actually carries an image — a text paste
+  // must keep the browser's own insert behaviour.
+  if (!imageFilesFrom(e.clipboardData).length) return
+  e.preventDefault()
+  insertAtCaret(await images.stage(e.clipboardData))
+}
+
+async function onDrop(e) {
+  if (!imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  insertAtCaret(await images.stage(e.dataTransfer))
+}
+
+// Removing a chip must also remove its marker, or the delivered text would
+// name an image the prompt no longer carries.
+function dropImage(img) {
+  draft.value = draft.value.replace(img.marker, '').replace(/\s{2,}/g, ' ').trimStart()
+  images.remove(img.idx)
+}
+
+async function onPick(e) {
+  insertAtCaret(await images.stage(e.target))
+  e.target.value = ''
 }
 
 // Apply an accepted draft and restore the caret after the insert (a mention
@@ -264,7 +335,30 @@ function onKeydown(e) {
       @select="onMenuSelect"
       @hover="onMenuHover"
     />
-    <textarea
+    <div
+      v-if="stagedImages.length"
+      class="live-attach-strip"
+      data-testid="live-composer-attachments"
+    >
+      <span
+        v-for="img in stagedImages"
+        :key="img.idx"
+        class="live-attach-chip"
+      >
+        <img :src="img.url" :alt="img.name" class="live-attach-thumb">
+        <span class="live-attach-idx">#{{ img.idx }}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="live-attach-x"
+          :aria-label="`Remove image ${img.idx}`"
+          @click="dropImage(img)"
+        >&times;</Button>
+      </span>
+    </div>
+    <div class="live-composer-field">
+      <ComposerHighlight ref="hlEl" class="live-composer-hl" :text="draft" />
+      <textarea
       ref="taEl"
       v-model="draft"
       class="live-composer-ta"
@@ -282,8 +376,35 @@ function onKeydown(e) {
       @keydown="onKeydown"
       @keyup="onCaretSync"
       @click="onCaretSync"
+      @paste="onPaste"
+      @dragover.prevent
+      @drop="onDrop"
       @blur="closeMenus"
+      @scroll="syncHighlight"
     ></textarea>
+    </div>
+    <input
+      ref="fileEl"
+      type="file"
+      accept="image/*"
+      class="sr-only"
+      tabindex="-1"
+      aria-hidden="true"
+      data-testid="live-composer-file"
+      @change="onPick"
+    >
+    <Button
+      variant="ghost"
+      size="icon"
+      class="live-attach-btn"
+      aria-label="Attach an image"
+      title="Attach an image"
+      :disabled="delivering || imgUploading"
+      data-testid="live-composer-attach"
+      @click="fileEl?.click()"
+    >
+      <Icon name="image" :size="15" />
+    </Button>
     <Button
       v-if="pane"
       variant="ghost"

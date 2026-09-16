@@ -25,6 +25,9 @@ const props = defineProps({
   // Roster-mode lists.
   runningAgents: { type: Array, default: () => [] },
   finishedAgents: { type: Array, default: () => [] },
+  // The whole roster, for the embedded feed's subagent cards (a nested agent
+  // launched by the scoped one reads its liveness off this too).
+  agents: { type: Array, default: () => [] },
   // Scoped-feed inputs (forwarded to SessionConversationView).
   spans: { type: Array, default: () => [] },
   turns: { type: Array, default: null },
@@ -47,7 +50,8 @@ const props = defineProps({
   followActive: { type: Boolean, default: false },
 })
 const emit = defineEmits([
-  'exit', 'scope', 'expand', 'select-span', 'fetch-content', 'load-subtree', 'jump-live',
+  'exit', 'scope', 'expand', 'select-span', 'fetch-content', 'load-subtree', 'load-subtrees', 'jump-live',
+  'present',
 ])
 
 // The pane element IS the scroll container (xl:overflow-y-auto) — handed to
@@ -75,7 +79,7 @@ const paneStyle = computed(() => ({
 <template>
   <aside
     ref="paneEl"
-    class="w-full xl:w-auto xl:basis-[45%] xl:min-w-[480px] xl:max-w-[560px] xl:shrink-0 xl:sticky xl:self-start xl:overflow-y-auto rounded-lg border border-violet-200 bg-white shadow-sm"
+    class="trace-agent-pane w-full xl:w-auto xl:basis-[45%] xl:min-w-[480px] xl:max-w-[560px] xl:shrink-0 xl:sticky xl:self-start xl:overflow-y-auto rounded-lg border border-violet-200 bg-white shadow-sm"
     :style="paneStyle"
     data-testid="trace-agent-pane"
     aria-label="Agent companion pane"
@@ -173,6 +177,9 @@ const paneStyle = computed(() => ({
         :loaded-subtrees="loadedSubtrees"
         :task-events="taskEvents"
         :scope-agent="agent"
+        :agents="agents"
+        :server-now="serverNow"
+        :server-now-at="serverNowAt"
         :scope-loading="scopeLoading"
         :scoped-agent-id="''"
         :show-follow-tail="false"
@@ -182,9 +189,24 @@ const paneStyle = computed(() => ({
         @select-span="emit('select-span', $event)"
         @fetch-content="emit('fetch-content', $event)"
         @load-subtree="emit('load-subtree', $event)"
+        @load-subtrees="emit('load-subtrees', $event)"
         @jump-live="emit('jump-live')"
         @enter-scope="emit('scope', $event)"
+        @present="emit('present', $event)"
       />
     </div>
   </aside>
 </template>
+
+<style scoped>
+/* Bounded layout: the pane is a full-height column beside the feed, scrolling
+   inside itself — the pin under the page header it needs while the page
+   scrolls would leave it short of the bottom. `!important` beats the inline
+   max-height that pin comes with. */
+.trace-bounded .trace-agent-pane {
+  position: static;
+  align-self: stretch;
+  min-height: 0;
+  max-height: none !important;
+}
+</style>

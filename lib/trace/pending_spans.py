@@ -88,9 +88,17 @@ def is_agent_scoped_prompt(span: dict, attrs: dict | None = None) -> bool:
     """True for a subagent-scoped `prompt` span. Detected by attributes.agent_id
     (present on every emit, old and new rows) or the `prompt-sa-` id prefix.
     `attrs` covers callers that carry attributes separately from the span row."""
+    from lib.trace.subagent_trace import is_subagent_trace_id
     for candidate in (attrs, span.get('attributes')):
         if isinstance(candidate, dict) and candidate.get('agent_id'):
             return True
+    # A prompt sitting in a subagent's OWN trace is that trace's main anchor,
+    # not a scoped aside — the `prompt-sa-` id survives the re-key (only the
+    # tag is cleared), so without this the child would be served with no
+    # anchoring prompt at all. A prompt that KEPT its tag there belongs to an
+    # agent this one launched and stays scoped.
+    if is_subagent_trace_id(span.get('trace_id')):
+        return False
     sid = span.get('span_id')
     return isinstance(sid, str) and sid.startswith(SUBAGENT_PROMPT_PREFIX)
 
@@ -185,3 +193,21 @@ def _prompt_supersede_ids(span: dict, attrs: dict) -> list[str]:
     if not isinstance(text, str) or not text:
         return []
     return [prompt_placeholder_id(span.get('trace_id'), text)]
+
+
+# The spans that mean "stopped, waiting for a human" — a permission gate, a
+# question, a plan awaiting approval. Distinct from a merely-stuck `tool.Bash`:
+# silence AFTER one of these is explained by the block, so it is not evidence
+# the session died, and the readers that age out stuck pendings must exempt it.
+HUMAN_BLOCKER_NAMES = (
+    'permission.request', 'tool.AskUserQuestion', 'tool.ExitPlanMode',
+)
+
+
+def is_human_blocker(name, span_id=None) -> bool:
+    """True for a span that parks the session on a human. The `permreq-`
+    prefix is checked too: a provider that gives no `tool_use_id` yields a
+    gate-keyed placeholder whose name may not be `permission.request`."""
+    if name in HUMAN_BLOCKER_NAMES:
+        return True
+    return isinstance(span_id, str) and span_id.startswith(PERM_PENDING_PREFIX)

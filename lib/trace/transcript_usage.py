@@ -63,6 +63,7 @@ from lib.trace.transcript_parsers import (
     _usage_tokens,
     _walk_to_assistant,
     _walk_to_prompt,
+    is_interrupt_marker,
 )
 
 # Local slash-command markers. Claude Code wraps every standalone local
@@ -194,6 +195,9 @@ class _TurnBuilder:
     # A `Skill` call also accumulates its injected body here — see
     # `_patch_skill_payload`.
     tool_calls: list[dict] = field(default_factory=list)
+    # Set from the entry's `isApiErrorMessage`. The one shape that
+    # survives `_counted_builders` with an all-zero usage block.
+    is_api_error: bool = False
 
 
 def _local_command_text(entry_n: dict, etype: str | None) -> str | None:
@@ -313,9 +317,17 @@ def _is_image_reference_carrier(text: str) -> bool:
 
 def _is_excluded_prompt_text(text: str) -> bool:
     """Text-level exclusions from the real-prompt set: synthetic image
-    carriers, background `<task-notification>` completions, and
-    local-command echoes are never real typed prompts that anchor a turn."""
+    carriers, background `<task-notification>` completions, interrupt
+    markers, and local-command echoes are never real typed prompts that
+    anchor a turn.
+
+    The interrupt marker is the user pressing Esc, never a turn opener —
+    left in, it becomes a phantom `PROMPT · TURN n` card that swallows the
+    work of whatever the user typed next (a whole 30-minute turn, filed
+    under "[Request interrupted by user]")."""
     if text.lstrip().startswith('<task-notification>'):
+        return True
+    if is_interrupt_marker(text):
         return True
     if _is_image_reference_carrier(text):
         return True
@@ -620,6 +632,7 @@ def _builder_to_turn_usage(
         turn_total_duration_ms=builder.turn_total_duration_ms,
         prompt_uuid=builder.prompt_uuid,
         tool_calls=tuple(tool_calls),
+        is_api_error=builder.is_api_error,
     )
 
 
@@ -1151,6 +1164,22 @@ class _TranscriptScan:
         return top_model if isinstance(top_model, str) else None
 
     @staticmethod
+    def _turn_model(msg: dict, entry_n: dict, is_api_error: bool) -> tuple[bool, str | None]:
+        """`(keep, model)` for one assistant entry.
+
+        Claude Code stamps model=<synthetic> on two unrelated shapes. Session
+        init banners and /compact markers are not API calls and are dropped.
+        A FAILED request is one: dropping it also drops the user prompt, which
+        `_resolve_prompt_anchors` reaches only by walking parentUuid back from
+        an assistant entry. It is kept with model=None so the failure can never
+        become the session's model (derived from assistant_response spans).
+        """
+        model = _TranscriptScan._resolve_model(msg, entry_n)
+        if model != '<synthetic>':
+            return True, model
+        return is_api_error, None
+
+    @staticmethod
     def _message_id(msg: dict) -> str | None:
         """The API's own `msg_…` id, or None for the shapes that lack one.
 
@@ -1162,8 +1191,15 @@ class _TranscriptScan:
         mid = msg.get('id')
         return mid if isinstance(mid, str) and mid else None
 
-    def _resolve_dedup_key(self, msg: dict, entry_n: dict, euuid: str | None) -> str:
-        key = msg.get('id') or entry_n.get('request_id')
+    def _resolve_dedup_key(
+        self, msg: dict, entry_n: dict, euuid: str | None,
+        is_api_error: bool = False,
+    ) -> str:
+        # A failed request is its own event, so it is keyed on its entry uuid
+        # rather than a message id it may share with a successful entry:
+        # merging the two would flag a billed turn as failed, zero its span
+        # output_tokens, and splice the error string into its response text.
+        key = None if is_api_error else (msg.get('id') or entry_n.get('request_id'))
         if isinstance(key, str) and key:
             return key
         # Without a stable key we'd risk duplicates; treat as its own
@@ -1179,11 +1215,9 @@ class _TranscriptScan:
         assistant_kind, msg = _assistant_message(entry_n)
         if assistant_kind != 'assistant':
             return
-        model = self._resolve_model(msg, entry_n)
-        # Claude Code writes synthetic assistant entries (session init
-        # banners, /compact markers) with model=<synthetic> and zero
-        # usage. Skip them — they're not real API calls.
-        if model == '<synthetic>':
+        is_api_error = bool(entry_n.get('is_api_error_message'))
+        keep, model = self._turn_model(msg, entry_n, is_api_error)
+        if not keep:
             return
         if euuid:
             self.entry_kind[euuid] = 'assistant'
@@ -1191,11 +1225,12 @@ class _TranscriptScan:
 
         usage = (_normalize_dict_keys(msg.get('usage'))
                  or _normalize_dict_keys(entry_n.get('usage')))
-        dedup_key = self._resolve_dedup_key(msg, entry_n, euuid)
+        dedup_key = self._resolve_dedup_key(msg, entry_n, euuid, is_api_error)
         builder = self.builders.get(dedup_key) or self._new_builder(
             dedup_key, entry_n, euuid, eparent, model,
         )
         builder.message_id = builder.message_id or self._message_id(msg)
+        builder.is_api_error = builder.is_api_error or is_api_error
         self._apply_usage_once(builder, usage)
         content = msg.get('content')
         self._accumulate_text_and_thinking(builder, content)
@@ -1321,7 +1356,13 @@ class _TranscriptScan:
         # A turn only counts toward token totals + peak context if it
         # actually carried a `usage` block — entries with content but
         # no usage are subordinate fragments, not standalone turns.
-        return [b for b in (self.builders[k] for k in self.order) if _has_tokens(b)]
+        # A failed API call is the exception: it is billed nothing, so its
+        # all-zero usage adds nothing here, but it must survive as a turn or
+        # the prompt it answers loses its only anchor.
+        return [
+            b for b in (self.builders[k] for k in self.order)
+            if _has_tokens(b) or b.is_api_error
+        ]
 
     def _has_emit_worthy_rows(self, counted: list[_TurnBuilder]) -> bool:
         # We still publish a usage object when only attachments /
@@ -1373,20 +1414,36 @@ class _TranscriptScan:
             if bridged is not None:
                 meta_parents.add(bridged)
         command_anchor_uuids = self.command_prompt_uuids & meta_parents
-        for builder in self.builders.values():
-            if builder.uuid is None:
-                continue
-            builder.prompt_uuid = self._resolve_anchor(
-                builder.uuid, command_anchor_uuids
-            )
+        # Two passes, because the task-notification fallback needs to know
+        # which commands actually opened a turn (see `_resolve_anchor`).
+        # Pass 1 can only land on a command anchor by NOT crossing a
+        # notification, so its command hits are exactly that set.
+        self._assign_anchors(command_anchor_uuids, frozenset())
+        self._assign_anchors(command_anchor_uuids, frozenset(
+            b.prompt_uuid for b in self.builders.values()
+            if b.prompt_uuid in command_anchor_uuids
+        ))
         return (
             command_anchor_uuids,
             self._promoted_anchor_texts(command_anchor_uuids),
             self._command_expansions(command_anchor_uuids, stdout_to_command),
         )
 
+    def _assign_anchors(
+        self, command_anchor_uuids: set[str], turn_opening_commands: frozenset,
+    ) -> None:
+        """Recompute every builder's `prompt_uuid`. Derived, not accumulated,
+        so re-running it is safe (see `_resolve_prompt_anchors`)."""
+        for builder in self.builders.values():
+            if builder.uuid is None:
+                continue
+            builder.prompt_uuid = self._resolve_anchor(
+                builder.uuid, command_anchor_uuids, turn_opening_commands,
+            )
+
     def _resolve_anchor(
         self, start: str | None, command_anchor_uuids: set[str],
+        turn_opening_commands: frozenset = frozenset(),
     ) -> str | None:
         """Walk the parentUuid chain from a turn's assistant to its opener.
 
@@ -1395,12 +1452,20 @@ class _TranscriptScan:
         response and the prior typed prompt), fixing the off-by-one where it
         used to walk past to the previous prompt.
 
-        A `<task-notification>` is a turn boundary: a command reached only by
-        crossing one isn't this turn's opener (e.g. `/workflows`, whose
-        workflow run chains up through task-notifications). On crossing one we
-        fall back to typed-prompts-only, so those turns keep nesting under the
-        prior real prompt instead of latching onto the command. Cycle-guarded
-        via a visited set."""
+        A `<task-notification>` is a turn boundary, because a command the
+        chain reaches ONLY by crossing one never opened a turn of its own —
+        `/workflows`, typed to watch a run that some earlier prompt launched,
+        would otherwise capture that run's completion turns. So on crossing
+        one, only typed prompts and `turn_opening_commands` (commands that
+        anchored a turn without crossing a notification) stay eligible.
+
+        Gating on "did this command ever open a turn" rather than on the
+        boundary alone is what keeps a long agentic command-turn intact: a
+        subagent finishing mid-turn posts a task-notification, and every
+        response after it used to walk past its own `/command` to whatever
+        the user typed before — stranding the rest of the turn, its final
+        answer included, under a different prompt. Cycle-guarded via a
+        visited set."""
         cursor = start
         seen: set[str] = set()
         while cursor is not None and cursor not in seen:
@@ -1412,7 +1477,7 @@ class _TranscriptScan:
                 return _walk_to_prompt(
                     self.entry_parent.get(cursor),
                     self.entry_parent,
-                    self.real_prompt_uuids,
+                    self.real_prompt_uuids | turn_opening_commands,
                 )
             seen.add(cursor)
             cursor = self.entry_parent.get(cursor)

@@ -19,6 +19,7 @@
  */
 import { test, expect } from './auth-fixture.js'
 import { API_BASE } from './helpers/api-base.js'
+import { selectViewMode } from './helpers/viewMode.js'
 
 // playwright.config.js pins baseURL to :5173 with `reuseExistingServer`, so a
 // dev server started from a DIFFERENT checkout that already owns :5173 makes
@@ -230,7 +231,7 @@ test.describe('deny badge reads the same inline and in the detail panel', () => 
     await expect(inlineBadge).toBeVisible({ timeout: 10_000 })
     const inline = (await inlineBadge.textContent()).trim()
 
-    await page.getByRole('button', { name: 'Timeline', exact: true }).first().click()
+    await selectViewMode(page, 'Timeline')
     await page.getByText('rm -rf /tmp/nope').first().click()
     const header = page.locator('div.flex.items-center.gap-2.mb-1')
       .filter({ hasText: 'agent injected prompt' }).first()

@@ -2,24 +2,47 @@
 
 The script must be executable by Claude Code as `statusLine.command`,
 so we invoke it via subprocess and feed it the same kind of stdin
-JSON Claude Code would send. Two properties matter:
+JSON Claude Code would send. Three properties matter:
 
 1. The script always prints *something* — returning an empty body
    from the statusline would leave Claude Code's UI blank.
 2. A malformed stdin, a missing session_id, or a dead ingest endpoint
    all result in exit 0. A statusline that fails is worse than one
    that silently stales.
-
-We don't assert on the POST body shape here — that contract is
-covered by `tests/test_blueprint_trace_extra.py::test_session_status_*`
-against the real endpoint.
+3. The POST body carries the context numbers. This one is not a
+   smoke test: the script once read `context_window.used_tokens` /
+   `.total_tokens`, Claude Code renamed both keys, and because these
+   tests fed the script the *same* stale names the drift stayed green
+   for months while every real payload silently ingested nothing.
+   The capture below is the guard — it fails if the extraction breaks
+   again, whatever the endpoint does with the body.
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+
+# Verbatim `context_window` block from a Claude Code v2.1.258 statusline
+# payload — keep it real, since a hand-written stub is exactly what let
+# the field rename through unnoticed.
+CONTEXT_WINDOW = {
+    'total_input_tokens': 93076,
+    'total_output_tokens': 499,
+    'context_window_size': 1_000_000,
+    'current_usage': {
+        'input_tokens': 2,
+        'output_tokens': 499,
+        'cache_creation_input_tokens': 2515,
+        'cache_read_input_tokens': 90559,
+    },
+    'used_percentage': 18.0,
+    'remaining_percentage': 82.0,
+}
 
 
 SCRIPT = Path(__file__).resolve().parent.parent.parent / 'scripts' / 'regin-statusline'
@@ -52,9 +75,7 @@ def test_prints_default_statusline_when_ingest_endpoint_down():
         'cwd': cwd,
         'model': {'id': 'claude-opus-4-7[1m]',
                   'display_name': 'Opus 4.7 (1M context)'},
-        'context_window': {'used_tokens': 180000,
-                           'total_tokens': 1_000_000,
-                           'used_percentage': 18.0},
+        'context_window': CONTEXT_WINDOW,
     }
     rc, out, _ = _run(json.dumps(payload))
     assert rc == 0
@@ -71,7 +92,7 @@ def test_ingest_only_mode_prints_nothing():
     payload = {
         'session_id': '32f89830',
         'model': {'id': 'claude-opus-4-7[1m]'},
-        'context_window': {'used_tokens': 180000, 'total_tokens': 1_000_000},
+        'context_window': CONTEXT_WINDOW,
     }
     rc, out, _ = _run(json.dumps(payload), '--ingest-only')
     assert rc == 0
@@ -98,3 +119,72 @@ def test_missing_session_id_still_renders_default():
     rc, out, _ = _run(json.dumps(payload))
     assert rc == 0
     assert 'Opus 4.7' in out
+
+
+class _Capture(BaseHTTPRequestHandler):
+    body: dict | None = None
+
+    def do_POST(self):  # noqa: N802 — BaseHTTPRequestHandler's spelling
+        raw = self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        type(self).body = json.loads(raw.decode())
+        self.send_response(200)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+def _post_body(payload: dict) -> dict | None:
+    """Run the script against a throwaway server and return what it POSTed."""
+    _Capture.body = None
+    server = HTTPServer(('127.0.0.1', 0), _Capture)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        env = {'REGIN_URL': f'http://127.0.0.1:{server.server_port}',
+               'PATH': '/usr/bin:/bin'}
+        subprocess.run(['python3', str(SCRIPT), '--ingest-only'],
+                       input=json.dumps(payload), capture_output=True,
+                       text=True, env=env, timeout=5)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+    return _Capture.body
+
+
+def test_ingest_posts_the_current_context_window_fields():
+    body = _post_body({
+        'session_id': '32f89830',
+        'model': {'id': 'claude-opus-4-7[1m]'},
+        'context_window': CONTEXT_WINDOW,
+    })
+    assert body == {
+        'trace_id': '32f89830',
+        'model': 'claude-opus-4-7[1m]',
+        'context_used_tokens': 93076,
+        'context_window_tokens': 1_000_000,
+    }
+
+
+def test_ingest_still_reads_the_pre_rename_field_names():
+    body = _post_body({
+        'session_id': '32f89830',
+        'context_window': {'used_tokens': 180000, 'total_tokens': 200_000},
+    })
+    assert body == {
+        'trace_id': '32f89830',
+        'context_used_tokens': 180000,
+        'context_window_tokens': 200_000,
+    }
+
+
+def test_ingest_omits_context_fields_when_the_block_is_unrecognized():
+    """A future rename must degrade to model-only, never to a bogus number."""
+    body = _post_body({
+        'session_id': '32f89830',
+        'model': {'id': 'claude-opus-5'},
+        'context_window': {'some_future_name': 12345},
+    })
+    assert body == {'trace_id': '32f89830', 'model': 'claude-opus-5'}

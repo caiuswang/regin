@@ -19,6 +19,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { test, expect } from './auth-fixture.js'
+import { traceScrollTop, wheelOverTrace } from './helpers/traceScroller.js'
 
 const SUB_MARKER = 'AGENT_INTERNAL_MARKER'
 
@@ -69,19 +70,9 @@ async function seedTallSession(page) {
   return { traceId, sfx, startId }
 }
 
-// The right gutter is .content-scroll's own padding strip, so no span card can
-// swallow the wheel before it reaches the page scroller.
-async function wheel(page, deltaY, times = 1) {
-  const vp = page.viewportSize()
-  await page.mouse.move(vp.width - 20, Math.round(vp.height / 2))
-  for (let i = 0; i < times; i++) {
-    await page.mouse.wheel(0, deltaY)
-    await page.waitForTimeout(40)
-  }
-}
+const wheel = wheelOverTrace
 
-const scrollTop = (page) =>
-  page.evaluate(() => Math.round(document.querySelector('.content-scroll').scrollTop))
+const scrollTop = traceScrollTop
 
 test.describe('SessionTraceView reading affordances', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
@@ -117,7 +108,12 @@ test.describe('SessionTraceView reading affordances', () => {
     await backTop.click()
     await expect.poll(() => scrollTop(page), { timeout: 5_000 }).toBe(0)
     await expect(backTop).toBeHidden()
-    await expect(toggle).toContainText('Hide details')
+    // Arriving at the top does NOT unfold the header. Revealing it is a
+    // deliberate act — the pull, H, or the toggle itself — and back-to-top is a
+    // navigation control, not a statement about the header. Were it a fourth
+    // reveal route, jumping up to re-read the start of a trace would throw the
+    // details bar in the reader's face, which is the whole bug being fixed.
+    await expect(toggle).toContainText('Details')
   })
 
   test('pinning a subagent row does not unfold its subtree', async ({ page }) => {

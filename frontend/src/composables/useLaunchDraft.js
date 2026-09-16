@@ -23,6 +23,14 @@ const blank = () => ({
   effort: '',
   mode: '',
   oneShot: false,
+  // "Run this in a fresh git worktree", and the branch it is cut for. Held in
+  // the draft like everything else the operator typed: a branch name is the
+  // most expensive field on the form to retype, and the sheet unmounts on
+  // every dismissal. `worktreeBase` is re-seeded from the picked directory's
+  // own HEAD, so it survives a dismissal but not a change of repo.
+  useWorktree: false,
+  worktreeBranch: '',
+  worktreeBase: '',
   // The picked session row, or null for a fresh run. Holding the whole row
   // (not just its id) is what lets the form say which trace a pick lands on
   // and adopt its cwd without a second fetch.

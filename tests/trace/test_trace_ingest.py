@@ -2077,6 +2077,54 @@ def test_api_session_detail_returns_context_pct(client, trace_db):
     assert body['context_pct'] == 0.2  # 2000/1000000 = 0.2%
 
 
+def test_turn_usage_model_seeds_window_before_any_model_span(client, trace_db):
+    """A live session has no session.start/turn/assistant_response model
+    yet, but turn_usage does. Without the fallback the window collapses to
+    the 200K default and ctx% reads ~5x high for a 1M-window model."""
+    client.post('/api/session-spans', json=_make_span(
+        span_id='s0', name='session.start', attributes={'source': 'clear'},
+    ))
+    client.post('/api/turn-usage', json=_turn_row(
+        model='claude-opus-4-7', context_used_tokens=92_902,
+    ))
+    body = client.get('/api/sessions/t1?shallow=1').get_json()
+    assert body['model'] == 'claude-opus-4-7'
+    assert body['context_window_tokens'] == 1_000_000
+    assert body['context_pct'] == 9.3
+
+
+def test_turn_usage_model_never_downgrades_a_span_model(client, trace_db):
+    """The turn_usage id is the bare base; a variant-bracketed model already
+    resolved from a span must survive it."""
+    client.post('/api/session-spans', json=_make_span(
+        span_id='s0', name='session.start',
+        attributes={'source': 'startup', 'model': 'claude-opus-4-7[1m]'},
+    ))
+    client.post('/api/turn-usage', json=_turn_row(
+        model='claude-opus-4-7', context_used_tokens=1_000,
+    ))
+    body = client.get('/api/sessions/t1?shallow=1').get_json()
+    assert body['model'] == 'claude-opus-4-7[1m]'
+
+
+def test_a_newer_alias_row_does_not_shadow_the_resolved_id(client, trace_db):
+    """A turn that completes before any assistant message names a model is
+    priced against the launch alias. Newest-wins alone would let that alias
+    shadow the concrete id an earlier turn already recorded."""
+    client.post('/api/session-spans', json=_make_span(
+        span_id='s0', name='session.start', attributes={'source': 'clear'},
+    ))
+    client.post('/api/turn-usage', json=[
+        _turn_row(model='claude-opus-4-7', turn_index=0, turn_uuid='uuid-a',
+                  context_used_tokens=92_902),
+        _turn_row(model='opus', turn_index=1, turn_uuid='uuid-b',
+                  context_used_tokens=92_902),
+    ])
+    body = client.get('/api/sessions/t1?shallow=1').get_json()
+    assert body['model'] == 'claude-opus-4-7'
+    assert body['context_window_tokens'] == 1_000_000
+
+
 # ── session_repos resolution at ingest ───────────────────────────────
 
 def _seed_repo(name, path):

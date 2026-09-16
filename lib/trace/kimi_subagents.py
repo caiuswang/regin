@@ -715,6 +715,12 @@ def reconcile_kimi_subagents(trace_id: str, live: bool = False) -> dict:
     finally:
         conn.close()
 
+    # Every write above rewrites existing rows in place (agent_id stamps,
+    # marker enrichment, closing a PENDING tool.Agent), so nothing the read
+    # side can measure moves — invalidate its memo explicitly.
+    from lib.trace.trace_service import projection_cache
+    projection_cache.invalidate(trace_id)
+
     result = {"subagents": len(runs), "tool_spans": tool_spans,
               "turns": turns, "launches_closed": closed}
     _log.write("kimi_subagents_reconciled", trace_id=trace_id, **result)

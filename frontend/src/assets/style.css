@@ -35,6 +35,11 @@
   --color-surface: var(--color-white);          /* cards, inputs, popovers (flips to #181d24) */
   --color-surface-2: var(--color-slate-100);    /* secondary fill: secondary buttons, hovers */
   --color-surface-3: var(--color-slate-200);    /* tertiary fill: pressed, track */
+  /* Selected/highlighted row inside a popover. It cannot be --color-surface-2:
+     that token is a fill for the PAGE background, and under dark inversion it
+     resolves BELOW the surface a popover paints on (#171b21 on #181d24), so the
+     highlight disappears. See the [data-theme="dark"] override. */
+  --color-surface-selected: var(--color-slate-100);
 
   /* Text */
   --color-fg: var(--color-slate-900);           /* primary text */
@@ -54,19 +59,23 @@
   --color-primary-active: var(--color-blue-800);
   --color-primary-fg: var(--color-white);       /* text on primary fill */
 
-  /* Semantic states: -strong = text/icon, -soft = tinted background */
+  /* Semantic states: -strong = text/icon, -soft = tinted background.
+     Every -soft aliases the ramp's `50` step, never `100`. Under inversion
+     the two diverge sharply: `50` becomes the subtle tint the name promises
+     (blue #151b26), while `100` becomes a fully saturated block (#1e3a8a)
+     that reads as a filled badge rather than a background wash. */
   --color-danger: var(--color-red-600);
   --color-danger-strong: var(--color-red-700);
   --color-danger-soft: var(--color-red-50);
   --color-success: var(--color-emerald-600);
   --color-success-strong: var(--color-emerald-700);
-  --color-success-soft: var(--color-emerald-100);
+  --color-success-soft: var(--color-emerald-50);
   --color-warning: var(--color-amber-600);
   --color-warning-strong: var(--color-amber-700);
-  --color-warning-soft: var(--color-amber-100);
+  --color-warning-soft: var(--color-amber-50);
   --color-info: var(--color-blue-600);
   --color-info-strong: var(--color-blue-700);
-  --color-info-soft: var(--color-blue-100);
+  --color-info-soft: var(--color-blue-50);
 
   /* Agent (subagent affordances only) — violet, distinct from the blue
      primary so a launched sub-agent reads as a different actor. Aliases the
@@ -82,6 +91,18 @@
 }
 
 :root {
+  /* The bottom-right corner, as one reservation rather than a guess per
+     component. Three of them anchor there independently — the quick-capture
+     bubble, the trace view's back-to-top, and (via `--trace-dock-h`) the
+     follow-up composer — and every collision between them so far came from
+     each re-deciding the numbers on its own. The bubble sits AT the inset;
+     anything stacking above it clears `inset + size + gap`.
+     A viewport-edge reservation, deliberately: the affordances that use it are
+     `position: fixed`, so a container-relative one would not describe them. */
+  --corner-fab-inset: 1.5rem;
+  --corner-fab-size: 3rem;
+  --corner-fab-gap: 0.5rem;
+
   /* Code blocks are intentionally dark in BOTH themes (they pair with
      highlight.js github-dark), so they ride dedicated fixed tokens
      instead of the invertible slate ramp. */
@@ -94,21 +115,90 @@
   --term-bg: #0a0a0c;
   --term-fg: #d4d6de;
 
+  /* Modal scrim, as an unpremultiplied triple so each overlay keeps its own
+     alpha. Slate-navy over a light page reads as shadow; over dark mode's
+     desaturated greys the same navy tints the whole page blue instead of
+     dimming it, so dark swaps in a neutral (see the [data-theme] block). */
+  --scrim-rgb: 15, 23, 42;
+
   /* Elevation + stacking foundation (plain props for CSS use). */
   --ds-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.03);
   --ds-shadow-md: 0 4px 12px rgba(30, 64, 175, 0.12);
   --ds-shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
 
   /* Canonical stacking order — every overlay/sticky should use these. */
+  /* The bottom-right corner is shared: the capture bubble sits in it and the
+     toast stack rises out of it. This is the bubble's full footprint (3rem
+     tall + its 1.5rem inset), reserved so the stack clears it rather than
+     covering the control. Both sides read it — see QuickCaptureBubble.vue and
+     NotificationHost.vue. */
+  --fab-corner-reserve: 4.5rem;
+
   --z-sticky: 30;
   --z-dropdown: 40;
   --z-modal: 50;
   --z-popover: 60;
   --z-toast: 70;
   --z-tooltip: 80;
+  /* The search palette stacks ABOVE presentation mode: ⌘K works from inside
+     the reader and returns to it on esc, so it cannot share --z-modal. */
+  --z-search: 90;
+
+  /* Full-text search. One accent per document kind — the group header, the
+     row glyph and the preview dot all key off the same token, so a kind is
+     recognisable before its label is read. */
+  --search-accent-span: var(--color-blue-600);
+  --search-accent-pattern: var(--color-violet-600);
+  --search-accent-session: var(--color-cyan-600);
+  --search-accent-file: var(--color-amber-600);
+
+  /* Spans are ~14 of the ~20 rows on screen, so within that group it is the
+     category — not the kind — that has to make the list scannable. One hue
+     per category; the chip fill is mixed from it at render time so a theme
+     flip needs no second token per category. */
+  --search-cat-prompt: var(--color-purple-600);
+  --search-cat-thinking: var(--color-indigo-600);
+  --search-cat-assistant: var(--color-emerald-600);
+  --search-cat-tool: var(--color-sky-600);
+  --search-cat-edit: var(--color-orange-600);
+  --search-cat-shell: var(--color-slate-600);
+  --search-cat-rule: var(--color-rose-600);
+  --search-cat-agent: var(--color-fuchsia-600);
+  --search-cat-system: var(--color-gray-600);
+
+  --search-diff-add: var(--color-emerald-600);
+  --search-diff-del: var(--color-red-600);
+
+  /* Amber is reserved for "this is why you are seeing this row". Two tints
+     so a title hit and a snippet hit are distinguishable, plus a line bar
+     rather than a full-row fill — a solid amber row would collide with the
+     semantic warning amber that lives on turn chrome. */
+  --search-hit-bg: var(--color-amber-200);
+  --search-hit-fg: var(--color-amber-950);
+  --search-hit-soft-bg: var(--color-amber-100);
+  --search-hit-soft-fg: var(--color-amber-800);
+  --search-hit-line-bg: var(--color-amber-50);
+  --search-hit-line-bar: var(--color-amber-400);
 }
 
 [data-theme="dark"] {
+  --scrim-rgb: 0, 0, 0;
+
+  /* Lifted off the popover surface rather than aliased to a ramp step: every
+     dark neutral at or below slate-100 sits under --color-surface, which is
+     what made the selected menu row invisible. */
+  --color-surface-selected: #3a4a66;
+
+  /* The amber ramp inverts under dark, so the light-mode hit tints land on
+     the wrong side of the text they wrap. Pin the highlight to a dark-amber
+     fill with light text — the mark must stay legible, not merely amber. */
+  --search-hit-bg: #b45309;
+  --search-hit-fg: #fffbeb;
+  --search-hit-soft-bg: #78350f;
+  --search-hit-soft-fg: #fde68a;
+  --search-hit-line-bg: rgba(180, 83, 9, 0.16);
+  --search-hit-line-bar: #f59e0b;
+
   /* keep the code surface a touch deeper than cards so it reads as a
      distinct well, but soft (not pure black) */
   --code-bg: #0d1117;
@@ -381,7 +471,13 @@ body {
 
 /* Always-dark surfaces (code/diff/terminal output) are styled with the
    LIGHT palette (dark box + light text). Under inversion they'd flip light,
-   so freeze the subtree back to light values via .code-surface. */
+   so freeze the subtree back to light values via .code-surface.
+   Exception: the dark END of the cool ramps (slate/gray 800-950) is what the
+   box itself is FILLED with, and Tailwind's slate/gray are blue-tinted. Frozen
+   literally, a #0f172a slab reads as a navy panel dropped into dark mode's
+   desaturated greys — the one place inversion and the light palette visibly
+   disagree. Those steps track --code-bg instead; the light end (text) does not,
+   because it has to stay light against the fill. */
 [data-theme="dark"] .code-surface {
   --color-white: #ffffff;
   --color-slate-50: #f8fafc;
@@ -392,9 +488,9 @@ body {
   --color-slate-500: #64748b;
   --color-slate-600: #475569;
   --color-slate-700: #334155;
-  --color-slate-800: #1e293b;
-  --color-slate-900: #0f172a;
-  --color-slate-950: #020617;
+  --color-slate-800: #1c2026;
+  --color-slate-900: var(--code-bg);
+  --color-slate-950: #080b0e;
   --color-gray-50: #f9fafb;
   --color-gray-100: #f3f4f6;
   --color-gray-200: #e5e7eb;
@@ -403,9 +499,9 @@ body {
   --color-gray-500: #6b7280;
   --color-gray-600: #4b5563;
   --color-gray-700: #374151;
-  --color-gray-800: #1f2937;
-  --color-gray-900: #111827;
-  --color-gray-950: #030712;
+  --color-gray-800: #1c2026;
+  --color-gray-900: var(--code-bg);
+  --color-gray-950: #080b0e;
   --color-zinc-50: #fafafa;
   --color-zinc-100: #f4f4f5;
   --color-zinc-200: #e4e4e7;
@@ -529,6 +625,16 @@ body {
 .badge-blue   { background: var(--color-blue-100); color: var(--color-blue-700); }
 .badge-purple { background: var(--color-purple-100); color: var(--color-violet-600); }
 .badge-gray   { background: var(--color-gray-100); color: var(--color-gray-500); }
+.badge-cyan   { background: var(--color-cyan-100); color: var(--color-cyan-800); }
+/* `escaped` — a feature that shipped and has had bugs blamed on it since.
+   Deeper than `yellow` and ringed, because it is the one badge the pipeline
+   surfaces exist to make unmissable, and yellow is already spoken for by
+   triage. Every token here flips with the theme, so both halves follow. */
+.badge-amber  {
+    background: var(--color-amber-200);
+    color: var(--color-amber-900);
+    box-shadow: inset 0 0 0 1px var(--color-amber-400);
+}
 
 /* Cards */
 /* Page header: eyebrow + title + subtitle + actions ---------- */
@@ -2301,6 +2407,10 @@ details summary {
     overflow-y: auto;
 }
 .live-queued-steer .live-msg-eyebrow { color: var(--color-amber-700); }
+/* A dropped row reports a loss, not a wait — it must not read as one more
+   amber "still going" chip. */
+.live-queued-dropped .live-msg-eyebrow { color: var(--color-danger-strong); }
+.live-queued-dropped { border-left: 2px solid var(--color-danger-strong); }
 /* Edit/remove ride the eyebrow line so a row's height is unchanged until it
    actually opens for editing. Only rows the server gave an id render them. */
 .live-queued-head {
@@ -2435,6 +2545,45 @@ details summary {
 /* Action row OUTSIDE the clamped text: a long question/response fills both
    clamp lines and would clip a button rendered inside .live-now-text. */
 .live-now-act { display: flex; align-items: baseline; gap: 8px; margin-top: 3px; }
+/* Terminal-derived status inside the NOW zone (LiveScreenStatus.vue) —
+   global, not scoped: scoped styles do not reach an extracted child. */
+.live-screen { margin-top: 5px; min-width: 0; }
+.live-screen-1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.live-screen-verb {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.live-screen-elapsed {
+    margin-left: auto;
+    flex-shrink: 0;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+}
+.live-screen-meta { flex-shrink: 0; font-size: 11px; color: var(--color-fg-subtle); }
+.live-screen-tool {
+    margin-top: 2px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--color-fg-subtle);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* The chip is the constant in this row — it sits last and stays put whether
+   or not the parse produced any status to show beside it. */
+.live-screen-peek {
+    margin-left: auto;
+    flex-shrink: 0;
+    height: auto;
+    padding: 2px 9px;
+    font-size: 11px;
+}
+.live-screen-elapsed { margin-left: 0; }
 .live-now-qmeta {
     font-size: 11px;
     color: var(--color-fg-subtle);
@@ -2502,28 +2651,96 @@ details summary {
     position: relative; /* anchors the /-autocomplete menu (LiveCommandMenu) */
     display: flex;
     align-items: flex-end;
+    /* Wraps so the attachment strip can take a full-width line of its own
+       above the input row; with nothing else at 100% the row is unchanged. */
+    flex-wrap: wrap;
     gap: 8px;
     margin-top: 7px;
+}
+/* Staged image attachments, above the input row. Thumbnails are local object
+   URLs — the bytes are already in the browser, so the preview never waits on
+   the server that is storing them. */
+.live-attach-strip {
+    flex: 0 0 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.live-attach-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 5px 3px 3px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-subtle);
+}
+.live-attach-thumb {
+    width: 30px;
+    height: 30px;
+    object-fit: cover;
+    border-radius: 3px;
+    display: block;
+}
+.live-attach-idx {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-fg-muted);
+}
+/* Overrides the Button primitive's icon box, which is sized for a toolbar
+   and would dwarf a 30px thumbnail chip. */
+.live-attach-x {
+    height: 16px;
+    width: 16px;
+    min-width: 16px;
+    padding: 0;
+    line-height: 1;
+    color: var(--color-fg-faint);
+}
+.live-attach-x:hover { color: var(--color-danger); }
+/* The follow-up composer stacks its rows, so the strip needs its own
+   inset rather than the /live row's full-width flex basis. */
+.followup-attach-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 12px 6px;
 }
 .live-composer-steer {
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid var(--color-border-subtle);
 }
-.live-composer-ta {
+/* Holds the field and the token mirror that paints behind it, and carries the
+   opaque fill the textarea gives up so the mirror is not buried under it. */
+.live-composer-field {
+    position: relative;
     flex: 1;
     min-width: 0;
-    resize: none;
-    min-height: 36px;
-    max-height: 88px;
-    padding: 8px 10px;
-    border: 1px solid var(--color-border);
     border-radius: 10px;
     background: var(--color-background);
-    color: var(--color-fg);
+}
+/* Field and mirror wrap identically or the highlight slides off the token it
+   marks, so every metric that drives wrapping — the border included, since it
+   insets the text — is declared for the pair at once, never on one alone. */
+.live-composer-ta,
+.live-composer-hl {
+    padding: 8px 10px;
+    border: 1px solid transparent;
     font: inherit;
     font-size: 13px;
     line-height: 1.45;
+}
+.live-composer-ta {
+    display: block;
+    width: 100%;
+    resize: none;
+    min-height: 36px;
+    max-height: 88px;
+    border-color: var(--color-border);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--color-fg);
 }
 .live-composer-ta::placeholder { color: var(--color-fg-faint); }
 .live-composer-ta:focus-visible {
@@ -2531,11 +2748,12 @@ details summary {
     outline-offset: -1px;
 }
 .live-composer-ta:disabled { opacity: 0.55; }
-.live-composer-steer .live-composer-ta {
-    min-height: 32px;
+.live-composer-steer .live-composer-ta,
+.live-composer-steer .live-composer-hl {
     padding: 6px 10px;
     font-size: 12.5px;
 }
+.live-composer-steer .live-composer-ta { min-height: 32px; }
 .live-send-btn { flex-shrink: 0; width: 36px; height: 36px; }
 .live-composer-steer .live-send-btn { width: 32px; height: 32px; }
 /* Esc recovery button — quiet furniture beside send; dismisses a harness
@@ -2704,6 +2922,23 @@ details summary {
 }
 .live-qa-nav .live-qa-send { margin-left: auto; }
 .live-qa-title { font-size: 13px; font-weight: 600; color: var(--color-fg); overflow-wrap: anywhere; }
+.live-qa-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 5px;
+    padding: 1px 7px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-fg-muted);
+}
+.live-qa-mode-multi {
+    border-color: var(--color-info);
+    background: var(--color-info-soft);
+    color: var(--color-info-strong);
+}
 .live-qa-opt {
     display: flex;
     align-items: flex-start;
@@ -2766,6 +3001,9 @@ button.live-qa-pick.live-qa-staged {
 .live-qa-confirm .live-qa-free-input { width: 100%; }
 .live-qa-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .live-qa-confirm-hint { margin: 6px 0 0; font-size: 11px; color: var(--color-fg-subtle); }
+/* Decline verb — last in the QA sheet, visually separated from the answer
+   controls so it is never the thumb's next stop after an option. */
+.live-qa-dismiss { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-border-subtle); }
 /* Per-option preview disclosure (mirrors the desktop AskUserQuestionCard). */
 .live-qa-optwrap + .live-qa-optwrap { border-top: 1px solid var(--color-border-subtle); }
 /* In the answerer the details is a sibling of the full-width option button, so
@@ -2986,6 +3224,27 @@ button.live-qa-pick.live-qa-staged {
     font-size: 11px;
     color: var(--color-fg-faint);
 }
+/* The live counterpart to the snapshot: same pill as `refresh`, but filled,
+   because it leaves this sheet for a page that can type into the pane. */
+.live-term-live-cta {
+    flex-shrink: 0;
+    height: auto;
+    padding: 4px 9px;
+    gap: 5px;
+    border: 1px solid var(--color-primary);
+    border-radius: 99px;
+    background: var(--color-primary);
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 600;
+    text-decoration: none;
+}
+.live-term-live-cta:hover {
+    background: var(--color-primary-hover);
+    border-color: var(--color-primary-hover);
+    color: #fff;
+}
+
 .live-term-refresh {
     flex-shrink: 0;
     height: auto;
@@ -3017,7 +3276,83 @@ button.live-qa-pick.live-qa-staged {
     overflow-y: auto;
     overflow-x: auto;
 }
+/* The spine's live node: a normal spine row whose content is a status line
+   rather than a card. Steady grey dot when the terminal is quiet — the
+   pulsing halo is reserved for a turn actually in flight. */
+.spine-live-row { padding-bottom: 2px; }
+.spine-dot-live-idle { color: var(--color-fg-faint); }
+/* The whole row is the hit target — an icon-sized one was both hard to find
+   and hard to land on. Bordered and full-width so it reads as pressable at a
+   glance rather than only on hover. */
+.spine-live {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    margin-left: 10px;
+    padding: 4px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    font-size: 11.5px;
+    font-weight: 400;
+    color: var(--color-fg-subtle);
+    text-align: left;
+}
+.spine-live:hover {
+    background: var(--color-surface-2);
+    border-color: var(--color-blue-500);
+}
+/* Same strip, nothing to open: a session regin launched over the SDK reports
+   its status without a tmux pane behind it. Reads as a label, so it must not
+   borrow the pressable affordances the terminal variant earns. */
+.spine-live-flat,
+.spine-live-flat:hover {
+    cursor: default;
+    background: var(--color-surface);
+    border-color: var(--color-border);
+}
+/* One look for "click here to see the real terminal", wherever it appears.
+   Reads as pressable without hover: a filled pill with its purpose spelled
+   out, not an icon whose meaning only a tooltip carries. */
+.spine-live-cta,
+.term-cta {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: auto;
+    padding: 3px 10px;
+    border-radius: 99px;
+    background: var(--color-blue-50);
+    color: var(--color-blue-600);
+    font-size: 11px;
+    font-weight: 600;
+}
+.spine-live-cta { margin-left: auto; }
+.spine-live:hover .spine-live-cta,
+.term-cta:hover { background: var(--color-blue-100); }
+.spine-live-label { font-weight: 600; white-space: nowrap; }
+.spine-live-tool {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    color: var(--color-fg-faint);
+}
 .live-term-body a { color: inherit; }
+/* In the desktop modal there is room for the pane's real width, so the frame
+   keeps its column alignment instead of wrapping its box-drawing apart. */
+.ds-dialog .live-term-body {
+    white-space: pre;
+    word-break: normal;
+    max-height: 68dvh;
+}
 .live-term-foot {
     margin: 8px 2px 0;
     font-size: 10.5px;
@@ -3627,13 +3962,17 @@ button.live-qa-pick.live-qa-staged {
 .event-spine-row {
     position: relative;
     padding-left: 22px;
+    /* Reserves the ⤢ present affordance's column rather than painting it over
+       the card's right-aligned meta (tokens · duration), which is what every
+       card puts there. */
+    padding-right: 24px;
     margin-bottom: 14px;
 }
 /* Belt-and-braces only. Undispatched spans are now filtered out before they
    reach the spine (conversation/dispatch.js), so this should never match; it
    stays as a backstop for a card that renders nothing at runtime, which would
    otherwise punch a node onto the wire with nothing attached. */
-.event-spine-row:not(:has(> :not(.spine-dot):not(.spine-pin))) {
+.event-spine-row:not(:has(> :not(.spine-dot):not(.spine-pin):not(.present-open):not(.span-running-tag))) {
     display: none;
 }
 /* Two nested circles rather than a box-shadow ring: the ring must be the
@@ -3670,6 +4009,103 @@ button.live-qa-pick.live-qa-staged {
     inset: 1px;
     border-radius: 9999px;
     border: 2.5px solid var(--color-surface);
+}
+
+/* ── In-flight spans ─────────────────────────────────────────
+   A span that has not reported back is the only thing on the page that is
+   still changing, so it is the only thing allowed to move. The halo is an
+   expanding ring OUTSIDE the dot rather than an opacity pulse on the dot
+   itself: the dot's fill is its per-kind category colour, and dimming it
+   would make "running" read as "faded/less important" — the opposite of the
+   intent — while an added ring leaves that colour intact. */
+.spine-dot-run::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    border: 2px solid currentColor;
+    animation: spine-dot-halo 1.6s ease-out infinite;
+}
+.spine-dot-run[data-run-state="running"] { color: var(--color-emerald-500); }
+.spine-dot-run[data-run-state="waiting"] { color: var(--color-amber-500); }
+.spine-dot-run[data-run-state="error"] { color: var(--color-red-500); }
+@keyframes spine-dot-halo {
+    0%   { transform: scale(1);   opacity: 0.85; }
+    100% { transform: scale(2.3); opacity: 0; }
+}
+
+/* Findable while scrolling: the tag says WHAT the state is, the tint is what
+   makes the reader's eye land on the row at all in a long feed. */
+.spine-row-run {
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--color-emerald-500) 6%, transparent);
+}
+.spine-row-run[data-run-state="waiting"] {
+    background: color-mix(in srgb, var(--color-amber-500) 8%, transparent);
+}
+.spine-row-run[data-run-state="error"] {
+    background: color-mix(in srgb, var(--color-red-500) 8%, transparent);
+}
+
+.span-running-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 9999px;
+    border: 1px solid;
+    padding: 1px 8px 1px 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+.span-running-tag--running {
+    border-color: var(--color-emerald-200);
+    background: var(--color-emerald-50);
+    color: var(--color-emerald-700);
+}
+.span-running-tag--waiting {
+    border-color: var(--color-amber-200);
+    background: var(--color-amber-50);
+    color: var(--color-amber-700);
+}
+.span-running-tag--queued {
+    border-color: var(--color-slate-200);
+    background: var(--color-slate-50);
+    color: var(--color-slate-500);
+}
+.span-running-tag--queued .span-running-pip {
+    animation: none;
+    opacity: 0.6;
+}
+/* The rollup seen from a collapsed ancestor: same hue, no fill. The reader
+   must be able to tell "this row is running" from "something under this row
+   is running" at a glance, and outline-vs-fill does that without a second
+   colour — colour still means WHICH state, never whose. */
+.span-running-tag--folded {
+    background: transparent;
+    border-style: dashed;
+}
+
+.span-running-pip {
+    width: 5px;
+    height: 5px;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: span-running-pip 1.4s ease-in-out infinite;
+}
+@keyframes span-running-pip {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+}
+
+/* Motion is the whole signal here, so with it suppressed the states must
+   still be distinguishable by colour and label alone — which they are; only
+   the animation stops, nothing is hidden. */
+@media (prefers-reduced-motion: reduce) {
+    .spine-dot-run::after { animation: none; opacity: 0.6; }
+    .span-running-pip { animation: none; }
 }
 
 /* THE selection treatment for every conversation event — inline row, prose
@@ -3833,4 +4269,43 @@ button.live-qa-pick.live-qa-staged {
     border-radius: 9999px;
     background: var(--color-danger);
     flex-shrink: 0;
+}
+
+/* Marks the search preview injects into the presentation renderers' own DOM.
+   Global because the directive creates these outside any component's render,
+   so no scoped `data-v-` attribute reaches them. Same amber as SearchMark. */
+mark[data-search-hit] {
+    background: var(--search-hit-bg);
+    color: var(--search-hit-fg);
+    border-radius: 3px;
+    padding: 0 1px;
+    font: inherit;
+}
+
+/* Literal text in the presentation reader: a code well, wrapping rather than
+   scrolling sideways, because a 62KB file read through a horizontal scrollbar
+   is not a reading surface. Global rather than scoped to PresentContent
+   because PresentProse paints the same well for a verbatim body, and a scoped
+   rule does not reach into a child component. */
+.present-verbatim {
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border-radius: 11px;
+    background: var(--color-surface-2);
+    color: var(--color-fg);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* A phone gives the bottom-right corner less room, so its shared inset shrinks
+   once — here, where every occupant reads it — rather than once per occupant.
+   Kept out of the `:root` block above because that block is theme tokens; this
+   is a layout reservation that varies by width, not by theme. */
+@media (max-width: 767px) {
+  :root { --corner-fab-inset: 1rem; }
 }

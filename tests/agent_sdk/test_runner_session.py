@@ -131,9 +131,9 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-async def _session(trace_id, prompts, *, stop=True):
+async def _session(trace_id, prompts, *, stop=True, options=None):
     """Start a runner, feed it `prompts`, and let the pump drain them."""
-    run = runner_mod.AgentRunner(trace_id)
+    run = runner_mod.AgentRunner(trace_id, options=options)
     await run.start()
     for text in prompts:
         run.enqueue(text)
@@ -401,6 +401,46 @@ def test_the_run_row_learns_the_model_the_agent_answered_on(captured,
     _run(_session("sdk-model", ["go"]))
 
     assert "claude-opus-5" in models
+
+
+def test_the_launch_models_choice_is_stamped_before_the_agent_speaks(
+        captured, fake_client, monkeypatch):
+    """A per-run model is known at launch, so the run row and `session.start`
+    must carry it from the first byte — not once an assistant message reveals
+    one. The concrete id still supersedes the alias when it arrives."""
+    monkeypatch.setattr(settings.agent_sdk, "model", "")
+    models = []
+    monkeypatch.setattr(runner_mod.store, "upsert_run",
+                        lambda tid, **kw: models.append(kw.get("model")))
+
+    _run(_session("sdk-launch-model", ["go"],
+                  options=runner_mod.client.RunOptions(model="opus")))
+
+    assert models[0] == "opus"
+    assert "claude-opus-5" in models
+    start = next(s for s in captured["spans"] if s["name"] == "session.start")
+    assert start["attributes"]["model"] == "opus"
+
+
+def test_a_per_run_model_beats_the_install_default(captured, fake_client,
+                                                   monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "model", "claude-haiku-4-5")
+
+    _run(_session("sdk-override-model", [],
+                  options=runner_mod.client.RunOptions(model="opus")))
+
+    start = next(s for s in captured["spans"] if s["name"] == "session.start")
+    assert start["attributes"]["model"] == "opus"
+
+
+def test_a_run_with_no_model_anywhere_still_stamps_none(captured, fake_client,
+                                                        monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "model", "")
+
+    _run(_session("sdk-no-model", [], options=runner_mod.client.RunOptions()))
+
+    start = next(s for s in captured["spans"] if s["name"] == "session.start")
+    assert "model" not in start["attributes"]
 
 
 class WedgedClient(FakeClient):

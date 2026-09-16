@@ -49,6 +49,7 @@ def _agent_attrs(attrs: dict, event) -> None:
 
 
 def _tool_call_span(event: ToolCall) -> dict:
+    from hook_manager.handlers.post_tool_trace import apply_pending_input_attrs
     from lib.trace.pending_spans import tool_pending_id
 
     attrs = {
@@ -56,8 +57,12 @@ def _tool_call_span(event: ToolCall) -> dict:
         'tool_use_id': event.tool_use_id,
         'live': True,
     }
-    if event.tool_input:
-        attrs['tool_input'] = event.tool_input
+    # The flat keys the conversation labellers read (a Bash command, a
+    # WebSearch query); a raw `tool_input` dump alone renders a bare tool name.
+    ti = event.tool_input or {}
+    if not apply_pending_input_attrs(attrs, event.tool_name, ti) \
+            and isinstance(ti, dict) and ti:
+        attrs['tool_input'] = ti
     _agent_attrs(attrs, event)
     return {
         'name': f'tool.{event.tool_name}',

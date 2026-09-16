@@ -22,6 +22,7 @@
 import { test, expect } from './auth-fixture.js'
 import { contentOverflow } from './helpers/overflow.js'
 import { randomUUID } from 'node:crypto'
+import { selectViewMode } from './helpers/viewMode.js'
 
 const PROMPT_TEXT = 'CAI-38 load-failure fixture prompt'
 
@@ -223,7 +224,7 @@ test.describe('Mid-session reload failure', () => {
     const errors = collectPageErrors(page)
     await loadThenBreak(page)
 
-    await page.getByRole('button', { name: 'Terminal' }).click()
+    await selectViewMode(page, 'Log')
     await expect(staleMarker(page)).toBeVisible({ timeout: TWO_TICKS_MS })
 
     expect(errors).toEqual([])

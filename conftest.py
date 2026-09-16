@@ -22,6 +22,9 @@ writing to the developer's real `db/regin.db`:
 - `_block_notify_transport`   — the badge-push loopback POST fired by every
   `record_message` / drift write, which reaches the dev server on
   `settings.web_port` for the same reason `_block_ingest_transport` exists.
+- `_no_bridge_pane_registration` — `bridge_registry` claiming the developer's
+  own tmux pane for a fixture session id, which silently evicted the live
+  session sitting in it.
 """
 
 from __future__ import annotations
@@ -188,6 +191,36 @@ def _block_notify_transport(monkeypatch):
     # spawn one that runs the real hook handlers. Point its port at a closed
     # one so the child's own probe fails instead of finding the dev server.
     monkeypatch.setenv('REGIN_WEB_PORT', '1')
+
+
+@pytest.fixture(autouse=True)
+def _no_bridge_pane_registration(monkeypatch):
+    """Keep the suite out of the agent-bridge pane registry.
+
+    `bridge_registry` reads the pane triple from `os.environ`, not from the
+    hook payload, so a run inside the developer's own tmux pane registers
+    `bridge_panes` rows for the replayed FIXTURE session ids against that
+    real pane. `tmp_db` cannot stop it: `test_replay` also spawns
+    `python -m hook_manager`, and the child is a fresh process holding the
+    real `DB_PATH` — the same cross-process escape `_block_ingest_transport`
+    exists for.
+
+    The rows are not inert. Occupancy is "newest reachable registration on
+    the pane whose session has not ended", and a fixture id never gets a
+    `sessions` row (this file severs ingest), so the LEFT JOIN reads its
+    absent `ended_at` as NULL — a live claimant. It therefore EVICTS the
+    session actually sitting in the pane, whose `bridge_reachable` goes
+    false and takes the trace view's follow-up composer and terminal node
+    down with it, until that session's next turn event re-upserts its row.
+    A long-running Bash emits no turn event, so the outage lasts as long as
+    the command does.
+
+    Pinned as env rather than a patched function so it reaches those child
+    processes, and because `REGIN_BRIDGE` is the handler's own first guard:
+    off, `_register_pane` returns before the tmux query and before any
+    write, which is exactly the pristine-checkout state.
+    """
+    monkeypatch.setenv('REGIN_BRIDGE', '0')
 
 
 # ── External agent spawns ─────────────────────────────────────

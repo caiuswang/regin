@@ -664,6 +664,46 @@ test.describe('command menu affordances', () => {
     expect(requests.length, 'the empty catalog was never re-requested').toBe(2)
   })
 
+  // `/reload-skills` and `/reload-plugins` change what the target session
+  // accepts mid-run, so the catalog is revalidated every time the menu opens:
+  // the cached rows show instantly, and a newer answer replaces them in place.
+  test('a reloaded catalog reaches an open page without a reload', async ({ page }) => {
+    const { traceId } = await idleComposer(page)
+    const reloaded = [...FIXTURE_COMMANDS,
+                      { name: 'freshskill', description: 'Installed by a reload.',
+                        kind: 'skill', scope: 'user' }]
+    const requests = await stubBridgeCommandsSeq(page, traceId,
+                                                 [FIXTURE_COMMANDS, reloaded])
+
+    await composerTa(page).fill('/')
+    await expect(cmdItems(page)).toHaveCount(FIXTURE_COMMANDS.length, { timeout: 5_000 })
+
+    await composerTa(page).fill('')
+    await composerTa(page).fill('/')
+    await expect(cmdItems(page)).toHaveCount(reloaded.length, { timeout: 5_000 })
+    expect(requests.length, 'the catalog was never revalidated').toBeGreaterThan(1)
+
+    // And the cached rows are what shows while that revalidation is in flight —
+    // reopening never flashes the loading row or an empty menu.
+    await expect(cmdLoading(page)).toHaveCount(0)
+  })
+
+  // The composer asks for the catalog on both `input` and `keyup`, so a
+  // revalidation hung off that call is one request per keystroke of an
+  // ordinary prompt. It belongs on the menu's closed → open edge instead.
+  test('typing does not re-request the catalog once per keystroke', async ({ page }) => {
+    const { traceId } = await idleComposer(page)
+    const requests = await stubBridgeCommands(page, traceId, FIXTURE_COMMANDS)
+
+    await composerTa(page).pressSequentially('/deploy', { delay: 20 })
+    await expect(cmdItems(page)).toHaveCount(1, { timeout: 5_000 })
+    expect(requests.length, `catalog fetched ${requests.length}× for one token`).toBe(1)
+
+    await composerTa(page).fill('')
+    await composerTa(page).pressSequentially('just prose, no slash', { delay: 10 })
+    expect(requests.length, 'a prose draft re-requested the catalog').toBe(1)
+  })
+
   test('the fixed-position menu re-anchors to the composer on resize', async ({ page }) => {
     await idleComposer(page)
 

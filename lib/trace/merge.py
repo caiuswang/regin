@@ -40,6 +40,7 @@ from lib.trace.pending_spans import (
     INACTIVE_THRESHOLD_SEC,
     PROMPT_PLACEHOLDER_PREFIX,
     is_agent_scoped_prompt,
+    is_human_blocker,
     is_pending_span_id,
     parse_naive_ts as _merge_ts,
     pending_id_for_resolved,
@@ -590,7 +591,13 @@ def _absorb_slash_command_expansions(spans: list[dict]) -> list[dict]:
             continue
         if sig in expansion_by_anchor:
             survivor = dict(s)
-            survivor['attributes'] = {**_attrs(s), 'text': expansion_by_anchor[sig]}
+            full = expansion_by_anchor[sig]
+            # `chars` travels with the text it counts, as it does when an
+            # untruncated body is taken over in `_take_untruncated_text` —
+            # otherwise the reader's attribute rail reads `chars 22` beside
+            # the 1625-character prompt it is describing.
+            survivor['attributes'] = {**_attrs(s), 'text': full,
+                                      'chars': len(full)}
             out.append(survivor)
         else:
             out.append(s)
@@ -728,6 +735,24 @@ def _session_is_inactive(session_activity: dict | None, now: datetime) -> bool:
     return (now - last_seen).total_seconds() > INACTIVE_THRESHOLD_SEC
 
 
+def _blocks_on_a_human(pending: dict, session_activity: dict | None) -> bool:
+    """True for an unresolved permission/ask/plan that is the session's NEWEST
+    span on a still-open session — the state rule (b)'s clock cannot see.
+
+    Such a span is why the session went quiet, so its own age is not evidence
+    it is stuck; it is the length of the wait. A stuck `tool.Bash` gets no such
+    exemption — nothing about it explains the silence. Newest-ness is read off
+    the session row's `last_seen` rather than the merge window, which may be a
+    scroll-up page that ends before the blocker."""
+    if not session_activity or session_activity.get('status') == 'ended':
+        return False
+    if not is_human_blocker(pending.get('name'), pending.get('span_id')):
+        return False
+    p_ts = _merge_ts(pending.get('start_time'))
+    last_seen = _merge_ts(session_activity.get('last_seen'))
+    return p_ts is not None and last_seen is not None and p_ts >= last_seen
+
+
 def _demote(pending: dict) -> dict:
     """Copy of the pending rendered as resolved-interrupted (status ERROR +
     interrupt markers the frontend already reads). Merge stays pure — a copy,
@@ -753,7 +778,10 @@ def _demote_stale_pending(
           `_MOVED_ON_GRACE_SEC` after the pending — Claude moved on and the
           backfill has had its shot, OR
       (b) the session is inactive (ended, or silent past INACTIVE_THRESHOLD)
-          and the pending is older than `_STALE_PENDING_OLDER_THAN_SEC`.
+          and the pending is older than `_STALE_PENDING_OLDER_THAN_SEC` —
+          EXCEPT for a human blocker that is the session's newest span on a
+          still-open session (`_blocks_on_a_human`), whose age measures the
+          wait, not a fault.
 
     INVARIANT: a legitimately-running long tool on an ACTIVE session with no
     same-agent completion activity after it is never demoted — (a) needs a
@@ -775,7 +803,7 @@ def _demote_stale_pending(
     def demote(s: dict) -> bool:
         if _moved_on_past_grace(s, move_on_ts):
             return True
-        if not inactive:
+        if not inactive or _blocks_on_a_human(s, session_activity):
             return False
         p_ts = _merge_ts(s.get('start_time'))
         return p_ts is not None and \
@@ -1036,18 +1064,52 @@ def _dedup_cross_source(spans: list[dict]) -> list[dict]:
     `pending-` row that `_inherit_turn_linkage` reads turn linkage from, and
     hand `_absorb_slash_command_expansions` a survivor it can't pair.
 
-    A no-op unless the window actually mixes writers, which is what keeps every
-    ordinary session's output identical.
+    The cross-source BUCKETING is a no-op unless the window actually mixes
+    writers, which is what keeps every ordinary session's output identical.
+    The shared-span-id collapse runs unconditionally: it needs no origins to be
+    correct, and a single-origin window has no same-id pairs to collapse.
     """
+    spans = _collapse_shared_span_ids(spans)
     origins = {s.get(_ORIGIN_KEY) for s in spans}
     if 'sdk' not in origins or 'hook' not in origins:
         return spans
-    spans = _collapse_shared_span_ids(spans)
+    spans = _mark_queued_sdk_placeholders(spans)
     merged, buckets = _bucket_by_cross_source_key(spans)
     for rows in buckets.values():
         merged.extend(_reconcile_bucket(rows))
     return sorted(merged, key=lambda s: (s.get('start_time') or '',
                                          s.get('id') or 0))
+
+
+QUEUED_STATUS_MESSAGE = 'queued'
+
+
+def _mark_queued_sdk_placeholders(spans: list[dict]) -> list[dict]:
+    """Render an SDK-only `pending-` tool placeholder as queued, not running.
+
+    The runner posts a placeholder the moment the model STREAMS a tool_use
+    block, so a batch of three parallel calls lands as three PENDING rows at
+    once. The harness executes them one at a time, and the hook's PreToolUse
+    twin (same `pending-<tool_use_id>` id, hook origin) is what marks the
+    moment a call actually starts — `_collapse_shared_span_ids` has just made
+    the hook row the survivor wherever that twin exists. A runner row still
+    standing alone is therefore a call the model asked for that the harness
+    has not begun, and it must not read as a running one.
+
+    Only reached for a dual-writer window (the caller checks origins), so a
+    hook-less SDK session keeps its placeholders as its only liveness signal.
+    Stamped on `status_message`, a top-level column, so the client's keyed
+    merge replaces it the moment the hook twin arrives — an attribute would
+    survive the shallow map's attribute strip and read queued forever.
+    """
+    out = []
+    for s in spans:
+        if (s.get(_ORIGIN_KEY) == 'sdk' and s.get('status_code') == 'PENDING'
+                and (s.get('name') or '').startswith('tool.')
+                and is_pending_span_id(s.get('span_id'))):
+            s = {**s, 'status_message': QUEUED_STATUS_MESSAGE}
+        out.append(s)
+    return out
 
 
 def _fill_capped_text(survivor: dict, dropped: dict) -> dict:

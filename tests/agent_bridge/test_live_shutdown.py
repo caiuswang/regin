@@ -138,6 +138,52 @@ def test_broken_pane_probe_reads_as_unreachable(monkeypatch):
     assert live_session.manageability("T-1")["tier"] is None
 
 
+def test_a_failed_probe_is_undetermined_not_nothing_to_close(monkeypatch):
+    """The two ways `tier` comes back None must not read alike.
+
+    A probe that could not answer leaves a session that may still be running
+    and was certainly never touched. Reported with the same shape as "regin
+    looked and nothing holds it", a client renders a tick for a stop that
+    never happened — the failure `session_liveness` gained INDETERMINATE for.
+    """
+    def _boom(trace_id):
+        raise RuntimeError("tmux socket died")
+
+    _sdk(monkeypatch)
+    monkeypatch.setattr(delivery, "session_liveness", _boom)
+
+    state = live_session.manageability("T-1")
+    assert state["tier"] is None
+    assert state["undetermined"] is True
+    assert "may still be running" in state["detail"]
+
+    result = live_session.graceful_close("T-1")
+    assert result["closed"] is False
+    assert result["undetermined"] is True
+
+
+def test_a_registered_pane_regin_cannot_read_is_undetermined(monkeypatch):
+    """Not just a raised probe: `session_liveness` itself answers
+    INDETERMINATE when a row exists and the identity read failed."""
+    _sdk(monkeypatch)
+    monkeypatch.setattr(delivery, "session_liveness",
+                        lambda t: delivery.INDETERMINATE)
+
+    assert live_session.manageability("T-1")["undetermined"] is True
+
+
+def test_nothing_holding_the_session_stays_a_settled_answer(monkeypatch):
+    """The common case must NOT become undetermined. A session that was never
+    in tmux — no pane row, or the bridge switched off — is a settled no, and
+    flagging it would raise a false alarm on every ordinary close."""
+    _sdk(monkeypatch)
+    for settled in (delivery.GONE, delivery.UNKNOWN):
+        monkeypatch.setattr(delivery, "session_liveness", lambda t, r=settled: r)
+        state = live_session.manageability("T-1")
+        assert state["tier"] is None, settled
+        assert state["undetermined"] is False, settled
+
+
 # ── graceful close ───────────────────────────────────────────
 
 
@@ -153,7 +199,8 @@ def test_sdk_close_stops_the_run_and_leaves_tmux_alone(monkeypatch):
     assert stops == ["T-1"]
     assert calls == []
     assert result == {"tier": "sdk", "live": True, "closed": True,
-                      "interrupted": False, "detail": "stopping"}
+                      "interrupted": False, "undetermined": False,
+                      "detail": "stopping"}
 
 
 def test_tmux_close_cancels_the_turn_before_typing_exit(monkeypatch):
@@ -347,4 +394,5 @@ def test_shutdown_serves_the_close_result(flask_client, monkeypatch):
     monkeypatch.setattr(agent_sdk, "stop_run", lambda t: (True, "stopping"))
     body = flask_client.post("/api/sessions/T-1/shutdown").get_json()
     assert body == {"tier": "sdk", "live": True, "closed": True,
-                    "interrupted": False, "detail": "stopping"}
+                    "interrupted": False, "undetermined": False,
+                    "detail": "stopping"}

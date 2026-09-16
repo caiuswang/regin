@@ -971,7 +971,8 @@ class SqliteMemoryStore:
                                 scope: Optional[str] = None) -> list[str]:
         """Active memory ids linked to an authoritative topic node — the
         recall-time lookup backing the topic boost. Index-driven on
-        `topic_node_id`; an optional `scope` filter joins to `memories`."""
+        `topic_node_id`; an optional `scope` joins to `memories` and selects
+        that scope plus `global`."""
         with MemorySessionLocal() as session:
             stmt = (select(MemoryAuthoritativeTopic.memory_id)
                     .join(Memory,
@@ -980,7 +981,11 @@ class SqliteMemoryStore:
                         MemoryAuthoritativeTopic.topic_node_id == topic_node_id,
                         Memory.status == "active"))
             if scope is not None:
-                stmt = stmt.where(Memory.scope == scope)
+                # Same union as `_eligible_rows`: a scope filter on a
+                # retrieval path means "this repo *and* global", never
+                # repo-only — else a scoped walk hides every cross-repo
+                # lesson while `recall` for the same query surfaces it.
+                stmt = stmt.where(Memory.scope.in_(["global", scope]))
             rows = session.exec(stmt).all()
         return list(rows)
 
@@ -1004,7 +1009,11 @@ class SqliteMemoryStore:
                     .order_by(Memory.importance.desc(),
                               Memory.recall_count.desc()))
             if scope is not None:
-                stmt = stmt.where(Memory.scope == scope)
+                # Same union as `_eligible_rows`: a scope filter on a
+                # retrieval path means "this repo *and* global", never
+                # repo-only — else a scoped walk hides every cross-repo
+                # lesson while `recall` for the same query surfaces it.
+                stmt = stmt.where(Memory.scope.in_(["global", scope]))
             rows = session.exec(stmt).all()
         return list(dict.fromkeys(rows))
 
@@ -1096,7 +1105,7 @@ class SqliteMemoryStore:
         them. Same ranking as `memories_for_topic_subtree` (importance then
         recall_count, most-valuable first); deduped order-preserving. The
         outer-join-IS-NULL keeps the un-linked rows; an optional `scope`
-        filters Memory.scope."""
+        selects that scope plus `global`."""
         with MemorySessionLocal() as session:
             stmt = (select(Memory.id)
                     .outerjoin(
@@ -1107,7 +1116,11 @@ class SqliteMemoryStore:
                     .order_by(Memory.importance.desc(),
                               Memory.recall_count.desc()))
             if scope is not None:
-                stmt = stmt.where(Memory.scope == scope)
+                # Same union as `_eligible_rows`: a scope filter on a
+                # retrieval path means "this repo *and* global", never
+                # repo-only — else a scoped walk hides every cross-repo
+                # lesson while `recall` for the same query surfaces it.
+                stmt = stmt.where(Memory.scope.in_(["global", scope]))
             rows = session.exec(stmt).all()
         out = list(dict.fromkeys(rows))
         log.read("memory_orphans_listed", count=len(out))

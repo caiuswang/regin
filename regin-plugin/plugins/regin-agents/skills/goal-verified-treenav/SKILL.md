@@ -246,8 +246,8 @@ over-includes), and a tree walk can pull a whole leaf's worth of lessons when
 only one applies. So open the **1–2 real target files** the goal names and
 refine in place:
 
-- **Drop wrong-area noise** from the scaffold (pure-frontend? drop the Python
-  skills and the pytest gate).
+- **Drop wrong-area noise** from the scaffold (pure-frontend? drop the backend
+  skills and the backend test gate).
 - **Keep only lessons that apply.** For each tree-nav memory id, keep it *only*
   if it bears on this change as seen in the actual file; drop subtree-neighbour
   matches that merely shared a topic node. Note what you dropped and why.
@@ -503,8 +503,8 @@ stranded no wiki — say so and move on.
 - **Tree dead-ends are data.** A right-bucket-but-empty leaf is a genuine
   knowledge gap; record it (it is exactly the kind of thing step 6's `--fail`
   should seed) and fill from code, not from a forced semantic guess.
-- **Preflight needs the repo's `.venv`.** Run from repo root with
-  `.venv/bin/python`.
+- **Preflight runs the `regin` CLI.** Run it from the repo root; `setup.sh`
+  links `regin` onto PATH, so no interpreter path is needed.
 
 ## Further reading
 

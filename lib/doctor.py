@@ -580,6 +580,7 @@ def run_checks() -> dict:
     }
     utilities = {
         'jq': _check_tool('jq', ['jq', '--version']),
+        'rg': _check_tool('rg', ['rg', '--version']),
         'curl': _check_tool('curl', ['curl', '--version']),
     }
 
@@ -614,6 +615,10 @@ def run_checks() -> dict:
         ]},
         {'name': 'Utilities', 'items': [
             {'id': 'jq', 'label': 'jq', **utilities['jq'], 'optional': True},
+            {'id': 'rg', 'label': 'ripgrep (full-text search accelerator)',
+             **utilities['rg'], 'optional': True,
+             'install_hint': 'brew install ripgrep — without it /api/search '
+                             'falls back to a slower Python file walk'},
             {'id': 'curl', 'label': 'curl', **utilities['curl'], 'optional': True},
         ]},
     ]

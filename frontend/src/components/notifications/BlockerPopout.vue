@@ -61,13 +61,6 @@ const allAnswered = computed(
 const sendLabel = computed(() => (stepped.value
   ? `Send ${questions.value.length} answers → resume agent`
   : 'Send decision → resume agent'))
-// A multi-select question needs per-option toggles the bridge cannot drive
-// blindly, so the server marks such an ask unanswerable. Saying why beats
-// rendering a dead card the operator has to guess about.
-const multiSelectOnly = computed(
-  () => !canAnswer.value && blocker.value?.kind === 'question'
-    && questions.value.some(q => q.multiSelect))
-
 function openLive() {
   const traceId = blocker.value?.trace_id
   router.push(traceId ? `/live/${encodeURIComponent(traceId)}` : '/live')
@@ -79,7 +72,10 @@ function deliverStaged(row) {
   const staged = blockerAnswers.value
   if (!stepped.value) {
     const answer = staged[0]
-    if (answer.kind === 'free') {
+    // Only a plain single pick takes the flat legacy shape. A typed answer and
+    // a multi-select toggle both need the `answers` array, whose walk is what
+    // presses the TUI's mandatory final "Submit answers".
+    if (answer.kind !== 'option') {
       return answerBlockerAll(row, [answerPayload(questions.value[0], answer)])
     }
     return answerBlocker(row, { index: answer.index, label: answer.label })
@@ -237,17 +233,16 @@ onUnmounted(() => {
           <p v-if="context" class="blocker-popout-context">{{ context }}</p>
         </template>
 
-        <p v-if="multiSelectOnly" class="blocker-popout-context" role="status">
-          This ask has a multi-select question, which cannot be driven from
-          here — answer it in the agent terminal, or open the live session.
-        </p>
-
-        <!-- allow/deny, or a card no channel reaches. Unchanged surfaces. -->
+        <!-- allow/deny, or a card no channel reaches. NOT rendered beside
+             BlockerAnswer: its one-tap options post immediately, bypassing
+             everything staged above and the footer's Send. On a multi-select
+             ask that bypass ticked one box, reported success and retired the
+             card while the agent stayed parked. -->
         <!-- Keyed by card: it holds its own `staged`/`phase`, and paging the
              queue — or a re-prompt superseding in place — under a live
              component would carry a half-staged allow/deny onto a different
              question. Same key as the selection map, version included. -->
-        <BlockerActions v-else :key="cardId" :row="blocker" :show-live="false" />
+        <BlockerActions v-if="!canAnswer" :key="cardId" :row="blocker" :show-live="false" />
 
         <p v-if="phase === 'failed'" class="blocker-popout-failed" role="status">
           Not delivered — {{ detail }}. The agent is still paused; open the live
